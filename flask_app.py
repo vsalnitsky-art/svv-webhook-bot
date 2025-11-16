@@ -55,12 +55,37 @@ class BybitTradingBot:
         return round(quantity, 6), round(position_size_usdt, 2)
 
     def get_current_price(self, symbol):
-        """Получение текущей цены"""
+        """Получение текущей цены с улучшенной обработкой ошибок"""
         try:
             ticker = self.session.get_tickers(category="linear", symbol=symbol)
-            return float(ticker['result']['list'][0]['lastPrice'])
+            
+            # Проверяем всю структуру ответа перед конвертацией
+            if (ticker and 
+                'result' in ticker and 
+                'list' in ticker['result'] and 
+                len(ticker['result']['list']) > 0 and
+                'lastPrice' in ticker['result']['list'][0]):
+                
+                last_price_str = ticker['result']['list'][0]['lastPrice']
+                
+                # Проверяем, что цена не пустая и может быть конвертирована
+                if last_price_str and last_price_str.strip():
+                    # Убираем возможные пробелы и конвертируем
+                    price = float(last_price_str.strip())
+                    logger.info(f"💰 Цена {symbol}: ${price}")
+                    return price
+                else:
+                    logger.error(f"❌ Пустая цена для {symbol}")
+                    return None
+            else:
+                logger.error(f"❌ Неверная структура ответа для {symbol}")
+                return None
+                
+        except ValueError as e:
+            logger.error(f"❌ Ошибка конвертации цены для {symbol}: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Error getting price: {e}")
+            logger.error(f"❌ Ошибка получения цены для {symbol}: {e}")
             return None
 
     def set_leverage(self, symbol, leverage):
@@ -84,6 +109,9 @@ class BybitTradingBot:
         
         # Берем только часть до точки (если есть)
         symbol = symbol.split('.')[0]
+        
+        # 🔥 ИСПРАВЛЯЕМ ОПЕЧАТКУ В СИМВОЛЕ
+        symbol = symbol.replace('ADAMSDT', 'ADAUSDT')
         
         # Проверяем формат и добавляем USDT если нужно
         if not symbol.endswith('USDT'):
