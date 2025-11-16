@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from pybit.unified_trading import HTTP
 import os
 import logging
+import math
 
 app = Flask(__name__)
 
@@ -21,30 +22,133 @@ class BybitTradingBot:
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации: {e}")
 
-    def place_order(self, data):
+    def calculate_position_size(self, balance, risk_percent, leverage, price):
+        """Расчет размера позиции в USDT и количества монет"""
+        position_size_usdt = balance * (risk_percent / 100) * leverage
+        quantity = position_size_usdt / price
+        return round(quantity, 6), round(position_size_usdt, 2)
+
+    def get_current_price(self, symbol):
+        """Получение текущей цены"""
         try:
-            logger.info(f"📨 Получен запрос: {data}")
-            
-            # Простая проверка связи
-            ticker = self.session.get_tickers(category="linear", symbol="BTCUSDT")
-            price = ticker['result']['list'][0]['lastPrice']
-            
+            ticker = self.session.get_tickers(category="linear", symbol=symbol)
+            return float(ticker['result']['list'][0]['lastPrice'])
+        except Exception as e:
+            logger.error(f"Error getting price: {e}")
+            return None
+
+    def set_leverage(self, symbol, leverage):
+        """Установка плеча"""
+        try:
+            self.session.set_leverage(
+                category="linear",
+                symbol=symbol,
+                buyLeverage=str(leverage),
+                sellLeverage=str(leverage),
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"Leverage setting warning: {e}")
+            return False
+
+    def place_order(self, data):
+        """Размещение ордера с TP/SL"""
+        try:
+            # Параметры из TradingView
+            action = data.get('action', 'Buy')
+            symbol = data.get('symbol', 'BTCUSDT')
+            leverage = data.get('leverage', 5)
+            risk_percent = data.get('riskPercent', 1)
+            account_balance = data.get('accountBalance', 100)
+            tp_percent = data.get('takeProfitPercent', 3)
+            sl_percent = data.get('stopLossPercent', 1.5)
+
+            logger.info(f"📈 Получен ордер: {action} {symbol}")
+            logger.info(f"⚙️ Параметры: Плечо: {leverage}x, Риск: {risk_percent}%, Баланс: ${account_balance}")
+
+            # Получение текущей цены
+            current_price = self.get_current_price(symbol)
+            if not current_price:
+                return {"status": "error", "error": "Не удалось получить цену"}
+
+            logger.info(f"💰 Текущая цена: ${current_price}")
+
+            # Установка плеча
+            self.set_leverage(symbol, leverage)
+
+            # Расчет объема
+            quantity, position_size = self.calculate_position_size(
+                account_balance, risk_percent, leverage, current_price
+            )
+
+            logger.info(f"📊 Рассчитано: Количество: {quantity}, Размер позиции: ${position_size}")
+
+            # Проверка минимального объема
+            if quantity < 0.001:
+                return {"status": "error", "error": f"Слишком маленький объем: {quantity}"}
+
+            # Расчет TP/SL цен
+            if action == "Buy":
+                tp_price = round(current_price * (1 + tp_percent / 100), 2)
+                sl_price = round(current_price * (1 - sl_percent / 100), 2)
+                position_index = 0
+            else:  # Sell
+                tp_price = round(current_price * (1 - tp_percent / 100), 2)
+                sl_price = round(current_price * (1 + sl_percent / 100), 2)
+                position_index = 1
+
+            logger.info(f"🎯 TP: ${tp_price}, SL: ${sl_price}")
+
+            # Размещение рыночного ордера
+            order = self.session.place_order(
+                category="linear",
+                symbol=symbol,
+                side=action,
+                orderType="Market",
+                qty=str(quantity),
+                timeInForce="GTC",
+            )
+
+            order_id = order['result']['orderId']
+            logger.info(f"✅ Ордер размещен: {order_id}")
+
+            # Установка TP/SL
+            if tp_percent > 0 or sl_percent > 0:
+                try:
+                    self.session.set_trading_stop(
+                        category="linear",
+                        symbol=symbol,
+                        takeProfit=str(tp_price),
+                        stopLoss=str(sl_price),
+                        positionIdx=position_index
+                    )
+                    logger.info(f"🛡️ TP/SL установлены: TP=${tp_price}, SL=${sl_price}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
+
             return {
                 "status": "success",
-                "message": "Тест связи успешен!",
-                "btc_price": price,
-                "received_data": data
+                "order_id": order_id,
+                "symbol": symbol,
+                "action": action,
+                "quantity": quantity,
+                "entry_price": current_price,
+                "position_size_usdt": position_size,
+                "take_profit_price": tp_price,
+                "stop_loss_price": sl_price,
+                "leverage": leverage,
+                "risk_percent": risk_percent
             }
-            
+
         except Exception as e:
-            logger.error(f"❌ Ошибка в place_order: {e}")
+            logger.error(f"❌ Ошибка ордера: {e}")
             return {"status": "error", "error": str(e)}
 
 bot = BybitTradingBot()
 
 @app.route('/')
 def home():
-    return "Trading Bot is Running! ✅"
+    return "Trading Bot is Running! ✅ Use /webhook for TradingView"
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -54,7 +158,7 @@ def health_check():
 def webhook():
     try:
         data = request.get_json()
-        logger.info(f"🔧 Webhook вызван с данными: {data}")
+        logger.info(f"📨 Webhook вызван: {data}")
         result = bot.place_order(data)
         return jsonify(result)
     except Exception as e:
