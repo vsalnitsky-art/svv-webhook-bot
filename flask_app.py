@@ -19,11 +19,11 @@ def keep_alive():
         time.sleep(600)
 
 # Запускаем в фоновом потоке (раскомментируйте если нужно)
-# @app.before_first_request
-# def activate_keep_alive():
-#     thread = threading.Thread(target=keep_alive)
-#     thread.daemon = True
-#     thread.start()
+@app.before_first_request
+def activate_keep_alive():
+    thread = threading.Thread(target=keep_alive)
+    thread.daemon = True
+    thread.start()
 
 # 🔐 БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ
 from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
