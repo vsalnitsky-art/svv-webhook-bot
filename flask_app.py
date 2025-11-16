@@ -59,11 +59,16 @@ def place_order(self, data):
         symbol = data.get('symbol', 'BTCUSDT')
         leverage = data.get('leverage', 5)
         risk_percent = data.get('riskPercent', 1)
-        account_balance = data.get('accountBalance', 100)
         tp_percent = data.get('takeProfitPercent', 3)
         sl_percent = data.get('stopLossPercent', 1.5)
 
         logger.info(f"📈 Получен ордер: {action} {symbol}")
+
+        # 🔄 ПОЛУЧАЕМ РЕАЛЬНЫЙ БАЛАНС С БИРЖИ
+        balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
+        real_balance = float(balance_info['result']['list'][0]['totalAvailableBalance'])
+        
+        logger.info(f"💰 Реальный баланс на бирже: ${real_balance}")
 
         # Получение текущей цены
         current_price = self.get_current_price(symbol)
@@ -75,16 +80,18 @@ def place_order(self, data):
         # Установка плеча
         self.set_leverage(symbol, leverage)
 
-        # Расчет объема
+        # 🔄 РАСЧЕТ ОТ РЕАЛЬНОГО БАЛАНСА
         quantity, position_size = self.calculate_position_size(
-            account_balance, risk_percent, leverage, current_price
+            real_balance,  # Используем реальный баланс!
+            risk_percent, 
+            leverage, 
+            current_price
         )
 
         logger.info(f"📊 Рассчитано: Количество: {quantity}, Размер позиции: ${position_size}")
 
         # ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА под разные пары
         if symbol in ['ADAUSDT', 'DOTUSDT', 'MATICUSDT']:
-            # Для этих пар нужно больше знаков после запятой
             formatted_quantity = format(quantity, '.6f')
         elif symbol in ['BTCUSDT', 'ETHUSDT']:
             formatted_quantity = format(quantity, '.5f')  
@@ -115,7 +122,7 @@ def place_order(self, data):
             symbol=symbol,
             side=action,
             orderType="Market",
-            qty=formatted_quantity,  # Используем отформатированное количество
+            qty=formatted_quantity,
             timeInForce="GTC",
         )
 
@@ -146,13 +153,14 @@ def place_order(self, data):
             "position_size_usdt": position_size,
             "take_profit_price": tp_price,
             "stop_loss_price": sl_price,
-            "leverage": leverage
+            "leverage": leverage,
+            "real_balance_used": real_balance,  # Показываем какой баланс использовался
+            "risk_percent": risk_percent
         }
 
     except Exception as e:
         logger.error(f"❌ Ошибка ордера: {e}")
         return {"status": "error", "error": str(e)}
-
 bot = BybitTradingBot()
 
 @app.route('/')
