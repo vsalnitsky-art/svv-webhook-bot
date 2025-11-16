@@ -51,98 +51,107 @@ class BybitTradingBot:
             logger.warning(f"Leverage setting warning: {e}")
             return False
 
-    def place_order(self, data):
-        """Размещение ордера с TP/SL"""
-        try:
-            # Параметры из TradingView
-            action = data.get('action', 'Buy')
-            symbol = data.get('symbol', 'BTCUSDT')
-            leverage = data.get('leverage', 5)
-            risk_percent = data.get('riskPercent', 1)
-            account_balance = data.get('accountBalance', 100)
-            tp_percent = data.get('takeProfitPercent', 3)
-            sl_percent = data.get('stopLossPercent', 1.5)
+def place_order(self, data):
+    """Размещение ордера с TP/SL"""
+    try:
+        # Параметры из TradingView
+        action = data.get('action', 'Buy')
+        symbol = data.get('symbol', 'BTCUSDT')
+        leverage = data.get('leverage', 5)
+        risk_percent = data.get('riskPercent', 1)
+        account_balance = data.get('accountBalance', 100)
+        tp_percent = data.get('takeProfitPercent', 3)
+        sl_percent = data.get('stopLossPercent', 1.5)
 
-            logger.info(f"📈 Получен ордер: {action} {symbol}")
-            logger.info(f"⚙️ Параметры: Плечо: {leverage}x, Риск: {risk_percent}%, Баланс: ${account_balance}")
+        logger.info(f"📈 Получен ордер: {action} {symbol}")
 
-            # Получение текущей цены
-            current_price = self.get_current_price(symbol)
-            if not current_price:
-                return {"status": "error", "error": "Не удалось получить цену"}
+        # Получение текущей цены
+        current_price = self.get_current_price(symbol)
+        if not current_price:
+            return {"status": "error", "error": "Не удалось получить цену"}
 
-            logger.info(f"💰 Текущая цена: ${current_price}")
+        logger.info(f"💰 Текущая цена: ${current_price}")
 
-            # Установка плеча
-            self.set_leverage(symbol, leverage)
+        # Установка плеча
+        self.set_leverage(symbol, leverage)
 
-            # Расчет объема
-            quantity, position_size = self.calculate_position_size(
-                account_balance, risk_percent, leverage, current_price
-            )
+        # Расчет объема
+        quantity, position_size = self.calculate_position_size(
+            account_balance, risk_percent, leverage, current_price
+        )
 
-            logger.info(f"📊 Рассчитано: Количество: {quantity}, Размер позиции: ${position_size}")
+        logger.info(f"📊 Рассчитано: Количество: {quantity}, Размер позиции: ${position_size}")
 
-            # Проверка минимального объема
-            if quantity < 0.001:
-                return {"status": "error", "error": f"Слишком маленький объем: {quantity}"}
+        # ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА под разные пары
+        if symbol in ['ADAUSDT', 'DOTUSDT', 'MATICUSDT']:
+            # Для этих пар нужно больше знаков после запятой
+            formatted_quantity = format(quantity, '.6f')
+        elif symbol in ['BTCUSDT', 'ETHUSDT']:
+            formatted_quantity = format(quantity, '.5f')  
+        else:
+            formatted_quantity = format(quantity, '.4f')
 
-            # Расчет TP/SL цен
-            if action == "Buy":
-                tp_price = round(current_price * (1 + tp_percent / 100), 2)
-                sl_price = round(current_price * (1 - sl_percent / 100), 2)
-                position_index = 0
-            else:  # Sell
-                tp_price = round(current_price * (1 - tp_percent / 100), 2)
-                sl_price = round(current_price * (1 + sl_percent / 100), 2)
-                position_index = 1
+        logger.info(f"🔢 Отформатированное количество: {formatted_quantity}")
 
-            logger.info(f"🎯 TP: ${tp_price}, SL: ${sl_price}")
+        # Проверка минимального объема
+        if quantity < 0.0001:
+            return {"status": "error", "error": f"Слишком маленький объем: {quantity}"}
 
-            # Размещение рыночного ордера
-            order = self.session.place_order(
-                category="linear",
-                symbol=symbol,
-                side=action,
-                orderType="Market",
-                qty=str(quantity),
-                timeInForce="GTC",
-            )
+        # Расчет TP/SL цен
+        if action == "Buy":
+            tp_price = round(current_price * (1 + tp_percent / 100), 2)
+            sl_price = round(current_price * (1 - sl_percent / 100), 2)
+            position_index = 0
+        else:  # Sell
+            tp_price = round(current_price * (1 - tp_percent / 100), 2)
+            sl_price = round(current_price * (1 + sl_percent / 100), 2)
+            position_index = 1
 
-            order_id = order['result']['orderId']
-            logger.info(f"✅ Ордер размещен: {order_id}")
+        logger.info(f"🎯 TP: ${tp_price}, SL: ${sl_price}")
 
-            # Установка TP/SL
-            if tp_percent > 0 or sl_percent > 0:
-                try:
-                    self.session.set_trading_stop(
-                        category="linear",
-                        symbol=symbol,
-                        takeProfit=str(tp_price),
-                        stopLoss=str(sl_price),
-                        positionIdx=position_index
-                    )
-                    logger.info(f"🛡️ TP/SL установлены: TP=${tp_price}, SL=${sl_price}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
+        # Размещение рыночного ордера
+        order = self.session.place_order(
+            category="linear",
+            symbol=symbol,
+            side=action,
+            orderType="Market",
+            qty=formatted_quantity,  # Используем отформатированное количество
+            timeInForce="GTC",
+        )
 
-            return {
-                "status": "success",
-                "order_id": order_id,
-                "symbol": symbol,
-                "action": action,
-                "quantity": quantity,
-                "entry_price": current_price,
-                "position_size_usdt": position_size,
-                "take_profit_price": tp_price,
-                "stop_loss_price": sl_price,
-                "leverage": leverage,
-                "risk_percent": risk_percent
-            }
+        order_id = order['result']['orderId']
+        logger.info(f"✅ Ордер размещен: {order_id}")
 
-        except Exception as e:
-            logger.error(f"❌ Ошибка ордера: {e}")
-            return {"status": "error", "error": str(e)}
+        # Установка TP/SL
+        if tp_percent > 0 or sl_percent > 0:
+            try:
+                self.session.set_trading_stop(
+                    category="linear",
+                    symbol=symbol,
+                    takeProfit=str(tp_price),
+                    stopLoss=str(sl_price),
+                    positionIdx=position_index
+                )
+                logger.info(f"🛡️ TP/SL установлены: TP=${tp_price}, SL=${sl_price}")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
+
+        return {
+            "status": "success",
+            "order_id": order_id,
+            "symbol": symbol,
+            "action": action,
+            "quantity": float(formatted_quantity),
+            "entry_price": current_price,
+            "position_size_usdt": position_size,
+            "take_profit_price": tp_price,
+            "stop_loss_price": sl_price,
+            "leverage": leverage
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка ордера: {e}")
+        return {"status": "error", "error": str(e)}
 
 bot = BybitTradingBot()
 
