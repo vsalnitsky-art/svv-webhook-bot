@@ -18,19 +18,19 @@ def keep_alive():
         # Ждем 10 минут
         time.sleep(600)
 
-# Запускаем в фоновом потоке (раскомментируйте если нужно)
-@app.before_first_request
-def activate_keep_alive():
-    thread = threading.Thread(target=keep_alive)
-    thread.daemon = True
-    thread.start()
-
 # 🔐 БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ
 from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 🔄 ПЕРЕМЕСТИЛИ ФУНКЦИЮ ПОСЛЕ СОЗДАНИЯ APP
+@app.before_first_request
+def activate_keep_alive():
+    thread = threading.Thread(target=keep_alive)
+    thread.daemon = True
+    thread.start()
 
 class BybitTradingBot:
     def __init__(self):
@@ -77,7 +77,7 @@ class BybitTradingBot:
             logger.warning(f"Leverage setting warning: {e}")
             return False
 
-    def normalize_symbol(self, symbol):  # ← ИСПРАВЛЕНО: правильный отступ
+    def normalize_symbol(self, symbol):
         """Нормализация символа из TradingView"""
         # Удаляем TradingView постфиксы
         symbol = symbol.replace('.P', '').replace('.PERP', '').replace('.D', '')
@@ -94,7 +94,7 @@ class BybitTradingBot:
         
         return symbol
 
-    def place_order(self, data):  # ← ИСПРАВЛЕНО: правильный отступ
+    def place_order(self, data):
         try:
             # Параметры из TradingView
             action = data.get('action', 'Buy')
@@ -121,7 +121,7 @@ class BybitTradingBot:
             if not current_price:
                 return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
 
-            logger.info(f"💰 Текущая цена: ${current_price}")  # ← ИСПРАВЛЕНО: правильный отступ
+            logger.info(f"💰 Текущая цена: ${current_price}")
 
             # Установка плеча
             self.set_leverage(symbol, leverage)
