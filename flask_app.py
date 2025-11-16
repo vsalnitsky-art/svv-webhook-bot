@@ -18,19 +18,19 @@ def keep_alive():
         # Ждем 10 минут
         time.sleep(600)
 
-# Запускаем в фоновом потоке (раскомментируйте если нужно)
-# @app.before_first_request
-# def activate_keep_alive():
-#     thread = threading.Thread(target=keep_alive)
-#     thread.daemon = True
-#     thread.start()
-
 # 🔐 БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ
 from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Запускаем в фоновом потоке
+@app.before_first_request
+def activate_keep_alive():
+     thread = threading.Thread(target=keep_alive)
+     thread.daemon = True
+     thread.start()
 
 class BybitTradingBot:
     def __init__(self):
