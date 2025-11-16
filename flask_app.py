@@ -12,25 +12,38 @@ def keep_alive():
             # Пингуем себя каждые 10 минут
             requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
             print("🔄 Keep-alive ping sent")
-        except:
-            print("⚠️ Keep-alive ping failed")
+        except Exception as e:
+            print(f"⚠️ Keep-alive ping failed: {e}")
         
         # Ждем 10 минут
         time.sleep(600)
 
 # 🔐 БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ
-from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
+try:
+    from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
+except ImportError as e:
+    print(f"❌ Ошибка импорта config: {e}")
+    # Создаем заглушки для тестирования
+    def get_api_credentials():
+        return "test_key", "test_secret"
+    DEFAULT_LEVERAGE = 5
+    DEFAULT_RISK_PERCENT = 1
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 🔄 ПЕРЕМЕСТИЛИ ФУНКЦИЮ ПОСЛЕ СОЗДАНИЯ APP
+# 🔄 Функция keep-alive после создания app
 @app.before_first_request
 def activate_keep_alive():
-    thread = threading.Thread(target=keep_alive)
-    thread.daemon = True
-    thread.start()
+    """Активация keep-alive при первом запросе"""
+    try:
+        thread = threading.Thread(target=keep_alive)
+        thread.daemon = True
+        thread.start()
+        logger.info("✅ Keep-alive активирован")
+    except Exception as e:
+        logger.error(f"❌ Ошибка активации keep-alive: {e}")
 
 class BybitTradingBot:
     def __init__(self):
@@ -105,8 +118,8 @@ class BybitTradingBot:
             
             logger.info(f"📈 Символ: {raw_symbol} -> {symbol}")
 
-            leverage = data.get('leverage', 5)
-            risk_percent = data.get('riskPercent', 1)
+            leverage = data.get('leverage', DEFAULT_LEVERAGE)
+            risk_percent = data.get('riskPercent', DEFAULT_RISK_PERCENT)
             tp_percent = data.get('takeProfitPercent', 3)
             sl_percent = data.get('stopLossPercent', 1.5)
 
@@ -200,7 +213,7 @@ class BybitTradingBot:
                 "take_profit_price": tp_price,
                 "stop_loss_price": sl_price,
                 "leverage": leverage,
-                "real_balance_used": real_balance,  # Показываем какой баланс использовался
+                "real_balance_used": real_balance,
                 "risk_percent": risk_percent
             }
 
@@ -208,7 +221,13 @@ class BybitTradingBot:
             logger.error(f"❌ Ошибка ордера: {e}")
             return {"status": "error", "error": str(e)}
 
-bot = BybitTradingBot()
+# Инициализация бота
+try:
+    bot = BybitTradingBot()
+    logger.info("✅ Trading Bot успешно инициализирован")
+except Exception as e:
+    logger.error(f"❌ Не удалось инициализировать Trading Bot: {e}")
+    bot = None
 
 @app.route('/')
 def home():
@@ -220,6 +239,9 @@ def health_check():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    if bot is None:
+        return jsonify({"status": "error", "error": "Bot not initialized"}), 500
+        
     try:
         data = request.get_json()
         logger.info(f"📨 Webhook вызван: {data}")
