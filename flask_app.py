@@ -127,3 +127,23 @@ def health_check():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
+
+@app.route('/test-connection', methods=['GET'])
+def test_connection():
+    """Тест подключения к Bybit"""
+    try:
+        # Простой тест без торговли
+        ticker = bot.session.get_tickers(category="linear", symbol="BTCUSDT")
+        btc_price = ticker['result']['list'][0]['lastPrice']
+        
+        return jsonify({
+            "status": "success", 
+            "message": "Connection to Bybit successful!",
+            "btc_price": btc_price,
+            "timestamp": "2024-11-16 14:30:00"
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
