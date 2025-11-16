@@ -54,31 +54,51 @@ class BybitTradingBot:
             logger.warning(f"Leverage setting warning: {e}")
             return False
 
+def normalize_symbol(self, symbol):
+    """Нормализация символа из TradingView"""
+    # Удаляем TradingView постфиксы
+    symbol = symbol.replace('.P', '').replace('.PERP', '').replace('.D', '')
+    
+    # Берем только часть до точки (если есть)
+    symbol = symbol.split('.')[0]
+    
+    # Проверяем формат и добавляем USDT если нужно
+    if not symbol.endswith('USDT'):
+        symbol = symbol + 'USDT'
+    
+    # Приводим к верхнему регистру
+    symbol = symbol.upper()
+    
+    return symbol
+
 def place_order(self, data):
-    """Размещение ордера с TP/SL"""
     try:
         # Параметры из TradingView
         action = data.get('action', 'Buy')
-        symbol = data.get('symbol', 'BTCUSDT')
+        raw_symbol = data.get('symbol', 'BTCUSDT')
+        
+        # 🔄 НОРМАЛИЗАЦИЯ СИМВОЛА
+        symbol = self.normalize_symbol(raw_symbol)
+        
+        logger.info(f"📈 Символ: {raw_symbol} -> {symbol}")
+
         leverage = data.get('leverage', 5)
         risk_percent = data.get('riskPercent', 1)
         tp_percent = data.get('takeProfitPercent', 3)
         sl_percent = data.get('stopLossPercent', 1.5)
 
-        logger.info(f"📈 Получен ордер: {action} {symbol}")
-
-        # 🔄 ПОЛУЧАЕМ РЕАЛЬНЫЙ БАЛАНС С БИРЖИ
+        # Получаем реальный баланс
         balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
         real_balance = float(balance_info['result']['list'][0]['totalAvailableBalance'])
         
-        logger.info(f"💰 Реальный баланс на бирже: ${real_balance}")
+        logger.info(f"💰 Реальный баланс: ${real_balance}")
 
         # Получение текущей цены
         current_price = self.get_current_price(symbol)
         if not current_price:
-            return {"status": "error", "error": "Не удалось получить цену"}
+            return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
 
-        logger.info(f"💰 Текущая цена: ${current_price}")
+       logger.info(f"💰 Текущая цена: ${current_price}")
 
         # Установка плеча
         self.set_leverage(symbol, leverage)
