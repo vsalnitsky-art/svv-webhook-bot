@@ -1,6 +1,29 @@
 from flask import Flask, request, jsonify
 from pybit.unified_trading import HTTP
 import logging
+import threading
+import time
+import requests
+
+def keep_alive():
+    """Функция для поддержания сервера активным"""
+    while True:
+        try:
+            # Пингуем себя каждые 10 минут
+            requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
+            print("🔄 Keep-alive ping sent")
+        except:
+            print("⚠️ Keep-alive ping failed")
+        
+        # Ждем 10 минут
+        time.sleep(600)
+
+# Запускаем в фоновом потоке (раскомментируйте если нужно)
+# @app.before_first_request
+# def activate_keep_alive():
+#     thread = threading.Thread(target=keep_alive)
+#     thread.daemon = True
+#     thread.start()
 
 # 🔐 БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ
 from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
