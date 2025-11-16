@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: svv-webhook-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python flask_app.py
+    envVars:
+      - key: BYBIT_API_KEY
+        value: 74UOoOj6JXdSHsMdmV
+      - key: BYBIT_API_SECRET  
+        value: tlgbk0aDxxoiEC4Pv1HKMfq7whS2OPPSqIa7
