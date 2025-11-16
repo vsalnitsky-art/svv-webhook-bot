@@ -25,12 +25,10 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Запускаем в фоновом потоке
-@app.before_first_request
-def activate_keep_alive():
-     thread = threading.Thread(target=keep_alive)
-     thread.daemon = True
-     thread.start()
+# 🔄 ЗАПУСКАЕМ KEEP-ALIVE ПРИ СТАРТЕ ПРИЛОЖЕНИЯ (вместо before_first_request)
+keep_alive_thread = threading.Thread(target=keep_alive)
+keep_alive_thread.daemon = True
+keep_alive_thread.start()
 
 class BybitTradingBot:
     def __init__(self):
@@ -57,35 +55,55 @@ class BybitTradingBot:
     def get_current_price(self, symbol):
         """Получение текущей цены с улучшенной обработкой ошибок"""
         try:
+            logger.info(f"🔍 Получение цены для {symbol}")
             ticker = self.session.get_tickers(category="linear", symbol=symbol)
             
-            # Проверяем всю структуру ответа перед конвертацией
-            if (ticker and 
-                'result' in ticker and 
-                'list' in ticker['result'] and 
-                len(ticker['result']['list']) > 0 and
-                'lastPrice' in ticker['result']['list'][0]):
-                
-                last_price_str = ticker['result']['list'][0]['lastPrice']
-                
-                # Проверяем, что цена не пустая и может быть конвертирована
-                if last_price_str and last_price_str.strip():
-                    # Убираем возможные пробелы и конвертируем
-                    price = float(last_price_str.strip())
-                    logger.info(f"💰 Цена {symbol}: ${price}")
-                    return price
-                else:
-                    logger.error(f"❌ Пустая цена для {symbol}")
-                    return None
-            else:
-                logger.error(f"❌ Неверная структура ответа для {symbol}")
+            # Детальная проверка структуры ответа
+            logger.info(f"📊 Ответ API: {ticker}")
+            
+            if not ticker:
+                logger.error("❌ Пустой ответ от API")
                 return None
                 
-        except ValueError as e:
-            logger.error(f"❌ Ошибка конвертации цены для {symbol}: {e}")
-            return None
+            if 'result' not in ticker:
+                logger.error(f"❌ Нет 'result' в ответе: {ticker}")
+                return None
+                
+            if 'list' not in ticker['result']:
+                logger.error(f"❌ Нет 'list' в result: {ticker['result']}")
+                return None
+                
+            if not ticker['result']['list']:
+                logger.error(f"❌ Пустой список в list: {ticker['result']['list']}")
+                return None
+                
+            first_item = ticker['result']['list'][0]
+            if 'lastPrice' not in first_item:
+                logger.error(f"❌ Нет 'lastPrice' в элементе: {first_item}")
+                return None
+                
+            last_price_str = first_item['lastPrice']
+            logger.info(f"🔢 Получена строка цены: '{last_price_str}'")
+            
+            # Проверяем, что цена не пустая и может быть конвертирована
+            if last_price_str and last_price_str.strip() and last_price_str != 'None':
+                # Убираем возможные пробелы и конвертируем
+                price_value = last_price_str.strip()
+                # Заменяем запятые на точки если есть
+                price_value = price_value.replace(',', '.')
+                try:
+                    price = float(price_value)
+                    logger.info(f"💰 Цена {symbol}: ${price}")
+                    return price
+                except ValueError as e:
+                    logger.error(f"❌ Ошибка конвертации '{price_value}' в float: {e}")
+                    return None
+            else:
+                logger.error(f"❌ Пустая или невалидная цена: '{last_price_str}'")
+                return None
+                
         except Exception as e:
-            logger.error(f"❌ Ошибка получения цены для {symbol}: {e}")
+            logger.error(f"❌ Неожиданная ошибка получения цены для {symbol}: {e}")
             return None
 
     def set_leverage(self, symbol, leverage):
@@ -102,7 +120,7 @@ class BybitTradingBot:
             logger.warning(f"Leverage setting warning: {e}")
             return False
 
-    def normalize_symbol(self, symbol):  # ← ИСПРАВЛЕНО: правильный отступ
+    def normalize_symbol(self, symbol):
         """Нормализация символа из TradingView"""
         # Удаляем TradingView постфиксы
         symbol = symbol.replace('.P', '').replace('.PERP', '').replace('.D', '')
@@ -122,7 +140,7 @@ class BybitTradingBot:
         
         return symbol
 
-    def place_order(self, data):  # ← ИСПРАВЛЕНО: правильный отступ
+    def place_order(self, data):
         try:
             # Параметры из TradingView
             action = data.get('action', 'Buy')
@@ -149,7 +167,7 @@ class BybitTradingBot:
             if not current_price:
                 return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
 
-            logger.info(f"💰 Текущая цена: ${current_price}")  # ← ИСПРАВЛЕНО: правильный отступ
+            logger.info(f"💰 Текущая цена: ${current_price}")
 
             # Установка плеча
             self.set_leverage(symbol, leverage)
