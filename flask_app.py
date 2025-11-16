@@ -1,26 +1,29 @@
 from flask import Flask, request, jsonify
 from pybit.unified_trading import HTTP
-import os
 import logging
-import math
+
+# 🔐 БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ
+from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
 
 app = Flask(__name__)
-
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class BybitTradingBot:
     def __init__(self):
         try:
+            # 🔐 БЕЗОПАСНОЕ ПОЛУЧЕНИЕ КЛЮЧЕЙ
+            api_key, api_secret = get_api_credentials()
+            
             self.session = HTTP(
                 testnet=False,
-                api_key=os.environ.get('BYBIT_API_KEY'),
-                api_secret=os.environ.get('BYBIT_API_SECRET'),
+                api_key=api_key,
+                api_secret=api_secret,
             )
-            logger.info("✅ Бот инициализирован")
+            logger.info("✅ Бот инициализирован с зашифрованными ключами")
         except Exception as e:
-            logger.error(f"❌ Ошибка инициализации: {e}")
+            logger.error(f"❌ Ошибка инициализации бота: {e}")
+            raise
 
     def calculate_position_size(self, balance, risk_percent, leverage, price):
         """Расчет размера позиции в USDT и количества монет"""
