@@ -25,7 +25,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 🔄 ЗАПУСКАЕМ KEEP-ALIVE ПРИ СТАРТЕ ПРИЛОЖЕНИЯ (вместо before_first_request)
+# 🔄 ЗАПУСКАЕМ KEEP-ALIVE ПРИ СТАРТЕ ПРИЛОЖЕНИЯ
 keep_alive_thread = threading.Thread(target=keep_alive)
 keep_alive_thread.daemon = True
 keep_alive_thread.start()
@@ -53,58 +53,114 @@ class BybitTradingBot:
         return round(quantity, 6), round(position_size_usdt, 2)
 
     def get_current_price(self, symbol):
-        """Получение текущей цены с улучшенной обработкой ошибок"""
+        """Получение текущей цены с несколькими fallback методами"""
+        methods = [
+            self._get_price_from_tickers,
+            self._get_price_from_orderbook,
+            self._get_price_from_public_trading
+        ]
+        
+        for method in methods:
+            price = method(symbol)
+            if price is not None:
+                logger.info(f"✅ Цена получена методом {method.__name__}: ${price}")
+                return price
+        
+        logger.error(f"❌ Все методы получения цены для {symbol} не сработали")
+        return None
+
+    def _get_price_from_tickers(self, symbol):
+        """Попытка получить цену через get_tickers"""
         try:
-            logger.info(f"🔍 Получение цены для {symbol}")
+            logger.info(f"🔍 Попытка получить цену через get_tickers для {symbol}")
             ticker = self.session.get_tickers(category="linear", symbol=symbol)
             
-            # Детальная проверка структуры ответа
-            logger.info(f"📊 Ответ API: {ticker}")
+            # Детальная диагностика ответа
+            logger.info(f"📊 Полный ответ get_tickers: {ticker}")
             
-            if not ticker:
-                logger.error("❌ Пустой ответ от API")
+            if not ticker or 'result' not in ticker:
+                logger.error("❌ Нет результата в ответе get_tickers")
                 return None
                 
-            if 'result' not in ticker:
-                logger.error(f"❌ Нет 'result' в ответе: {ticker}")
+            result = ticker['result']
+            if 'list' not in result or not result['list']:
+                logger.error("❌ Пустой список в ответе get_tickers")
                 return None
                 
-            if 'list' not in ticker['result']:
-                logger.error(f"❌ Нет 'list' в result: {ticker['result']}")
-                return None
-                
-            if not ticker['result']['list']:
-                logger.error(f"❌ Пустой список в list: {ticker['result']['list']}")
-                return None
-                
-            first_item = ticker['result']['list'][0]
-            if 'lastPrice' not in first_item:
-                logger.error(f"❌ Нет 'lastPrice' в элементе: {first_item}")
-                return None
-                
-            last_price_str = first_item['lastPrice']
-            logger.info(f"🔢 Получена строка цены: '{last_price_str}'")
+            first_item = result['list'][0]
+            logger.info(f"📋 Первый элемент списка: {first_item}")
             
-            # Проверяем, что цена не пустая и может быть конвертирована
-            if last_price_str and last_price_str.strip() and last_price_str != 'None':
-                # Убираем возможные пробелы и конвертируем
-                price_value = last_price_str.strip()
-                # Заменяем запятые на точки если есть
-                price_value = price_value.replace(',', '.')
-                try:
-                    price = float(price_value)
-                    logger.info(f"💰 Цена {symbol}: ${price}")
-                    return price
-                except ValueError as e:
-                    logger.error(f"❌ Ошибка конвертации '{price_value}' в float: {e}")
-                    return None
-            else:
-                logger.error(f"❌ Пустая или невалидная цена: '{last_price_str}'")
-                return None
-                
-        except Exception as e:
-            logger.error(f"❌ Неожиданная ошибка получения цены для {symbol}: {e}")
+            # Пробуем разные возможные поля с ценой
+            price_fields = ['lastPrice', 'markPrice', 'indexPrice', 'prevPrice24h']
+            
+            for field in price_fields:
+                if field in first_item:
+                    price_str = first_item[field]
+                    logger.info(f"🔍 Найдено поле {field}: '{price_str}'")
+                    
+                    if price_str and price_str.strip() and price_str not in ['', 'None', 'null']:
+                        try:
+                            # Очистка строки от лишних символов
+                            clean_price = price_str.strip().replace(',', '')
+                            price = float(clean_price)
+                            logger.info(f"💰 Цена из {field}: ${price}")
+                            return price
+                        except ValueError as e:
+                            logger.warning(f"⚠️ Не удалось конвертировать {field} '{price_str}': {e}")
+                            continue
+            
+            logger.error("❌ Ни одно поле цены не содержит валидных данных")
             return None
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка в _get_price_from_tickers: {e}")
+            return None
+
+    def _get_price_from_orderbook(self, symbol):
+        """Попытка получить цену через стакан цен"""
+        try:
+            logger.info(f"🔍 Попытка получить цену через стакан для {symbol}")
+            orderbook = self.session.get_orderbook(category="linear", symbol=symbol)
+            
+            if (orderbook and 'result' in orderbook and 
+                'a' in orderbook['result'] and orderbook['result']['a']):
+                # Берем лучшую цену продажи (ask price)
+                ask_price_str = orderbook['result']['a'][0][0]
+                if ask_price_str and ask_price_str.strip():
+                    clean_price = ask_price_str.strip().replace(',', '')
+                    price = float(clean_price)
+                    logger.info(f"💰 Цена из стакана: ${price}")
+                    return price
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось получить цену из стакана: {e}")
+            
+        return None
+
+    def _get_price_from_public_trading(self, symbol):
+        """Попытка получить цену через публичные сделки"""
+        try:
+            logger.info(f"🔍 Попытка получить цену через публичные сделки для {symbol}")
+            trades = self.session.get_public_trade_history(
+                category="linear", 
+                symbol=symbol, 
+                limit=1
+            )
+            
+            if (trades and 'result' in trades and 
+                'list' in trades['result'] and trades['result']['list']):
+                last_trade = trades['result']['list'][0]
+                price_str = last_trade.get('price')
+                if price_str and price_str.strip():
+                    clean_price = price_str.strip().replace(',', '')
+                    price = float(clean_price)
+                    logger.info(f"💰 Цена из последней сделки: ${price}")
+                    return price
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось получить цену из сделок: {e}")
+            
+        return None
 
     def set_leverage(self, symbol, leverage):
         """Установка плеча"""
@@ -174,7 +230,7 @@ class BybitTradingBot:
 
             # 🔄 РАСЧЕТ ОТ РЕАЛЬНОГО БАЛАНСА
             quantity, position_size = self.calculate_position_size(
-                real_balance,  # Используем реальный баланс!
+                real_balance,
                 risk_percent, 
                 leverage, 
                 current_price
@@ -198,12 +254,12 @@ class BybitTradingBot:
 
             # Расчет TP/SL цен
             if action == "Buy":
-                tp_price = round(current_price * (1 + tp_percent / 100), 2)
-                sl_price = round(current_price * (1 - sl_percent / 100), 2)
+                tp_price = round(current_price * (1 + tp_percent / 100), 4)
+                sl_price = round(current_price * (1 - sl_percent / 100), 4)
                 position_index = 0
             else:  # Sell
-                tp_price = round(current_price * (1 - tp_percent / 100), 2)
-                sl_price = round(current_price * (1 + sl_percent / 100), 2)
+                tp_price = round(current_price * (1 - tp_percent / 100), 4)
+                sl_price = round(current_price * (1 + sl_percent / 100), 4)
                 position_index = 1
 
             logger.info(f"🎯 TP: ${tp_price}, SL: ${sl_price}")
@@ -246,7 +302,7 @@ class BybitTradingBot:
                 "take_profit_price": tp_price,
                 "stop_loss_price": sl_price,
                 "leverage": leverage,
-                "real_balance_used": real_balance,  # Показываем какой баланс использовался
+                "real_balance_used": real_balance,
                 "risk_percent": risk_percent
             }
 
