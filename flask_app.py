@@ -189,7 +189,12 @@ class BybitTradingBot:
             # 📝 ЛОГИРОВАНИЕ ВХОДНЫХ ДАННЫХ
             logger.info("📥" + "="*50)
             logger.info("📥 ВХОДНЫЕ ДАННЫЕ ОТ TRADINGVIEW:")
+            logger.info(f"📥 Тип данных: {type(data)}")
             logger.info(f"📥 Raw data: {data}")
+            
+            # Проверяем что данные не пустые
+            if not data:
+                return {"status": "error", "error": "Получены пустые данные"}
             
             # Принимаем параметры как есть из TradingView
             action = data.get('action')  # "Buy" или "Sell"
@@ -372,17 +377,22 @@ def parse_tradingview_data(raw_data):
     try:
         logger.info(f"🔧 Парсинг сырых данных: {raw_data}")
         
+        # Если данные уже словарь (приходят из request.get_json())
+        if isinstance(raw_data, dict):
+            logger.info("✅ Данные уже в формате словаря")
+            return raw_data
+        
         # Если это JSON строка
-        if isinstance(raw_data, str) and raw_data.strip().startswith('{'):
+        if isinstance(raw_data, str):
+            # Пробуем распарсить как чистый JSON
             try:
                 data = json.loads(raw_data)
-                logger.info("✅ Данные распарсены как JSON")
+                logger.info("✅ Данные распарсены как JSON строка")
                 return data
             except json.JSONDecodeError:
                 pass
-        
-        # Если это plain text, ищем JSON-like структуру
-        if isinstance(raw_data, str):
+            
+            # Если не получилось, ищем JSON-like структуру в тексте
             json_match = re.search(r'\{[^}]+\}', raw_data)
             if json_match:
                 json_str = json_match.group()
@@ -419,6 +429,7 @@ def webhook():
         logger.info(f"🌐 Method: {request.method}")
         
         # Получаем сырые данные
+        raw_data = None
         if request.content_type and 'application/json' in request.content_type:
             raw_data = request.get_json()
             logger.info(f"🌐 Raw данные (JSON): {raw_data}")
@@ -426,11 +437,17 @@ def webhook():
             raw_data = request.get_data(as_text=True)
             logger.info(f"🌐 Raw данные (TEXT): {raw_data}")
         
+        # Если raw_data None, пробуем получить данные из формы
+        if raw_data is None:
+            raw_data = request.form.to_dict()
+            logger.info(f"🌐 Raw данные (FORM): {raw_data}")
+        
         # Парсим данные от TradingView
         data = parse_tradingview_data(raw_data)
         logger.info(f"🌐 Данные после парсинга: {data}")
         
         if not data:
+            logger.error("❌ Получены пустые данные после парсинга")
             return jsonify({"status": "error", "error": "No valid data received"}), 400
         
         # Обрабатываем ордер
