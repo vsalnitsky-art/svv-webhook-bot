@@ -45,6 +45,87 @@ class BybitTradingBot:
         quantity = position_size_usdt / price
         return round(quantity, 6), round(position_size_usdt, 2)
 
+    def get_available_balance(self):
+        """Получение доступного баланса с обработкой пустых значений"""
+        try:
+            balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
+            logger.info(f"💰 Полный ответ баланса: {balance_info}")
+            
+            if balance_info.get('retCode') != 0:
+                logger.error(f"❌ Ошибка API баланса: {balance_info.get('retMsg')}")
+                return None
+            
+            result = balance_info.get('result', {})
+            if not result or 'list' not in result or not result['list']:
+                logger.error("❌ Пустой список в ответе баланса")
+                return None
+            
+            account_list = result['list']
+            logger.info(f"💰 Список аккаунтов: {account_list}")
+            
+            # Ищем USDT баланс
+            for account in account_list:
+                logger.info(f"💰 Обрабатываем аккаунт: {account}")
+                
+                # Пробуем разные поля с балансом
+                balance_fields = [
+                    'totalAvailableBalance',
+                    'totalWalletBalance', 
+                    'totalEquity',
+                    'totalMarginBalance',
+                    'totalPerpUPL'
+                ]
+                
+                for field in balance_fields:
+                    if field in account:
+                        balance_str = account[field]
+                        logger.info(f"💰 Поле {field}: '{balance_str}'")
+                        
+                        if balance_str and balance_str.strip() and balance_str not in ['', 'None', 'null']:
+                            try:
+                                clean_balance = str(balance_str).strip().replace(',', '').replace(' ', '')
+                                balance = float(clean_balance)
+                                if balance > 0:
+                                    logger.info(f"💰 Найден баланс в поле {field}: ${balance}")
+                                    return balance
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"⚠️ Ошибка конвертации {field}: {e}")
+                                continue
+                
+                # Также проверяем монеты в аккаунте
+                if 'coin' in account and account['coin']:
+                    for coin in account['coin']:
+                        logger.info(f"💰 Данные монеты: {coin}")
+                        if coin.get('coin') == 'USDT':
+                            coin_fields = [
+                                'availableToWithdraw',
+                                'walletBalance',
+                                'equity',
+                                'free'
+                            ]
+                            for field in coin_fields:
+                                if field in coin:
+                                    balance_str = coin[field]
+                                    logger.info(f"💰 Монета USDT поле {field}: '{balance_str}'")
+                                    
+                                    if balance_str and balance_str.strip() and balance_str not in ['', 'None', 'null']:
+                                        try:
+                                            clean_balance = str(balance_str).strip().replace(',', '').replace(' ', '')
+                                            balance = float(clean_balance)
+                                            if balance > 0:
+                                                logger.info(f"💰 Найден USDT баланс в поле {field}: ${balance}")
+                                                return balance
+                                        except (ValueError, TypeError) as e:
+                                            logger.warning(f"⚠️ Ошибка конвертации USDT {field}: {e}")
+                                            continue
+            
+            logger.error("❌ Не удалось найти доступный баланс USDT")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения баланса: {e}")
+            return None
+
     def validate_symbol(self, symbol):
         """Проверка что символ существует и доступен для торговли"""
         try:
@@ -144,83 +225,6 @@ class BybitTradingBot:
             logger.error(f"❌ Ошибка в _get_price_via_tickers: {e}")
             return None
 
-    def _get_price_via_orderbook(self, symbol):
-        """Через стакан цен"""
-        try:
-            response = self.session.get_orderbook(category="linear", symbol=symbol, limit=1)
-            
-            if response.get('retCode') == 0:
-                result = response.get('result', {})
-                asks = result.get('a', [])
-                if asks and asks[0]:
-                    price_str = asks[0][0]
-                    if price_str:
-                        return float(price_str)
-                        
-                bids = result.get('b', [])
-                if bids and bids[0]:
-                    price_str = bids[0][0]
-                    if price_str:
-                        return float(price_str)
-                        
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка в _get_price_via_orderbook: {e}")
-            
-        return None
-
-    def _get_price_via_kline(self, symbol):
-        """Через последний свечной график"""
-        try:
-            from datetime import datetime, timedelta
-            
-            end_time = int(datetime.now().timestamp() * 1000)
-            start_time = int((datetime.now() - timedelta(minutes=10)).timestamp() * 1000)
-            
-            response = self.session.get_kline(
-                category="linear",
-                symbol=symbol,
-                interval=1,
-                start=start_time,
-                end=end_time,
-                limit=1
-            )
-            
-            if response.get('retCode') == 0:
-                result = response.get('result', {})
-                klines = result.get('list', [])
-                if klines and klines[0]:
-                    close_price = klines[0][4]
-                    if close_price:
-                        return float(close_price)
-                        
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка в _get_price_via_kline: {e}")
-            
-        return None
-
-    def _get_price_via_public_trades(self, symbol):
-        """Через последние публичные сделки"""
-        try:
-            response = self.session.get_public_trade_history(
-                category="linear",
-                symbol=symbol,
-                limit=5
-            )
-            
-            if response.get('retCode') == 0:
-                result = response.get('result', {})
-                trades = result.get('list', [])
-                if trades:
-                    last_trade = trades[0]
-                    price_str = last_trade.get('price')
-                    if price_str:
-                        return float(price_str)
-                        
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка в _get_price_via_public_trades: {e}")
-            
-        return None
-
     def set_leverage(self, symbol, leverage):
         """Установка плеча"""
         try:
@@ -273,11 +277,11 @@ class BybitTradingBot:
             tp_percent = data.get('takeProfitPercent', 3)
             sl_percent = data.get('stopLossPercent', 1.5)
 
-            # Получаем баланс
-            balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
-            logger.info(f"💰 Ответ баланса: {balance_info}")
+            # Получаем баланс через улучшенный метод
+            real_balance = self.get_available_balance()
+            if real_balance is None:
+                return {"status": "error", "error": "Не удалось получить доступный баланс"}
             
-            real_balance = float(balance_info['result']['list'][0]['totalAvailableBalance'])
             logger.info(f"💰 Реальный баланс: ${real_balance}")
 
             # Получение цены
@@ -339,9 +343,7 @@ class BybitTradingBot:
             logger.info(f"🎯 Position Index: {position_index}")
             logger.info("🎯" + "="*50)
 
-            # 📝 ЛОГИРОВАНИЕ ДАННЫХ ДЛЯ ОРДЕРА
-            logger.info("📤" + "="*50)
-            logger.info("📤 ДАННЫЕ ДЛЯ ОТПРАВКИ НА БИРЖУ:")
+            # Размещение ордера
             order_params = {
                 "category": "linear",
                 "symbol": symbol,
@@ -350,20 +352,20 @@ class BybitTradingBot:
                 "qty": formatted_quantity,
                 "timeInForce": "GTC",
             }
+            
+            logger.info("📤" + "="*50)
+            logger.info("📤 ДАННЫЕ ДЛЯ ОТПРАВКИ НА БИРЖУ:")
             logger.info(f"📤 Параметры ордера: {order_params}")
             logger.info("📤" + "="*50)
 
-            # Размещение ордера
             order = self.session.place_order(**order_params)
             logger.info(f"📊 Ответ от биржи на ордер: {order}")
 
             order_id = order['result']['orderId']
             logger.info(f"✅ Ордер размещен: {order_id}")
 
-            # 📝 ЛОГИРОВАНИЕ TP/SL ПАРАМЕТРОВ
+            # Установка TP/SL
             if tp_percent > 0 or sl_percent > 0:
-                logger.info("🛡️" + "="*50)
-                logger.info("🛡️ ПАРАМЕТРЫ TP/SL:")
                 tp_sl_params = {
                     "category": "linear",
                     "symbol": symbol,
@@ -371,6 +373,9 @@ class BybitTradingBot:
                     "stopLoss": str(sl_price),
                     "positionIdx": position_index
                 }
+                
+                logger.info("🛡️" + "="*50)
+                logger.info("🛡️ ПАРАМЕТРЫ TP/SL:")
                 logger.info(f"🛡️ Параметры TP/SL: {tp_sl_params}")
                 logger.info("🛡️" + "="*50)
 
@@ -380,7 +385,6 @@ class BybitTradingBot:
                 except Exception as e:
                     logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
 
-            # 📝 ЛОГИРОВАНИЕ ФИНАЛЬНОГО РЕЗУЛЬТАТА
             final_result = {
                 "status": "success",
                 "order_id": order_id,
