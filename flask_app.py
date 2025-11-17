@@ -102,14 +102,40 @@ class BybitTradingBot:
         """Установка плеча"""
         try:
             normalized_symbol = self.normalize_symbol(symbol)
-            self.session.set_leverage(
-                category="linear",
-                symbol=normalized_symbol,
-                buyLeverage=str(leverage),
-                sellLeverage=str(leverage),
-            )
-            logger.info(f"✅ Плечо установлено: {leverage}x")
-            return True
+            
+            # Пробуем разные варианты установки плеча
+            leverage_params = {
+                "category": "linear",
+                "symbol": normalized_symbol,
+                "buyLeverage": str(leverage),
+                "sellLeverage": str(leverage),
+            }
+            
+            logger.info(f"🔧 Попытка установки плеча с параметрами: {leverage_params}")
+            
+            result = self.session.set_leverage(**leverage_params)
+            
+            if result.get('retCode') == 0:
+                logger.info(f"✅ Плечо установлено: {leverage}x")
+                return True
+            else:
+                logger.warning(f"⚠️ Не удалось установить плечо: {result.get('retMsg')}")
+                # Пробуем альтернативный метод
+                try:
+                    # Для некоторых пар может потребоваться установка через другой endpoint
+                    self.session.switch_margin_mode(
+                        category="linear",
+                        symbol=normalized_symbol,
+                        tradeMode=1,  # Режим маржи
+                        buyLeverage=str(leverage),
+                        sellLeverage=str(leverage),
+                    )
+                    logger.info(f"✅ Плечо установлено через альтернативный метод: {leverage}x")
+                    return True
+                except Exception as e2:
+                    logger.warning(f"⚠️ Альтернативный метод также не сработал: {e2}")
+                    return False
+                    
         except Exception as e:
             logger.warning(f"⚠️ Не удалось установить плечо: {e}")
             return False
@@ -206,8 +232,10 @@ class BybitTradingBot:
             logger.info(f"🧮 Количество: {quantity}")
             logger.info("🧮" + "="*50)
 
-            # Установка плеча
-            self.set_leverage(symbol, leverage)
+            # Установка плеча (продолжаем даже если не удалось)
+            leverage_success = self.set_leverage(symbol, leverage)
+            if not leverage_success:
+                logger.warning("⚠️ Продолжаем без установки плеча")
 
             # Расчет TP/SL (используем базовую цену 1.0)
             base_price = 1.0
@@ -278,8 +306,11 @@ class BybitTradingBot:
                 logger.info("🛡️" + "="*50)
 
                 try:
-                    self.session.set_trading_stop(**tp_sl_params)
-                    logger.info("✅ TP/SL установлены")
+                    tp_sl_result = self.session.set_trading_stop(**tp_sl_params)
+                    if tp_sl_result.get('retCode') == 0:
+                        logger.info("✅ TP/SL установлены")
+                    else:
+                        logger.warning(f"⚠️ Не удалось установить TP/SL: {tp_sl_result.get('retMsg')}")
                 except Exception as e:
                     logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
 
@@ -294,7 +325,8 @@ class BybitTradingBot:
                 "take_profit_percent": takeProfitPercent,
                 "stop_loss_percent": stopLossPercent,
                 "leverage": leverage,
-                "real_balance_used": real_balance
+                "real_balance_used": real_balance,
+                "leverage_set": leverage_success
             }
             
             logger.info("✅" + "="*50)
