@@ -9,23 +9,18 @@ def keep_alive():
     """Функция для поддержания сервера активным"""
     while True:
         try:
-            # Пингуем себя каждые 10 минут
             requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
             print("🔄 Keep-alive ping sent")
         except:
             print("⚠️ Keep-alive ping failed")
-        
-        # Ждем 10 минут
         time.sleep(600)
 
-# 🔐 БЕЗОПАСНЫЙ ИМПОРТ КЛЮЧЕЙ
 from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 🔄 ЗАПУСКАЕМ KEEP-ALIVE ПРИ СТАРТЕ ПРИЛОЖЕНИЯ
 keep_alive_thread = threading.Thread(target=keep_alive)
 keep_alive_thread.daemon = True
 keep_alive_thread.start()
@@ -33,9 +28,7 @@ keep_alive_thread.start()
 class BybitTradingBot:
     def __init__(self):
         try:
-            # 🔐 БЕЗОПАСНОЕ ПОЛУЧЕНИЕ КЛЮЧЕЙ
             api_key, api_secret = get_api_credentials()
-            
             self.session = HTTP(
                 testnet=False,
                 api_key=api_key,
@@ -52,113 +45,187 @@ class BybitTradingBot:
         quantity = position_size_usdt / price
         return round(quantity, 6), round(position_size_usdt, 2)
 
+    def validate_symbol(self, symbol):
+        """Проверка что символ существует и доступен для торговли"""
+        try:
+            # Пробуем получить информацию о символе
+            info = self.session.get_instruments_info(
+                category="linear",
+                symbol=symbol
+            )
+            
+            if (info and info.get('retCode') == 0 and 
+                info.get('result') and 
+                info['result'].get('list') and 
+                len(info['result']['list']) > 0):
+                
+                symbol_info = info['result']['list'][0]
+                status = symbol_info.get('status', '')
+                
+                if status == 'Trading':
+                    logger.info(f"✅ Символ {symbol} доступен для торговли")
+                    return True
+                else:
+                    logger.error(f"❌ Символ {symbol} не доступен для торговли. Статус: {status}")
+                    return False
+            else:
+                logger.error(f"❌ Символ {symbol} не найден")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки символа {symbol}: {e}")
+            return False
+
     def get_current_price(self, symbol):
-        """Получение текущей цены с несколькими fallback методами"""
+        """Улучшенное получение цены с проверкой символа"""
+        # Сначала проверяем что символ существует
+        if not self.validate_symbol(symbol):
+            return None
+
         methods = [
-            self._get_price_from_tickers,
-            self._get_price_from_orderbook,
-            self._get_price_from_public_trading
+            self._get_price_via_tickers,
+            self._get_price_via_orderbook, 
+            self._get_price_via_kline,
+            self._get_price_via_public_trades
         ]
         
-        for method in methods:
-            price = method(symbol)
-            if price is not None:
-                logger.info(f"✅ Цена получена методом {method.__name__}: ${price}")
-                return price
+        for i, method in enumerate(methods):
+            try:
+                logger.info(f"🔍 Метод {i+1}: {method.__name__} для {symbol}")
+                price = method(symbol)
+                if price and price > 0:
+                    logger.info(f"✅ Цена получена: ${price}")
+                    return price
+            except Exception as e:
+                logger.warning(f"⚠️ Метод {i+1} не сработал: {e}")
+                continue
         
-        logger.error(f"❌ Все методы получения цены для {symbol} не сработали")
+        logger.error(f"❌ Все методы получения цены для {symbol} провалились")
         return None
 
-    def _get_price_from_tickers(self, symbol):
-        """Попытка получить цену через get_tickers"""
+    def _get_price_via_tickers(self, symbol):
+        """Основной метод через get_tickers"""
         try:
-            logger.info(f"🔍 Попытка получить цену через get_tickers для {symbol}")
-            ticker = self.session.get_tickers(category="linear", symbol=symbol)
+            response = self.session.get_tickers(category="linear", symbol=symbol)
+            logger.info(f"📊 Ответ get_tickers: {response}")
             
-            # Детальная диагностика ответа
-            logger.info(f"📊 Полный ответ get_tickers: {ticker}")
-            
-            if not ticker or 'result' not in ticker:
-                logger.error("❌ Нет результата в ответе get_tickers")
+            if response.get('retCode') != 0:
+                logger.error(f"❌ Ошибка API: {response.get('retMsg')}")
                 return None
                 
-            result = ticker['result']
-            if 'list' not in result or not result['list']:
-                logger.error("❌ Пустой список в ответе get_tickers")
+            result = response.get('result', {})
+            tickers_list = result.get('list', [])
+            
+            if not tickers_list:
+                logger.error("❌ Пустой список тикеров")
                 return None
                 
-            first_item = result['list'][0]
-            logger.info(f"📋 Первый элемент списка: {first_item}")
+            ticker = tickers_list[0]
+            logger.info(f"📋 Данные тикера: {ticker}")
             
-            # Пробуем разные возможные поля с ценой
-            price_fields = ['lastPrice', 'markPrice', 'indexPrice', 'prevPrice24h']
+            # Пробуем все возможные поля с ценой
+            price_fields = ['lastPrice', 'markPrice', 'indexPrice', 'prevPrice24h', 'highPrice24h', 'lowPrice24h']
             
             for field in price_fields:
-                if field in first_item:
-                    price_str = first_item[field]
-                    logger.info(f"🔍 Найдено поле {field}: '{price_str}'")
-                    
-                    if price_str and price_str.strip() and price_str not in ['', 'None', 'null']:
-                        try:
-                            # Очистка строки от лишних символов
-                            clean_price = price_str.strip().replace(',', '')
+                price_str = ticker.get(field)
+                if price_str:
+                    logger.info(f"🔍 Поле {field}: '{price_str}'")
+                    try:
+                        clean_price = str(price_str).strip().replace(',', '').replace(' ', '')
+                        if clean_price and clean_price not in ['', 'None', 'null', '0']:
                             price = float(clean_price)
-                            logger.info(f"💰 Цена из {field}: ${price}")
-                            return price
-                        except ValueError as e:
-                            logger.warning(f"⚠️ Не удалось конвертировать {field} '{price_str}': {e}")
-                            continue
+                            if price > 0:
+                                return price
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"⚠️ Ошибка конвертации {field}: {e}")
+                        continue
             
             logger.error("❌ Ни одно поле цены не содержит валидных данных")
             return None
             
         except Exception as e:
-            logger.error(f"❌ Ошибка в _get_price_from_tickers: {e}")
+            logger.error(f"❌ Ошибка в _get_price_via_tickers: {e}")
             return None
 
-    def _get_price_from_orderbook(self, symbol):
-        """Попытка получить цену через стакан цен"""
+    def _get_price_via_orderbook(self, symbol):
+        """Через стакан цен"""
         try:
-            logger.info(f"🔍 Попытка получить цену через стакан для {symbol}")
-            orderbook = self.session.get_orderbook(category="linear", symbol=symbol)
+            response = self.session.get_orderbook(category="linear", symbol=symbol, limit=1)
             
-            if (orderbook and 'result' in orderbook and 
-                'a' in orderbook['result'] and orderbook['result']['a']):
-                # Берем лучшую цену продажи (ask price)
-                ask_price_str = orderbook['result']['a'][0][0]
-                if ask_price_str and ask_price_str.strip():
-                    clean_price = ask_price_str.strip().replace(',', '')
-                    price = float(clean_price)
-                    logger.info(f"💰 Цена из стакана: ${price}")
-                    return price
-                    
+            if response.get('retCode') == 0:
+                result = response.get('result', {})
+                # Пробуем цену продажи (ask)
+                asks = result.get('a', [])
+                if asks and asks[0]:
+                    price_str = asks[0][0]
+                    if price_str:
+                        return float(price_str)
+                        
+                # Или цену покупки (bid)
+                bids = result.get('b', [])
+                if bids and bids[0]:
+                    price_str = bids[0][0]
+                    if price_str:
+                        return float(price_str)
+                        
         except Exception as e:
-            logger.warning(f"⚠️ Не удалось получить цену из стакана: {e}")
+            logger.warning(f"⚠️ Ошибка в _get_price_via_orderbook: {e}")
             
         return None
 
-    def _get_price_from_public_trading(self, symbol):
-        """Попытка получить цену через публичные сделки"""
+    def _get_price_via_kline(self, symbol):
+        """Через последний свечной график"""
         try:
-            logger.info(f"🔍 Попытка получить цену через публичные сделки для {symbol}")
-            trades = self.session.get_public_trade_history(
-                category="linear", 
-                symbol=symbol, 
+            from datetime import datetime, timedelta
+            
+            # Получаем последнюю завершенную свечу
+            end_time = int(datetime.now().timestamp() * 1000)
+            start_time = int((datetime.now() - timedelta(minutes=10)).timestamp() * 1000)
+            
+            response = self.session.get_kline(
+                category="linear",
+                symbol=symbol,
+                interval=1,  # 1 минута
+                start=start_time,
+                end=end_time,
                 limit=1
             )
             
-            if (trades and 'result' in trades and 
-                'list' in trades['result'] and trades['result']['list']):
-                last_trade = trades['result']['list'][0]
-                price_str = last_trade.get('price')
-                if price_str and price_str.strip():
-                    clean_price = price_str.strip().replace(',', '')
-                    price = float(clean_price)
-                    logger.info(f"💰 Цена из последней сделки: ${price}")
-                    return price
-                    
+            if response.get('retCode') == 0:
+                result = response.get('result', {})
+                klines = result.get('list', [])
+                if klines and klines[0]:
+                    # Берем цену закрытия последней свечи
+                    close_price = klines[0][4]  # [open, high, low, close, volume, ...]
+                    if close_price:
+                        return float(close_price)
+                        
         except Exception as e:
-            logger.warning(f"⚠️ Не удалось получить цену из сделок: {e}")
+            logger.warning(f"⚠️ Ошибка в _get_price_via_kline: {e}")
+            
+        return None
+
+    def _get_price_via_public_trades(self, symbol):
+        """Через последние публичные сделки"""
+        try:
+            response = self.session.get_public_trade_history(
+                category="linear",
+                symbol=symbol,
+                limit=5  # Берем несколько последних сделок
+            )
+            
+            if response.get('retCode') == 0:
+                result = response.get('result', {})
+                trades = result.get('list', [])
+                if trades:
+                    # Берем цену последней сделки
+                    last_trade = trades[0]
+                    price_str = last_trade.get('price')
+                    if price_str:
+                        return float(price_str)
+                        
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка в _get_price_via_public_trades: {e}")
             
         return None
 
@@ -177,68 +244,52 @@ class BybitTradingBot:
             return False
 
     def normalize_symbol(self, symbol):
-        """Нормализация символа из TradingView"""
-        # Удаляем TradingView постфиксы
+        """Нормализация символа"""
         symbol = symbol.replace('.P', '').replace('.PERP', '').replace('.D', '')
-        
-        # Берем только часть до точки (если есть)
         symbol = symbol.split('.')[0]
-        
-        # 🔥 ИСПРАВЛЯЕМ ОПЕЧАТКУ В СИМВОЛЕ
         symbol = symbol.replace('ADAMSDT', 'ADAUSDT')
         
-        # Проверяем формат и добавляем USDT если нужно
         if not symbol.endswith('USDT'):
             symbol = symbol + 'USDT'
         
-        # Приводим к верхнему регистру
         symbol = symbol.upper()
-        
+        logger.info(f"🔧 Нормализованный символ: {symbol}")
         return symbol
 
     def place_order(self, data):
         try:
-            # Параметры из TradingView
             action = data.get('action', 'Buy')
             raw_symbol = data.get('symbol', 'BTCUSDT')
             
-            # 🔄 НОРМАЛИЗАЦИЯ СИМВОЛА
             symbol = self.normalize_symbol(raw_symbol)
-            
             logger.info(f"📈 Символ: {raw_symbol} -> {symbol}")
 
-            leverage = data.get('leverage', 5)
-            risk_percent = data.get('riskPercent', 1)
+            leverage = min(data.get('leverage', 5), 25)
+            risk_percent = min(data.get('riskPercent', 1), 10)
             tp_percent = data.get('takeProfitPercent', 3)
             sl_percent = data.get('stopLossPercent', 1.5)
 
-            # Получаем реальный баланс
+            # Получаем баланс
             balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
             real_balance = float(balance_info['result']['list'][0]['totalAvailableBalance'])
-            
             logger.info(f"💰 Реальный баланс: ${real_balance}")
 
-            # Получение текущей цены
+            # Получение цены
             current_price = self.get_current_price(symbol)
             if not current_price:
-                return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
+                return {"status": "error", "error": f"Не удалось получить цену для {symbol}. Символ может не существовать."}
 
             logger.info(f"💰 Текущая цена: ${current_price}")
 
-            # Установка плеча
-            self.set_leverage(symbol, leverage)
-
-            # 🔄 РАСЧЕТ ОТ РЕАЛЬНОГО БАЛАНСА
+            # Расчет позиции
             quantity, position_size = self.calculate_position_size(
-                real_balance,
-                risk_percent, 
-                leverage, 
-                current_price
+                real_balance, risk_percent, leverage, current_price
             )
 
-            logger.info(f"📊 Рассчитано: Количество: {quantity}, Размер позиции: ${position_size}")
+            if quantity < 0.0001:
+                return {"status": "error", "error": f"Слишком маленький объем: {quantity}"}
 
-            # ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА под разные пары
+            # Форматирование количества
             if symbol in ['ADAUSDT', 'DOTUSDT', 'MATICUSDT']:
                 formatted_quantity = format(quantity, '.6f')
             elif symbol in ['BTCUSDT', 'ETHUSDT']:
@@ -246,25 +297,17 @@ class BybitTradingBot:
             else:
                 formatted_quantity = format(quantity, '.4f')
 
-            logger.info(f"🔢 Отформатированное количество: {formatted_quantity}")
-
-            # Проверка минимального объема
-            if quantity < 0.0001:
-                return {"status": "error", "error": f"Слишком маленький объем: {quantity}"}
-
-            # Расчет TP/SL цен
+            # Расчет TP/SL
             if action == "Buy":
                 tp_price = round(current_price * (1 + tp_percent / 100), 4)
                 sl_price = round(current_price * (1 - sl_percent / 100), 4)
                 position_index = 0
-            else:  # Sell
+            else:
                 tp_price = round(current_price * (1 - tp_percent / 100), 4)
                 sl_price = round(current_price * (1 + sl_percent / 100), 4)
                 position_index = 1
 
-            logger.info(f"🎯 TP: ${tp_price}, SL: ${sl_price}")
-
-            # Размещение рыночного ордера
+            # Размещение ордера
             order = self.session.place_order(
                 category="linear",
                 symbol=symbol,
@@ -287,7 +330,6 @@ class BybitTradingBot:
                         stopLoss=str(sl_price),
                         positionIdx=position_index
                     )
-                    logger.info(f"🛡️ TP/SL установлены: TP=${tp_price}, SL=${sl_price}")
                 except Exception as e:
                     logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
 
@@ -332,4 +374,4 @@ def webhook():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=10000, debug=False)
