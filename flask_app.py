@@ -91,53 +91,20 @@ class BybitTradingBot:
             logger.error(f"❌ Ошибка получения баланса: {e}")
             return None
 
-    def get_current_price(self, symbol):
-        """Получение текущей цены"""
-        try:
-            response = self.session.get_tickers(category="linear", symbol=symbol)
-            
-            if response.get('retCode') != 0:
-                logger.error(f"❌ Ошибка API: {response.get('retMsg')}")
-                return None
-                
-            result = response.get('result', {})
-            tickers_list = result.get('list', [])
-            
-            if not tickers_list:
-                logger.error("❌ Пустой список тикеров")
-                return None
-                
-            ticker = tickers_list[0]
-            
-            price_fields = ['lastPrice', 'markPrice', 'indexPrice', 'prevPrice24h']
-            
-            for field in price_fields:
-                price_str = ticker.get(field)
-                if price_str:
-                    try:
-                        clean_price = str(price_str).strip().replace(',', '').replace(' ', '')
-                        if clean_price and clean_price not in ['', 'None', 'null', '0']:
-                            price = float(clean_price)
-                            if price > 0:
-                                logger.info(f"💰 Цена {symbol}: ${price}")
-                                return price
-                    except (ValueError, TypeError) as e:
-                        logger.warning(f"⚠️ Ошибка конвертации {field}: {e}")
-                        continue
-            
-            logger.error("❌ Ни одно поле цены не содержит валидных данных")
-            return None
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения цены: {e}")
-            return None
+    def normalize_symbol(self, symbol):
+        """Нормализация символа для Bybit API"""
+        # Убираем .P и оставляем только базовый символ
+        clean_symbol = symbol.replace('.P', '')
+        logger.info(f"🔧 Нормализованный символ: {clean_symbol}")
+        return clean_symbol
 
     def set_leverage(self, symbol, leverage):
         """Установка плеча"""
         try:
+            normalized_symbol = self.normalize_symbol(symbol)
             self.session.set_leverage(
                 category="linear",
-                symbol=symbol,
+                symbol=normalized_symbol,
                 buyLeverage=str(leverage),
                 sellLeverage=str(leverage),
             )
@@ -147,67 +114,20 @@ class BybitTradingBot:
             logger.warning(f"⚠️ Не удалось установить плечо: {e}")
             return False
 
-    def calculate_quantity_from_amount(self, symbol, amount, price):
-        """Расчет количества от суммы в USDT/USDC"""
+    def calculate_quantity_from_amount(self, amount, price=1.0):
+        """Расчет количества от суммы в USDT (упрощенный)"""
         try:
-            # Получаем информацию о символе для минимального количества и шага
-            info = self.session.get_instruments_info(category="linear", symbol=symbol)
-            if info and info.get('retCode') == 0:
-                symbol_info = info['result']['list'][0]
-                min_order_qty = float(symbol_info.get('lotSizeFilter', {}).get('minOrderQty', 0))
-                qty_step = float(symbol_info.get('lotSizeFilter', {}).get('qtyStep', 0.001))
-                
-                logger.info(f"📏 Параметры символа: minOrderQty={min_order_qty}, qtyStep={qty_step}")
-                
-                # Рассчитываем количество от суммы
-                quantity = amount / price
-                
-                # Проверяем минимальное количество
-                if quantity < min_order_qty:
-                    logger.warning(f"⚠️ Количество {quantity} меньше минимального {min_order_qty}")
-                    return None, "Слишком маленькая сумма для минимального объема"
-                
-                # Округляем согласно шагу
-                if qty_step > 0:
-                    quantity = round(quantity // qty_step * qty_step, 8)
-                
-                logger.info(f"🔢 Количество от ${amount}: {quantity}")
-                return quantity, None
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось получить параметры символа: {e}")
-        
-        # Fallback: простой расчет
-        quantity = amount / price
-        quantity = round(quantity, 6)
-        
-        logger.info(f"🔢 Количество от ${amount} (fallback): {quantity}")
-        return quantity, None
-
-    def extract_currency_from_symbol(self, symbol):
-        """Извлечение валюты из символа (USDT или USDC)"""
-        try:
-            # Убираем .P если есть
-            clean_symbol = symbol.replace('.P', '')
+            # Для USDT пары количество = сумма / цена
+            # Используем цену 1.0 как базовую для расчета
+            quantity = amount / price
+            quantity = round(quantity, 6)  # Округляем до 6 знаков
             
-            # Ищем USDT или USDC в конце символа
-            if clean_symbol.endswith('USDT'):
-                return 'USDT'
-            elif clean_symbol.endswith('USDC'):
-                return 'USDC'
-            else:
-                # Если не нашли, пробуем извлечь последние 4 символа
-                if len(clean_symbol) >= 4:
-                    possible_currency = clean_symbol[-4:]
-                    if possible_currency in ['USDT', 'USDC']:
-                        return possible_currency
-                
-                logger.warning(f"⚠️ Не удалось определить валюту из символа {symbol}, используем USDT по умолчанию")
-                return 'USDT'
+            logger.info(f"🔢 Количество от ${amount}: {quantity}")
+            return quantity, None
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка извлечения валюты: {e}")
-            return 'USDT'
+            logger.warning(f"⚠️ Ошибка расчета количества: {e}")
+            return None, str(e)
 
     def place_order(self, data):
         try:
@@ -223,11 +143,11 @@ class BybitTradingBot:
             
             # Принимаем параметры как есть из TradingView
             action = data.get('action')  # "Buy" или "Sell"
-            symbol = data.get('symbol')  # Символ как есть (например "BTCUSDT", "ETHUSDC")
-            leverage = data.get('leverage', 1)  # Плечо 1-100
-            takeProfitPercent = data.get('takeProfitPercent', 0)  # TP в %
-            stopLossPercent = data.get('stopLossPercent', 0)  # SL в %
-            fixedAmount = data.get('fixedAmount', 0)  # Фиксированная сумма
+            symbol = data.get('symbol')  # Символ как есть (например "ADAUSDT.P")
+            leverage = data.get('leverage', 25)  # Плечо
+            takeProfitPercent = data.get('takeProfitPercent', 0.5)  # TP в %
+            stopLossPercent = data.get('stopLossPercent', 0.5)  # SL в %
+            fixedAmount = data.get('fixedAmount', 6)  # Фиксированная сумма
 
             logger.info(f"📥 Action: {action}")
             logger.info(f"📥 Symbol: {symbol}")
@@ -250,11 +170,11 @@ class BybitTradingBot:
             if fixedAmount <= 0:
                 return {"status": "error", "error": "Фиксированная сумма должна быть больше 0"}
 
-            # Определяем валюту из символа (исправленная функция)
-            currency = self.extract_currency_from_symbol(symbol)
-            logger.info(f"💰 Определенная валюта сделки: {currency}")
+            # Используем USDT как валюту по умолчанию
+            currency = "USDT"
+            logger.info(f"💰 Валюта сделки: {currency}")
 
-            # Получаем баланс в нужной валюте
+            # Получаем баланс в USDT
             real_balance = self.get_available_balance(currency)
             if real_balance is None:
                 return {"status": "error", "error": f"Не удалось получить доступный баланс {currency}"}
@@ -265,19 +185,15 @@ class BybitTradingBot:
             if fixedAmount > real_balance:
                 return {"status": "error", "error": f"Недостаточно средств. Баланс: ${real_balance}, Запрошено: ${fixedAmount}"}
 
-            # Получение цены
-            current_price = self.get_current_price(symbol)
-            if not current_price:
-                return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
-
-            logger.info(f"💰 Текущая цена {symbol}: ${current_price}")
-
+            # Нормализуем символ для Bybit API
+            normalized_symbol = self.normalize_symbol(symbol)
+            
             # Используем фиксированную сумму как есть
             position_amount = fixedAmount
             logger.info(f"💰 Фиксированная сумма: ${position_amount}")
 
-            # Рассчитываем количество от суммы
-            quantity, error = self.calculate_quantity_from_amount(symbol, position_amount, current_price)
+            # Упрощенный расчет количества (используем цену 1.0)
+            quantity, error = self.calculate_quantity_from_amount(position_amount, 1.0)
             if error:
                 return {"status": "error", "error": error}
 
@@ -287,34 +203,32 @@ class BybitTradingBot:
             logger.info(f"🧮 Баланс {currency}: ${real_balance}")
             logger.info(f"🧮 Фиксированная сумма: ${position_amount}")
             logger.info(f"🧮 Плечо: {leverage}x")
-            logger.info(f"🧮 Цена: ${current_price}")
-            logger.info(f"🧮 Сумма позиции: ${position_amount}")
             logger.info(f"🧮 Количество: {quantity}")
             logger.info("🧮" + "="*50)
 
             # Установка плеча
             self.set_leverage(symbol, leverage)
 
-            # Расчет TP/SL цен
+            # Расчет TP/SL (используем базовую цену 1.0)
+            base_price = 1.0
             if action == "Buy":
-                tp_price = round(current_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
-                sl_price = round(current_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
+                tp_price = round(base_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                sl_price = round(base_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
                 position_index = 0
             else:
-                tp_price = round(current_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
-                sl_price = round(current_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
+                tp_price = round(base_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                sl_price = round(base_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
                 position_index = 1
 
             # 📝 ЛОГИРОВАНИЕ ТОРГОВЫХ ПАРАМЕТРОВ
             logger.info("🎯" + "="*50)
             logger.info("🎯 ТОРГОВЫЕ ПАРАМЕТРЫ:")
             logger.info(f"🎯 Действие: {action}")
-            logger.info(f"🎯 Символ: {symbol}")
+            logger.info(f"🎯 Символ: {normalized_symbol}")
             logger.info(f"🎯 Плечо: {leverage}x")
-            logger.info(f"🎯 Текущая цена: ${current_price}")
             logger.info(f"🎯 Сумма ордера: ${position_amount}")
-            logger.info(f"🎯 Take Profit: ${tp_price} ({takeProfitPercent}%)" if tp_price > 0 else "🎯 Take Profit: не установлен")
-            logger.info(f"🎯 Stop Loss: ${sl_price} ({stopLossPercent}%)" if sl_price > 0 else "🎯 Stop Loss: не установлен")
+            logger.info(f"🎯 Take Profit: {takeProfitPercent}%")
+            logger.info(f"🎯 Stop Loss: {stopLossPercent}%")
             logger.info(f"🎯 Количество: {quantity}")
             logger.info(f"🎯 Position Index: {position_index}")
             logger.info("🎯" + "="*50)
@@ -322,7 +236,7 @@ class BybitTradingBot:
             # Размещение ордера
             order_params = {
                 "category": "linear",
-                "symbol": symbol,
+                "symbol": normalized_symbol,
                 "side": action,
                 "orderType": "Market",
                 "qty": str(quantity),
@@ -349,7 +263,7 @@ class BybitTradingBot:
             if takeProfitPercent > 0 or stopLossPercent > 0:
                 tp_sl_params = {
                     "category": "linear",
-                    "symbol": symbol,
+                    "symbol": normalized_symbol,
                     "positionIdx": position_index
                 }
                 
@@ -372,14 +286,13 @@ class BybitTradingBot:
             final_result = {
                 "status": "success",
                 "order_id": order_id,
-                "symbol": symbol,
+                "symbol": normalized_symbol,
                 "action": action,
                 "quantity": float(quantity),
-                "entry_price": current_price,
                 "position_amount": position_amount,
                 "currency": currency,
-                "take_profit_price": tp_price,
-                "stop_loss_price": sl_price,
+                "take_profit_percent": takeProfitPercent,
+                "stop_loss_percent": stopLossPercent,
                 "leverage": leverage,
                 "real_balance_used": real_balance
             }
