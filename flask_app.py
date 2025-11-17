@@ -48,7 +48,6 @@ class BybitTradingBot:
     def validate_symbol(self, symbol):
         """Проверка что символ существует и доступен для торговли"""
         try:
-            # Пробуем получить информацию о символе
             info = self.session.get_instruments_info(
                 category="linear",
                 symbol=symbol
@@ -78,7 +77,6 @@ class BybitTradingBot:
 
     def get_current_price(self, symbol):
         """Улучшенное получение цены с проверкой символа"""
-        # Сначала проверяем что символ существует
         if not self.validate_symbol(symbol):
             return None
 
@@ -123,7 +121,6 @@ class BybitTradingBot:
             ticker = tickers_list[0]
             logger.info(f"📋 Данные тикера: {ticker}")
             
-            # Пробуем все возможные поля с ценой
             price_fields = ['lastPrice', 'markPrice', 'indexPrice', 'prevPrice24h', 'highPrice24h', 'lowPrice24h']
             
             for field in price_fields:
@@ -154,14 +151,12 @@ class BybitTradingBot:
             
             if response.get('retCode') == 0:
                 result = response.get('result', {})
-                # Пробуем цену продажи (ask)
                 asks = result.get('a', [])
                 if asks and asks[0]:
                     price_str = asks[0][0]
                     if price_str:
                         return float(price_str)
                         
-                # Или цену покупки (bid)
                 bids = result.get('b', [])
                 if bids and bids[0]:
                     price_str = bids[0][0]
@@ -178,14 +173,13 @@ class BybitTradingBot:
         try:
             from datetime import datetime, timedelta
             
-            # Получаем последнюю завершенную свечу
             end_time = int(datetime.now().timestamp() * 1000)
             start_time = int((datetime.now() - timedelta(minutes=10)).timestamp() * 1000)
             
             response = self.session.get_kline(
                 category="linear",
                 symbol=symbol,
-                interval=1,  # 1 минута
+                interval=1,
                 start=start_time,
                 end=end_time,
                 limit=1
@@ -195,8 +189,7 @@ class BybitTradingBot:
                 result = response.get('result', {})
                 klines = result.get('list', [])
                 if klines and klines[0]:
-                    # Берем цену закрытия последней свечи
-                    close_price = klines[0][4]  # [open, high, low, close, volume, ...]
+                    close_price = klines[0][4]
                     if close_price:
                         return float(close_price)
                         
@@ -211,14 +204,13 @@ class BybitTradingBot:
             response = self.session.get_public_trade_history(
                 category="linear",
                 symbol=symbol,
-                limit=5  # Берем несколько последних сделок
+                limit=5
             )
             
             if response.get('retCode') == 0:
                 result = response.get('result', {})
                 trades = result.get('list', [])
                 if trades:
-                    # Берем цену последней сделки
                     last_trade = trades[0]
                     price_str = last_trade.get('price')
                     if price_str:
@@ -258,6 +250,18 @@ class BybitTradingBot:
 
     def place_order(self, data):
         try:
+            # 📝 ЛОГИРОВАНИЕ ВХОДНЫХ ДАННЫХ
+            logger.info("📥" + "="*50)
+            logger.info("📥 ВХОДНЫЕ ДАННЫЕ ОТ TRADINGVIEW:")
+            logger.info(f"📥 Raw data: {data}")
+            logger.info(f"📥 Action: {data.get('action')}")
+            logger.info(f"📥 Symbol: {data.get('symbol')}")
+            logger.info(f"📥 Leverage: {data.get('leverage')}")
+            logger.info(f"📥 RiskPercent: {data.get('riskPercent')}")
+            logger.info(f"📥 TakeProfitPercent: {data.get('takeProfitPercent')}")
+            logger.info(f"📥 StopLossPercent: {data.get('stopLossPercent')}")
+            logger.info("📥" + "="*50)
+
             action = data.get('action', 'Buy')
             raw_symbol = data.get('symbol', 'BTCUSDT')
             
@@ -271,6 +275,8 @@ class BybitTradingBot:
 
             # Получаем баланс
             balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
+            logger.info(f"💰 Ответ баланса: {balance_info}")
+            
             real_balance = float(balance_info['result']['list'][0]['totalAvailableBalance'])
             logger.info(f"💰 Реальный баланс: ${real_balance}")
 
@@ -286,6 +292,17 @@ class BybitTradingBot:
                 real_balance, risk_percent, leverage, current_price
             )
 
+            # 📝 ЛОГИРОВАНИЕ РАСЧЕТОВ
+            logger.info("🧮" + "="*50)
+            logger.info("🧮 РАСЧЕТЫ ПОЗИЦИИ:")
+            logger.info(f"🧮 Баланс: ${real_balance}")
+            logger.info(f"🧮 Риск: {risk_percent}%")
+            logger.info(f"🧮 Плечо: {leverage}x")
+            logger.info(f"🧮 Цена: ${current_price}")
+            logger.info(f"🧮 Размер позиции (USDT): ${position_size}")
+            logger.info(f"🧮 Количество (монет): {quantity}")
+            logger.info("🧮" + "="*50)
+
             if quantity < 0.0001:
                 return {"status": "error", "error": f"Слишком маленький объем: {quantity}"}
 
@@ -297,6 +314,8 @@ class BybitTradingBot:
             else:
                 formatted_quantity = format(quantity, '.4f')
 
+            logger.info(f"🔢 Отформатированное количество: {formatted_quantity}")
+
             # Расчет TP/SL
             if action == "Buy":
                 tp_price = round(current_price * (1 + tp_percent / 100), 4)
@@ -307,33 +326,62 @@ class BybitTradingBot:
                 sl_price = round(current_price * (1 + sl_percent / 100), 4)
                 position_index = 1
 
+            # 📝 ЛОГИРОВАНИЕ ТОРГОВЫХ ПАРАМЕТРОВ
+            logger.info("🎯" + "="*50)
+            logger.info("🎯 ТОРГОВЫЕ ПАРАМЕТРЫ:")
+            logger.info(f"🎯 Действие: {action}")
+            logger.info(f"🎯 Символ: {symbol}")
+            logger.info(f"🎯 Плечо: {leverage}")
+            logger.info(f"🎯 Текущая цена: ${current_price}")
+            logger.info(f"🎯 Take Profit: ${tp_price} ({tp_percent}%)")
+            logger.info(f"🎯 Stop Loss: ${sl_price} ({sl_percent}%)")
+            logger.info(f"🎯 Количество: {formatted_quantity}")
+            logger.info(f"🎯 Position Index: {position_index}")
+            logger.info("🎯" + "="*50)
+
+            # 📝 ЛОГИРОВАНИЕ ДАННЫХ ДЛЯ ОРДЕРА
+            logger.info("📤" + "="*50)
+            logger.info("📤 ДАННЫЕ ДЛЯ ОТПРАВКИ НА БИРЖУ:")
+            order_params = {
+                "category": "linear",
+                "symbol": symbol,
+                "side": action,
+                "orderType": "Market",
+                "qty": formatted_quantity,
+                "timeInForce": "GTC",
+            }
+            logger.info(f"📤 Параметры ордера: {order_params}")
+            logger.info("📤" + "="*50)
+
             # Размещение ордера
-            order = self.session.place_order(
-                category="linear",
-                symbol=symbol,
-                side=action,
-                orderType="Market",
-                qty=formatted_quantity,
-                timeInForce="GTC",
-            )
+            order = self.session.place_order(**order_params)
+            logger.info(f"📊 Ответ от биржи на ордер: {order}")
 
             order_id = order['result']['orderId']
             logger.info(f"✅ Ордер размещен: {order_id}")
 
-            # Установка TP/SL
+            # 📝 ЛОГИРОВАНИЕ TP/SL ПАРАМЕТРОВ
             if tp_percent > 0 or sl_percent > 0:
+                logger.info("🛡️" + "="*50)
+                logger.info("🛡️ ПАРАМЕТРЫ TP/SL:")
+                tp_sl_params = {
+                    "category": "linear",
+                    "symbol": symbol,
+                    "takeProfit": str(tp_price),
+                    "stopLoss": str(sl_price),
+                    "positionIdx": position_index
+                }
+                logger.info(f"🛡️ Параметры TP/SL: {tp_sl_params}")
+                logger.info("🛡️" + "="*50)
+
                 try:
-                    self.session.set_trading_stop(
-                        category="linear",
-                        symbol=symbol,
-                        takeProfit=str(tp_price),
-                        stopLoss=str(sl_price),
-                        positionIdx=position_index
-                    )
+                    self.session.set_trading_stop(**tp_sl_params)
+                    logger.info("✅ TP/SL установлены")
                 except Exception as e:
                     logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
 
-            return {
+            # 📝 ЛОГИРОВАНИЕ ФИНАЛЬНОГО РЕЗУЛЬТАТА
+            final_result = {
                 "status": "success",
                 "order_id": order_id,
                 "symbol": symbol,
@@ -347,6 +395,13 @@ class BybitTradingBot:
                 "real_balance_used": real_balance,
                 "risk_percent": risk_percent
             }
+            
+            logger.info("✅" + "="*50)
+            logger.info("✅ ФИНАЛЬНЫЙ РЕЗУЛЬТАТ:")
+            logger.info(f"✅ {final_result}")
+            logger.info("✅" + "="*50)
+
+            return final_result
 
         except Exception as e:
             logger.error(f"❌ Ошибка ордера: {e}")
