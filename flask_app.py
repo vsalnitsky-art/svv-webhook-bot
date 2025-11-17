@@ -17,7 +17,7 @@ def keep_alive():
             print("⚠️ Keep-alive ping failed")
         time.sleep(600)
 
-from config import get_api_credentials, DEFAULT_LEVERAGE, DEFAULT_RISK_PERCENT
+from config import get_api_credentials
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -41,13 +41,8 @@ class BybitTradingBot:
             logger.error(f"❌ Ошибка инициализации бота: {e}")
             raise
 
-    def calculate_position_size_usdt(self, balance, risk_percent, leverage):
-        """Расчет размера позиции ТОЛЬКО в USDT"""
-        position_size_usdt = balance * (risk_percent / 100) * leverage
-        return round(position_size_usdt, 2)
-
-    def get_available_balance(self):
-        """Получение доступного баланса в USDT"""
+    def get_available_balance(self, currency="USDT"):
+        """Получение доступного баланса в указанной валюте"""
         try:
             balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
             
@@ -62,35 +57,12 @@ class BybitTradingBot:
             
             account_list = result['list']
             
-            # Ищем USDT баланс
+            # Ищем баланс в указанной валюте
             for account in account_list:
-                # Пробуем разные поля с балансом
-                balance_fields = [
-                    'totalAvailableBalance',
-                    'totalWalletBalance', 
-                    'totalEquity',
-                    'totalMarginBalance'
-                ]
-                
-                for field in balance_fields:
-                    if field in account:
-                        balance_str = account[field]
-                        
-                        if balance_str and balance_str.strip() and balance_str not in ['', 'None', 'null']:
-                            try:
-                                clean_balance = str(balance_str).strip().replace(',', '').replace(' ', '')
-                                balance = float(clean_balance)
-                                if balance > 0:
-                                    logger.info(f"💰 Найден баланс в поле {field}: ${balance}")
-                                    return balance
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"⚠️ Ошибка конвертации {field}: {e}")
-                                continue
-                
-                # Также проверяем монеты в аккаунте
+                # Проверяем монеты в аккаунте
                 if 'coin' in account and account['coin']:
                     for coin in account['coin']:
-                        if coin.get('coin') == 'USDT':
+                        if coin.get('coin') == currency:
                             coin_fields = [
                                 'availableToWithdraw',
                                 'walletBalance',
@@ -106,48 +78,18 @@ class BybitTradingBot:
                                             clean_balance = str(balance_str).strip().replace(',', '').replace(' ', '')
                                             balance = float(clean_balance)
                                             if balance > 0:
-                                                logger.info(f"💰 Найден USDT баланс в поле {field}: ${balance}")
+                                                logger.info(f"💰 Найден {currency} баланс в поле {field}: ${balance}")
                                                 return balance
                                         except (ValueError, TypeError) as e:
-                                            logger.warning(f"⚠️ Ошибка конвертации USDT {field}: {e}")
+                                            logger.warning(f"⚠️ Ошибка конвертации {currency} {field}: {e}")
                                             continue
             
-            logger.error("❌ Не удалось найти доступный баланс USDT")
+            logger.error(f"❌ Не удалось найти доступный баланс {currency}")
             return None
             
         except Exception as e:
             logger.error(f"❌ Ошибка получения баланса: {e}")
             return None
-
-    def validate_symbol(self, symbol):
-        """Проверка что символ существует и доступен для торговли"""
-        try:
-            info = self.session.get_instruments_info(
-                category="linear",
-                symbol=symbol
-            )
-            
-            if (info and info.get('retCode') == 0 and 
-                info.get('result') and 
-                info['result'].get('list') and 
-                len(info['result']['list']) > 0):
-                
-                symbol_info = info['result']['list'][0]
-                status = symbol_info.get('status', '')
-                
-                if status == 'Trading':
-                    logger.info(f"✅ Символ {symbol} доступен для торговли")
-                    return True
-                else:
-                    logger.error(f"❌ Символ {symbol} не доступен для торговли. Статус: {status}")
-                    return False
-            else:
-                logger.error(f"❌ Символ {symbol} не найден")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Ошибка проверки символа {symbol}: {e}")
-            return False
 
     def get_current_price(self, symbol):
         """Получение текущей цены"""
@@ -205,21 +147,8 @@ class BybitTradingBot:
             logger.warning(f"⚠️ Не удалось установить плечо: {e}")
             return False
 
-    def normalize_symbol(self, symbol):
-        """Нормализация символа"""
-        symbol = symbol.replace('.P', '').replace('.PERP', '').replace('.D', '')
-        symbol = symbol.split('.')[0]
-        symbol = symbol.replace('ADAMSDT', 'ADAUSDT')
-        
-        if not symbol.endswith('USDT'):
-            symbol = symbol + 'USDT'
-        
-        symbol = symbol.upper()
-        logger.info(f"🔧 Нормализованный символ: {symbol}")
-        return symbol
-
-    def calculate_quantity_from_usdt(self, symbol, usdt_amount, price):
-        """Расчет количества от суммы в USDT"""
+    def calculate_quantity_from_amount(self, symbol, amount, price):
+        """Расчет количества от суммы в USDT/USDC"""
         try:
             # Получаем информацию о символе для минимального количества и шага
             info = self.session.get_instruments_info(category="linear", symbol=symbol)
@@ -230,35 +159,30 @@ class BybitTradingBot:
                 
                 logger.info(f"📏 Параметры символа: minOrderQty={min_order_qty}, qtyStep={qty_step}")
                 
-                # Рассчитываем количество от USDT
-                quantity = usdt_amount / price
+                # Рассчитываем количество от суммы
+                quantity = amount / price
                 
                 # Проверяем минимальное количество
                 if quantity < min_order_qty:
                     logger.warning(f"⚠️ Количество {quantity} меньше минимального {min_order_qty}")
-                    # Увеличиваем сумму чтобы достичь минимума
-                    min_usdt = min_order_qty * price
-                    if min_usdt > usdt_amount:
-                        logger.info(f"💰 Увеличиваем сумму до минимума: ${min_usdt}")
-                        usdt_amount = min_usdt
-                        quantity = min_order_qty
+                    return None, "Слишком маленькая сумма для минимального объема"
                 
                 # Округляем согласно шагу
                 if qty_step > 0:
                     quantity = round(quantity // qty_step * qty_step, 8)
                 
-                logger.info(f"🔢 Количество от ${usdt_amount}: {quantity}")
-                return quantity, usdt_amount
+                logger.info(f"🔢 Количество от ${amount}: {quantity}")
+                return quantity, None
                 
         except Exception as e:
             logger.warning(f"⚠️ Не удалось получить параметры символа: {e}")
         
         # Fallback: простой расчет
-        quantity = usdt_amount / price
-        quantity = round(quantity, 6)  # Округляем до 6 знаков
+        quantity = amount / price
+        quantity = round(quantity, 6)
         
-        logger.info(f"🔢 Количество от ${usdt_amount} (fallback): {quantity}")
-        return quantity, usdt_amount
+        logger.info(f"🔢 Количество от ${amount} (fallback): {quantity}")
+        return quantity, None
 
     def place_order(self, data):
         try:
@@ -267,85 +191,88 @@ class BybitTradingBot:
             logger.info("📥 ВХОДНЫЕ ДАННЫЕ ОТ TRADINGVIEW:")
             logger.info(f"📥 Raw data: {data}")
             
-            action = data.get('action', 'Buy')
-            raw_symbol = data.get('symbol', 'BTCUSDT')
-            leverage = min(data.get('leverage', 5), 25)
-            risk_percent = min(data.get('riskPercent', 1), 10)
-            tp_percent = data.get('takeProfitPercent', 3)
-            sl_percent = data.get('stopLossPercent', 1.5)
-            fixed_amount = data.get('fixedAmount', 0)  # Фиксированная сумма в USDT
+            # Принимаем параметры как есть из TradingView
+            action = data.get('action')  # "Buy" или "Sell"
+            symbol = data.get('symbol')  # Символ как есть (например "BTCUSDT", "ETHUSDC")
+            leverage = data.get('leverage', 1)  # Плечо 1-100
+            takeProfitPercent = data.get('takeProfitPercent', 0)  # TP в %
+            stopLossPercent = data.get('stopLossPercent', 0)  # SL в %
+            fixedAmount = data.get('fixedAmount', 0)  # Фиксированная сумма
 
             logger.info(f"📥 Action: {action}")
-            logger.info(f"📥 Symbol: {raw_symbol}")
+            logger.info(f"📥 Symbol: {symbol}")
             logger.info(f"📥 Leverage: {leverage}")
-            logger.info(f"📥 RiskPercent: {risk_percent}")
-            logger.info(f"📥 TakeProfitPercent: {tp_percent}")
-            logger.info(f"📥 StopLossPercent: {sl_percent}")
-            logger.info(f"📥 FixedAmount: {fixed_amount}")
+            logger.info(f"📥 TakeProfitPercent: {takeProfitPercent}%")
+            logger.info(f"📥 StopLossPercent: {stopLossPercent}%")
+            logger.info(f"📥 FixedAmount: ${fixedAmount}")
             logger.info("📥" + "="*50)
 
-            # Нормализация символа
-            symbol = self.normalize_symbol(raw_symbol)
-
-            # Получаем баланс
-            real_balance = self.get_available_balance()
-            if real_balance is None:
-                return {"status": "error", "error": "Не удалось получить доступный баланс"}
+            # Валидация обязательных параметров
+            if not action or not symbol:
+                return {"status": "error", "error": "Отсутствуют обязательные параметры: action, symbol"}
             
-            logger.info(f"💰 Реальный баланс: ${real_balance}")
+            if action not in ['Buy', 'Sell']:
+                return {"status": "error", "error": "Некорректное действие. Допустимо: Buy или Sell"}
+            
+            if leverage < 1 or leverage > 100:
+                return {"status": "error", "error": "Плечо должно быть от 1 до 100"}
+            
+            if fixedAmount <= 0:
+                return {"status": "error", "error": "Фиксированная сумма должна быть больше 0"}
+
+            # Определяем валюту из символа (последние 4 символа)
+            currency = symbol[-4:]  # USDT или USDC
+            logger.info(f"💰 Валюта сделки: {currency}")
+
+            # Получаем баланс в нужной валюте
+            real_balance = self.get_available_balance(currency)
+            if real_balance is None:
+                return {"status": "error", "error": f"Не удалось получить доступный баланс {currency}"}
+            
+            logger.info(f"💰 Реальный баланс {currency}: ${real_balance}")
+
+            # Проверяем что фиксированная сумма не превышает баланс
+            if fixedAmount > real_balance:
+                return {"status": "error", "error": f"Недостаточно средств. Баланс: ${real_balance}, Запрошено: ${fixedAmount}"}
 
             # Получение цены
             current_price = self.get_current_price(symbol)
             if not current_price:
                 return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
 
-            # РАСЧЕТ СУММЫ В USDT
-            if fixed_amount and fixed_amount > 0:
-                # Используем фиксированную сумму в USDT
-                position_size_usdt = min(fixed_amount, real_balance)
-                logger.info(f"💰 Фиксированная сумма: ${fixed_amount}")
-                logger.info(f"💰 Используется: ${position_size_usdt}")
-            else:
-                # Расчет от баланса и риска в USDT
-                position_size_usdt = self.calculate_position_size_usdt(
-                    real_balance, risk_percent, leverage
-                )
-                logger.info(f"💰 Рассчитанная сумма: ${position_size_usdt}")
+            logger.info(f"💰 Текущая цена {symbol}: ${current_price}")
 
-            # Рассчитываем количество от суммы в USDT
-            quantity, final_usdt_amount = self.calculate_quantity_from_usdt(
-                symbol, position_size_usdt, current_price
-            )
+            # Используем фиксированную сумму как есть
+            position_amount = fixedAmount
+            logger.info(f"💰 Фиксированная сумма: ${position_amount}")
 
-            # Проверка минимального объема
-            if quantity <= 0:
-                return {"status": "error", "error": f"Слишком маленький объем: {quantity}"}
+            # Рассчитываем количество от суммы
+            quantity, error = self.calculate_quantity_from_amount(symbol, position_amount, current_price)
+            if error:
+                return {"status": "error", "error": error}
 
             # 📝 ЛОГИРОВАНИЕ РАСЧЕТОВ
             logger.info("🧮" + "="*50)
-            logger.info("🧮 РАСЧЕТЫ ПОЗИЦИИ В USDT:")
-            logger.info(f"🧮 Баланс: ${real_balance}")
-            if fixed_amount:
-                logger.info(f"🧮 Фиксированная сумма: ${fixed_amount}")
-            else:
-                logger.info(f"🧮 Риск: {risk_percent}%")
-                logger.info(f"🧮 Плечо: {leverage}x")
+            logger.info("🧮 РАСЧЕТЫ ПОЗИЦИИ:")
+            logger.info(f"🧮 Баланс {currency}: ${real_balance}")
+            logger.info(f"🧮 Фиксированная сумма: ${position_amount}")
+            logger.info(f"🧮 Плечо: {leverage}x")
             logger.info(f"🧮 Цена: ${current_price}")
-            logger.info(f"🧮 Сумма позиции (USDT): ${final_usdt_amount}")
-            logger.info(f"🧮 Количество (монет): {quantity}")
+            logger.info(f"🧮 Сумма позиции: ${position_amount}")
+            logger.info(f"🧮 Количество: {quantity}")
             logger.info("🧮" + "="*50)
 
-            # Установка плеча (игнорируем ошибки)
+            # Установка плеча
             self.set_leverage(symbol, leverage)
 
-            # Расчет TP/SL
+            # Расчет TP/SL цен
             if action == "Buy":
-                tp_price = round(current_price * (1 + tp_percent / 100), 4)
-                sl_price = round(current_price * (1 - sl_percent / 100), 4)
+                tp_price = round(current_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                sl_price = round(current_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
                 position_index = 0
             else:
-                tp_price = round(current_price * (1 - tp_percent / 100), 4)
-                sl_price = round(current_price * (1 + sl_percent / 100), 4)
+                tp_price = round(current_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                sl_price = round(current_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
                 position_index = 1
 
             # 📝 ЛОГИРОВАНИЕ ТОРГОВЫХ ПАРАМЕТРОВ
@@ -353,11 +280,11 @@ class BybitTradingBot:
             logger.info("🎯 ТОРГОВЫЕ ПАРАМЕТРЫ:")
             logger.info(f"🎯 Действие: {action}")
             logger.info(f"🎯 Символ: {symbol}")
-            logger.info(f"🎯 Плечо: {leverage}")
+            logger.info(f"🎯 Плечо: {leverage}x")
             logger.info(f"🎯 Текущая цена: ${current_price}")
-            logger.info(f"🎯 Сумма ордера: ${final_usdt_amount}")
-            logger.info(f"🎯 Take Profit: ${tp_price} ({tp_percent}%)")
-            logger.info(f"🎯 Stop Loss: ${sl_price} ({sl_percent}%)")
+            logger.info(f"🎯 Сумма ордера: ${position_amount}")
+            logger.info(f"🎯 Take Profit: ${tp_price} ({takeProfitPercent}%)" if tp_price > 0 else "🎯 Take Profit: не установлен")
+            logger.info(f"🎯 Stop Loss: ${sl_price} ({stopLossPercent}%)" if sl_price > 0 else "🎯 Stop Loss: не установлен")
             logger.info(f"🎯 Количество: {quantity}")
             logger.info(f"🎯 Position Index: {position_index}")
             logger.info("🎯" + "="*50)
@@ -373,7 +300,7 @@ class BybitTradingBot:
             }
             
             logger.info("📤" + "="*50)
-            logger.info("📤 ДАННЫЕ ДЛЯ ОТПРАВКИ НА БИРЖИ:")
+            logger.info("📤 ДАННЫЕ ДЛЯ ОТПРАВКИ НА БИРЖУ:")
             logger.info(f"📤 Параметры ордера: {order_params}")
             logger.info("📤" + "="*50)
 
@@ -388,16 +315,24 @@ class BybitTradingBot:
             order_id = order['result']['orderId']
             logger.info(f"✅ Ордер размещен: {order_id}")
 
-            # Установка TP/SL
-            if tp_percent > 0 or sl_percent > 0:
+            # Установка TP/SL если указаны проценты
+            if takeProfitPercent > 0 or stopLossPercent > 0:
                 tp_sl_params = {
                     "category": "linear",
                     "symbol": symbol,
-                    "takeProfit": str(tp_price),
-                    "stopLoss": str(sl_price),
                     "positionIdx": position_index
                 }
                 
+                if takeProfitPercent > 0:
+                    tp_sl_params["takeProfit"] = str(tp_price)
+                if stopLossPercent > 0:
+                    tp_sl_params["stopLoss"] = str(sl_price)
+                
+                logger.info("🛡️" + "="*50)
+                logger.info("🛡️ ПАРАМЕТРЫ TP/SL:")
+                logger.info(f"🛡️ Параметры TP/SL: {tp_sl_params}")
+                logger.info("🛡️" + "="*50)
+
                 try:
                     self.session.set_trading_stop(**tp_sl_params)
                     logger.info("✅ TP/SL установлены")
@@ -411,12 +346,12 @@ class BybitTradingBot:
                 "action": action,
                 "quantity": float(quantity),
                 "entry_price": current_price,
-                "position_size_usdt": final_usdt_amount,
+                "position_amount": position_amount,
+                "currency": currency,
                 "take_profit_price": tp_price,
                 "stop_loss_price": sl_price,
                 "leverage": leverage,
-                "real_balance_used": real_balance,
-                "risk_percent": risk_percent
+                "real_balance_used": real_balance
             }
             
             logger.info("✅" + "="*50)
@@ -433,24 +368,21 @@ class BybitTradingBot:
 bot = BybitTradingBot()
 
 def parse_tradingview_data(raw_data):
-    """Парсинг данных от TradingView (plain text -> JSON)"""
+    """Парсинг данных от TradingView"""
     try:
         logger.info(f"🔧 Парсинг сырых данных: {raw_data}")
         
         # Если это JSON строка
         if isinstance(raw_data, str) and raw_data.strip().startswith('{'):
             try:
-                # Пробуем распарсить как JSON
                 data = json.loads(raw_data)
                 logger.info("✅ Данные распарсены как JSON")
                 return data
             except json.JSONDecodeError:
-                # Если не JSON, ищем JSON-like структуру в тексте
                 pass
         
         # Если это plain text, ищем JSON-like структуру
         if isinstance(raw_data, str):
-            # Ищем что-то похожее на JSON в тексте
             json_match = re.search(r'\{[^}]+\}', raw_data)
             if json_match:
                 json_str = json_match.group()
@@ -460,22 +392,6 @@ def parse_tradingview_data(raw_data):
                     return data
                 except json.JSONDecodeError as e:
                     logger.error(f"❌ Ошибка парсинга JSON из текста: {e}")
-        
-        # Если ничего не нашли, создаем базовую структуру из текста
-        if isinstance(raw_data, str):
-            data = {}
-            if "BUY" in raw_data.upper() or "LONG" in raw_data.upper():
-                data['action'] = 'Buy'
-            elif "SELL" in raw_data.upper() or "SHORT" in raw_data.upper():
-                data['action'] = 'Sell'
-            
-            # Пробуем найти символ в тексте
-            symbol_match = re.search(r'([A-Z0-9]+\.?[A-Z0-9]*)', raw_data)
-            if symbol_match:
-                data['symbol'] = symbol_match.group(1)
-            
-            logger.info(f"🔄 Данные извлечены из текста: {data}")
-            return data
         
         logger.error("❌ Не удалось распарсить данные")
         return {}
