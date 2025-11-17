@@ -184,6 +184,81 @@ class BybitTradingBot:
             logger.warning(f"⚠️ Ошибка расчета количества: {e}")
             return None, str(e)
 
+    def set_tp_sl(self, symbol, action, current_price, takeProfitPercent, stopLossPercent):
+        """Установка Take Profit и Stop Loss с правильным positionIdx"""
+        try:
+            normalized_symbol = self.normalize_symbol(symbol)
+            
+            # Расчет TP/SL цен
+            if action == "Buy":
+                tp_price = round(current_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                sl_price = round(current_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
+                # Для лонговой позиции используем positionIdx = 0
+                position_index = 0
+            else:
+                tp_price = round(current_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                sl_price = round(current_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
+                # Для шортовой позиции также используем positionIdx = 0
+                position_index = 0
+            
+            tp_sl_params = {
+                "category": "linear",
+                "symbol": normalized_symbol,
+                "positionIdx": position_index
+            }
+            
+            if takeProfitPercent > 0:
+                tp_sl_params["takeProfit"] = str(tp_price)
+            if stopLossPercent > 0:
+                tp_sl_params["stopLoss"] = str(sl_price)
+            
+            logger.info("🛡️" + "="*50)
+            logger.info("🛡️ ПАРАМЕТРЫ TP/SL:")
+            logger.info(f"🛡️ Действие: {action}")
+            logger.info(f"🛡️ Текущая цена: ${current_price}")
+            logger.info(f"🛡️ Take Profit: ${tp_price} ({takeProfitPercent}%)" if tp_price > 0 else "🛡️ Take Profit: не установлен")
+            logger.info(f"🛡️ Stop Loss: ${sl_price} ({stopLossPercent}%)" if sl_price > 0 else "🛡️ Stop Loss: не установлен")
+            logger.info(f"🛡️ Position Index: {position_index}")
+            logger.info(f"🛡️ Параметры TP/SL: {tp_sl_params}")
+            logger.info("🛡️" + "="*50)
+
+            tp_sl_result = self.session.set_trading_stop(**tp_sl_params)
+            
+            if tp_sl_result.get('retCode') == 0:
+                logger.info("✅ TP/SL успешно установлены")
+                return True
+            else:
+                error_msg = tp_sl_result.get('retMsg', 'Unknown error')
+                logger.warning(f"⚠️ Не удалось установить TP/SL: {error_msg}")
+                
+                # Пробуем альтернативный метод без positionIdx
+                try:
+                    logger.info("🔄 Пробуем альтернативный метод установки TP/SL...")
+                    alt_params = {
+                        "category": "linear",
+                        "symbol": normalized_symbol
+                    }
+                    
+                    if takeProfitPercent > 0:
+                        alt_params["takeProfit"] = str(tp_price)
+                    if stopLossPercent > 0:
+                        alt_params["stopLoss"] = str(sl_price)
+                    
+                    alt_result = self.session.set_trading_stop(**alt_params)
+                    if alt_result.get('retCode') == 0:
+                        logger.info("✅ TP/SL установлены альтернативным методом")
+                        return True
+                    else:
+                        logger.warning(f"⚠️ Альтернативный метод также не сработал: {alt_result.get('retMsg')}")
+                        return False
+                except Exception as alt_e:
+                    logger.warning(f"⚠️ Ошибка альтернативного метода: {alt_e}")
+                    return False
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
+            return False
+
     def place_order(self, data):
         try:
             # 📝 ЛОГИРОВАНИЕ ВХОДНЫХ ДАННЫХ
@@ -249,29 +324,20 @@ class BybitTradingBot:
             if error:
                 return {"status": "error", "error": error}
 
+            # Получаем текущую цену для TP/SL
+            current_price = self.get_current_price(symbol)
+            if not current_price:
+                return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
+
             # 📝 ЛОГИРОВАНИЕ РАСЧЕТОВ
             logger.info("🧮" + "="*50)
             logger.info("🧮 РАСЧЕТЫ ПОЗИЦИИ:")
             logger.info(f"🧮 Баланс {currency}: ${real_balance}")
             logger.info(f"🧮 Фиксированная сумма: ${position_amount}")
             logger.info(f"🧮 Плечо: {leverage}x (используется настройка биржи)")
+            logger.info(f"🧮 Текущая цена: ${current_price}")
             logger.info(f"🧮 Количество: {quantity}")
             logger.info("🧮" + "="*50)
-
-            # Получаем текущую цену для TP/SL
-            current_price = self.get_current_price(symbol)
-            if not current_price:
-                return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
-
-            # Расчет TP/SL на основе реальной цены
-            if action == "Buy":
-                tp_price = round(current_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
-                sl_price = round(current_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
-                position_index = 0
-            else:
-                tp_price = round(current_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
-                sl_price = round(current_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
-                position_index = 1
 
             # 📝 ЛОГИРОВАНИЕ ТОРГОВЫХ ПАРАМЕТРОВ
             logger.info("🎯" + "="*50)
@@ -281,10 +347,9 @@ class BybitTradingBot:
             logger.info(f"🎯 Плечо: {leverage}x (настройка биржи)")
             logger.info(f"🎯 Текущая цена: ${current_price}")
             logger.info(f"🎯 Сумма ордера: ${position_amount}")
-            logger.info(f"🎯 Take Profit: ${tp_price} ({takeProfitPercent}%)" if tp_price > 0 else "🎯 Take Profit: не установлен")
-            logger.info(f"🎯 Stop Loss: ${sl_price} ({stopLossPercent}%)" if sl_price > 0 else "🎯 Stop Loss: не установлен")
+            logger.info(f"🎯 Take Profit: {takeProfitPercent}%")
+            logger.info(f"🎯 Stop Loss: {stopLossPercent}%")
             logger.info(f"🎯 Количество: {quantity}")
-            logger.info(f"🎯 Position Index: {position_index}")
             logger.info("🎯" + "="*50)
 
             # Размещение ордера
@@ -314,31 +379,17 @@ class BybitTradingBot:
             logger.info(f"✅ Ордер размещен: {order_id}")
 
             # Установка TP/SL если указаны проценты
+            tp_sl_success = False
             if takeProfitPercent > 0 or stopLossPercent > 0:
-                tp_sl_params = {
-                    "category": "linear",
-                    "symbol": normalized_symbol,
-                    "positionIdx": position_index
-                }
-                
-                if takeProfitPercent > 0:
-                    tp_sl_params["takeProfit"] = str(tp_price)
-                if stopLossPercent > 0:
-                    tp_sl_params["stopLoss"] = str(sl_price)
-                
-                logger.info("🛡️" + "="*50)
-                logger.info("🛡️ ПАРАМЕТРЫ TP/SL:")
-                logger.info(f"🛡️ Параметры TP/SL: {tp_sl_params}")
-                logger.info("🛡️" + "="*50)
+                tp_sl_success = self.set_tp_sl(symbol, action, current_price, takeProfitPercent, stopLossPercent)
 
-                try:
-                    tp_sl_result = self.session.set_trading_stop(**tp_sl_params)
-                    if tp_sl_result.get('retCode') == 0:
-                        logger.info("✅ TP/SL установлены")
-                    else:
-                        logger.warning(f"⚠️ Не удалось установить TP/SL: {tp_sl_result.get('retMsg')}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Не удалось установить TP/SL: {e}")
+            # Расчет финальных цен TP/SL для результата
+            if action == "Buy":
+                final_tp_price = round(current_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                final_sl_price = round(current_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
+            else:
+                final_tp_price = round(current_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                final_sl_price = round(current_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
 
             final_result = {
                 "status": "success",
@@ -349,12 +400,13 @@ class BybitTradingBot:
                 "entry_price": current_price,
                 "position_amount": position_amount,
                 "currency": currency,
-                "take_profit_price": tp_price,
-                "stop_loss_price": sl_price,
+                "take_profit_price": final_tp_price,
+                "stop_loss_price": final_sl_price,
                 "take_profit_percent": takeProfitPercent,
                 "stop_loss_percent": stopLossPercent,
                 "leverage": leverage,
                 "real_balance_used": real_balance,
+                "tp_sl_set": tp_sl_success,
                 "note": "Плечо использует настройки биржи по умолчанию"
             }
             
