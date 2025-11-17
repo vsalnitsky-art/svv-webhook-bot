@@ -184,6 +184,31 @@ class BybitTradingBot:
         logger.info(f"🔢 Количество от ${amount} (fallback): {quantity}")
         return quantity, None
 
+    def extract_currency_from_symbol(self, symbol):
+        """Извлечение валюты из символа (USDT или USDC)"""
+        try:
+            # Убираем .P если есть
+            clean_symbol = symbol.replace('.P', '')
+            
+            # Ищем USDT или USDC в конце символа
+            if clean_symbol.endswith('USDT'):
+                return 'USDT'
+            elif clean_symbol.endswith('USDC'):
+                return 'USDC'
+            else:
+                # Если не нашли, пробуем извлечь последние 4 символа
+                if len(clean_symbol) >= 4:
+                    possible_currency = clean_symbol[-4:]
+                    if possible_currency in ['USDT', 'USDC']:
+                        return possible_currency
+                
+                logger.warning(f"⚠️ Не удалось определить валюту из символа {symbol}, используем USDT по умолчанию")
+                return 'USDT'
+                
+        except Exception as e:
+            logger.error(f"❌ Ошибка извлечения валюты: {e}")
+            return 'USDT'
+
     def place_order(self, data):
         try:
             # 📝 ЛОГИРОВАНИЕ ВХОДНЫХ ДАННЫХ
@@ -225,9 +250,9 @@ class BybitTradingBot:
             if fixedAmount <= 0:
                 return {"status": "error", "error": "Фиксированная сумма должна быть больше 0"}
 
-            # Определяем валюту из символа (последние 4 символа)
-            currency = symbol[-4:]  # USDT или USDC
-            logger.info(f"💰 Валюта сделки: {currency}")
+            # Определяем валюту из символа (исправленная функция)
+            currency = self.extract_currency_from_symbol(symbol)
+            logger.info(f"💰 Определенная валюта сделки: {currency}")
 
             # Получаем баланс в нужной валюте
             real_balance = self.get_available_balance(currency)
