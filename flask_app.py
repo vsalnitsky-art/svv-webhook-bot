@@ -167,16 +167,61 @@ def home():
 def health_check():
     return jsonify({"status": "healthy", "message": "Bot is running"})
 
-@app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
     try:
-        data = request.get_json()
-        logger.info(f"📨 Webhook вызван: {data}")
+        # Логируем заголовки для диагностики
+        logger.info(f"📨 Headers: {dict(request.headers)}")
+        logger.info(f"📨 Content-Type: {request.content_type}")
+        logger.info(f"📨 Method: {request.method}")
+        
+        # Пробуем разные методы получения данных
+        data = None
+        
+        # Метод 1: JSON данные
+        if request.is_json:
+            data = request.get_json()
+            logger.info(f"📨 Данные (JSON): {data}")
+        
+        # Метод 2: Form данные
+        elif request.form:
+            data = request.form.to_dict()
+            logger.info(f"📨 Данные (FORM): {data}")
+        
+        # Метод 3: Raw данные (текст)
+        elif request.data:
+            try:
+                raw_data = request.get_data(as_text=True)
+                logger.info(f"📨 Raw данные: {raw_data}")
+                # Пробуем распарсить как JSON
+                import json
+                data = json.loads(raw_data)
+                logger.info(f"📨 Данные (RAW->JSON): {data}")
+            except:
+                # Если не JSON, пробуем парсить как query string
+                try:
+                    from urllib.parse import parse_qs
+                    parsed = parse_qs(raw_data)
+                    data = {k: v[0] if len(v) == 1 else v for k, v in parsed.items()}
+                    logger.info(f"📨 Данные (RAW->FORM): {data}")
+                except:
+                    data = {"raw": raw_data}
+        
+        # Метод 4: Query параметры (для GET запросов)
+        elif request.args:
+            data = request.args.to_dict()
+            logger.info(f"📨 Данные (QUERY): {data}")
+        
+        if not data:
+            return jsonify({"status": "error", "error": "No data received"}), 400
+        
+        logger.info(f"📨 Обработанные данные: {data}")
         result = bot.place_simple_order(data)
         return jsonify(result)
+        
     except Exception as e:
         logger.error(f"💥 Ошибка webhook: {e}")
         return jsonify({"status": "error", "error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=10000, debug=False)
