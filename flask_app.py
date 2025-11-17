@@ -98,16 +98,87 @@ class BybitTradingBot:
         logger.info(f"🔧 Нормализованный символ: {clean_symbol}")
         return clean_symbol
 
-    def calculate_quantity_from_amount(self, amount, price=1.0):
-        """Расчет количества от суммы в USDT (упрощенный)"""
+    def get_current_price(self, symbol):
+        """Получение текущей цены"""
         try:
-            # Для USDT пары количество = сумма / цена
-            # Используем цену 1.0 как базовую для расчета
-            quantity = amount / price
-            quantity = round(quantity, 6)  # Округляем до 6 знаков
+            normalized_symbol = self.normalize_symbol(symbol)
+            response = self.session.get_tickers(category="linear", symbol=normalized_symbol)
             
-            logger.info(f"🔢 Количество от ${amount}: {quantity}")
-            return quantity, None
+            if response.get('retCode') != 0:
+                logger.error(f"❌ Ошибка API цены: {response.get('retMsg')}")
+                return None
+                
+            result = response.get('result', {})
+            tickers_list = result.get('list', [])
+            
+            if not tickers_list:
+                logger.error("❌ Пустой список тикеров")
+                return None
+                
+            ticker = tickers_list[0]
+            last_price = ticker.get('lastPrice')
+            
+            if last_price:
+                price = float(last_price)
+                logger.info(f"💰 Текущая цена {normalized_symbol}: ${price}")
+                return price
+            
+            logger.error("❌ Не удалось получить цену")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения цены: {e}")
+            return None
+
+    def calculate_quantity(self, symbol, amount_usdt):
+        """Правильный расчет количества на основе реальной цены"""
+        try:
+            normalized_symbol = self.normalize_symbol(symbol)
+            
+            # Получаем текущую цену
+            current_price = self.get_current_price(symbol)
+            if not current_price:
+                return None, "Не удалось получить текущую цену"
+            
+            # Рассчитываем количество
+            quantity = amount_usdt / current_price
+            
+            # Получаем информацию о символе для минимального количества и шага
+            info = self.session.get_instruments_info(category="linear", symbol=normalized_symbol)
+            if info and info.get('retCode') == 0:
+                symbol_info = info['result']['list'][0]
+                
+                # Минимальное количество
+                min_order_qty = float(symbol_info.get('lotSizeFilter', {}).get('minOrderQty', 0))
+                # Шаг количества
+                qty_step = float(symbol_info.get('lotSizeFilter', {}).get('qtyStep', 0.001))
+                # Минимальная сумма ордера
+                min_order_value = float(symbol_info.get('lotSizeFilter', {}).get('minOrderAmt', 5))
+                
+                logger.info(f"📏 Параметры символа: minOrderQty={min_order_qty}, qtyStep={qty_step}, minOrderValue=${min_order_value}")
+                
+                # Проверяем минимальное количество
+                if quantity < min_order_qty:
+                    logger.warning(f"⚠️ Количество {quantity} меньше минимального {min_order_qty}")
+                    return None, f"Слишком маленькая сумма для минимального объема. Минимум: ${min_order_value}"
+                
+                # Проверяем минимальную сумму
+                order_value = quantity * current_price
+                if order_value < min_order_value:
+                    logger.warning(f"⚠️ Сумма ордера ${order_value} меньше минимальной ${min_order_value}")
+                    return None, f"Сумма ордера меньше минимальной. Минимум: ${min_order_value}"
+                
+                # Округляем согласно шагу
+                if qty_step > 0:
+                    quantity = round(quantity // qty_step * qty_step, 8)
+                
+                logger.info(f"🔢 Количество от ${amount_usdt} по цене ${current_price}: {quantity}")
+                return quantity, None
+            else:
+                # Fallback: простой расчет
+                quantity = round(quantity, 6)
+                logger.info(f"🔢 Количество от ${amount_usdt} (fallback): {quantity}")
+                return quantity, None
                 
         except Exception as e:
             logger.warning(f"⚠️ Ошибка расчета количества: {e}")
@@ -128,7 +199,7 @@ class BybitTradingBot:
             # Принимаем параметры как есть из TradingView
             action = data.get('action')  # "Buy" или "Sell"
             symbol = data.get('symbol')  # Символ как есть (например "ADAUSDT.P")
-            leverage = data.get('leverage', 25)  # Плечо (используется только для информации)
+            leverage = data.get('leverage', 25)  # Плечо (информационно)
             takeProfitPercent = data.get('takeProfitPercent', 0.5)  # TP в %
             stopLossPercent = data.get('stopLossPercent', 0.5)  # SL в %
             fixedAmount = data.get('fixedAmount', 6)  # Фиксированная сумма
@@ -173,8 +244,8 @@ class BybitTradingBot:
             position_amount = fixedAmount
             logger.info(f"💰 Фиксированная сумма: ${position_amount}")
 
-            # Упрощенный расчет количества (используем цену 1.0)
-            quantity, error = self.calculate_quantity_from_amount(position_amount, 1.0)
+            # ПРАВИЛЬНЫЙ расчет количества на основе реальной цены
+            quantity, error = self.calculate_quantity(symbol, position_amount)
             if error:
                 return {"status": "error", "error": error}
 
@@ -187,15 +258,19 @@ class BybitTradingBot:
             logger.info(f"🧮 Количество: {quantity}")
             logger.info("🧮" + "="*50)
 
-            # Расчет TP/SL (используем базовую цену 1.0)
-            base_price = 1.0
+            # Получаем текущую цену для TP/SL
+            current_price = self.get_current_price(symbol)
+            if not current_price:
+                return {"status": "error", "error": f"Не удалось получить цену для {symbol}"}
+
+            # Расчет TP/SL на основе реальной цены
             if action == "Buy":
-                tp_price = round(base_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
-                sl_price = round(base_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
+                tp_price = round(current_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                sl_price = round(current_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
                 position_index = 0
             else:
-                tp_price = round(base_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
-                sl_price = round(base_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
+                tp_price = round(current_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
+                sl_price = round(current_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
                 position_index = 1
 
             # 📝 ЛОГИРОВАНИЕ ТОРГОВЫХ ПАРАМЕТРОВ
@@ -204,9 +279,10 @@ class BybitTradingBot:
             logger.info(f"🎯 Действие: {action}")
             logger.info(f"🎯 Символ: {normalized_symbol}")
             logger.info(f"🎯 Плечо: {leverage}x (настройка биржи)")
+            logger.info(f"🎯 Текущая цена: ${current_price}")
             logger.info(f"🎯 Сумма ордера: ${position_amount}")
-            logger.info(f"🎯 Take Profit: {takeProfitPercent}%")
-            logger.info(f"🎯 Stop Loss: {stopLossPercent}%")
+            logger.info(f"🎯 Take Profit: ${tp_price} ({takeProfitPercent}%)" if tp_price > 0 else "🎯 Take Profit: не установлен")
+            logger.info(f"🎯 Stop Loss: ${sl_price} ({stopLossPercent}%)" if sl_price > 0 else "🎯 Stop Loss: не установлен")
             logger.info(f"🎯 Количество: {quantity}")
             logger.info(f"🎯 Position Index: {position_index}")
             logger.info("🎯" + "="*50)
@@ -270,8 +346,11 @@ class BybitTradingBot:
                 "symbol": normalized_symbol,
                 "action": action,
                 "quantity": float(quantity),
+                "entry_price": current_price,
                 "position_amount": position_amount,
                 "currency": currency,
+                "take_profit_price": tp_price,
+                "stop_loss_price": sl_price,
                 "take_profit_percent": takeProfitPercent,
                 "stop_loss_percent": stopLossPercent,
                 "leverage": leverage,
