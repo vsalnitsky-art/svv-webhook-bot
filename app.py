@@ -249,10 +249,12 @@ class BybitTradingBot:
             
             action = data.get('action')
             symbol = data.get('symbol')
-            leverage = data.get('leverage', 20) # Дефолтне плече 20, якщо не прийшло
+            leverage = data.get('leverage', 20) # Дефолтне плече
             takeProfitPercent = data.get('takeProfitPercent', 0.0)
             stopLossPercent = data.get('stopLossPercent', 0.0)
-            fixedAmount = data.get('fixedAmount', 0)
+            
+            # Отримуємо відсоток ризику, за замовчуванням 5%
+            riskPercent = float(data.get('riskPercent', 5.0))
 
             if not action or not symbol:
                 return {"status": "error", "error": "Missing action or symbol"}
@@ -260,22 +262,45 @@ class BybitTradingBot:
             # 2. Баланс
             currency = "USDT"
             real_balance = self.get_available_balance(currency)
-            if real_balance is None or fixedAmount > real_balance:
-                return {"status": "error", "error": f"Low balance: ${real_balance}, Req: ${fixedAmount}"}
+            
+            if real_balance is None:
+                return {"status": "error", "error": f"Could not get balance for {currency}"}
 
+            # 3. ВСТАНОВЛЕННЯ ПЛЕЧА
             normalized_symbol = self.normalize_symbol(symbol)
-
-            # 3. ВСТАНОВЛЕННЯ ПЛЕЧА (НОВЕ)
-            # Викликаємо перед розрахунками, оскільки плече впливає на маржу
             self.set_leverage(normalized_symbol, leverage)
 
-            # 4. Розрахунок кількості
-            quantity, error = self.calculate_quantity(symbol, fixedAmount)
+            # ==============================================================================
+            # 4. ДИНАМІЧНИЙ РОЗРАХУНОК РОЗМІРУ ПОЗИЦІЇ
+            # Алгоритм: Balance * (Risk% / 100) * Leverage
+            # ==============================================================================
+            
+            # а) Вираховуємо маржу (скільки грошей беремо з балансу)
+            margin_amount = real_balance * (riskPercent / 100.0)
+            
+            # б) Вираховуємо повний розмір позиції з урахуванням плеча
+            total_position_value_usdt = margin_amount * leverage
+            
+            logger.info("🧮" + "="*50)
+            logger.info("🧮 РОЗРАХУНОК РОЗМІРУ ОРДЕРА (DYNAMIC):")
+            logger.info(f"🧮 Доступний баланс: ${real_balance}")
+            logger.info(f"🧮 Відсоток ризику: {riskPercent}%")
+            logger.info(f"🧮 Використана маржа: ${margin_amount:.2f}")
+            logger.info(f"🧮 Плече: {leverage}x")
+            logger.info(f"🧮 ЗАГАЛЬНА СУМА ОРДЕРА: ${total_position_value_usdt:.2f}")
+            logger.info("🧮" + "="*50)
+
+            if margin_amount > real_balance:
+                 return {"status": "error", "error": f"Margin ${margin_amount} > Balance ${real_balance}"}
+
+            # 5. Розрахунок кількості монет
+            # Передаємо повну суму позиції в calculate_quantity
+            quantity, error = self.calculate_quantity(symbol, total_position_value_usdt)
             if error: return {"status": "error", "error": error}
 
             current_price = self.get_current_price(symbol)
             
-            # 5. Розміщення ордера
+            # 6. Розміщення ордера
             logger.info(f"🚀 Відкриття {action} {normalized_symbol} x{leverage} | Qty: {quantity}")
             
             order_params = {
@@ -295,7 +320,7 @@ class BybitTradingBot:
             order_id = order['result']['orderId']
             logger.info(f"✅ Ордер успішний: {order_id}")
 
-            # 6. TP/SL
+            # 7. TP/SL
             tp_sl_success = False
             if takeProfitPercent > 0 or stopLossPercent > 0:
                 tp_sl_success = self.set_tp_sl(symbol, action, current_price, takeProfitPercent, stopLossPercent)
@@ -305,6 +330,8 @@ class BybitTradingBot:
                 "order_id": order_id,
                 "symbol": normalized_symbol,
                 "leverage": leverage,
+                "used_margin": margin_amount,
+                "total_value": total_position_value_usdt,
                 "tp_sl_set": tp_sl_success
             }
 
