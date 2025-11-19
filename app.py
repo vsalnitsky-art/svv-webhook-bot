@@ -389,7 +389,4 @@ def webhook():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 if __name__ == '__main__':
-    # Цей блок виконується тільки при локальному запуску через python app.py
-    # Gunicorn ігнорує цей блок і імпортує app напряму
-    logger.info(f"🚀 Запуск Development сервера на порту {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
