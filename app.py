@@ -12,16 +12,20 @@ from config import get_api_credentials
 PORT = 10000  # Порт винесено в змінну для keep_alive та app.run
 
 def keep_alive():
-    """Функція для підтримки сервера активним (Dynamic Localhost)"""
-    time.sleep(5) # Чекаємо трохи, поки сервер запуститься
+    """Функція для підтримки сервера активним (External URL)"""
+    # Чекаємо трохи довше перед першим пінгом, щоб сервер точно встав
+    time.sleep(10) 
     while True:
         try:
-            # Використовуємо локальний інтерфейс, щоб не залежати від домену
-            requests.get(f'http://127.0.0.1:{PORT}/health', timeout=5)
-            print("🔄 Keep-alive ping sent (localhost)")
+            # ⚠️ ВАЖЛИВО: Пінгуємо зовнішню адресу, щоб Render бачив вхідний трафік
+            requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
+            print("🔄 Keep-alive ping sent (External URL)")
         except Exception as e:
             print(f"⚠️ Keep-alive ping failed: {e}")
-        time.sleep(600) # Пінг кожні 10 хвилин
+        
+        # Пінг кожні 10 хвилин (600 секунд). 
+        # Render засинає через 15 хв бездіяльності, тому 10 хв — ідеально.
+        time.sleep(600) 
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -389,4 +393,7 @@ def webhook():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 if __name__ == '__main__':
+    # Цей блок виконується тільки при локальному запуску через python app.py
+    # Gunicorn ігнорує цей блок і імпортує app напряму
+    logger.info(f"🚀 Запуск Development сервера на порту {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
