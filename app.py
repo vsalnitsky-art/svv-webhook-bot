@@ -9,29 +9,24 @@ import re
 from config import get_api_credentials
 
 # Налаштування
-PORT = 10000  # Порт винесено в змінну для keep_alive та app.run
+PORT = 10000
+MONITOR_INTERVAL = 5  # Інтервал перевірки позицій для безубитку (сек)
 
 def keep_alive():
     """Функція для підтримки сервера активним (External URL)"""
-    # Чекаємо трохи довше перед першим пінгом, щоб сервер точно встав
-    time.sleep(10) 
+    time.sleep(10)
     while True:
         try:
-            # ⚠️ ВАЖЛИВО: Пінгуємо зовнішню адресу, щоб Render бачив вхідний трафік
             requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
-            print("🔄 Keep-alive ping sent (External URL)")
+            print("🔄 Keep-alive ping sent")
         except Exception as e:
             print(f"⚠️ Keep-alive ping failed: {e}")
-        
-        # Пінг кожні 10 хвилин (600 секунд). 
-        # Render засинає через 15 хв бездіяльності, тому 10 хв — ідеально.
-        time.sleep(600) 
+        time.sleep(600)
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Запуск keep-alive в окремому потоці
 keep_alive_thread = threading.Thread(target=keep_alive)
 keep_alive_thread.daemon = True
 keep_alive_thread.start()
@@ -45,355 +40,328 @@ class BybitTradingBot:
                 api_key=api_key,
                 api_secret=api_secret,
             )
-            logger.info("✅ Бот ініціалізований із зашифрованими ключами")
+            logger.info("✅ Бот ініціалізований")
         except Exception as e:
-            logger.error(f"❌ Помилка ініціалізації бота: {e}")
+            logger.error(f"❌ Помилка ініціалізації: {e}")
             raise
 
     def get_available_balance(self, currency="USDT"):
-        """Отримання доступного балансу"""
         try:
             balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
+            if balance_info.get('retCode') != 0: return None
             
-            if balance_info.get('retCode') != 0:
-                logger.error(f"❌ Помилка API балансу: {balance_info.get('retMsg')}")
-                return None
-            
-            result = balance_info.get('result', {})
-            if not result or 'list' not in result or not result['list']:
-                logger.error("❌ Порожній список у відповіді балансу")
-                return None
-            
-            account_list = result['list']
-            
-            for account in account_list:
-                if 'coin' in account and account['coin']:
-                    for coin in account['coin']:
-                        if coin.get('coin') == currency:
-                            # Логіка пошуку доступного балансу по пріоритету полів
-                            coin_fields = ['availableToWithdraw', 'walletBalance', 'equity', 'free']
-                            for field in coin_fields:
-                                if field in coin:
-                                    balance_str = coin[field]
-                                    if balance_str and balance_str.strip() and balance_str not in ['', 'None', 'null']:
-                                        try:
-                                            clean_balance = str(balance_str).strip().replace(',', '').replace(' ', '')
-                                            balance = float(clean_balance)
-                                            if balance > 0:
-                                                logger.info(f"💰 Знайдено {currency} баланс ({field}): ${balance}")
-                                                return balance
-                                        except (ValueError, TypeError):
-                                            continue
-            
-            logger.error(f"❌ Не вдалося знайти доступний баланс {currency}")
+            for account in balance_info.get('result', {}).get('list', []):
+                for coin in account.get('coin', []):
+                    if coin.get('coin') == currency:
+                        return float(coin.get('walletBalance', 0))
             return None
-            
         except Exception as e:
-            logger.error(f"❌ Помилка отримання балансу: {e}")
+            logger.error(f"❌ Error balance: {e}")
             return None
 
     def normalize_symbol(self, symbol):
-        """Нормалізація символу (прибираємо .P)"""
-        clean_symbol = symbol.replace('.P', '')
-        # logger.info(f"🔧 Нормалізований символ: {clean_symbol}") # Можна розкоментувати для дебагу
-        return clean_symbol
+        return symbol.replace('.P', '')
 
     def get_current_price(self, symbol):
-        """Отримання поточної ціни"""
         try:
-            normalized_symbol = self.normalize_symbol(symbol)
-            response = self.session.get_tickers(category="linear", symbol=normalized_symbol)
-            
-            if response.get('retCode') != 0:
-                return None
-                
-            result = response.get('result', {})
-            tickers_list = result.get('list', [])
-            
-            if tickers_list:
-                ticker = tickers_list[0]
-                last_price = ticker.get('lastPrice')
-                if last_price:
-                    return float(last_price)
+            norm_symbol = self.normalize_symbol(symbol)
+            resp = self.session.get_tickers(category="linear", symbol=norm_symbol)
+            if resp.get('retCode') == 0 and resp['result']['list']:
+                return float(resp['result']['list'][0]['lastPrice'])
             return None
-            
-        except Exception as e:
-            logger.error(f"❌ Помилка отримання ціни: {e}")
+        except:
             return None
 
     def set_leverage(self, symbol, leverage):
-        """Встановлення кредитного плеча"""
         try:
-            normalized_symbol = self.normalize_symbol(symbol)
-            leverage_str = str(leverage)
-            
-            logger.info(f"⚙️ Спроба встановити плече {leverage_str}x для {normalized_symbol}...")
-            
-            response = self.session.set_leverage(
-                category="linear",
-                symbol=normalized_symbol,
-                buyLeverage=leverage_str,
-                sellLeverage=leverage_str
+            norm_symbol = self.normalize_symbol(symbol)
+            self.session.set_leverage(
+                category="linear", symbol=norm_symbol, 
+                buyLeverage=str(leverage), sellLeverage=str(leverage)
             )
-            
-            if response.get('retCode') == 0:
-                logger.info(f"✅ Плече {leverage_str}x успішно встановлено")
-                return True
-            else:
-                # Якщо плече вже встановлено таким же (код помилки 110043), це не помилка
-                if response.get('retCode') == 110043:
-                    logger.info(f"ℹ️ Плече вже дорівнює {leverage_str}x (пропускаємо)")
-                    return True
-                
-                logger.warning(f"⚠️ Не вдалося встановити плече: {response.get('retMsg')}")
-                return False
-                
+            return True
         except Exception as e:
-            # Обробка виключення, якщо бібліотека кидає помилку при retCode != 0
-            if "110043" in str(e):
-                logger.info(f"ℹ️ Плече вже встановлено (API Exception caught)")
-                return True
-            logger.error(f"❌ Помилка при зміні плеча: {e}")
+            if "110043" in str(e): return True # Вже встановлено
+            logger.error(f"❌ Leverage error: {e}")
             return False
 
-    def calculate_quantity(self, symbol, amount_usdt):
-        """Розрахунок кількості монет"""
+    def get_instrument_info(self, symbol):
+        """Отримання даних про крок ціни та лот"""
         try:
-            normalized_symbol = self.normalize_symbol(symbol)
-            current_price = self.get_current_price(symbol)
-            
-            if not current_price:
-                return None, "Не вдалося отримати поточну ціну"
-            
-            quantity = amount_usdt / current_price
-            
-            # Отримання інформації про інструмент для округлення
-            info = self.session.get_instruments_info(category="linear", symbol=normalized_symbol)
-            if info and info.get('retCode') == 0:
-                symbol_info = info['result']['list'][0]
-                
-                min_order_qty = float(symbol_info.get('lotSizeFilter', {}).get('minOrderQty', 0))
-                qty_step = float(symbol_info.get('lotSizeFilter', {}).get('qtyStep', 0.001))
-                min_order_value = float(symbol_info.get('lotSizeFilter', {}).get('minOrderAmt', 5))
-                
-                if quantity < min_order_qty:
-                    return None, f"Занадто мала сума. Мінімум: {min_order_qty} монет"
-                
-                if (quantity * current_price) < min_order_value:
-                    return None, f"Сума ордера менша за мінімальну ${min_order_value}"
-                
-                # Округлення
-                if qty_step > 0:
-                    # Використовуємо decimal або строкове форматування для точності, тут спрощено
-                    import decimal
-                    step_decimals = abs(decimal.Decimal(str(qty_step)).as_tuple().exponent)
-                    quantity = round(quantity // qty_step * qty_step, step_decimals)
-                
-                return quantity, None
-            else:
-                return round(quantity, 6), None
-                
-        except Exception as e:
-            return None, str(e)
+            norm_symbol = self.normalize_symbol(symbol)
+            resp = self.session.get_instruments_info(category="linear", symbol=norm_symbol)
+            if resp.get('retCode') == 0:
+                return resp['result']['list'][0]['lotSizeFilter'], resp['result']['list'][0]['priceFilter']
+            return None, None
+        except:
+            return None, None
 
-    def set_tp_sl(self, symbol, action, current_price, takeProfitPercent, stopLossPercent):
-        """Встановлення TP/SL"""
-        try:
-            normalized_symbol = self.normalize_symbol(symbol)
-            
-            if action == "Buy":
-                tp_price = round(current_price * (1 + takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
-                sl_price = round(current_price * (1 - stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
-                position_index = 0 # 0 для One-Way Mode
-            else:
-                tp_price = round(current_price * (1 - takeProfitPercent / 100), 4) if takeProfitPercent > 0 else 0
-                sl_price = round(current_price * (1 + stopLossPercent / 100), 4) if stopLossPercent > 0 else 0
-                position_index = 0
+    def round_qty(self, qty, step):
+        if step <= 0: return qty
+        import decimal
+        step_decimals = abs(decimal.Decimal(str(step)).as_tuple().exponent)
+        return round(qty // step * step, step_decimals)
 
-            tp_sl_params = {
-                "category": "linear",
-                "symbol": normalized_symbol,
-                "positionIdx": position_index
-            }
-            
-            if takeProfitPercent > 0: tp_sl_params["takeProfit"] = str(tp_price)
-            if stopLossPercent > 0: tp_sl_params["stopLoss"] = str(sl_price)
-            
-            logger.info(f"🛡️ Встановлення TP: {tp_price} | SL: {sl_price}")
-
-            tp_sl_result = self.session.set_trading_stop(**tp_sl_params)
-            
-            if tp_sl_result.get('retCode') == 0:
-                logger.info("✅ TP/SL успішно встановлені")
-                return True
-            else:
-                logger.warning(f"⚠️ Помилка TP/SL (Main): {tp_sl_result.get('retMsg')}")
-                # Альтернативний метод без positionIdx
-                try:
-                    alt_params = {"category": "linear", "symbol": normalized_symbol}
-                    if takeProfitPercent > 0: alt_params["takeProfit"] = str(tp_price)
-                    if stopLossPercent > 0: alt_params["stopLoss"] = str(sl_price)
-                    
-                    alt_result = self.session.set_trading_stop(**alt_params)
-                    if alt_result.get('retCode') == 0:
-                        logger.info("✅ TP/SL встановлені (Alt method)")
-                        return True
-                except:
-                    pass
-                return False
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Виключення при TP/SL: {e}")
-            return False
+    def round_price(self, price, tick_size):
+        if tick_size <= 0: return price
+        import decimal
+        tick_decimals = abs(decimal.Decimal(str(tick_size)).as_tuple().exponent)
+        return round(price // tick_size * tick_size, tick_decimals)
 
     def place_order(self, data):
         try:
             # 1. Валідація
-            if not data: return {"status": "error", "error": "Empty data"}
-            
             action = data.get('action')
             symbol = data.get('symbol')
-            leverage = data.get('leverage', 20) # Дефолтне плече
-            takeProfitPercent = data.get('takeProfitPercent', 0.0)
-            stopLossPercent = data.get('stopLossPercent', 0.0)
-            
-            # Отримуємо відсоток ризику, за замовчуванням 5%
+            if not action or not symbol: return {"status": "error", "error": "Missing params"}
+
             riskPercent = float(data.get('riskPercent', 5.0))
+            leverage = int(data.get('leverage', 20))
+            tpPercent = float(data.get('takeProfitPercent', 0.0))
+            slPercent = float(data.get('stopLossPercent', 0.0))
 
-            if not action or not symbol:
-                return {"status": "error", "error": "Missing action or symbol"}
+            norm_symbol = self.normalize_symbol(symbol)
             
-            # 2. Баланс
-            currency = "USDT"
-            real_balance = self.get_available_balance(currency)
+            # 2. Ціна та Інфо
+            cur_price = self.get_current_price(norm_symbol)
+            if not cur_price: return {"status": "error", "error": "No price"}
             
-            if real_balance is None:
-                return {"status": "error", "error": f"Could not get balance for {currency}"}
+            lot_filter, price_filter = self.get_instrument_info(norm_symbol)
+            if not lot_filter: return {"status": "error", "error": "No instrument info"}
 
-            # 3. ВСТАНОВЛЕННЯ ПЛЕЧА
-            normalized_symbol = self.normalize_symbol(symbol)
-            self.set_leverage(normalized_symbol, leverage)
+            qty_step = float(lot_filter['qtyStep'])
+            min_qty = float(lot_filter['minOrderQty'])
+            tick_size = float(price_filter['tickSize'])
 
-            # ==============================================================================
-            # 4. ДИНАМІЧНИЙ РОЗРАХУНОК РОЗМІРУ ПОЗИЦІЇ
-            # Алгоритм: Balance * (Risk% / 100) * Leverage
-            # ==============================================================================
-            
-            # а) Вираховуємо маржу (скільки грошей беремо з балансу)
-            margin_amount = real_balance * (riskPercent / 100.0)
-            
-            # б) Вираховуємо повний розмір позиції з урахуванням плеча
-            total_position_value_usdt = margin_amount * leverage
-            
-            logger.info("🧮" + "="*50)
-            logger.info("🧮 РОЗРАХУНОК РОЗМІРУ ОРДЕРА (DYNAMIC):")
-            logger.info(f"🧮 Доступний баланс: ${real_balance}")
-            logger.info(f"🧮 Відсоток ризику: {riskPercent}%")
-            logger.info(f"🧮 Використана маржа: ${margin_amount:.2f}")
-            logger.info(f"🧮 Плече: {leverage}x")
-            logger.info(f"🧮 ЗАГАЛЬНА СУМА ОРДЕРА: ${total_position_value_usdt:.2f}")
-            logger.info("🧮" + "="*50)
+            # 3. Баланс та Кількість
+            balance = self.get_available_balance()
+            if not balance: return {"status": "error", "error": "No balance"}
 
-            if margin_amount > real_balance:
-                 return {"status": "error", "error": f"Margin ${margin_amount} > Balance ${real_balance}"}
-
-            # 5. Розрахунок кількості монет
-            # Передаємо повну суму позиції в calculate_quantity
-            quantity, error = self.calculate_quantity(symbol, total_position_value_usdt)
-            if error: return {"status": "error", "error": error}
-
-            current_price = self.get_current_price(symbol)
+            # Динамічний розрахунок: Margin * Lev
+            margin = balance * (riskPercent / 100)
+            total_value = margin * leverage
+            raw_qty = total_value / cur_price
             
-            # 6. Розміщення ордера
-            logger.info(f"🚀 Відкриття {action} {normalized_symbol} x{leverage} | Qty: {quantity}")
-            
-            order_params = {
-                "category": "linear",
-                "symbol": normalized_symbol,
-                "side": action,
-                "orderType": "Market",
-                "qty": str(quantity),
-                "timeInForce": "GTC",
-            }
-            
-            order = self.session.place_order(**order_params)
-            
-            if order.get('retCode') != 0:
-                return {"status": "error", "error": order.get('retMsg')}
+            final_qty = self.round_qty(raw_qty, qty_step)
+            if final_qty < min_qty: return {"status": "error", "error": "Qty too small"}
 
-            order_id = order['result']['orderId']
-            logger.info(f"✅ Ордер успішний: {order_id}")
+            # 4. Плече
+            self.set_leverage(norm_symbol, leverage)
 
-            # 7. TP/SL
-            tp_sl_success = False
-            if takeProfitPercent > 0 or stopLossPercent > 0:
-                tp_sl_success = self.set_tp_sl(symbol, action, current_price, takeProfitPercent, stopLossPercent)
+            # 5. Вхід в позицію (Market)
+            logger.info(f"🚀 {action} {norm_symbol} | Qty: {final_qty} | Price: {cur_price}")
+            entry_order = self.session.place_order(
+                category="linear",
+                symbol=norm_symbol,
+                side=action,
+                orderType="Market",
+                qty=str(final_qty),
+                timeInForce="GTC"
+            )
+            
+            if entry_order['retCode'] != 0:
+                return {"status": "error", "error": entry_order['retMsg']}
+
+            # 6. Стоп Лосс (Один на всю позицію)
+            sl_price = 0
+            if slPercent > 0:
+                if action == "Buy":
+                    sl_price = cur_price * (1 - slPercent / 100)
+                else:
+                    sl_price = cur_price * (1 + slPercent / 100)
+                
+                sl_price = self.round_price(sl_price, tick_size)
+                
+                # Встановлюємо SL для позиції
+                self.session.set_trading_stop(
+                    category="linear",
+                    symbol=norm_symbol,
+                    stopLoss=str(sl_price),
+                    positionIdx=0 
+                )
+
+            # 7. Розділення TP (50% / 50%)
+            if tpPercent > 0:
+                # TP1: 50% відстані, 50% об'єму
+                tp1_dist_percent = tpPercent / 2
+                # TP2: 100% відстані, решта об'єму
+                tp2_dist_percent = tpPercent
+
+                qty_tp1 = self.round_qty(final_qty / 2, qty_step)
+                qty_tp2 = self.round_qty(final_qty - qty_tp1, qty_step) # Решта
+
+                tp1_price = 0
+                tp2_price = 0
+
+                if action == "Buy":
+                    tp1_price = cur_price * (1 + tp1_dist_percent / 100)
+                    tp2_price = cur_price * (1 + tp2_dist_percent / 100)
+                    tp_side = "Sell"
+                else:
+                    tp1_price = cur_price * (1 - tp1_dist_percent / 100)
+                    tp2_price = cur_price * (1 - tp2_dist_percent / 100)
+                    tp_side = "Buy"
+
+                tp1_price = self.round_price(tp1_price, tick_size)
+                tp2_price = self.round_price(tp2_price, tick_size)
+
+                # Розміщуємо лімітні ордери (Reduce Only)
+                # TP1
+                if qty_tp1 >= min_qty:
+                    self.session.place_order(
+                        category="linear", symbol=norm_symbol, side=tp_side,
+                        orderType="Limit", qty=str(qty_tp1), price=str(tp1_price),
+                        reduceOnly=True, timeInForce="GTC"
+                    )
+                    logger.info(f"🎯 TP1 Placed: {tp1_price} (50%)")
+
+                # TP2
+                if qty_tp2 >= min_qty:
+                    self.session.place_order(
+                        category="linear", symbol=norm_symbol, side=tp_side,
+                        orderType="Limit", qty=str(qty_tp2), price=str(tp2_price),
+                        reduceOnly=True, timeInForce="GTC"
+                    )
+                    logger.info(f"🎯 TP2 Placed: {tp2_price} (100%)")
 
             return {
                 "status": "success",
-                "order_id": order_id,
-                "symbol": normalized_symbol,
-                "leverage": leverage,
-                "used_margin": margin_amount,
-                "total_value": total_position_value_usdt,
-                "tp_sl_set": tp_sl_success
+                "symbol": norm_symbol,
+                "qty": final_qty,
+                "tp1": tp1_price,
+                "tp2": tp2_price,
+                "sl": sl_price
             }
 
         except Exception as e:
-            logger.error(f"❌ Критична помилка ордера: {e}")
+            logger.error(f"💥 Order Error: {e}")
             return {"status": "error", "error": str(e)}
 
-# Ініціалізація бота
 bot = BybitTradingBot()
 
+# --- МОНІТОРИНГ БЕЗУБИТКУ (BREAKEVEN) ---
+class BreakevenMonitor:
+    def __init__(self, bot_instance):
+        self.bot = bot_instance
+        self.running = True
+
+    def start(self):
+        thread = threading.Thread(target=self.loop)
+        thread.daemon = True
+        thread.start()
+
+    def loop(self):
+        logger.info("🛡️ Breakeven Monitor Started")
+        while self.running:
+            try:
+                self.check_positions()
+            except Exception as e:
+                logger.error(f"⚠️ Monitor Error: {e}")
+            time.sleep(MONITOR_INTERVAL)
+
+    def check_positions(self):
+        # Отримуємо всі відкриті позиції
+        positions = self.bot.session.get_positions(category="linear", settlementCoin="USDT")
+        if positions['retCode'] != 0: return
+
+        for pos in positions['result']['list']:
+            size = float(pos['size'])
+            if size == 0: continue # Пропускаємо закриті
+
+            symbol = pos['symbol']
+            side = pos['side'] # Buy or Sell
+            entry_price = float(pos['avgPrice'])
+            stop_loss = float(pos.get('stopLoss', 0))
+            cur_price = float(pos['markPrice']) # Використовуємо Mark Price для перевірки
+
+            # Якщо SL вже біля входу (безубиток вже активований) - пропускаємо
+            # Додаємо невеликий буфер 0.1%, щоб не спрацьовувало постійно на дрібних коливаннях
+            is_breakeven = False
+            if side == "Buy" and stop_loss >= entry_price: is_breakeven = True
+            if side == "Sell" and stop_loss > 0 and stop_loss <= entry_price: is_breakeven = True
+            
+            if is_breakeven: continue
+
+            # Перевіряємо наявність активних ордерів TP
+            # Якщо ми ставили 2 TP, і один зник (виконався) -> ставимо БУ
+            orders = self.bot.session.get_open_orders(category="linear", symbol=symbol)
+            tp_orders = []
+            if orders['retCode'] == 0:
+                for o in orders['result']['list']:
+                    # Шукаємо лімітні ордери на закриття (TP)
+                    if o['reduceOnly'] and o['orderType'] == 'Limit':
+                        tp_orders.append(o)
+            
+            # ЛОГІКА:
+            # Якщо ми в позиції, але бачимо лише 1 TP ордер (а ставили 2), 
+            # значить TP1 вже виконався. Час переводити в БУ.
+            # (Або якщо ціна просто пішла далеко в наш бік)
+            
+            should_move_to_be = False
+            
+            # Варіант 1: За кількістю ордерів (якщо використовуємо лімітки)
+            if len(tp_orders) == 1: 
+                should_move_to_be = True
+                logger.info(f"🛡️ {symbol}: Виявлено виконання TP1 (залишився 1 ордер). Переводимо в БУ.")
+
+            # Варіант 2 (Резервний): За ціною (якщо TP1 був пробитий)
+            # Це корисно, якщо TP був ринковим або ми не бачимо ордерів
+            # Тут потрібна логіка, яка знає, де був TP1. Але бот не зберігає стан.
+            # Тому покладаємося на Варіант 1.
+
+            if should_move_to_be:
+                new_sl = entry_price
+                # Трохи зсуваємо в плюс, щоб покрити комісію (наприклад 0.1%)
+                # if side == "Buy": new_sl = entry_price * 1.001
+                # else: new_sl = entry_price * 0.999
+                # Для простоти ставимо рівно вхід:
+                
+                try:
+                    self.bot.session.set_trading_stop(
+                        category="linear",
+                        symbol=symbol,
+                        stopLoss=str(new_sl),
+                        positionIdx=0
+                    )
+                    logger.info(f"✅ {symbol} SL Moved to Breakeven: {new_sl}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to move SL: {e}")
+
+# Запускаємо монітор
+monitor = BreakevenMonitor(bot)
+monitor.start()
+
+# --- WEBHOOK ---
 def parse_tradingview_data(raw_data):
-    """Парсинг даних (JSON/String)"""
     try:
         if isinstance(raw_data, dict): return raw_data
         if isinstance(raw_data, str):
-            import json
-            import re
-            try:
-                return json.loads(raw_data)
-            except:
-                json_match = re.search(r'\{[^}]+\}', raw_data)
-                if json_match:
-                    return json.loads(json_match.group())
-        return {}
+            return json.loads(raw_data)
     except:
-        return {}
+        match = re.search(r'\{[^}]+\}', str(raw_data))
+        if match: return json.loads(match.group())
+    return {}
 
 @app.route('/')
-def home():
-    return "🤖 Trading Bot Active"
+def home(): return "Trading Bot Active 🤖"
 
 @app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({"status": "healthy"})
+def health(): return jsonify({"status": "ok"})
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        raw_data = None
-        if request.content_type and 'application/json' in request.content_type:
-            raw_data = request.get_json()
-        else:
-            raw_data = request.get_data(as_text=True) or request.form.to_dict()
-        
-        data = parse_tradingview_data(raw_data)
-        
+        data = request.get_json(silent=True)
         if not data:
-            return jsonify({"status": "error", "error": "No data"}), 400
-            
-        result = bot.place_order(data)
-        return jsonify(result)
+            data = parse_tradingview_data(request.get_data(as_text=True))
         
+        if not data: return jsonify({"error": "No data"}), 400
+        
+        threading.Thread(target=bot.place_order, args=(data,)).start()
+        return jsonify({"status": "processing"})
     except Exception as e:
-        logger.error(f"💥 Webhook error: {e}")
-        return jsonify({"status": "error", "error": str(e)}), 500
+        logger.error(f"Webhook error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # Цей блок виконується тільки при локальному запуску через python app.py
-    # Gunicorn ігнорує цей блок і імпортує app напряму
-    logger.info(f"🚀 Запуск Development сервера на порту {PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    app.run(host='0.0.0.0', port=PORT)
