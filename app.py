@@ -261,8 +261,12 @@ class BreakevenMonitor:
 
     def check_positions(self):
         # Отримуємо всі відкриті позиції
-        positions = self.bot.session.get_positions(category="linear", settlementCoin="USDT")
-        if positions['retCode'] != 0: return
+        # ВИПРАВЛЕНО: settlementCoin -> settleCoin
+        positions = self.bot.session.get_positions(category="linear", settleCoin="USDT")
+        
+        if positions['retCode'] != 0:
+            logger.warning(f"⚠️ API Error in Monitor: {positions['retMsg']}")
+            return
 
         for pos in positions['result']['list']:
             size = float(pos['size'])
@@ -272,10 +276,9 @@ class BreakevenMonitor:
             side = pos['side'] # Buy or Sell
             entry_price = float(pos['avgPrice'])
             stop_loss = float(pos.get('stopLoss', 0))
-            cur_price = float(pos['markPrice']) # Використовуємо Mark Price для перевірки
+            cur_price = float(pos['markPrice'])
 
             # Якщо SL вже біля входу (безубиток вже активований) - пропускаємо
-            # Додаємо невеликий буфер 0.1%, щоб не спрацьовувало постійно на дрібних коливаннях
             is_breakeven = False
             if side == "Buy" and stop_loss >= entry_price: is_breakeven = True
             if side == "Sell" and stop_loss > 0 and stop_loss <= entry_price: is_breakeven = True
@@ -283,7 +286,6 @@ class BreakevenMonitor:
             if is_breakeven: continue
 
             # Перевіряємо наявність активних ордерів TP
-            # Якщо ми ставили 2 TP, і один зник (виконався) -> ставимо БУ
             orders = self.bot.session.get_open_orders(category="linear", symbol=symbol)
             tp_orders = []
             if orders['retCode'] == 0:
@@ -293,29 +295,9 @@ class BreakevenMonitor:
                         tp_orders.append(o)
             
             # ЛОГІКА:
-            # Якщо ми в позиції, але бачимо лише 1 TP ордер (а ставили 2), 
-            # значить TP1 вже виконався. Час переводити в БУ.
-            # (Або якщо ціна просто пішла далеко в наш бік)
-            
-            should_move_to_be = False
-            
-            # Варіант 1: За кількістю ордерів (якщо використовуємо лімітки)
+            # Якщо залишився тільки 1 TP ордер (а ставили 2), значить TP1 виконався
             if len(tp_orders) == 1: 
-                should_move_to_be = True
-                logger.info(f"🛡️ {symbol}: Виявлено виконання TP1 (залишився 1 ордер). Переводимо в БУ.")
-
-            # Варіант 2 (Резервний): За ціною (якщо TP1 був пробитий)
-            # Це корисно, якщо TP був ринковим або ми не бачимо ордерів
-            # Тут потрібна логіка, яка знає, де був TP1. Але бот не зберігає стан.
-            # Тому покладаємося на Варіант 1.
-
-            if should_move_to_be:
                 new_sl = entry_price
-                # Трохи зсуваємо в плюс, щоб покрити комісію (наприклад 0.1%)
-                # if side == "Buy": new_sl = entry_price * 1.001
-                # else: new_sl = entry_price * 0.999
-                # Для простоти ставимо рівно вхід:
-                
                 try:
                     self.bot.session.set_trading_stop(
                         category="linear",
