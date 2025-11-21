@@ -18,13 +18,13 @@ def keep_alive():
     while True:
         try:
             requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
-            print("🔄 Keep-alive ping sent")
+            # print("🔄 Keep-alive ping sent") # LOGS OFF
         except Exception as e:
             print(f"⚠️ Keep-alive ping failed: {e}")
         time.sleep(600)
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.ERROR) # ЗМІНЕНО РІВЕНЬ НА ERROR (менше спаму)
 logger = logging.getLogger(__name__)
 
 keep_alive_thread = threading.Thread(target=keep_alive)
@@ -40,7 +40,7 @@ class BybitTradingBot:
                 api_key=api_key,
                 api_secret=api_secret,
             )
-            logger.info("✅ Бот ініціалізований")
+            # logger.info("✅ Бот ініціалізований") # LOGS OFF
         except Exception as e:
             logger.error(f"❌ Помилка ініціалізації: {e}")
             raise
@@ -108,20 +108,39 @@ class BybitTradingBot:
         tick_decimals = abs(decimal.Decimal(str(tick_size)).as_tuple().exponent)
         return round(price // tick_size * tick_size, tick_decimals)
 
+    def get_position_size(self, symbol):
+        """Перевірка наявності відкритої позиції"""
+        try:
+            norm_symbol = self.normalize_symbol(symbol)
+            resp = self.session.get_positions(category="linear", symbol=norm_symbol)
+            if resp['retCode'] == 0 and resp['result']['list']:
+                return float(resp['result']['list'][0]['size'])
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error checking position: {e}")
+            return 0.0
+
     def place_order(self, data):
         try:
             # 1. Валідація
             action = data.get('action')
             symbol = data.get('symbol')
             if not action or not symbol: return {"status": "error", "error": "Missing params"}
+            
+            norm_symbol = self.normalize_symbol(symbol)
+
+            # --- ПЕРЕВІРКА ІСНУЮЧОЇ ПОЗИЦІЇ ---
+            current_pos_size = self.get_position_size(norm_symbol)
+            if current_pos_size > 0:
+                # logger.info(f"🚫 Позиція по {norm_symbol} вже існує ({current_pos_size}). Пропускаємо сигнал.") # LOGS OFF
+                return {"status": "ignored", "message": "Position already exists"}
+            # ----------------------------------
 
             riskPercent = float(data.get('riskPercent', 5.0))
             leverage = int(data.get('leverage', 20))
             tpPercent = float(data.get('takeProfitPercent', 0.0))
             slPercent = float(data.get('stopLossPercent', 0.0))
 
-            norm_symbol = self.normalize_symbol(symbol)
-            
             # 2. Ціна та Інфо
             cur_price = self.get_current_price(norm_symbol)
             if not cur_price: return {"status": "error", "error": "No price"}
@@ -137,8 +156,8 @@ class BybitTradingBot:
             balance = self.get_available_balance()
             if not balance: return {"status": "error", "error": "No balance"}
 
-            # Динамічний розрахунок: Margin * Lev
-            margin = balance * (riskPercent / 100)
+            # Динамічний розрахунок: Margin * Lev * Safety Factor (0.98 для комісій)
+            margin = (balance * (riskPercent / 100)) * 0.98
             total_value = margin * leverage
             raw_qty = total_value / cur_price
             
@@ -149,7 +168,7 @@ class BybitTradingBot:
             self.set_leverage(norm_symbol, leverage)
 
             # 5. Вхід в позицію (Market)
-            logger.info(f"🚀 {action} {norm_symbol} | Qty: {final_qty} | Price: {cur_price}")
+            # logger.info(f"🚀 {action} {norm_symbol} | Qty: {final_qty} | Price: {cur_price}") # LOGS OFF
             entry_order = self.session.place_order(
                 category="linear",
                 symbol=norm_symbol,
@@ -172,7 +191,6 @@ class BybitTradingBot:
                 
                 sl_price = self.round_price(sl_price, tick_size)
                 
-                # Встановлюємо SL для позиції
                 self.session.set_trading_stop(
                     category="linear",
                     symbol=norm_symbol,
@@ -180,56 +198,75 @@ class BybitTradingBot:
                     positionIdx=0 
                 )
 
-            # 7. Розділення TP (50% / 50%)
+            # 7. Розділення TP на 3 частини (50% / 35% / 15%)
             if tpPercent > 0:
-                # TP1: 50% відстані, 50% об'єму
-                tp1_dist_percent = tpPercent / 2
-                # TP2: 100% відстані, решта об'єму
-                tp2_dist_percent = tpPercent
+                # Розрахунок об'ємів
+                # 50%
+                qty_tp1 = self.round_qty(final_qty * 0.50, qty_step)
+                # 35%
+                qty_tp2 = self.round_qty(final_qty * 0.35, qty_step)
+                # 15% (Решта, щоб уникнути помилок округлення)
+                qty_tp3 = self.round_qty(final_qty - qty_tp1 - qty_tp2, qty_step)
 
-                qty_tp1 = self.round_qty(final_qty / 2, qty_step)
-                qty_tp2 = self.round_qty(final_qty - qty_tp1, qty_step) # Решта
+                # Розрахунок цін
+                # TP1: 50% відстані (швидка фіксація)
+                tp1_dist = tpPercent * 0.5
+                # TP2: 100% відстані (основна ціль)
+                tp2_dist = tpPercent * 1.0
+                # TP3: 150% відстані (бонусний рух)
+                tp3_dist = tpPercent * 1.5
 
                 tp1_price = 0
                 tp2_price = 0
+                tp3_price = 0
 
                 if action == "Buy":
-                    tp1_price = cur_price * (1 + tp1_dist_percent / 100)
-                    tp2_price = cur_price * (1 + tp2_dist_percent / 100)
+                    tp1_price = cur_price * (1 + tp1_dist / 100)
+                    tp2_price = cur_price * (1 + tp2_dist / 100)
+                    tp3_price = cur_price * (1 + tp3_dist / 100)
                     tp_side = "Sell"
                 else:
-                    tp1_price = cur_price * (1 - tp1_dist_percent / 100)
-                    tp2_price = cur_price * (1 - tp2_dist_percent / 100)
+                    tp1_price = cur_price * (1 - tp1_dist / 100)
+                    tp2_price = cur_price * (1 - tp2_dist / 100)
+                    tp3_price = cur_price * (1 - tp3_dist / 100)
                     tp_side = "Buy"
 
                 tp1_price = self.round_price(tp1_price, tick_size)
                 tp2_price = self.round_price(tp2_price, tick_size)
+                tp3_price = self.round_price(tp3_price, tick_size)
 
                 # Розміщуємо лімітні ордери (Reduce Only)
-                # TP1
+                # TP1 (50%)
                 if qty_tp1 >= min_qty:
                     self.session.place_order(
                         category="linear", symbol=norm_symbol, side=tp_side,
                         orderType="Limit", qty=str(qty_tp1), price=str(tp1_price),
                         reduceOnly=True, timeInForce="GTC"
                     )
-                    logger.info(f"🎯 TP1 Placed: {tp1_price} (50%)")
+                    # logger.info(f"🎯 TP1 Placed: {tp1_price} (50% vol)") # LOGS OFF
 
-                # TP2
+                # TP2 (35%)
                 if qty_tp2 >= min_qty:
                     self.session.place_order(
                         category="linear", symbol=norm_symbol, side=tp_side,
                         orderType="Limit", qty=str(qty_tp2), price=str(tp2_price),
                         reduceOnly=True, timeInForce="GTC"
                     )
-                    logger.info(f"🎯 TP2 Placed: {tp2_price} (100%)")
+                    # logger.info(f"🎯 TP2 Placed: {tp2_price} (35% vol)") # LOGS OFF
+
+                # TP3 (15%)
+                if qty_tp3 >= min_qty:
+                    self.session.place_order(
+                        category="linear", symbol=norm_symbol, side=tp_side,
+                        orderType="Limit", qty=str(qty_tp3), price=str(tp3_price),
+                        reduceOnly=True, timeInForce="GTC"
+                    )
+                    # logger.info(f"🎯 TP3 Placed: {tp3_price} (15% vol)") # LOGS OFF
 
             return {
                 "status": "success",
                 "symbol": norm_symbol,
                 "qty": final_qty,
-                "tp1": tp1_price,
-                "tp2": tp2_price,
                 "sl": sl_price
             }
 
@@ -251,7 +288,7 @@ class BreakevenMonitor:
         thread.start()
 
     def loop(self):
-        logger.info("🛡️ Breakeven Monitor Started")
+        # logger.info("🛡️ Breakeven Monitor Started") # LOGS OFF
         while self.running:
             try:
                 self.check_positions()
@@ -261,11 +298,9 @@ class BreakevenMonitor:
 
     def check_positions(self):
         # Отримуємо всі відкриті позиції
-        # ВИПРАВЛЕНО: settlementCoin -> settleCoin
         positions = self.bot.session.get_positions(category="linear", settleCoin="USDT")
         
         if positions['retCode'] != 0:
-            logger.warning(f"⚠️ API Error in Monitor: {positions['retMsg']}")
             return
 
         for pos in positions['result']['list']:
@@ -276,9 +311,8 @@ class BreakevenMonitor:
             side = pos['side'] # Buy or Sell
             entry_price = float(pos['avgPrice'])
             stop_loss = float(pos.get('stopLoss', 0))
-            cur_price = float(pos['markPrice'])
-
-            # Якщо SL вже біля входу (безубиток вже активований) - пропускаємо
+            
+            # Якщо SL вже на рівні входу або краще - пропускаємо
             is_breakeven = False
             if side == "Buy" and stop_loss >= entry_price: is_breakeven = True
             if side == "Sell" and stop_loss > 0 and stop_loss <= entry_price: is_breakeven = True
@@ -287,16 +321,20 @@ class BreakevenMonitor:
 
             # Перевіряємо наявність активних ордерів TP
             orders = self.bot.session.get_open_orders(category="linear", symbol=symbol)
-            tp_orders = []
+            tp_orders_count = 0
+            
             if orders['retCode'] == 0:
                 for o in orders['result']['list']:
                     # Шукаємо лімітні ордери на закриття (TP)
                     if o['reduceOnly'] and o['orderType'] == 'Limit':
-                        tp_orders.append(o)
+                        tp_orders_count += 1
             
-            # ЛОГІКА:
-            # Якщо залишився тільки 1 TP ордер (а ставили 2), значить TP1 виконався
-            if len(tp_orders) == 1: 
+            # ЛОГІКА БЕЗУБИТКУ:
+            # Ми ставимо 3 TP. 
+            # Якщо активних TP залишилося МЕНШЕ 3 (тобто 2 або 1), значить TP1 (або більше) вже спрацював.
+            # Час переводити в БУ.
+            
+            if tp_orders_count > 0 and tp_orders_count < 3:
                 new_sl = entry_price
                 try:
                     self.bot.session.set_trading_stop(
@@ -305,7 +343,7 @@ class BreakevenMonitor:
                         stopLoss=str(new_sl),
                         positionIdx=0
                     )
-                    logger.info(f"✅ {symbol} SL Moved to Breakeven: {new_sl}")
+                    # logger.info(f"✅ {symbol} SL Moved to Breakeven: {new_sl}") # LOGS OFF
                 except Exception as e:
                     logger.error(f"❌ Failed to move SL: {e}")
 
@@ -325,7 +363,7 @@ def parse_tradingview_data(raw_data):
     return {}
 
 @app.route('/')
-def home(): return "Trading Bot Active 🤖"
+def home(): return "Bot Active"
 
 @app.route('/health', methods=['GET'])
 def health(): return jsonify({"status": "ok"})
