@@ -30,13 +30,20 @@ def keep_alive():
     time.sleep(10)
     while True:
         try:
+            # Логування спроби пінгу
+            # logger.info("Sending keep-alive ping...") 
             requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
         except Exception as e:
-            print(f"⚠️ Keep-alive ping failed: {e}")
+            logger.warning(f"⚠️ Keep-alive ping failed: {e}")
         time.sleep(600)
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.ERROR)
+
+# --- ЗМІНЕНО РІВЕНЬ ЛОГУВАННЯ НА INFO ---
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 keep_alive_thread = threading.Thread(target=keep_alive)
@@ -52,21 +59,24 @@ class BybitTradingBot:
                 api_key=api_key,
                 api_secret=api_secret,
             )
+            logger.info("✅ Bybit API session initialized successfully.")
         except Exception as e:
             logger.error(f"❌ Помилка ініціалізації: {e}")
             raise
 
-    # ... (Функції get_available_balance, normalize_symbol, get_current_price, set_leverage, get_instrument_info, round_qty, round_price, get_position_size залишаються без змін)
-    
     def get_available_balance(self, currency="USDT"):
         try:
             balance_info = self.session.get_wallet_balance(accountType="UNIFIED")
-            if balance_info.get('retCode') != 0: return None
+            if balance_info.get('retCode') != 0: 
+                logger.error(f"❌ Failed to get wallet balance: {balance_info}")
+                return None
             
             for account in balance_info.get('result', {}).get('list', []):
                 for coin in account.get('coin', []):
                     if coin.get('coin') == currency:
-                        return float(coin.get('walletBalance', 0))
+                        balance = float(coin.get('walletBalance', 0))
+                        logger.info(f"💰 Current Balance ({currency}): {balance}")
+                        return balance
             return None
         except Exception as e:
             logger.error(f"❌ Error balance: {e}")
@@ -80,9 +90,13 @@ class BybitTradingBot:
             norm_symbol = self.normalize_symbol(symbol)
             resp = self.session.get_tickers(category="linear", symbol=norm_symbol)
             if resp.get('retCode') == 0 and resp['result']['list']:
-                return float(resp['result']['list'][0]['lastPrice'])
+                price = float(resp['result']['list'][0]['lastPrice'])
+                logger.info(f"📈 Current price for {norm_symbol}: {price}")
+                return price
+            logger.warning(f"⚠️ Could not get price for {norm_symbol}")
             return None
-        except:
+        except Exception as e:
+            logger.error(f"❌ Error getting price: {e}")
             return None
 
     def set_leverage(self, symbol, leverage):
@@ -92,9 +106,12 @@ class BybitTradingBot:
                 category="linear", symbol=norm_symbol, 
                 buyLeverage=str(leverage), sellLeverage=str(leverage)
             )
+            logger.info(f"⚙️ Leverage set to {leverage}x for {norm_symbol}")
             return True
         except Exception as e:
-            if "110043" in str(e): return True
+            if "110043" in str(e): 
+                # logger.info(f"ℹ️ Leverage already set for {symbol}")
+                return True
             logger.error(f"❌ Leverage error: {e}")
             return False
 
@@ -125,26 +142,29 @@ class BybitTradingBot:
             norm_symbol = self.normalize_symbol(symbol)
             resp = self.session.get_positions(category="linear", symbol=norm_symbol)
             if resp['retCode'] == 0 and resp['result']['list']:
-                return float(resp['result']['list'][0]['size'])
+                size = float(resp['result']['list'][0]['size'])
+                if size > 0:
+                    logger.info(f"ℹ️ Existing position size for {norm_symbol}: {size}")
+                return size
             return 0.0
         except Exception as e:
             logger.error(f"Error checking position: {e}")
             return 0.0
 
-    # --- НОВИЙ ФУНКЦІОНАЛ: ОТРИМАННЯ СТАТИСТИКИ ---
     def get_pnl_stats(self, days=7):
-        """Отримує статистику PnL за останні N днів"""
+        logger.info(f"📊 Fetching PnL stats for last {days} days...")
         try:
             end_time = int(time.time() * 1000)
             start_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
             
-            # Запит до Bybit API (Closed PnL)
             resp = self.session.get_closed_pnl(category="linear", startTime=start_time, endTime=end_time, limit=100)
             
             if resp['retCode'] != 0:
+                logger.error(f"❌ API Error getting PnL: {resp['retMsg']}")
                 return None, f"API Error: {resp['retMsg']}"
 
             pnl_list = resp['result']['list']
+            logger.info(f"✅ Found {len(pnl_list)} trades.")
             
             stats = {
                 "total_trades": len(pnl_list),
@@ -166,27 +186,31 @@ class BybitTradingBot:
                 if pnl > stats["best_trade"]: stats["best_trade"] = pnl
                 if pnl < stats["worst_trade"]: stats["worst_trade"] = pnl
                 
-                # Деталі для звіту
                 symbol = trade['symbol']
-                side = trade['side'] # Buy/Sell (на момент закриття)
                 fill_time = datetime.fromtimestamp(int(trade['updatedTime']) / 1000).strftime('%Y-%m-%d %H:%M')
                 stats["details"].append(f"{fill_time} | {symbol} | PnL: {pnl:.2f} USDT")
 
             return stats, None
 
         except Exception as e:
+            logger.error(f"❌ Exception in get_pnl_stats: {e}")
             return None, str(e)
 
     def place_order(self, data):
-        # ... (Ваша існуюча логіка place_order БЕЗ ЗМІН)
+        logger.info(f"📩 Processing order request: {data}")
         try:
             action = data.get('action')
             symbol = data.get('symbol')
-            if not action or not symbol: return {"status": "error", "error": "Missing params"}
+            if not action or not symbol: 
+                logger.error("❌ Missing action or symbol params")
+                return {"status": "error", "error": "Missing params"}
             
             norm_symbol = self.normalize_symbol(symbol)
+            
+            # Check existing position
             current_pos_size = self.get_position_size(norm_symbol)
             if current_pos_size > 0:
+                logger.info(f"⚠️ Position already exists for {norm_symbol}. Ignoring signal.")
                 return {"status": "ignored", "message": "Position already exists"}
 
             riskPercent = float(data.get('riskPercent', 5.0))
@@ -212,10 +236,16 @@ class BybitTradingBot:
             raw_qty = total_value / cur_price
             
             final_qty = self.round_qty(raw_qty, qty_step)
-            if final_qty < min_qty: return {"status": "error", "error": "Qty too small"}
+            
+            logger.info(f"🧮 Calculation: Balance={balance}, Margin={margin:.2f}, Leverage={leverage}, Qty={final_qty}")
+
+            if final_qty < min_qty: 
+                logger.error(f"❌ Calculated quantity {final_qty} is less than min {min_qty}")
+                return {"status": "error", "error": "Qty too small"}
 
             self.set_leverage(norm_symbol, leverage)
 
+            logger.info(f"🚀 Placing MARKET {action} order for {norm_symbol} qty={final_qty}...")
             entry_order = self.session.place_order(
                 category="linear",
                 symbol=norm_symbol,
@@ -226,15 +256,22 @@ class BybitTradingBot:
             )
             
             if entry_order['retCode'] != 0:
+                logger.error(f"❌ Order placement failed: {entry_order['retMsg']}")
                 return {"status": "error", "error": entry_order['retMsg']}
+            
+            logger.info(f"✅ Order placed successfully: {entry_order}")
 
+            # Stop Loss
             sl_price = 0
             if slPercent > 0:
                 if action == "Buy": sl_price = cur_price * (1 - slPercent / 100)
                 else: sl_price = cur_price * (1 + slPercent / 100)
                 sl_price = self.round_price(sl_price, tick_size)
+                
+                logger.info(f"🛡️ Setting Stop Loss at {sl_price}")
                 self.session.set_trading_stop(category="linear", symbol=norm_symbol, stopLoss=str(sl_price), positionIdx=0)
 
+            # Take Profits
             if tpPercent > 0:
                 qty_tp1 = self.round_qty(final_qty * 0.50, qty_step)
                 qty_tp2 = self.round_qty(final_qty * 0.35, qty_step)
@@ -259,6 +296,8 @@ class BybitTradingBot:
                 tp2_price = self.round_price(tp2_price, tick_size)
                 tp3_price = self.round_price(tp3_price, tick_size)
 
+                logger.info(f"🎯 Placing TP Orders: TP1={tp1_price}, TP2={tp2_price}, TP3={tp3_price}")
+
                 if qty_tp1 >= min_qty:
                     self.session.place_order(category="linear", symbol=norm_symbol, side=tp_side, orderType="Limit", qty=str(qty_tp1), price=str(tp1_price), reduceOnly=True, timeInForce="GTC")
                 if qty_tp2 >= min_qty:
@@ -269,12 +308,12 @@ class BybitTradingBot:
             return {"status": "success", "symbol": norm_symbol}
 
         except Exception as e:
-            logger.error(f"💥 Order Error: {e}")
+            logger.error(f"💥 Order Critical Error: {e}")
             return {"status": "error", "error": str(e)}
 
 bot = BybitTradingBot()
 
-# --- МОНІТОРИНГ БЕЗУБИТКУ (БЕЗ ЗМІН) ---
+# --- МОНІТОРИНГ БЕЗУБИТКУ ---
 class BreakevenMonitor:
     def __init__(self, bot_instance):
         self.bot = bot_instance
@@ -284,6 +323,7 @@ class BreakevenMonitor:
         thread = threading.Thread(target=self.loop)
         thread.daemon = True
         thread.start()
+        logger.info("👀 Breakeven Monitor started.")
 
     def loop(self):
         while self.running:
@@ -294,43 +334,49 @@ class BreakevenMonitor:
             time.sleep(MONITOR_INTERVAL)
 
     def check_positions(self):
-        positions = self.bot.session.get_positions(category="linear", settleCoin="USDT")
-        if positions['retCode'] != 0: return
+        try:
+            positions = self.bot.session.get_positions(category="linear", settleCoin="USDT")
+            if positions['retCode'] != 0: return
 
-        for pos in positions['result']['list']:
-            size = float(pos['size'])
-            if size == 0: continue
+            for pos in positions['result']['list']:
+                size = float(pos['size'])
+                if size == 0: continue
 
-            symbol = pos['symbol']
-            side = pos['side']
-            entry_price = float(pos['avgPrice'])
-            stop_loss = float(pos.get('stopLoss', 0))
-            
-            is_breakeven = False
-            if side == "Buy" and stop_loss >= entry_price: is_breakeven = True
-            if side == "Sell" and stop_loss > 0 and stop_loss <= entry_price: is_breakeven = True
-            if is_breakeven: continue
+                symbol = pos['symbol']
+                side = pos['side']
+                entry_price = float(pos['avgPrice'])
+                stop_loss = float(pos.get('stopLoss', 0))
+                
+                is_breakeven = False
+                if side == "Buy" and stop_loss >= entry_price: is_breakeven = True
+                if side == "Sell" and stop_loss > 0 and stop_loss <= entry_price: is_breakeven = True
+                if is_breakeven: continue
 
-            orders = self.bot.session.get_open_orders(category="linear", symbol=symbol)
-            tp_orders_count = 0
-            if orders['retCode'] == 0:
-                for o in orders['result']['list']:
-                    if o['reduceOnly'] and o['orderType'] == 'Limit':
-                        tp_orders_count += 1
-            
-            if tp_orders_count > 0 and tp_orders_count < 3:
-                new_sl = entry_price
-                try:
-                    self.bot.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=str(new_sl), positionIdx=0)
-                except Exception as e:
-                    logger.error(f"❌ Failed to move SL: {e}")
+                orders = self.bot.session.get_open_orders(category="linear", symbol=symbol)
+                tp_orders_count = 0
+                if orders['retCode'] == 0:
+                    for o in orders['result']['list']:
+                        if o['reduceOnly'] and o['orderType'] == 'Limit':
+                            tp_orders_count += 1
+                
+                # Якщо TP спрацювали (залишилось менше 3-х), рухаємо SL в Б/У
+                if tp_orders_count > 0 and tp_orders_count < 3:
+                    logger.info(f"📉 Moving StopLoss to Breakeven for {symbol}. Open TPs: {tp_orders_count}")
+                    new_sl = entry_price
+                    try:
+                        self.bot.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=str(new_sl), positionIdx=0)
+                        logger.info(f"✅ StopLoss moved to {new_sl} for {symbol}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to move SL for {symbol}: {e}")
+        except Exception as e:
+            pass # Silent pass to avoid spamming logs on connection glitches
 
 monitor = BreakevenMonitor(bot)
 monitor.start()
 
-# --- НОВІ ФУНКЦІЇ: EMAIL REPORT ---
+# --- EMAIL REPORT ---
 def send_email(subject, body):
-    """Відправка листа"""
+    logger.info(f"📧 Attempting to send email: {subject}")
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_SENDER
@@ -344,13 +390,13 @@ def send_email(subject, body):
         text = msg.as_string()
         server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, text)
         server.quit()
+        logger.info("✅ Email sent successfully.")
         return True
     except Exception as e:
-        logger.error(f"Email Error: {e}")
+        logger.error(f"❌ Email Error: {e}")
         return False
 
 def generate_report(days):
-    """Генерація тексту звіту"""
     stats, error = bot.get_pnl_stats(days=days)
     if error: return f"Error getting stats: {error}"
     
@@ -369,7 +415,6 @@ def generate_report(days):
     report += f"Worst Trade: {stats['worst_trade']:.2f}\n"
     report += "\nLast Trades:\n"
     
-    # Останні 10 угод
     for det in stats['details'][:10]:
         report += det + "\n"
         
@@ -391,13 +436,11 @@ def home(): return "Bot Active"
 @app.route('/health', methods=['GET'])
 def health(): return jsonify({"status": "ok"})
 
-# 🆕 НОВИЙ ЕНДПОІНТ ДЛЯ ЗВІТУ
-# Викликати: https://ваш-урл.onrender.com/report?days=7
 @app.route('/report', methods=['GET'])
 def trigger_report():
     days = request.args.get('days', default=7, type=int)
+    logger.info(f"📝 Report requested for last {days} days.")
     
-    # Запускаємо в окремому потоці, щоб не блокувати сервер
     def process_report():
         text = generate_report(days)
         send_email(f"Trading Report ({days} days)", text)
@@ -407,18 +450,25 @@ def trigger_report():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    logger.info("🔔 Webhook received.")
     try:
+        raw_data = request.get_data(as_text=True)
+        logger.info(f"📥 Raw Webhook Data: {raw_data}")
+
         data = request.get_json(silent=True)
         if not data:
-            data = parse_tradingview_data(request.get_data(as_text=True))
+            data = parse_tradingview_data(raw_data)
         
-        if not data: return jsonify({"error": "No data"}), 400
+        if not data: 
+            logger.error("❌ No valid JSON data found in webhook.")
+            return jsonify({"error": "No data"}), 400
         
         threading.Thread(target=bot.place_order, args=(data,)).start()
         return jsonify({"status": "processing"})
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"❌ Webhook critical error: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
+    logger.info(f"🚀 Starting Flask server on port {PORT}...")
     app.run(host='0.0.0.0', port=PORT)
