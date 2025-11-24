@@ -144,6 +144,8 @@ class BybitTradingBot:
                 "total_volume": 0.0,
                 "win_trades": 0,
                 "loss_trades": 0,
+                "long_trades": 0,  # Додано
+                "short_trades": 0, # Додано
                 "details": [],
                 "chart_labels": [],
                 "chart_data": [],
@@ -160,13 +162,18 @@ class BybitTradingBot:
                 price = float(trade['avgExitPrice'])
                 qty = float(trade['qty'])
                 volume = price * qty
-                
+                side = trade['side'] # Buy = Long, Sell = Short (в контексті Bybit PnL це напрямок позиції)
+
                 stats["total_pnl"] += pnl
                 stats["total_volume"] += volume
                 cumulative_pnl += pnl
                 
                 if pnl > 0: stats["win_trades"] += 1
                 else: stats["loss_trades"] += 1
+
+                # Рахуємо Лонги та Шорти
+                if side == "Buy": stats["long_trades"] += 1
+                else: stats["short_trades"] += 1
                 
                 # Графік P&L (накопичувальний)
                 fill_time = datetime.fromtimestamp(int(trade['updatedTime']) / 1000)
@@ -183,7 +190,7 @@ class BybitTradingBot:
                 stats["details"].append({
                     "time": fill_time.strftime('%Y-%m-%d %H:%M'),
                     "symbol": symbol,
-                    "side": trade['side'], # Buy/Sell
+                    "side": side,
                     "qty": qty,
                     "entry_price": float(trade['avgEntryPrice']),
                     "exit_price": float(trade['avgExitPrice']),
@@ -196,7 +203,7 @@ class BybitTradingBot:
             
             # Сортуємо монети по PnL для топ-чарту
             sorted_coins = sorted(stats["coin_performance"].items(), key=lambda x: x[1], reverse=True)
-            stats["top_coins_labels"] = [x[0] for x in sorted_coins[:5]] # Топ 5
+            stats["top_coins_labels"] = [x[0] for x in sorted_coins[:5]]
             stats["top_coins_values"] = [round(x[1], 2) for x in sorted_coins[:5]]
 
             return stats, None
@@ -304,27 +311,26 @@ class BreakevenMonitor:
 monitor = BreakevenMonitor(bot)
 monitor.start()
 
-# --- HTML REPORT BYBIT STYLE ---
+# --- HTML REPORT UKRAINIAN STYLE ---
 @app.route('/report', methods=['GET'])
 def report_page():
     days = request.args.get('days', default=7, type=int)
     stats, error = bot.get_pnl_stats(days=days)
     balance = bot.get_available_balance()
     
-    if error: return f"<h1>Error</h1><p>{error}</p>"
+    if error: return f"<h1>Помилка</h1><p>{error}</p>"
 
     win_rate = 0
     if stats['total_trades'] > 0:
         win_rate = round((stats['win_trades'] / stats['total_trades']) * 100, 1)
 
-    # Шаблон в стиле Bybit
     html_template = """
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="uk">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>P&L Analysis</title>
+        <title>Аналіз P&L</title>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
             :root {
@@ -345,7 +351,6 @@ def report_page():
             }
             .container { max_width: 1200px; margin: 0 auto; }
             
-            /* Cards */
             .card {
                 background: var(--card-bg);
                 border-radius: 8px;
@@ -354,71 +359,60 @@ def report_page():
                 box-shadow: 0 1px 3px rgba(0,0,0,0.05);
             }
             
-            /* Header */
             .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
             h1 { font-size: 20px; font-weight: 600; margin: 0; }
             .balance { font-size: 24px; font-weight: 700; }
             .sub-text { font-size: 12px; color: var(--text-secondary); }
 
-            /* KPI Grid */
-            .kpi-grid {
+            /* Grid for Top Stats */
+            .top-stats-grid {
+                display: flex; gap: 40px; margin-bottom: 10px; flex-wrap: wrap;
+            }
+            .kpi-block { min-width: 150px; }
+            .kpi-val { font-size: 24px; font-weight: 700; margin-top: 5px; }
+            .kpi-label { font-size: 13px; color: var(--text-secondary); text-decoration: underline dotted; cursor: help; }
+            
+            /* Detailed Stat Cards (Screenshot Look) */
+            .detail-stats-grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                grid-template-columns: 1fr 1fr;
                 gap: 20px;
                 margin-bottom: 20px;
             }
-            .kpi-val { font-size: 28px; font-weight: 700; margin-top: 5px; }
-            .kpi-label { font-size: 13px; color: var(--text-secondary); }
+            @media (max-width: 768px) { .detail-stats-grid { grid-template-columns: 1fr; } }
+
+            .stat-box {
+                background: white; border-radius: 8px; padding: 20px;
+                display: flex; flex-direction: column;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            }
+            .stat-box-header { font-size: 13px; color: var(--text-secondary); margin-bottom: 15px; }
+            
+            .stat-box-content { display: flex; align-items: center; gap: 20px; }
+            .donut-ring, .gauge-ring { width: 50px; height: 50px; flex-shrink: 0; }
+            
+            .stat-big-num { font-size: 28px; font-weight: 700; line-height: 1.2; }
+            .stat-sub-row { font-size: 13px; margin-top: 4px; display: flex; gap: 5px; }
             
             /* Colors */
             .text-green { color: var(--green); }
             .text-red { color: var(--red); }
-            
+            .text-gray { color: var(--text-secondary); }
+
             /* Charts Row */
-            .charts-row {
-                display: grid;
-                grid-template-columns: 2fr 1fr;
-                gap: 20px;
-                margin-bottom: 20px;
-            }
+            .charts-row { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 20px; }
             @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
             .chart-container { position: relative; height: 300px; width: 100%; }
 
             /* Table */
             .table-container { overflow-x: auto; }
-            table {
-                width: 100%;
-                border-collapse: collapse;
-                font-size: 13px;
-            }
-            th {
-                text-align: left;
-                color: var(--text-secondary);
-                font-weight: 500;
-                padding: 12px 16px;
-                border-bottom: 1px solid var(--border);
-            }
-            td {
-                padding: 14px 16px;
-                border-bottom: 1px solid var(--border);
-                vertical-align: middle;
-            }
+            table { width: 100%; border-collapse: collapse; font-size: 13px; }
+            th { text-align: left; color: var(--text-secondary); font-weight: 500; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+            td { padding: 14px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
             .symbol-cell { display: flex; align-items: center; gap: 10px; font-weight: 600; }
-            .coin-icon {
-                width: 24px; height: 24px;
-                border-radius: 50%;
-                background: #e0e0e0;
-                display: flex; align-items: center; justify-content: center;
-                font-size: 10px; color: #555;
-            }
+            .coin-icon { width: 24px; height: 24px; border-radius: 50%; background: #e0e0e0; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #555; }
             
-            /* Badges */
-            .badge {
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: 500;
-            }
+            .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
             .badge-win { background: rgba(32, 178, 108, 0.1); color: var(--green); }
             .badge-loss { background: rgba(239, 69, 74, 0.1); color: var(--red); }
             .type-long { color: var(--green); }
@@ -427,38 +421,72 @@ def report_page():
     </head>
     <body>
         <div class="container">
-            <!-- Summary Header -->
+            
+            <!-- Main Header -->
             <div class="card">
                 <div class="header-row">
-                    <div>
-                        <h1>P&L Analysis <span style="font-size:14px; color:#999; font-weight:400; margin-left:10px;">Last {{ days }} days</span></h1>
-                    </div>
+                    <h1>Аналіз P&L <span style="font-size:14px; color:#999; font-weight:400; margin-left:10px;">Останні {{ days }} днів</span></h1>
                     <div style="text-align: right;">
-                        <div class="sub-text">Wallet Balance</div>
+                        <div class="sub-text">Баланс Гаманця</div>
                         <div class="balance">${{ "%.2f"|format(balance) }}</div>
                     </div>
                 </div>
-
-                <div class="kpi-grid">
-                    <div>
-                        <div class="kpi-label">Total Realized P&L</div>
+                
+                <div class="top-stats-grid">
+                    <div class="kpi-block">
+                        <div class="kpi-label">Загальний P&L</div>
                         <div class="kpi-val {{ 'text-green' if stats.total_pnl >= 0 else 'text-red' }}">
                             {{ "+" if stats.total_pnl > 0 }}{{ "%.2f"|format(stats.total_pnl) }} <span style="font-size:14px; color:#333;">USD</span>
                         </div>
                     </div>
-                    <div>
-                        <div class="kpi-label">Trading Volume</div>
+                    <div class="kpi-block">
+                        <div class="kpi-label">Торговий об'єм</div>
                         <div class="kpi-val text-green">
                             {{ "%.2f"|format(stats.total_volume) }} <span style="font-size:14px; color:#333;">USD</span>
                         </div>
                     </div>
-                    <div>
-                        <div class="kpi-label">Total Trades</div>
-                        <div class="kpi-val">{{ stats.total_trades }}</div>
+                </div>
+            </div>
+
+            <!-- Specific Detail Cards (Like Screenshot) -->
+            <div class="detail-stats-grid">
+                <!-- Card 1: Orders -->
+                <div class="stat-box">
+                    <div class="stat-box-header">Загальна кількість закритих ордерів</div>
+                    <div class="stat-box-content">
+                        <div class="donut-ring">
+                            <svg viewBox="0 0 36 36">
+                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#ef454a" stroke-width="4" />
+                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#20b26c" stroke-width="4" stroke-dasharray="{{ (stats.long_trades / stats.total_trades * 100) if stats.total_trades > 0 else 0 }}, 100" />
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="stat-big-num">{{ stats.total_trades }}</div>
+                            <div class="stat-sub-row">
+                                <span class="text-green">{{ stats.long_trades }} Закрити лонг</span> / 
+                                <span class="text-red">{{ stats.short_trades }} Закрити шорт</span>
+                            </div>
+                        </div>
                     </div>
-                    <div>
-                        <div class="kpi-label">Win Rate</div>
-                        <div class="kpi-val">{{ win_rate }}%</div>
+                </div>
+
+                <!-- Card 2: Win Rate -->
+                <div class="stat-box">
+                    <div class="stat-box-header">Відсоток успішних угод по закритим ордерам</div>
+                    <div class="stat-box-content">
+                        <div class="gauge-ring">
+                            <!-- Simple SVG Gauge representation -->
+                            <svg viewBox="0 0 36 36">
+                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#eff2f5" stroke-width="4" />
+                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#20b26c" stroke-width="4" stroke-dasharray="{{ win_rate }}, 100" />
+                            </svg>
+                        </div>
+                        <div>
+                            <div class="stat-big-num">{{ win_rate }} %</div>
+                            <div class="stat-sub-row text-gray">
+                                {{ stats.win_trades }} Успішні угоди / {{ stats.loss_trades }} Збитки
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -466,40 +494,30 @@ def report_page():
             <!-- Charts -->
             <div class="charts-row">
                 <div class="card">
-                    <div class="header-row">
-                        <h3>Cumulative P&L ($)</h3>
-                    </div>
-                    <div class="chart-container">
-                        <canvas id="pnlChart"></canvas>
-                    </div>
+                    <div class="header-row"><h3>Кумулятивний P&L ($)</h3></div>
+                    <div class="chart-container"><canvas id="pnlChart"></canvas></div>
                 </div>
                 <div class="card">
-                    <div class="header-row">
-                        <h3>Top Coins</h3>
-                    </div>
-                    <div class="chart-container">
-                        <canvas id="coinChart"></canvas>
-                    </div>
+                    <div class="header-row"><h3>Топ монет</h3></div>
+                    <div class="chart-container"><canvas id="coinChart"></canvas></div>
                 </div>
             </div>
 
             <!-- Table -->
             <div class="card">
-                <div class="header-row">
-                    <h3>Closed Orders Details</h3>
-                </div>
+                <div class="header-row"><h3>Деталі закритих ордерів</h3></div>
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th>Symbol</th>
-                                <th>Side</th>
-                                <th>Qty</th>
-                                <th>Entry Price</th>
-                                <th>Exit Price</th>
-                                <th>Realized P&L</th>
-                                <th>Result</th>
-                                <th>Time</th>
+                                <th>Тікер</th>
+                                <th>Сторона</th>
+                                <th>Кіл-сть</th>
+                                <th>Ціна входу</th>
+                                <th>Ціна виходу</th>
+                                <th>Реаліз. P&L</th>
+                                <th>Результат</th>
+                                <th>Час</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -512,7 +530,7 @@ def report_page():
                                     </div>
                                 </td>
                                 <td class="{{ 'type-long' if trade.side == 'Buy' else 'type-short' }}">
-                                    {{ "Long" if trade.side == "Buy" else "Short" }}
+                                    {{ "Лонг" if trade.side == "Buy" else "Шорт" }}
                                 </td>
                                 <td>{{ trade.qty }}</td>
                                 <td>{{ trade.entry_price }}</td>
@@ -522,7 +540,7 @@ def report_page():
                                 </td>
                                 <td>
                                     <span class="badge {{ 'badge-win' if trade.is_win else 'badge-loss' }}">
-                                        {{ "Win" if trade.is_win else "Loss" }}
+                                        {{ "Прибуток" if trade.is_win else "Збиток" }}
                                     </span>
                                 </td>
                                 <td style="color: #888;">{{ trade.time }}</td>
@@ -546,7 +564,7 @@ def report_page():
                 data: {
                     labels: {{ stats.chart_labels | safe }},
                     datasets: [{
-                        label: 'Cumulative P&L',
+                        label: 'Кумулятивний P&L',
                         data: {{ stats.chart_data | safe }},
                         borderColor: '#20b26c',
                         backgroundColor: gradient,
@@ -573,7 +591,7 @@ def report_page():
                 data: {
                     labels: {{ stats.top_coins_labels | safe }},
                     datasets: [{
-                        label: 'P&L by Coin',
+                        label: 'P&L по монетам',
                         data: {{ stats.top_coins_values | safe }},
                         backgroundColor: (ctx) => {
                             const val = ctx.raw;
