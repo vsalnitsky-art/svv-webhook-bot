@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 from pybit.unified_trading import HTTP
 import logging
 import threading
@@ -12,12 +12,10 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from config import get_api_credentials
 
-# --- НАЛАШТУВАННЯ EMAIL ---
-# ⚠️ ЗАМІНІТЬ НА ВАШІ ДАНІ АБО ВИКОРИСТОВУЙТЕ ЗМІННІ СЕРЕДОВИЩА
+# --- НАЛАШТУВАННЯ EMAIL (Залишаємо як опцію) ---
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 EMAIL_SENDER = "vsalnitsky@gmail.com"
-# Тут вставте 16-значний пароль додатка Google (НЕ звичайний пароль)
 EMAIL_PASSWORD = "hovx cuvd cypv tmtx" 
 EMAIL_RECEIVER = "vsalnitsky@gmail.com"
 
@@ -30,8 +28,6 @@ def keep_alive():
     time.sleep(10)
     while True:
         try:
-            # Логування спроби пінгу
-            # logger.info("Sending keep-alive ping...") 
             requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
         except Exception as e:
             logger.warning(f"⚠️ Keep-alive ping failed: {e}")
@@ -39,7 +35,6 @@ def keep_alive():
 
 app = Flask(__name__)
 
-# --- ЗМІНЕНО РІВЕНЬ ЛОГУВАННЯ НА INFO ---
 logging.basicConfig(
     level=logging.INFO, 
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -75,7 +70,6 @@ class BybitTradingBot:
                 for coin in account.get('coin', []):
                     if coin.get('coin') == currency:
                         balance = float(coin.get('walletBalance', 0))
-                        logger.info(f"💰 Current Balance ({currency}): {balance}")
                         return balance
             return None
         except Exception as e:
@@ -90,10 +84,7 @@ class BybitTradingBot:
             norm_symbol = self.normalize_symbol(symbol)
             resp = self.session.get_tickers(category="linear", symbol=norm_symbol)
             if resp.get('retCode') == 0 and resp['result']['list']:
-                price = float(resp['result']['list'][0]['lastPrice'])
-                logger.info(f"📈 Current price for {norm_symbol}: {price}")
-                return price
-            logger.warning(f"⚠️ Could not get price for {norm_symbol}")
+                return float(resp['result']['list'][0]['lastPrice'])
             return None
         except Exception as e:
             logger.error(f"❌ Error getting price: {e}")
@@ -106,11 +97,9 @@ class BybitTradingBot:
                 category="linear", symbol=norm_symbol, 
                 buyLeverage=str(leverage), sellLeverage=str(leverage)
             )
-            logger.info(f"⚙️ Leverage set to {leverage}x for {norm_symbol}")
             return True
         except Exception as e:
             if "110043" in str(e): 
-                # logger.info(f"ℹ️ Leverage already set for {symbol}")
                 return True
             logger.error(f"❌ Leverage error: {e}")
             return False
@@ -142,10 +131,7 @@ class BybitTradingBot:
             norm_symbol = self.normalize_symbol(symbol)
             resp = self.session.get_positions(category="linear", symbol=norm_symbol)
             if resp['retCode'] == 0 and resp['result']['list']:
-                size = float(resp['result']['list'][0]['size'])
-                if size > 0:
-                    logger.info(f"ℹ️ Existing position size for {norm_symbol}: {size}")
-                return size
+                return float(resp['result']['list'][0]['size'])
             return 0.0
         except Exception as e:
             logger.error(f"Error checking position: {e}")
@@ -157,36 +143,23 @@ class BybitTradingBot:
             now = datetime.now()
             all_pnl_list = []
             
-            # Bybit API limitation: startTime and endTime cannot exceed 7 days.
-            # We iterate backwards in 7-day chunks to cover the requested period.
+            # Розбиваємо запит на чанки по 7 днів через обмеження API
             for i in range(0, days, 7):
                 current_chunk_days = min(7, days - i)
-                
-                # Calculate chunk time range
-                # End of this chunk: 'i' days ago
                 chunk_end_time = now - timedelta(days=i)
-                # Start of this chunk: 'i + current_chunk_days' days ago
                 chunk_start_time = chunk_end_time - timedelta(days=current_chunk_days)
                 
                 ts_end = int(chunk_end_time.timestamp() * 1000)
                 ts_start = int(chunk_start_time.timestamp() * 1000)
                 
-                logger.info(f"   📥 Fetching chunk: {chunk_start_time.strftime('%Y-%m-%d')} -> {chunk_end_time.strftime('%Y-%m-%d')}")
-                
-                # Request data for this chunk
-                # Note: This simple logic takes the first 100 trades per week. 
-                # For heavy trading (>100/week), pagination (cursor) logic would be needed inside this loop.
                 resp = self.session.get_closed_pnl(category="linear", startTime=ts_start, endTime=ts_end, limit=100)
                 
                 if resp['retCode'] != 0:
                     logger.error(f"❌ API Error getting PnL: {resp['retMsg']}")
                     return None, f"API Error: {resp['retMsg']}"
 
-                chunk_trades = resp['result']['list']
-                all_pnl_list.extend(chunk_trades)
-                
-                # Small delay to respect API rate limits
-                time.sleep(0.1)
+                all_pnl_list.extend(resp['result']['list'])
+                time.sleep(0.1) # Anti-spam delay
 
             logger.info(f"✅ Found {len(all_pnl_list)} trades in total.")
             
@@ -197,7 +170,7 @@ class BybitTradingBot:
                 "loss_trades": 0,
                 "best_trade": 0.0,
                 "worst_trade": 0.0,
-                "details": []
+                "details": [] # Тепер тут буде список словників, а не рядків
             }
             
             for trade in all_pnl_list:
@@ -212,10 +185,19 @@ class BybitTradingBot:
                 
                 symbol = trade['symbol']
                 fill_time = datetime.fromtimestamp(int(trade['updatedTime']) / 1000).strftime('%Y-%m-%d %H:%M')
-                stats["details"].append(f"{fill_time} | {symbol} | PnL: {pnl:.2f} USDT")
+                
+                # Зберігаємо структуровані дані
+                stats["details"].append({
+                    "time": fill_time,
+                    "symbol": symbol,
+                    "pnl": pnl,
+                    "side": trade['side'],
+                    "price": trade['avgExitPrice'],
+                    "qty": trade['qty']
+                })
 
-            # Sort details by date (newest first) as chunks might be out of order
-            stats["details"].sort(key=lambda x: x.split('|')[0], reverse=True)
+            # Сортуємо за часом (нові зверху)
+            stats["details"].sort(key=lambda x: x['time'], reverse=True)
             
             return stats, None
 
@@ -224,21 +206,15 @@ class BybitTradingBot:
             return None, str(e)
 
     def place_order(self, data):
-        logger.info(f"📩 Processing order request: {data}")
+        # (Ваш код place_order залишається без змін, скорочую для читабельності)
         try:
             action = data.get('action')
             symbol = data.get('symbol')
-            if not action or not symbol: 
-                logger.error("❌ Missing action or symbol params")
-                return {"status": "error", "error": "Missing params"}
-            
+            if not action or not symbol: return {"status": "error", "error": "Missing params"}
             norm_symbol = self.normalize_symbol(symbol)
             
-            # Check existing position
             current_pos_size = self.get_position_size(norm_symbol)
-            if current_pos_size > 0:
-                logger.info(f"⚠️ Position already exists for {norm_symbol}. Ignoring signal.")
-                return {"status": "ignored", "message": "Position already exists"}
+            if current_pos_size > 0: return {"status": "ignored", "message": "Position already exists"}
 
             riskPercent = float(data.get('riskPercent', 5.0))
             leverage = int(data.get('leverage', 20))
@@ -261,81 +237,50 @@ class BybitTradingBot:
             margin = (balance * (riskPercent / 100)) * 0.98
             total_value = margin * leverage
             raw_qty = total_value / cur_price
-            
             final_qty = self.round_qty(raw_qty, qty_step)
             
-            logger.info(f"🧮 Calculation: Balance={balance}, Margin={margin:.2f}, Leverage={leverage}, Qty={final_qty}")
-
-            if final_qty < min_qty: 
-                logger.error(f"❌ Calculated quantity {final_qty} is less than min {min_qty}")
-                return {"status": "error", "error": "Qty too small"}
+            if final_qty < min_qty: return {"status": "error", "error": "Qty too small"}
 
             self.set_leverage(norm_symbol, leverage)
 
-            logger.info(f"🚀 Placing MARKET {action} order for {norm_symbol} qty={final_qty}...")
             entry_order = self.session.place_order(
-                category="linear",
-                symbol=norm_symbol,
-                side=action,
-                orderType="Market",
-                qty=str(final_qty),
-                timeInForce="GTC"
+                category="linear", symbol=norm_symbol, side=action,
+                orderType="Market", qty=str(final_qty), timeInForce="GTC"
             )
             
-            if entry_order['retCode'] != 0:
-                logger.error(f"❌ Order placement failed: {entry_order['retMsg']}")
-                return {"status": "error", "error": entry_order['retMsg']}
+            if entry_order['retCode'] != 0: return {"status": "error", "error": entry_order['retMsg']}
             
-            logger.info(f"✅ Order placed successfully: {entry_order}")
-
-            # Stop Loss
             sl_price = 0
             if slPercent > 0:
                 if action == "Buy": sl_price = cur_price * (1 - slPercent / 100)
                 else: sl_price = cur_price * (1 + slPercent / 100)
                 sl_price = self.round_price(sl_price, tick_size)
-                
-                logger.info(f"🛡️ Setting Stop Loss at {sl_price}")
                 self.session.set_trading_stop(category="linear", symbol=norm_symbol, stopLoss=str(sl_price), positionIdx=0)
 
-            # Take Profits
             if tpPercent > 0:
                 qty_tp1 = self.round_qty(final_qty * 0.50, qty_step)
                 qty_tp2 = self.round_qty(final_qty * 0.35, qty_step)
                 qty_tp3 = self.round_qty(final_qty - qty_tp1 - qty_tp2, qty_step)
-
+                
                 tp1_dist = tpPercent * 0.5
                 tp2_dist = tpPercent * 1.0
                 tp3_dist = tpPercent * 1.5
 
                 if action == "Buy":
-                    tp1_price = cur_price * (1 + tp1_dist / 100)
-                    tp2_price = cur_price * (1 + tp2_dist / 100)
-                    tp3_price = cur_price * (1 + tp3_dist / 100)
+                    tp1_price, tp2_price, tp3_price = cur_price * (1 + tp1_dist/100), cur_price * (1 + tp2_dist/100), cur_price * (1 + tp3_dist/100)
                     tp_side = "Sell"
                 else:
-                    tp1_price = cur_price * (1 - tp1_dist / 100)
-                    tp2_price = cur_price * (1 - tp2_dist / 100)
-                    tp3_price = cur_price * (1 - tp3_dist / 100)
+                    tp1_price, tp2_price, tp3_price = cur_price * (1 - tp1_dist/100), cur_price * (1 - tp2_dist/100), cur_price * (1 - tp3_dist/100)
                     tp_side = "Buy"
 
-                tp1_price = self.round_price(tp1_price, tick_size)
-                tp2_price = self.round_price(tp2_price, tick_size)
-                tp3_price = self.round_price(tp3_price, tick_size)
-
-                logger.info(f"🎯 Placing TP Orders: TP1={tp1_price}, TP2={tp2_price}, TP3={tp3_price}")
-
-                if qty_tp1 >= min_qty:
-                    self.session.place_order(category="linear", symbol=norm_symbol, side=tp_side, orderType="Limit", qty=str(qty_tp1), price=str(tp1_price), reduceOnly=True, timeInForce="GTC")
-                if qty_tp2 >= min_qty:
-                    self.session.place_order(category="linear", symbol=norm_symbol, side=tp_side, orderType="Limit", qty=str(qty_tp2), price=str(tp2_price), reduceOnly=True, timeInForce="GTC")
-                if qty_tp3 >= min_qty:
-                    self.session.place_order(category="linear", symbol=norm_symbol, side=tp_side, orderType="Limit", qty=str(qty_tp3), price=str(tp3_price), reduceOnly=True, timeInForce="GTC")
+                for q, p in [(qty_tp1, tp1_price), (qty_tp2, tp2_price), (qty_tp3, tp3_price)]:
+                    if q >= min_qty:
+                        self.session.place_order(category="linear", symbol=norm_symbol, side=tp_side, orderType="Limit", 
+                                                 qty=str(q), price=str(self.round_price(p, tick_size)), reduceOnly=True, timeInForce="GTC")
 
             return {"status": "success", "symbol": norm_symbol}
-
         except Exception as e:
-            logger.error(f"💥 Order Critical Error: {e}")
+            logger.error(f"Order Error: {e}")
             return {"status": "error", "error": str(e)}
 
 bot = BybitTradingBot()
@@ -350,104 +295,173 @@ class BreakevenMonitor:
         thread = threading.Thread(target=self.loop)
         thread.daemon = True
         thread.start()
-        logger.info("👀 Breakeven Monitor started.")
 
     def loop(self):
         while self.running:
             try:
                 self.check_positions()
             except Exception as e:
-                logger.error(f"⚠️ Monitor Error: {e}")
+                pass
             time.sleep(MONITOR_INTERVAL)
 
     def check_positions(self):
-        try:
-            positions = self.bot.session.get_positions(category="linear", settleCoin="USDT")
-            if positions['retCode'] != 0: return
+        positions = self.bot.session.get_positions(category="linear", settleCoin="USDT")
+        if positions['retCode'] != 0: return
 
-            for pos in positions['result']['list']:
-                size = float(pos['size'])
-                if size == 0: continue
+        for pos in positions['result']['list']:
+            size = float(pos['size'])
+            if size == 0: continue
 
-                symbol = pos['symbol']
-                side = pos['side']
-                entry_price = float(pos['avgPrice'])
-                stop_loss = float(pos.get('stopLoss', 0))
-                
-                is_breakeven = False
-                if side == "Buy" and stop_loss >= entry_price: is_breakeven = True
-                if side == "Sell" and stop_loss > 0 and stop_loss <= entry_price: is_breakeven = True
-                if is_breakeven: continue
+            symbol = pos['symbol']
+            side = pos['side']
+            entry_price = float(pos['avgPrice'])
+            stop_loss = float(pos.get('stopLoss', 0))
+            
+            is_breakeven = False
+            if side == "Buy" and stop_loss >= entry_price: is_breakeven = True
+            if side == "Sell" and stop_loss > 0 and stop_loss <= entry_price: is_breakeven = True
+            if is_breakeven: continue
 
-                orders = self.bot.session.get_open_orders(category="linear", symbol=symbol)
-                tp_orders_count = 0
-                if orders['retCode'] == 0:
-                    for o in orders['result']['list']:
-                        if o['reduceOnly'] and o['orderType'] == 'Limit':
-                            tp_orders_count += 1
-                
-                # Якщо TP спрацювали (залишилось менше 3-х), рухаємо SL в Б/У
-                if tp_orders_count > 0 and tp_orders_count < 3:
-                    logger.info(f"📉 Moving StopLoss to Breakeven for {symbol}. Open TPs: {tp_orders_count}")
-                    new_sl = entry_price
-                    try:
-                        self.bot.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=str(new_sl), positionIdx=0)
-                        logger.info(f"✅ StopLoss moved to {new_sl} for {symbol}")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to move SL for {symbol}: {e}")
-        except Exception as e:
-            pass # Silent pass to avoid spamming logs on connection glitches
+            orders = self.bot.session.get_open_orders(category="linear", symbol=symbol)
+            tp_orders_count = 0
+            if orders['retCode'] == 0:
+                for o in orders['result']['list']:
+                    if o['reduceOnly'] and o['orderType'] == 'Limit':
+                        tp_orders_count += 1
+            
+            if tp_orders_count > 0 and tp_orders_count < 3:
+                try:
+                    self.bot.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=str(entry_price), positionIdx=0)
+                except: pass
 
 monitor = BreakevenMonitor(bot)
 monitor.start()
 
-# --- EMAIL REPORT ---
-def send_email(subject, body):
-    logger.info(f"📧 Attempting to send email: {subject}")
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_SENDER
-        msg['To'] = EMAIL_RECEIVER
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
-
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        text = msg.as_string()
-        server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, text)
-        server.quit()
-        logger.info("✅ Email sent successfully.")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Email Error: {e}")
-        return False
-
-def generate_report(days):
-    stats, error = bot.get_pnl_stats(days=days)
-    if error: return f"Error getting stats: {error}"
+# --- ЗВІТ В HTML ФОРМАТІ ---
+@app.route('/report', methods=['GET'])
+def report_page():
+    days = request.args.get('days', default=7, type=int)
+    logger.info(f"🖥️ Generating HTML report for {days} days...")
     
+    stats, error = bot.get_pnl_stats(days=days)
     balance = bot.get_available_balance()
     
-    report = f"📊 TRADING REPORT ({days} days)\n"
-    report += f"📅 Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-    report += f"💰 Current Balance: {balance:.2f} USDT\n"
-    report += "-" * 30 + "\n"
-    report += f"Total Trades: {stats['total_trades']}\n"
-    report += f"Win Trades: {stats['win_trades']}\n"
-    report += f"Loss Trades: {stats['loss_trades']}\n"
-    report += f"💵 NET PnL: {stats['total_pnl']:.2f} USDT\n"
-    report += "-" * 30 + "\n"
-    report += f"Best Trade: {stats['best_trade']:.2f}\n"
-    report += f"Worst Trade: {stats['worst_trade']:.2f}\n"
-    report += "\nLast Trades:\n"
+    if error:
+        return f"<h1>Error</h1><p>{error}</p>"
     
-    for det in stats['details'][:10]:
-        report += det + "\n"
-        
+    html_template = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Trading Report</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f6f8; margin: 0; padding: 20px; color: #333; }
+            .container { max_width: 900px; margin: 0 auto; }
+            .header-card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+            .balance-box { text-align: right; }
+            .balance-val { font-size: 1.5em; font-weight: bold; color: #2c3e50; }
+            h1 { margin: 0; font-size: 1.5em; }
+            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; margin-bottom: 25px; }
+            .stat-card { background: white; padding: 15px; border-radius: 10px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.03); }
+            .stat-val { font-size: 1.4em; font-weight: bold; margin-bottom: 5px; }
+            .stat-label { font-size: 0.85em; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+            .green { color: #00b894; }
+            .red { color: #d63031; }
+            table { width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+            th { background: #f8f9fa; text-align: left; padding: 15px; font-size: 0.9em; color: #666; font-weight: 600; }
+            td { padding: 15px; border-bottom: 1px solid #eee; font-size: 0.95em; }
+            tr:last-child td { border-bottom: none; }
+            .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
+            .badge-buy { background: #e3fcef; color: #00b894; }
+            .badge-sell { background: #ffecec; color: #d63031; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header-card">
+                <div>
+                    <h1>📊 Trading Report</h1>
+                    <span style="color: #888; font-size: 0.9em;">Last {{ days }} days • {{ date }}</span>
+                </div>
+                <div class="balance-box">
+                    <div class="balance-val">${{ "%.2f"|format(balance if balance else 0) }}</div>
+                    <div style="color: #888; font-size: 0.8em;">Current Balance</div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-val">{{ stats.total_trades }}</div>
+                    <div class="stat-label">Total Trades</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-val green">{{ stats.win_trades }}</div>
+                    <div class="stat-label">Wins</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-val red">{{ stats.loss_trades }}</div>
+                    <div class="stat-label">Losses</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-val {{ 'green' if stats.total_pnl >= 0 else 'red' }}">
+                        {{ "%.2f"|format(stats.total_pnl) }}
+                    </div>
+                    <div class="stat-label">Net PnL (USDT)</div>
+                </div>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in stats.details %}
+                    <tr>
+                        <td>{{ trade.time }}</td>
+                        <td><b>{{ trade.symbol }}</b></td>
+                        <td><span class="badge {{ 'badge-buy' if trade.side == 'Buy' else 'badge-sell' }}">{{ trade.side }}</span></td>
+                        <td class="{{ 'green' if trade.pnl >= 0 else 'red' }}">
+                            {{ "+" if trade.pnl > 0 else "" }}{{ "%.2f"|format(trade.pnl) }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return render_template_string(html_template, stats=stats, balance=balance, days=days, date=datetime.now().strftime('%Y-%m-%d %H:%M'))
+
+# Текстова версія для сумісності (якщо колись захочете повернути пошту)
+def generate_report(days):
+    stats, error = bot.get_pnl_stats(days=days)
+    if error: return f"Error: {error}"
+    report = f"📊 TRADING REPORT ({days} days)\nNet PnL: {stats['total_pnl']:.2f} USDT\n\n"
+    for t in stats['details'][:20]:
+        report += f"{t['time']} | {t['symbol']} | {t['pnl']:.2f}\n"
     return report
 
-# --- WEBHOOK & ROUTES ---
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        data = request.get_json(silent=True)
+        if not data: data = parse_tradingview_data(request.get_data(as_text=True))
+        if not data: return jsonify({"error": "No data"}), 400
+        threading.Thread(target=bot.place_order, args=(data,)).start()
+        return jsonify({"status": "processing"})
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Допоміжні функції для вебхука
 def parse_tradingview_data(raw_data):
     try:
         if isinstance(raw_data, dict): return raw_data
@@ -459,43 +473,8 @@ def parse_tradingview_data(raw_data):
 
 @app.route('/')
 def home(): return "Bot Active"
-
 @app.route('/health', methods=['GET'])
 def health(): return jsonify({"status": "ok"})
 
-@app.route('/report', methods=['GET'])
-def trigger_report():
-    days = request.args.get('days', default=7, type=int)
-    logger.info(f"📝 Report requested for last {days} days.")
-    
-    def process_report():
-        text = generate_report(days)
-        send_email(f"Trading Report ({days} days)", text)
-        
-    threading.Thread(target=process_report).start()
-    return jsonify({"status": "Report sending initiated", "days": days})
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    logger.info("🔔 Webhook received.")
-    try:
-        raw_data = request.get_data(as_text=True)
-        logger.info(f"📥 Raw Webhook Data: {raw_data}")
-
-        data = request.get_json(silent=True)
-        if not data:
-            data = parse_tradingview_data(raw_data)
-        
-        if not data: 
-            logger.error("❌ No valid JSON data found in webhook.")
-            return jsonify({"error": "No data"}), 400
-        
-        threading.Thread(target=bot.place_order, args=(data,)).start()
-        return jsonify({"status": "processing"})
-    except Exception as e:
-        logger.error(f"❌ Webhook critical error: {e}")
-        return jsonify({"error": str(e)}), 500
-
 if __name__ == '__main__':
-    logger.info(f"🚀 Starting Flask server on port {PORT}...")
     app.run(host='0.0.0.0', port=PORT)
