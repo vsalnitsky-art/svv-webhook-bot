@@ -154,20 +154,44 @@ class BybitTradingBot:
     def get_pnl_stats(self, days=7):
         logger.info(f"📊 Fetching PnL stats for last {days} days...")
         try:
-            end_time = int(time.time() * 1000)
-            start_time = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
+            now = datetime.now()
+            all_pnl_list = []
             
-            resp = self.session.get_closed_pnl(category="linear", startTime=start_time, endTime=end_time, limit=100)
-            
-            if resp['retCode'] != 0:
-                logger.error(f"❌ API Error getting PnL: {resp['retMsg']}")
-                return None, f"API Error: {resp['retMsg']}"
+            # Bybit API limitation: startTime and endTime cannot exceed 7 days.
+            # We iterate backwards in 7-day chunks to cover the requested period.
+            for i in range(0, days, 7):
+                current_chunk_days = min(7, days - i)
+                
+                # Calculate chunk time range
+                # End of this chunk: 'i' days ago
+                chunk_end_time = now - timedelta(days=i)
+                # Start of this chunk: 'i + current_chunk_days' days ago
+                chunk_start_time = chunk_end_time - timedelta(days=current_chunk_days)
+                
+                ts_end = int(chunk_end_time.timestamp() * 1000)
+                ts_start = int(chunk_start_time.timestamp() * 1000)
+                
+                logger.info(f"   📥 Fetching chunk: {chunk_start_time.strftime('%Y-%m-%d')} -> {chunk_end_time.strftime('%Y-%m-%d')}")
+                
+                # Request data for this chunk
+                # Note: This simple logic takes the first 100 trades per week. 
+                # For heavy trading (>100/week), pagination (cursor) logic would be needed inside this loop.
+                resp = self.session.get_closed_pnl(category="linear", startTime=ts_start, endTime=ts_end, limit=100)
+                
+                if resp['retCode'] != 0:
+                    logger.error(f"❌ API Error getting PnL: {resp['retMsg']}")
+                    return None, f"API Error: {resp['retMsg']}"
 
-            pnl_list = resp['result']['list']
-            logger.info(f"✅ Found {len(pnl_list)} trades.")
+                chunk_trades = resp['result']['list']
+                all_pnl_list.extend(chunk_trades)
+                
+                # Small delay to respect API rate limits
+                time.sleep(0.1)
+
+            logger.info(f"✅ Found {len(all_pnl_list)} trades in total.")
             
             stats = {
-                "total_trades": len(pnl_list),
+                "total_trades": len(all_pnl_list),
                 "total_pnl": 0.0,
                 "win_trades": 0,
                 "loss_trades": 0,
@@ -176,7 +200,7 @@ class BybitTradingBot:
                 "details": []
             }
             
-            for trade in pnl_list:
+            for trade in all_pnl_list:
                 pnl = float(trade['closedPnl'])
                 stats["total_pnl"] += pnl
                 
@@ -190,6 +214,9 @@ class BybitTradingBot:
                 fill_time = datetime.fromtimestamp(int(trade['updatedTime']) / 1000).strftime('%Y-%m-%d %H:%M')
                 stats["details"].append(f"{fill_time} | {symbol} | PnL: {pnl:.2f} USDT")
 
+            # Sort details by date (newest first) as chunks might be out of order
+            stats["details"].sort(key=lambda x: x.split('|')[0], reverse=True)
+            
             return stats, None
 
         except Exception as e:
