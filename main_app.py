@@ -1,9 +1,10 @@
 """
-Main Application - Light Theme Edition ☀️
+Main Application - Server Logs Edition 📝
 Включає:
-- Світлий UI (Сканер та Звіти)
-- Очищення бази після закриття угоди
-- Smart Exit та повна логіка торгівлі
+- Вивід повідомлень та причин закриття в ЛОГИ СЕРВЕРА (замість Telegram)
+- Smart Exit (RSI + Volume Pressure)
+- Світлий UI
+- Захист від миттєвого закриття (Cooldown)
 """
 
 from flask import Flask, request, jsonify, render_template_string
@@ -42,16 +43,15 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# === TELEGRAM ===
+# === 🔔 ЛОГУВАННЯ ЗАМІСТЬ ТЕЛЕГРАМУ ===
 def send_telegram_message(text):
-    try:
-        tg_token = getattr(config, 'TG_BOT_TOKEN', "ВАШ_ТОКЕН")
-        chat_id = getattr(config, 'TG_CHAT_ID', "ВАШ_CHAT_ID")
-        if "ВАШ_" in tg_token: return 
-        url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-        requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
-    except Exception as e:
-        logger.error(f"TG Error: {e}")
+    """
+    Заглушка: Виводить повідомлення в лог сервера замість Telegram.
+    """
+    # Прибираємо HTML теги для чистоти логів
+    clean_text = text.replace("<b>", "").replace("</b>", "").replace("\n", " | ")
+    
+    logger.info(f"\n{'='*60}\n🔔 [BOT MESSAGE]: {clean_text}\n{'='*60}")
 
 # === ОБРОБКА СИГНАЛУ ===
 def process_signal_with_ai(data):
@@ -63,7 +63,7 @@ def process_signal_with_ai(data):
         try: ai_text = ai_analyst.analyze_signal(symbol, action)
         except: ai_text = "Помилка аналізу"
 
-    msg = f"🚀 <b>ВХІД: {symbol}</b>\nНапрямок: {action}\n\n🤖 <b>Gemini:</b> {ai_text}"
+    msg = f"ВХІД: {symbol} | Напрямок: {action} | AI: {ai_text}"
     send_telegram_message(msg)
     bot.place_order(data)
 
@@ -191,6 +191,7 @@ class BybitTradingBot:
                     return {"status": "error_balance"}
             
             self.set_leverage(norm_symbol, leverage)
+            
             self.session.place_order(
                 category="linear", symbol=norm_symbol, side=action, 
                 orderType="Market", qty=str(final_qty), timeInForce="GTC"
@@ -220,7 +221,7 @@ class BybitTradingBot:
 
     # === СИНХРОНІЗАЦІЯ ===
     def sync_trades_from_bybit(self, days=30):
-        logger.info(f"🔄 Syncing P&L...")
+        # logger.info(f"🔄 Syncing P&L...") # Вимкнув, щоб не спамило
         try:
             now = datetime.now()
             for i in range(0, days, 7):
@@ -250,8 +251,7 @@ class BybitTradingBot:
         self.sync_trades_from_bybit(days=30) 
         try:
             all_trades = stats_service.get_trades(days=90)
-            if not all_trades:
-                return {"total_pnl": 0.0, "total_trades": 0, "win_rate": 0, "chart_labels": [], "chart_data": [], "history": []}, None
+            if not all_trades: return {"total_pnl": 0.0, "total_trades": 0, "win_rate": 0, "chart_labels": [], "chart_data": [], "history": []}, None
 
             filtered_trades = []
             filter_start = None
@@ -324,7 +324,7 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === 🔥 SMART TRADE MANAGER (RSI + VOLUME PRESSURE) ===
+# === 🔥 SMART TRADE MANAGER (LOGS + COOLDOWN) ===
 class SmartTradeManager:
     def __init__(self, bot_instance, scanner_instance):
         self.bot = bot_instance
@@ -338,7 +338,7 @@ class SmartTradeManager:
     def loop(self):
         while self.running:
             try: self.manage_positions()
-            except: pass
+            except Exception as e: logger.error(f"Manager Error: {e}")
             time.sleep(5)
             
     def manage_positions(self):
@@ -354,23 +354,40 @@ class SmartTradeManager:
             entry_price = float(pos['avgPrice'])
             unrealized_pnl = float(pos['unrealisedPnl'])
             
+            # 1. COOLDOWN: Ігноруємо угоди молодші 60 сек (щоб індикатори стабілізувались)
+            last_update_ts = int(pos['updatedTime']) / 1000
+            seconds_open = time.time() - last_update_ts
+            if seconds_open < 60: continue
+
             rsi = self.scanner.get_current_rsi(symbol)
             pressure = self.scanner.get_market_pressure(symbol)
             
+            # Формуємо рядок для логу
+            details = f"RSI={rsi}, PnL={unrealized_pnl:.2f}, Pressure={int(pressure)}"
+            
             # 1. RSI Exit
-            if side == "Buy" and rsi >= 78 and unrealized_pnl > 0:
-                self.close_position(symbol, size, "Sell", f"RSI High ({rsi})")
-                continue
-            if side == "Sell" and rsi <= 22 and unrealized_pnl > 0:
-                self.close_position(symbol, size, "Buy", f"RSI Low ({rsi})")
-                continue
+            if side == "Buy":
+                if rsi >= 80 and unrealized_pnl > 0:
+                    self.close_position(symbol, size, "Sell", f"RSI Overbought ({rsi} > 80)", details)
+                    continue
+                if rsi <= 20 and unrealized_pnl < -10: # Panic save
+                    self.close_position(symbol, size, "Sell", f"RSI Crash Protect", details)
+                    continue
+
+            if side == "Sell":
+                if rsi <= 20 and unrealized_pnl > 0:
+                    self.close_position(symbol, size, "Buy", f"RSI Oversold ({rsi} < 20)", details)
+                    continue
+                if rsi >= 80 and unrealized_pnl < -10:
+                    self.close_position(symbol, size, "Buy", f"RSI Pump Protect", details)
+                    continue
 
             # 2. Volume Pressure Exit
-            if side == "Buy" and pressure < -100000:
-                self.close_position(symbol, size, "Sell", f"Volume Dump")
+            if side == "Buy" and pressure < -200000:
+                self.close_position(symbol, size, "Sell", "Volume Dump Panic", details)
                 continue
-            if side == "Sell" and pressure > 100000:
-                self.close_position(symbol, size, "Buy", f"Volume Pump")
+            if side == "Sell" and pressure > 200000:
+                self.close_position(symbol, size, "Buy", "Volume Pump Panic", details)
                 continue
 
             # 3. Trailing Stop
@@ -389,31 +406,31 @@ class SmartTradeManager:
                     new_sl = entry_price * 0.995
                     if current_sl == 0 or current_sl > new_sl: self.update_sl(symbol, new_sl)
 
-    def close_position(self, symbol, qty, side, reason):
+    def close_position(self, symbol, qty, side, reason, details):
         try:
             self.bot.session.place_order(category="linear", symbol=symbol, side=side, orderType="Market", qty=str(qty), reduceOnly=True)
             self.bot.session.cancel_all_orders(category="linear", symbol=symbol)
-            send_telegram_message(f"💰 <b>AUTO-CLOSE: {symbol}</b>\nПричина: {reason}\nP&L фіксується.")
             
-            # 🔥 ОЧИЩЕННЯ БАЗИ ПО ЦІЙ МОНЕТІ
+            msg = f"AUTO-CLOSE: {symbol} | Причина: {reason} | {details}"
+            send_telegram_message(msg)
+            
             try:
                 stats_service.delete_coin_history(symbol)
-                logger.info(f"🧹 History cleared for {symbol}")
             except: pass
             
-            logger.info(f"✅ Auto-closed {symbol}: {reason}")
-        except: pass
+        except Exception as e: logger.error(f"Failed to close {symbol}: {e}")
 
     def update_sl(self, symbol, price):
         try:
             price_str = "{:.4f}".format(price)
             self.bot.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=price_str, positionIdx=0)
+            # Не спамимо в лог про трейлінг, щоб було чисто
         except: pass
 
 trade_manager = SmartTradeManager(bot, scanner)
 trade_manager.start()
 
-# === WEB ROUTES (LIGHT THEME) ===
+# === WEB ROUTES (LIGHT) ===
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -452,7 +469,6 @@ def scanner_page():
     positive_coins.sort(key=lambda x: x['inflow'], reverse=True)
     negative_coins.sort(key=lambda x: x['inflow'], reverse=True)
 
-    # === СВІТЛИЙ ДИЗАЙН ===
     html = """
     <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Whale Scanner Light</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -473,23 +489,14 @@ def scanner_page():
         .badge-rsi-low { background-color: #e0f2f1; color: #00695c; border: 1px solid #b2dfdb; }
     </style>
     <meta http-equiv="refresh" content="30"></head><body>
-    
     <nav class="navbar navbar-expand-lg navbar-light mb-4 px-3">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="#">🐋 Whale Scanner <span class="badge bg-light text-dark border">LIGHT</span></a>
-            <span class="text-muted ms-2 small">Оновлено: {{ last_update }}</span>
-        </div>
+        <div class="container-fluid"><a class="navbar-brand" href="#">🐋 Whale Scanner <span class="badge bg-light text-dark border">LIGHT</span></a><span class="text-muted ms-2 small">Оновлено: {{ last_update }}</span></div>
     </nav>
-
     <div class="container-fluid">
-        {% if positions %}
-        <div class="card border-primary mb-4"><div class="card-header text-primary bg-light border-bottom-0">АКТИВНІ УГОДИ</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск ($)</th><th>Статус</th></tr></thead><tbody>
-        {% for pos in positions %}<tr class="{{ pos.row_class }}"><td class="fw-bold">{{ pos.symbol }}</td><td><span class="badge {{ 'bg-success' if pos.side=='Buy' else 'bg-danger' }}">{{ pos.side }}</span></td><td class="{{ 'text-up' if pos.pnl>0 else 'text-down' }}">{{ pos.pnl }}$</td><td><span class="badge {{ 'badge-rsi-high' if pos.rsi>70 else 'badge-rsi-low' }}">{{ pos.rsi }}</span></td><td class="{{ 'text-up' if pos.pressure>0 else 'text-down' }}">{{ "{:,.0f}".format(pos.pressure) }}</td><td><strong>{{ pos.recommendation }}</strong></td></tr>{% endfor %}</tbody></table></div></div>
-        {% endif %}
-        
-        <div class="row"><div class="col-md-6"><div class="card"><div class="card-header text-up">Покупці (Вливання)</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вхід ($)</th></tr></thead><tbody>{% for c in positive_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-up">+{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div><div class="col-md-6"><div class="card"><div class="card-header text-down">Продавці (Вихід)</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вихід ($)</th></tr></thead><tbody>{% for c in negative_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-down">{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div></div>
-        
-        <div class="card"><div class="card-header d-flex justify-content-between align-items-center bg-white"><span>Журнал Сигналів</span><a href="/report" class="btn btn-sm btn-outline-secondary">Перейти до P&L</a></div><div class="card-body p-0"><table id="signalsTable" class="table table-hover w-100"><thead><tr><th>Час</th><th>Символ</th><th>Ціна</th><th>Зміна</th><th>Аномалія</th><th>RSI</th><th>Об'єм ($)</th></tr></thead><tbody>{% for p in pumps %}<tr><td class="text-muted">{{ p.time }}</td><td class="fw-bold text-primary">{{ p.symbol }}</td><td>{{ p.price }}</td><td class="{{ 'text-up' if p.price_change_interval>0 else 'text-down' }}">{{ p.price_change_interval }}%</td><td>x{{ p.spike_factor }}</td><td>{{ p.get('rsi','-') }}</td><td class="fw-bold">{{ "{:,.0f}".format(p.vol_inflow) }}</td></tr>{% endfor %}</tbody></table></div></div>
+        {% if positions %}<div class="card border-primary mb-4"><div class="card-header text-primary bg-light border-bottom-0">АКТИВНІ УГОДИ</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск ($)</th><th>Статус</th></tr></thead><tbody>
+        {% for pos in positions %}<tr class="{{ pos.row_class }}"><td class="fw-bold">{{ pos.symbol }}</td><td><span class="badge {{ 'bg-success' if pos.side=='Buy' else 'bg-danger' }}">{{ pos.side }}</span></td><td class="{{ 'text-up' if pos.pnl>0 else 'text-down' }}">{{ pos.pnl }}$</td><td><span class="badge {{ 'badge-rsi-high' if pos.rsi>70 else 'badge-rsi-low' }}">{{ pos.rsi }}</span></td><td class="{{ 'text-up' if pos.pressure>0 else 'text-down' }}">{{ "{:,.0f}".format(pos.pressure) }}</td><td><strong>{{ pos.recommendation }}</strong></td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
+        <div class="row"><div class="col-md-6"><div class="card"><div class="card-header text-up">Покупці</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вхід ($)</th></tr></thead><tbody>{% for c in positive_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-up">+{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div><div class="col-md-6"><div class="card"><div class="card-header text-down">Продавці</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вихід ($)</th></tr></thead><tbody>{% for c in negative_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-down">{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div></div>
+        <div class="card"><div class="card-header d-flex justify-content-between align-items-center bg-white"><span>Журнал</span><a href="/report" class="btn btn-sm btn-outline-secondary">Звіт P&L</a></div><div class="card-body p-0"><table id="signalsTable" class="table table-hover w-100"><thead><tr><th>Час</th><th>Символ</th><th>Ціна</th><th>Зміна</th><th>Аномалія</th><th>RSI</th><th>Об'єм ($)</th></tr></thead><tbody>{% for p in pumps %}<tr><td class="text-muted">{{ p.time }}</td><td class="fw-bold text-primary">{{ p.symbol }}</td><td>{{ p.price }}</td><td class="{{ 'text-up' if p.price_change_interval>0 else 'text-down' }}">{{ p.price_change_interval }}%</td><td>x{{ p.spike_factor }}</td><td>{{ p.get('rsi','-') }}</td><td class="fw-bold">{{ "{:,.0f}".format(p.vol_inflow) }}</td></tr>{% endfor %}</tbody></table></div></div>
     </div>
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script><script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script><script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script><script>$(document).ready(function(){$('#signalsTable').DataTable({"order":[[0,"desc"]],"pageLength":25,"language":{"search":"Пошук:","paginate":{"next":">","previous":"<"}}});});</script></body></html>
     """
