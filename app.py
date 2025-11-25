@@ -460,6 +460,22 @@ def scanner_page():
     """Сторінка зі звітом сканера та сортуванням"""
     last_update = scanner.last_scan_time.strftime('%H:%M:%S') if scanner.last_scan_time else "Запуск..."
     
+    # --- АГРЕГАЦІЯ ДАНИХ ДЛЯ ГРАФІКА ---
+    # Сумуємо вливання по кожній монеті
+    inflows = {}
+    for p in scanner.detected_pumps:
+        sym = p['symbol']
+        val = p['vol_inflow']
+        if sym in inflows:
+            inflows[sym] += val
+        else:
+            inflows[sym] = val
+    
+    # Сортуємо та беремо топ 5
+    top_inflows = sorted(inflows.items(), key=lambda x: x[1], reverse=True)[:5]
+    top_labels = [x[0] for x in top_inflows]
+    top_values = [x[1] for x in top_inflows]
+    
     html_template = """
     <!DOCTYPE html>
     <html lang="uk">
@@ -468,6 +484,7 @@ def scanner_page():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Whale Scanner 🐋</title>
         <meta http-equiv="refresh" content="30">
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
             :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --red: #ef4444; --blue: #3b82f6; }
             body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
@@ -489,6 +506,8 @@ def scanner_page():
             
             /* Highlighting large moves */
             tr.huge-move { background: rgba(34, 197, 94, 0.05); }
+            
+            .chart-container { position: relative; height: 300px; width: 100%; }
         </style>
     </head>
     <body>
@@ -499,10 +518,16 @@ def scanner_page():
             </div>
             
             <div class="card">
-                <h3>🔥 Вливання Великого Капіталу (Статистика за 24г)</h3>
+                <h3>💰 ТОП-5 Монет за об'ємом вливань (24г)</h3>
+                <div class="chart-container">
+                    <canvas id="inflowChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3>🔥 Вливання Великого Капіталу (Лог)</h3>
                 <p style="color:#94a3b8; font-size: 14px;">
                     Тут відображаються тільки монети, в які за одну хвилину зайшло <strong>понад $1,000,000</strong>.
-                    <br>Це ознака підготовки до сильного руху (Памп або Дамп).
                 </p>
                 
                 {% if pumps %}
@@ -546,11 +571,54 @@ def scanner_page():
         </div>
 
         <script>
+        // --- Chart Configuration ---
+        const ctx = document.getElementById('inflowChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: {{ top_labels | safe }},
+                datasets: [{
+                    label: 'Сумарне вливання USDT',
+                    data: {{ top_values | safe }},
+                    backgroundColor: '#22c55e',
+                    borderRadius: 6,
+                    barThickness: 40
+                }]
+            },
+            options: {
+                indexAxis: 'y', // Horizontal Bar Chart like in screenshot
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                let value = context.raw;
+                                return '$' + value.toLocaleString();
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: '#334155' },
+                        ticks: { color: '#94a3b8' }
+                    },
+                    y: {
+                        grid: { display: false },
+                        ticks: { color: '#e2e8f0', font: { weight: 'bold' } }
+                    }
+                }
+            }
+        });
+
+        // --- Table Sort Logic ---
         function sortTable(n) {
           var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
           table = document.getElementById("pumpsTable");
           switching = true;
-          dir = "desc"; // Default sort Descending (Newest/Largest first)
+          dir = "desc"; 
           
           while (switching) {
             switching = false;
@@ -563,7 +631,7 @@ def scanner_page():
               let xVal = x.innerText.toLowerCase().replace(/[$,x%+,]/g, "").trim();
               let yVal = y.innerText.toLowerCase().replace(/[$,x%+,]/g, "").trim();
               
-              if (n === 0) { // Time sort logic if needed, usually string compare works for HH:MM:SS
+              if (n === 0) { 
               } else if (!isNaN(parseFloat(xVal)) && isFinite(xVal)) {
                   xVal = parseFloat(xVal);
                   yVal = parseFloat(yVal);
@@ -591,7 +659,7 @@ def scanner_page():
     </body>
     </html>
     """
-    return render_template_string(html_template, pumps=scanner.detected_pumps, last_update=last_update)
+    return render_template_string(html_template, pumps=scanner.detected_pumps, last_update=last_update, top_labels=top_labels, top_values=top_values)
 
 @app.route('/report', methods=['GET'])
 def report_page():
