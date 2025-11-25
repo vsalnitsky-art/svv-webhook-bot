@@ -6,23 +6,31 @@ import time
 import requests
 import json
 import re
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import copy
 from datetime import datetime, timedelta
 from config import get_api_credentials
 
 # --- НАЛАШТУВАННЯ ---
 PORT = 10000
 MONITOR_INTERVAL = 5 
+SCANNER_INTERVAL = 60  # Сканування ринку раз на 60 секунд
+VOLUME_SPIKE_THRESHOLD = 3.0 # Коефіцієнт аномалії (3.0 = об'єм у 3 рази вищий за середній)
+MIN_24H_VOLUME = 1000000 # Ігнорувати монети з добовим об'ємом менше 1 млн$
 
 # --- EMAIL (Опціонально) ---
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 EMAIL_SENDER = "vsalnitsky@gmail.com"
-EMAIL_PASSWORD = "hovx cuvd cypv tmtx" 
+EMAIL_PASSWORD = "YOUR_APP_PASSWORD_HERE" # Вставте пароль сюди
 EMAIL_RECEIVER = "vsalnitsky@gmail.com"
 
+# --- FLASK APP ---
+app = Flask(__name__)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# --- KEEP ALIVE ---
 def keep_alive():
     """Функція для підтримки сервера активним"""
     time.sleep(10)
@@ -33,15 +41,11 @@ def keep_alive():
             logger.warning(f"⚠️ Keep-alive ping failed: {e}")
         time.sleep(600)
 
-app = Flask(__name__)
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
 keep_alive_thread = threading.Thread(target=keep_alive)
 keep_alive_thread.daemon = True
 keep_alive_thread.start()
 
+# --- BOT CLASS ---
 class BybitTradingBot:
     def __init__(self):
         try:
@@ -67,6 +71,17 @@ class BybitTradingBot:
 
     def normalize_symbol(self, symbol):
         return symbol.replace('.P', '')
+
+    def get_all_tickers(self):
+        """Отримує дані по всім монетам відразу"""
+        try:
+            resp = self.session.get_tickers(category="linear")
+            if resp['retCode'] == 0:
+                return resp['result']['list']
+            return []
+        except Exception as e:
+            logger.error(f"Ticker fetch error: {e}")
+            return []
 
     def get_current_price(self, symbol):
         try:
@@ -116,14 +131,13 @@ class BybitTradingBot:
             return 0.0
         except: return 0.0
 
-    # --- ОСНОВНА ЛОГІКА ЗБОРУ СТАТИСТИКИ ---
+    # --- P&L STATISTICS ---
     def get_pnl_stats(self, days=7):
         logger.info(f"📊 Fetching PnL stats for last {days} days...")
         try:
             now = datetime.now()
             all_trades = []
             
-            # Завантаження частинами по 7 днів
             for i in range(0, days, 7):
                 chunk_days = min(7, days - i)
                 end_dt = now - timedelta(days=i)
@@ -137,24 +151,17 @@ class BybitTradingBot:
                     all_trades.extend(resp['result']['list'])
                 time.sleep(0.1)
 
-            # Підготовка даних
             stats = {
                 "total_trades": len(all_trades),
                 "total_pnl": 0.0,
                 "total_volume": 0.0,
-                "win_trades": 0,
-                "loss_trades": 0,
-                "long_trades": 0,  # Додано
-                "short_trades": 0, # Додано
-                "details": [],
-                "chart_labels": [],
-                "chart_data": [],
+                "win_trades": 0, "loss_trades": 0,
+                "long_trades": 0, "short_trades": 0,
+                "details": [], "chart_labels": [], "chart_data": [],
                 "coin_performance": {}
             }
 
-            # Сортуємо від старих до нових для графіка
             all_trades.sort(key=lambda x: int(x['updatedTime']))
-
             cumulative_pnl = 0.0
             
             for trade in all_trades:
@@ -162,7 +169,7 @@ class BybitTradingBot:
                 price = float(trade['avgExitPrice'])
                 qty = float(trade['qty'])
                 volume = price * qty
-                side = trade['side'] # Buy = Long, Sell = Short (в контексті Bybit PnL це напрямок позиції)
+                side = trade['side']
 
                 stats["total_pnl"] += pnl
                 stats["total_volume"] += volume
@@ -171,49 +178,37 @@ class BybitTradingBot:
                 if pnl > 0: stats["win_trades"] += 1
                 else: stats["loss_trades"] += 1
 
-                # Рахуємо Лонги та Шорти
                 if side == "Buy": stats["long_trades"] += 1
                 else: stats["short_trades"] += 1
                 
-                # Графік P&L (накопичувальний)
                 fill_time = datetime.fromtimestamp(int(trade['updatedTime']) / 1000)
                 stats["chart_labels"].append(fill_time.strftime('%m-%d'))
                 stats["chart_data"].append(round(cumulative_pnl, 2))
                 
-                # P&L по монетам
                 symbol = trade['symbol']
-                if symbol not in stats["coin_performance"]:
-                    stats["coin_performance"][symbol] = 0.0
+                if symbol not in stats["coin_performance"]: stats["coin_performance"][symbol] = 0.0
                 stats["coin_performance"][symbol] += pnl
 
-                # Деталі для таблиці
                 stats["details"].append({
                     "time": fill_time.strftime('%Y-%m-%d %H:%M'),
-                    "symbol": symbol,
-                    "side": side,
-                    "qty": qty,
+                    "symbol": symbol, "side": side, "qty": qty,
                     "entry_price": float(trade['avgEntryPrice']),
                     "exit_price": float(trade['avgExitPrice']),
-                    "pnl": pnl,
-                    "is_win": pnl > 0
+                    "pnl": pnl, "is_win": pnl > 0
                 })
 
-            # Сортуємо деталі для таблиці: нові зверху
             stats["details"].sort(key=lambda x: x['time'], reverse=True)
-            
-            # Сортуємо монети по PnL для топ-чарту
             sorted_coins = sorted(stats["coin_performance"].items(), key=lambda x: x[1], reverse=True)
             stats["top_coins_labels"] = [x[0] for x in sorted_coins[:5]]
             stats["top_coins_values"] = [round(x[1], 2) for x in sorted_coins[:5]]
 
             return stats, None
-
         except Exception as e:
             logger.error(f"❌ Stat Error: {e}")
             return None, str(e)
 
+    # --- ORDER PLACEMENT ---
     def place_order(self, data):
-        # (Логіка ордерів без змін)
         try:
             action = data.get('action')
             symbol = data.get('symbol')
@@ -248,7 +243,6 @@ class BybitTradingBot:
             self.set_leverage(norm_symbol, leverage)
             self.session.place_order(category="linear", symbol=norm_symbol, side=action, orderType="Market", qty=str(final_qty), timeInForce="GTC")
             
-            sl_price = 0
             if slPercent > 0:
                 sl_price = cur_price * (1 - slPercent/100) if action == "Buy" else cur_price * (1 + slPercent/100)
                 self.session.set_trading_stop(category="linear", symbol=norm_symbol, stopLoss=str(self.round_price(sl_price, tick_size)), positionIdx=0)
@@ -263,13 +257,11 @@ class BybitTradingBot:
                 tp3_dist = tpPercent * 1.5
                 
                 tp_side = "Sell" if action == "Buy" else "Buy"
-                
                 tps = [
                     (qty_tp1, cur_price * (1 + tp1_dist/100) if action == "Buy" else cur_price * (1 - tp1_dist/100)),
                     (qty_tp2, cur_price * (1 + tp2_dist/100) if action == "Buy" else cur_price * (1 - tp2_dist/100)),
                     (qty_tp3, cur_price * (1 + tp3_dist/100) if action == "Buy" else cur_price * (1 - tp3_dist/100))
                 ]
-
                 for q, p in tps:
                     if q >= min_qty:
                         self.session.place_order(category="linear", symbol=norm_symbol, side=tp_side, orderType="Limit", qty=str(q), price=str(self.round_price(p, tick_size)), reduceOnly=True)
@@ -281,6 +273,110 @@ class BybitTradingBot:
 
 bot = BybitTradingBot()
 
+# --- MARKET SCANNER (NEW!) ---
+class MarketScanner:
+    def __init__(self, bot_instance):
+        self.bot = bot_instance
+        self.running = True
+        self.previous_snapshot = {}
+        self.detected_pumps = [] # Зберігає знайдені пампи
+        self.last_scan_time = None
+
+    def start(self):
+        threading.Thread(target=self.loop, daemon=True).start()
+
+    def loop(self):
+        logger.info("🚀 Market Scanner Started")
+        while self.running:
+            try:
+                self.scan_market()
+            except Exception as e:
+                logger.error(f"Scanner error: {e}")
+            time.sleep(SCANNER_INTERVAL)
+
+    def scan_market(self):
+        tickers = self.bot.get_all_tickers()
+        current_snapshot = {}
+        
+        # 1. Збираємо поточні дані
+        for t in tickers:
+            symbol = t['symbol']
+            if "USDT" not in symbol: continue
+            
+            try:
+                price = float(t['lastPrice'])
+                # turnover24h = об'єм в USDT за 24г
+                turnover = float(t['turnover24h']) 
+                
+                if turnover < MIN_24H_VOLUME: continue # Фільтруємо сміття
+
+                current_snapshot[symbol] = {
+                    'price': price,
+                    'turnover': turnover,
+                    'timestamp': time.time(),
+                    'change24h': float(t['price24hPcnt']) * 100
+                }
+            except: continue
+
+        # 2. Якщо є попередні дані, порівнюємо
+        if self.previous_snapshot:
+            self.analyze_changes(current_snapshot)
+
+        self.previous_snapshot = current_snapshot
+        self.last_scan_time = datetime.now()
+
+    def analyze_changes(self, current):
+        detected = []
+        
+        for symbol, data in current.items():
+            if symbol not in self.previous_snapshot: continue
+            
+            prev = self.previous_snapshot[symbol]
+            
+            # Різниця в часі в хвилинах
+            time_delta = (data['timestamp'] - prev['timestamp']) / 60
+            if time_delta == 0: continue
+
+            # Скільки зайшло грошей (Turnover) за цей проміжок
+            # turnover - це кумулятивна цифра за 24г. Її зміна = об'єм за інтервал.
+            # Увага: якщо вікно зсунулося і старий великий об'єм випав, цифра може бути меншою.
+            # Тому беремо abs або просто різницю, якщо вона додатна.
+            
+            vol_diff = data['turnover'] - prev['turnover']
+            if vol_diff <= 0: continue # Об'єм не змінився або впав (через зсув вікна 24г)
+
+            # Розрахунок "Нормального" об'єму за цей час
+            # Середній об'єм за хвилину = Всього за добу / 1440 хвилин
+            avg_vol_per_min = data['turnover'] / 1440
+            expected_vol = avg_vol_per_min * time_delta
+            
+            # Фактор аномалії
+            spike_factor = vol_diff / expected_vol if expected_vol > 0 else 0
+            
+            price_change_interval = ((data['price'] - prev['price']) / prev['price']) * 100
+
+            # Логіка фільтрації пампа
+            if spike_factor > VOLUME_SPIKE_THRESHOLD and price_change_interval > 0.5:
+                detected.append({
+                    "symbol": symbol,
+                    "price": data['price'],
+                    "spike_factor": round(spike_factor, 2),
+                    "vol_inflow": round(vol_diff, 0),
+                    "price_change_interval": round(price_change_interval, 2),
+                    "time": datetime.now().strftime('%H:%M:%S')
+                })
+
+        # Оновлюємо список пампів (додаємо нові зверху, тримаємо останні 50)
+        if detected:
+            logger.info(f"🚨 DETECTED {len(detected)} PUMPS!")
+            # Додаємо нові події на початок списку
+            self.detected_pumps = detected + self.detected_pumps
+            self.detected_pumps = self.detected_pumps[:50] # Зберігаємо тільки топ 50
+
+scanner = MarketScanner(bot)
+scanner.start()
+
+# --- BREAKEVEN MONITOR ---
 class BreakevenMonitor:
     def __init__(self, bot_instance):
         self.bot = bot_instance
@@ -311,7 +407,90 @@ class BreakevenMonitor:
 monitor = BreakevenMonitor(bot)
 monitor.start()
 
-# --- HTML REPORT UKRAINIAN STYLE ---
+# --- WEB ROUTES ---
+
+@app.route('/scanner', methods=['GET'])
+def scanner_page():
+    """Сторінка зі звітом сканера"""
+    last_update = scanner.last_scan_time.strftime('%H:%M:%S') if scanner.last_scan_time else "Запуск..."
+    
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="uk">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Crypto Volume Scanner</title>
+        <meta http-equiv="refresh" content="30"> <!-- Автооновлення сторінки кожні 30 сек -->
+        <style>
+            :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --blue: #3b82f6; }
+            body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
+            .container { max-width: 1000px; margin: 0 auto; }
+            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+            .card { background: var(--card); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+            h1 { margin: 0; font-size: 24px; }
+            .badge { background: var(--blue); padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+            table { width: 100%; border-collapse: collapse; }
+            th { text-align: left; color: #94a3b8; padding: 10px; border-bottom: 1px solid #334155; }
+            td { padding: 12px 10px; border-bottom: 1px solid #334155; }
+            .pump-factor { color: var(--green); font-weight: bold; }
+            .symbol { font-weight: bold; font-size: 1.1em; }
+            .empty-msg { text-align: center; color: #64748b; padding: 40px; }
+            .inflow { color: #818cf8; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>📡 Market Scanner</h1>
+                <span class="badge">Last Scan: {{ last_update }}</span>
+            </div>
+            
+            <div class="card">
+                <h3>🔥 Виявлені аномалії об'єму (Live)</h3>
+                <p style="color:#94a3b8; font-size: 14px;">Показує монети, де об'єм за останню хвилину в 3+ рази перевищує середній.</p>
+                
+                {% if pumps %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Час</th>
+                            <th>Монета</th>
+                            <th>Ціна</th>
+                            <th>Зміна ціни (1хв)</th>
+                            <th>Аномалія (x разів)</th>
+                            <th>Вливання ($)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in pumps %}
+                        <tr>
+                            <td>{{ p.time }}</td>
+                            <td class="symbol">{{ p.symbol }}</td>
+                            <td>{{ p.price }}</td>
+                            <td style="color: {{ '#22c55e' if p.price_change_interval > 0 else '#ef4444' }}">
+                                {{ "+" if p.price_change_interval > 0 }}{{ p.price_change_interval }}%
+                            </td>
+                            <td class="pump-factor">x{{ p.spike_factor }}</td>
+                            <td class="inflow">${{ "{:,.0f}".format(p.vol_inflow) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                    <div class="empty-msg">Поки що тихо. Чекаємо на активність китів... 🐋</div>
+                {% endif %}
+            </div>
+            
+            <div style="text-align:center;">
+                <a href="/report" style="color: #64748b; text-decoration: none;">Перейти до звіту P&L</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template, pumps=scanner.detected_pumps, last_update=last_update)
+
 @app.route('/report', methods=['GET'])
 def report_page():
     days = request.args.get('days', default=7, type=int)
@@ -333,96 +512,44 @@ def report_page():
         <title>Аналіз P&L</title>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
-            :root {
-                --bg-color: #f7f8fa;
-                --card-bg: #ffffff;
-                --text-primary: #121214;
-                --text-secondary: #858e9c;
-                --green: #20b26c;
-                --red: #ef454a;
-                --border: #eff2f5;
-            }
-            body {
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                background-color: var(--bg-color);
-                color: var(--text-primary);
-                margin: 0;
-                padding: 20px;
-            }
-            .container { max_width: 1200px; margin: 0 auto; }
-            
-            .card {
-                background: var(--card-bg);
-                border-radius: 8px;
-                padding: 20px;
-                margin-bottom: 20px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            }
-            
+            :root { --bg-color: #f7f8fa; --card-bg: #ffffff; --text-primary: #121214; --text-secondary: #858e9c; --green: #20b26c; --red: #ef454a; --border: #eff2f5; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-primary); margin: 0; padding: 20px; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            .card { background: var(--card-bg); border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
             .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
             h1 { font-size: 20px; font-weight: 600; margin: 0; }
             .balance { font-size: 24px; font-weight: 700; }
             .sub-text { font-size: 12px; color: var(--text-secondary); }
-
-            /* Grid for Top Stats */
-            .top-stats-grid {
-                display: flex; gap: 40px; margin-bottom: 10px; flex-wrap: wrap;
-            }
+            .top-stats-grid { display: flex; gap: 40px; margin-bottom: 10px; flex-wrap: wrap; }
             .kpi-block { min-width: 150px; }
             .kpi-val { font-size: 24px; font-weight: 700; margin-top: 5px; }
             .kpi-label { font-size: 13px; color: var(--text-secondary); text-decoration: underline dotted; cursor: help; }
-            
-            /* Detailed Stat Cards (Screenshot Look) */
-            .detail-stats-grid {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 20px;
-                margin-bottom: 20px;
-            }
+            .detail-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
             @media (max-width: 768px) { .detail-stats-grid { grid-template-columns: 1fr; } }
-
-            .stat-box {
-                background: white; border-radius: 8px; padding: 20px;
-                display: flex; flex-direction: column;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            }
+            .stat-box { background: white; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
             .stat-box-header { font-size: 13px; color: var(--text-secondary); margin-bottom: 15px; }
-            
             .stat-box-content { display: flex; align-items: center; gap: 20px; }
             .donut-ring, .gauge-ring { width: 50px; height: 50px; flex-shrink: 0; }
-            
             .stat-big-num { font-size: 28px; font-weight: 700; line-height: 1.2; }
             .stat-sub-row { font-size: 13px; margin-top: 4px; display: flex; gap: 5px; }
-            
-            /* Colors */
-            .text-green { color: var(--green); }
-            .text-red { color: var(--red); }
-            .text-gray { color: var(--text-secondary); }
-
-            /* Charts Row */
+            .text-green { color: var(--green); } .text-red { color: var(--red); } .text-gray { color: var(--text-secondary); }
             .charts-row { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 20px; }
             @media (max-width: 768px) { .charts-row { grid-template-columns: 1fr; } }
             .chart-container { position: relative; height: 300px; width: 100%; }
-
-            /* Table */
             .table-container { overflow-x: auto; }
             table { width: 100%; border-collapse: collapse; font-size: 13px; }
             th { text-align: left; color: var(--text-secondary); font-weight: 500; padding: 12px 16px; border-bottom: 1px solid var(--border); }
             td { padding: 14px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
             .symbol-cell { display: flex; align-items: center; gap: 10px; font-weight: 600; }
             .coin-icon { width: 24px; height: 24px; border-radius: 50%; background: #e0e0e0; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #555; }
-            
             .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
             .badge-win { background: rgba(32, 178, 108, 0.1); color: var(--green); }
             .badge-loss { background: rgba(239, 69, 74, 0.1); color: var(--red); }
-            .type-long { color: var(--green); }
-            .type-short { color: var(--red); }
+            .type-long { color: var(--green); } .type-short { color: var(--red); }
         </style>
     </head>
     <body>
         <div class="container">
-            
-            <!-- Main Header -->
             <div class="card">
                 <div class="header-row">
                     <h1>Аналіз P&L <span style="font-size:14px; color:#999; font-weight:400; margin-left:10px;">Останні {{ days }} днів</span></h1>
@@ -431,7 +558,6 @@ def report_page():
                         <div class="balance">${{ "%.2f"|format(balance) }}</div>
                     </div>
                 </div>
-                
                 <div class="top-stats-grid">
                     <div class="kpi-block">
                         <div class="kpi-label">Загальний P&L</div>
@@ -445,12 +571,16 @@ def report_page():
                             {{ "%.2f"|format(stats.total_volume) }} <span style="font-size:14px; color:#333;">USD</span>
                         </div>
                     </div>
+                     <div class="kpi-block">
+                        <div class="kpi-label">Інструменти</div>
+                        <div class="kpi-val text-gray" style="font-size: 16px; margin-top: 10px;">
+                            <a href="/scanner">📡 Перейти до Сканера</a>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Specific Detail Cards (Like Screenshot) -->
             <div class="detail-stats-grid">
-                <!-- Card 1: Orders -->
                 <div class="stat-box">
                     <div class="stat-box-header">Загальна кількість закритих ордерів</div>
                     <div class="stat-box-content">
@@ -469,13 +599,10 @@ def report_page():
                         </div>
                     </div>
                 </div>
-
-                <!-- Card 2: Win Rate -->
                 <div class="stat-box">
-                    <div class="stat-box-header">Відсоток успішних угод по закритим ордерам</div>
+                    <div class="stat-box-header">Відсоток успішних угод</div>
                     <div class="stat-box-content">
                         <div class="gauge-ring">
-                            <!-- Simple SVG Gauge representation -->
                             <svg viewBox="0 0 36 36">
                                 <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#eff2f5" stroke-width="4" />
                                 <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#20b26c" stroke-width="4" stroke-dasharray="{{ win_rate }}, 100" />
@@ -491,7 +618,6 @@ def report_page():
                 </div>
             </div>
 
-            <!-- Charts -->
             <div class="charts-row">
                 <div class="card">
                     <div class="header-row"><h3>Кумулятивний P&L ($)</h3></div>
@@ -503,46 +629,25 @@ def report_page():
                 </div>
             </div>
 
-            <!-- Table -->
             <div class="card">
                 <div class="header-row"><h3>Деталі закритих ордерів</h3></div>
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th>Тікер</th>
-                                <th>Сторона</th>
-                                <th>Кіл-сть</th>
-                                <th>Ціна входу</th>
-                                <th>Ціна виходу</th>
-                                <th>Реаліз. P&L</th>
-                                <th>Результат</th>
-                                <th>Час</th>
+                                <th>Тікер</th><th>Сторона</th><th>Кіл-сть</th><th>Ціна входу</th><th>Ціна виходу</th><th>Реаліз. P&L</th><th>Результат</th><th>Час</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for trade in stats.details %}
                             <tr>
-                                <td>
-                                    <div class="symbol-cell">
-                                        <div class="coin-icon">{{ trade.symbol[0] }}</div>
-                                        {{ trade.symbol }}
-                                    </div>
-                                </td>
-                                <td class="{{ 'type-long' if trade.side == 'Buy' else 'type-short' }}">
-                                    {{ "Лонг" if trade.side == "Buy" else "Шорт" }}
-                                </td>
+                                <td><div class="symbol-cell"><div class="coin-icon">{{ trade.symbol[0] }}</div>{{ trade.symbol }}</div></td>
+                                <td class="{{ 'type-long' if trade.side == 'Buy' else 'type-short' }}">{{ "Лонг" if trade.side == "Buy" else "Шорт" }}</td>
                                 <td>{{ trade.qty }}</td>
                                 <td>{{ trade.entry_price }}</td>
                                 <td>{{ trade.exit_price }}</td>
-                                <td class="{{ 'text-green' if trade.pnl > 0 else 'text-red' }}">
-                                    {{ "+" if trade.pnl > 0 }}{{ "%.4f"|format(trade.pnl) }}
-                                </td>
-                                <td>
-                                    <span class="badge {{ 'badge-win' if trade.is_win else 'badge-loss' }}">
-                                        {{ "Прибуток" if trade.is_win else "Збиток" }}
-                                    </span>
-                                </td>
+                                <td class="{{ 'text-green' if trade.pnl > 0 else 'text-red' }}">{{ "+" if trade.pnl > 0 }}{{ "%.4f"|format(trade.pnl) }}</td>
+                                <td><span class="badge {{ 'badge-win' if trade.is_win else 'badge-loss' }}">{{ "Прибуток" if trade.is_win else "Збиток" }}</span></td>
                                 <td style="color: #888;">{{ trade.time }}</td>
                             </tr>
                             {% endfor %}
@@ -551,14 +656,11 @@ def report_page():
                 </div>
             </div>
         </div>
-
         <script>
-            // Config for Line Chart
             const ctxPnl = document.getElementById('pnlChart').getContext('2d');
             const gradient = ctxPnl.createLinearGradient(0, 0, 0, 300);
             gradient.addColorStop(0, 'rgba(32, 178, 108, 0.2)');
             gradient.addColorStop(1, 'rgba(32, 178, 108, 0)');
-
             new Chart(ctxPnl, {
                 type: 'line',
                 data: {
@@ -566,26 +668,11 @@ def report_page():
                     datasets: [{
                         label: 'Кумулятивний P&L',
                         data: {{ stats.chart_data | safe }},
-                        borderColor: '#20b26c',
-                        backgroundColor: gradient,
-                        borderWidth: 2,
-                        pointRadius: 0,
-                        fill: true,
-                        tension: 0.4
+                        borderColor: '#20b26c', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true, tension: 0.4
                     }]
                 },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { grid: { display: false } },
-                        y: { grid: { color: '#eff2f5' } }
-                    }
-                }
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#eff2f5' } } } }
             });
-
-            // Config for Bar Chart
             new Chart(document.getElementById('coinChart'), {
                 type: 'bar',
                 data: {
@@ -593,19 +680,11 @@ def report_page():
                     datasets: [{
                         label: 'P&L по монетам',
                         data: {{ stats.top_coins_values | safe }},
-                        backgroundColor: (ctx) => {
-                            const val = ctx.raw;
-                            return val >= 0 ? '#20b26c' : '#ef454a';
-                        },
+                        backgroundColor: (ctx) => { return ctx.raw >= 0 ? '#20b26c' : '#ef454a'; },
                         borderRadius: 4
                     }]
                 },
-                options: {
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } }
-                }
+                options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
             });
         </script>
     </body>
