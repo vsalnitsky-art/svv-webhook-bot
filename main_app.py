@@ -12,8 +12,6 @@ import requests
 import json
 import re
 from datetime import datetime, timedelta
-import ctypes # Библиотека для управления питанием Windows
-
 # Импортируйте ваши модули
 from bot_config import config
 from models import db_manager
@@ -30,13 +28,18 @@ except ImportError:
     print("⚠️ ai_analyst.py не найден. AI функции отключены.")
 
 # === WINDOWS NO-SLEEP (БЛОКИРОВКА СПЯЩЕГО РЕЖИМА) ===
+# Только для Windows - на Linux/Mac не нужно
 try:
-    # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
-    # Это говорит Windows: "Я работаю, не спи!"
-    ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
-    print("☕ Режим 'Без сна' для Windows активирован успешно.")
+    import platform
+    if platform.system() == 'Windows':
+        import ctypes
+        # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+        ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
+        print("☕ Режим 'Без сна' для Windows активирован успешно.")
+    else:
+        print("ℹ️ Linux/Mac обнаружен - режим без сна не требуется")
 except Exception as e:
-    print(f"ℹ️ Не удалось активировать режим без сна (это нормально для Linux/Mac): {e}")
+    print(f"ℹ️ Не удалось активировать режим без сна: {e}")
 
 # === FLASK APP ===
 app = Flask(__name__)
