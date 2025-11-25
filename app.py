@@ -327,6 +327,7 @@ class MarketScanner:
 
     def analyze_changes(self, current):
         detected = []
+        now = datetime.now()
         
         for symbol, data in current.items():
             if symbol not in self.previous_snapshot: continue
@@ -363,15 +364,19 @@ class MarketScanner:
                     "spike_factor": round(spike_factor, 2),
                     "vol_inflow": round(vol_diff, 0),
                     "price_change_interval": round(price_change_interval, 2),
-                    "time": datetime.now().strftime('%H:%M:%S')
+                    "time": now.strftime('%H:%M:%S'),
+                    "timestamp_dt": now # Зберігаємо об'єкт datetime для фільтрації
                 })
 
-        # Оновлюємо список пампів (додаємо нові зверху, тримаємо останні 50)
+        # Оновлюємо список пампів (додаємо нові зверху)
         if detected:
             logger.info(f"🚨 DETECTED {len(detected)} PUMPS!")
-            # Додаємо нові події на початок списку
             self.detected_pumps = detected + self.detected_pumps
-            self.detected_pumps = self.detected_pumps[:50] # Зберігаємо тільки топ 50
+
+        # Фільтр: Залишаємо тільки пампи за останню 1 годину (60 хвилин)
+        one_hour_ago = now - timedelta(hours=1)
+        self.detected_pumps = [p for p in self.detected_pumps if p.get('timestamp_dt', now) > one_hour_ago]
+
 
 scanner = MarketScanner(bot)
 scanner.start()
@@ -431,7 +436,8 @@ def scanner_page():
             h1 { margin: 0; font-size: 24px; }
             .badge { background: var(--blue); padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
             table { width: 100%; border-collapse: collapse; }
-            th { text-align: left; color: #94a3b8; padding: 10px; border-bottom: 1px solid #334155; }
+            th { text-align: left; color: #94a3b8; padding: 10px; border-bottom: 1px solid #334155; cursor: pointer; user-select: none; }
+            th:hover { color: #e2e8f0; }
             td { padding: 12px 10px; border-bottom: 1px solid #334155; }
             .pump-factor { color: var(--green); font-weight: bold; }
             .symbol { font-weight: bold; font-size: 1.1em; }
@@ -447,19 +453,19 @@ def scanner_page():
             </div>
             
             <div class="card">
-                <h3>🔥 Виявлені аномалії об'єму (Live)</h3>
-                <p style="color:#94a3b8; font-size: 14px;">Показує монети, де об'єм за останню хвилину в 3+ рази перевищує середній.</p>
+                <h3>🔥 Виявлені аномалії об'єму (Історія за 1 годину)</h3>
+                <p style="color:#94a3b8; font-size: 14px;">Показує монети, де об'єм за хвилину в 3+ рази перевищує середній. Натисніть на заголовок для сортування.</p>
                 
                 {% if pumps %}
-                <table>
+                <table id="pumpsTable">
                     <thead>
                         <tr>
-                            <th>Час</th>
-                            <th>Монета</th>
-                            <th>Ціна</th>
-                            <th>Зміна ціни (1хв)</th>
-                            <th>Аномалія (x разів)</th>
-                            <th>Вливання ($)</th>
+                            <th onclick="sortTable(0)">Час ⇅</th>
+                            <th onclick="sortTable(1)">Монета ⇅</th>
+                            <th onclick="sortTable(2)">Ціна ⇅</th>
+                            <th onclick="sortTable(3)">Зміна ціни (1хв) ⇅</th>
+                            <th onclick="sortTable(4)">Аномалія (x разів) ⇅</th>
+                            <th onclick="sortTable(5)">Вливання ($) ⇅</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -486,6 +492,49 @@ def scanner_page():
                 <a href="/report" style="color: #64748b; text-decoration: none;">Перейти до звіту P&L</a>
             </div>
         </div>
+
+        <script>
+        function sortTable(n) {
+          var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+          table = document.getElementById("pumpsTable");
+          switching = true;
+          dir = "asc"; 
+          
+          while (switching) {
+            switching = false;
+            rows = table.rows;
+            for (i = 1; i < (rows.length - 1); i++) {
+              shouldSwitch = false;
+              x = rows[i].getElementsByTagName("TD")[n];
+              y = rows[i + 1].getElementsByTagName("TD")[n];
+              
+              let xVal = x.innerText.toLowerCase().replace(/[$,x%+,]/g, "");
+              let yVal = y.innerText.toLowerCase().replace(/[$,x%+,]/g, "");
+              
+              if (!isNaN(parseFloat(xVal)) && isFinite(xVal)) {
+                  xVal = parseFloat(xVal);
+                  yVal = parseFloat(yVal);
+              }
+              
+              if (dir == "asc") {
+                if (xVal > yVal) { shouldSwitch = true; break; }
+              } else if (dir == "desc") {
+                if (xVal < yVal) { shouldSwitch = true; break; }
+              }
+            }
+            if (shouldSwitch) {
+              rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+              switching = true;
+              switchcount ++;      
+            } else {
+              if (switchcount == 0 && dir == "asc") {
+                dir = "desc";
+                switching = true;
+              }
+            }
+          }
+        }
+        </script>
     </body>
     </html>
     """
