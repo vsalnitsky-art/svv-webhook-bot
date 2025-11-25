@@ -11,6 +11,7 @@ import time
 import requests
 import json
 import re
+import os
 from datetime import datetime, timedelta
 # Импортируйте ваши модули
 from bot_config import config
@@ -105,15 +106,18 @@ def process_signal_with_ai(data):
 
 # === KEEP ALIVE (САМО-ПИНГ 5 МИНУТ) ===
 def keep_alive():
-    """Бот пингует сам себя каждые 5 минут"""
+    """Бот пингует сам себя каждые 5 минут чтобы Render не усыплял"""
     logger.info("⏰ Система само-пинга запущена")
     time.sleep(10) # Даем серверу время на полный старт
     
+    # ✅ ВНЕШНИЙ URL - Render считает это активностью!
+    # Замените на ваш реальный домен
+    external_url = os.environ.get('RENDER_EXTERNAL_URL', 'https://svv-webhook-bot.onrender.com') + '/health'
+    
     while True:
         try:
-            local_url = f'http://127.0.0.1:{config.PORT}/health'
-            # Таймаут 10 сек, чтобы не зависнуть
-            response = requests.get(local_url, timeout=10)
+            # Пингуем ВНЕШНИЙ URL, не localhost!
+            response = requests.get(external_url, timeout=10)
             
             if response.status_code == 200:
                 logger.info(f"💓 PING (5min): Бот в норме. Статус: 200 OK")
