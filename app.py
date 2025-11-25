@@ -14,8 +14,11 @@ from config import get_api_credentials
 PORT = 10000
 MONITOR_INTERVAL = 5 
 SCANNER_INTERVAL = 60  # Сканування ринку раз на 60 секунд
-VOLUME_SPIKE_THRESHOLD = 3.0 # Коефіцієнт аномалії (3.0 = об'єм у 3 рази вищий за середній)
-MIN_24H_VOLUME = 1000000 # Ігнорувати монети з добовим об'ємом менше 1 млн$
+
+# Налаштування Сканера Китів 🐋
+VOLUME_SPIKE_THRESHOLD = 2.0 # Об'єм має бути хоча б в 2 рази вищим за середній
+MIN_INFLOW_VALUE = 1000000   # 🔥 МІНІМАЛЬНЕ ВЛИВАННЯ ЗА ХВИЛИНУ: 1,000,000 USDT
+MIN_24H_VOLUME = 10000000    # Ігнорувати монети з добовим об'ємом менше 10 млн$ (щоб прибрати неліквід)
 
 # --- EMAIL (Опціонально) ---
 SMTP_SERVER = "smtp.gmail.com"
@@ -311,13 +314,13 @@ class BybitTradingBot:
 
 bot = BybitTradingBot()
 
-# --- MARKET SCANNER ---
+# --- MARKET SCANNER (WHALE TRACKER) ---
 class MarketScanner:
     def __init__(self, bot_instance):
         self.bot = bot_instance
         self.running = True
         self.previous_snapshot = {}
-        self.detected_pumps = [] # Зберігає знайдені пампи
+        self.detected_pumps = [] # Накопичення статистики
         self.last_scan_time = None
 
     def start(self):
@@ -345,6 +348,7 @@ class MarketScanner:
                 price = float(t['lastPrice'])
                 turnover = float(t['turnover24h']) 
                 
+                # Фільтруємо дрібні монети
                 if turnover < MIN_24H_VOLUME: continue 
 
                 current_snapshot[symbol] = {
@@ -371,25 +375,28 @@ class MarketScanner:
             
             prev = self.previous_snapshot[symbol]
             
-            # Різниця в часі в хвилинах
             time_delta = (data['timestamp'] - prev['timestamp']) / 60
             if time_delta == 0: continue
 
+            # Розрахунок чистого вливання грошей за хвилину
             vol_diff = data['turnover'] - prev['turnover']
-            if vol_diff <= 0: continue 
+            
+            # 🔥 ФІЛЬТР: Тільки великі вливання (наприклад, > 1 млн $ за хвилину)
+            if vol_diff < MIN_INFLOW_VALUE: continue 
 
             avg_vol_per_min = data['turnover'] / 1440
             expected_vol = avg_vol_per_min * time_delta
             
             spike_factor = vol_diff / expected_vol if expected_vol > 0 else 0
-            
             price_change_interval = ((data['price'] - prev['price']) / prev['price']) * 100
 
-            if spike_factor > VOLUME_SPIKE_THRESHOLD and price_change_interval > 0.5:
+            # Логіка виявлення "Дій Китів"
+            # Якщо об'єм аномально великий і вливання більше мільйона
+            if spike_factor > VOLUME_SPIKE_THRESHOLD:
                 detected.append({
                     "symbol": symbol,
                     "price": data['price'],
-                    "spike_factor": round(spike_factor, 2),
+                    "spike_factor": round(spike_factor, 1),
                     "vol_inflow": round(vol_diff, 0),
                     "price_change_interval": round(price_change_interval, 2),
                     "time": now.strftime('%H:%M:%S'),
@@ -397,12 +404,12 @@ class MarketScanner:
                 })
 
         if detected:
-            logger.info(f"🚨 DETECTED {len(detected)} PUMPS!")
+            logger.info(f"🚨 DETECTED {len(detected)} WHALE MOVES! (> ${MIN_INFLOW_VALUE/1000000}M)")
             self.detected_pumps = detected + self.detected_pumps
 
-        # Фільтр: Залишаємо тільки пампи за останню 1 годину (60 хвилин)
-        one_hour_ago = now - timedelta(hours=1)
-        self.detected_pumps = [p for p in self.detected_pumps if p.get('timestamp_dt', now) > one_hour_ago]
+        # Фільтр: Зберігаємо статистику за 24 години (накопичення)
+        one_day_ago = now - timedelta(hours=24)
+        self.detected_pumps = [p for p in self.detected_pumps if p.get('timestamp_dt', now) > one_day_ago]
 
 scanner = MarketScanner(bot)
 scanner.start()
@@ -453,36 +460,44 @@ def scanner_page():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Crypto Volume Scanner</title>
+        <title>Whale Scanner 🐋</title>
         <meta http-equiv="refresh" content="30">
         <style>
-            :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --blue: #3b82f6; }
+            :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --red: #ef4444; --blue: #3b82f6; }
             body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
-            .container { max-width: 1000px; margin: 0 auto; }
+            .container { max-width: 1100px; margin: 0 auto; }
             .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
             .card { background: var(--card); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
             h1 { margin: 0; font-size: 24px; }
             .badge { background: var(--blue); padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+            
             table { width: 100%; border-collapse: collapse; }
-            th { text-align: left; color: #94a3b8; padding: 10px; border-bottom: 1px solid #334155; cursor: pointer; user-select: none; }
-            th:hover { color: #e2e8f0; }
-            td { padding: 12px 10px; border-bottom: 1px solid #334155; }
+            th { text-align: left; color: #94a3b8; padding: 12px 10px; border-bottom: 1px solid #334155; cursor: pointer; user-select: none; }
+            th:hover { color: #e2e8f0; background: #334155; }
+            td { padding: 14px 10px; border-bottom: 1px solid #334155; }
+            
             .pump-factor { color: var(--green); font-weight: bold; }
-            .symbol { font-weight: bold; font-size: 1.1em; }
+            .symbol { font-weight: bold; font-size: 1.1em; color: #fff; }
+            .inflow { font-weight: bold; color: #facc15; } /* Yellow for money */
             .empty-msg { text-align: center; color: #64748b; padding: 40px; }
-            .inflow { color: #818cf8; }
+            
+            /* Highlighting large moves */
+            tr.huge-move { background: rgba(34, 197, 94, 0.05); }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>📡 Market Scanner</h1>
+                <h1>🐋 Whale Scanner (>$1M/min)</h1>
                 <span class="badge">Last Scan: {{ last_update }}</span>
             </div>
             
             <div class="card">
-                <h3>🔥 Виявлені аномалії об'єму (Історія за 1 годину)</h3>
-                <p style="color:#94a3b8; font-size: 14px;">Показує монети, де об'єм за хвилину в 3+ рази перевищує середній. Натисніть на заголовок для сортування.</p>
+                <h3>🔥 Вливання Великого Капіталу (Статистика за 24г)</h3>
+                <p style="color:#94a3b8; font-size: 14px;">
+                    Тут відображаються тільки монети, в які за одну хвилину зайшло <strong>понад $1,000,000</strong>.
+                    <br>Це ознака підготовки до сильного руху (Памп або Дамп).
+                </p>
                 
                 {% if pumps %}
                 <table id="pumpsTable">
@@ -491,18 +506,18 @@ def scanner_page():
                             <th onclick="sortTable(0)">Час ⇅</th>
                             <th onclick="sortTable(1)">Монета ⇅</th>
                             <th onclick="sortTable(2)">Ціна ⇅</th>
-                            <th onclick="sortTable(3)">Зміна ціни (1хв) ⇅</th>
-                            <th onclick="sortTable(4)">Аномалія (x разів) ⇅</th>
+                            <th onclick="sortTable(3)">Зміна (1хв) ⇅</th>
+                            <th onclick="sortTable(4)">Аномалія (x) ⇅</th>
                             <th onclick="sortTable(5)">Вливання ($) ⇅</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for p in pumps %}
-                        <tr>
+                        <tr class="{{ 'huge-move' if p.vol_inflow > 5000000 else '' }}">
                             <td>{{ p.time }}</td>
                             <td class="symbol">{{ p.symbol }}</td>
                             <td>{{ p.price }}</td>
-                            <td style="color: {{ '#22c55e' if p.price_change_interval > 0 else '#ef4444' }}">
+                            <td style="color: {{ '#22c55e' if p.price_change_interval >= 0 else '#ef4444' }}">
                                 {{ "+" if p.price_change_interval > 0 }}{{ p.price_change_interval }}%
                             </td>
                             <td class="pump-factor">x{{ p.spike_factor }}</td>
@@ -512,7 +527,10 @@ def scanner_page():
                     </tbody>
                 </table>
                 {% else %}
-                    <div class="empty-msg">Поки що тихо. Чекаємо на активність китів... 🐋</div>
+                    <div class="empty-msg">
+                        🐋 Великі гравці поки що сплять.<br>
+                        Чекаємо на вливання понад $1,000,000...
+                    </div>
                 {% endif %}
             </div>
             
@@ -526,7 +544,8 @@ def scanner_page():
           var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
           table = document.getElementById("pumpsTable");
           switching = true;
-          dir = "asc"; 
+          dir = "desc"; // Default sort Descending (Newest/Largest first)
+          
           while (switching) {
             switching = false;
             rows = table.rows;
@@ -534,18 +553,31 @@ def scanner_page():
               shouldSwitch = false;
               x = rows[i].getElementsByTagName("TD")[n];
               y = rows[i + 1].getElementsByTagName("TD")[n];
-              let xVal = x.innerText.toLowerCase().replace(/[$,x%+,]/g, "");
-              let yVal = y.innerText.toLowerCase().replace(/[$,x%+,]/g, "");
-              if (!isNaN(parseFloat(xVal)) && isFinite(xVal)) { xVal = parseFloat(xVal); yVal = parseFloat(yVal); }
-              if (dir == "asc") { if (xVal > yVal) { shouldSwitch = true; break; } } 
-              else if (dir == "desc") { if (xVal < yVal) { shouldSwitch = true; break; } }
+              
+              let xVal = x.innerText.toLowerCase().replace(/[$,x%+,]/g, "").trim();
+              let yVal = y.innerText.toLowerCase().replace(/[$,x%+,]/g, "").trim();
+              
+              if (n === 0) { // Time sort logic if needed, usually string compare works for HH:MM:SS
+              } else if (!isNaN(parseFloat(xVal)) && isFinite(xVal)) {
+                  xVal = parseFloat(xVal);
+                  yVal = parseFloat(yVal);
+              }
+              
+              if (dir == "asc") {
+                if (xVal > yVal) { shouldSwitch = true; break; }
+              } else if (dir == "desc") {
+                if (xVal < yVal) { shouldSwitch = true; break; }
+              }
             }
             if (shouldSwitch) {
               rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
               switching = true;
               switchcount ++;      
             } else {
-              if (switchcount == 0 && dir == "asc") { dir = "desc"; switching = true; }
+              if (switchcount == 0 && dir == "desc") {
+                dir = "asc";
+                switching = true;
+              }
             }
           }
         }
