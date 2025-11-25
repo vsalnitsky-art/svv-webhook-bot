@@ -1,10 +1,10 @@
 """
-Main Application - Ultimate Edition 🚀
+Main Application - Smart Exit Edition 🧠
 Включає:
-- Стару перевірену логіку відкриття ордерів
-- Новий Smart Exit (вихід по RSI)
-- Професійний UI (Сканер + P&L) українською
-- Базу даних та ШІ
+- Відкриття угод БЕЗ Take Profit (вихід через логіку)
+- Stop Loss з буфером безпеки (підстрахування)
+- Автоматичне закриття позиції та скасування ордерів
+- Професійний UI
 """
 
 from flask import Flask, request, jsonify, render_template_string
@@ -20,27 +20,25 @@ import decimal
 from datetime import datetime, timedelta
 import ctypes
 
-# === ІМПОРТИ МОДУЛІВ ===
+# === ІМПОРТИ ===
 from bot_config import config
 from models import db_manager
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from config import get_api_credentials
 
-# === ШІ МОДУЛЬ ===
+# === ШІ ===
 try:
     import ai_analyst
     AI_AVAILABLE = True
 except ImportError:
     AI_AVAILABLE = False
-    print("⚠️ AI module not found")
 
 # === WINDOWS ANTI-SLEEP ===
 try:
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
-# === FLASK SETUP ===
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -48,18 +46,15 @@ logger = logging.getLogger(__name__)
 # === TELEGRAM ===
 def send_telegram_message(text):
     try:
-        # 👇👇 ВСТАВТЕ ВАШІ ДАНІ НИЖЧЕ (ЯКЩО ВОНИ НЕ В CONFIG) 👇👇
         tg_token = getattr(config, 'TG_BOT_TOKEN', "ВАШ_ТОКЕН")
         chat_id = getattr(config, 'TG_CHAT_ID', "ВАШ_CHAT_ID")
-        
         if "ВАШ_" in tg_token: return 
-        
         url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
         requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
     except Exception as e:
         logger.error(f"TG Error: {e}")
 
-# === ОБРОБКА СИГНАЛУ (ШІ + ТОРГІВЛЯ) ===
+# === ОБРОБКА СИГНАЛУ ===
 def process_signal_with_ai(data):
     symbol = data.get('symbol')
     action = data.get('action')
@@ -69,31 +64,30 @@ def process_signal_with_ai(data):
         try: ai_text = ai_analyst.analyze_signal(symbol, action)
         except: ai_text = "Помилка аналізу"
 
-    msg = f"🚀 <b>СИГНАЛ: {symbol}</b>\nДія: {action}\n\n🤖 <b>Gemini:</b> {ai_text}"
+    msg = f"🚀 <b>ВХІД: {symbol}</b>\nНапрямок: {action}\n\n🤖 <b>Gemini:</b> {ai_text}"
     send_telegram_message(msg)
     
-    # Запуск торгівлі
+    # Відкриваємо угоду
     bot.place_order(data)
 
-# === SELF PING (KEEP ALIVE) ===
+# === SELF PING ===
 def keep_alive():
     time.sleep(10)
     external_url = os.environ.get('RENDER_EXTERNAL_URL', f'http://127.0.0.1:{config.PORT}') + '/health'
     while True:
         try: requests.get(external_url, timeout=10)
         except: pass
-        time.sleep(300) # 5 хвилин
+        time.sleep(300)
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# === ТОРГОВИЙ БОТ (BYBIT) ===
+# === ТОРГОВИЙ БОТ ===
 class BybitTradingBot:
     def __init__(self):
         k, s = get_api_credentials()
         self.session = HTTP(testnet=False, api_key=k, api_secret=s)
         logger.info("✅ Bybit Connected")
 
-    # --- Допоміжні методи ---
     def normalize_symbol(self, symbol): return symbol.replace('.P', '')
 
     def get_available_balance(self, currency="USDT"):
@@ -157,12 +151,12 @@ class BybitTradingBot:
             return 0.0
         except: return 0.0
 
-    # --- ГОЛОВНА ЛОГІКА ВХОДУ (З ВАШОГО СТАРОГО ФАЙЛУ) ---
+    # === ОНОВЛЕНА ЛОГІКА ВІДКРИТТЯ УГОДИ ===
     def place_order(self, data):
         try:
             action = data.get('action')
             symbol = data.get('symbol')
-            logger.info(f"🤖 Placing Order: {symbol} {action}")
+            logger.info(f"🤖 Processing Order: {symbol} {action}")
             
             if not action or not symbol: return {"status": "error"}
             norm_symbol = self.normalize_symbol(symbol)
@@ -171,11 +165,12 @@ class BybitTradingBot:
                 logger.warning(f"Position exists for {norm_symbol}. Ignored.")
                 return {"status": "ignored"}
             
+            # Параметри
             riskPercent = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
             leverage = int(data.get('leverage', config.DEFAULT_LEVERAGE))
-            tpPercent = float(data.get('takeProfitPercent', config.DEFAULT_TP_PERCENT))
             slPercent = float(data.get('stopLossPercent', config.DEFAULT_SL_PERCENT))
             
+            # Отримуємо ціну та інфо
             cur_price = self.get_current_price(norm_symbol)
             if not cur_price: return {"status": "error"}
             
@@ -188,48 +183,66 @@ class BybitTradingBot:
             balance = self.get_available_balance()
             if not balance: return {"status": "error"}
             
+            # Розрахунок позиції
             margin = (balance * (riskPercent / 100)) * 0.98
             raw_qty = (margin * leverage) / cur_price
             final_qty = self.round_qty(raw_qty, qty_step)
             
             if final_qty < min_qty:
                 cost_of_min_qty = (min_qty * cur_price) / leverage
-                if balance > cost_of_min_qty * 1.05: final_qty = min_qty
-                else: return {"status": "error_balance"}
+                if balance > cost_of_min_qty * 1.05:
+                    final_qty = min_qty
+                    logger.info(f"✅ Forced Min Qty: {final_qty}")
+                else:
+                    return {"status": "error_balance"}
             
+            # 1. Плече
             self.set_leverage(norm_symbol, leverage)
-            self.session.place_order(category="linear", symbol=norm_symbol, side=action, orderType="Market", qty=str(final_qty), timeInForce="GTC")
-            logger.info(f"✅ Market Order Placed: {final_qty} {norm_symbol}")
             
+            # 2. Відкриття позиції (Market Order)
+            self.session.place_order(
+                category="linear", symbol=norm_symbol, side=action, 
+                orderType="Market", qty=str(final_qty), timeInForce="GTC"
+            )
+            logger.info(f"✅ Opened: {action} {final_qty} {norm_symbol}")
+            
+            # 3. Stop Loss з БУФЕРОМ (Підстрахування)
             if slPercent > 0:
-                sl_price = cur_price * (1 - slPercent/100) if action == "Buy" else cur_price * (1 + slPercent/100)
-                self.session.set_trading_stop(category="linear", symbol=norm_symbol, stopLoss=str(self.round_price(sl_price, tick_size)), positionIdx=0)
-            
-            if tpPercent > 0:
-                qty_tp1 = self.round_qty(final_qty * 0.5, qty_step)
-                qty_tp2 = self.round_qty(final_qty * 0.35, qty_step)
-                qty_tp3 = self.round_qty(final_qty - qty_tp1 - qty_tp2, qty_step)
-                tp1_dist = tpPercent * 0.5
-                tp2_dist = tpPercent * 1.0
-                tp3_dist = tpPercent * 1.5
-                tp_side = "Sell" if action == "Buy" else "Buy"
-                tps = [(qty_tp1, cur_price * (1 + tp1_dist/100) if action == "Buy" else cur_price * (1 - tp1_dist/100)),
-                       (qty_tp2, cur_price * (1 + tp2_dist/100) if action == "Buy" else cur_price * (1 - tp2_dist/100)),
-                       (qty_tp3, cur_price * (1 + tp3_dist/100) if action == "Buy" else cur_price * (1 - tp3_dist/100))]
-                for q, p in tps:
-                    if q >= min_qty:
-                        self.session.place_order(category="linear", symbol=norm_symbol, side=tp_side, orderType="Limit", qty=str(q), price=str(self.round_price(p, tick_size)), reduceOnly=True)
+                buffer_percent = 0.2  # 0.2% додатковий відступ (пару пунктів)
+                
+                if action == "Buy":
+                    # Для Лонга стоп нижче: звичайний стоп - буфер
+                    raw_sl = cur_price * (1 - slPercent/100)
+                    buffered_sl = raw_sl * (1 - buffer_percent/100)
+                else:
+                    # Для Шорта стоп вище: звичайний стоп + буфер
+                    raw_sl = cur_price * (1 + slPercent/100)
+                    buffered_sl = raw_sl * (1 + buffer_percent/100)
+                
+                final_sl = self.round_price(buffered_sl, tick_size)
+                
+                # Встановлюємо SL як властивість позиції (Position Stop Loss)
+                # Це гарантує, що при закритті позиції SL зникне сам!
+                self.session.set_trading_stop(
+                    category="linear", symbol=norm_symbol, 
+                    stopLoss=str(final_sl), positionIdx=0
+                )
+                logger.info(f"🛡️ SL Set with Buffer: {final_sl} (Orig: {raw_sl:.2f})")
+
+            # ❌ TAKE PROFIT ВИДАЛЕНО (Працює Smart Exit)
+            logger.info("ℹ️ TP not set. Smart Exit Manager active.")
+
             return {"status": "success"}
         except Exception as e:
             logger.error(f"🔥 Order Error: {e}")
             return {"status": "error"}
 
-    # --- P&L СТАТИСТИКА (ВИПРАВЛЕНА) ---
+    # P&L
     def get_pnl_stats(self, days=7):
         try:
             trades = stats_service.get_trades(days=days)
             if not trades:
-                return {"total_pnl": 0.0, "total_trades": 0, "win_rate": 0, "chart_labels": [], "chart_data": [], "history": []}, None
+                return {"total_pnl": 0.0, "total_trades": 0, "win_rate": 0, "winners":0, "losers":0, "volume":0, "chart_labels": [], "chart_data": [], "history": []}, None
 
             total_pnl = sum(t['pnl'] for t in trades)
             total_trades = len(trades)
@@ -266,7 +279,7 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === 🔥 SMART TRADE MANAGER (АВТОМАТИЧНИЙ ВИХІД) ===
+# === 🔥 SMART TRADE MANAGER (РОЗУМНИЙ ВИХІД) ===
 class SmartTradeManager:
     def __init__(self, bot_instance, scanner_instance):
         self.bot = bot_instance
@@ -299,40 +312,49 @@ class SmartTradeManager:
             # Отримуємо RSI
             rsi = self.scanner.get_current_rsi(symbol)
             
-            # 1. Вихід по RSI (Піковий)
+            # --- ЛОГІКА ВИХОДУ ---
+            
+            # 1. Вихід по RSI (Пік)
             if side == "Buy" and rsi >= 78 and unrealized_pnl > 0:
-                self.close_position(symbol, size, "Sell", f"RSI Overbought ({rsi})")
+                self.close_position(symbol, size, "Sell", f"RSI High ({rsi})")
                 continue
             if side == "Sell" and rsi <= 22 and unrealized_pnl > 0:
-                self.close_position(symbol, size, "Buy", f"RSI Oversold ({rsi})")
+                self.close_position(symbol, size, "Buy", f"RSI Low ({rsi})")
                 continue
 
-            # 2. Трейлінг Стоп
+            # 2. Динамічний Трейлінг Стоп
+            # Якщо ціна пішла в нашу сторону, підтягуємо SL в Беззбиток і далі
             pnl_pct = (unrealized_pnl / (entry_price * size / float(pos['leverage']))) * 100
             current_sl = float(pos.get('stopLoss', 0))
             
             if side == "Buy":
-                if pnl_pct > 1.5: # Якщо прибуток > 1.5%, ставимо БУ+
-                    new_sl = entry_price * 1.005
+                if pnl_pct > 1.0: # +1% прибутку -> БУ
+                    new_sl = entry_price * 1.002 # Трохи вище входу (щоб покрити комісію)
                     if current_sl < new_sl: self.update_sl(symbol, new_sl)
-                elif pnl_pct > 3.0: # Якщо прибуток > 3%, підтягуємо
+                elif pnl_pct > 3.0: # +3% прибутку -> Трейлінг
                     new_sl = entry_price * 1.02
                     if current_sl < new_sl: self.update_sl(symbol, new_sl)
+                    
             elif side == "Sell":
-                if pnl_pct > 1.5:
-                    new_sl = entry_price * 0.995
+                if pnl_pct > 1.0:
+                    new_sl = entry_price * 0.998
                     if current_sl == 0 or current_sl > new_sl: self.update_sl(symbol, new_sl)
 
     def close_position(self, symbol, qty, side, reason):
         try:
+            # Закриваємо по ринку
             self.bot.session.place_order(category="linear", symbol=symbol, side=side, orderType="Market", qty=str(qty), reduceOnly=True)
-            send_telegram_message(f"💰 <b>AUTO-CLOSE: {symbol}</b>\nПричина: {reason}\nP&L фіксується.")
+            
+            # ⚠️ СКАСУВАННЯ ВСІХ ОРДЕРІВ (Для видалення старих SL, якщо вони раптом залишились)
+            self.bot.session.cancel_all_orders(category="linear", symbol=symbol)
+            
+            send_telegram_message(f"💰 <b>AUTO-CLOSE: {symbol}</b>\nПричина: {reason}\nP&L зафіксовано.")
             logger.info(f"✅ Auto-closed {symbol}: {reason}")
         except Exception as e: logger.error(f"Failed to close {symbol}: {e}")
 
     def update_sl(self, symbol, price):
         try:
-            price_str = "{:.4f}".format(price)
+            price_str = "{:.4f}".format(price) # Тут можна додати round_price
             self.bot.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=price_str, positionIdx=0)
             logger.info(f"🛡️ Updated SL for {symbol} to {price_str}")
         except: pass
@@ -340,14 +362,14 @@ class SmartTradeManager:
 trade_manager = SmartTradeManager(bot, scanner)
 trade_manager.start()
 
-# === WEB ROUTES (UI) ===
+# === WEB ROUTES ===
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
     scan_data = scanner.get_aggregated_data(hours=24)
     last_update = datetime.now().strftime('%H:%M:%S')
     
-    # Отримуємо активні позиції для відображення
+    # Активні позиції
     active_positions = []
     try:
         pos_data = bot.session.get_positions(category="linear", settleCoin="USDT")
@@ -358,16 +380,10 @@ def scanner_page():
                     market_data = scan_data['snapshots'].get(symbol, {})
                     current_rsi = market_data.get('rsi', 50)
                     pnl = float(p['unrealisedPnl'])
-                    
-                    rec = "ТРИМАТИ 🟢"
-                    row_class = ""
+                    rec, row_class = "ТРИМАТИ 🟢", ""
                     if p['side'] == "Buy" and current_rsi > 75: rec = "ВИХІД (RSI) 🔴"; row_class = "table-danger"
                     elif p['side'] == "Sell" and current_rsi < 25: rec = "ВИХІД (RSI) 🔴"; row_class = "table-danger"
-
-                    active_positions.append({
-                        'symbol': symbol, 'side': p['side'], 'entry': p['avgPrice'], 'pnl': round(pnl, 2),
-                        'rsi': current_rsi, 'recommendation': rec, 'row_class': row_class
-                    })
+                    active_positions.append({'symbol': symbol, 'side': p['side'], 'entry': p['avgPrice'], 'pnl': round(pnl, 2), 'rsi': current_rsi, 'recommendation': rec, 'row_class': row_class})
     except: pass
 
     # Сортування
@@ -378,7 +394,6 @@ def scanner_page():
         coin_stats[sym]['inflow'] += p['vol_inflow']
         coin_stats[sym]['change'] += p['price_change_interval']
         coin_stats[sym]['count'] += 1
-    
     positive_coins = [{'symbol':k, 'inflow':v['inflow'], 'avg_change':round(v['change']/v['count'],2), 'bar_pct': 50} for k,v in coin_stats.items() if v['change']>=0]
     negative_coins = [{'symbol':k, 'inflow':v['inflow'], 'avg_change':round(v['change']/v['count'],2), 'bar_pct': 50} for k,v in coin_stats.items() if v['change']<0]
     positive_coins.sort(key=lambda x: x['inflow'], reverse=True)
@@ -405,10 +420,8 @@ def scanner_page():
             <td><span class="badge {{ 'badge-rsi-high' if pos.rsi>70 else 'bg-secondary' }}">{{ pos.rsi }}</span></td><td>{{ pos.recommendation }}</td>
         </tr>{% endfor %}</tbody></table></div></div>
         {% endif %}
-        
         <div class="row"><div class="col-md-6"><div class="card"><div class="card-header text-up">ТОП ПОКУПЦІВ</div><div class="card-body p-0"><table class="table table-dark table-sm mb-0"><thead><tr><th>Актив</th><th>Вхід</th></tr></thead><tbody>{% for c in positive_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-up">${{"{:,.0f}".format(c.inflow)}}</td></tr>{% endfor %}</tbody></table></div></div></div>
         <div class="col-md-6"><div class="card"><div class="card-header text-down">ТОП ПРОДАВЦІВ</div><div class="card-body p-0"><table class="table table-dark table-sm mb-0"><thead><tr><th>Актив</th><th>Вхід</th></tr></thead><tbody>{% for c in negative_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-down">${{"{:,.0f}".format(c.inflow)}}</td></tr>{% endfor %}</tbody></table></div></div></div></div>
-
         <div class="card"><div class="card-header d-flex justify-content-between"><span>ЖУРНАЛ СИГНАЛІВ</span><a href="/report" class="btn btn-sm btn-outline-light">Звіт P&L</a></div>
         <div class="card-body p-0"><table id="signalsTable" class="table table-dark table-hover w-100"><thead><tr><th>Час</th><th>Символ</th><th>Ціна</th><th>Зміна</th><th>Аномалія</th><th>RSI</th><th>Об'єм</th></tr></thead><tbody>
         {% for p in pumps %}<tr><td class="text-muted">{{ p.time }}</td><td class="fw-bold text-primary">{{ p.symbol }}</td><td>{{ p.price }}</td><td class="{{ 'text-up' if p.price_change_interval>0 else 'text-down' }}">{{ p.price_change_interval }}%</td><td>x{{ p.spike_factor }}</td><td>{{ p.get('rsi','-') }}</td><td>${{ "{:,.0f}".format(p.vol_inflow) }}</td></tr>{% endfor %}
@@ -425,6 +438,7 @@ def report_page():
     stats, error = bot.get_pnl_stats(days=days)
     if error or not stats: stats = {"total_pnl": 0, "win_rate": 0, "total_trades": 0, "volume": 0, "chart_labels": [], "chart_data": [], "history": []}
     balance = bot.get_available_balance() or 0.0
+    win_rate = stats.get('win_rate', 0)
     
     html = """
     <!DOCTYPE html><html lang="uk" data-bs-theme="dark"><head><title>P&L</title><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"><script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -438,7 +452,7 @@ def report_page():
     </tbody></table></div></div>
     <script>new Chart(document.getElementById('chart'),{type:'line',data:{labels:{{ stats.chart_labels|tojson }},datasets:[{label:'P&L',data:{{ stats.chart_data|tojson }},borderColor:'#0ecb81',backgroundColor:'rgba(14,203,129,0.2)',fill:true}]}});</script></body></html>
     """
-    return render_template_string(html, stats=stats, balance=balance)
+    return render_template_string(html, stats=stats, balance=balance, win_rate=win_rate, days=days)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
