@@ -1,9 +1,9 @@
 """
-Main Application - Custom Period Analytics 📅
+Main Application - Light Theme Edition ☀️
 Включає:
-- Фільтр статистики: 1 день, 7 днів, 30 днів, Довільний період
-- Професійний UI
-- Smart Exit та Торгівля
+- Світлий UI (Сканер та Звіти)
+- Очищення бази після закриття угоди
+- Smart Exit та повна логіка торгівлі
 """
 
 from flask import Flask, request, jsonify, render_template_string
@@ -16,7 +16,7 @@ import json
 import re
 import os
 import decimal
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 import ctypes
 
 # === ІМПОРТИ ===
@@ -191,7 +191,10 @@ class BybitTradingBot:
                     return {"status": "error_balance"}
             
             self.set_leverage(norm_symbol, leverage)
-            self.session.place_order(category="linear", symbol=norm_symbol, side=action, orderType="Market", qty=str(final_qty), timeInForce="GTC")
+            self.session.place_order(
+                category="linear", symbol=norm_symbol, side=action, 
+                orderType="Market", qty=str(final_qty), timeInForce="GTC"
+            )
             logger.info(f"✅ Opened: {action} {final_qty} {norm_symbol}")
             
             if slPercent > 0:
@@ -204,7 +207,10 @@ class BybitTradingBot:
                     buffered_sl = raw_sl * (1 + buffer_percent/100)
                 
                 final_sl = self.round_price(buffered_sl, tick_size)
-                self.session.set_trading_stop(category="linear", symbol=norm_symbol, stopLoss=str(final_sl), positionIdx=0)
+                self.session.set_trading_stop(
+                    category="linear", symbol=norm_symbol, 
+                    stopLoss=str(final_sl), positionIdx=0
+                )
                 logger.info(f"🛡️ SL Set with Buffer: {final_sl}")
 
             return {"status": "success"}
@@ -214,7 +220,6 @@ class BybitTradingBot:
 
     # === СИНХРОНІЗАЦІЯ ===
     def sync_trades_from_bybit(self, days=30):
-        """Вантажимо трохи більше даних для гнучкості"""
         logger.info(f"🔄 Syncing P&L...")
         try:
             now = datetime.now()
@@ -240,49 +245,38 @@ class BybitTradingBot:
                         stats_service.save_trade(trade_data)
         except: pass
 
-    # === P&L ЛОГІКА З ФІЛЬТРАМИ ДАТ ===
+    # === P&L ЛОГІКА ===
     def get_pnl_stats(self, days=None, start_date=None, end_date=None):
-        # 1. Синхронізуємо дані за максимальний період (про всяк випадок)
         self.sync_trades_from_bybit(days=30) 
-        
         try:
-            # 2. Отримуємо всі угоди з бази (за 90 днів для запасу)
             all_trades = stats_service.get_trades(days=90)
             if not all_trades:
                 return {"total_pnl": 0.0, "total_trades": 0, "win_rate": 0, "chart_labels": [], "chart_data": [], "history": []}, None
 
-            # 3. Фільтруємо угоди по датах
             filtered_trades = []
-            
-            # Визначаємо межі часу
             filter_start = None
             filter_end = None
 
             if start_date and end_date:
-                # Якщо вибрано календар
                 filter_start = datetime.strptime(start_date, '%Y-%m-%d')
-                filter_end = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1) # Включаючи кінець дня
+                filter_end = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
             elif days:
-                # Якщо вибрано кнопку (1, 7, 30 днів)
                 filter_end = datetime.now()
                 filter_start = filter_end - timedelta(days=days)
 
             for t in all_trades:
                 if not t['exit_time']: continue
-                # Конвертуємо рядок дати з БД в об'єкт datetime, якщо треба
                 exit_dt = t['exit_time'] 
                 if isinstance(exit_dt, str):
                     try: exit_dt = datetime.strptime(exit_dt, '%Y-%m-%d %H:%M')
                     except: continue
                 
-                # Перевірка діапазону
                 if filter_start and filter_end:
                     if filter_start <= exit_dt <= filter_end:
                         filtered_trades.append(t)
                 else:
                     filtered_trades.append(t)
 
-            # 4. Рахуємо статистику по відфільтрованим даним
             stats = {
                 "total_trades": len(filtered_trades),
                 "total_pnl": 0.0, "total_volume": 0.0,
@@ -292,45 +286,33 @@ class BybitTradingBot:
             }
 
             cumulative_pnl = 0.0
-            # Сортуємо від старих до нових для графіка
             filtered_trades.sort(key=lambda x: x['exit_time'] if x['exit_time'] else '', reverse=False)
-
-            daily_pnl = {} # Для агрегації по днях на графіку
+            daily_pnl = {} 
 
             for trade in filtered_trades:
                 pnl = trade['pnl']
                 stats["total_pnl"] += pnl
                 cumulative_pnl += pnl
-                
                 qty = trade.get('qty', 0)
                 price = trade.get('exit_price', 0)
                 stats["total_volume"] += qty * price
-
                 if pnl > 0: stats["win_trades"] += 1
                 else: stats["loss_trades"] += 1
-
                 if trade['side'] == "Long": stats["long_trades"] += 1
                 else: stats["short_trades"] += 1
-
-                # Графік
                 if trade['exit_time']:
                     if isinstance(trade['exit_time'], str): d_str = trade['exit_time'].split(' ')[0]
                     else: d_str = trade['exit_time'].strftime('%Y-%m-%d')
-                    
                     daily_pnl[d_str] = daily_pnl.get(d_str, 0) + pnl
-
                 stats["details"].append(trade)
 
-            # Будуємо красивий графік по днях
             running_balance = 0
             for d in sorted(daily_pnl.keys()):
                 running_balance += daily_pnl[d]
-                stats["chart_labels"].append(d[5:]) # MM-DD
+                stats["chart_labels"].append(d[5:])
                 stats["chart_data"].append(round(running_balance, 2))
 
-            # Сортуємо деталі: нові зверху для таблиці
             stats["details"].sort(key=lambda x: x['exit_time'] if x['exit_time'] else '', reverse=True)
-            
             if stats["total_trades"] > 0:
                 stats["win_rate"] = round((stats["win_trades"] / stats["total_trades"]) * 100, 1)
             
@@ -342,30 +324,40 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === SMART EXIT MANAGER ===
+# === 🔥 SMART TRADE MANAGER (RSI + VOLUME PRESSURE) ===
 class SmartTradeManager:
     def __init__(self, bot_instance, scanner_instance):
         self.bot = bot_instance
         self.scanner = scanner_instance
         self.running = True
-    def start(self): threading.Thread(target=self.loop, daemon=True).start()
+        
+    def start(self):
+        threading.Thread(target=self.loop, daemon=True).start()
+        logger.info("🛡️ Smart Trade Manager Active")
+        
     def loop(self):
         while self.running:
             try: self.manage_positions()
             except: pass
             time.sleep(5)
+            
     def manage_positions(self):
         resp = self.bot.session.get_positions(category="linear", settleCoin="USDT")
         if resp['retCode'] != 0: return
+        
         for pos in resp['result']['list']:
             size = float(pos['size'])
             if size == 0: continue
+            
             symbol = pos['symbol']
             side = pos['side']
             entry_price = float(pos['avgPrice'])
             unrealized_pnl = float(pos['unrealisedPnl'])
-            rsi = self.scanner.get_current_rsi(symbol)
             
+            rsi = self.scanner.get_current_rsi(symbol)
+            pressure = self.scanner.get_market_pressure(symbol)
+            
+            # 1. RSI Exit
             if side == "Buy" and rsi >= 78 and unrealized_pnl > 0:
                 self.close_position(symbol, size, "Sell", f"RSI High ({rsi})")
                 continue
@@ -373,8 +365,18 @@ class SmartTradeManager:
                 self.close_position(symbol, size, "Buy", f"RSI Low ({rsi})")
                 continue
 
+            # 2. Volume Pressure Exit
+            if side == "Buy" and pressure < -100000:
+                self.close_position(symbol, size, "Sell", f"Volume Dump")
+                continue
+            if side == "Sell" and pressure > 100000:
+                self.close_position(symbol, size, "Buy", f"Volume Pump")
+                continue
+
+            # 3. Trailing Stop
             pnl_pct = (unrealized_pnl / (entry_price * size / float(pos['leverage']))) * 100
             current_sl = float(pos.get('stopLoss', 0))
+            
             if side == "Buy":
                 if pnl_pct > 1.5:
                     new_sl = entry_price * 1.005
@@ -392,6 +394,14 @@ class SmartTradeManager:
             self.bot.session.place_order(category="linear", symbol=symbol, side=side, orderType="Market", qty=str(qty), reduceOnly=True)
             self.bot.session.cancel_all_orders(category="linear", symbol=symbol)
             send_telegram_message(f"💰 <b>AUTO-CLOSE: {symbol}</b>\nПричина: {reason}\nP&L фіксується.")
+            
+            # 🔥 ОЧИЩЕННЯ БАЗИ ПО ЦІЙ МОНЕТІ
+            try:
+                stats_service.delete_coin_history(symbol)
+                logger.info(f"🧹 History cleared for {symbol}")
+            except: pass
+            
+            logger.info(f"✅ Auto-closed {symbol}: {reason}")
         except: pass
 
     def update_sl(self, symbol, price):
@@ -403,7 +413,7 @@ class SmartTradeManager:
 trade_manager = SmartTradeManager(bot, scanner)
 trade_manager.start()
 
-# === WEB ROUTES ===
+# === WEB ROUTES (LIGHT THEME) ===
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -416,12 +426,18 @@ def scanner_page():
             for p in pos_data['result']['list']:
                 if float(p['size']) > 0:
                     symbol = p['symbol']
-                    current_rsi = scan_data['snapshots'].get(symbol, {}).get('rsi', 50)
+                    market_data = scan_data['snapshots'].get(symbol, {})
+                    current_rsi = market_data.get('rsi', 50)
+                    pressure = scanner.get_market_pressure(symbol)
                     pnl = float(p['unrealisedPnl'])
-                    rec, row_class = "ТРИМАТИ 🟢", ""
-                    if p['side'] == "Buy" and current_rsi > 75: rec = "ВИХІД (RSI) 🔴"; row_class = "table-danger"
-                    elif p['side'] == "Sell" and current_rsi < 25: rec = "ВИХІД (RSI) 🔴"; row_class = "table-danger"
-                    active_positions.append({'symbol': symbol, 'side': p['side'], 'entry': p['avgPrice'], 'pnl': round(pnl, 2), 'rsi': current_rsi, 'recommendation': rec, 'row_class': row_class})
+                    rec, row_class = "ТРИМАТИ", ""
+                    if p['side'] == "Buy":
+                        if current_rsi > 75: rec = "RSI HIGH 🔴"; row_class = "table-danger"
+                        elif pressure < -50000: rec = "DUMPING! ⚠️"; row_class = "table-warning"
+                    elif p['side'] == "Sell":
+                        if current_rsi < 25: rec = "RSI LOW 🔴"; row_class = "table-danger"
+                        elif pressure > 50000: rec = "PUMPING! ⚠️"; row_class = "table-warning"
+                    active_positions.append({'symbol': symbol, 'side': p['side'], 'entry': p['avgPrice'], 'pnl': round(pnl, 2), 'rsi': current_rsi, 'pressure': round(pressure), 'recommendation': rec, 'row_class': row_class})
     except: pass
 
     coin_stats = {}
@@ -436,39 +452,60 @@ def scanner_page():
     positive_coins.sort(key=lambda x: x['inflow'], reverse=True)
     negative_coins.sort(key=lambda x: x['inflow'], reverse=True)
 
+    # === СВІТЛИЙ ДИЗАЙН ===
     html = """
-    <!DOCTYPE html><html lang="uk" data-bs-theme="dark"><head><meta charset="UTF-8"><title>Whale Terminal Pro</title>
+    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Whale Scanner Light</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" rel="stylesheet">
-    <style>body{background:#0b0e11;color:#eaecef;font-family:'Segoe UI',sans-serif;font-size:13px}.card{background:#151a1f;border:1px solid #2a3441;margin-bottom:15px}.table-dark{--bs-table-bg:transparent} td{vertical-align:middle}.text-up{color:#0ecb81!important}.text-down{color:#f6465d!important}.badge-rsi-high{background:rgba(246,70,93,0.2);color:#f6465d;border:1px solid #f6465d}</style>
+    <style>
+        body { background-color: #f4f6f8; color: #212529; font-family: 'Segoe UI', sans-serif; font-size: 14px; }
+        .navbar { background-color: #ffffff !important; border-bottom: 1px solid #e1e4e8; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .navbar-brand { color: #000 !important; font-weight: 700; }
+        .card { background-color: #ffffff; border: 1px solid #e1e4e8; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); margin-bottom: 20px; }
+        .card-header { background-color: #ffffff; border-bottom: 1px solid #f0f0f0; font-weight: 700; color: #495057; padding: 15px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .table { color: #212529; margin-bottom: 0; background-color: #fff; }
+        .table th { font-weight: 600; color: #6c757d; border-bottom: 2px solid #f0f0f0; }
+        .table td { border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+        .table-hover tbody tr:hover { background-color: #f8f9fa; }
+        .text-up { color: #00b894 !important; font-weight: 600; }
+        .text-down { color: #d63031 !important; font-weight: 600; }
+        .badge-rsi-high { background-color: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
+        .badge-rsi-low { background-color: #e0f2f1; color: #00695c; border: 1px solid #b2dfdb; }
+    </style>
     <meta http-equiv="refresh" content="30"></head><body>
-    <nav class="navbar navbar-dark bg-dark border-bottom border-secondary mb-3 p-2"><span class="navbar-brand">🐋 Whale Terminal PRO</span><span class="text-muted">{{ last_update }}</span></nav>
+    
+    <nav class="navbar navbar-expand-lg navbar-light mb-4 px-3">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">🐋 Whale Scanner <span class="badge bg-light text-dark border">LIGHT</span></a>
+            <span class="text-muted ms-2 small">Оновлено: {{ last_update }}</span>
+        </div>
+    </nav>
+
     <div class="container-fluid">
-        {% if positions %}<div class="card border-primary mb-3"><div class="card-header bg-primary bg-opacity-10">МОЇ ПОЗИЦІЇ</div><div class="card-body p-0"><table class="table table-dark table-hover mb-0"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Статус</th></tr></thead><tbody>{% for pos in positions %}<tr class="{{ pos.row_class }}"><td class="fw-bold">{{ pos.symbol }}</td><td>{{ pos.side }}</td><td class="{{ 'text-up' if pos.pnl>0 else 'text-down' }}">{{ pos.pnl }}$</td><td><span class="badge {{ 'badge-rsi-high' if pos.rsi>70 else 'bg-secondary' }}">{{ pos.rsi }}</span></td><td>{{ pos.recommendation }}</td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
-        <div class="row"><div class="col-md-6"><div class="card"><div class="card-header text-up">ТОП ПОКУПЦІВ</div><div class="card-body p-0"><table class="table table-dark table-sm mb-0"><thead><tr><th>Актив</th><th>Вхід</th></tr></thead><tbody>{% for c in positive_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-up">${{"{:,.0f}".format(c.inflow)}}</td></tr>{% endfor %}</tbody></table></div></div></div><div class="col-md-6"><div class="card"><div class="card-header text-down">ТОП ПРОДАВЦІВ</div><div class="card-body p-0"><table class="table table-dark table-sm mb-0"><thead><tr><th>Актив</th><th>Вхід</th></tr></thead><tbody>{% for c in negative_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-down">${{"{:,.0f}".format(c.inflow)}}</td></tr>{% endfor %}</tbody></table></div></div></div></div>
-        <div class="card"><div class="card-header d-flex justify-content-between"><span>ЖУРНАЛ СИГНАЛІВ</span><a href="/report" class="btn btn-sm btn-outline-light">Звіт P&L</a></div><div class="card-body p-0"><table id="signalsTable" class="table table-dark table-hover w-100"><thead><tr><th>Час</th><th>Символ</th><th>Ціна</th><th>Зміна</th><th>Аномалія</th><th>RSI</th><th>Об'єм</th></tr></thead><tbody>{% for p in pumps %}<tr><td class="text-muted">{{ p.time }}</td><td class="fw-bold text-primary">{{ p.symbol }}</td><td>{{ p.price }}</td><td class="{{ 'text-up' if p.price_change_interval>0 else 'text-down' }}">{{ p.price_change_interval }}%</td><td>x{{ p.spike_factor }}</td><td>{{ p.get('rsi','-') }}</td><td>${{ "{:,.0f}".format(p.vol_inflow) }}</td></tr>{% endfor %}</tbody></table></div></div>
+        {% if positions %}
+        <div class="card border-primary mb-4"><div class="card-header text-primary bg-light border-bottom-0">АКТИВНІ УГОДИ</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск ($)</th><th>Статус</th></tr></thead><tbody>
+        {% for pos in positions %}<tr class="{{ pos.row_class }}"><td class="fw-bold">{{ pos.symbol }}</td><td><span class="badge {{ 'bg-success' if pos.side=='Buy' else 'bg-danger' }}">{{ pos.side }}</span></td><td class="{{ 'text-up' if pos.pnl>0 else 'text-down' }}">{{ pos.pnl }}$</td><td><span class="badge {{ 'badge-rsi-high' if pos.rsi>70 else 'badge-rsi-low' }}">{{ pos.rsi }}</span></td><td class="{{ 'text-up' if pos.pressure>0 else 'text-down' }}">{{ "{:,.0f}".format(pos.pressure) }}</td><td><strong>{{ pos.recommendation }}</strong></td></tr>{% endfor %}</tbody></table></div></div>
+        {% endif %}
+        
+        <div class="row"><div class="col-md-6"><div class="card"><div class="card-header text-up">Покупці (Вливання)</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вхід ($)</th></tr></thead><tbody>{% for c in positive_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-up">+{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div><div class="col-md-6"><div class="card"><div class="card-header text-down">Продавці (Вихід)</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вихід ($)</th></tr></thead><tbody>{% for c in negative_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-down">{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div></div>
+        
+        <div class="card"><div class="card-header d-flex justify-content-between align-items-center bg-white"><span>Журнал Сигналів</span><a href="/report" class="btn btn-sm btn-outline-secondary">Перейти до P&L</a></div><div class="card-body p-0"><table id="signalsTable" class="table table-hover w-100"><thead><tr><th>Час</th><th>Символ</th><th>Ціна</th><th>Зміна</th><th>Аномалія</th><th>RSI</th><th>Об'єм ($)</th></tr></thead><tbody>{% for p in pumps %}<tr><td class="text-muted">{{ p.time }}</td><td class="fw-bold text-primary">{{ p.symbol }}</td><td>{{ p.price }}</td><td class="{{ 'text-up' if p.price_change_interval>0 else 'text-down' }}">{{ p.price_change_interval }}%</td><td>x{{ p.spike_factor }}</td><td>{{ p.get('rsi','-') }}</td><td class="fw-bold">{{ "{:,.0f}".format(p.vol_inflow) }}</td></tr>{% endfor %}</tbody></table></div></div>
     </div>
-    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script><script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script><script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script><script>$(document).ready(function(){$('#signalsTable').DataTable({"order":[[0,"desc"]],"pageLength":25});});</script></body></html>
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script><script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script><script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script><script>$(document).ready(function(){$('#signalsTable').DataTable({"order":[[0,"desc"]],"pageLength":25,"language":{"search":"Пошук:","paginate":{"next":">","previous":"<"}}});});</script></body></html>
     """
     return render_template_string(html, pumps=scan_data['all_signals'], last_update=last_update, positive_coins=positive_coins, negative_coins=negative_coins, positions=active_positions)
 
 @app.route('/report', methods=['GET'])
 def report_page():
-    # Отримуємо параметри фільтрації
     days_arg = request.args.get('days')
     start_arg = request.args.get('start')
     end_arg = request.args.get('end')
-    
     days = int(days_arg) if days_arg else None
-    
-    # Якщо параметрів немає, за замовчуванням 7 днів
     if not days and not start_arg: days = 7
 
     stats, error = bot.get_pnl_stats(days=days, start_date=start_arg, end_date=end_arg)
     balance = bot.get_available_balance() or 0.0
     if error or not stats: stats = {"total_pnl": 0, "win_rate": 0, "total_trades": 0, "volume": 0, "chart_labels": [], "chart_data": [], "details": [], "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0}
-
-    # Відображення періоду у заголовку
     if start_arg and end_arg: period_label = f"{start_arg} — {end_arg}"
     else: period_label = f"Останні {days} днів"
 
@@ -481,10 +518,10 @@ def report_page():
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
         <style>
-            :root { --bg-color: #f7f8fa; --card-bg: #ffffff; --text-primary: #121214; --text-secondary: #858e9c; --green: #20b26c; --red: #ef454a; --border: #eff2f5; }
+            :root { --bg-color: #f7f9fc; --card-bg: #ffffff; --text-primary: #333; --text-secondary: #666; --green: #00b894; --red: #d63031; --border: #e0e0e0; }
             body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: var(--bg-color); color: var(--text-primary); margin: 0; padding: 20px; }
             .container { max-width: 1200px; margin: 0 auto; }
-            .card { background: var(--card-bg); border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+            .card { background: var(--card-bg); border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.03); border: 1px solid var(--border); }
             .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
             .balance { font-size: 24px; font-weight: 700; }
             .top-stats-grid { display: flex; gap: 40px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -492,7 +529,7 @@ def report_page():
             .kpi-val { font-size: 24px; font-weight: 700; margin-top: 5px; }
             .kpi-label { font-size: 13px; color: var(--text-secondary); text-decoration: underline dotted; cursor: help; }
             .detail-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-            .stat-box { background: white; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+            .stat-box { background: white; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; box-shadow: 0 2px 5px rgba(0,0,0,0.03); border: 1px solid var(--border); }
             .stat-box-content { display: flex; align-items: center; gap: 20px; }
             .donut-ring, .gauge-ring { width: 50px; height: 50px; flex-shrink: 0; }
             .stat-big-num { font-size: 28px; font-weight: 700; line-height: 1.2; }
@@ -502,9 +539,9 @@ def report_page():
             th { text-align: left; color: var(--text-secondary); font-weight: 500; padding: 12px 16px; border-bottom: 1px solid var(--border); }
             td { padding: 14px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
             .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
-            .badge-win { background: rgba(32, 178, 108, 0.1); color: var(--green); }
-            .badge-loss { background: rgba(239, 69, 74, 0.1); color: var(--red); }
-            .filter-bar { display: flex; gap: 10px; align-items: center; background: #fff; padding: 10px; border-radius: 8px; margin-bottom: 20px; }
+            .badge-win { background: rgba(0, 184, 148, 0.1); color: var(--green); }
+            .badge-loss { background: rgba(214, 48, 49, 0.1); color: var(--red); }
+            .filter-bar { display: flex; gap: 10px; align-items: center; background: #fff; padding: 10px; border-radius: 8px; margin-bottom: 20px; border: 1px solid var(--border); }
         </style>
     </head>
     <body>
@@ -545,8 +582,8 @@ def report_page():
                     <div class="stat-box-content">
                         <div class="donut-ring">
                             <svg viewBox="0 0 36 36">
-                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#ef454a" stroke-width="4" />
-                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#20b26c" stroke-width="4" stroke-dasharray="{{ (stats.long_trades / stats.total_trades * 100) if stats.total_trades > 0 else 0 }}, 100" />
+                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#d63031" stroke-width="4" />
+                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#00b894" stroke-width="4" stroke-dasharray="{{ (stats.long_trades / stats.total_trades * 100) if stats.total_trades > 0 else 0 }}, 100" />
                             </svg>
                         </div>
                         <div>
@@ -560,8 +597,8 @@ def report_page():
                     <div class="stat-box-content">
                         <div class="gauge-ring">
                             <svg viewBox="0 0 36 36">
-                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#eff2f5" stroke-width="4" />
-                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#20b26c" stroke-width="4" stroke-dasharray="{{ stats.win_rate }}, 100" />
+                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#e0e0e0" stroke-width="4" />
+                                <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#00b894" stroke-width="4" stroke-dasharray="{{ stats.win_rate }}, 100" />
                             </svg>
                         </div>
                         <div>
@@ -609,8 +646,8 @@ def report_page():
                     datasets: [{
                         label: 'P&L ($)',
                         data: {{ stats.chart_data | tojson }},
-                        borderColor: '#20b26c',
-                        backgroundColor: 'rgba(32, 178, 108, 0.1)',
+                        borderColor: '#00b894',
+                        backgroundColor: 'rgba(0, 184, 148, 0.1)',
                         fill: true, tension: 0.4
                     }]
                 },
