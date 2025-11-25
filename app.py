@@ -254,11 +254,21 @@ class BybitTradingBot:
 
             margin = (balance * (riskPercent / 100)) * 0.98
             raw_qty = (margin * leverage) / cur_price
+            
+            # --- FIX: LOGIC FOR SMALL POSITIONS ---
             final_qty = self.round_qty(raw_qty, qty_step)
             
-            if final_qty < min_qty: 
-                logger.warning(f"Calculated Qty {final_qty} < Min Qty {min_qty}")
-                return {"status": "error"}
+            if final_qty < min_qty:
+                logger.warning(f"⚠️ Calculated Qty {final_qty} < Min Qty {min_qty}. Trying to force Min Qty.")
+                
+                # Check if we can afford min_qty
+                cost_of_min_qty = (min_qty * cur_price) / leverage
+                if balance > cost_of_min_qty * 1.05: # 5% buffer for fees
+                    final_qty = min_qty
+                    logger.info(f"✅ Forced Min Qty: {final_qty} (Cost: ~{cost_of_min_qty:.2f}$)")
+                else:
+                    logger.error(f"❌ Not enough balance for Min Qty. Need {cost_of_min_qty:.2f}$, Have {balance:.2f}$")
+                    return {"status": "error_balance"}
 
             # 1. Set Leverage
             self.set_leverage(norm_symbol, leverage)
