@@ -610,10 +610,158 @@ def scanner_page():
 
 @app.route('/report', methods=['GET'])
 def report_page():
+    """P&L Report страница"""
     days = request.args.get('days', default=7, type=int)
     stats, error = bot.get_pnl_stats(days=days)
-    if error: return f"<h1>Помилка</h1><p>{error}</p>"
-    return f"<h1>Report готовий, HTML шаблон не змінився</h1>"
+    
+    if error:
+        return f"<h1>Ошибка</h1><p>{error}</p>"
+    
+    # HTML шаблон отчёта
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="uk">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>P&L Report</title>
+        <style>
+            :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --red: #ef4444; --blue: #3b82f6; }
+            body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
+            .container { max-width: 1200px; margin: 0 auto; }
+            .card { background: var(--card); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+            h1 { margin: 0 0 20px 0; font-size: 24px; }
+            .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+            .stat-box { background: #334155; padding: 15px; border-radius: 8px; text-align: center; }
+            .stat-value { font-size: 28px; font-weight: bold; margin: 5px 0; }
+            .stat-label { font-size: 14px; color: #94a3b8; }
+            .positive { color: var(--green); }
+            .negative { color: var(--red); }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            th { text-align: left; color: #94a3b8; padding: 12px; border-bottom: 2px solid #334155; }
+            td { padding: 12px; border-bottom: 1px solid #334155; }
+            .btn { display: inline-block; padding: 8px 16px; margin: 5px; background: #3b82f6; color: white; text-decoration: none; border-radius: 6px; }
+            .btn:hover { background: #2563eb; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="card">
+                <h1>📊 P&L Report ({{ days }} днів)</h1>
+                
+                <div style="margin-bottom: 20px;">
+                    <a href="/report?days=1" class="btn">1 день</a>
+                    <a href="/report?days=7" class="btn">7 днів</a>
+                    <a href="/report?days=30" class="btn">30 днів</a>
+                    <a href="/scanner" class="btn" style="background: #334155;">← Сканер</a>
+                </div>
+                
+                <div class="stat-grid">
+                    <div class="stat-box">
+                        <div class="stat-label">Загальний P&L</div>
+                        <div class="stat-value {{ 'positive' if stats.total_pnl >= 0 else 'negative' }}">
+                            {{ '+' if stats.total_pnl >= 0 else '' }}${{ "{:,.2f}".format(stats.total_pnl) }}
+                        </div>
+                    </div>
+                    
+                    <div class="stat-box">
+                        <div class="stat-label">Загальні угоди</div>
+                        <div class="stat-value">{{ stats.total_trades }}</div>
+                    </div>
+                    
+                    <div class="stat-box">
+                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-value {{ 'positive' if stats.win_rate >= 50 else 'negative' }}">
+                            {{ "{:.1f}".format(stats.win_rate) }}%
+                        </div>
+                    </div>
+                    
+                    <div class="stat-box">
+                        <div class="stat-label">Прибуткові</div>
+                        <div class="stat-value positive">{{ stats.profitable_trades }}</div>
+                    </div>
+                    
+                    <div class="stat-box">
+                        <div class="stat-label">Збиткові</div>
+                        <div class="stat-value negative">{{ stats.losing_trades }}</div>
+                    </div>
+                    
+                    <div class="stat-box">
+                        <div class="stat-label">Avg P&L</div>
+                        <div class="stat-value">
+                            ${{ "{:,.2f}".format(stats.avg_pnl) }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            {% if stats.top_performers %}
+            <div class="card">
+                <h2>🏆 Топ монет</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Монета</th>
+                            <th>Угод</th>
+                            <th>Win Rate</th>
+                            <th>P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for coin in stats.top_performers %}
+                        <tr>
+                            <td><strong>{{ coin.symbol }}</strong></td>
+                            <td>{{ coin.trades }}</td>
+                            <td class="{{ 'positive' if coin.win_rate >= 50 else 'negative' }}">
+                                {{ "{:.1f}".format(coin.win_rate) }}%
+                            </td>
+                            <td class="{{ 'positive' if coin.pnl >= 0 else 'negative' }}">
+                                {{ '+' if coin.pnl >= 0 else '' }}${{ "{:,.2f}".format(coin.pnl) }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+            
+            {% if stats.recent_trades %}
+            <div class="card">
+                <h2>📜 Останні угоди</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Час</th>
+                            <th>Монета</th>
+                            <th>Side</th>
+                            <th>Ціна входу</th>
+                            <th>Ціна виходу</th>
+                            <th>P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for trade in stats.recent_trades %}
+                        <tr>
+                            <td>{{ trade.closed_at.strftime('%d.%m %H:%M') }}</td>
+                            <td><strong>{{ trade.symbol }}</strong></td>
+                            <td>{{ trade.side }}</td>
+                            <td>${{ "{:,.2f}".format(trade.entry_price) }}</td>
+                            <td>${{ "{:,.2f}".format(trade.exit_price) }}</td>
+                            <td class="{{ 'positive' if trade.pnl >= 0 else 'negative' }}">
+                                {{ '+' if trade.pnl >= 0 else '' }}${{ "{:,.2f}".format(trade.pnl) }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </body>
+    </html>
+    """
+    
+    return render_template_string(html_template, stats=stats, days=days)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
