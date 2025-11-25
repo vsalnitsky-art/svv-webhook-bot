@@ -181,7 +181,13 @@ class BybitTradingBot:
                 price = float(trade['avgExitPrice'])
                 qty = float(trade['qty'])
                 volume = price * qty
-                side = trade['side']
+                
+                # --- ВИПРАВЛЕННЯ СТОРІН (Long/Short) ---
+                # Bybit повертає сторону ЗАКРИВАЮЧОГО ордера.
+                # Sell -> закриває Лонг -> це був Long
+                # Buy -> закриває Шорт -> це був Short
+                api_side = trade['side']
+                real_side = "Long" if api_side == "Sell" else "Short"
 
                 stats["total_pnl"] += pnl
                 stats["total_volume"] += volume
@@ -190,7 +196,7 @@ class BybitTradingBot:
                 if pnl > 0: stats["win_trades"] += 1
                 else: stats["loss_trades"] += 1
 
-                if side == "Buy": stats["long_trades"] += 1
+                if real_side == "Long": stats["long_trades"] += 1
                 else: stats["short_trades"] += 1
                 
                 fill_time = datetime.fromtimestamp(int(trade['updatedTime']) / 1000)
@@ -203,7 +209,9 @@ class BybitTradingBot:
 
                 stats["details"].append({
                     "time": fill_time.strftime('%Y-%m-%d %H:%M'),
-                    "symbol": symbol, "side": side, "qty": qty,
+                    "symbol": symbol, 
+                    "side": real_side, # Тепер тут "Long" або "Short"
+                    "qty": qty,
                     "entry_price": float(trade['avgEntryPrice']),
                     "exit_price": float(trade['avgExitPrice']),
                     "pnl": pnl, "is_win": pnl > 0
@@ -813,7 +821,7 @@ def report_page():
                             {% for trade in stats.details %}
                             <tr>
                                 <td><div class="symbol-cell"><div class="coin-icon">{{ trade.symbol[0] }}</div>{{ trade.symbol }}</div></td>
-                                <td class="{{ 'type-long' if trade.side == 'Buy' else 'type-short' }}">{{ "Лонг" if trade.side == "Buy" else "Шорт" }}</td>
+                                <td class="{{ 'type-long' if trade.side == 'Long' else 'type-short' }}">{{ "Лонг" if trade.side == 'Long' else "Шорт" }}</td>
                                 <td>{{ trade.qty }}</td>
                                 <td>{{ trade.entry_price }}</td>
                                 <td>{{ trade.exit_price }}</td>
