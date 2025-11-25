@@ -7,11 +7,13 @@ import requests
 import json
 import re
 import copy
+import os  # <--- Added OS for Environment Variables
 from datetime import datetime, timedelta
 from config import get_api_credentials
 
 # --- НАЛАШТУВАННЯ ---
-PORT = 10000
+# PORT береться з Environment Variable (для Render), або 10000 за замовчуванням
+PORT = int(os.environ.get("PORT", 10000))
 MONITOR_INTERVAL = 5 
 SCANNER_INTERVAL = 60  # Сканування ринку раз на 60 секунд
 
@@ -36,15 +38,19 @@ logger = logging.getLogger(__name__)
 
 # --- KEEP ALIVE ---
 def keep_alive():
-    """Функція для підтримки сервера активним на Render"""
-    time.sleep(10)
+    """
+    Функція для підтримки сервера активним.
+    Використовує localhost для надійності під час деплою.
+    """
+    time.sleep(5) # Даємо час серверу на запуск
     while True:
         try:
-            # Замініть URL на вашу реальну адресу на Render
-            requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
+            # Пінгуємо самі себе локально - це швидше і надійніше для Render
+            requests.get(f'http://127.0.0.1:{PORT}/health', timeout=5)
         except Exception as e:
-            logger.warning(f"⚠️ Keep-alive ping failed: {e}")
-        time.sleep(600)
+            # Мовчимо про помилки з'єднання, щоб не засмічувати логи, це фоновий процес
+            pass 
+        time.sleep(600) # Кожні 10 хвилин
 
 keep_alive_thread = threading.Thread(target=keep_alive)
 keep_alive_thread.daemon = True
