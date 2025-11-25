@@ -27,15 +27,17 @@ EMAIL_RECEIVER = "vsalnitsky@gmail.com"
 # --- FLASK APP ---
 app = Flask(__name__)
 
+# Налаштування логування для відображення в Render
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- KEEP ALIVE ---
 def keep_alive():
-    """Функція для підтримки сервера активним"""
+    """Функція для підтримки сервера активним на Render"""
     time.sleep(10)
     while True:
         try:
+            # Замініть URL на вашу реальну адресу на Render
             requests.get('https://svv-webhook-bot.onrender.com/health', timeout=5)
         except Exception as e:
             logger.warning(f"⚠️ Keep-alive ping failed: {e}")
@@ -70,6 +72,7 @@ class BybitTradingBot:
             return None
 
     def normalize_symbol(self, symbol):
+        # Видаляє .P, який іноді додає TradingView
         return symbol.replace('.P', '')
 
     def get_all_tickers(self):
@@ -98,7 +101,7 @@ class BybitTradingBot:
             self.session.set_leverage(category="linear", symbol=norm, buyLeverage=str(leverage), sellLeverage=str(leverage))
             return True
         except Exception as e:
-            if "110043" in str(e): return True
+            if "110043" in str(e): return True # Leverage already set
             return False
 
     def get_instrument_info(self, symbol):
@@ -212,9 +215,18 @@ class BybitTradingBot:
         try:
             action = data.get('action')
             symbol = data.get('symbol')
-            if not action or not symbol: return {"status": "error"}
+            
+            logger.info(f"🤖 Placing Order: {symbol} {action}")
+            
+            if not action or not symbol: 
+                logger.error("Missing action or symbol")
+                return {"status": "error"}
+                
             norm_symbol = self.normalize_symbol(symbol)
-            if self.get_position_size(norm_symbol) > 0: return {"status": "ignored"}
+            
+            if self.get_position_size(norm_symbol) > 0: 
+                logger.warning(f"Position already exists for {norm_symbol}. Ignored.")
+                return {"status": "ignored"}
 
             riskPercent = float(data.get('riskPercent', 5.0))
             leverage = int(data.get('leverage', 20))
@@ -222,31 +234,46 @@ class BybitTradingBot:
             slPercent = float(data.get('stopLossPercent', 0.0))
 
             cur_price = self.get_current_price(norm_symbol)
-            if not cur_price: return {"status": "error"}
+            if not cur_price: 
+                logger.error(f"Could not get price for {norm_symbol}")
+                return {"status": "error"}
             
             lot_filter, price_filter = self.get_instrument_info(norm_symbol)
-            if not lot_filter: return {"status": "error"}
+            if not lot_filter: 
+                logger.error(f"Could not get info for {norm_symbol}")
+                return {"status": "error"}
 
             qty_step = float(lot_filter['qtyStep'])
             min_qty = float(lot_filter['minOrderQty'])
             tick_size = float(price_filter['tickSize'])
             balance = self.get_available_balance()
             
-            if not balance: return {"status": "error"}
+            if not balance: 
+                logger.error("Balance is 0 or unavailable")
+                return {"status": "error"}
 
             margin = (balance * (riskPercent / 100)) * 0.98
             raw_qty = (margin * leverage) / cur_price
             final_qty = self.round_qty(raw_qty, qty_step)
             
-            if final_qty < min_qty: return {"status": "error"}
+            if final_qty < min_qty: 
+                logger.warning(f"Calculated Qty {final_qty} < Min Qty {min_qty}")
+                return {"status": "error"}
 
+            # 1. Set Leverage
             self.set_leverage(norm_symbol, leverage)
-            self.session.place_order(category="linear", symbol=norm_symbol, side=action, orderType="Market", qty=str(final_qty), timeInForce="GTC")
             
+            # 2. Market Order
+            self.session.place_order(category="linear", symbol=norm_symbol, side=action, orderType="Market", qty=str(final_qty), timeInForce="GTC")
+            logger.info(f"✅ Market Order Placed: {final_qty} {norm_symbol}")
+            
+            # 3. Stop Loss
             if slPercent > 0:
                 sl_price = cur_price * (1 - slPercent/100) if action == "Buy" else cur_price * (1 + slPercent/100)
                 self.session.set_trading_stop(category="linear", symbol=norm_symbol, stopLoss=str(self.round_price(sl_price, tick_size)), positionIdx=0)
+                logger.info("✅ SL Set")
 
+            # 4. Take Profit (Ladder)
             if tpPercent > 0:
                 qty_tp1 = self.round_qty(final_qty * 0.5, qty_step)
                 qty_tp2 = self.round_qty(final_qty * 0.35, qty_step)
@@ -265,15 +292,16 @@ class BybitTradingBot:
                 for q, p in tps:
                     if q >= min_qty:
                         self.session.place_order(category="linear", symbol=norm_symbol, side=tp_side, orderType="Limit", qty=str(q), price=str(self.round_price(p, tick_size)), reduceOnly=True)
+                logger.info("✅ TP Ladder Set")
 
             return {"status": "success"}
         except Exception as e:
-            logger.error(f"Order Error: {e}")
+            logger.error(f"🔥 Order Execution Error: {e}")
             return {"status": "error"}
 
 bot = BybitTradingBot()
 
-# --- MARKET SCANNER (NEW!) ---
+# --- MARKET SCANNER ---
 class MarketScanner:
     def __init__(self, bot_instance):
         self.bot = bot_instance
@@ -305,10 +333,9 @@ class MarketScanner:
             
             try:
                 price = float(t['lastPrice'])
-                # turnover24h = об'єм в USDT за 24г
                 turnover = float(t['turnover24h']) 
                 
-                if turnover < MIN_24H_VOLUME: continue # Фільтруємо сміття
+                if turnover < MIN_24H_VOLUME: continue 
 
                 current_snapshot[symbol] = {
                     'price': price,
@@ -338,25 +365,16 @@ class MarketScanner:
             time_delta = (data['timestamp'] - prev['timestamp']) / 60
             if time_delta == 0: continue
 
-            # Скільки зайшло грошей (Turnover) за цей проміжок
-            # turnover - це кумулятивна цифра за 24г. Її зміна = об'єм за інтервал.
-            # Увага: якщо вікно зсунулося і старий великий об'єм випав, цифра може бути меншою.
-            # Тому беремо abs або просто різницю, якщо вона додатна.
-            
             vol_diff = data['turnover'] - prev['turnover']
-            if vol_diff <= 0: continue # Об'єм не змінився або впав (через зсув вікна 24г)
+            if vol_diff <= 0: continue 
 
-            # Розрахунок "Нормального" об'єму за цей час
-            # Середній об'єм за хвилину = Всього за добу / 1440 хвилин
             avg_vol_per_min = data['turnover'] / 1440
             expected_vol = avg_vol_per_min * time_delta
             
-            # Фактор аномалії
             spike_factor = vol_diff / expected_vol if expected_vol > 0 else 0
             
             price_change_interval = ((data['price'] - prev['price']) / prev['price']) * 100
 
-            # Логіка фільтрації пампа
             if spike_factor > VOLUME_SPIKE_THRESHOLD and price_change_interval > 0.5:
                 detected.append({
                     "symbol": symbol,
@@ -365,10 +383,9 @@ class MarketScanner:
                     "vol_inflow": round(vol_diff, 0),
                     "price_change_interval": round(price_change_interval, 2),
                     "time": now.strftime('%H:%M:%S'),
-                    "timestamp_dt": now # Зберігаємо об'єкт datetime для фільтрації
+                    "timestamp_dt": now
                 })
 
-        # Оновлюємо список пампів (додаємо нові зверху)
         if detected:
             logger.info(f"🚨 DETECTED {len(detected)} PUMPS!")
             self.detected_pumps = detected + self.detected_pumps
@@ -376,7 +393,6 @@ class MarketScanner:
         # Фільтр: Залишаємо тільки пампи за останню 1 годину (60 хвилин)
         one_hour_ago = now - timedelta(hours=1)
         self.detected_pumps = [p for p in self.detected_pumps if p.get('timestamp_dt', now) > one_hour_ago]
-
 
 scanner = MarketScanner(bot)
 scanner.start()
@@ -406,7 +422,9 @@ class BreakevenMonitor:
             orders = self.bot.session.get_open_orders(category="linear", symbol=pos['symbol'])
             tps = sum(1 for o in orders.get('result', {}).get('list', []) if o['reduceOnly'])
             if tps > 0 and tps < 3:
-                try: self.bot.session.set_trading_stop(category="linear", symbol=pos['symbol'], stopLoss=str(entry), positionIdx=0)
+                try: 
+                    self.bot.session.set_trading_stop(category="linear", symbol=pos['symbol'], stopLoss=str(entry), positionIdx=0)
+                    logger.info(f"🛡️ Moved SL to Breakeven for {pos['symbol']}")
                 except: pass
 
 monitor = BreakevenMonitor(bot)
@@ -416,7 +434,7 @@ monitor.start()
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
-    """Сторінка зі звітом сканера"""
+    """Сторінка зі звітом сканера та сортуванням"""
     last_update = scanner.last_scan_time.strftime('%H:%M:%S') if scanner.last_scan_time else "Запуск..."
     
     html_template = """
@@ -426,7 +444,7 @@ def scanner_page():
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Crypto Volume Scanner</title>
-        <meta http-equiv="refresh" content="30"> <!-- Автооновлення сторінки кожні 30 сек -->
+        <meta http-equiv="refresh" content="30">
         <style>
             :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --blue: #3b82f6; }
             body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
@@ -499,7 +517,6 @@ def scanner_page():
           table = document.getElementById("pumpsTable");
           switching = true;
           dir = "asc"; 
-          
           while (switching) {
             switching = false;
             rows = table.rows;
@@ -507,30 +524,18 @@ def scanner_page():
               shouldSwitch = false;
               x = rows[i].getElementsByTagName("TD")[n];
               y = rows[i + 1].getElementsByTagName("TD")[n];
-              
               let xVal = x.innerText.toLowerCase().replace(/[$,x%+,]/g, "");
               let yVal = y.innerText.toLowerCase().replace(/[$,x%+,]/g, "");
-              
-              if (!isNaN(parseFloat(xVal)) && isFinite(xVal)) {
-                  xVal = parseFloat(xVal);
-                  yVal = parseFloat(yVal);
-              }
-              
-              if (dir == "asc") {
-                if (xVal > yVal) { shouldSwitch = true; break; }
-              } else if (dir == "desc") {
-                if (xVal < yVal) { shouldSwitch = true; break; }
-              }
+              if (!isNaN(parseFloat(xVal)) && isFinite(xVal)) { xVal = parseFloat(xVal); yVal = parseFloat(yVal); }
+              if (dir == "asc") { if (xVal > yVal) { shouldSwitch = true; break; } } 
+              else if (dir == "desc") { if (xVal < yVal) { shouldSwitch = true; break; } }
             }
             if (shouldSwitch) {
               rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
               switching = true;
               switchcount ++;      
             } else {
-              if (switchcount == 0 && dir == "asc") {
-                dir = "desc";
-                switching = true;
-              }
+              if (switchcount == 0 && dir == "asc") { dir = "desc"; switching = true; }
             }
           }
         }
@@ -552,6 +557,7 @@ def report_page():
     if stats['total_trades'] > 0:
         win_rate = round((stats['win_trades'] / stats['total_trades']) * 100, 1)
 
+    # Використовуємо той самий шаблон HTML, що був раніше (скорочено для економії місця, функціонал той самий)
     html_template = """
     <!DOCTYPE html>
     <html lang="uk">
@@ -743,19 +749,46 @@ def report_page():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    """Обробка сигналів від TradingView (навіть із брудним JSON)"""
     try:
-        data = request.get_json(silent=True)
-        if not data: 
-            match = re.search(r'\{[^}]+\}', str(request.get_data(as_text=True)))
-            if match: data = json.loads(match.group())
-        if not data: return jsonify({"error": "No data"}), 400
+        # 1. Отримуємо сирі дані як текст
+        raw_data = request.get_data(as_text=True)
+        logger.info(f"📨 RAW WEBHOOK DATA: {raw_data}")
+
+        data = None
+
+        # 2. Спроба стандартного парсингу
+        try:
+            data = json.loads(raw_data)
+        except:
+            # 3. Спроба знайти JSON всередині тексту (Regex)
+            # Шукає все між першою { та останньою }
+            match = re.search(r'\{.*\}', raw_data, re.DOTALL)
+            if match:
+                try:
+                    clean_json_str = match.group()
+                    data = json.loads(clean_json_str)
+                    logger.info("✅ JSON extracted from text successfully")
+                except Exception as e:
+                    logger.error(f"⚠️ JSON parse error after regex: {e}")
+
+        if not data:
+            logger.error("❌ Failed to find JSON in request")
+            return jsonify({"error": "No valid JSON found"}), 400
+
+        # 4. Запускаємо обробку ордера в окремому потоці
+        logger.info(f"🚀 Processing Signal: {data.get('symbol')} {data.get('action')}")
         threading.Thread(target=bot.place_order, args=(data,)).start()
+        
         return jsonify({"status": "processing"})
+
     except Exception as e:
+        logger.error(f"🔥 Webhook Critical Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/')
 def home(): return "Bot Active"
+
 @app.route('/health', methods=['GET'])
 def health(): return jsonify({"status": "ok"})
 
