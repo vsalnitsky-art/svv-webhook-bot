@@ -5,7 +5,7 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     # startCommand: python flask_app.py
-    startCommand: python app.py
+    startCommand: python main_app.py
     envVars:
       - key: BYBIT_API_KEY
         value: 
