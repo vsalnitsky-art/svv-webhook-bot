@@ -1,9 +1,8 @@
 """
-Main Application - Smart Exit Edition 🧠
+Main Application - Fixed P&L Sync & Smart Logic
 Включає:
-- Відкриття угод БЕЗ Take Profit (вихід через логіку)
-- Stop Loss з буфером безпеки (підстрахування)
-- Автоматичне закриття позиції та скасування ордерів
+- Автоматичну синхронізацію історії угод з Bybit (Fix P&L)
+- Smart Exit Manager
 - Професійний UI
 """
 
@@ -66,8 +65,6 @@ def process_signal_with_ai(data):
 
     msg = f"🚀 <b>ВХІД: {symbol}</b>\nНапрямок: {action}\n\n🤖 <b>Gemini:</b> {ai_text}"
     send_telegram_message(msg)
-    
-    # Відкриваємо угоду
     bot.place_order(data)
 
 # === SELF PING ===
@@ -151,7 +148,7 @@ class BybitTradingBot:
             return 0.0
         except: return 0.0
 
-    # === ОНОВЛЕНА ЛОГІКА ВІДКРИТТЯ УГОДИ ===
+    # === ВХІД В УГОДУ ===
     def place_order(self, data):
         try:
             action = data.get('action')
@@ -165,12 +162,10 @@ class BybitTradingBot:
                 logger.warning(f"Position exists for {norm_symbol}. Ignored.")
                 return {"status": "ignored"}
             
-            # Параметри
             riskPercent = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
             leverage = int(data.get('leverage', config.DEFAULT_LEVERAGE))
             slPercent = float(data.get('stopLossPercent', config.DEFAULT_SL_PERCENT))
             
-            # Отримуємо ціну та інфо
             cur_price = self.get_current_price(norm_symbol)
             if not cur_price: return {"status": "error"}
             
@@ -183,7 +178,6 @@ class BybitTradingBot:
             balance = self.get_available_balance()
             if not balance: return {"status": "error"}
             
-            # Розрахунок позиції
             margin = (balance * (riskPercent / 100)) * 0.98
             raw_qty = (margin * leverage) / cur_price
             final_qty = self.round_qty(raw_qty, qty_step)
@@ -196,49 +190,85 @@ class BybitTradingBot:
                 else:
                     return {"status": "error_balance"}
             
-            # 1. Плече
             self.set_leverage(norm_symbol, leverage)
             
-            # 2. Відкриття позиції (Market Order)
             self.session.place_order(
                 category="linear", symbol=norm_symbol, side=action, 
                 orderType="Market", qty=str(final_qty), timeInForce="GTC"
             )
             logger.info(f"✅ Opened: {action} {final_qty} {norm_symbol}")
             
-            # 3. Stop Loss з БУФЕРОМ (Підстрахування)
             if slPercent > 0:
-                buffer_percent = 0.2  # 0.2% додатковий відступ (пару пунктів)
-                
+                buffer_percent = 0.2
                 if action == "Buy":
-                    # Для Лонга стоп нижче: звичайний стоп - буфер
                     raw_sl = cur_price * (1 - slPercent/100)
                     buffered_sl = raw_sl * (1 - buffer_percent/100)
                 else:
-                    # Для Шорта стоп вище: звичайний стоп + буфер
                     raw_sl = cur_price * (1 + slPercent/100)
                     buffered_sl = raw_sl * (1 + buffer_percent/100)
                 
                 final_sl = self.round_price(buffered_sl, tick_size)
-                
-                # Встановлюємо SL як властивість позиції (Position Stop Loss)
-                # Це гарантує, що при закритті позиції SL зникне сам!
                 self.session.set_trading_stop(
                     category="linear", symbol=norm_symbol, 
                     stopLoss=str(final_sl), positionIdx=0
                 )
-                logger.info(f"🛡️ SL Set with Buffer: {final_sl} (Orig: {raw_sl:.2f})")
-
-            # ❌ TAKE PROFIT ВИДАЛЕНО (Працює Smart Exit)
-            logger.info("ℹ️ TP not set. Smart Exit Manager active.")
+                logger.info(f"🛡️ SL Set with Buffer: {final_sl}")
 
             return {"status": "success"}
         except Exception as e:
             logger.error(f"🔥 Order Error: {e}")
             return {"status": "error"}
 
-    # P&L
+    # === СИНХРОНІЗАЦІЯ З БІРЖЕЮ (FIX EMPTY P&L) ===
+    def sync_trades_from_bybit(self, days=7):
+        """Завантажує історію з Bybit в нашу БД"""
+        logger.info(f"🔄 Syncing P&L from Bybit for last {days} days...")
+        try:
+            now = datetime.now()
+            # Розбиваємо на чанки по 7 днів (обмеження API)
+            for i in range(0, days, 7):
+                chunk_days = min(7, days - i)
+                end_dt = now - timedelta(days=i)
+                start_dt = end_dt - timedelta(days=chunk_days)
+                
+                ts_end = int(end_dt.timestamp() * 1000)
+                ts_start = int(start_dt.timestamp() * 1000)
+                
+                resp = self.session.get_closed_pnl(category="linear", startTime=ts_start, endTime=ts_end, limit=50)
+                
+                if resp['retCode'] == 0:
+                    trades = resp['result']['list']
+                    for t in trades:
+                        # Конвертуємо дані Bybit у наш формат
+                        api_side = t['side'] # Buy/Sell
+                        # В Closed PnL: Side 'Buy' означає закриття шорта, 'Sell' - закриття лонга
+                        # Але нам важливіше знати, якою була позиція.
+                        # Зазвичай Bybit не віддає напрямок початкової позиції прямо тут, 
+                        # тому спрощуємо: PnL > 0 = Win.
+                        
+                        # Зберігаємо в БД через stats_service
+                        trade_data = {
+                            'order_id': t['orderId'],
+                            'symbol': t['symbol'],
+                            'side': 'Long' if api_side == 'Sell' else 'Short', # Приблизно
+                            'qty': float(t['qty']),
+                            'entry_price': float(t['avgEntryPrice']),
+                            'exit_price': float(t['avgExitPrice']),
+                            'pnl': float(t['closedPnl']),
+                            'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
+                            'is_win': float(t['closedPnl']) > 0
+                        }
+                        stats_service.save_trade(trade_data)
+            logger.info("✅ Sync Complete")
+        except Exception as e:
+            logger.error(f"❌ Sync Error: {e}")
+
+    # === ОТРИМАННЯ СТАТИСТИКИ ===
     def get_pnl_stats(self, days=7):
+        # 1. Спочатку синхронізуємось!
+        self.sync_trades_from_bybit(days)
+        
+        # 2. Беремо з БД
         try:
             trades = stats_service.get_trades(days=days)
             if not trades:
@@ -279,7 +309,7 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === 🔥 SMART TRADE MANAGER (РОЗУМНИЙ ВИХІД) ===
+# === SMART EXIT MANAGER ===
 class SmartTradeManager:
     def __init__(self, bot_instance, scanner_instance):
         self.bot = bot_instance
@@ -309,12 +339,9 @@ class SmartTradeManager:
             entry_price = float(pos['avgPrice'])
             unrealized_pnl = float(pos['unrealisedPnl'])
             
-            # Отримуємо RSI
             rsi = self.scanner.get_current_rsi(symbol)
             
-            # --- ЛОГІКА ВИХОДУ ---
-            
-            # 1. Вихід по RSI (Пік)
+            # 1. RSI Exit
             if side == "Buy" and rsi >= 78 and unrealized_pnl > 0:
                 self.close_position(symbol, size, "Sell", f"RSI High ({rsi})")
                 continue
@@ -322,39 +349,33 @@ class SmartTradeManager:
                 self.close_position(symbol, size, "Buy", f"RSI Low ({rsi})")
                 continue
 
-            # 2. Динамічний Трейлінг Стоп
-            # Якщо ціна пішла в нашу сторону, підтягуємо SL в Беззбиток і далі
+            # 2. Trailing Stop
             pnl_pct = (unrealized_pnl / (entry_price * size / float(pos['leverage']))) * 100
             current_sl = float(pos.get('stopLoss', 0))
             
             if side == "Buy":
-                if pnl_pct > 1.0: # +1% прибутку -> БУ
-                    new_sl = entry_price * 1.002 # Трохи вище входу (щоб покрити комісію)
+                if pnl_pct > 1.5:
+                    new_sl = entry_price * 1.005
                     if current_sl < new_sl: self.update_sl(symbol, new_sl)
-                elif pnl_pct > 3.0: # +3% прибутку -> Трейлінг
+                elif pnl_pct > 3.0:
                     new_sl = entry_price * 1.02
                     if current_sl < new_sl: self.update_sl(symbol, new_sl)
-                    
             elif side == "Sell":
-                if pnl_pct > 1.0:
-                    new_sl = entry_price * 0.998
+                if pnl_pct > 1.5:
+                    new_sl = entry_price * 0.995
                     if current_sl == 0 or current_sl > new_sl: self.update_sl(symbol, new_sl)
 
     def close_position(self, symbol, qty, side, reason):
         try:
-            # Закриваємо по ринку
             self.bot.session.place_order(category="linear", symbol=symbol, side=side, orderType="Market", qty=str(qty), reduceOnly=True)
-            
-            # ⚠️ СКАСУВАННЯ ВСІХ ОРДЕРІВ (Для видалення старих SL, якщо вони раптом залишились)
             self.bot.session.cancel_all_orders(category="linear", symbol=symbol)
-            
-            send_telegram_message(f"💰 <b>AUTO-CLOSE: {symbol}</b>\nПричина: {reason}\nP&L зафіксовано.")
+            send_telegram_message(f"💰 <b>AUTO-CLOSE: {symbol}</b>\nПричина: {reason}\nP&L фіксується.")
             logger.info(f"✅ Auto-closed {symbol}: {reason}")
         except Exception as e: logger.error(f"Failed to close {symbol}: {e}")
 
     def update_sl(self, symbol, price):
         try:
-            price_str = "{:.4f}".format(price) # Тут можна додати round_price
+            price_str = "{:.4f}".format(price)
             self.bot.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=price_str, positionIdx=0)
             logger.info(f"🛡️ Updated SL for {symbol} to {price_str}")
         except: pass
@@ -369,7 +390,6 @@ def scanner_page():
     scan_data = scanner.get_aggregated_data(hours=24)
     last_update = datetime.now().strftime('%H:%M:%S')
     
-    # Активні позиції
     active_positions = []
     try:
         pos_data = bot.session.get_positions(category="linear", settleCoin="USDT")
@@ -377,8 +397,7 @@ def scanner_page():
             for p in pos_data['result']['list']:
                 if float(p['size']) > 0:
                     symbol = p['symbol']
-                    market_data = scan_data['snapshots'].get(symbol, {})
-                    current_rsi = market_data.get('rsi', 50)
+                    current_rsi = scan_data['snapshots'].get(symbol, {}).get('rsi', 50)
                     pnl = float(p['unrealisedPnl'])
                     rec, row_class = "ТРИМАТИ 🟢", ""
                     if p['side'] == "Buy" and current_rsi > 75: rec = "ВИХІД (RSI) 🔴"; row_class = "table-danger"
@@ -386,7 +405,6 @@ def scanner_page():
                     active_positions.append({'symbol': symbol, 'side': p['side'], 'entry': p['avgPrice'], 'pnl': round(pnl, 2), 'rsi': current_rsi, 'recommendation': rec, 'row_class': row_class})
     except: pass
 
-    # Сортування
     coin_stats = {}
     for p in scan_data['all_signals']:
         sym = p['symbol']
