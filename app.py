@@ -183,9 +183,6 @@ class BybitTradingBot:
                 volume = price * qty
                 
                 # --- ВИПРАВЛЕННЯ СТОРІН (Long/Short) ---
-                # Bybit повертає сторону ЗАКРИВАЮЧОГО ордера.
-                # Sell -> закриває Лонг -> це був Long
-                # Buy -> закриває Шорт -> це був Short
                 api_side = trade['side']
                 real_side = "Long" if api_side == "Sell" else "Short"
 
@@ -210,7 +207,7 @@ class BybitTradingBot:
                 stats["details"].append({
                     "time": fill_time.strftime('%Y-%m-%d %H:%M'),
                     "symbol": symbol, 
-                    "side": real_side, # Тепер тут "Long" або "Short"
+                    "side": real_side,
                     "qty": qty,
                     "entry_price": float(trade['avgEntryPrice']),
                     "exit_price": float(trade['avgExitPrice']),
@@ -277,10 +274,8 @@ class BybitTradingBot:
             
             if final_qty < min_qty:
                 logger.warning(f"⚠️ Calculated Qty {final_qty} < Min Qty {min_qty}. Trying to force Min Qty.")
-                
-                # Check if we can afford min_qty
                 cost_of_min_qty = (min_qty * cur_price) / leverage
-                if balance > cost_of_min_qty * 1.05: # 5% buffer for fees
+                if balance > cost_of_min_qty * 1.05:
                     final_qty = min_qty
                     logger.info(f"✅ Forced Min Qty: {final_qty} (Cost: ~{cost_of_min_qty:.2f}$)")
                 else:
@@ -361,8 +356,6 @@ class MarketScanner:
             try:
                 price = float(t['lastPrice'])
                 turnover = float(t['turnover24h']) 
-                
-                # Фільтруємо дрібні монети
                 if turnover < MIN_24H_VOLUME: continue 
 
                 current_snapshot[symbol] = {
@@ -388,14 +381,10 @@ class MarketScanner:
             if symbol not in self.previous_snapshot: continue
             
             prev = self.previous_snapshot[symbol]
-            
             time_delta = (data['timestamp'] - prev['timestamp']) / 60
             if time_delta == 0: continue
 
-            # Розрахунок чистого вливання грошей за хвилину
             vol_diff = data['turnover'] - prev['turnover']
-            
-            # 🔥 ФІЛЬТР: Тільки великі вливання (наприклад, > 1 млн $ за хвилину)
             if vol_diff < MIN_INFLOW_VALUE: continue 
 
             avg_vol_per_min = data['turnover'] / 1440
@@ -404,8 +393,6 @@ class MarketScanner:
             spike_factor = vol_diff / expected_vol if expected_vol > 0 else 0
             price_change_interval = ((data['price'] - prev['price']) / prev['price']) * 100
 
-            # Логіка виявлення "Дій Китів"
-            # Якщо об'єм аномально великий і вливання більше мільйона
             if spike_factor > VOLUME_SPIKE_THRESHOLD:
                 detected.append({
                     "symbol": symbol,
@@ -468,21 +455,48 @@ def scanner_page():
     """Сторінка зі звітом сканера та сортуванням"""
     last_update = scanner.last_scan_time.strftime('%H:%M:%S') if scanner.last_scan_time else "Запуск..."
     
-    # --- АГРЕГАЦІЯ ДАНИХ ДЛЯ ГРАФІКА ---
-    # Сумуємо вливання по кожній монеті
-    inflows = {}
+    # --- АГРЕГАЦІЯ ДАНИХ ---
+    coin_stats = {}
+    
     for p in scanner.detected_pumps:
         sym = p['symbol']
         val = p['vol_inflow']
-        if sym in inflows:
-            inflows[sym] += val
+        change = p['price_change_interval']
+        
+        if sym not in coin_stats:
+            coin_stats[sym] = {'inflow': 0, 'total_change': 0, 'count': 0}
+        
+        coin_stats[sym]['inflow'] += val
+        coin_stats[sym]['total_change'] += change
+        coin_stats[sym]['count'] += 1
+
+    positive_coins = []
+    negative_coins = []
+
+    # Знаходимо макс вливання для візуалізації
+    max_inflow = 0
+    for sym, data in coin_stats.items():
+        if data['inflow'] > max_inflow: max_inflow = data['inflow']
+
+    for sym, data in coin_stats.items():
+        avg_change = data['total_change'] / data['count']
+        bar_pct = (data['inflow'] / max_inflow) * 100 if max_inflow > 0 else 0
+        
+        coin_data = {
+            'symbol': sym,
+            'inflow': data['inflow'],
+            'avg_change': round(avg_change, 2),
+            'count': data['count'],
+            'bar_pct': bar_pct
+        }
+        
+        if avg_change >= 0:
+            positive_coins.append(coin_data)
         else:
-            inflows[sym] = val
-    
-    # Сортуємо та беремо топ 5
-    top_inflows = sorted(inflows.items(), key=lambda x: x[1], reverse=True)[:5]
-    top_labels = [x[0] for x in top_inflows]
-    top_values = [x[1] for x in top_inflows]
+            negative_coins.append(coin_data)
+
+    positive_coins.sort(key=lambda x: x['inflow'], reverse=True)
+    negative_coins.sort(key=lambda x: x['inflow'], reverse=True)
     
     html_template = """
     <!DOCTYPE html>
@@ -492,52 +506,135 @@ def scanner_page():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Whale Scanner 🐋</title>
         <meta http-equiv="refresh" content="30">
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
             :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --green: #22c55e; --red: #ef4444; --blue: #3b82f6; }
             body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; }
-            .container { max-width: 1100px; margin: 0 auto; }
+            .container { max-width: 1200px; margin: 0 auto; }
             .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
             .card { background: var(--card); padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
             h1 { margin: 0; font-size: 24px; }
             .badge { background: var(--blue); padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
             
-            table { width: 100%; border-collapse: collapse; }
-            th { text-align: left; color: #94a3b8; padding: 12px 10px; border-bottom: 1px solid #334155; cursor: pointer; user-select: none; }
-            th:hover { color: #e2e8f0; background: #334155; }
-            td { padding: 14px 10px; border-bottom: 1px solid #334155; }
+            /* Спліт вікно */
+            .split-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+            @media (max-width: 768px) { .split-container { grid-template-columns: 1fr; } }
             
-            .pump-factor { color: var(--green); font-weight: bold; }
-            .symbol { font-weight: bold; font-size: 1.1em; color: #fff; }
-            .inflow { font-weight: bold; color: #facc15; } /* Yellow for money */
-            .empty-msg { text-align: center; color: #64748b; padding: 40px; }
+            .scroll-box { max-height: 400px; overflow-y: auto; padding-right: 5px; }
+            /* Скроллбар */
+            .scroll-box::-webkit-scrollbar { width: 6px; }
+            .scroll-box::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
             
-            /* Highlighting large moves */
+            .mini-table { width: 100%; border-collapse: collapse; }
+            .mini-table th { text-align: left; color: #94a3b8; padding: 10px; position: sticky; top: 0; background: #1e293b; z-index: 10; border-bottom: 2px solid #334155; }
+            .mini-table td { padding: 12px 5px; border-bottom: 1px solid #334155; vertical-align: middle; }
+            
+            .coin-row-header { display: flex; justify-content: space-between; margin-bottom: 4px; }
+            .coin-name { font-weight: bold; font-size: 1.1em; }
+            .coin-change { font-weight: bold; }
+            
+            .bar-container { height: 6px; background: #334155; border-radius: 3px; width: 100%; overflow: hidden; }
+            .bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+            .bar-green { background: #22c55e; }
+            .bar-red { background: #ef4444; }
+            
+            .inflow-val { font-size: 0.9em; color: #cbd5e1; margin-top: 2px; }
+            
+            /* Основна таблиця логів */
+            #pumpsTable { width: 100%; border-collapse: collapse; }
+            #pumpsTable th { text-align: left; color: #94a3b8; padding: 12px 10px; border-bottom: 1px solid #334155; cursor: pointer; }
+            #pumpsTable td { padding: 14px 10px; border-bottom: 1px solid #334155; }
             tr.huge-move { background: rgba(34, 197, 94, 0.05); }
-            
-            .chart-container { position: relative; height: 300px; width: 100%; }
+            .inflow { font-weight: bold; color: #facc15; }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>🐋 Whale Scanner (>$1M/min)</h1>
-                <span class="badge">Last Scan: {{ last_update }}</span>
+                <div>
+                    <h1>🐋 Whale Scanner (>$1M/min)</h1>
+                    <span class="badge" style="margin-top: 5px; display: inline-block;">Last Scan: {{ last_update }}</span>
+                </div>
+                <a href="/report" style="background: #334155; padding: 10px 20px; border-radius: 8px; color: #fff; text-decoration: none; font-weight: bold;">📊 Звіт P&L</a>
             </div>
             
-            <div class="card">
-                <h3>💰 ТОП-5 Монет за об'ємом вливань (24г)</h3>
-                <div class="chart-container">
-                    <canvas id="inflowChart"></canvas>
+            <div class="split-container">
+                <!-- WINDOW 1: POSITIVE -->
+                <div class="card">
+                    <h3 style="color: #22c55e; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-top:0;">
+                        📈 Зелена Зона ({{ positive_coins|length }})
+                    </h3>
+                    <div class="scroll-box">
+                        <table class="mini-table">
+                            <thead>
+                                <tr>
+                                    <th>Монета</th>
+                                    <th>Вливання (24г)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for coin in positive_coins %}
+                                <tr>
+                                    <td width="40%">
+                                        <div class="coin-name">{{ coin.symbol }}</div>
+                                        <div class="coin-change" style="color: #22c55e;">+{{ coin.avg_change }}%</div>
+                                    </td>
+                                    <td>
+                                        <div class="inflow-val">${{ "{:,.0f}".format(coin.inflow) }}</div>
+                                        <div class="bar-container">
+                                            <div class="bar-fill bar-green" style="width: {{ coin.bar_pct }}%;"></div>
+                                        </div>
+                                        <div style="font-size: 10px; color: #64748b;">{{ coin.count }} сигналів</div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                                {% if not positive_coins %}
+                                <tr><td colspan="2" style="text-align:center; padding: 20px; color: #64748b;">Немає активності</td></tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- WINDOW 2: NEGATIVE -->
+                <div class="card">
+                    <h3 style="color: #ef4444; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-top:0;">
+                        📉 Червона Зона ({{ negative_coins|length }})
+                    </h3>
+                    <div class="scroll-box">
+                        <table class="mini-table">
+                            <thead>
+                                <tr>
+                                    <th>Монета</th>
+                                    <th>Вливання (24г)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for coin in negative_coins %}
+                                <tr>
+                                    <td width="40%">
+                                        <div class="coin-name">{{ coin.symbol }}</div>
+                                        <div class="coin-change" style="color: #ef4444;">{{ coin.avg_change }}%</div>
+                                    </td>
+                                    <td>
+                                        <div class="inflow-val">${{ "{:,.0f}".format(coin.inflow) }}</div>
+                                        <div class="bar-container">
+                                            <div class="bar-fill bar-red" style="width: {{ coin.bar_pct }}%;"></div>
+                                        </div>
+                                        <div style="font-size: 10px; color: #64748b;">{{ coin.count }} сигналів</div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                                {% if not negative_coins %}
+                                <tr><td colspan="2" style="text-align:center; padding: 20px; color: #64748b;">Немає активності</td></tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
             
             <div class="card">
-                <h3>🔥 Вливання Великого Капіталу (Лог)</h3>
-                <p style="color:#94a3b8; font-size: 14px;">
-                    Тут відображаються тільки монети, в які за одну хвилину зайшло <strong>понад $1,000,000</strong>.
-                </p>
-                
+                <h3>🔥 Лог подій (Всі сигнали)</h3>
                 {% if pumps %}
                 <table id="pumpsTable">
                     <thead>
@@ -566,68 +663,17 @@ def scanner_page():
                     </tbody>
                 </table>
                 {% else %}
-                    <div class="empty-msg">
-                        🐋 Великі гравці поки що сплять.<br>
-                        Чекаємо на вливання понад $1,000,000...
-                    </div>
+                    <div class="empty-msg">🐋 Великі гравці поки що сплять.</div>
                 {% endif %}
-            </div>
-            
-            <div style="text-align:center;">
-                <a href="/report" style="color: #64748b; text-decoration: none;">Перейти до звіту P&L</a>
             </div>
         </div>
 
         <script>
-        // --- Chart Configuration ---
-        const ctx = document.getElementById('inflowChart').getContext('2d');
-        new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: {{ top_labels | safe }},
-                datasets: [{
-                    label: 'Сумарне вливання USDT',
-                    data: {{ top_values | safe }},
-                    backgroundColor: '#22c55e',
-                    borderRadius: 6,
-                    barThickness: 40
-                }]
-            },
-            options: {
-                indexAxis: 'y', // Horizontal Bar Chart like in screenshot
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                let value = context.raw;
-                                return '$' + value.toLocaleString();
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        grid: { color: '#334155' },
-                        ticks: { color: '#94a3b8' }
-                    },
-                    y: {
-                        grid: { display: false },
-                        ticks: { color: '#e2e8f0', font: { weight: 'bold' } }
-                    }
-                }
-            }
-        });
-
-        // --- Table Sort Logic ---
         function sortTable(n) {
           var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
           table = document.getElementById("pumpsTable");
           switching = true;
           dir = "desc"; 
-          
           while (switching) {
             switching = false;
             rows = table.rows;
@@ -635,31 +681,18 @@ def scanner_page():
               shouldSwitch = false;
               x = rows[i].getElementsByTagName("TD")[n];
               y = rows[i + 1].getElementsByTagName("TD")[n];
-              
               let xVal = x.innerText.toLowerCase().replace(/[$,x%+,]/g, "").trim();
               let yVal = y.innerText.toLowerCase().replace(/[$,x%+,]/g, "").trim();
-              
-              if (n === 0) { 
-              } else if (!isNaN(parseFloat(xVal)) && isFinite(xVal)) {
-                  xVal = parseFloat(xVal);
-                  yVal = parseFloat(yVal);
-              }
-              
-              if (dir == "asc") {
-                if (xVal > yVal) { shouldSwitch = true; break; }
-              } else if (dir == "desc") {
-                if (xVal < yVal) { shouldSwitch = true; break; }
-              }
+              if (n === 0) {} else if (!isNaN(parseFloat(xVal)) && isFinite(xVal)) { xVal = parseFloat(xVal); yVal = parseFloat(yVal); }
+              if (dir == "asc") { if (xVal > yVal) { shouldSwitch = true; break; } } 
+              else if (dir == "desc") { if (xVal < yVal) { shouldSwitch = true; break; } }
             }
             if (shouldSwitch) {
               rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
               switching = true;
               switchcount ++;      
             } else {
-              if (switchcount == 0 && dir == "desc") {
-                dir = "asc";
-                switching = true;
-              }
+              if (switchcount == 0 && dir == "desc") { dir = "asc"; switching = true; }
             }
           }
         }
@@ -667,7 +700,11 @@ def scanner_page():
     </body>
     </html>
     """
-    return render_template_string(html_template, pumps=scanner.detected_pumps, last_update=last_update, top_labels=top_labels, top_values=top_values)
+    return render_template_string(html_template, 
+                                  pumps=scanner.detected_pumps, 
+                                  last_update=last_update, 
+                                  positive_coins=positive_coins,
+                                  negative_coins=negative_coins)
 
 @app.route('/report', methods=['GET'])
 def report_page():
