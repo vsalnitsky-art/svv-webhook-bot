@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 def send_telegram_message(text):
     clean = text.replace("<b>", "").replace("</b>", "").replace("\n", " | ")
     logger.info(f"\n🔔 [BOT]: {clean}")
-    # Тут можна розкоментувати реальну відправку, коли налаштуєте
     # try:
     #     requests.post(f"https://api.telegram.org/bot{config.TG_BOT_TOKEN}/sendMessage", 
     #                   json={"chat_id": config.TG_CHAT_ID, "text": text, "parse_mode": "HTML"})
@@ -30,6 +29,7 @@ class BybitTradingBot:
         k, s = get_api_credentials()
         self.session = HTTP(testnet=False, api_key=k, api_secret=s)
         logger.info("✅ Bybit Connected (Bot Module)")
+        self.position_tracker = {}
 
     def normalize_symbol(self, symbol): return symbol.replace('.P', '')
 
@@ -50,6 +50,15 @@ class BybitTradingBot:
             if r.get('retCode')==0: return float(r['result']['list'][0]['lastPrice'])
         except: return None
 
+    # 🔥 ДОДАНО МЕТОД, ЯКОГО НЕ ВИСТАЧАЛО
+    def get_all_tickers(self):
+        try:
+            r = self.session.get_tickers(category="linear")
+            if r.get('retCode') == 0:
+                return r['result']['list']
+            return []
+        except: return []
+
     def get_instrument_info(self, symbol):
         try:
             norm = self.normalize_symbol(symbol)
@@ -67,6 +76,13 @@ class BybitTradingBot:
             r = self.session.get_positions(category="linear", symbol=self.normalize_symbol(symbol))
             if r['retCode']==0: return float(r['result']['list'][0]['size'])
         except: return 0.0
+    
+    # Додаємо метод для переведення в БУ (для ActiveTradeMonitor)
+    def move_sl_to_breakeven(self, symbol, entry_price):
+        try:
+            self.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=str(entry_price), positionIdx=0)
+            return True
+        except: return False
 
     def round_qty(self, qty, step):
         if step <= 0: return qty
@@ -92,7 +108,6 @@ class BybitTradingBot:
             risk = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
             lev = int(data.get('leverage', config.DEFAULT_LEVERAGE))
             
-            # TP / SL
             json_tp_price = data.get('takeProfit')
             json_tp_percent = data.get('takeProfitPercent')
             json_sl_price = data.get('stopLoss')
@@ -118,11 +133,13 @@ class BybitTradingBot:
             
             self.set_leverage(norm, lev)
             
-            # 1. Маркет Ордер
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
             logger.info(f"✅ OPENED: {action} {qty} {norm} @ {price}")
             
-            # 2. STOP LOSS
+            # Ініціалізація трекера для БУ
+            self.position_tracker[norm] = {'initial_qty': qty, 'sl_moved': False}
+            
+            # STOP LOSS
             sl_target = 0.0
             if json_sl_price: sl_target = float(json_sl_price)
             elif json_sl_percent:
@@ -135,19 +152,18 @@ class BybitTradingBot:
             if sl_target > 0:
                 sl_rounded = self.round_price(sl_target, tick_size)
                 self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_rounded), positionIdx=0)
-                logger.info(f"🛡️ Fixed SL Set: {sl_rounded}")
+                logger.info(f"🛡️ SL Set: {sl_rounded}")
 
-            # 3. TAKE PROFIT SPLIT
+            # TAKE PROFIT SPLIT
             direction = 1 if action == "Buy" else -1
             final_tp_price = 0.0
             
-            if json_tp_price and float(json_tp_price) > 0:
-                final_tp_price = float(json_tp_price)
-            elif json_tp_percent and float(json_tp_percent) > 0:
+            if json_tp_price: final_tp_price = float(json_tp_price)
+            elif json_tp_percent:
                 tp_pct = float(json_tp_percent)
                 final_tp_price = price * (1 + (tp_pct/100) * direction)
             else:
-                final_tp_price = price * (1 + 0.03 * direction) # +3%
+                final_tp_price = price * (1 + 0.03 * direction)
 
             total_dist = abs(final_tp_price - price)
             tp1_price = self.round_price(price + (total_dist * 0.40 * direction), tick_size)
@@ -160,11 +176,11 @@ class BybitTradingBot:
             
             if qty1 >= min_qty:
                 self.session.place_order(category="linear", symbol=norm, side=tp_side, orderType="Limit", qty=str(qty1), price=str(tp1_price), reduceOnly=True)
-                logger.info(f"🎯 TP1 (40%): {tp1_price}")
+                logger.info(f"🎯 TP1: {tp1_price}")
             
             if qty2 >= min_qty:
                 self.session.place_order(category="linear", symbol=norm, side=tp_side, orderType="Limit", qty=str(qty2), price=str(tp2_price), reduceOnly=True)
-                logger.info(f"🎯 TP2 (100%): {tp2_price}")
+                logger.info(f"🎯 TP2: {tp2_price}")
 
             return {"status": "success"}
         except Exception as e:
@@ -244,3 +260,18 @@ class PassiveManager:
             try: stats_service.delete_coin_history(sym)
             except: pass
         self.known = curr
+        
+        # Перевірка на часткове закриття (TP1 hit)
+        for p in r['result']['list']:
+            sym = p['symbol']
+            size = float(p['size'])
+            if size == 0: continue
+            
+            tracker = self.bot.position_tracker.get(sym)
+            if tracker:
+                # Якщо розмір зменшився (спрацював TP1) і ще не переводили в БУ
+                if size < (tracker['initial_qty'] * 0.95) and not tracker['sl_moved']:
+                    if float(p['unrealisedPnl']) > 0:
+                        self.bot.move_sl_to_breakeven(sym, float(p['avgPrice']))
+                        tracker['sl_moved'] = True
+                        logger.info(f"🛡️ TP1 HIT: {sym} -> SL to Breakeven")
