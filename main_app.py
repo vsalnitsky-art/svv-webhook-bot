@@ -1,41 +1,44 @@
 """
-Main Application - Final Light Edition ☀️
+Main Application - Final Fix 🛠️
 Включає:
-- Світлий інтерфейс
-- Збереження історії закритих угод у базу (замість видалення)
-- Відображення історії торгівлі на головній сторінці
-- Smart Exit + Trailing Stop
+- Виправлену помилку синтаксису (SyntaxError)
+- Автоматичне видалення старої бази (для оновлення колонок)
+- Світлий дизайн + Smart Exit + P&L
 """
-# ... далі йдуть ваші звичайні імпорти ...
-from flask import Flask...
-from flask import Flask, request, jsonify, render_template_string
-from pybit.unified_trading import HTTP
+
+import os
 import logging
 import threading
 import time
-import requests
 import json
 import re
-import os
 import decimal
-from datetime import datetime, timedelta
 import ctypes
+from datetime import datetime, timedelta
 
-if os.path.exists("trading_bot.db"):
-    try:
+# === 1. БЕЗПЕЧНЕ ВИДАЛЕННЯ СТАРОЇ БАЗИ ===
+# Робимо це до імпортів Flask, але обережно
+try:
+    if os.path.exists("trading_bot.db"):
         os.remove("trading_bot.db")
-        print("✅ СТАРА БАЗА ВИДАЛЕНА! Створюю нову...")
-    except Exception as e:
-        print(f"Не вдалося видалити базу: {e}")
+        print(">>> OLD DATABASE DELETED <<<")
+except Exception as e:
+    print("DB Delete Error (Ignored)")
 
-# === ІМПОРТИ ===
+# === 2. ОСНОВНІ ІМПОРТИ ===
+from flask import Flask, request, jsonify, render_template_string
+from pybit.unified_trading import HTTP
+import requests
+
+# === 3. ІМПОРТИ МОДУЛІВ ПРОЕКТУ ===
+# Переконайтеся, що ці файли існують у проекті
 from bot_config import config
 from models import db_manager
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from config import get_api_credentials
 
-# === ШІ ===
+# === ШІ МОДУЛЬ ===
 try:
     import ai_analyst
     AI_AVAILABLE = True
@@ -47,11 +50,12 @@ try:
     ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
+# === FLASK SETUP ===
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# === ЛОГУВАННЯ (ЗАМІСТЬ ТЕЛЕГРАМУ ПОКИ ЩО) ===
+# === ЛОГУВАННЯ ===
 def send_telegram_message(text):
     clean_text = text.replace("<b>", "").replace("</b>", "").replace("\n", " | ")
     logger.info(f"\n{'='*60}\n🔔 [BOT ACTION]: {clean_text}\n{'='*60}")
@@ -164,7 +168,6 @@ class BybitTradingBot:
                 logger.warning(f"Position exists for {norm_symbol}. Ignored.")
                 return {"status": "ignored"}
             
-            # Параметри
             riskPercent = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
             leverage = int(data.get('leverage', config.DEFAULT_LEVERAGE))
             
@@ -198,7 +201,6 @@ class BybitTradingBot:
             logger.info(f"✅ Opened: {action} {final_qty} {norm_symbol}")
             
             # Трейлінг Стоп (Автоматичний)
-            # Для BTC/ETH - 0.8%, Альти - 2%, Щитки - 4%
             if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: trail_percent = 0.8
             elif any(x in symbol for x in ["SOL", "XRP", "ADA", "SUI"]): trail_percent = 2.0
             else: trail_percent = 4.0
@@ -320,7 +322,7 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === 🔥 SMART TRADE MANAGER (ЗБЕРЕЖЕННЯ В БАЗУ ПРИ ЗАКРИТТІ) ===
+# === 🔥 SMART TRADE MANAGER (ЗБЕРЕЖЕННЯ В БАЗУ) ===
 class SmartTradeManager:
     def __init__(self, bot_instance, scanner_instance):
         self.bot = bot_instance
@@ -386,7 +388,7 @@ class SmartTradeManager:
                 'symbol': symbol,
                 'side': 'Long' if side == 'Sell' else 'Short',
                 'qty': float(qty),
-                'entry_price': 0, # Не критично для історії авто-виходу
+                'entry_price': 0, 
                 'exit_price': 0,
                 'pnl': float(pnl_val),
                 'exit_time': datetime.utcnow(),
@@ -400,7 +402,7 @@ class SmartTradeManager:
 trade_manager = SmartTradeManager(bot, scanner)
 trade_manager.start()
 
-# === 🔥 PASSIVE MONITOR (Для угод, що закрились по трейлінгу) ===
+# === 🔥 PASSIVE MONITOR (Для угод по трейлінгу) ===
 class PassiveMonitor:
     def __init__(self, bot_instance):
         self.bot = bot_instance
@@ -419,17 +421,17 @@ class PassiveMonitor:
         for p in resp['result']['list']:
             if float(p['size']) > 0: curr.add(p['symbol'])
         
-        # Якщо угода зникла, значить закрилась по Trailing Stop
+        # Якщо угода зникла (закрилась по трейлінгу)
         closed = self.known - curr
         for sym in closed:
             logger.info(f"🏁 Position {sym} closed by Trailing Stop/TP/SL")
-            # Можна спробувати витягнути PnL через sync_trades, але це зробиться автоматично при оновленні сторінки Report
+            # При оновленні сторінки report дані підтягнуться автоматично
         self.known = curr
 
 pass_mon = PassiveMonitor(bot)
 pass_mon.start()
 
-# === WEB ROUTES (LIGHT & UPDATED) ===
+# === WEB ROUTES ===
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -457,7 +459,7 @@ def scanner_page():
                     active_positions.append({'symbol': symbol, 'side': p['side'], 'entry': p['avgPrice'], 'pnl': round(pnl, 2), 'rsi': current_rsi, 'pressure': round(pressure), 'recommendation': rec, 'row_class': row_class})
     except: pass
 
-    # 2. 🔥 ІСТОРІЯ ЗАКРИТИХ УГОД (З бази)
+    # 2. ІСТОРІЯ ЗАКРИТИХ УГОД (З бази)
     recent_trades = stats_service.get_trades(days=1)
 
     # 3. Топ ринку
@@ -475,22 +477,28 @@ def scanner_page():
     html = """
     <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Whale Scanner Light</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" rel="stylesheet">
     <style>
         body { background-color: #f4f6f8; color: #212529; font-family: 'Segoe UI', sans-serif; font-size: 14px; }
-        .navbar { background-color: #ffffff; border-bottom: 1px solid #e1e4e8; }
-        .card { background-color: #ffffff; border: 1px solid #e1e4e8; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.03); margin-bottom: 20px; }
+        .navbar { background-color: #ffffff !important; border-bottom: 1px solid #e1e4e8; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .navbar-brand { color: #000 !important; font-weight: 700; }
+        .card { background-color: #ffffff; border: 1px solid #e1e4e8; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); margin-bottom: 20px; }
         .card-header { background-color: #ffffff; border-bottom: 1px solid #f0f0f0; font-weight: 700; color: #495057; padding: 15px; }
-        .table th { font-weight: 600; color: #6c757d; }
+        .table { color: #212529; margin-bottom: 0; background-color: #fff; }
+        .table th { font-weight: 600; color: #6c757d; border-bottom: 2px solid #f0f0f0; }
+        .table td { border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+        .table-hover tbody tr:hover { background-color: #f8f9fa; }
         .text-up { color: #00b894; font-weight: 600; } .text-down { color: #d63031; font-weight: 600; }
+        .badge-rsi-high { background-color: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
+        .badge-rsi-low { background-color: #e0f2f1; color: #00695c; border: 1px solid #b2dfdb; }
     </style>
     <meta http-equiv="refresh" content="30"></head><body>
     <nav class="navbar navbar-expand-lg navbar-light mb-4 px-3">
         <div class="container-fluid"><a class="navbar-brand" href="#">🐋 Whale Scanner <span class="badge bg-light text-dark border">LIGHT</span></a><span class="text-muted ms-2 small">Оновлено: {{ last_update }}</span></div>
     </nav>
     <div class="container-fluid">
-        {% if positions %}
-        <div class="card border-primary mb-4"><div class="card-header text-primary bg-light border-bottom-0">АКТИВНІ УГОДИ (TRAILING ACTIVE)</div><div class="card-body p-0"><table class="table table-hover mb-0"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск ($)</th><th>Статус</th></tr></thead><tbody>
-        {% for pos in positions %}<tr class="{{ pos.row_class }}"><td class="fw-bold">{{ pos.symbol }}</td><td><span class="badge {{ 'bg-success' if pos.side=='Buy' else 'bg-danger' }}">{{ pos.side }}</span></td><td class="{{ 'text-up' if pos.pnl>0 else 'text-down' }}">{{ pos.pnl }}$</td><td>{{ pos.rsi }}</td><td>{{ "{:,.0f}".format(pos.pressure) }}</td><td><strong>{{ pos.recommendation }}</strong></td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
+        {% if positions %}<div class="card border-primary mb-4"><div class="card-header text-primary bg-light border-bottom-0">АКТИВНІ УГОДИ</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск ($)</th><th>Статус</th></tr></thead><tbody>
+        {% for pos in positions %}<tr class="{{ pos.row_class }}"><td class="fw-bold">{{ pos.symbol }}</td><td><span class="badge {{ 'bg-success' if pos.side=='Buy' else 'bg-danger' }}">{{ pos.side }}</span></td><td class="{{ 'text-up' if pos.pnl>0 else 'text-down' }}">{{ pos.pnl }}$</td><td><span class="badge {{ 'badge-rsi-high' if pos.rsi>70 else 'badge-rsi-low' }}">{{ pos.rsi }}</span></td><td class="{{ 'text-up' if pos.pressure>0 else 'text-down' }}">{{ "{:,.0f}".format(pos.pressure) }}</td><td><strong>{{ pos.recommendation }}</strong></td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
         
         <div class="row"><div class="col-md-6"><div class="card"><div class="card-header text-up">Покупці</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вхід ($)</th></tr></thead><tbody>{% for c in positive_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-up">+{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div><div class="col-md-6"><div class="card"><div class="card-header text-down">Продавці</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вихід ($)</th></tr></thead><tbody>{% for c in negative_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-down">{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div></div>
         
@@ -499,7 +507,7 @@ def scanner_page():
         {% if not history %}<tr><td colspan="6" class="text-center text-muted p-3">Історія порожня</td></tr>{% endif %}
         </tbody></table></div></div>
     </div>
-    </body></html>
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script><script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script><script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script><script>$(document).ready(function(){$('#signalsTable').DataTable({"order":[[0,"desc"]],"pageLength":25,"language":{"search":"Пошук:","paginate":{"next":">","previous":"<"}}});});</script></body></html>
     """
     return render_template_string(html, pumps=scan_data['all_signals'], last_update=last_update, positive_coins=positive_coins, negative_coins=negative_coins, positions=active_positions, history=recent_trades)
 
