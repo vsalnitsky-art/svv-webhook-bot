@@ -1,86 +1,73 @@
 """
-Report Module - P&L UI 📊
-Відповідає за рендеринг сторінки статистики.
+Report Module - P&L Page 📊
 """
 from flask import render_template_string
 from statistics_service import stats_service
 from datetime import datetime, timedelta
 
 def render_report_page(bot_instance, request):
-    # 1. Отримуємо параметри
     days = int(request.args.get('days', 7))
     s_arg, e_arg = request.args.get('start'), request.args.get('end')
     
-    # 2. Синхронізуємо дані з біржі (через бот)
+    # Синхронізація
     bot_instance.sync_trades(days)
-    
-    # 3. Отримуємо баланс
     bal = bot_instance.get_available_balance() or 0.0
     
-    # 4. Отримуємо статистику з бази
+    # Отримання даних
+    stats = {"total_pnl":0, "win_rate":0, "total_trades":0, "volume":0, "chart_labels":[], "chart_data":[], "details":[], "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0, "top_coins_labels":[], "top_coins_values":[], "long_pnl":0, "short_pnl":0}
+    
     try:
         trades = stats_service.get_trades(90)
-        if not trades: raise ValueError("No trades")
-        
-        filtered = []
-        s_dt, e_dt = None, None
-        if s_arg and e_arg:
-            s_dt = datetime.strptime(s_arg, '%Y-%m-%d')
-            e_dt = datetime.strptime(e_arg, '%Y-%m-%d') + timedelta(days=1)
-        elif days:
-            e_dt = datetime.now()
-            s_dt = e_dt - timedelta(days=days)
+        if trades:
+            filtered = []
+            s_dt, e_dt = None, None
+            if s_arg and e_arg:
+                s_dt = datetime.strptime(s_arg, '%Y-%m-%d')
+                e_dt = datetime.strptime(e_arg, '%Y-%m-%d') + timedelta(days=1)
+            elif days:
+                e_dt = datetime.now()
+                s_dt = e_dt - timedelta(days=days)
+            for t in trades:
+                if not t['exit_time']: continue
+                et = datetime.strptime(t['exit_time'], '%d.%m %H:%M') if isinstance(t['exit_time'], str) else t['exit_time']
+                et = et.replace(year=datetime.now().year)
+                if s_dt and e_dt:
+                    if s_dt <= et <= e_dt: filtered.append(t)
+                else: filtered.append(t)
+                
+            stats["total_trades"] = len(filtered)
+            filtered.sort(key=lambda x: x['exit_time'], reverse=False)
+            run_bal = 0
+            daily = {}
+            for t in filtered:
+                stats["total_pnl"] += t['pnl']
+                run_bal += t['pnl']
+                stats["total_volume"] += t.get('qty',0)*t.get('exit_price',0)
+                if t['pnl']>0: stats["win_trades"]+=1
+                else: stats["loss_trades"]+=1
+                if t['side'] == 'Long': stats['long_trades']+=1; stats['long_pnl']+=t['pnl']
+                else: stats['short_trades']+=1; stats['short_pnl']+=t['pnl']
+                
+                sym = t['symbol']
+                if sym not in stats['coin_performance']: stats['coin_performance'][sym]=0
+                stats['coin_performance'][sym]+=t['pnl']
+                d_str = t['exit_time'].split(' ')[0]
+                daily[d_str] = daily.get(d_str, 0) + t['pnl']
+                stats["details"].append(t)
             
-        for t in trades:
-            if not t['exit_time']: continue
-            et = datetime.strptime(t['exit_time'], '%d.%m %H:%M') if isinstance(t['exit_time'], str) else t['exit_time']
-            et = et.replace(year=datetime.now().year)
-            if s_dt and e_dt:
-                if s_dt <= et <= e_dt: filtered.append(t)
-            else: filtered.append(t)
+            rb = 0
+            for d in sorted(daily.keys()):
+                rb += daily[d]
+                stats["chart_labels"].append(d)
+                stats["chart_data"].append(round(rb, 2))
             
-        stats = {"total_trades": len(filtered), "total_pnl": 0.0, "total_volume": 0.0, "win_trades": 0, "loss_trades": 0, "long_trades": 0, "short_trades": 0, "long_pnl":0, "short_pnl":0, "details": [], "chart_labels": [], "chart_data": [], "coin_performance":{}}
-        
-        filtered.sort(key=lambda x: x['exit_time'], reverse=False)
-        run_bal = 0
-        daily = {}
-        
-        for t in filtered:
-            stats["total_pnl"] += t['pnl']
-            run_bal += t['pnl']
-            stats["total_volume"] += t.get('qty',0)*t.get('exit_price',0)
-            if t['pnl']>0: stats["win_trades"]+=1
-            else: stats["loss_trades"]+=1
-            
-            if t['side'] == 'Long': 
-                stats['long_trades'] += 1; stats['long_pnl'] += t['pnl']
-            else: 
-                stats['short_trades'] += 1; stats['short_pnl'] += t['pnl']
-            
-            sym = t['symbol']
-            if sym not in stats['coin_performance']: stats['coin_performance'][sym] = 0.0
-            stats['coin_performance'][sym] += t['pnl']
-            
-            d_str = t['exit_time'].split(' ')[0]
-            daily[d_str] = daily.get(d_str, 0) + t['pnl']
-            stats["details"].append(t)
-        
-        rb = 0
-        for d in sorted(daily.keys()):
-            rb += daily[d]
-            stats["chart_labels"].append(d)
-            stats["chart_data"].append(round(rb, 2))
-            
-        top = sorted(stats['coin_performance'].items(), key=lambda x: x[1], reverse=True)
-        stats['top_coins_labels'] = [x[0] for x in top[:5]]
-        stats['top_coins_values'] = [round(x[1], 2) for x in top[:5]]
-        stats["details"].sort(key=lambda x: x['exit_time'], reverse=True)
-        if stats["total_trades"]>0: stats["win_rate"] = round((stats["win_trades"]/stats["total_trades"])*100,1)
-        
-    except:
-        stats = {"total_pnl":0, "win_rate":0, "total_trades":0, "volume":0, "chart_labels":[], "chart_data":[], "details":[], "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0, "top_coins_labels":[], "top_coins_values":[], "long_pnl":0, "short_pnl":0}
+            top = sorted(stats['coin_performance'].items(), key=lambda x: x[1], reverse=True)
+            stats['top_coins_labels'] = [x[0] for x in top[:5]]
+            stats['top_coins_values'] = [round(x[1], 2) for x in top[:5]]
+            stats["details"].sort(key=lambda x: x['exit_time'], reverse=True)
+            if stats["total_trades"]>0: stats["win_rate"] = round((stats["win_trades"]/stats["total_trades"])*100,1)
+    except: pass
 
-    # HTML ТЕМПЛЕЙТ (BYBIT STYLE)
     html = """
     <!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>P&L Analysis</title><script src="https://cdn.jsdelivr.net/npm/chart.js"></script><link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet"><style>
     :root { --bg-color: #ffffff; --text-primary: #121214; --text-secondary: #858e9c; --green: #20b26c; --red: #ef454a; --btn-active-bg: #fff8d9; --btn-active-text: #cf9e04; --border: #f4f4f4; }
