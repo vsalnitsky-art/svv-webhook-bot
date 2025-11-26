@@ -1,277 +1,134 @@
-"""
-Bot Module - Trading Logic & Managers 🤖
-"""
 import logging
-import threading
-import time
 import decimal
-from datetime import datetime
-import requests
 from pybit.unified_trading import HTTP
-
 from bot_config import config
 from config import get_api_credentials
 from statistics_service import stats_service
 
 logger = logging.getLogger(__name__)
 
-# === HELPER: TELEGRAM ===
-def send_telegram_message(text):
-    clean = text.replace("<b>", "").replace("</b>", "").replace("\n", " | ")
-    logger.info(f"\n🔔 [BOT]: {clean}")
-    # try:
-    #     requests.post(f"https://api.telegram.org/bot{config.TG_BOT_TOKEN}/sendMessage", 
-    #                   json={"chat_id": config.TG_CHAT_ID, "text": text, "parse_mode": "HTML"})
-    # except: pass
-
 class BybitTradingBot:
     def __init__(self):
         k, s = get_api_credentials()
         self.session = HTTP(testnet=False, api_key=k, api_secret=s)
-        logger.info("✅ Bybit Connected (Bot Module)")
         self.position_tracker = {}
 
-    def normalize_symbol(self, symbol): return symbol.replace('.P', '')
+    def normalize(self, s): return s.replace('.P', '')
 
-    def get_available_balance(self, currency="USDT"):
+    def get_bal(self):
         try:
             b = self.session.get_wallet_balance(accountType="UNIFIED")
-            if b.get('retCode') != 0: return None
-            for acc in b.get('result', {}).get('list', []):
-                for c in acc.get('coin', []):
-                    if c.get('coin') == currency: return float(c.get('walletBalance', 0))
-            return None
-        except: return None
+            for acc in b['result']['list']:
+                for c in acc['coin']:
+                    if c['coin'] == "USDT": return float(c['walletBalance'])
+        except: return 0.0
 
-    def get_current_price(self, symbol):
-        try:
-            norm = self.normalize_symbol(symbol)
-            r = self.session.get_tickers(category="linear", symbol=norm)
-            if r.get('retCode')==0: return float(r['result']['list'][0]['lastPrice'])
-        except: return None
+    def get_price(self, s):
+        try: return float(self.session.get_tickers(category="linear", symbol=self.normalize(s))['result']['list'][0]['lastPrice'])
+        except: return 0.0
 
-    # 🔥 ДОДАНО МЕТОД, ЯКОГО НЕ ВИСТАЧАЛО
-    def get_all_tickers(self):
+    def get_instr(self, s):
         try:
-            r = self.session.get_tickers(category="linear")
-            if r.get('retCode') == 0:
-                return r['result']['list']
-            return []
-        except: return []
-
-    def get_instrument_info(self, symbol):
-        try:
-            norm = self.normalize_symbol(symbol)
-            r = self.session.get_instruments_info(category="linear", symbol=norm)
-            if r.get('retCode')==0: return r['result']['list'][0]['lotSizeFilter'], r['result']['list'][0]['priceFilter']
+            r = self.session.get_instruments_info(category="linear", symbol=self.normalize(s))
+            return r['result']['list'][0]['lotSizeFilter'], r['result']['list'][0]['priceFilter']
         except: return None, None
 
-    def set_leverage(self, symbol, leverage):
-        try:
-            self.session.set_leverage(category="linear", symbol=self.normalize_symbol(symbol), buyLeverage=str(leverage), sellLeverage=str(leverage))
-        except: pass
-
-    def get_position_size(self, symbol):
-        try:
-            r = self.session.get_positions(category="linear", symbol=self.normalize_symbol(symbol))
-            if r['retCode']==0: return float(r['result']['list'][0]['size'])
-        except: return 0.0
-    
-    # Додаємо метод для переведення в БУ (для ActiveTradeMonitor)
-    def move_sl_to_breakeven(self, symbol, entry_price):
-        try:
-            self.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=str(entry_price), positionIdx=0)
-            return True
-        except: return False
-
-    def round_qty(self, qty, step):
-        if step <= 0: return qty
+    def round_val(self, val, step):
         import decimal
         d = abs(decimal.Decimal(str(step)).as_tuple().exponent)
-        return round(qty // step * step, d)
+        return round(val // step * step, d)
 
-    def round_price(self, price, tick):
-        if tick <= 0: return price
-        import decimal
-        d = abs(decimal.Decimal(str(tick)).as_tuple().exponent)
-        return round(price // tick * tick, d)
+    def set_lev(self, s, l):
+        try: self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
+        except: pass
 
-    # === ВХІД ===
     def place_order(self, data):
         try:
             action = data.get('action')
             symbol = data.get('symbol')
-            norm = self.normalize_symbol(symbol)
+            norm = self.normalize(symbol)
             
-            if self.get_position_size(norm) > 0: return {"status": "ignored"}
+            risk = float(data.get('riskPercent', 5.0))
+            lev = int(data.get('leverage', 20))
             
-            risk = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
-            lev = int(data.get('leverage', config.DEFAULT_LEVERAGE))
-            
-            json_tp_price = data.get('takeProfit')
-            json_tp_percent = data.get('takeProfitPercent')
-            json_sl_price = data.get('stopLoss')
-            json_sl_percent = data.get('stopLossPercent')
-            
-            price = self.get_current_price(norm)
-            lot, tick = self.get_instrument_info(norm)
+            price = self.get_price(norm)
+            lot, tick = self.get_instr(norm)
             if not price or not lot: return {"status": "error"}
             
-            bal = self.get_available_balance()
-            if not bal: return {"status": "error_balance"}
-            
+            bal = self.get_bal()
+            if bal < 5: return {"status": "no_balance"}
+
             qty_step = float(lot['qtyStep'])
-            tick_size = float(tick['tickSize'])
             min_qty = float(lot['minOrderQty'])
+            tick_size = float(tick['tickSize'])
             
             raw_qty = (bal * (risk/100) * 0.98 * lev) / price
-            qty = self.round_qty(raw_qty, qty_step)
+            qty = self.round_val(raw_qty, qty_step)
+            if qty < min_qty: qty = min_qty
             
-            if qty < min_qty:
-                if bal > (min_qty*price/lev)*1.05: qty = min_qty
-                else: return {"status": "error_min_qty"}
+            self.set_lev(norm, lev)
             
-            self.set_leverage(norm, lev)
-            
+            # 1. MARKET ORDER
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
-            logger.info(f"✅ OPENED: {action} {qty} {norm} @ {price}")
+            logger.info(f"✅ OPEN: {action} {symbol}")
             
-            # Ініціалізація трекера для БУ
-            self.position_tracker[norm] = {'initial_qty': qty, 'sl_moved': False}
+            # 2. TRAILING STOP
+            if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: tr_pct = 0.5
+            elif any(x in symbol for x in ["SOL","XRP","ADA"]): tr_pct = 1.5
+            else: tr_pct = 3.0
             
-            # STOP LOSS
-            sl_target = 0.0
-            if json_sl_price: sl_target = float(json_sl_price)
-            elif json_sl_percent:
-                sl_pct = float(json_sl_percent)
-                sl_target = price * (1 - sl_pct/100) if action == "Buy" else price * (1 + sl_pct/100)
-            else:
-                sl_pct = 1.5
-                sl_target = price * (1 - sl_pct/100) if action == "Buy" else price * (1 + sl_pct/100)
+            dist = self.round_val(price * (tr_pct/100), tick_size)
+            sl = price - dist if action == "Buy" else price + dist
+            sl = self.round_val(sl, tick_size)
             
-            if sl_target > 0:
-                sl_rounded = self.round_price(sl_target, tick_size)
-                self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_rounded), positionIdx=0)
-                logger.info(f"🛡️ SL Set: {sl_rounded}")
-
-            # TAKE PROFIT SPLIT
+            self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl), trailingStop=str(dist), positionIdx=0)
+            
+            # 3. SPLIT TP
+            tp_price = data.get('takeProfit')
+            tp_pct = data.get('takeProfitPercent')
+            target = 0.0
             direction = 1 if action == "Buy" else -1
-            final_tp_price = 0.0
             
-            if json_tp_price: final_tp_price = float(json_tp_price)
-            elif json_tp_percent:
-                tp_pct = float(json_tp_percent)
-                final_tp_price = price * (1 + (tp_pct/100) * direction)
-            else:
-                final_tp_price = price * (1 + 0.03 * direction)
+            if tp_price: target = float(tp_price)
+            elif tp_pct: target = price * (1 + (float(tp_pct)/100) * direction)
+            else: target = price * (1 + 0.03 * direction)
+            
+            dist_tp = abs(target - price)
+            tp1 = self.round_val(price + (dist_tp * 0.4 * direction), tick_size)
+            tp2 = self.round_val(target, tick_size)
+            
+            q1 = self.round_val(qty * 0.5, qty_step)
+            q2 = self.round_val(qty - q1, qty_step)
+            
+            side_exit = "Sell" if action == "Buy" else "Buy"
+            
+            if q1 >= min_qty:
+                self.session.place_order(category="linear", symbol=norm, side=side_exit, orderType="Limit", qty=str(q1), price=str(tp1), reduceOnly=True)
+            if q2 >= min_qty:
+                self.session.place_order(category="linear", symbol=norm, side=side_exit, orderType="Limit", qty=str(q2), price=str(tp2), reduceOnly=True)
 
-            total_dist = abs(final_tp_price - price)
-            tp1_price = self.round_price(price + (total_dist * 0.40 * direction), tick_size)
-            tp2_price = self.round_price(final_tp_price, tick_size)
-            
-            qty1 = self.round_qty(qty * 0.5, qty_step)
-            qty2 = self.round_qty(qty - qty1, qty_step)
-            
-            tp_side = "Sell" if action=="Buy" else "Buy"
-            
-            if qty1 >= min_qty:
-                self.session.place_order(category="linear", symbol=norm, side=tp_side, orderType="Limit", qty=str(qty1), price=str(tp1_price), reduceOnly=True)
-                logger.info(f"🎯 TP1: {tp1_price}")
-            
-            if qty2 >= min_qty:
-                self.session.place_order(category="linear", symbol=norm, side=tp_side, orderType="Limit", qty=str(qty2), price=str(tp2_price), reduceOnly=True)
-                logger.info(f"🎯 TP2: {tp2_price}")
-
-            return {"status": "success"}
+            return {"status": "ok"}
         except Exception as e:
             logger.error(f"Order Error: {e}")
             return {"status": "error"}
 
-    def sync_trades(self, days=30):
+    def sync_history(self):
+        # Проста синхронізація за 24 години для відображення
         try:
-            now = datetime.now()
-            for i in range(0, days, 7):
-                end = now - timedelta(days=i)
-                start = end - timedelta(days=min(7, days-i))
-                r = self.session.get_closed_pnl(category="linear", startTime=int(start.timestamp()*1000), endTime=int(end.timestamp()*1000), limit=50)
-                if r['retCode']==0:
-                    for t in r['result']['list']:
-                        stats_service.save_trade({
-                            'order_id': t['orderId'], 'symbol': t['symbol'],
-                            'side': 'Long' if t['side']=='Sell' else 'Short',
-                            'qty': float(t['qty']), 'entry_price': float(t['avgEntryPrice']),
-                            'exit_price': float(t['avgExitPrice']), 'pnl': float(t['closedPnl']),
-                            'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
-                            'is_win': float(t['closedPnl'])>0,
-                            'exit_reason': 'Manual/TP/SL'
-                        })
+            import time
+            end = int(time.time()*1000)
+            start = end - (24*60*60*1000)
+            r = self.session.get_closed_pnl(category="linear", startTime=start, endTime=end, limit=50)
+            if r['retCode']==0:
+                for t in r['result']['list']:
+                    stats_service.save_trade({
+                        'order_id': t['orderId'], 'symbol': t['symbol'],
+                        'side': 'Long' if t['side']=='Sell' else 'Short',
+                        'qty': float(t['qty']), 'entry_price': float(t['avgEntryPrice']),
+                        'exit_price': float(t['avgExitPrice']), 'pnl': float(t['closedPnl']),
+                        'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
+                        'exit_reason': 'Trailing/TP'
+                    })
         except: pass
 
-# Створюємо екземпляр бота
 bot_instance = BybitTradingBot()
-
-# === МЕНЕДЖЕРИ ===
-class SmartTradeManager:
-    def __init__(self, bot, scanner):
-        self.bot = bot
-        self.scanner = scanner
-        self.running = True
-        self.last_log = 0
-    def start(self): threading.Thread(target=self.loop, daemon=True).start()
-    def loop(self):
-        while self.running:
-            try: self.manage()
-            except: pass
-            time.sleep(5)
-    def manage(self):
-        r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
-        if r['retCode']!=0: return
-        
-        should_log = (time.time() - self.last_log) > 15
-        if should_log: self.last_log = time.time()
-
-        for p in r['result']['list']:
-            if float(p['size'])==0: continue
-            sym = p['symbol']
-            if should_log:
-                stats_service.save_monitor_log({
-                    'symbol': sym, 'price': float(p['avgPrice']), 'pnl': float(p['unrealisedPnl']),
-                    'rsi': self.scanner.get_current_rsi(sym), 'pressure': self.scanner.get_market_pressure(sym)
-                })
-
-class PassiveManager:
-    def __init__(self, bot, scanner):
-        self.bot = bot
-        self.scanner = scanner
-        self.known = set()
-        self.running = True
-    def start(self): threading.Thread(target=self.loop, daemon=True).start()
-    def loop(self):
-        while self.running:
-            try: self.check()
-            except: pass
-            time.sleep(5)
-    def check(self):
-        r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
-        if r['retCode']!=0: return
-        curr = set(p['symbol'] for p in r['result']['list'] if float(p['size'])>0)
-        closed = self.known - curr
-        for sym in closed:
-            try: stats_service.delete_coin_history(sym)
-            except: pass
-        self.known = curr
-        
-        # Перевірка на часткове закриття (TP1 hit)
-        for p in r['result']['list']:
-            sym = p['symbol']
-            size = float(p['size'])
-            if size == 0: continue
-            
-            tracker = self.bot.position_tracker.get(sym)
-            if tracker:
-                # Якщо розмір зменшився (спрацював TP1) і ще не переводили в БУ
-                if size < (tracker['initial_qty'] * 0.95) and not tracker['sl_moved']:
-                    if float(p['unrealisedPnl']) > 0:
-                        self.bot.move_sl_to_breakeven(sym, float(p['avgPrice']))
-                        tracker['sl_moved'] = True
-                        logger.info(f"🛡️ TP1 HIT: {sym} -> SL to Breakeven")
