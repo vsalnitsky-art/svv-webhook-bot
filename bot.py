@@ -22,11 +22,17 @@ class BybitTradingBot:
             for acc in b['result']['list']:
                 for c in acc['coin']:
                     if c['coin'] == "USDT": return float(c['walletBalance'])
-        except: return 0.0
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error getting balance: {e}")
+            return 0.0
 
     def get_price(self, s):
-        try: return float(self.session.get_tickers(category="linear", symbol=self.normalize(s))['result']['list'][0]['lastPrice'])
-        except: return 0.0
+        try: 
+            return float(self.session.get_tickers(category="linear", symbol=self.normalize(s))['result']['list'][0]['lastPrice'])
+        except Exception as e:
+            logger.error(f"Error getting price for {s}: {e}")
+            return 0.0
 
     def get_all_tickers(self):
         """Получить данные по всем тикерам"""
@@ -34,23 +40,35 @@ class BybitTradingBot:
             r = self.session.get_tickers(category="linear")
             if r['retCode'] == 0:
                 return r['result']['list']
-        except: pass
+            else:
+                logger.warning(f"Get all tickers API Error: {r}")
+        except Exception as e:
+             logger.error(f"Error getting all tickers: {e}")
         return []
 
     def get_instr(self, s):
         try:
             r = self.session.get_instruments_info(category="linear", symbol=self.normalize(s))
             return r['result']['list'][0]['lotSizeFilter'], r['result']['list'][0]['priceFilter']
-        except: return None, None
+        except Exception as e:
+            logger.error(f"Error getting instrument info for {s}: {e}")
+            return None, None
 
     def round_val(self, val, step):
         import decimal
-        d = abs(decimal.Decimal(str(step)).as_tuple().exponent)
-        return round(val // step * step, d)
+        try:
+            d = abs(decimal.Decimal(str(step)).as_tuple().exponent)
+            return round(val // step * step, d)
+        except Exception as e:
+            logger.error(f"Rounding error: {e}")
+            return val
 
     def set_lev(self, s, l):
-        try: self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
-        except: pass
+        try: 
+            self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
+        except Exception as e:
+            # Часто помилка виникає, якщо плече вже встановлене, тому логуємо як info/warning
+            logger.info(f"Set leverage info for {s}: {e}")
 
     def place_order(self, data):
         try:
@@ -63,10 +81,12 @@ class BybitTradingBot:
             
             price = self.get_price(norm)
             lot, tick = self.get_instr(norm)
-            if not price or not lot: return {"status": "error"}
+            if not price or not lot: 
+                return {"status": "error", "reason": "Failed to get price/instrument info"}
             
             bal = self.get_bal()
-            if bal < 5: return {"status": "no_balance"}
+            if bal < 5: 
+                return {"status": "no_balance", "balance": bal}
 
             qty_step = float(lot['qtyStep'])
             min_qty = float(lot['minOrderQty'])
@@ -80,7 +100,7 @@ class BybitTradingBot:
             
             # 1. MARKET ORDER
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
-            logger.info(f"✅ OPEN: {action} {symbol}")
+            logger.info(f"✅ OPEN: {action} {symbol} | Qty: {qty}")
             
             # 2. TRAILING STOP
             if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: tr_pct = 0.5
@@ -119,8 +139,8 @@ class BybitTradingBot:
 
             return {"status": "ok"}
         except Exception as e:
-            logger.error(f"Order Error: {e}")
-            return {"status": "error"}
+            logger.error(f"Order Placement Critical Error: {e}")
+            return {"status": "error", "reason": str(e)}
 
     def sync_history(self):
         # Проста синхронізація за 24 години для відображення
@@ -139,7 +159,8 @@ class BybitTradingBot:
                         'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
                         'exit_reason': 'Trailing/TP'
                     })
-        except: pass
+        except Exception as e:
+             logger.error(f"Sync history error: {e}")
 
     def sync_trades(self, days=7):
         """Синхронизация торговой истории за указанный период"""
@@ -158,7 +179,8 @@ class BybitTradingBot:
                         'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
                         'exit_reason': 'Trailing/TP'
                     })
-        except: pass
+        except Exception as e:
+            logger.error(f"Sync trades error: {e}")
 
     def get_available_balance(self):
         """Получить доступный баланс USDT"""
