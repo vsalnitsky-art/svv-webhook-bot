@@ -1,5 +1,5 @@
 """
-Database Models - Stable & Clean
+Database Models - Full V3 (With Monitor Log)
 """
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Index
 from sqlalchemy.ext.declarative import declarative_base
@@ -19,18 +19,8 @@ class WhaleSignal(Base):
     price_change_1min = Column(Float)
     turnover_24h = Column(Float)
 
-class CoinStatistics(Base):
-    __tablename__ = 'coin_statistics'
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), unique=True)
-    total_signals = Column(Integer, default=0)
-    total_inflow_24h = Column(Float, default=0.0)
-    last_updated = Column(DateTime, default=datetime.utcnow)
-
 class Trade(Base):
-    """Таблиця для історії угод"""
     __tablename__ = 'trades'
-    
     id = Column(Integer, primary_key=True)
     order_id = Column(String(50), unique=True, index=True)
     symbol = Column(String(20), nullable=False, index=True)
@@ -41,11 +31,29 @@ class Trade(Base):
     pnl = Column(Float)
     is_win = Column(Boolean)
     exit_time = Column(DateTime, default=datetime.utcnow)
-    
-    # Важливі поля для статистики
     exit_reason = Column(String(100))
     exit_rsi = Column(Float)
     exit_pressure = Column(Float)
+
+# ✅ ЦЯ ТАБЛИЦЯ ПОТРІБНА ДЛЯ ЛІВОГО БЛОКУ
+class TradeMonitorLog(Base):
+    __tablename__ = 'trade_monitor_logs'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    current_price = Column(Float)
+    current_pnl = Column(Float)
+    rsi = Column(Float)
+    pressure = Column(Float)
+    session_id = Column(String(50), index=True) 
+
+class CoinStatistics(Base):
+    __tablename__ = 'coin_statistics'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), unique=True)
+    total_signals = Column(Integer, default=0)
+    total_inflow_24h = Column(Float, default=0.0)
+    last_updated = Column(DateTime, default=datetime.utcnow)
 
 class CoinPerformance(Base):
     __tablename__ = 'coin_performance'
@@ -57,8 +65,8 @@ class CoinPerformance(Base):
     win_rate = Column(Float, default=0.0)
 
 class DatabaseManager:
-    # Використовуємо стабільну назву бази
-    def __init__(self, db_path='trading_bot_v2.db'):
+    # Використовуємо v3, щоб створити чисту базу з новою структурою
+    def __init__(self, db_path='trading_bot_v3.db'):
         self.engine = create_engine(f'sqlite:///{db_path}', echo=False)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
