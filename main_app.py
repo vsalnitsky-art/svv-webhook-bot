@@ -1,10 +1,10 @@
 """
-Main Application - Server Logs Edition 📝
+Main Application - Native Trailing Stop Edition 📉
 Включає:
-- Вивід повідомлень та причин закриття в ЛОГИ СЕРВЕРА (замість Telegram)
-- Smart Exit (RSI + Volume Pressure)
+- Автоматичний розрахунок Трейлінг-стопу залежно від монети
+- Видалення складної логіки виходу (все робить біржа)
+- Очищення бази після закриття
 - Світлий UI
-- Захист від миттєвого закриття (Cooldown)
 """
 
 from flask import Flask, request, jsonify, render_template_string
@@ -43,15 +43,16 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# === 🔔 ЛОГУВАННЯ ЗАМІСТЬ ТЕЛЕГРАМУ ===
+# === TELEGRAM ===
 def send_telegram_message(text):
-    """
-    Заглушка: Виводить повідомлення в лог сервера замість Telegram.
-    """
-    # Прибираємо HTML теги для чистоти логів
-    clean_text = text.replace("<b>", "").replace("</b>", "").replace("\n", " | ")
-    
-    logger.info(f"\n{'='*60}\n🔔 [BOT MESSAGE]: {clean_text}\n{'='*60}")
+    try:
+        tg_token = getattr(config, 'TG_BOT_TOKEN', "ВАШ_ТОКЕН")
+        chat_id = getattr(config, 'TG_CHAT_ID', "ВАШ_CHAT_ID")
+        if "ВАШ_" in tg_token: return 
+        url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+        requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+    except Exception as e:
+        logger.error(f"TG Error: {e}")
 
 # === ОБРОБКА СИГНАЛУ ===
 def process_signal_with_ai(data):
@@ -63,7 +64,7 @@ def process_signal_with_ai(data):
         try: ai_text = ai_analyst.analyze_signal(symbol, action)
         except: ai_text = "Помилка аналізу"
 
-    msg = f"ВХІД: {symbol} | Напрямок: {action} | AI: {ai_text}"
+    msg = f"🚀 <b>ВХІД: {symbol}</b>\nНапрямок: {action}\n📊 Стратегія: Trailing Stop\n\n🤖 {ai_text}"
     send_telegram_message(msg)
     bot.place_order(data)
 
@@ -148,80 +149,105 @@ class BybitTradingBot:
             return 0.0
         except: return 0.0
 
-    # === ВХІД В УГОДУ ===
+    # === 🔥 ГОЛОВНА ЛОГІКА: ВХІД + ТРЕЙЛІНГ ===
     def place_order(self, data):
         try:
             action = data.get('action')
             symbol = data.get('symbol')
-            logger.info(f"🤖 Processing Order: {symbol} {action}")
-            
-            if not action or not symbol: return {"status": "error"}
             norm_symbol = self.normalize_symbol(symbol)
+            
+            logger.info(f"🤖 Processing Trailing Setup: {symbol} {action}")
             
             if self.get_position_size(norm_symbol) > 0:
                 logger.warning(f"Position exists for {norm_symbol}. Ignored.")
                 return {"status": "ignored"}
             
+            # Параметри
             riskPercent = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
             leverage = int(data.get('leverage', config.DEFAULT_LEVERAGE))
-            slPercent = float(data.get('stopLossPercent', config.DEFAULT_SL_PERCENT))
             
+            # Отримуємо дані ринку
             cur_price = self.get_current_price(norm_symbol)
-            if not cur_price: return {"status": "error"}
-            
             lot_filter, price_filter = self.get_instrument_info(norm_symbol)
-            if not lot_filter: return {"status": "error"}
+            
+            if not cur_price or not lot_filter:
+                logger.error("Failed to get market data")
+                return {"status": "error"}
             
             qty_step = float(lot_filter['qtyStep'])
             min_qty = float(lot_filter['minOrderQty'])
             tick_size = float(price_filter['tickSize'])
             balance = self.get_available_balance()
-            if not balance: return {"status": "error"}
             
+            if not balance: return {"status": "error_balance"}
+            
+            # Розрахунок об'єму
             margin = (balance * (riskPercent / 100)) * 0.98
             raw_qty = (margin * leverage) / cur_price
             final_qty = self.round_qty(raw_qty, qty_step)
             
             if final_qty < min_qty:
-                cost_of_min_qty = (min_qty * cur_price) / leverage
-                if balance > cost_of_min_qty * 1.05:
-                    final_qty = min_qty
-                    logger.info(f"✅ Forced Min Qty: {final_qty}")
-                else:
-                    return {"status": "error_balance"}
+                cost = (min_qty * cur_price) / leverage
+                if balance > cost * 1.05: final_qty = min_qty
+                else: return {"status": "error_balance_min"}
             
+            # 1. Ставимо плече
             self.set_leverage(norm_symbol, leverage)
             
+            # 2. Відкриваємо позицію по ринку
             self.session.place_order(
                 category="linear", symbol=norm_symbol, side=action, 
                 orderType="Market", qty=str(final_qty), timeInForce="GTC"
             )
-            logger.info(f"✅ Opened: {action} {final_qty} {norm_symbol}")
+            logger.info(f"✅ Market Order Filled: {action} {final_qty} {norm_symbol}")
             
-            if slPercent > 0:
-                buffer_percent = 0.2
-                if action == "Buy":
-                    raw_sl = cur_price * (1 - slPercent/100)
-                    buffered_sl = raw_sl * (1 - buffer_percent/100)
-                else:
-                    raw_sl = cur_price * (1 + slPercent/100)
-                    buffered_sl = raw_sl * (1 + buffer_percent/100)
-                
-                final_sl = self.round_price(buffered_sl, tick_size)
-                self.session.set_trading_stop(
-                    category="linear", symbol=norm_symbol, 
-                    stopLoss=str(final_sl), positionIdx=0
-                )
-                logger.info(f"🛡️ SL Set with Buffer: {final_sl}")
+            # 3. 🔥 РОЗРАХУНОК ТРЕЙЛІНГ СТОПУ (У ВІДСОТКАХ ВІД ЦІНИ)
+            # Визначаємо волатильність монети "на око" по назві
+            if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]:
+                trail_percent = 0.8 # 0.8% для важковаговиків
+            elif any(x in symbol for x in ["SOL", "XRP", "ADA", "SUI", "AVAX"]):
+                trail_percent = 2.0 # 2% для альтів
+            else:
+                trail_percent = 4.0 # 4% для мемкоїнів та щитків
+            
+            # Bybit API приймає 'trailingStop' як ДИСТАНЦІЮ ЦІНИ (не відсоток)
+            # Тому рахуємо: Ціна * 0.02 = дистанція
+            trail_distance = cur_price * (trail_percent / 100)
+            trail_dist_rounded = self.round_price(trail_distance, tick_size)
+            
+            # Ставимо активний стоп-лосс (Hard SL) на рівні трейлінгу для безпеки
+            if action == "Buy":
+                sl_price = cur_price - trail_dist_rounded
+            else:
+                sl_price = cur_price + trail_dist_rounded
+            
+            sl_rounded = self.round_price(sl_price, tick_size)
+
+            # Відправляємо налаштування захисту
+            # trailingStop - це відстань, activePrice - не ставимо (активація відразу)
+            self.session.set_trading_stop(
+                category="linear", 
+                symbol=norm_symbol, 
+                stopLoss=str(sl_rounded), # Початковий стоп
+                trailingStop=str(trail_dist_rounded), # Динамічний трейлінг
+                positionIdx=0
+            )
+            
+            msg = (
+                f"🛡️ <b>TRAILING SET: {symbol}</b>\n"
+                f"Відкат: {trail_percent}% (${trail_dist_rounded})\n"
+                f"Якщо ціна піде назад на {trail_percent}%, угода закриється."
+            )
+            send_telegram_message(msg)
+            logger.info(f"✅ Trailing set: {trail_percent}% ({trail_dist_rounded})")
 
             return {"status": "success"}
         except Exception as e:
-            logger.error(f"🔥 Order Error: {e}")
+            logger.error(f"🔥 Execution Error: {e}")
             return {"status": "error"}
 
     # === СИНХРОНІЗАЦІЯ ===
     def sync_trades_from_bybit(self, days=30):
-        # logger.info(f"🔄 Syncing P&L...") # Вимкнув, щоб не спамило
         try:
             now = datetime.now()
             for i in range(0, days, 7):
@@ -270,18 +296,13 @@ class BybitTradingBot:
                 if isinstance(exit_dt, str):
                     try: exit_dt = datetime.strptime(exit_dt, '%Y-%m-%d %H:%M')
                     except: continue
-                
                 if filter_start and filter_end:
-                    if filter_start <= exit_dt <= filter_end:
-                        filtered_trades.append(t)
-                else:
-                    filtered_trades.append(t)
+                    if filter_start <= exit_dt <= filter_end: filtered_trades.append(t)
+                else: filtered_trades.append(t)
 
             stats = {
-                "total_trades": len(filtered_trades),
-                "total_pnl": 0.0, "total_volume": 0.0,
-                "win_trades": 0, "loss_trades": 0,
-                "long_trades": 0, "short_trades": 0,
+                "total_trades": len(filtered_trades), "total_pnl": 0.0, "total_volume": 0.0,
+                "win_trades": 0, "loss_trades": 0, "long_trades": 0, "short_trades": 0,
                 "details": [], "chart_labels": [], "chart_data": []
             }
 
@@ -313,9 +334,7 @@ class BybitTradingBot:
                 stats["chart_data"].append(round(running_balance, 2))
 
             stats["details"].sort(key=lambda x: x['exit_time'] if x['exit_time'] else '', reverse=True)
-            if stats["total_trades"] > 0:
-                stats["win_rate"] = round((stats["win_trades"] / stats["total_trades"]) * 100, 1)
-            
+            if stats["total_trades"] > 0: stats["win_rate"] = round((stats["win_trades"] / stats["total_trades"]) * 100, 1)
             return stats, None
         except Exception as e: return None, str(e)
 
@@ -324,113 +343,52 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === 🔥 SMART TRADE MANAGER (LOGS + COOLDOWN) ===
-class SmartTradeManager:
-    def __init__(self, bot_instance, scanner_instance):
+# === 🔥 PASSIVE MONITOR (ONLY CLEANUP DB) ===
+class PassiveTradeMonitor:
+    """
+    Цей монітор більше НЕ закриває угоди. Це робить біржа через Trailing Stop.
+    Його задача - дивитись, чи зникла угода, і чистити базу.
+    """
+    def __init__(self, bot_instance):
         self.bot = bot_instance
-        self.scanner = scanner_instance
+        self.known_positions = set()
         self.running = True
         
     def start(self):
         threading.Thread(target=self.loop, daemon=True).start()
-        logger.info("🛡️ Smart Trade Manager Active")
+        logger.info("🧹 Passive DB Cleaner Started")
         
     def loop(self):
         while self.running:
-            try: self.manage_positions()
-            except Exception as e: logger.error(f"Manager Error: {e}")
-            time.sleep(5)
+            try: self.check_positions()
+            except: pass
+            time.sleep(10)
             
-    def manage_positions(self):
+    def check_positions(self):
         resp = self.bot.session.get_positions(category="linear", settleCoin="USDT")
         if resp['retCode'] != 0: return
         
+        current_positions = set()
         for pos in resp['result']['list']:
-            size = float(pos['size'])
-            if size == 0: continue
-            
-            symbol = pos['symbol']
-            side = pos['side']
-            entry_price = float(pos['avgPrice'])
-            unrealized_pnl = float(pos['unrealisedPnl'])
-            
-            # 1. COOLDOWN: Ігноруємо угоди молодші 60 сек (щоб індикатори стабілізувались)
-            last_update_ts = int(pos['updatedTime']) / 1000
-            seconds_open = time.time() - last_update_ts
-            if seconds_open < 60: continue
-
-            rsi = self.scanner.get_current_rsi(symbol)
-            pressure = self.scanner.get_market_pressure(symbol)
-            
-            # Формуємо рядок для логу
-            details = f"RSI={rsi}, PnL={unrealized_pnl:.2f}, Pressure={int(pressure)}"
-            
-            # 1. RSI Exit
-            if side == "Buy":
-                if rsi >= 80 and unrealized_pnl > 0:
-                    self.close_position(symbol, size, "Sell", f"RSI Overbought ({rsi} > 80)", details)
-                    continue
-                if rsi <= 20 and unrealized_pnl < -10: # Panic save
-                    self.close_position(symbol, size, "Sell", f"RSI Crash Protect", details)
-                    continue
-
-            if side == "Sell":
-                if rsi <= 20 and unrealized_pnl > 0:
-                    self.close_position(symbol, size, "Buy", f"RSI Oversold ({rsi} < 20)", details)
-                    continue
-                if rsi >= 80 and unrealized_pnl < -10:
-                    self.close_position(symbol, size, "Buy", f"RSI Pump Protect", details)
-                    continue
-
-            # 2. Volume Pressure Exit
-            if side == "Buy" and pressure < -200000:
-                self.close_position(symbol, size, "Sell", "Volume Dump Panic", details)
-                continue
-            if side == "Sell" and pressure > 200000:
-                self.close_position(symbol, size, "Buy", "Volume Pump Panic", details)
-                continue
-
-            # 3. Trailing Stop
-            pnl_pct = (unrealized_pnl / (entry_price * size / float(pos['leverage']))) * 100
-            current_sl = float(pos.get('stopLoss', 0))
-            
-            if side == "Buy":
-                if pnl_pct > 1.5:
-                    new_sl = entry_price * 1.005
-                    if current_sl < new_sl: self.update_sl(symbol, new_sl)
-                elif pnl_pct > 3.0:
-                    new_sl = entry_price * 1.02
-                    if current_sl < new_sl: self.update_sl(symbol, new_sl)
-            elif side == "Sell":
-                if pnl_pct > 1.5:
-                    new_sl = entry_price * 0.995
-                    if current_sl == 0 or current_sl > new_sl: self.update_sl(symbol, new_sl)
-
-    def close_position(self, symbol, qty, side, reason, details):
-        try:
-            self.bot.session.place_order(category="linear", symbol=symbol, side=side, orderType="Market", qty=str(qty), reduceOnly=True)
-            self.bot.session.cancel_all_orders(category="linear", symbol=symbol)
-            
-            msg = f"AUTO-CLOSE: {symbol} | Причина: {reason} | {details}"
-            send_telegram_message(msg)
-            
+            if float(pos['size']) > 0:
+                current_positions.add(pos['symbol'])
+        
+        # Якщо позиція була в списку, а тепер зникла - значить закрилась
+        closed_positions = self.known_positions - current_positions
+        
+        for symbol in closed_positions:
+            logger.info(f"🏁 Position closed on Exchange (Trailing/TP/SL): {symbol}")
             try:
                 stats_service.delete_coin_history(symbol)
+                logger.info(f"🧹 Cleaned history for {symbol}")
             except: pass
             
-        except Exception as e: logger.error(f"Failed to close {symbol}: {e}")
+        self.known_positions = current_positions
 
-    def update_sl(self, symbol, price):
-        try:
-            price_str = "{:.4f}".format(price)
-            self.bot.session.set_trading_stop(category="linear", symbol=symbol, stopLoss=price_str, positionIdx=0)
-            # Не спамимо в лог про трейлінг, щоб було чисто
-        except: pass
+monitor = PassiveTradeMonitor(bot)
+monitor.start()
 
-trade_manager = SmartTradeManager(bot, scanner)
-trade_manager.start()
-
-# === WEB ROUTES (LIGHT) ===
+# === WEB ROUTES ===
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -447,13 +405,7 @@ def scanner_page():
                     current_rsi = market_data.get('rsi', 50)
                     pressure = scanner.get_market_pressure(symbol)
                     pnl = float(p['unrealisedPnl'])
-                    rec, row_class = "ТРИМАТИ", ""
-                    if p['side'] == "Buy":
-                        if current_rsi > 75: rec = "RSI HIGH 🔴"; row_class = "table-danger"
-                        elif pressure < -50000: rec = "DUMPING! ⚠️"; row_class = "table-warning"
-                    elif p['side'] == "Sell":
-                        if current_rsi < 25: rec = "RSI LOW 🔴"; row_class = "table-danger"
-                        elif pressure > 50000: rec = "PUMPING! ⚠️"; row_class = "table-warning"
+                    rec, row_class = "TRAILING ACTIVE 🛡️", "table-success"
                     active_positions.append({'symbol': symbol, 'side': p['side'], 'entry': p['avgPrice'], 'pnl': round(pnl, 2), 'rsi': current_rsi, 'pressure': round(pressure), 'recommendation': rec, 'row_class': row_class})
     except: pass
 
@@ -474,15 +426,14 @@ def scanner_page():
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css" rel="stylesheet">
     <style>
-        body { background-color: #f4f6f8; color: #212529; font-family: 'Segoe UI', sans-serif; font-size: 14px; }
+        body { background-color: #f4f6f8 !important; color: #212529 !important; font-family: 'Segoe UI', sans-serif; font-size: 14px; }
         .navbar { background-color: #ffffff !important; border-bottom: 1px solid #e1e4e8; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
         .navbar-brand { color: #000 !important; font-weight: 700; }
-        .card { background-color: #ffffff; border: 1px solid #e1e4e8; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); margin-bottom: 20px; }
-        .card-header { background-color: #ffffff; border-bottom: 1px solid #f0f0f0; font-weight: 700; color: #495057; padding: 15px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
-        .table { color: #212529; margin-bottom: 0; background-color: #fff; }
-        .table th { font-weight: 600; color: #6c757d; border-bottom: 2px solid #f0f0f0; }
+        .card { background-color: #ffffff !important; border: 1px solid #e1e4e8; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); margin-bottom: 20px; }
+        .card-header { background-color: #ffffff !important; border-bottom: 1px solid #f0f0f0; font-weight: 700; color: #495057; padding: 15px; }
+        .table { color: #212529 !important; background-color: #ffffff !important; }
+        .table th { color: #6c757d; border-bottom: 2px solid #f0f0f0; }
         .table td { border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
-        .table-hover tbody tr:hover { background-color: #f8f9fa; }
         .text-up { color: #00b894 !important; font-weight: 600; }
         .text-down { color: #d63031 !important; font-weight: 600; }
         .badge-rsi-high { background-color: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
@@ -493,7 +444,7 @@ def scanner_page():
         <div class="container-fluid"><a class="navbar-brand" href="#">🐋 Whale Scanner <span class="badge bg-light text-dark border">LIGHT</span></a><span class="text-muted ms-2 small">Оновлено: {{ last_update }}</span></div>
     </nav>
     <div class="container-fluid">
-        {% if positions %}<div class="card border-primary mb-4"><div class="card-header text-primary bg-light border-bottom-0">АКТИВНІ УГОДИ</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск ($)</th><th>Статус</th></tr></thead><tbody>
+        {% if positions %}<div class="card border-primary mb-4"><div class="card-header text-primary bg-light border-bottom-0">АКТИВНІ УГОДИ (TRAILING ACTIVE)</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск ($)</th><th>Статус</th></tr></thead><tbody>
         {% for pos in positions %}<tr class="{{ pos.row_class }}"><td class="fw-bold">{{ pos.symbol }}</td><td><span class="badge {{ 'bg-success' if pos.side=='Buy' else 'bg-danger' }}">{{ pos.side }}</span></td><td class="{{ 'text-up' if pos.pnl>0 else 'text-down' }}">{{ pos.pnl }}$</td><td><span class="badge {{ 'badge-rsi-high' if pos.rsi>70 else 'badge-rsi-low' }}">{{ pos.rsi }}</span></td><td class="{{ 'text-up' if pos.pressure>0 else 'text-down' }}">{{ "{:,.0f}".format(pos.pressure) }}</td><td><strong>{{ pos.recommendation }}</strong></td></tr>{% endfor %}</tbody></table></div></div>{% endif %}
         <div class="row"><div class="col-md-6"><div class="card"><div class="card-header text-up">Покупці</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вхід ($)</th></tr></thead><tbody>{% for c in positive_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-up">+{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div><div class="col-md-6"><div class="card"><div class="card-header text-down">Продавці</div><div class="card-body p-0"><table class="table table-sm"><thead><tr><th>Актив</th><th class="text-end">Вихід ($)</th></tr></thead><tbody>{% for c in negative_coins[:5] %}<tr><td>{{c.symbol}}</td><td class="text-end text-down">{{ "{:,.0f}".format(c.inflow) }}</td></tr>{% endfor %}</tbody></table></div></div></div></div>
         <div class="card"><div class="card-header d-flex justify-content-between align-items-center bg-white"><span>Журнал</span><a href="/report" class="btn btn-sm btn-outline-secondary">Звіт P&L</a></div><div class="card-body p-0"><table id="signalsTable" class="table table-hover w-100"><thead><tr><th>Час</th><th>Символ</th><th>Ціна</th><th>Зміна</th><th>Аномалія</th><th>RSI</th><th>Об'єм ($)</th></tr></thead><tbody>{% for p in pumps %}<tr><td class="text-muted">{{ p.time }}</td><td class="fw-bold text-primary">{{ p.symbol }}</td><td>{{ p.price }}</td><td class="{{ 'text-up' if p.price_change_interval>0 else 'text-down' }}">{{ p.price_change_interval }}%</td><td>x{{ p.spike_factor }}</td><td>{{ p.get('rsi','-') }}</td><td class="fw-bold">{{ "{:,.0f}".format(p.vol_inflow) }}</td></tr>{% endfor %}</tbody></table></div></div>
