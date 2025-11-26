@@ -15,14 +15,6 @@ import decimal
 import ctypes
 from datetime import datetime, timedelta
 
-# === БЕЗПЕЧНЕ ОЧИЩЕННЯ БАЗИ ПРИ СТАРТІ (Один раз, щоб виправити структуру) ===
-if os.path.exists("trading_bot.db"):
-    try:
-        # Розкоментуйте рядок нижче, якщо будуть помилки "no column"
-        # os.remove("trading_bot.db") 
-        pass
-    except: pass
-
 from flask import Flask, request, jsonify, render_template_string
 from pybit.unified_trading import HTTP
 import requests
