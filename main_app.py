@@ -6,7 +6,15 @@ Main Application - Final Light Edition ☀️
 - Відображення історії торгівлі на головній сторінці
 - Smart Exit + Trailing Stop
 """
+import os
+# 🔥 ЕКСТРЕНЕ ВИДАЛЕННЯ СТАРОЇ БАЗИ
+# Це гарантує, що при запуску створиться нова база з правильними колонками
+if os.path.exists("trading_bot.db"):
+    os.remove("trading_bot.db")
+    print("⚠️ OLD DATABASE DELETED SUCCESSFULLY!")
 
+# ... далі йдуть ваші звичайні імпорти ...
+from flask import Flask...
 from flask import Flask, request, jsonify, render_template_string
 from pybit.unified_trading import HTTP
 import logging
