@@ -1,8 +1,8 @@
 """
-Main Application - Bybit Scanner Layout v3 🚀
-- 3 Блоки: Активні (верх), Монітор Статистики (ліво), Сканер (право)
-- Нова база даних для історії активних угод
-- Світла тема (Light UI)
+Main Application - Full V3 Layout 📊
+- Верх: Активні
+- Ліво: Монітор угоди (Лог з бази)
+- Право: Живий сканер
 """
 
 import os
@@ -15,25 +15,22 @@ import decimal
 import ctypes
 from datetime import datetime, timedelta
 
-# Видалення старої бази не потрібне, бо ми змінили назву на trading_bot_v3.db в models.py
+# Видалення старої бази не потрібне, бо в models.py нова назва trading_bot_v3.db
 
 from flask import Flask, request, jsonify, render_template_string
 from pybit.unified_trading import HTTP
 import requests
 
-# === ІМПОРТИ ===
 from bot_config import config
 from models import db_manager
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from config import get_api_credentials
 
-# === ШІ ===
 try:
     import ai_analyst
     AI_AVAILABLE = True
-except ImportError:
-    AI_AVAILABLE = False
+except: AI_AVAILABLE = False
 
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
@@ -49,7 +46,7 @@ def send_telegram_message(text):
 def process_signal_with_ai(data):
     symbol = data.get('symbol')
     action = data.get('action')
-    ai_text = "AI Вимкнено"
+    ai_text = "AI OFF"
     if AI_AVAILABLE:
         try: ai_text = ai_analyst.analyze_signal(symbol, action)
         except: pass
@@ -66,7 +63,6 @@ def keep_alive():
         time.sleep(300)
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# === BOT ===
 class BybitTradingBot:
     def __init__(self):
         k, s = get_api_credentials()
@@ -128,12 +124,13 @@ class BybitTradingBot:
             if r['retCode']==0: return float(r['result']['list'][0]['size'])
         except: return 0.0
 
-    # === ВХІД З ТРЕЙЛІНГОМ ===
+    # === ВХІД ===
     def place_order(self, data):
         try:
             action = data.get('action')
             symbol = data.get('symbol')
             norm = self.normalize_symbol(symbol)
+            
             if self.get_position_size(norm) > 0: return {"status": "ignored"}
             
             risk = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
@@ -148,7 +145,6 @@ class BybitTradingBot:
             
             qty = self.round_qty((bal * (risk/100) * 0.98 * lev) / price, float(lot['qtyStep']))
             min_qty = float(lot['minOrderQty'])
-            
             if qty < min_qty:
                 if bal > (min_qty*price/lev)*1.05: qty = min_qty
                 else: return {"status": "error_min_qty"}
@@ -156,7 +152,7 @@ class BybitTradingBot:
             self.set_leverage(norm, lev)
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
             
-            # Трейлінг
+            # Trailing
             if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: tr_pct = 0.8
             elif any(x in symbol for x in ["SOL","XRP","ADA"]): tr_pct = 2.0
             else: tr_pct = 4.0
@@ -212,7 +208,7 @@ class BybitTradingBot:
                 if s_dt and e_dt:
                     if s_dt <= et <= e_dt: filtered.append(t)
                 else: filtered.append(t)
-            stats = {"total_trades": len(filtered), "total_pnl": 0.0, "total_volume": 0.0, "win_trades": 0, "loss_trades": 0, "long_trades": 0, "short_trades": 0, "long_pnl":0, "short_pnl":0, "details": [], "chart_labels": [], "chart_data": [], "coin_performance":{}}
+            stats = {"total_trades": len(filtered), "total_pnl": 0.0, "total_volume": 0.0, "win_trades": 0, "loss_trades": 0, "long_trades": 0, "short_trades": 0, "long_pnl": 0, "short_pnl": 0, "details": [], "chart_labels": [], "chart_data": [], "coin_performance": {}}
             filtered.sort(key=lambda x: x['exit_time'], reverse=False)
             run_bal = 0
             daily = {}
@@ -222,28 +218,22 @@ class BybitTradingBot:
                 stats["total_volume"] += t.get('qty',0)*t.get('exit_price',0)
                 if t['pnl']>0: stats["win_trades"]+=1
                 else: stats["loss_trades"]+=1
-                if t['side'] == 'Long': 
-                    stats['long_trades'] += 1; stats['long_pnl'] += t['pnl']
-                else: 
-                    stats['short_trades'] += 1; stats['short_pnl'] += t['pnl']
-                
+                if t['side'] == 'Long': stats['long_trades'] += 1; stats['long_pnl'] += t['pnl']
+                else: stats['short_trades'] += 1; stats['short_pnl'] += t['pnl']
                 sym = t['symbol']
-                if sym not in stats['coin_performance']: stats['coin_performance'][sym]=0
-                stats['coin_performance'][sym]+=t['pnl']
-
+                if sym not in stats['coin_performance']: stats['coin_performance'][sym] = 0.0
+                stats['coin_performance'][sym] += t['pnl']
                 d_str = t['exit_time'].split(' ')[0]
                 daily[d_str] = daily.get(d_str, 0) + t['pnl']
                 stats["details"].append(t)
-            
             rb = 0
             for d in sorted(daily.keys()):
                 rb += daily[d]
                 stats["chart_labels"].append(d)
                 stats["chart_data"].append(round(rb, 2))
-            
-            top = sorted(stats['coin_performance'].items(), key=lambda x:x[1], reverse=True)
+            top = sorted(stats['coin_performance'].items(), key=lambda x: x[1], reverse=True)
             stats['top_coins_labels'] = [x[0] for x in top[:5]]
-            stats['top_coins_values'] = [round(x[1],2) for x in top[:5]]
+            stats['top_coins_values'] = [round(x[1], 2) for x in top[:5]]
             stats["details"].sort(key=lambda x: x['exit_time'], reverse=True)
             if stats["total_trades"]>0: stats["win_rate"] = round((stats["win_trades"]/stats["total_trades"])*100,1)
             return stats, None
@@ -253,79 +243,41 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === SMART MANAGER (ЗАПИСУЄ СТАТИСТИКУ В БАЗУ) ===
+# === SMART MANAGER (Моніторинг в базу) ===
 class SmartTradeManager:
     def __init__(self, bot, scanner):
         self.bot = bot
         self.scanner = scanner
         self.running = True
-        self.last_record_time = 0
-
+        self.last_log_time = 0
     def start(self): threading.Thread(target=self.loop, daemon=True).start()
-    
     def loop(self):
         while self.running:
             try: self.manage()
             except: pass
             time.sleep(5)
-            
     def manage(self):
         r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
         if r['retCode']!=0: return
         
-        # Раз на 10 секунд записуємо статистику активних угод в нову базу
-        should_record = (time.time() - self.last_record_time) > 10
-        if should_record: self.last_record_time = time.time()
+        # Записуємо статистику в базу раз на 15 сек, щоб не спамити
+        should_log = (time.time() - self.last_log_time) > 15
+        if should_log: self.last_log_time = time.time()
 
         for p in r['result']['list']:
             if float(p['size'])==0: continue
             sym = p['symbol']
-            side = p['side']
             pnl = float(p['unrealisedPnl'])
             rsi = self.scanner.get_current_rsi(sym)
             press = self.scanner.get_market_pressure(sym)
             
-            # 🔥 ЗАПИС В БАЗУ МОНІТОРИНГУ
-            if should_record:
-                stats_service.save_monitor_log({
-                    'symbol': sym,
-                    'price': float(p['avgPrice']),
-                    'pnl': pnl,
-                    'rsi': rsi,
-                    'pressure': press,
-                    'session_id': 'live'
-                })
+            if should_log:
+                stats_service.save_monitor_log({'symbol':sym, 'price':float(p['avgPrice']), 'pnl':pnl, 'rsi':rsi, 'pressure':press})
 
-            # Smart Exit (тільки для логів, не закриваємо)
-            # ... можна додати умови ...
-
+            # Smart Exit логіка тут (видалена, бо лише Трейлінг)
+            
 trade_manager = SmartTradeManager(bot, scanner)
 trade_manager.start()
-
-# === PASSIVE CLEANER (Очищає стару статистику) ===
-class PassiveMonitor:
-    def __init__(self, bot):
-        self.bot = bot
-        self.known = set()
-        self.running = True
-    def start(self): threading.Thread(target=self.loop, daemon=True).start()
-    def loop(self):
-        while self.running:
-            try: self.check()
-            except: pass
-            time.sleep(10)
-    def check(self):
-        r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
-        if r['retCode']!=0: return
-        curr = set(p['symbol'] for p in r['result']['list'] if float(p['size'])>0)
-        # Якщо угода зникла - очищаємо логи моніторингу по ній, щоб не засмічувати базу
-        closed = self.known - curr
-        # Тут ми поки НЕ видаляємо логи, бо ви хочете їх бачити в історії.
-        # Можна видалити пізніше.
-        self.known = curr
-
-pass_mon = PassiveMonitor(bot)
-pass_mon.start()
 
 # === ROUTES ===
 @app.route('/scanner', methods=['GET'])
@@ -334,26 +286,19 @@ def scanner_page():
     last_update = datetime.now().strftime('%H:%M:%S')
     
     active = []
-    active_symbols = []
-    
     try:
         r = bot.session.get_positions(category="linear", settleCoin="USDT")
         if r['retCode']==0:
             for p in r['result']['list']:
                 if float(p['size'])>0:
                     sym = p['symbol']
-                    active_symbols.append(sym)
                     rsi = scan_data['snapshots'].get(sym, {}).get('rsi', 50)
                     press = scanner.get_market_pressure(sym)
-                    pnl = round(float(p['unrealisedPnl']), 2)
-                    active.append({'symbol':sym, 'side':p['side'], 'pnl':pnl, 'rsi':rsi, 'pressure':round(press), 'size':p['size'], 'entry':p['avgPrice']})
+                    rec, cls = "Трейлінг Активний", "table-success"
+                    active.append({'symbol':sym, 'side':p['side'], 'pnl':round(float(p['unrealisedPnl']),2), 'rsi':rsi, 'pressure':round(press), 'rec':rec, 'cls':cls, 'size':p['size'], 'entry':p['avgPrice']})
     except: pass
 
-    # Отримуємо логи моніторингу для лівого блоку
-    # Беремо тільки для активних монет або останніх записів
     monitor_logs = stats_service.get_monitor_logs(limit=30)
-    
-    # Отримуємо живі сигнали для правого блоку
     live_signals = scan_data['all_signals'][:30]
 
     html = """
@@ -375,11 +320,9 @@ def scanner_page():
         .text-up{color:#20b26c;font-weight:600} .text-down{color:#ef454a;font-weight:600}
         .badge-long{background:#e6fffa;color:#20b26c} .badge-short{background:#fff5f5;color:#ef454a}
         
-        /* Scrollbar */
         ::-webkit-scrollbar {width: 6px; height: 6px;}
         ::-webkit-scrollbar-track {background: #f1f1f1;}
         ::-webkit-scrollbar-thumb {background: #ccc; border-radius: 3px;}
-        ::-webkit-scrollbar-thumb:hover {background: #aaa;}
     </style>
     <meta http-equiv="refresh" content="10">
     </head><body>
@@ -412,7 +355,7 @@ def scanner_page():
 
         <div class="bottom-row">
             <div class="half-block">
-                <div class="block-header"><span class="text-primary">📊 МОНІТОРИНГ УГОДИ (ЛОГ БАЗИ)</span></div>
+                <div class="block-header"><span class="text-primary">📊 МОНІТОРИНГ УГОДИ (БАЗА)</span></div>
                 <table class="table table-striped">
                     <thead><tr><th>Час</th><th>Монета</th><th>Ціна</th><th>P&L</th><th>RSI</th><th>Тиск</th></tr></thead>
                     <tbody>
@@ -450,67 +393,55 @@ def scanner_page():
 
 @app.route('/report', methods=['GET'])
 def report_page():
-    # ... (Код сторінки P&L такий самий, як у попередньому відповіді - точна копія Bybit) ...
-    # Для скорочення відповіді я вставлю сюди заглушку, але ви повинні залишити код P&L з минулого разу
     days = int(request.args.get('days', 7))
-    s_arg, e_arg = request.args.get('start'), request.args.get('end')
-    stats, err = bot.get_pnl_stats(days, s_arg, e_arg)
+    stats, err = bot.get_pnl_stats(days)
     bal = bot.get_available_balance() or 0.0
     if err or not stats: stats = {"total_pnl":0, "win_rate":0, "total_trades":0, "volume":0, "chart_labels":[], "chart_data":[], "details":[], "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0, "top_coins_labels":[], "top_coins_values":[], "long_pnl":0, "short_pnl":0}
 
-    # BYBIT STYLE REPORT UI (Той самий код, що й раніше)
+    # BYBIT STYLE REPORT (Повернуто повний код)
     html = """
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <title>P&L Analysis</title>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
-        <style>
-            :root { --bg-color: #ffffff; --text-primary: #121214; --text-secondary: #858e9c; --green: #20b26c; --red: #ef454a; --btn-active-bg: #fff8d9; --btn-active-text: #cf9e04; --border: #f4f4f4; }
-            body { font-family: 'Roboto', sans-serif; background-color: var(--bg-color); color: var(--text-primary); margin: 0; padding: 20px; }
-            .container { max-width: 1280px; margin: 0 auto; }
-            .header { display: flex; align-items: center; margin-bottom: 30px; }
-            .title { font-size: 20px; font-weight: 700; margin-right: 20px; }
-            .btn-group { display: flex; gap: 10px; }
-            .btn { border: none; background: none; padding: 6px 12px; border-radius: 4px; font-size: 13px; cursor: pointer; color: var(--text-primary); font-weight: 500; text-decoration:none;}
-            .btn:hover { background: #f5f5f5; }
-            .btn.active { background-color: var(--btn-active-bg); color: var(--btn-active-text); }
-            .summary-grid { display: flex; gap: 60px; margin-bottom: 30px; }
-            .stat-item { display: flex; flex-direction: column; }
-            .stat-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; text-decoration: underline dotted; cursor: help; }
-            .stat-value { font-size: 28px; font-weight: 700; }
-            .text-green { color: var(--green); } .text-red { color: var(--red); }
-            .charts-container { display: grid; grid-template-columns: 2fr 1fr; gap: 30px; margin-bottom: 40px; }
-            .bottom-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 40px; }
-            .b-stat-box { padding: 15px 0; }
-            .b-stat-header { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
-            .b-stat-val { font-size: 24px; font-weight: 700; }
-            .custom-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-            .custom-table th { text-align: left; color: var(--text-secondary); font-weight: 400; padding: 10px 0; border-bottom: 1px solid var(--border); }
-            .custom-table td { padding: 14px 0; border-bottom: 1px solid var(--border); vertical-align: middle; }
-            .badge { padding: 2px 6px; border-radius: 2px; font-size: 11px; }
-            .badge-success { background: #fff8ec; color: #cf9e04; } .badge-loss { background: #f5f5f5; color: #858e9c; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header"><div class="title">P&L</div><div class="btn-group"><a href="/report?days=7" class="btn {{ 'active' if days==7 }}">7 дн.</a><a href="/report?days=30" class="btn {{ 'active' if days==30 }}">30 дн.</a><a href="/scanner" class="btn">← Сканер</a></div></div>
-            <div class="summary-grid"><div class="stat-item"><div class="stat-label">Общий P&L</div><div class="stat-value {{ 'text-green' if stats.total_pnl >= 0 else 'text-red' }}">{{ "+" if stats.total_pnl > 0 }}{{ "%.2f"|format(stats.total_pnl) }} USD</div></div></div>
-            <div class="charts-container"><div class="chart-box"><div style="height: 300px;"><canvas id="pnlChart"></canvas></div></div><div class="chart-box"><div style="height: 300px;"><canvas id="rankChart"></canvas></div></div></div>
-            <div class="bottom-stats"><div class="b-stat-box"><div class="b-stat-header">Успешных</div><div class="b-stat-val">{{ stats.win_rate }} %</div></div><div class="b-stat-box"><div class="b-stat-header">Всего</div><div class="b-stat-val">{{ stats.total_trades }}</div></div></div>
-            <div class="table-section"><h3>Закрытые ордера</h3><table class="custom-table"><thead><tr><th>Контракт</th><th>Тип</th><th>P&L</th><th>Результат</th><th>Время</th></tr></thead><tbody>
-            {% for t in stats.details %}<tr><td style="font-weight: 500;">{{ t.symbol }}</td><td class="{{ 'text-green' if t.side == 'Long' else 'text-red' }}">{{ t.side }}</td><td class="{{ 'text-red' if t.pnl < 0 else 'text-green' }}">{{ "+" if t.pnl > 0 }}{{ "%.4f"|format(t.pnl) }}</td><td><span class="badge {{ 'badge-success' if t.pnl > 0 else 'badge-loss' }}">{{ "Успех" if t.pnl > 0 else "Убыток" }}</span></td><td style="color: var(--text-secondary);">{{ t.exit_time }}</td></tr>{% endfor %}
-            </tbody></table></div>
-        </div>
-        <script>
-            const ctx = document.getElementById('pnlChart').getContext('2d');
-            new Chart(ctx, {type: 'line', data: {labels: {{ stats.chart_labels|tojson }}, datasets: [{data: {{ stats.chart_data|tojson }}, borderColor: '#ef454a', borderWidth: 2, pointRadius: 0, fill: true}]}, options: {responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {x: {grid: {display: false}}, y: {grid: {color: '#f4f4f4'}}}}});
-            const ctxBar = document.getElementById('rankChart').getContext('2d');
-            new Chart(ctxBar, {type: 'bar', data: {labels: {{ stats.top_coins_labels|tojson }}, datasets: [{data: {{ stats.top_coins_values|tojson }}, backgroundColor: (ctx) => ctx.raw >= 0 ? '#20b26c' : '#ef454a', borderRadius: 2}]}, options: {indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {x: {display: false}, y: {grid: {display: false}}}}});
-        </script>
-    </body></html>
+    <!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>P&L</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --bg-color: #ffffff; --text-primary: #121214; --text-secondary: #858e9c; --green: #20b26c; --red: #ef454a; --btn-active-bg: #fff8d9; --btn-active-text: #cf9e04; --border: #f4f4f4; }
+        body { font-family: 'Roboto', sans-serif; background-color: var(--bg-color); color: var(--text-primary); margin: 0; padding: 20px; }
+        .container { max-width: 1280px; margin: 0 auto; }
+        .header { display: flex; align-items: center; margin-bottom: 30px; }
+        .title { font-size: 20px; font-weight: 700; margin-right: 20px; }
+        .btn-group { display: flex; gap: 10px; }
+        .btn { border: none; background: none; padding: 6px 12px; border-radius: 4px; font-size: 13px; cursor: pointer; color: var(--text-primary); font-weight: 500; text-decoration:none; }
+        .btn:hover { background: #f5f5f5; }
+        .btn.active { background-color: var(--btn-active-bg); color: var(--btn-active-text); }
+        .summary-grid { display: flex; gap: 60px; margin-bottom: 30px; }
+        .stat-item { display: flex; flex-direction: column; }
+        .stat-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; text-decoration: underline dotted; cursor: help; }
+        .stat-value { font-size: 28px; font-weight: 700; }
+        .text-green { color: var(--green); } .text-red { color: var(--red); }
+        .charts-container { display: grid; grid-template-columns: 2fr 1fr; gap: 30px; margin-bottom: 40px; }
+        .bottom-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 40px; }
+        .b-stat-box { padding: 15px 0; }
+        .b-stat-header { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+        .b-stat-val { font-size: 24px; font-weight: 700; }
+        .custom-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .custom-table th { text-align: left; color: var(--text-secondary); font-weight: 400; padding: 10px 0; border-bottom: 1px solid var(--border); }
+        .custom-table td { padding: 14px 0; border-bottom: 1px solid var(--border); vertical-align: middle; }
+        .badge { padding: 2px 6px; border-radius: 2px; font-size: 11px; }
+        .badge-success { background: #fff8ec; color: #cf9e04; } .badge-loss { background: #f5f5f5; color: #858e9c; }
+    </style>
+    </head><body>
+    <div class="container"><div class="header"><div class="title">P&L</div><div class="btn-group"><a href="/report?days=7" class="btn {{ 'active' if days==7 }}">7 дн.</a><a href="/report?days=30" class="btn {{ 'active' if days==30 }}">30 дн.</a><a href="/scanner" class="btn">← Сканер</a></div></div>
+    <div class="summary-grid"><div class="stat-item"><div class="stat-label">Общий P&L</div><div class="stat-value {{ 'text-green' if stats.total_pnl >= 0 else 'text-red' }}">{{ "+" if stats.total_pnl > 0 }}{{ "%.2f"|format(stats.total_pnl) }} USD</div></div><div class="stat-item"><div class="stat-label">Объем</div><div class="stat-value text-green">{{ "{:,.0f}".format(stats.total_volume) }} USD</div></div></div>
+    <div class="charts-container"><div class="chart-box"><div style="height: 300px;"><canvas id="pnlChart"></canvas></div></div><div class="chart-box"><div style="height: 300px;"><canvas id="rankChart"></canvas></div></div></div>
+    <div class="bottom-stats"><div class="b-stat-box"><div class="b-stat-header">Всего ордеров</div><div class="b-stat-val">{{ stats.total_trades }}</div></div><div class="b-stat-box"><div class="b-stat-header">Успешных</div><div class="b-stat-val">{{ stats.win_rate }} %</div></div></div>
+    <table class="custom-table"><thead><tr><th>Контракт</th><th>Тип</th><th>P&L</th><th>Результат</th><th>Время</th></tr></thead><tbody>
+    {% for t in stats.details %}<tr><td style="font-weight: 500;">{{ t.symbol }}</td><td class="{{ 'text-green' if t.side == 'Long' else 'text-red' }}">{{ t.side }}</td><td class="{{ 'text-red' if t.pnl < 0 else 'text-green' }}">{{ "+" if t.pnl > 0 }}{{ "%.4f"|format(t.pnl) }}</td><td><span class="badge {{ 'badge-success' if t.pnl > 0 else 'badge-loss' }}">{{ "Успех" if t.pnl > 0 else "Убыток" }}</span></td><td style="color: var(--text-secondary);">{{ t.exit_time }}</td></tr>{% endfor %}
+    </tbody></table></div>
+    <script>
+    const ctx = document.getElementById('pnlChart').getContext('2d'); const gradient = ctx.createLinearGradient(0, 0, 0, 300); gradient.addColorStop(0, 'rgba(239, 69, 74, 0.2)'); gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    new Chart(ctx, {type: 'line', data: {labels: {{ stats.chart_labels|tojson }}, datasets: [{data: {{ stats.chart_data|tojson }}, borderColor: '#ef454a', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true}]}, options: {responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {x: {grid: {display: false}}, y: {grid: {color: '#f4f4f4'}}}}});
+    const ctxBar = document.getElementById('rankChart').getContext('2d'); new Chart(ctxBar, {type: 'bar', data: {labels: {{ stats.top_coins_labels|tojson }}, datasets: [{data: {{ stats.top_coins_values|tojson }}, backgroundColor: (ctx) => ctx.raw >= 0 ? '#20b26c' : '#ef454a', borderRadius: 2}]}, options: {indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {x: {display: false}, y: {grid: {display: false}}}}});
+    </script></body></html>
     """
     return render_template_string(html, stats=stats, bal=bal, days=days)
 
