@@ -1,7 +1,8 @@
 """
-Main Application - Force DB Reset Fix 🛠️
-Цей код примусово видалить стару базу даних при запуску, 
-щоб виправити помилку 'no such column'.
+Main Application - STABLE RELEASE 🏁
+- Scanner: Light Theme, Active Positions, History Table.
+- Report: Light Theme, FULL CHARTS (Bybit Style), KPIs.
+- Logic: Entry + Native Trailing Stop. No auto-close by script.
 """
 
 import os
@@ -14,18 +15,13 @@ import decimal
 import ctypes
 from datetime import datetime, timedelta
 
-# === 🔥 ЕКСТРЕНЕ ВИДАЛЕННЯ СТАРОЇ БАЗИ ===
-# Це виправить помилку на сервері
-print("🔄 Checking for old database...")
+# === БЕЗПЕЧНЕ ОЧИЩЕННЯ БАЗИ ПРИ СТАРТІ (Один раз, щоб виправити структуру) ===
 if os.path.exists("trading_bot.db"):
     try:
-        os.remove("trading_bot.db")
-        print("✅ OLD DATABASE DELETED! New one will be created.")
-    except Exception as e:
-        print(f"⚠️ Could not delete DB: {e}")
-else:
-    print("ℹ️ No old database found. Starting fresh.")
-# ==========================================
+        # Розкоментуйте рядок нижче, якщо будуть помилки "no column"
+        # os.remove("trading_bot.db") 
+        pass
+    except: pass
 
 from flask import Flask, request, jsonify, render_template_string
 from pybit.unified_trading import HTTP
@@ -54,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 def send_telegram_message(text):
     clean = text.replace("<b>", "").replace("</b>", "").replace("\n", " | ")
-    logger.info(f"\n{'='*60}\n🔔 [BOT]: {clean}\n{'='*60}")
+    logger.info(f"\n🔔 [BOT]: {clean}")
 
 def process_signal_with_ai(data):
     symbol = data.get('symbol')
@@ -167,10 +163,10 @@ class BybitTradingBot:
             self.set_leverage(norm, lev)
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
             
-            # Налаштування Трейлінгу
+            # Трейлінг Стоп
             if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: tr_pct = 0.8
-            elif any(x in symbol for x in ["SOL","XRP","ADA"]): tr_pct = 2.0
-            else: tr_pct = 4.0
+            elif any(x in symbol for x in ["SOL","XRP","ADA","AVAX"]): tr_pct = 2.0
+            else: tr_pct = 3.5
             
             dist = self.round_price(price * (tr_pct/100), float(tick['tickSize']))
             sl = price - dist if action == "Buy" else price + dist
@@ -203,6 +199,7 @@ class BybitTradingBot:
                         })
         except: pass
 
+    # === P&L STATS (Full Data for Charts) ===
     def get_pnl_stats(self, days=None, start_date=None, end_date=None):
         self.sync_trades_from_bybit(30)
         try:
@@ -222,12 +219,18 @@ class BybitTradingBot:
                 if not t['exit_time']: continue
                 et = datetime.strptime(t['exit_time'], '%d.%m %H:%M') if isinstance(t['exit_time'], str) else t['exit_time']
                 et = et.replace(year=datetime.now().year)
-                
                 if s_dt and e_dt:
                     if s_dt <= et <= e_dt: filtered.append(t)
                 else: filtered.append(t)
             
-            stats = {"total_trades": len(filtered), "total_pnl": 0.0, "total_volume": 0.0, "win_trades": 0, "loss_trades": 0, "long_trades": 0, "short_trades": 0, "details": [], "chart_labels": [], "chart_data": []}
+            # Формуємо повну статистику для графіків
+            stats = {
+                "total_trades": len(filtered), 
+                "total_pnl": 0.0, "total_volume": 0.0, 
+                "win_trades": 0, "loss_trades": 0, 
+                "long_trades": 0, "short_trades": 0, 
+                "details": [], "chart_labels": [], "chart_data": []
+            }
             
             filtered.sort(key=lambda x: x['exit_time'], reverse=False)
             run_bal = 0
@@ -237,10 +240,13 @@ class BybitTradingBot:
                 stats["total_pnl"] += t['pnl']
                 run_bal += t['pnl']
                 stats["total_volume"] += t.get('qty',0)*t.get('exit_price',0)
+                
                 if t['pnl']>0: stats["win_trades"]+=1
                 else: stats["loss_trades"]+=1
+                
                 if t['side'] == 'Long': stats['long_trades'] += 1
                 else: stats['short_trades'] += 1
+                
                 d_str = t['exit_time'].split(' ')[0]
                 daily[d_str] = daily.get(d_str, 0) + t['pnl']
                 stats["details"].append(t)
@@ -260,56 +266,7 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === SMART EXIT ===
-class SmartTradeManager:
-    def __init__(self, bot, scanner):
-        self.bot = bot
-        self.scanner = scanner
-        self.running = True
-    def start(self): threading.Thread(target=self.loop, daemon=True).start()
-    def loop(self):
-        while self.running:
-            try: self.manage()
-            except: pass
-            time.sleep(5)
-    def manage(self):
-        r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
-        if r['retCode']!=0: return
-        for p in r['result']['list']:
-            if float(p['size'])==0: continue
-            sym = p['symbol']
-            side = p['side']
-            pnl = float(p['unrealisedPnl'])
-            
-            # Cooldown
-            if time.time() - int(p['updatedTime'])/1000 < 60: continue
-            
-            rsi = self.scanner.get_current_rsi(sym)
-            press = self.scanner.get_market_pressure(sym)
-            
-            reason = None
-            # RSI тільки для моніторингу, не закриваємо
-            # Тут можна розкоментувати логіку, якщо захочете повернути авто-закриття
-            
-            if reason: self.close(sym, p['size'], "Sell" if side=="Buy" else "Buy", reason, rsi, press, pnl)
-
-    def close(self, sym, qty, side, reason, rsi, press, pnl):
-        try:
-            self.bot.session.place_order(category="linear", symbol=sym, side=side, orderType="Market", qty=str(qty), reduceOnly=True)
-            self.bot.session.cancel_all_orders(category="linear", symbol=sym)
-            send_telegram_message(f"AUTO-CLOSE: {sym} | {reason}")
-            stats_service.save_trade({
-                'order_id': f"AUTO_{int(time.time())}_{sym}", 'symbol': sym,
-                'side': 'Long' if side=='Sell' else 'Short', 'qty': float(qty),
-                'pnl': float(pnl), 'exit_time': datetime.utcnow(),
-                'exit_reason': reason, 'exit_rsi': rsi, 'exit_pressure': press
-            })
-        except: pass
-
-trade_manager = SmartTradeManager(bot, scanner)
-trade_manager.start()
-
-# === PASSIVE CLEANER ===
+# === PASSIVE MONITOR (Тільки чистить базу) ===
 class PassiveMonitor:
     def __init__(self, bot):
         self.bot = bot
@@ -350,10 +307,6 @@ def scanner_page():
                     rsi = scan_data['snapshots'].get(sym, {}).get('rsi', 50)
                     press = scanner.get_market_pressure(sym)
                     rec, cls = "Трейлінг Активний", "table-success"
-                    if p['side']=="Buy":
-                        if rsi>75: rec, cls = "RSI HIGH", "table-danger"
-                    elif p['side']=="Sell":
-                        if rsi<25: rec, cls = "RSI LOW", "table-danger"
                     active.append({'symbol':sym, 'side':p['side'], 'pnl':round(float(p['unrealisedPnl']),2), 'rsi':rsi, 'pressure':round(press), 'rec':rec, 'cls':cls})
     except: pass
 
@@ -369,16 +322,16 @@ def scanner_page():
         .card-header{background:#fff;border-bottom:1px solid #f0f0f0;font-weight:700;color:#555;padding:15px}
         .table{margin-bottom:0} .text-up{color:#00b894;font-weight:600} .text-down{color:#d63031;font-weight:600}
     </style><meta http-equiv="refresh" content="30"></head><body>
-    <nav class="navbar navbar-light mb-4 px-3"><span class="navbar-brand h1">🐋 Whale Scanner <span class="badge bg-light text-dark border">CLEAN</span></span><span class="text-muted small">{{ last_update }}</span></nav>
+    <nav class="navbar navbar-light mb-4 px-3"><span class="navbar-brand h1">🐋 Whale Scanner <span class="badge bg-light text-dark border">STABLE</span></span><span class="text-muted small">{{ last_update }}</span></nav>
     <div class="container-fluid">
         {% if active %}
         <div class="card border-primary"><div class="card-header text-primary bg-light">АКТИВНІ УГОДИ</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск</th><th>Статус</th></tr></thead><tbody>
         {% for a in active %}<tr class="{{a.cls}}"><td class="fw-bold">{{a.symbol}}</td><td>{{a.side}}</td><td class="{{ 'text-up' if a.pnl>0 else 'text-down' }}">{{a.pnl}}$</td><td>{{a.rsi}}</td><td>{{a.pressure}}</td><td>{{a.rec}}</td></tr>{% endfor %}
         </tbody></table></div></div>{% endif %}
         
-        <div class="card"><div class="card-header d-flex justify-content-between"><span>ІСТОРІЯ ЗАКРИТИХ УГОД (24Г)</span><a href="/report" class="btn btn-sm btn-outline-secondary">Звіт</a></div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Час</th><th>Монета</th><th>Тип</th><th>P&L</th><th>Причина</th><th>RSI</th></tr></thead><tbody>
-        {% for t in history %}<tr><td class="text-muted">{{t.exit_time}}</td><td class="fw-bold">{{t.symbol}}</td><td>{{t.side}}</td><td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}">{{t.pnl}}$</td><td>{{t.exit_reason or 'Trailing/TP'}}</td><td>{{t.exit_rsi or '-'}}</td></tr>{% endfor %}
-        {% if not history %}<tr><td colspan="6" class="text-center text-muted p-3">Історія порожня</td></tr>{% endif %}
+        <div class="card"><div class="card-header d-flex justify-content-between"><span>ІСТОРІЯ (24Г)</span><a href="/report" class="btn btn-sm btn-outline-secondary">Звіт</a></div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Час</th><th>Монета</th><th>Тип</th><th>P&L</th><th>Причина</th></tr></thead><tbody>
+        {% for t in history %}<tr><td class="text-muted">{{t.exit_time}}</td><td class="fw-bold">{{t.symbol}}</td><td>{{t.side}}</td><td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}">{{t.pnl}}$</td><td>{{t.exit_reason or 'Trailing/TP'}}</td></tr>{% endfor %}
+        {% if not history %}<tr><td colspan="5" class="text-center text-muted p-3">Історія порожня</td></tr>{% endif %}
         </tbody></table></div></div>
     </div></body></html>
     """
@@ -391,10 +344,18 @@ def report_page():
     stats, err = bot.get_pnl_stats(days, s_arg, e_arg)
     bal = bot.get_available_balance() or 0.0
     
+    # Заглушка
     if err or not stats: 
-        stats = {"total_pnl":0, "win_rate":0, "total_trades":0, "volume":0, "chart_labels":[], "chart_data":[], "details":[], "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0}
+        stats = {
+            "total_pnl":0, "win_rate":0, "total_trades":0, "volume":0, 
+            "chart_labels":[], "chart_data":[], "details":[], 
+            "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0
+        }
     
-    # BYBIT STYLE REPORT UI
+    if s_arg and e_arg: period_label = f"{s_arg} — {e_arg}"
+    else: period_label = f"Останні {days} днів"
+
+    # === ПОВНИЙ ДИЗАЙН P&L (СВІТЛИЙ) ===
     html = """
     <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>P&L</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -403,7 +364,6 @@ def report_page():
         .card{background:#fff;border:1px solid #e0e0e0;box-shadow:0 2px 5px rgba(0,0,0,0.03); margin-bottom:20px; border-radius:8px;}
         .text-up{color:#00b894}.text-down{color:#d63031}
         .kpi-val{font-size:24px;font-weight:700;} .kpi-label{color:#666;font-size:13px;}
-        .btn-outline-primary.active{background:#0d6efd;color:#fff;}
         .stat-box{padding:20px; text-align:center; border-right:1px solid #eee;}
         .stat-box:last-child{border-right:none;}
         .donut-ring{width:60px;height:60px;margin:0 auto 10px;}
@@ -412,39 +372,48 @@ def report_page():
     <div class="container">
         <div class="card p-4 mb-4">
             <div class="d-flex justify-content-between align-items-center mb-4">
-                <div><h3 class="mb-0">Аналіз P&L</h3><small class="text-muted">Баланс: ${{ "%.2f"|format(bal) }}</small></div>
+                <div><h3 class="mb-0">Аналіз P&L <span class="text-muted fs-6">{{ period_label }}</span></h3><small class="text-muted">Баланс: ${{ "%.2f"|format(bal) }}</small></div>
                 <div>
-                    <a href="/report?days=1" class="btn btn-sm btn-outline-primary {{ 'active' if days==1 }}">1Д</a>
-                    <a href="/report?days=7" class="btn btn-sm btn-outline-primary {{ 'active' if days==7 }}">7Д</a>
-                    <a href="/report?days=30" class="btn btn-sm btn-outline-primary {{ 'active' if days==30 }}">30Д</a>
+                    <a href="/report?days=1" class="btn btn-sm btn-outline-primary">1Д</a>
+                    <a href="/report?days=7" class="btn btn-sm btn-outline-primary">7Д</a>
+                    <a href="/report?days=30" class="btn btn-sm btn-outline-primary">30Д</a>
                     <a href="/scanner" class="btn btn-sm btn-secondary ms-2">← Сканер</a>
                 </div>
             </div>
-            <div class="d-flex border rounded bg-white">
+            
+            <div class="d-flex border rounded bg-white mb-4">
                 <div class="stat-box flex-fill">
-                    <div class="kpi-label">P&L ({{days}}д)</div>
+                    <div class="kpi-label">P&L</div>
                     <div class="kpi-val {{ 'text-up' if stats.total_pnl>=0 else 'text-down' }}">${{ "{:,.2f}".format(stats.total_pnl) }}</div>
                 </div>
                 <div class="stat-box flex-fill">
                     <div class="kpi-label">Win Rate</div>
                     <div class="kpi-val">{{ stats.win_rate }}%</div>
-                    <small class="text-muted">{{ stats.win_trades }} Win / {{ stats.loss_trades }} Loss</small>
+                    <small class="text-muted">{{ stats.win_trades }} W / {{ stats.loss_trades }} L</small>
                 </div>
                 <div class="stat-box flex-fill">
                     <div class="kpi-label">Угоди</div>
                     <div class="kpi-val">{{ stats.total_trades }}</div>
                     <small class="text-muted"><span class="text-up">{{ stats.long_trades }} Long</span> / <span class="text-down">{{ stats.short_trades }} Short</span></small>
                 </div>
-                <div class="stat-box flex-fill">
-                    <div class="kpi-label">Об'єм</div>
-                    <div class="kpi-val">${{ "{:,.0f}".format(stats.total_volume) }}</div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-8">
+                    <div class="card p-3">
+                        <h5 class="mb-3 fs-6 text-muted">Крива Прибутковості</h5>
+                        <div style="height:300px;"><canvas id="c"></canvas></div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-3 h-100">
+                        <h5 class="mb-3 fs-6 text-muted">Співвідношення</h5>
+                        <div style="height:250px; display:flex; align-items:center; justify-content:center;">
+                            <canvas id="donut"></canvas>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
-
-        <div class="card p-3 mb-4">
-            <h5 class="mb-3">Крива Прибутковості</h5>
-            <div style="height:300px;"><canvas id="c"></canvas></div>
         </div>
 
         <div class="card">
@@ -454,13 +423,11 @@ def report_page():
                     <thead class="table-light"><tr><th>Час</th><th>Монета</th><th>Сторона</th><th>Вхід</th><th>Вихід</th><th>P&L</th></tr></thead>
                     <tbody>
                     {% for t in stats.details %}<tr>
-                        <td>{{t.exit_time}}</td>
-                        <td><strong>{{t.symbol}}</strong></td>
+                        <td>{{t.exit_time}}</td><td><strong>{{t.symbol}}</strong></td>
                         <td><span class="badge {{ 'bg-success' if t.side=='Long' else 'bg-danger' }} bg-opacity-10 text-dark">{{t.side}}</span></td>
                         <td>{{t.entry_price}}</td><td>{{t.exit_price}}</td>
                         <td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}"><strong>{{t.pnl}}</strong></td>
                     </tr>{% endfor %}
-                    {% if not stats.details %}<tr><td colspan="6" class="text-center py-3 text-muted">Немає даних</td></tr>{% endif %}
                     </tbody>
                 </table>
             </div>
@@ -474,16 +441,28 @@ def report_page():
         data: {
             labels: {{ stats.chart_labels|tojson }},
             datasets: [{
-                label: 'P&L ($)',
-                data: {{ stats.chart_data|tojson }},
+                label: 'P&L ($)', data: {{ stats.chart_data|tojson }},
                 borderColor: '#00b894', backgroundColor: grad, borderWidth: 2, fill: true, tension: 0.4, pointRadius: 0
             }]
         },
         options: { responsive: true, maintainAspectRatio: false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}}, y:{grid:{color:'#f0f0f0'}}} }
     });
+
+    const ctxD = document.getElementById('donut').getContext('2d');
+    new Chart(ctxD, {
+        type: 'doughnut',
+        data: {
+            labels: ['Long', 'Short'],
+            datasets: [{
+                data: [{{ stats.long_trades }}, {{ stats.short_trades }}],
+                backgroundColor: ['#00b894', '#d63031'], borderWidth: 0
+            }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins:{legend:{position:'bottom'}} }
+    });
     </script></body></html>
     """
-    return render_template_string(html, stats=stats, bal=bal, days=days)
+    return render_template_string(html, stats=stats, bal=bal, days=days, period_label=period_label)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
