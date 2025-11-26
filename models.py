@@ -1,5 +1,5 @@
 """
-Database Models - Updated for Exit Reasons
+Database Models - Updated (V2)
 """
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Index
 from sqlalchemy.ext.declarative import declarative_base
@@ -32,7 +32,7 @@ class Trade(Base):
     __tablename__ = 'trades'
     
     id = Column(Integer, primary_key=True)
-    order_id = Column(String(50), unique=True, index=True) # Може бути "AUTO_EXIT_timestamp"
+    order_id = Column(String(50), unique=True, index=True)
     symbol = Column(String(20), nullable=False, index=True)
     side = Column(String(10)) 
     qty = Column(Float)
@@ -42,10 +42,10 @@ class Trade(Base):
     is_win = Column(Boolean)
     exit_time = Column(DateTime, default=datetime.utcnow)
     
-    # 🔥 НОВІ ПОЛЯ: ПРИЧИНИ ЗАКРИТТЯ
-    exit_reason = Column(String(100)) # Наприклад: "RSI Overbought (82)"
-    exit_rsi = Column(Float)          # RSI в момент закриття
-    exit_pressure = Column(Float)     # Тиск в момент закриття
+    # Нові колонки (тепер точно будуть створені)
+    exit_reason = Column(String(100))
+    exit_rsi = Column(Float)
+    exit_pressure = Column(Float)
 
 class CoinPerformance(Base):
     __tablename__ = 'coin_performance'
@@ -57,7 +57,8 @@ class CoinPerformance(Base):
     win_rate = Column(Float, default=0.0)
 
 class DatabaseManager:
-    def __init__(self, db_path='trading_bot.db'):
+    # 🔥 ЗМІНЕНО НАЗВУ ФАЙЛУ ТУТ 👇
+    def __init__(self, db_path='trading_bot_v2.db'):
         self.engine = create_engine(f'sqlite:///{db_path}', echo=False)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
