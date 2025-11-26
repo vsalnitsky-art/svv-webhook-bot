@@ -1,8 +1,8 @@
 """
-Main Application - Full V3 Layout 📊
-- Верх: Активні
-- Ліво: Монітор угоди (Лог з бази)
-- Право: Живий сканер
+Main Application - Trailing Stop Only (Final) 🏁
+- Логіка входу: Маркет ордер + Trailing Stop (активація відразу).
+- Логіка виходу: Тільки через біржу (Trailing).
+- UI: Світла тема, Bybit-style звіти.
 """
 
 import os
@@ -15,22 +15,27 @@ import decimal
 import ctypes
 from datetime import datetime, timedelta
 
-# Видалення старої бази не потрібне, бо в models.py нова назва trading_bot_v3.db
+# === БАЗА ДАНИХ (НЕ ВИДАЛЯЄМО) ===
+# Якщо потрібно скинути базу, розкоментуйте рядок нижче один раз:
+# if os.path.exists("trading_bot_v3.db"): os.remove("trading_bot_v3.db")
 
 from flask import Flask, request, jsonify, render_template_string
 from pybit.unified_trading import HTTP
 import requests
 
+# === ІМПОРТИ ===
 from bot_config import config
 from models import db_manager
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from config import get_api_credentials
 
+# === ШІ (Тільки для аналізу при вході) ===
 try:
     import ai_analyst
     AI_AVAILABLE = True
-except: AI_AVAILABLE = False
+except ImportError:
+    AI_AVAILABLE = False
 
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
@@ -46,7 +51,7 @@ def send_telegram_message(text):
 def process_signal_with_ai(data):
     symbol = data.get('symbol')
     action = data.get('action')
-    ai_text = "AI OFF"
+    ai_text = "AI Вимкнено"
     if AI_AVAILABLE:
         try: ai_text = ai_analyst.analyze_signal(symbol, action)
         except: pass
@@ -63,6 +68,7 @@ def keep_alive():
         time.sleep(300)
 threading.Thread(target=keep_alive, daemon=True).start()
 
+# === BOT ===
 class BybitTradingBot:
     def __init__(self):
         k, s = get_api_credentials()
@@ -124,7 +130,7 @@ class BybitTradingBot:
             if r['retCode']==0: return float(r['result']['list'][0]['size'])
         except: return 0.0
 
-    # === ВХІД ===
+    # === 🔥 ВХІД ТІЛЬКИ З TRAILING STOP ===
     def place_order(self, data):
         try:
             action = data.get('action')
@@ -145,24 +151,44 @@ class BybitTradingBot:
             
             qty = self.round_qty((bal * (risk/100) * 0.98 * lev) / price, float(lot['qtyStep']))
             min_qty = float(lot['minOrderQty'])
+            
             if qty < min_qty:
                 if bal > (min_qty*price/lev)*1.05: qty = min_qty
                 else: return {"status": "error_min_qty"}
             
+            # 1. Плече
             self.set_leverage(norm, lev)
-            self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
             
-            # Trailing
-            if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: tr_pct = 0.8
-            elif any(x in symbol for x in ["SOL","XRP","ADA"]): tr_pct = 2.0
-            else: tr_pct = 4.0
+            # 2. Відкриття позиції
+            self.session.place_order(
+                category="linear", symbol=norm, side=action, 
+                orderType="Market", qty=str(qty)
+            )
+            logger.info(f"✅ Opened: {action} {qty} {norm}")
             
+            # 3. Налаштування ТІЛЬКИ Trailing Stop
+            # Визначаємо відкат залежно від монети
+            if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: 
+                tr_pct = 0.5
+            elif any(x in symbol for x in ["SOL","XRP","ADA","AVAX","DOGE"]): 
+                tr_pct = 1.5
+            else: 
+                tr_pct = 3.0
+            
+            # Дистанція відкату в доларах
             dist = self.round_price(price * (tr_pct/100), float(tick['tickSize']))
-            sl = price - dist if action == "Buy" else price + dist
-            sl = self.round_price(sl, float(tick['tickSize']))
             
-            self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl), trailingStop=str(dist), positionIdx=0)
-            logger.info(f"✅ Opened {symbol} with Trailing {tr_pct}%")
+            # Встановлюємо тільки trailingStop
+            # activePrice = price (активація відразу від ціни входу)
+            self.session.set_trading_stop(
+                category="linear", 
+                symbol=norm, 
+                trailingStop=str(dist), 
+                activePrice=str(price), 
+                positionIdx=0
+            )
+            logger.info(f"🛡️ Trailing Only Set: {tr_pct}% (Dist: {dist})")
+            
             return {"status": "success"}
         except Exception as e:
             logger.error(f"Order Error: {e}")
@@ -193,6 +219,7 @@ class BybitTradingBot:
         try:
             trades = stats_service.get_trades(90)
             if not trades: return None, None
+            
             filtered = []
             s_dt, e_dt = None, None
             if start_date and end_date:
@@ -201,6 +228,7 @@ class BybitTradingBot:
             elif days:
                 e_dt = datetime.now()
                 s_dt = e_dt - timedelta(days=days)
+                
             for t in trades:
                 if not t['exit_time']: continue
                 et = datetime.strptime(t['exit_time'], '%d.%m %H:%M') if isinstance(t['exit_time'], str) else t['exit_time']
@@ -208,29 +236,40 @@ class BybitTradingBot:
                 if s_dt and e_dt:
                     if s_dt <= et <= e_dt: filtered.append(t)
                 else: filtered.append(t)
+            
             stats = {"total_trades": len(filtered), "total_pnl": 0.0, "total_volume": 0.0, "win_trades": 0, "loss_trades": 0, "long_trades": 0, "short_trades": 0, "long_pnl": 0, "short_pnl": 0, "details": [], "chart_labels": [], "chart_data": [], "coin_performance": {}}
+            
             filtered.sort(key=lambda x: x['exit_time'], reverse=False)
             run_bal = 0
             daily = {}
+            
             for t in filtered:
                 stats["total_pnl"] += t['pnl']
                 run_bal += t['pnl']
                 stats["total_volume"] += t.get('qty',0)*t.get('exit_price',0)
+                
                 if t['pnl']>0: stats["win_trades"]+=1
                 else: stats["loss_trades"]+=1
-                if t['side'] == 'Long': stats['long_trades'] += 1; stats['long_pnl'] += t['pnl']
-                else: stats['short_trades'] += 1; stats['short_pnl'] += t['pnl']
+                
+                if t['side'] == 'Long': 
+                    stats['long_trades'] += 1; stats['long_pnl'] += t['pnl']
+                else: 
+                    stats['short_trades'] += 1; stats['short_pnl'] += t['pnl']
+                
                 sym = t['symbol']
                 if sym not in stats['coin_performance']: stats['coin_performance'][sym] = 0.0
                 stats['coin_performance'][sym] += t['pnl']
+                
                 d_str = t['exit_time'].split(' ')[0]
                 daily[d_str] = daily.get(d_str, 0) + t['pnl']
                 stats["details"].append(t)
+            
             rb = 0
             for d in sorted(daily.keys()):
                 rb += daily[d]
                 stats["chart_labels"].append(d)
                 stats["chart_data"].append(round(rb, 2))
+            
             top = sorted(stats['coin_performance'].items(), key=lambda x: x[1], reverse=True)
             stats['top_coins_labels'] = [x[0] for x in top[:5]]
             stats['top_coins_values'] = [round(x[1], 2) for x in top[:5]]
@@ -243,41 +282,54 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === SMART MANAGER (Моніторинг в базу) ===
-class SmartTradeManager:
+# === PASSIVE MANAGER (Моніторинг та Логування) ===
+class PassiveManager:
     def __init__(self, bot, scanner):
         self.bot = bot
         self.scanner = scanner
+        self.known = set()
         self.running = True
-        self.last_log_time = 0
+        self.last_log = 0
+
     def start(self): threading.Thread(target=self.loop, daemon=True).start()
     def loop(self):
         while self.running:
-            try: self.manage()
+            try: self.check()
             except: pass
             time.sleep(5)
-    def manage(self):
+
+    def check(self):
         r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
         if r['retCode']!=0: return
         
-        # Записуємо статистику в базу раз на 15 сек, щоб не спамити
-        should_log = (time.time() - self.last_log_time) > 15
-        if should_log: self.last_log_time = time.time()
+        curr = set()
+        should_log = (time.time() - self.last_log) > 15
+        if should_log: self.last_log = time.time()
 
         for p in r['result']['list']:
             if float(p['size'])==0: continue
             sym = p['symbol']
-            pnl = float(p['unrealisedPnl'])
-            rsi = self.scanner.get_current_rsi(sym)
-            press = self.scanner.get_market_pressure(sym)
+            curr.add(sym)
             
+            # Тільки записуємо логи для лівого блоку
             if should_log:
-                stats_service.save_monitor_log({'symbol':sym, 'price':float(p['avgPrice']), 'pnl':pnl, 'rsi':rsi, 'pressure':press})
+                stats_service.save_monitor_log({
+                    'symbol': sym,
+                    'price': float(p['avgPrice']),
+                    'pnl': float(p['unrealisedPnl']),
+                    'rsi': self.scanner.get_current_rsi(sym),
+                    'pressure': self.scanner.get_market_pressure(sym)
+                })
+        
+        # Якщо угода зникла - чистимо історію
+        closed = self.known - curr
+        for sym in closed:
+            try: stats_service.delete_coin_history(sym)
+            except: pass
+        self.known = curr
 
-            # Smart Exit логіка тут (видалена, бо лише Трейлінг)
-            
-trade_manager = SmartTradeManager(bot, scanner)
-trade_manager.start()
+pass_man = PassiveManager(bot, scanner)
+pass_man.start()
 
 # === ROUTES ===
 @app.route('/scanner', methods=['GET'])
@@ -295,11 +347,13 @@ def scanner_page():
                     rsi = scan_data['snapshots'].get(sym, {}).get('rsi', 50)
                     press = scanner.get_market_pressure(sym)
                     rec, cls = "Трейлінг Активний", "table-success"
+                    if p['side']=="Buy" and rsi>75: cls = "table-warning"
+                    elif p['side']=="Sell" and rsi<25: cls = "table-warning"
                     active.append({'symbol':sym, 'side':p['side'], 'pnl':round(float(p['unrealisedPnl']),2), 'rsi':rsi, 'pressure':round(press), 'rec':rec, 'cls':cls, 'size':p['size'], 'entry':p['avgPrice']})
     except: pass
 
     monitor_logs = stats_service.get_monitor_logs(limit=30)
-    live_signals = scan_data['all_signals'][:30]
+    history = stats_service.get_trades(days=1)
 
     html = """
     <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Whale Scanner</title>
@@ -336,18 +390,19 @@ def scanner_page():
         <div class="top-block">
             <div class="block-header"><span>АКТИВНІ УГОДИ</span></div>
             <table class="table table-hover">
-                <thead><tr><th>Монета</th><th>Тип</th><th>Розмір</th><th>Вхід</th><th>P&L</th><th>RSI</th><th>Тиск</th></tr></thead>
+                <thead><tr><th>Монета</th><th>Тип</th><th>Розмір</th><th>Вхід</th><th>P&L</th><th>RSI</th><th>Тиск</th><th>Статус</th></tr></thead>
                 <tbody>
                 {% for a in active %}
-                <tr>
+                <tr class="{{a.cls}}">
                     <td class="fw-bold">{{a.symbol}}</td>
                     <td><span class="badge {{ 'badge-long' if a.side=='Buy' else 'badge-short' }}">{{a.side}}</span></td>
                     <td>{{a.size}}</td><td>{{a.entry}}</td>
                     <td class="{{ 'text-up' if a.pnl>0 else 'text-down' }}">{{a.pnl}}$</td>
                     <td>{{a.rsi}}</td><td class="{{ 'text-up' if a.pressure>0 else 'text-down' }}">{{ "{:,.0f}".format(a.pressure) }}</td>
+                    <td>{{a.rec}}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="7" class="text-center text-muted p-3">Немає активних угод</td></tr>
+                <tr><td colspan="8" class="text-center text-muted p-3">Немає активних угод</td></tr>
                 {% endfor %}
                 </tbody>
             </table>
@@ -371,15 +426,16 @@ def scanner_page():
             </div>
 
             <div class="half-block">
-                <div class="block-header"><span>📡 ЖИВИЙ СКАНЕР (ВХІД)</span></div>
+                <div class="block-header"><span>📜 ІСТОРІЯ ЗАКРИТИХ УГОД</span></div>
                 <table class="table table-hover">
-                    <thead><tr><th>Час</th><th>Монета</th><th>Ціна</th><th>Зміна</th><th>Об'єм</th></tr></thead>
+                    <thead><tr><th>Час</th><th>Монета</th><th>Тип</th><th>P&L</th><th>Причина</th></tr></thead>
                     <tbody>
-                    {% for s in signals %}
+                    {% for t in history %}
                     <tr>
-                        <td class="text-muted">{{s.time}}</td><td class="fw-bold">{{s.symbol}}</td>
-                        <td>{{s.price}}</td><td class="{{ 'text-up' if s.price_change_interval>0 else 'text-down' }}">{{s.price_change_interval}}%</td>
-                        <td class="fw-bold">{{ "{:,.0f}".format(s.vol_inflow) }}</td>
+                        <td class="text-muted">{{t.exit_time}}</td><td class="fw-bold">{{t.symbol}}</td>
+                        <td><span class="badge {{ 'badge-long' if t.side=='Long' else 'badge-short' }}">{{t.side}}</span></td>
+                        <td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}">{{t.pnl}}$</td>
+                        <td>{{t.exit_reason or 'Trailing/TP'}}</td>
                     </tr>
                     {% endfor %}
                     </tbody>
@@ -389,18 +445,20 @@ def scanner_page():
     </div>
     </body></html>
     """
-    return render_template_string(html, last_update=last_update, active=active, logs=monitor_logs, signals=live_signals)
+    return render_template_string(html, last_update=last_update, active=active, logs=monitor_logs, history=history)
 
 @app.route('/report', methods=['GET'])
 def report_page():
     days = int(request.args.get('days', 7))
-    stats, err = bot.get_pnl_stats(days)
+    s_arg, e_arg = request.args.get('start'), request.args.get('end')
+    stats, err = bot.get_pnl_stats(days, s_arg, e_arg)
     bal = bot.get_available_balance() or 0.0
+    
     if err or not stats: stats = {"total_pnl":0, "win_rate":0, "total_trades":0, "volume":0, "chart_labels":[], "chart_data":[], "details":[], "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0, "top_coins_labels":[], "top_coins_values":[], "long_pnl":0, "short_pnl":0}
 
-    # BYBIT STYLE REPORT (Повернуто повний код)
+    # BYBIT STYLE REPORT (ПОВНИЙ)
     html = """
-    <!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>P&L</title>
+    <!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>P&L Analysis</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -428,18 +486,19 @@ def report_page():
         .custom-table td { padding: 14px 0; border-bottom: 1px solid var(--border); vertical-align: middle; }
         .badge { padding: 2px 6px; border-radius: 2px; font-size: 11px; }
         .badge-success { background: #fff8ec; color: #cf9e04; } .badge-loss { background: #f5f5f5; color: #858e9c; }
+        .type-long { color: var(--green); } .type-short { color: var(--red); }
     </style>
     </head><body>
     <div class="container"><div class="header"><div class="title">P&L</div><div class="btn-group"><a href="/report?days=7" class="btn {{ 'active' if days==7 }}">7 дн.</a><a href="/report?days=30" class="btn {{ 'active' if days==30 }}">30 дн.</a><a href="/scanner" class="btn">← Сканер</a></div></div>
     <div class="summary-grid"><div class="stat-item"><div class="stat-label">Общий P&L</div><div class="stat-value {{ 'text-green' if stats.total_pnl >= 0 else 'text-red' }}">{{ "+" if stats.total_pnl > 0 }}{{ "%.2f"|format(stats.total_pnl) }} USD</div></div><div class="stat-item"><div class="stat-label">Объем</div><div class="stat-value text-green">{{ "{:,.0f}".format(stats.total_volume) }} USD</div></div></div>
     <div class="charts-container"><div class="chart-box"><div style="height: 300px;"><canvas id="pnlChart"></canvas></div></div><div class="chart-box"><div style="height: 300px;"><canvas id="rankChart"></canvas></div></div></div>
-    <div class="bottom-stats"><div class="b-stat-box"><div class="b-stat-header">Всего ордеров</div><div class="b-stat-val">{{ stats.total_trades }}</div></div><div class="b-stat-box"><div class="b-stat-header">Успешных</div><div class="b-stat-val">{{ stats.win_rate }} %</div></div></div>
+    <div class="bottom-stats"><div class="b-stat-box"><div class="b-stat-header">Успешных</div><div class="b-stat-val">{{ stats.win_rate }} %</div></div><div class="b-stat-box"><div class="b-stat-header">Всего</div><div class="b-stat-val">{{ stats.total_trades }}</div></div></div>
     <table class="custom-table"><thead><tr><th>Контракт</th><th>Тип</th><th>P&L</th><th>Результат</th><th>Время</th></tr></thead><tbody>
-    {% for t in stats.details %}<tr><td style="font-weight: 500;">{{ t.symbol }}</td><td class="{{ 'text-green' if t.side == 'Long' else 'text-red' }}">{{ t.side }}</td><td class="{{ 'text-red' if t.pnl < 0 else 'text-green' }}">{{ "+" if t.pnl > 0 }}{{ "%.4f"|format(t.pnl) }}</td><td><span class="badge {{ 'badge-success' if t.pnl > 0 else 'badge-loss' }}">{{ "Успех" if t.pnl > 0 else "Убыток" }}</span></td><td style="color: var(--text-secondary);">{{ t.exit_time }}</td></tr>{% endfor %}
+    {% for t in stats.details %}<tr><td style="font-weight: 500;">{{ t.symbol }}</td><td class="{{ 'type-long' if t.side == 'Long' else 'type-short' }}">{{ "Лонг" if t.side == 'Long' else "Шорт" }}</td><td class="{{ 'text-red' if t.pnl < 0 else 'text-green' }}">{{ "+" if t.pnl > 0 }}{{ "%.4f"|format(t.pnl) }}</td><td><span class="badge {{ 'badge-success' if t.pnl > 0 else 'badge-loss' }}">{{ "Успех" if t.pnl > 0 else "Убыток" }}</span></td><td style="color: var(--text-secondary);">{{ t.exit_time }}</td></tr>{% endfor %}
     </tbody></table></div>
     <script>
     const ctx = document.getElementById('pnlChart').getContext('2d'); const gradient = ctx.createLinearGradient(0, 0, 0, 300); gradient.addColorStop(0, 'rgba(239, 69, 74, 0.2)'); gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    new Chart(ctx, {type: 'line', data: {labels: {{ stats.chart_labels|tojson }}, datasets: [{data: {{ stats.chart_data|tojson }}, borderColor: '#ef454a', backgroundColor: gradient, borderWidth: 2, pointRadius: 0, fill: true}]}, options: {responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {x: {grid: {display: false}}, y: {grid: {color: '#f4f4f4'}}}}});
+    new Chart(ctx, {type: 'line', data: {labels: {{ stats.chart_labels|tojson }}, datasets: [{data: {{ stats.chart_data|tojson }}, borderColor: '#ef454a', borderWidth: 2, pointRadius: 0, fill: true}]}, options: {responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {x: {grid: {display: false}}, y: {grid: {color: '#f4f4f4'}}}}});
     const ctxBar = document.getElementById('rankChart').getContext('2d'); new Chart(ctxBar, {type: 'bar', data: {labels: {{ stats.top_coins_labels|tojson }}, datasets: [{data: {{ stats.top_coins_values|tojson }}, backgroundColor: (ctx) => ctx.raw >= 0 ? '#20b26c' : '#ef454a', borderRadius: 2}]}, options: {indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {x: {display: false}, y: {grid: {display: false}}}}});
     </script></body></html>
     """
