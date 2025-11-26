@@ -47,7 +47,10 @@ class EnhancedMarketScanner:
                 for p in resp['result']['list']:
                     if float(p['size']) > 0:
                         symbols.append(p['symbol'])
-        except: pass
+            else:
+                logger.warning(f"Error getting positions: {resp}")
+        except Exception as e:
+            logger.error(f"Active symbols error: {e}")
         return symbols
 
     def calculate_rsi(self, symbol, current_price):
@@ -127,7 +130,7 @@ class EnhancedMarketScanner:
                 coin_data['prev_price'] = price
                 
         except Exception as e:
-            logger.error(f"Monitor error: {e}")
+            logger.error(f"Monitor calculation error: {e}")
             
         self.last_scan_time = datetime.now()
 
