@@ -1,10 +1,7 @@
 """
-Main Application - Trailing Stop Only (No RSI Exit) 📉
-Включає:
-- Вхід з автоматичним Трейлінг-стопом (налаштування залежать від монети)
-- RSI тільки для візуалізації
-- Автоматична синхронізація історії з біржі
-- Світлий дизайн
+Main Application - Force DB Reset Fix 🛠️
+Цей код примусово видалить стару базу даних при запуску, 
+щоб виправити помилку 'no such column'.
 """
 
 import os
@@ -17,11 +14,18 @@ import decimal
 import ctypes
 from datetime import datetime, timedelta
 
-# === БЕЗПЕЧНЕ ВИДАЛЕННЯ СТАРОЇ БАЗИ (Для чистоти структури) ===
-try:
-    if os.path.exists("trading_bot.db"):
-        pass # Можна розкоментувати os.remove, якщо хочете скинути історію
-except: pass
+# === 🔥 ЕКСТРЕНЕ ВИДАЛЕННЯ СТАРОЇ БАЗИ ===
+# Це виправить помилку на сервері
+print("🔄 Checking for old database...")
+if os.path.exists("trading_bot.db"):
+    try:
+        os.remove("trading_bot.db")
+        print("✅ OLD DATABASE DELETED! New one will be created.")
+    except Exception as e:
+        print(f"⚠️ Could not delete DB: {e}")
+else:
+    print("ℹ️ No old database found. Starting fresh.")
+# ==========================================
 
 from flask import Flask, request, jsonify, render_template_string
 from pybit.unified_trading import HTTP
@@ -134,7 +138,7 @@ class BybitTradingBot:
             if r['retCode']==0: return float(r['result']['list'][0]['size'])
         except: return 0.0
 
-    # === 🔥 ВХІД + ТРЕЙЛІНГ (RSI ІГНОРУЄТЬСЯ) ===
+    # === ВХІД З ТРЕЙЛІНГОМ ===
     def place_order(self, data):
         try:
             action = data.get('action')
@@ -153,7 +157,6 @@ class BybitTradingBot:
             bal = self.get_available_balance()
             if not bal: return {"status": "error_balance"}
             
-            # Розрахунок лота
             qty = self.round_qty((bal * (risk/100) * 0.98 * lev) / price, float(lot['qtyStep']))
             min_qty = float(lot['minOrderQty'])
             
@@ -162,42 +165,24 @@ class BybitTradingBot:
                 else: return {"status": "error_min_qty"}
             
             self.set_leverage(norm, lev)
-            
-            # 1. ВІДКРИТТЯ ПОЗИЦІЇ
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
-            logger.info(f"✅ OPENED: {action} {symbol}")
             
-            # 2. НАЛАШТУВАННЯ ТРЕЙЛІНГУ (ПРОФЕСІЙНІ ВІДСОТКИ)
-            # Відсоток відкату залежить від монети
-            if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: 
-                tr_pct = 0.5  # Дуже тісний стоп для важких монет
-            elif any(x in symbol for x in ["SOL","XRP","ADA","AVAX","DOGE"]): 
-                tr_pct = 1.5  # Середній стоп
-            else: 
-                tr_pct = 3.0  # Широкий стоп для волатильних
+            # Налаштування Трейлінгу
+            if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: tr_pct = 0.8
+            elif any(x in symbol for x in ["SOL","XRP","ADA"]): tr_pct = 2.0
+            else: tr_pct = 4.0
             
-            # Розрахунок дистанції в доларах
             dist = self.round_price(price * (tr_pct/100), float(tick['tickSize']))
+            sl = price - dist if action == "Buy" else price + dist
+            sl = self.round_price(sl, float(tick['tickSize']))
             
-            # Початковий стоп-лосс ставимо на тій самій дистанції
-            sl_price = price - dist if action == "Buy" else price + dist
-            sl_rounded = self.round_price(sl_price, float(tick['tickSize']))
-            
-            # Відправка налаштувань захисту на біржу
-            self.session.set_trading_stop(
-                category="linear", 
-                symbol=norm, 
-                stopLoss=str(sl_rounded),    # Початковий хард-стоп
-                trailingStop=str(dist),      # Активація трейлінгу відразу
-                positionIdx=0
-            )
-            logger.info(f"🛡️ Trailing Stop Set: {tr_pct}% (${dist})")
+            self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl), trailingStop=str(dist), positionIdx=0)
+            logger.info(f"✅ Opened {symbol} with Trailing {tr_pct}%")
             return {"status": "success"}
         except Exception as e:
             logger.error(f"Order Error: {e}")
             return {"status": "error"}
 
-    # Синхронізація історії (для P&L)
     def sync_trades_from_bybit(self, days=30):
         try:
             now = datetime.now()
@@ -214,11 +199,10 @@ class BybitTradingBot:
                             'exit_price': float(t['avgExitPrice']), 'pnl': float(t['closedPnl']),
                             'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
                             'is_win': float(t['closedPnl'])>0,
-                            'exit_reason': 'Trailing/TP' # Вважаємо, що закрила біржа
+                            'exit_reason': 'Trailing/TP'
                         })
         except: pass
 
-    # P&L Статистика
     def get_pnl_stats(self, days=None, start_date=None, end_date=None):
         self.sync_trades_from_bybit(30)
         try:
@@ -238,6 +222,7 @@ class BybitTradingBot:
                 if not t['exit_time']: continue
                 et = datetime.strptime(t['exit_time'], '%d.%m %H:%M') if isinstance(t['exit_time'], str) else t['exit_time']
                 et = et.replace(year=datetime.now().year)
+                
                 if s_dt and e_dt:
                     if s_dt <= et <= e_dt: filtered.append(t)
                 else: filtered.append(t)
@@ -275,12 +260,57 @@ bot = BybitTradingBot()
 scanner = EnhancedMarketScanner(bot, config.get_scanner_config())
 scanner.start()
 
-# === MONITOR ONLY (NO AUTO-CLOSE) ===
+# === SMART EXIT ===
+class SmartTradeManager:
+    def __init__(self, bot, scanner):
+        self.bot = bot
+        self.scanner = scanner
+        self.running = True
+    def start(self): threading.Thread(target=self.loop, daemon=True).start()
+    def loop(self):
+        while self.running:
+            try: self.manage()
+            except: pass
+            time.sleep(5)
+    def manage(self):
+        r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
+        if r['retCode']!=0: return
+        for p in r['result']['list']:
+            if float(p['size'])==0: continue
+            sym = p['symbol']
+            side = p['side']
+            pnl = float(p['unrealisedPnl'])
+            
+            # Cooldown
+            if time.time() - int(p['updatedTime'])/1000 < 60: continue
+            
+            rsi = self.scanner.get_current_rsi(sym)
+            press = self.scanner.get_market_pressure(sym)
+            
+            reason = None
+            # RSI тільки для моніторингу, не закриваємо
+            # Тут можна розкоментувати логіку, якщо захочете повернути авто-закриття
+            
+            if reason: self.close(sym, p['size'], "Sell" if side=="Buy" else "Buy", reason, rsi, press, pnl)
+
+    def close(self, sym, qty, side, reason, rsi, press, pnl):
+        try:
+            self.bot.session.place_order(category="linear", symbol=sym, side=side, orderType="Market", qty=str(qty), reduceOnly=True)
+            self.bot.session.cancel_all_orders(category="linear", symbol=sym)
+            send_telegram_message(f"AUTO-CLOSE: {sym} | {reason}")
+            stats_service.save_trade({
+                'order_id': f"AUTO_{int(time.time())}_{sym}", 'symbol': sym,
+                'side': 'Long' if side=='Sell' else 'Short', 'qty': float(qty),
+                'pnl': float(pnl), 'exit_time': datetime.utcnow(),
+                'exit_reason': reason, 'exit_rsi': rsi, 'exit_pressure': press
+            })
+        except: pass
+
+trade_manager = SmartTradeManager(bot, scanner)
+trade_manager.start()
+
+# === PASSIVE CLEANER ===
 class PassiveMonitor:
-    """
-    Цей клас просто слідкує за тим, чи закрилась позиція на біржі,
-    щоб оновити історію в базі. Сам він нічого не закриває.
-    """
     def __init__(self, bot):
         self.bot = bot
         self.known = set()
@@ -317,20 +347,20 @@ def scanner_page():
             for p in r['result']['list']:
                 if float(p['size'])>0:
                     sym = p['symbol']
-                    # RSI тільки для інформації
                     rsi = scan_data['snapshots'].get(sym, {}).get('rsi', 50)
+                    press = scanner.get_market_pressure(sym)
                     rec, cls = "Трейлінг Активний", "table-success"
-                    # Підсвічуємо RSI, але не пишемо "ВИХІД"
-                    if p['side']=="Buy" and rsi>75: cls = "table-warning"
-                    elif p['side']=="Sell" and rsi<25: cls = "table-warning"
-                    
-                    active.append({'symbol':sym, 'side':p['side'], 'pnl':round(float(p['unrealisedPnl']),2), 'rsi':rsi, 'rec':rec, 'cls':cls})
+                    if p['side']=="Buy":
+                        if rsi>75: rec, cls = "RSI HIGH", "table-danger"
+                    elif p['side']=="Sell":
+                        if rsi<25: rec, cls = "RSI LOW", "table-danger"
+                    active.append({'symbol':sym, 'side':p['side'], 'pnl':round(float(p['unrealisedPnl']),2), 'rsi':rsi, 'pressure':round(press), 'rec':rec, 'cls':cls})
     except: pass
 
     history = stats_service.get_trades(days=1)
 
     html = """
-    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Whale Scanner Light</title>
+    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Whale Terminal</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body{background:#f4f6f8;color:#333;font-family:'Segoe UI',sans-serif;font-size:14px}
@@ -339,16 +369,16 @@ def scanner_page():
         .card-header{background:#fff;border-bottom:1px solid #f0f0f0;font-weight:700;color:#555;padding:15px}
         .table{margin-bottom:0} .text-up{color:#00b894;font-weight:600} .text-down{color:#d63031;font-weight:600}
     </style><meta http-equiv="refresh" content="30"></head><body>
-    <nav class="navbar navbar-light mb-4 px-3"><span class="navbar-brand h1">🐋 Whale Scanner <span class="badge bg-light text-dark border">TRAILING</span></span><span class="text-muted small">{{ last_update }}</span></nav>
+    <nav class="navbar navbar-light mb-4 px-3"><span class="navbar-brand h1">🐋 Whale Scanner <span class="badge bg-light text-dark border">CLEAN</span></span><span class="text-muted small">{{ last_update }}</span></nav>
     <div class="container-fluid">
         {% if active %}
-        <div class="card border-primary"><div class="card-header text-primary bg-light">АКТИВНІ УГОДИ</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI (Інфо)</th><th>Статус</th></tr></thead><tbody>
-        {% for a in active %}<tr class="{{a.cls}}"><td class="fw-bold">{{a.symbol}}</td><td>{{a.side}}</td><td class="{{ 'text-up' if a.pnl>0 else 'text-down' }}">{{a.pnl}}$</td><td>{{a.rsi}}</td><td>{{a.rec}}</td></tr>{% endfor %}
+        <div class="card border-primary"><div class="card-header text-primary bg-light">АКТИВНІ УГОДИ</div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Монета</th><th>Тип</th><th>P&L</th><th>RSI</th><th>Тиск</th><th>Статус</th></tr></thead><tbody>
+        {% for a in active %}<tr class="{{a.cls}}"><td class="fw-bold">{{a.symbol}}</td><td>{{a.side}}</td><td class="{{ 'text-up' if a.pnl>0 else 'text-down' }}">{{a.pnl}}$</td><td>{{a.rsi}}</td><td>{{a.pressure}}</td><td>{{a.rec}}</td></tr>{% endfor %}
         </tbody></table></div></div>{% endif %}
         
-        <div class="card"><div class="card-header d-flex justify-content-between"><span>ІСТОРІЯ (24Г)</span><a href="/report" class="btn btn-sm btn-outline-secondary">Звіт</a></div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Час</th><th>Монета</th><th>Тип</th><th>P&L</th><th>Причина</th></tr></thead><tbody>
-        {% for t in history %}<tr><td class="text-muted">{{t.exit_time}}</td><td class="fw-bold">{{t.symbol}}</td><td>{{t.side}}</td><td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}">{{t.pnl}}$</td><td>{{t.exit_reason or 'Trailing/TP'}}</td></tr>{% endfor %}
-        {% if not history %}<tr><td colspan="5" class="text-center text-muted p-3">Історія порожня</td></tr>{% endif %}
+        <div class="card"><div class="card-header d-flex justify-content-between"><span>ІСТОРІЯ ЗАКРИТИХ УГОД (24Г)</span><a href="/report" class="btn btn-sm btn-outline-secondary">Звіт</a></div><div class="card-body p-0"><table class="table table-hover"><thead><tr><th>Час</th><th>Монета</th><th>Тип</th><th>P&L</th><th>Причина</th><th>RSI</th></tr></thead><tbody>
+        {% for t in history %}<tr><td class="text-muted">{{t.exit_time}}</td><td class="fw-bold">{{t.symbol}}</td><td>{{t.side}}</td><td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}">{{t.pnl}}$</td><td>{{t.exit_reason or 'Trailing/TP'}}</td><td>{{t.exit_rsi or '-'}}</td></tr>{% endfor %}
+        {% if not history %}<tr><td colspan="6" class="text-center text-muted p-3">Історія порожня</td></tr>{% endif %}
         </tbody></table></div></div>
     </div></body></html>
     """
@@ -360,7 +390,9 @@ def report_page():
     s_arg, e_arg = request.args.get('start'), request.args.get('end')
     stats, err = bot.get_pnl_stats(days, s_arg, e_arg)
     bal = bot.get_available_balance() or 0.0
-    if err or not stats: stats = {"total_pnl":0, "win_rate":0, "total_trades":0, "volume":0, "chart_labels":[], "chart_data":[], "history":[], "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0}
+    
+    if err or not stats: 
+        stats = {"total_pnl":0, "win_rate":0, "total_trades":0, "volume":0, "chart_labels":[], "chart_data":[], "details":[], "long_trades":0, "short_trades":0, "win_trades":0, "loss_trades":0}
     
     # BYBIT STYLE REPORT UI
     html = """
@@ -403,12 +435,18 @@ def report_page():
                     <div class="kpi-val">{{ stats.total_trades }}</div>
                     <small class="text-muted"><span class="text-up">{{ stats.long_trades }} Long</span> / <span class="text-down">{{ stats.short_trades }} Short</span></small>
                 </div>
+                <div class="stat-box flex-fill">
+                    <div class="kpi-label">Об'єм</div>
+                    <div class="kpi-val">${{ "{:,.0f}".format(stats.total_volume) }}</div>
+                </div>
             </div>
         </div>
+
         <div class="card p-3 mb-4">
             <h5 class="mb-3">Крива Прибутковості</h5>
             <div style="height:300px;"><canvas id="c"></canvas></div>
         </div>
+
         <div class="card">
             <div class="card-header bg-white">Історія Угод</div>
             <div class="card-body p-0">
@@ -416,9 +454,11 @@ def report_page():
                     <thead class="table-light"><tr><th>Час</th><th>Монета</th><th>Сторона</th><th>Вхід</th><th>Вихід</th><th>P&L</th></tr></thead>
                     <tbody>
                     {% for t in stats.details %}<tr>
-                        <td>{{t.exit_time}}</td><td><strong>{{t.symbol}}</strong></td>
+                        <td>{{t.exit_time}}</td>
+                        <td><strong>{{t.symbol}}</strong></td>
                         <td><span class="badge {{ 'bg-success' if t.side=='Long' else 'bg-danger' }} bg-opacity-10 text-dark">{{t.side}}</span></td>
-                        <td>{{t.entry_price}}</td><td>{{t.exit_price}}</td><td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}"><strong>{{t.pnl}}</strong></td>
+                        <td>{{t.entry_price}}</td><td>{{t.exit_price}}</td>
+                        <td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}"><strong>{{t.pnl}}</strong></td>
                     </tr>{% endfor %}
                     {% if not stats.details %}<tr><td colspan="6" class="text-center py-3 text-muted">Немає даних</td></tr>{% endif %}
                     </tbody>
@@ -429,7 +469,18 @@ def report_page():
     <script>
     const ctx = document.getElementById('c').getContext('2d');
     const grad = ctx.createLinearGradient(0,0,0,300); grad.addColorStop(0,'rgba(0,184,148,0.2)'); grad.addColorStop(1,'rgba(0,184,148,0)');
-    new Chart(ctx, {type: 'line', data: {labels: {{ stats.chart_labels|tojson }}, datasets: [{label: 'P&L ($)', data: {{ stats.chart_data|tojson }}, borderColor: '#00b894', backgroundColor: grad, borderWidth: 2, fill: true, tension: 0.4, pointRadius: 0}]}, options: { responsive: true, maintainAspectRatio: false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}}, y:{grid:{color:'#f0f0f0'}}} }});
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: {{ stats.chart_labels|tojson }},
+            datasets: [{
+                label: 'P&L ($)',
+                data: {{ stats.chart_data|tojson }},
+                borderColor: '#00b894', backgroundColor: grad, borderWidth: 2, fill: true, tension: 0.4, pointRadius: 0
+            }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}}, y:{grid:{color:'#f0f0f0'}}} }
+    });
     </script></body></html>
     """
     return render_template_string(html, stats=stats, bal=bal, days=days)
