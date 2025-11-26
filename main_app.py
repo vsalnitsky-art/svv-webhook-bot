@@ -1,11 +1,13 @@
 """
 Main App - Clean & Professional
+Updated with proper logging and self-ping mechanism
 """
 import logging
 import threading
 import time
 import json
 import ctypes
+import os
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template_string
 import requests
@@ -14,8 +16,9 @@ from bot_config import config
 from bot import bot_instance
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
-from report import render_report_page # Тепер це буде працювати
+from report import render_report_page
 
+# Запобігання сну у Windows (якщо запускається локально)
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
@@ -29,6 +32,8 @@ scanner.start()
 
 # Монітор для запису логів в базу
 def monitor_active():
+    """Фоновий потік для запису стану позицій в БД"""
+    logger.info("Starting active position monitor...")
     while True:
         try:
             r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
@@ -36,30 +41,68 @@ def monitor_active():
                 for p in r['result']['list']:
                     if float(p['size']) > 0:
                         stats_service.save_monitor_log({
-                            'symbol': p['symbol'], 'price': float(p['avgPrice']), 
+                            'symbol': p['symbol'], 
+                            'price': float(p['avgPrice']), 
                             'pnl': float(p['unrealisedPnl']), 
                             'rsi': scanner.get_current_rsi(p['symbol']), 
                             'pressure': scanner.get_market_pressure(p['symbol'])
                         })
-        except: pass
+            else:
+                logger.warning(f"Monitor Warning: {r.get('retMsg')}")
+        except Exception as e:
+            logger.error(f"Error in monitor_active loop: {e}")
+        
         time.sleep(10)
+
 threading.Thread(target=monitor_active, daemon=True).start()
 
 def keep_alive():
+    """
+    Механізм запобігання засипанню (Self-Ping).
+    Пінгує сам себе кожні 5 хвилин.
+    """
+    # Чекаємо трохи, щоб сервер Flask встиг запуститися
+    time.sleep(5)
+    
+    # Спроба визначити URL. RENDER_EXTERNAL_URL додається Render автоматично.
+    external_url = os.environ.get('RENDER_EXTERNAL_URL')
+    local_url = f'http://127.0.0.1:{config.PORT}/health'
+    
+    target_url = f"{external_url}/health" if external_url else local_url
+    logger.info(f"💓 Keep-alive service started. Target: {target_url}")
+
     while True:
-        try: requests.get(f'http://127.0.0.1:{config.PORT}/health', timeout=5)
-        except: pass
+        try:
+            response = requests.get(target_url, timeout=10)
+            if response.status_code == 200:
+                logger.info(f"💓 Self-Ping OK: {target_url}")
+            else:
+                logger.warning(f"⚠️ Self-Ping returned status: {response.status_code}")
+        except Exception as e:
+            logger.error(f"❌ Self-Ping Failed: {e}")
+        
+        # Інтервал 5 хвилин (300 секунд)
         time.sleep(300)
+
 threading.Thread(target=keep_alive, daemon=True).start()
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         data = json.loads(request.get_data(as_text=True))
-        logger.info(f"🔔 SIGNAL: {data.get('symbol')} {data.get('action')}")
-        bot_instance.place_order(data)
-        return jsonify({"status": "ok"})
-    except: return jsonify({"error": "error"}), 400
+        logger.info(f"🔔 SIGNAL RECEIVED: {data.get('symbol')} {data.get('action')}")
+        
+        result = bot_instance.place_order(data)
+        
+        if result.get("status") == "ok":
+            return jsonify({"status": "ok"})
+        else:
+            logger.error(f"Order placement failed: {result}")
+            return jsonify(result), 400
+            
+    except Exception as e:
+        logger.error(f"Webhook Error: {e}")
+        return jsonify({"error": str(e)}), 400
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -72,9 +115,19 @@ def scanner_page():
                     sym = p['symbol']
                     rsi = scanner.get_current_rsi(sym)
                     press = scanner.get_market_pressure(sym)
-                    active.append({'symbol':sym, 'side':p['side'], 'pnl':round(float(p['unrealisedPnl']),2), 
-                                   'rsi':rsi, 'pressure':round(press), 'size':p['size'], 'entry':p['avgPrice']})
-    except: pass
+                    active.append({
+                        'symbol': sym, 
+                        'side': p['side'], 
+                        'pnl': round(float(p['unrealisedPnl']), 2), 
+                        'rsi': rsi, 
+                        'pressure': round(press), 
+                        'size': p['size'], 
+                        'entry': p['avgPrice']
+                    })
+        else:
+            logger.error(f"Scanner Page API Error: {r.get('retMsg')}")
+    except Exception as e:
+        logger.error(f"Error rendering scanner page: {e}")
     
     logs = stats_service.get_monitor_logs(30)
     history = stats_service.get_trades(1) # За 1 день
