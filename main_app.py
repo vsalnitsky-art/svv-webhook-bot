@@ -18,6 +18,7 @@ from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from scanner_config import ScannerConfig
 from report import render_report_page
+from models import db_manager, MarketCandidate  # ⭐ НОВОЕ для навигации
 
 # Запобігання сну у Windows (якщо запускається локально)
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
@@ -267,8 +268,15 @@ def scanner_page():
         # Получить статистику мониторинга
         monitor_stats = scanner.position_monitor.get_stats()
         
-        # Получить количество кандидатов для навигации
-        candidates_count = len(scanner.market_scanner.top_candidates) if scanner.market_scanner else 0
+        # Получить количество кандидатов для навигации (из БД)
+        try:
+            session = db_manager.get_session()
+            candidates_count = session.query(MarketCandidate).filter(
+                MarketCandidate.scan_id == scanner.market_scanner.last_scan_id
+            ).count() if scanner.market_scanner.last_scan_id > 0 else 0
+            session.close()
+        except:
+            candidates_count = 0
         
         return render_template('scanner.html',
                              positions=positions,
@@ -604,7 +612,16 @@ def parameters_page():
         
         # Получить счётчики для навигации
         monitor_stats = scanner.position_monitor.get_stats()
-        candidates_count = len(scanner.market_scanner.top_candidates) if scanner.market_scanner else 0
+        
+        # Получить количество кандидатов из БД
+        try:
+            session = db_manager.get_session()
+            candidates_count = session.query(MarketCandidate).filter(
+                MarketCandidate.scan_id == scanner.market_scanner.last_scan_id
+            ).count() if scanner.market_scanner.last_scan_id > 0 else 0
+            session.close()
+        except:
+            candidates_count = 0
         
         return render_template('parameters.html',
                              params=params,
