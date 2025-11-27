@@ -12,7 +12,6 @@ class BybitTradingBot:
     def __init__(self):
         k, s = get_api_credentials()
         self.session = HTTP(testnet=False, api_key=k, api_secret=s)
-        self.position_tracker = {}
 
     def normalize(self, s): return s.replace('.P', '')
 
@@ -35,7 +34,6 @@ class BybitTradingBot:
             return 0.0
 
     def get_all_tickers(self):
-        """Получить данные по всем тикерам"""
         try:
             r = self.session.get_tickers(category="linear")
             if r['retCode'] == 0:
@@ -67,18 +65,18 @@ class BybitTradingBot:
         try: 
             self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
         except Exception as e:
-            # Часто помилка виникає, якщо плече вже встановлене, тому логуємо як info/warning
             logger.info(f"Set leverage info for {s}: {e}")
 
     def place_order(self, data):
         try:
-            action = data.get('action')
+            action = data.get('action') # "Buy" or "Sell"
             symbol = data.get('symbol')
             norm = self.normalize(symbol)
             
-            risk = float(data.get('riskPercent', 5.0))
-            lev = int(data.get('leverage', 20))
+            risk = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
+            lev = int(data.get('leverage', config.DEFAULT_LEVERAGE))
             
+            # Отримуємо ціну та параметри монети
             price = self.get_price(norm)
             lot, tick = self.get_instr(norm)
             if not price or not lot: 
@@ -88,6 +86,7 @@ class BybitTradingBot:
             if bal < 5: 
                 return {"status": "no_balance", "balance": bal}
 
+            # Розрахунок кількості
             qty_step = float(lot['qtyStep'])
             min_qty = float(lot['minOrderQty'])
             tick_size = float(tick['tickSize'])
@@ -98,52 +97,37 @@ class BybitTradingBot:
             
             self.set_lev(norm, lev)
             
-            # 1. MARKET ORDER
+            # 1. MARKET ORDER (ВХІД)
+            logger.info(f"🚀 OPENING {action} {symbol} | Price: {price} | Qty: {qty}")
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
-            logger.info(f"✅ OPEN: {action} {symbol} | Qty: {qty}")
             
-            # 2. TRAILING STOP
-            if symbol in ["BTCUSDT", "ETHUSDT", "BNBUSDT"]: tr_pct = 0.5
-            elif any(x in symbol for x in ["SOL","XRP","ADA"]): tr_pct = 1.5
-            else: tr_pct = 3.0
+            # 2. FIXED STOP LOSS (ТІЛЬКИ З JSON)
+            # Беремо SL, який прийшов в JSON. Якщо його немає або він 0 - SL не ставимо.
+            sl_pct = float(data.get('stopLossPercent', 0.0))
             
-            dist = self.round_val(price * (tr_pct/100), tick_size)
-            sl = price - dist if action == "Buy" else price + dist
-            sl = self.round_val(sl, tick_size)
-            
-            self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl), trailingStop=str(dist), positionIdx=0)
-            
-            # 3. SPLIT TP
-            tp_price = data.get('takeProfit')
-            tp_pct = data.get('takeProfitPercent')
-            target = 0.0
-            direction = 1 if action == "Buy" else -1
-            
-            if tp_price: target = float(tp_price)
-            elif tp_pct: target = price * (1 + (float(tp_pct)/100) * direction)
-            else: target = price * (1 + 0.03 * direction)
-            
-            dist_tp = abs(target - price)
-            tp1 = self.round_val(price + (dist_tp * 0.4 * direction), tick_size)
-            tp2 = self.round_val(target, tick_size)
-            
-            q1 = self.round_val(qty * 0.5, qty_step)
-            q2 = self.round_val(qty - q1, qty_step)
-            
-            side_exit = "Sell" if action == "Buy" else "Buy"
-            
-            if q1 >= min_qty:
-                self.session.place_order(category="linear", symbol=norm, side=side_exit, orderType="Limit", qty=str(q1), price=str(tp1), reduceOnly=True)
-            if q2 >= min_qty:
-                self.session.place_order(category="linear", symbol=norm, side=side_exit, orderType="Limit", qty=str(q2), price=str(tp2), reduceOnly=True)
+            if sl_pct > 0:
+                dist = price * (sl_pct / 100)
+                dist = self.round_val(dist, tick_size)
+                
+                if action == "Buy":
+                    sl_price = price - dist
+                else: # Sell
+                    sl_price = price + dist
+                    
+                sl_price = self.round_val(sl_price, tick_size)
+                
+                logger.info(f"🛡️ SETTING SL for {symbol} from JSON: {sl_price} ({sl_pct}%)")
+                self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_price), positionIdx=0)
+                return {"status": "ok", "sl_price": sl_price}
+            else:
+                logger.info(f"⚠️ NO SL in JSON for {symbol}. Position opened without SL.")
+                return {"status": "ok", "sl_price": None}
 
-            return {"status": "ok"}
         except Exception as e:
             logger.error(f"Order Placement Critical Error: {e}")
             return {"status": "error", "reason": str(e)}
 
     def sync_history(self):
-        # Проста синхронізація за 24 години для відображення
         try:
             import time
             end = int(time.time()*1000)
@@ -157,13 +141,12 @@ class BybitTradingBot:
                         'qty': float(t['qty']), 'entry_price': float(t['avgEntryPrice']),
                         'exit_price': float(t['avgExitPrice']), 'pnl': float(t['closedPnl']),
                         'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
-                        'exit_reason': 'Trailing/TP'
+                        'exit_reason': 'Manual/SL'
                     })
         except Exception as e:
              logger.error(f"Sync history error: {e}")
 
     def sync_trades(self, days=7):
-        """Синхронизация торговой истории за указанный период"""
         try:
             import time
             end = int(time.time()*1000)
@@ -177,13 +160,12 @@ class BybitTradingBot:
                         'qty': float(t['qty']), 'entry_price': float(t['avgEntryPrice']),
                         'exit_price': float(t['avgExitPrice']), 'pnl': float(t['closedPnl']),
                         'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
-                        'exit_reason': 'Trailing/TP'
+                        'exit_reason': 'Manual/SL'
                     })
         except Exception as e:
             logger.error(f"Sync trades error: {e}")
 
     def get_available_balance(self):
-        """Получить доступный баланс USDT"""
         return self.get_bal()
 
 bot_instance = BybitTradingBot()
