@@ -186,6 +186,20 @@ class MarketScanner:
         
         filtered = []
         
+        # Статистика фільтрації
+        stats = {
+            'total': len(tickers),
+            'after_blacklist': 0,
+            'after_usdt_filter': 0,
+            'after_volume_filter': 0,
+            'after_price_change_filter': 0,
+            'after_price_valid_filter': 0,
+            'final': 0
+        }
+        
+        logger.info(f"📋 ФІЛЬТРАЦІЯ МОНЕТ:")
+        logger.info(f"   └─ Крок 0: Всього монет з біржі: {stats['total']}")
+        
         for ticker in tickers:
             try:
                 symbol = ticker['symbol']
@@ -194,25 +208,35 @@ class MarketScanner:
                 if symbol in risk_params['blacklist_symbols']:
                     continue
                 
+                stats['after_blacklist'] += 1
+                
                 # 2. Только USDT пары
                 if not symbol.endswith('USDT'):
                     continue
+                
+                stats['after_usdt_filter'] += 1
                 
                 # 3. Минимальный объём 24h
                 volume_24h = float(ticker.get('turnover24h', 0))
                 if volume_24h < scanner_params['min_volume_24h']:
                     continue
                 
+                stats['after_volume_filter'] += 1
+                
                 # 4. Минимальное изменение цены (волатильность)
                 price_change = abs(float(ticker.get('price24hPcnt', 0))) * 100
                 if price_change < scanner_params['min_price_change_24h']:
                     continue
+                
+                stats['after_price_change_filter'] += 1
                 
                 # 5. Проверка spread (bid-ask)
                 # Упрощённая проверка через lastPrice
                 last_price = float(ticker.get('lastPrice', 0))
                 if last_price <= 0:
                     continue
+                
+                stats['after_price_valid_filter'] += 1
                 
                 # Добавить в отфильтрованные
                 filtered.append({
@@ -227,6 +251,24 @@ class MarketScanner:
             except Exception as e:
                 logger.error(f"❌ Error filtering {ticker.get('symbol')}: {e}")
                 continue
+        
+        stats['final'] = len(filtered)
+        
+        # Детальний звіт фільтрації
+        logger.info(f"   ├─ Крок 1: Виключити blacklist: {stats['after_blacklist']} монет")
+        logger.info(f"   ├─ Крок 2: Тільки USDT пари: {stats['after_usdt_filter']} монет")
+        logger.info(f"   ├─ Крок 3: Об'єм > ${scanner_params['min_volume_24h']:,.0f}: {stats['after_volume_filter']} монет")
+        logger.info(f"   │          (відсіяно {stats['after_usdt_filter'] - stats['after_volume_filter']} через низький об'єм)")
+        logger.info(f"   ├─ Крок 4: Зміна ціни > {scanner_params['min_price_change_24h']}%: {stats['after_price_change_filter']} монет")
+        logger.info(f"   │          (відсіяно {stats['after_volume_filter'] - stats['after_price_change_filter']} через низьку волатильність)")
+        logger.info(f"   ├─ Крок 5: Валідна ціна: {stats['after_price_valid_filter']} монет")
+        logger.info(f"   └─ 🎯 ФІНАЛЬНИЙ РЕЗУЛЬТАТ: {stats['final']} монет пройшли базові фільтри")
+        
+        if stats['final'] == 0:
+            logger.warning("⚠️ УВАГА: Жодна монета не пройшла базові фільтри!")
+            logger.warning(f"   💡 Спробуй зменшити:")
+            logger.warning(f"      - min_volume_24h (зараз: ${scanner_params['min_volume_24h']:,.0f})")
+            logger.warning(f"      - min_price_change_24h (зараз: {scanner_params['min_price_change_24h']}%)")
         
         return filtered
     
@@ -253,13 +295,24 @@ class MarketScanner:
         """Последовательная обработка монет"""
         candidates = []
         
+        logger.info(f"🔬 АНАЛІЗ RSI/MFI ({len(coins)} монет):")
+        
         for i, coin in enumerate(coins):
             if i % 10 == 0:
-                logger.info(f"   Processing {i}/{len(coins)}...")
+                logger.info(f"   Прогрес: {i}/{len(coins)} ({i*100//len(coins)}%)")
             
             candidate = self._analyze_coin(coin)
             if candidate:
                 candidates.append(candidate)
+        
+        logger.info(f"   ✅ Завершено аналіз: знайдено {len(candidates)} кандидатів")
+        
+        if len(candidates) == 0 and len(coins) > 0:
+            logger.warning("⚠️ УВАГА: Жодного кандидата не знайдено після RSI/MFI аналізу!")
+            logger.warning(f"   💡 Можливі причини:")
+            logger.warning(f"      - RSI всіх монет поза зонами входу")
+            logger.warning(f"      - Занадто жорсткі вимоги до сили сигналу")
+            logger.warning(f"      - Невірний таймфрейм")
         
         return candidates
     
@@ -313,6 +366,7 @@ class MarketScanner:
             df = self._get_coin_historical_data(symbol)
             
             if df is None or len(df) < 50:
+                logger.debug(f"      ⏭️  {symbol}: Недостатньо історичних даних ({len(df) if df is not None else 0} свічок)")
                 return None
             
             # Применить индикатор
@@ -326,6 +380,8 @@ class MarketScanner:
             has_sell = signals.get('sell_signal', False)
             has_strong_buy = signals.get('strong_bullish_signal', False)
             has_strong_sell = signals.get('strong_bearish_signal', False)
+            
+            rsi_value = signals['rsi_value']
             
             # Определить направление и силу
             direction = None
@@ -346,6 +402,7 @@ class MarketScanner:
             
             # Если нет сигналов - пропустить
             if direction is None:
+                logger.debug(f"      ⏭️  {symbol}: Немає сигналів (RSI: {rsi_value:.1f})")
                 return None
             
             # Фильтр по силе сигнала
@@ -353,6 +410,7 @@ class MarketScanner:
             min_strength = scanner_params['min_signal_strength']
             
             if min_strength == 'strong' and signal_strength != 'Strong':
+                logger.debug(f"      ⏭️  {symbol}: Відсіяно через силу сигналу ({signal_strength}, потрібно: strong)")
                 return None
             
             # Создать кандидата
@@ -365,11 +423,13 @@ class MarketScanner:
                 'change_24h': coin['price_change_24h'],
                 'rsi': signals['rsi_value'],
                 'mfi': signals.get('mfi_value', 0),
-                'mfi_trend': signals.get('mfi_trend', 'Нейтральный'),
-                'last_signal': signals.get('last_signal', 'Нет'),
+                'mfi_trend': signals.get('mfi_trend', 'Нейтральний'),
+                'last_signal': signals.get('last_signal', 'Немає'),
                 'bullish_cloud': signals.get('bullish_cloud', False),
                 'bearish_cloud': signals.get('bearish_cloud', False),
             }
+            
+            logger.info(f"      ✅ {symbol}: {direction} {signal_strength} (RSI: {rsi_value:.1f})")
             
             return candidate
             
