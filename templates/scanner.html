@@ -3,21 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scanner v2.0 - Active Positions</title>
+    <title>Scanner v2.1 - Active Positions</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/scanner.css') }}">
     <meta http-equiv="refresh" content="5">
 </head>
 <body>
-    <!-- Navbar -->
-    <nav class="navbar">
-        <div class="navbar-brand">
-            🐋 Whale Scanner v2.0
-        </div>
-        <div class="navbar-links">
-            <a href="/scanner">Scanner</a>
-            <a href="/report">Reports</a>
-        </div>
-    </nav>
+    <!-- Navigation Header -->
+    {% include 'nav_header.html' %}
 
     <!-- Container -->
     <div class="container">

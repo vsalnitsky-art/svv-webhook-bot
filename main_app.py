@@ -1,5 +1,5 @@
 """
-Main App  -  Clean & Professional
+Main App - Clean & Professional
 Updated with proper logging and self-ping mechanism
 """
 import logging
@@ -267,13 +267,19 @@ def scanner_page():
         # Получить статистику мониторинга
         monitor_stats = scanner.position_monitor.get_stats()
         
+        # Получить количество кандидатов для навигации
+        candidates_count = len(scanner.market_scanner.top_candidates) if scanner.market_scanner else 0
+        
         return render_template('scanner.html',
                              positions=positions,
                              active_count=monitor_stats['active_positions'],
                              total_auto_closes=monitor_stats['total_auto_closes'],
                              success_rate=round(monitor_stats['success_rate'], 1),
                              last_update=monitor_stats['last_monitor_time'].strftime('%H:%M:%S') if monitor_stats['last_monitor_time'] else 'Never',
-                             update_time=datetime.now().strftime('%H:%M:%S'))
+                             update_time=datetime.now().strftime('%H:%M:%S'),
+                             # Для навигации ⭐
+                             active_positions_count=monitor_stats['active_positions'],
+                             candidates_count=candidates_count)
         
     except Exception as e:
         logger.error(f"Error rendering scanner page: {e}", exc_info=True)
@@ -411,6 +417,10 @@ def candidates_page():
         else:
             next_scan_in = scan_interval
         
+        # Получить количество активных позиций для навигации
+        monitor_stats = scanner.position_monitor.get_stats()
+        active_positions_count = monitor_stats['active_positions']
+        
         return render_template('candidates.html',
                              candidates=candidates_ui,
                              candidates_count=len(all_candidates),
@@ -422,7 +432,9 @@ def candidates_page():
                              filter_strength=filter_strength,
                              min_rating=min_rating,
                              scanning=scanner_stats['scanning'],
-                             next_scan_in=next_scan_in)
+                             next_scan_in=next_scan_in,
+                             # Для навигации ⭐
+                             active_positions_count=active_positions_count)
         
     except Exception as e:
         logger.error(f"Error rendering candidates page: {e}", exc_info=True)
@@ -590,11 +602,18 @@ def parameters_page():
             'scanner': scanner_config.get_scanner_params(),
         }
         
+        # Получить счётчики для навигации
+        monitor_stats = scanner.position_monitor.get_stats()
+        candidates_count = len(scanner.market_scanner.top_candidates) if scanner.market_scanner else 0
+        
         return render_template('parameters.html',
                              params=params,
                              current_style=scanner_config.trading_style,
                              message=message,
-                             message_type=message_type)
+                             message_type=message_type,
+                             # Для навигации ⭐
+                             active_positions_count=monitor_stats['active_positions'],
+                             candidates_count=candidates_count)
         
     except Exception as e:
         logger.error(f"Error rendering parameters page: {e}", exc_info=True)
