@@ -114,16 +114,16 @@
     <!-- Top Bar -->
     <div class="nav-top-bar">
         <div class="nav-logo">
-            🤖 SVV Scanner
+            🤖 SVV Сканер
             <span class="nav-version">v2.1</span>
         </div>
         
         <div class="nav-quick-actions">
             <a href="/parameters" class="nav-quick-btn">
-                ⚙️ Settings
+                ⚙️ Налаштування
             </a>
             <a href="https://github.com/yourusername/svv-scanner" target="_blank" class="nav-quick-btn">
-                📚 Docs
+                📚 Документація
             </a>
         </div>
     </div>
@@ -131,21 +131,21 @@
     <!-- Main Navigation -->
     <div class="nav-menu">
         <a href="/scanner" class="nav-item {{ 'active' if request.path == '/scanner' else '' }}">
-            📊 Scanner
+            📊 Позиції
             {% if active_positions_count > 0 %}
             <span class="nav-badge success">{{ active_positions_count }}</span>
             {% endif %}
         </a>
         
         <a href="/candidates" class="nav-item {{ 'active' if request.path == '/candidates' else '' }}">
-            🎯 Candidates
+            🎯 Кандидати
             {% if candidates_count > 0 %}
             <span class="nav-badge warning">{{ candidates_count }}</span>
             {% endif %}
         </a>
         
         <a href="/parameters" class="nav-item {{ 'active' if request.path == '/parameters' else '' }}">
-            ⚙️ Parameters
+            ⚙️ Налаштування
         </a>
     </div>
 </div>
