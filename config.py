@@ -1,23 +1,61 @@
+"""
+Config with Fernet Encryption for Render Deployment
+Підтримує шифрування API ключів через Environment Variables
+"""
+
 import os
+from cryptography.fernet import Fernet
 
-class Config:
-    # Сервер
-    PORT = int(os.environ.get("PORT", 10000))
-    HOST = "0.0.0.0"
+def get_api_credentials():
+    """
+    Отримати API credentials з зашифрованих Environment Variables
+    """
     
-    # Торгівля
-    DEFAULT_RISK_PERCENT = 5.0
-    DEFAULT_LEVERAGE = 20
-    DEFAULT_SL_PERCENT = 0.0 # Повернуто оригінальне значення
+    # Отримати ключ шифрування
+    encryption_key = os.environ.get('ENCRYPTION_KEY')
     
-    # Сканер (тільки для моніторингу активних)
-    SCANNER_INTERVAL = 5
+    # Спроба 1: Використати зашифровані ключі
+    if encryption_key:
+        try:
+            cipher = Fernet(encryption_key.encode())
+            
+            encrypted_api_key = os.environ.get('BYBIT_API_KEY_ENCRYPTED')
+            encrypted_api_secret = os.environ.get('BYBIT_API_SECRET_ENCRYPTED')
+            
+            if encrypted_api_key and encrypted_api_secret:
+                api_key = cipher.decrypt(encrypted_api_key.encode()).decode()
+                api_secret = cipher.decrypt(encrypted_api_secret.encode()).decode()
+                return api_key, api_secret
+        except Exception as e:
+            print(f"⚠️ Decryption failed: {e}")
+            print("Trying plain text credentials...")
     
-    # Очищення
-    DATA_RETENTION_DAYS = 30
+    # Спроба 2: Використати незашифровані ключі (fallback)
+    api_key = os.environ.get('BYBIT_API_KEY')
+    api_secret = os.environ.get('BYBIT_API_SECRET')
+    
+    if api_key and api_secret:
+        return api_key, api_secret
+    
+    # Спроба 3: Локальна розробка (hardcoded) - ТІЛЬКИ ДЛЯ ТЕСТУВАННЯ!
+    if not os.environ.get('RENDER'):
+        print("⚠️ Running in local mode with hardcoded credentials")
+        # ⚠️ ЗАМІНІТЬ НА ВАШІ РЕАЛЬНІ КЛЮЧІ ДЛЯ ЛОКАЛЬНОГО ТЕСТУВАННЯ
+        api_key = "YOUR_API_KEY_HERE"
+        api_secret = "YOUR_API_SECRET_HERE"
+        return api_key, api_secret
+    
+    # Якщо нічого не спрацювало на продакшні - помилка
+    raise ValueError(
+        "❌ API credentials not found!\n\n"
+        "Please set BYBIT_API_KEY and BYBIT_API_SECRET in Render Environment Variables."
+    )
 
-    @classmethod
-    def get_scanner_config(cls):
-        return {'SCANNER_INTERVAL': cls.SCANNER_INTERVAL}
+# Допоміжні функції для генерації ключів (можна викликати локально)
+def generate_encryption_key():
+    key = Fernet.generate_key()
+    print(key.decode())
+    return key
 
-config = Config()
+# Для зворотної сумісності
+API_KEY, API_SECRET = get_api_credentials()
