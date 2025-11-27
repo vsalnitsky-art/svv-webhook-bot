@@ -167,13 +167,13 @@
 
                         <div class="param-group">
                             <label class="param-label">
-                                Aggressiveness
+                                Агресивнийness
                                 <span class="badge badge-warning">{{ params.aggressiveness }}</span>
                             </label>
                             <select name="aggressiveness" class="param-input">
                                 <option value="auto" {{ 'selected' if params.aggressiveness == 'auto' else '' }}>Auto (Adapts to volatility)</option>
-                                <option value="conservative" {{ 'selected' if params.aggressiveness == 'conservative' else '' }}>Conservative</option>
-                                <option value="aggressive" {{ 'selected' if params.aggressiveness == 'aggressive' else '' }}>Aggressive</option>
+                                <option value="conservative" {{ 'selected' if params.aggressiveness == 'conservative' else '' }}>Консервативний</option>
+                                <option value="aggressive" {{ 'selected' if params.aggressiveness == 'aggressive' else '' }}>Агресивний</option>
                             </select>
                             <div class="param-help">Auto mode adjusts RSI levels based on market volatility</div>
                         </div>
@@ -223,7 +223,7 @@
                         <h4 style="color: var(--text-primary); margin-bottom: 1rem;">RSI Settings</h4>
                         
                         <div class="param-group">
-                            <label class="param-label">RSI Period</label>
+                            <label class="param-label">Період RSI</label>
                             <input type="number" name="rsi_period" value="{{ params.indicator.rsi_period }}" 
                                    class="param-input" min="5" max="50">
                             <div class="param-help">Number of candles for RSI calculation (default: 14)</div>
@@ -250,7 +250,7 @@
                         <h4 style="color: var(--text-primary); margin-bottom: 1rem;">MFI Settings</h4>
                         
                         <div class="param-group">
-                            <label class="param-label">MFI Period</label>
+                            <label class="param-label">Період MFI</label>
                             <input type="number" name="mfi_period" value="{{ params.indicator.mfi_period }}" 
                                    class="param-input" min="5" max="50">
                             <div class="param-help">Number of candles for MFI calculation (default: 20)</div>
@@ -278,7 +278,7 @@
             <!-- Risk Management -->
             <div class="card">
                 <div class="card-header">
-                    🛡️ RISK MANAGEMENT
+                    🛡️ УПРАВЛІННЯ РИЗИКАМИ
                 </div>
                 <div class="card-body">
                     <div class="param-section">
@@ -291,7 +291,7 @@
                             </div>
 
                             <div class="param-group">
-                                <label class="param-label">Position Size (%)</label>
+                                <label class="param-label">Розмір позиції (%)</label>
                                 <input type="number" name="position_size_percent" value="{{ params.risk.position_size_percent }}" 
                                        class="param-input" min="1" max="50">
                                 <div class="param-help">Percent of balance per trade (default: 10%)</div>
@@ -333,7 +333,7 @@
                     <div class="param-section">
                         <div class="param-group">
                             <label class="param-label">
-                                <span>Enable Auto-Close</span>
+                                <span>Увімкнути автозакриття</span>
                                 <label class="toggle-switch">
                                     <input type="checkbox" name="auto_close_enabled" 
                                            {{ 'checked' if params.auto_close.enabled else '' }}>
@@ -346,7 +346,7 @@
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                             <div class="param-group">
                                 <label class="param-label">
-                                    <span>Use Strong Signals</span>
+                                    <span>Використовувати сильні сигнали</span>
                                     <label class="toggle-switch">
                                         <input type="checkbox" name="use_strong_signals" 
                                                {{ 'checked' if params.auto_close.use_strong_signals else '' }}>
@@ -358,7 +358,7 @@
 
                             <div class="param-group">
                                 <label class="param-label">
-                                    <span>Use OBV Confirmation</span>
+                                    <span>Використовувати підтвердження OBV</span>
                                     <label class="toggle-switch">
                                         <input type="checkbox" name="use_obv_confirmation" 
                                                {{ 'checked' if params.auto_close.use_obv_confirmation else '' }}>
@@ -371,11 +371,11 @@
 
                         <!-- OBV Parameters -->
                         <div id="obv-params" style="background: var(--bg-secondary); padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
-                            <h5 style="color: var(--text-primary); margin-bottom: 1rem;">📊 OBV Settings</h5>
+                            <h5 style="color: var(--text-primary); margin-bottom: 1rem;">📊 Налаштування OBV</h5>
                             
                             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
                                 <div class="param-group">
-                                    <label class="param-label">OBV EMA Period</label>
+                                    <label class="param-label">Період EMA для OBV</label>
                                     <input type="number" name="obv_ema_period" 
                                            value="{{ params.auto_close.obv_ema_period }}" 
                                            class="param-input" min="5" max="100">
@@ -383,7 +383,7 @@
                                 </div>
 
                                 <div class="param-group">
-                                    <label class="param-label">OBV Trend Candles</label>
+                                    <label class="param-label">Свічок для тренду OBV</label>
                                     <input type="number" name="obv_trend_candles" 
                                            value="{{ params.auto_close.obv_trend_candles }}" 
                                            class="param-input" min="2" max="10">
@@ -391,7 +391,7 @@
                                 </div>
 
                                 <div class="param-group">
-                                    <label class="param-label">OBV Sensitivity</label>
+                                    <label class="param-label">Чутливість OBV</label>
                                     <select name="obv_sensitivity" class="param-input">
                                         <option value="low" {{ 'selected' if params.auto_close.obv_sensitivity == 'low' else '' }}>
                                             Low (5 candles)
@@ -409,7 +409,7 @@
 
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
                                 <div class="param-group">
-                                    <label class="param-label">RSI Exit Mode (if OBV OFF)</label>
+                                    <label class="param-label">Режим виходу RSI (if OBV OFF)</label>
                                     <select name="rsi_exit_mode" class="param-input">
                                         <option value="immediate" {{ 'selected' if params.auto_close.rsi_exit_mode == 'immediate' else '' }}>
                                             Immediate (close on RSI zone entry)
@@ -422,7 +422,7 @@
                                 </div>
 
                                 <div class="param-group">
-                                    <label class="param-label">MFI Check Mode</label>
+                                    <label class="param-label">Режим перевірки MFI</label>
                                     <select name="mfi_check_mode" class="param-input">
                                         <option value="before_obv" {{ 'selected' if params.auto_close.mfi_check_mode == 'before_obv' else '' }}>
                                             Before OBV (RSI → MFI → OBV)
@@ -442,7 +442,7 @@
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                             <div class="param-group">
                                 <label class="param-label">
-                                    <span>Confirm with MFI</span>
+                                    <span>Підтвердження MFI</span>
                                     <label class="toggle-switch">
                                         <input type="checkbox" name="confirm_with_mfi" 
                                                {{ 'checked' if params.auto_close.confirm_with_mfi else '' }}>
@@ -453,7 +453,7 @@
                             </div>
 
                             <div class="param-group">
-                                <label class="param-label">Min Hold Time (seconds)</label>
+                                <label class="param-label">Мінімальний час утримання (секунд)</label>
                                 <input type="number" name="min_hold_time" value="{{ params.auto_close.min_hold_time }}" 
                                        class="param-input" min="60" max="3600" step="60">
                                 <div class="param-help">Minimum time before auto-close (default: 300s = 5min)</div>
@@ -466,13 +466,13 @@
             <!-- Keep-Alive Parameters (НОВОЕ) -->
             <div class="card">
                 <div class="card-header">
-                    💓 KEEP-ALIVE (SELF-PING)
+                    💓 KEEP-ALIVE (САМОПІНГ)
                 </div>
                 <div class="card-body">
                     <div class="param-section">
                         <div class="param-group">
                             <label class="param-label">
-                                <span>Enable Keep-Alive</span>
+                                <span>Увімкнути Keep-Alive</span>
                                 <label class="toggle-switch">
                                     <input type="checkbox" name="keep_alive_enabled" 
                                            {{ 'checked' if params.keep_alive_enabled else '' }}>
@@ -483,10 +483,10 @@
                         </div>
 
                         <div class="param-group">
-                            <label class="param-label">Ping Interval (seconds)</label>
+                            <label class="param-label">Інтервал пінгу (секунд)</label>
                             <input type="number" name="keep_alive_interval" value="{{ params.keep_alive_interval }}" 
                                    class="param-input" min="60" max="900" step="30">
-                            <div class="param-help">How often to ping (default: 300s = 5 minutes)</div>
+                            <div class="param-help">How often to ping (default: 300s = 5 хвилин)</div>
                         </div>
                     </div>
                 </div>
@@ -495,13 +495,13 @@
             <!-- Scanner Parameters -->
             <div class="card">
                 <div class="card-header">
-                    🔍 SCANNER PARAMETERS
+                    🔍 ПАРАМЕТРИ СКАНЕРА
                 </div>
                 <div class="card-body">
                     <div class="param-section">
                         <div class="param-group">
                             <label class="param-label">
-                                <span>Enable Market Scanner</span>
+                                <span>Увімкнути сканер ринку</span>
                                 <label class="toggle-switch">
                                     <input type="checkbox" name="scanner_enabled" 
                                            {{ 'checked' if params.scanner.enabled else '' }}>
@@ -513,7 +513,7 @@
 
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                             <div class="param-group">
-                                <label class="param-label">Scan Interval (seconds)</label>
+                                <label class="param-label">Інтервал сканування (секунд)</label>
                                 <input type="number" name="scan_interval" value="{{ params.scanner.scan_interval }}" 
                                        class="param-input" min="30" max="600" step="30">
                                 <div class="param-help">Time between scans (default: 60s)</div>

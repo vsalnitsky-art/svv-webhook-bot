@@ -56,12 +56,12 @@ class PositionMonitor:
         self.total_auto_closes = 0
         self.successful_auto_closes = 0
         
-        logger.info("✅ PositionMonitor initialized with OBV support")
+        logger.info("✅ PositionMonitor ініціалізовано з підтримкою OBV")
     
     def start(self):
         """Запуск мониторинга в отдельном потоке"""
         threading.Thread(target=self._monitor_loop, daemon=True).start()
-        logger.info("🚀 PositionMonitor started")
+        logger.info("🚀 PositionMonitor запущено")
     
     def _monitor_loop(self):
         """Основной цикл мониторинга"""
@@ -70,7 +70,7 @@ class PositionMonitor:
                 self.monitor_positions()
                 time.sleep(5)  # Проверка каждые 5 секунд
             except Exception as e:
-                logger.error(f"❌ Monitor loop error: {e}", exc_info=True)
+                logger.error(f"❌ Помилка циклу моніторингу: {e}", exc_info=True)
                 time.sleep(10)
     
     def monitor_positions(self):
@@ -116,7 +116,7 @@ class PositionMonitor:
                         self._check_auto_close(symbol, position, latest_signals)
                     
                 except Exception as e:
-                    logger.error(f"❌ Error monitoring {symbol}: {e}")
+                    logger.error(f"❌ Помилка моніторингу {symbol}: {e}")
                     continue
             
             self.last_monitor_time = datetime.now()
@@ -397,7 +397,7 @@ class PositionMonitor:
                 state['in_zone'] = True
                 state['entry_time'] = datetime.now()
                 state['obv_monitoring'] = use_obv
-                logger.info(f"📊 {symbol}: RSI entered overbought zone ({rsi:.1f})")
+                logger.info(f"📊 {symbol}: RSI увійшов у зону перекупленості ({rsi:.1f})")
                 
                 # Если OBV выключен и режим immediate
                 if not use_obv and rsi_exit_mode == 'immediate':
@@ -429,7 +429,7 @@ class PositionMonitor:
                         
                         if should_close_obv:
                             # OBV ПОДТВЕРДИЛ РАЗВОРОТ!
-                            logger.info(f"✅ {symbol}: OBV confirmed reversal - {reason_obv}")
+                            logger.info(f"✅ {symbol}: OBV підтвердив розворот - {reason_obv}")
                             
                             # MFI проверка ПОСЛЕ OBV (если режим after_obv)
                             if confirm_mfi and mfi_check_mode == 'after_obv':
@@ -450,12 +450,12 @@ class PositionMonitor:
                             return True, f"RSI overbought + {reason_obv}"
                         else:
                             # OBV ещё не подтвердил
-                            logger.debug(f"⏳ {symbol}: OBV monitoring - {reason_obv}")
+                            logger.debug(f"⏳ {symbol}: Моніторинг OBV - {reason_obv}")
                 
                 # Проверка: ВЫШЛИ ИЗ ЗОНЫ?
                 if not in_overbought:
                     # RSI вышел из зоны перекупленности
-                    logger.info(f"📉 {symbol}: RSI exited overbought zone ({rsi:.1f})")
+                    logger.info(f"📉 {symbol}: RSI вийшов із зони перекупленості ({rsi:.1f})")
                     state['in_zone'] = False
                     state['obv_monitoring'] = False
                     
@@ -466,7 +466,7 @@ class PositionMonitor:
                         elif mfi_check_mode != 'with_obv':
                             return True, f"RSI exited overbought ({rsi:.1f})"
                     else:
-                        return True, f"RSI exited overbought zone ({rsi:.1f})"
+                        return True, f"RSI вийшов із зони перекупленості ({rsi:.1f})"
         
         # === ЛОГИКА ДЛЯ SHORT ПОЗИЦИЙ ===
         if is_short:
@@ -480,7 +480,7 @@ class PositionMonitor:
                 state['in_zone'] = True
                 state['entry_time'] = datetime.now()
                 state['obv_monitoring'] = use_obv
-                logger.info(f"📊 {symbol}: RSI entered oversold zone ({rsi:.1f})")
+                logger.info(f"📊 {symbol}: RSI увійшов у зону перепроданості ({rsi:.1f})")
                 
                 # Если OBV выключен и режим immediate
                 if not use_obv and rsi_exit_mode == 'immediate':
@@ -510,7 +510,7 @@ class PositionMonitor:
                         
                         if should_close_obv:
                             # OBV ПОДТВЕРДИЛ РАЗВОРОТ!
-                            logger.info(f"✅ {symbol}: OBV confirmed reversal - {reason_obv}")
+                            logger.info(f"✅ {symbol}: OBV підтвердив розворот - {reason_obv}")
                             
                             # MFI проверка ПОСЛЕ OBV
                             if confirm_mfi and mfi_check_mode == 'after_obv':
@@ -530,7 +530,7 @@ class PositionMonitor:
                 
                 # Проверка: ВЫШЛИ ИЗ ЗОНЫ?
                 if not in_oversold:
-                    logger.info(f"📈 {symbol}: RSI exited oversold zone ({rsi:.1f})")
+                    logger.info(f"📈 {symbol}: RSI вийшов із зони перепроданості ({rsi:.1f})")
                     state['in_zone'] = False
                     state['obv_monitoring'] = False
                     
@@ -541,10 +541,10 @@ class PositionMonitor:
                         elif mfi_check_mode != 'with_obv':
                             return True, f"RSI exited oversold ({rsi:.1f})"
                     else:
-                        return True, f"RSI exited oversold zone ({rsi:.1f})"
+                        return True, f"RSI вийшов із зони перепроданості ({rsi:.1f})"
         
         # Нет условий для закрытия
-        return False, "No close conditions met"
+        return False, "Умови закриття не виконано"
     
     def _get_historical_data_for_obv(self, symbol: str) -> List[Dict]:
         """
@@ -643,7 +643,7 @@ class PositionMonitor:
             })
             
             if result.get('status') == 'ok':
-                logger.info(f"✅ Position closed: {symbol}")
+                logger.info(f"✅ Позицію закрито: {symbol}")
                 self.successful_auto_closes += 1
                 
                 # Сохранить аналитику закрытия

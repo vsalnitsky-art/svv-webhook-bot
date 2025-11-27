@@ -17,7 +17,7 @@
         <div class="stats-bar">
             <div class="stat-item">
                 <div class="stat-value">{{ total_scans }}</div>
-                <div class="stat-label">Total Scans</div>
+                <div class="stat-label">Всього сканувань</div>
             </div>
             <div class="stat-item">
                 <div class="stat-value">{{ candidates_count }}</div>
@@ -25,43 +25,43 @@
             </div>
             <div class="stat-item">
                 <div class="stat-value">{{ scan_duration }}s</div>
-                <div class="stat-label">Last Scan Duration</div>
+                <div class="stat-label">Останнє сканування Duration</div>
             </div>
             <div class="stat-item">
                 <div class="stat-value timestamp">{{ last_scan_time }}</div>
-                <div class="stat-label">Last Scan</div>
+                <div class="stat-label">Останнє сканування</div>
             </div>
         </div>
 
         <!-- Filters -->
         <div class="card">
             <div class="card-header">
-                <span>🔍 FILTERS</span>
+                <span>🔍 ФІЛЬТРИ</span>
             </div>
             <div class="card-body">
                 <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
                     <div>
-                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Direction:</label>
+                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Напрямок:</label>
                         <select id="filterDirection" onchange="applyFilters()" style="padding: 0.5rem; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px;">
                             <option value="all" {{ 'selected' if filter_direction == 'all' else '' }}>All</option>
-                            <option value="long" {{ 'selected' if filter_direction == 'long' else '' }}>Long Only</option>
-                            <option value="short" {{ 'selected' if filter_direction == 'short' else '' }}>Short Only</option>
+                            <option value="long" {{ 'selected' if filter_direction == 'long' else '' }}>Тільки Long</option>
+                            <option value="short" {{ 'selected' if filter_direction == 'short' else '' }}>Тільки Short</option>
                         </select>
                     </div>
                     <div>
-                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Signal Strength:</label>
+                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Сила сигналу:</label>
                         <select id="filterStrength" onchange="applyFilters()" style="padding: 0.5rem; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px;">
                             <option value="all" {{ 'selected' if filter_strength == 'all' else '' }}>All</option>
-                            <option value="strong" {{ 'selected' if filter_strength == 'strong' else '' }}>Strong Only</option>
-                            <option value="regular" {{ 'selected' if filter_strength == 'regular' else '' }}>Regular Only</option>
+                            <option value="strong" {{ 'selected' if filter_strength == 'strong' else '' }}>Тільки сильні</option>
+                            <option value="regular" {{ 'selected' if filter_strength == 'regular' else '' }}>Тільки звичайні</option>
                         </select>
                     </div>
                     <div>
-                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Min Rating:</label>
-                        <input type="number" id="filterRating" value="{{ min_rating }}" min="0" max="100" onchange="applyFilters()" style="padding: 0.5rem; width: 80px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px;">
+                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Мін рейтинг:</label>
+                        <input type="number" id="filterРейтинг" value="{{ min_rating }}" min="0" max="100" onchange="applyFilters()" style="padding: 0.5rem; width: 80px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px;">
                     </div>
                     <div style="margin-left: auto;">
-                        <button onclick="resetFilters()" class="btn btn-secondary">🔄 Reset</button>
+                        <button onclick="resetFilters()" class="btn btn-secondary">🔄 Скинути</button>
                         <button onclick="manualScan()" class="btn btn-secondary" id="scanBtn">🔍 Scan Now</button>
                     </div>
                 </div>
@@ -71,8 +71,8 @@
         <!-- Candidates -->
         <div class="card">
             <div class="card-header">
-                <span>🎯 TOP CANDIDATES ({{ candidates|length }})</span>
-                <span class="timestamp">Updated: {{ update_time }}</span>
+                <span>🎯 ТОП КАНДИДАТИ ({{ candidates|length }})</span>
+                <span class="timestamp">Оновлено: {{ update_time }}</span>
             </div>
             <div class="card-body">
                 {% if candidates %}
@@ -94,12 +94,12 @@
                             </div>
                             <div>
                                 <span class="badge badge-info" style="font-size: 1rem;">
-                                    Rating: {{ candidate.rating }}/100
+                                    Рейтинг: {{ candidate.rating }}/100
                                 </span>
                             </div>
                         </div>
 
-                        <!-- Rating Bar -->
+                        <!-- Рейтинг Bar -->
                         <div style="margin-bottom: 1rem;">
                             <div class="indicator-bar" style="height: 12px;">
                                 <div class="indicator-fill {{ 'rsi-green' if candidate.rating >= 80 else ('rsi-yellow' if candidate.rating >= 60 else 'rsi-red') }}" 
@@ -110,7 +110,7 @@
                         <!-- Main Info Grid -->
                         <div class="position-grid">
                             <div class="position-metric">
-                                <div class="metric-label">Current Price</div>
+                                <div class="metric-label">Поточна ціна</div>
                                 <div class="metric-value">${{ '%.2f'|format(candidate.price) }}</div>
                             </div>
                             <div class="position-metric">
@@ -205,7 +205,7 @@
                 {% else %}
                     <div class="empty-state">
                         <div class="empty-state-icon">🔍</div>
-                        <div>No candidates found</div>
+                        <div>Кандидатів не знайдено</div>
                         <div class="timestamp">
                             {% if scanning %}
                                 <div class="pulse">Scanning in progress...</div>
@@ -223,14 +223,14 @@
         function applyFilters() {
             const direction = document.getElementById('filterDirection').value;
             const strength = document.getElementById('filterStrength').value;
-            const rating = parseInt(document.getElementById('filterRating').value) || 0;
+            const rating = parseInt(document.getElementById('filterРейтинг').value) || 0;
 
             const cards = document.querySelectorAll('.position-card');
             
             cards.forEach(card => {
                 const cardDirection = card.getAttribute('data-direction');
                 const cardStrength = card.getAttribute('data-strength');
-                const cardRating = parseInt(card.getAttribute('data-rating'));
+                const cardРейтинг = parseInt(card.getAttribute('data-rating'));
 
                 let show = true;
 
@@ -244,8 +244,8 @@
                     show = false;
                 }
 
-                // Rating filter
-                if (cardRating < rating) {
+                // Рейтинг filter
+                if (cardРейтинг < rating) {
                     show = false;
                 }
 
@@ -256,7 +256,7 @@
         function resetFilters() {
             document.getElementById('filterDirection').value = 'all';
             document.getElementById('filterStrength').value = 'all';
-            document.getElementById('filterRating').value = 0;
+            document.getElementById('filterРейтинг').value = 0;
             applyFilters();
         }
 

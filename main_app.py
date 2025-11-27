@@ -68,7 +68,7 @@ def keep_alive():
     
     # Проверяем включен ли keep-alive
     if not scanner_config.keep_alive_enabled:
-        logger.info("💤 Keep-alive is DISABLED in config")
+        logger.info("💤 Keep-alive ВИМКНЕНО в конфігурації")
         return
     
     external_url = os.environ.get('RENDER_EXTERNAL_URL')
@@ -77,7 +77,7 @@ def keep_alive():
     target_url = f"{external_url}/health" if external_url else local_url
     interval = scanner_config.keep_alive_interval
     
-    logger.info(f"💓 Keep-alive service started. Target: {target_url}, Interval: {interval}s")
+    logger.info(f"💓 Сервіс Keep-alive запущено. Target: {target_url}, Interval: {interval}s")
 
     while scanner_config.keep_alive_enabled:  # ⭐ Проверяем на каждой итерации
         try:
@@ -91,7 +91,7 @@ def keep_alive():
         
         time.sleep(interval)  # ⭐ Используем interval из конфига
     
-    logger.info("💤 Keep-alive stopped (disabled in config)")
+    logger.info("💤 Keep-alive зупинено (disabled in config)")
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
@@ -578,7 +578,7 @@ def parameters_page():
                 message = 'All parameters saved successfully!'
                 message_type = 'success'
                 
-                logger.info("✅ Parameters updated successfully")
+                logger.info("✅ Параметри успішно оновлено")
                 
             except Exception as e:
                 message = f'Error saving parameters: {str(e)}'
