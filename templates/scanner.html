@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner v2.0 - Active Positions</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/scanner.css') }}">
+    <meta http-equiv="refresh" content="5">
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="navbar-brand">
+            🐋 Whale Scanner v2.0
+        </div>
+        <div class="navbar-links">
+            <a href="/scanner">Scanner</a>
+            <a href="/report">Reports</a>
+        </div>
+    </nav>
+
+    <!-- Container -->
+    <div class="container">
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat-item">
+                <div class="stat-value">{{ active_count }}</div>
+                <div class="stat-label">Active Positions</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">{{ total_auto_closes }}</div>
+                <div class="stat-label">Auto-Closes</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">{{ success_rate }}%</div>
+                <div class="stat-label">Success Rate</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value timestamp">{{ last_update }}</div>
+                <div class="stat-label">Last Update</div>
+            </div>
+        </div>
+
+        <!-- Active Positions -->
+        <div class="card">
+            <div class="card-header">
+                <span>📊 ACTIVE POSITIONS</span>
+                <span class="timestamp">Updated: {{ update_time }}</span>
+            </div>
+            <div class="card-body">
+                {% if positions %}
+                    {% for pos in positions %}
+                    <div class="position-card">
+                        <!-- Header -->
+                        <div class="position-header">
+                            <div>
+                                <span class="position-symbol">{{ pos.symbol }}</span>
+                                <span class="position-side {{ 'long' if pos.side == 'Buy' else 'short' }}">
+                                    {{ 'LONG' if pos.side == 'Buy' else 'SHORT' }}
+                                </span>
+                            </div>
+                            <div class="timestamp">
+                                Opened: {{ pos.open_time }} • In trade: {{ pos.hold_duration }}
+                            </div>
+                        </div>
+
+                        <!-- P&L Info -->
+                        <div class="position-grid">
+                            <div class="position-metric">
+                                <div class="metric-label">Current P&L</div>
+                                <div class="metric-value {{ 'positive' if pos.pnl > 0 else 'negative' }}">
+                                    {{ '+' if pos.pnl > 0 else '' }}${{ '%.2f'|format(pos.pnl) }} ({{ '+' if pos.pnl_percent > 0 else '' }}{{ '%.2f'|format(pos.pnl_percent) }}%)
+                                </div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">Max P&L</div>
+                                <div class="metric-value positive">
+                                    ${{ '%.2f'|format(pos.max_pnl) }} ({{ '+%.2f'|format(pos.max_pnl_percent) }}%)
+                                </div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">Min P&L (Drawdown)</div>
+                                <div class="metric-value negative">
+                                    ${{ '%.2f'|format(pos.min_pnl) }} ({{ '%.2f'|format(pos.min_pnl_percent) }}%)
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Price Info -->
+                        <div class="position-grid">
+                            <div class="position-metric">
+                                <div class="metric-label">Entry Price</div>
+                                <div class="metric-value">${{ '%.2f'|format(pos.entry_price) }}</div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">Current Price</div>
+                                <div class="metric-value">${{ '%.2f'|format(pos.current_price) }}</div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">Size</div>
+                                <div class="metric-value">{{ pos.size }} ({{ pos.leverage }}x)</div>
+                            </div>
+                        </div>
+
+                        <!-- Indicators -->
+                        <div class="indicators-row">
+                            <!-- RSI -->
+                            <div class="indicator-box">
+                                <div class="indicator-label">RSI</div>
+                                <div class="indicator-bar">
+                                    <div class="indicator-fill {{ pos.rsi_color }}" style="width: {{ pos.rsi_value }}%"></div>
+                                </div>
+                                <div class="indicator-value" style="color: {{ pos.rsi_text_color }}">
+                                    {{ '%.2f'|format(pos.rsi_value) }}
+                                    <span class="badge badge-{{ 'success' if pos.rsi_value < 30 else ('danger' if pos.rsi_value > 70 else 'warning') }}">
+                                        {{ 'Oversold' if pos.rsi_value < 30 else ('Overbought' if pos.rsi_value > 70 else 'Neutral') }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- MFI -->
+                            <div class="indicator-box">
+                                <div class="indicator-label">MFI</div>
+                                <div class="indicator-bar">
+                                    <div class="indicator-fill rsi-yellow" style="width: {{ pos.mfi_value }}%"></div>
+                                </div>
+                                <div class="indicator-value">
+                                    {{ '%.2f'|format(pos.mfi_value) }}
+                                    <span class="indicator-trend trend-{{ pos.mfi_trend_class }}">
+                                        {{ pos.mfi_trend }}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Statistics -->
+                        <div class="position-grid">
+                            <div class="position-metric">
+                                <div class="metric-label">Avg RSI</div>
+                                <div class="metric-value">{{ '%.2f'|format(pos.avg_rsi) }}</div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">RSI Range</div>
+                                <div class="metric-value">{{ pos.rsi_range }}</div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">Avg MFI</div>
+                                <div class="metric-value">{{ '%.2f'|format(pos.avg_mfi) }}</div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">Signals Count</div>
+                                <div class="metric-value">{{ pos.signal_count }}</div>
+                            </div>
+                        </div>
+
+                        <!-- Current Signal -->
+                        {% if pos.current_signal and pos.current_signal != 'Нет' %}
+                        <div class="signal-alert {{ pos.signal_class }}">
+                            <span class="signal-icon">{{ pos.signal_icon|safe }}</span>
+                            <strong>{{ pos.signal_title|safe }}</strong>: {{ pos.current_signal|safe }}
+                        </div>
+                        {% endif %}
+
+                        <!-- Market Data -->
+                        <div class="position-grid">
+                            <div class="position-metric">
+                                <div class="metric-label">Volume 24h</div>
+                                <div class="metric-value">${{ pos.volume_24h }}</div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">Change 24h</div>
+                                <div class="metric-value {{ 'positive' if pos.change_24h > 0 else 'negative' }}">
+                                    {{ '+' if pos.change_24h > 0 else '' }}{{ '%.2f'|format(pos.change_24h) }}%
+                                </div>
+                            </div>
+                            <div class="position-metric">
+                                <div class="metric-label">Momentum</div>
+                                <div class="metric-value">{{ pos.momentum }}</div>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+                            <button class="btn btn-danger" onclick="closePosition('{{ pos.symbol }}', '{{ 'Long' if pos.side == 'Buy' else 'Short' }}')">
+                                🔴 Close Position
+                            </button>
+                            <button class="btn btn-secondary" onclick="viewDetails('{{ pos.symbol }}')">
+                                📊 Details
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📭</div>
+                        <div>No active positions</div>
+                        <div class="timestamp">Waiting for new trades...</div>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function closePosition(symbol, direction) {
+            if (!confirm(`Close ${direction} position on ${symbol}?`)) return;
+            
+            fetch('/webhook', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    action: 'Close',
+                    symbol: symbol,
+                    direction: direction,
+                    reason: 'Manual close from UI'
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    alert('Position closed successfully!');
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.reason || 'Unknown error'));
+                }
+            })
+            .catch(err => {
+                alert('Error: ' + err.message);
+            });
+        }
+
+        function viewDetails(symbol) {
+            // TODO: Open modal with detailed info
+            alert('Details for ' + symbol + ' coming soon...');
+        }
+    </script>
+</body>
+</html>
