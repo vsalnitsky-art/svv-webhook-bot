@@ -61,10 +61,8 @@ def keep_alive():
     Механізм запобігання засипанню (Self-Ping).
     Пінгує сам себе кожні 5 хвилин.
     """
-    # Чекаємо трохи, щоб сервер Flask встиг запуститися
     time.sleep(5)
     
-    # Спроба визначити URL. RENDER_EXTERNAL_URL додається Render автоматично.
     external_url = os.environ.get('RENDER_EXTERNAL_URL')
     local_url = f'http://127.0.0.1:{config.PORT}/health'
     
@@ -81,7 +79,6 @@ def keep_alive():
         except Exception as e:
             logger.error(f"❌ Self-Ping Failed: {e}")
         
-        # Інтервал 5 хвилин (300 секунд)
         time.sleep(300)
 
 threading.Thread(target=keep_alive, daemon=True).start()
@@ -90,14 +87,16 @@ threading.Thread(target=keep_alive, daemon=True).start()
 def webhook():
     try:
         data = json.loads(request.get_data(as_text=True))
+        # Логування дії (Close або Buy/Sell)
         logger.info(f"🔔 SIGNAL RECEIVED: {data.get('symbol')} {data.get('action')}")
         
         result = bot_instance.place_order(data)
         
-        if result.get("status") == "ok":
-            return jsonify({"status": "ok"})
+        # Обробка статусів, що повернув bot.py
+        if result.get("status") in ["ok", "ignored"]:
+            return jsonify(result)
         else:
-            logger.error(f"Order placement failed: {result}")
+            logger.error(f"Order action failed: {result}")
             return jsonify(result), 400
             
     except Exception as e:
@@ -130,7 +129,7 @@ def scanner_page():
         logger.error(f"Error rendering scanner page: {e}")
     
     logs = stats_service.get_monitor_logs(30)
-    history = stats_service.get_trades(1) # За 1 день
+    history = stats_service.get_trades(1) 
     
     html = """
     <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Scanner</title>
