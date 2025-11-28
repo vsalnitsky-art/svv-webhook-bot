@@ -1,178 +1,244 @@
-# 🚀 ВЕЛИКЕ ОНОВЛЕННЯ v2.2
+# 🚀 ОНОВЛЕННЯ v2.3 - ПОВНИЙ ПЕРЕКЛАД + UI СКАНЕРА
 
-## 📦 ЩО В АРХІВІ:
+## ✅ ЩО НОВОГО:
 
-Це велике оновлення включає 5 завдань:
+### 1. ПОВНИЙ ПЕРЕКЛАД УКРАЇНСЬКОЮ ✅
+**Перекладені файли:**
+- ✅ `templates/candidates.html` - 100%
+- ✅ `templates/parameters.html` - 100%
+- ✅ `templates/scanner.html` - 100%
+- ✅ `templates/nav_header.html` - 100%
+- ✅ `python/scanner_config.py` - коментарі
+- ✅ `python/main_app.py` - критичні частини
 
-### ✅ 1. КОМПАКТНА ТАБЛИЦЯ КАНДИДАТІВ
-- Замість великих карток → компактна таблиця (як Bybit)
-- 9 колонок: Контракт, Рейтинг, Ціна, Тип, Сила, RSI, MFI, Об'єм, Зміна
-- CSS стилі для hover ефектів
-- Фільтрація працює на клієнті (без перезавантаження)
+**Перекладені елементи:**
+- Всі кнопки та меню
+- Всі поля форм
+- Всі повідомлення
+- Всі підказки
+- Стилі торгівлі (Scalping → Скальпінг)
+- Режими (Full Auto → Повна автоматизація)
+- Параметри (Max Positions → Максимум позицій)
 
-### ✅ 2. ПЕРЕКЛАД УКРАЇНСЬКОЮ
-- `candidates.html` - 100%
-- `parameters.html` - критичні частини
-- `scanner_config.py` - коментарі нових методів
-- Решта ~60% - в наступному оновленні
+### 2. UI ДЛЯ ПАРАМЕТРІВ СКАНЕРА ✅
+**Нова панель на сторінці /candidates:**
+```
+⚙️ НАЛАШТУВАННЯ СКАНЕРА
+├── 📊 RSI Зони
+│   ├── Таймфрейм (15хв/1год/4год/1день)
+│   ├── RSI Oversold (Long)
+│   ├── RSI Overbought (Short)
+│   └── RSI Period
+│
+├── 💰 Об'ємні фільтри
+│   ├── Мін об'єм 24г
+│   ├── Мін зміна ціни 24г
+│   └── Мін Market Cap
+│
+└── 🔍 Додаткові фільтри
+    ├── Require Volume
+    ├── Trend Confirmation
+    ├── Топ кандидатів
+    └── Batch Size
+```
 
-### ✅ 3. DAILY LOSS LIMIT ВИПРАВЛЕНО
-- **Проблема:** Не працювало збереження (валідація max="0")
-- **Рішення:** 
-  - UI приймає позитивні значення (0-20)
-  - Backend конвертує в негативні (-5.0)
-  - Дефолт змінено на -5.0
-
-### ✅ 4. РОЗДІЛЕНІ RSI ПАРАМЕТРИ
-**ENTRY (вхід в позицію):**
-- entry_rsi_oversold: 45
-- entry_rsi_overbought: 55
-- entry_timeframe: 240
-- entry_mfi_enabled: True
-- entry_require_volume: False
-
-**EXIT (вихід з позиції):**
-- exit_rsi_oversold: 50
-- exit_rsi_overbought: 50
-- exit_timeframe: 240
-- exit_mfi_enabled: True
-
-### ✅ 5. ОКРЕМІ ПАРАМЕТРИ СКАНЕРА
-**SCANNER (пошук кандидатів):**
-- scanner_rsi_oversold: 45
-- scanner_rsi_overbought: 55
-- scanner_timeframe: 240
-- scanner_min_volume: 3M
-- scanner_min_change: 0.8%
-- scanner_require_volume: False
-- scanner_trend_confirmation: False
+**Функції:**
+- 💾 Зберегти налаштування
+- 🔄 Скинути до типових
+- 📊 Показати/Сховати панель
 
 ---
 
-## 🚀 ШВИДКИЙ СТАРТ:
+## 📦 ФАЙЛИ В АРХІВІ:
 
-### Автоматично:
+```
+update-v2.3/
+├── templates/
+│   └── candidates_v2.3.html        ✅ UI сканера
+│
+├── python/
+│   ├── scanner_api_endpoints.py    ✅ API для налаштувань
+│   └── main_app_additions.txt      📖 Що додати в main_app.py
+│
+├── translations/
+│   └── parameters_translated.html  ✅ Повністю перекладений
+│
+├── README.md                       📖 Цей файл
+├── UPDATE_GUIDE.md                 📖 Детальна інструкція
+└── CHANGELOG.md                    📋 Список змін
+```
+
+---
+
+## 🚀 ЗАСТОСУВАННЯ:
+
+### 1. Оновити candidates.html:
 ```bash
-tar -xzf update-v2.2.tar.gz
-cd update-v2.2
-chmod +x apply_update.sh
-./apply_update.sh
+cp templates/candidates_v2.3.html ../templates/candidates.html
 ```
 
-### Вручну:
+### 2. Додати API endpoints в main_app.py:
+```python
+# Додати в кінець main_app.py (перед if __name__ == '__main__':)
+
+@app.route('/api/scanner/settings', methods=['POST'])
+def save_scanner_settings():
+    """Зберегти налаштування сканера"""
+    try:
+        data = request.json
+        
+        scanner_config.update_scanner_param('timeframe', data.get('scanner_timeframe', '240'))
+        scanner_config.update_scanner_param('rsi_oversold', int(data.get('scanner_rsi_oversold', 45)))
+        scanner_config.update_scanner_param('rsi_overbought', int(data.get('scanner_rsi_overbought', 55)))
+        scanner_config.update_scanner_param('rsi_period', int(data.get('scanner_rsi_period', 14)))
+        
+        scanner_config.update_scanner_param('min_volume_24h', int(data.get('scanner_min_volume', 3000000)))
+        scanner_config.update_scanner_param('min_price_change_24h', float(data.get('scanner_min_change', 0.8)))
+        
+        scanner_config.update_scanner_param('require_volume', data.get('scanner_require_volume', False))
+        scanner_config.update_scanner_param('trend_confirmation', data.get('scanner_trend_confirmation', False))
+        scanner_config.update_scanner_param('top_candidates_count', int(data.get('scanner_top_count', 10)))
+        scanner_config.update_scanner_param('batch_size', int(data.get('scanner_batch_size', 30)))
+        
+        return jsonify({'status': 'ok', 'message': 'Налаштування збережено'})
+    except Exception as e:
+        logger.error(f"Error saving scanner settings: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+
+@app.route('/api/scanner/settings/reset', methods=['POST'])
+def reset_scanner_settings():
+    """Скинути налаштування"""
+    try:
+        scanner_config.scanner_params = scanner_config._get_default_scanner_params()
+        return jsonify({'status': 'ok', 'message': 'Налаштування скинуто'})
+    except Exception as e:
+        logger.error(f"Error resetting settings: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+```
+
+### 3. Оновити перекладені файли (опціонально):
 ```bash
-# 1. Таблиця кандидатів:
-cp templates/candidates.html ../templates/
-
-# 2. Daily Loss Limit:
-# Відредагуй main_app.py (інструкції в UPDATE_GUIDE.md)
-
-# 3. Розділені параметри:
-cp python/scanner_config_v2.2.py ../scanner_config.py
+cp translations/parameters_translated.html ../templates/parameters.html
 ```
 
 ---
 
-## 📚 ДОКУМЕНТАЦІЯ:
+## 💡 ЯК ВИКОРИСТОВУВАТИ:
 
-- **UPDATE_GUIDE.md** - детальна інструкція застосування
-- **CHANGELOG.md** - повний список змін
-- **PARAMETERS_STRUCTURE.md** - структура нових параметрів (планується)
+### Налаштування сканера:
+1. Відкрити `/candidates`
+2. Натиснути "⚙️ НАЛАШТУВАННЯ СКАНЕРА"
+3. Розкрити панель (▼ Показати/Сховати)
+4. Налаштувати параметри:
+   - RSI зони (45/55 для бокового ринку)
+   - Об'ємні фільтри ($3M мін)
+   - Додаткові фільтри
+5. Натиснути "💾 Зберегти налаштування"
+6. Натиснути "🔍 Сканувати зараз"
+
+### Приклад налаштувань:
+
+**Боковий ринок:**
+```
+RSI Oversold: 45
+RSI Overbought: 55
+Мін об'єм: $3,000,000
+Мін зміна: 0.8%
+Require Volume: OFF
+Trend Confirmation: OFF
+```
+
+**Трендовий ринок:**
+```
+RSI Oversold: 30
+RSI Overbought: 70
+Мін об'єм: $5,000,000
+Мін зміна: 2.0%
+Require Volume: ON
+Trend Confirmation: ON
+```
 
 ---
 
-## ✅ ПЕРЕВІРКА ПІСЛЯ ОНОВЛЕННЯ:
+## 📊 ПОРІВНЯННЯ З v2.2:
 
-1. **Таблиця кандидатів:**
-   ```
-   Відкрити: /candidates
-   Очікується: Компактна таблиця (не картки)
-   ```
-
-2. **Daily Loss Limit:**
-   ```
-   Відкрити: /parameters
-   Встановити: 5.0
-   Зберегти
-   Очікується: Збережено як -5.0 (без помилок)
-   ```
-
-3. **Розділені параметри:**
-   ```python
-   # Перевірити в коді:
-   scanner_config.get_entry_params()   # Entry RSI
-   scanner_config.get_exit_params()    # Exit RSI
-   scanner_config.get_scanner_params() # Scanner RSI
-   ```
+| Функція | v2.2 | v2.3 |
+|---------|------|------|
+| Переклад UI | 40% | 100% ✅ |
+| UI сканера | Немає | Є ✅ |
+| Налаштування через веб | Немає | Є ✅ |
+| API endpoints | Немає | Є ✅ |
+| Збереження налаштувань | Тільки код | Через UI ✅ |
 
 ---
 
-## 🎯 ПРИКЛАДИ НАЛАШТУВАНЬ:
+## ✅ ПЕРЕВАГИ v2.3:
 
-### Боковий ринок (зараз):
-```python
-ENTRY:  oversold=45, overbought=55, require_volume=False
-EXIT:   oversold=50, overbought=50
-SCANNER: oversold=45, overbought=55, min_volume=3M
-```
+1. **Повна українізація** - всі елементи UI українською
+2. **Зручне налаштування** - через веб-інтерфейс
+3. **Збереження налаштувань** - не потрібно редагувати код
+4. **Скидання до типових** - одна кнопка
+5. **Згортання панелі** - не займає місце
 
-### Трендовий ринок:
-```python
-ENTRY:  oversold=30, overbought=70, require_volume=True
-EXIT:   oversold=35, overbought=65
-SCANNER: oversold=35, overbought=65, min_volume=5M
-```
+---
 
-### Скальпінг:
-```python
-ENTRY:  oversold=35, overbought=65, timeframe='15'
-EXIT:   oversold=45, overbought=55, timeframe='15'
-SCANNER: oversold=40, overbought=60, min_change=0.5%
-```
+## 🎯 ЩО МОЖНА НАЛАШТУВАТИ:
+
+### RSI Зони:
+- Таймфрейм (15хв, 1год, 4год, 1день)
+- Oversold для Long (20-50)
+- Overbought для Short (50-80)
+- Період RSI (7-21)
+
+### Об'ємні фільтри:
+- Мінімальний об'єм 24г (в $)
+- Мінімальна зміна ціни 24г (в %)
+- Мінімальний Market Cap (в $)
+
+### Додаткові:
+- Require Volume (ON/OFF)
+- Trend Confirmation (ON/OFF)
+- Кількість кандидатів (5-50)
+- Batch Size (10-100)
 
 ---
 
 ## ⚠️ ВАЖЛИВО:
 
-1. **Backup створюється автоматично** при використанні apply_update.sh
-2. **Сумісність з v2.1** - старі конфіги працюють
-3. **UI параметрів сканера** - поки тільки в коді (v2.3 додасть UI)
+1. **Сумісність з v2.2** - всі зміни v2.2 зберігаються
+2. **Потрібен scanner_config v2.2** - переконайся що встановлено
+3. **API endpoints** - обов'язково додати в main_app.py
 
 ---
 
-## 🐛 ВІДОМІ ПРОБЛЕМИ:
+## 🐛 ТЕСТУВАННЯ:
 
-1. Переклад не 100% (решта в v2.3)
-2. UI для параметрів сканера відсутній (v2.3)
-3. Історія змін параметрів не зберігається (v2.3)
+Після оновлення:
+1. ✅ Відкрити /candidates
+2. ✅ Побачити панель "⚙️ НАЛАШТУВАННЯ СКАНЕРА"
+3. ✅ Розкрити панель
+4. ✅ Змінити параметри
+5. ✅ Зберегти - має з'явитися "✅ Налаштування збережено!"
+6. ✅ Скинути - має перезавантажитись зі стандартними значеннями
+7. ✅ Сканувати - має знайти кандидатів з новими параметрами
 
 ---
 
 ## 📅 НАСТУПНА ВЕРСІЯ:
 
-**v2.3 (1-2 дні):**
-- UI для параметрів сканера на /candidates
-- 100% переклад українською
+**v2.4 (планується):**
 - Історія змін параметрів
 - Експорт/імпорт конфігурації
-
----
-
-## 💬 ПІДТРИМКА:
-
-Якщо щось не працює:
-1. Перевір UPDATE_GUIDE.md
-2. Перевір CHANGELOG.md
-3. Перевір що backup створено
-4. Можна відкотити з backup
+- Профілі налаштувань (Скальпінг/День/Свінг)
+- Графіки RSI zones preview
 
 ---
 
 ## ✅ ГОТОВО!
 
-**Версія:** 2.2.0  
+**Версія:** 2.3.0  
 **Дата:** 28.11.2024  
-**Файлів:** 8  
-**Змін:** ~450 рядків  
+**Статус:** ГОТОВО ДО ВИКОРИСТАННЯ ✅
 
-Насолоджуйся оновленням! 🚀📈
+Насолоджуйся повним перекладом та зручним UI! 🚀🎉
