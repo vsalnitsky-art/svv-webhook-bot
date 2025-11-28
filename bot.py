@@ -5,6 +5,7 @@ from pybit.unified_trading import HTTP
 from bot_config import config
 from config import get_api_credentials
 from statistics_service import stats_service
+from tp_strategy_config import tp_config  # ⭐ НОВИЙ ІМПОРТ
 
 logger = logging.getLogger(__name__)
 
@@ -190,10 +191,27 @@ class BybitTradingBot:
                 
                 logger.info(f"🛡️ SETTING SL for {symbol} from JSON: {sl_price} ({sl_pct}%)")
                 self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_price), positionIdx=0)
-                return {"status": "ok", "sl_price": sl_price}
+                
+                # 3. TAKE PROFIT (ТІЛЬКИ З JSON) ⭐ НОВИЙ v2.4
+                logger.info(f"🎯 Checking for TP settings in JSON...")
+                tp_result = self.apply_tp_from_json(data, symbol, price, action, qty)
+                
+                return {
+                    "status": "ok", 
+                    "sl_price": sl_price,
+                    "tp_result": tp_result
+                }
             else:
-                logger.info(f"⚠️ NO SL in JSON for {symbol}. Position opened without SL.")
-                return {"status": "ok", "sl_price": None}
+                logger.info(f"⚠️ NO SL in JSON for {symbol}. Checking for TP...")
+                
+                # Навіть без SL можна встановити TP
+                tp_result = self.apply_tp_from_json(data, symbol, price, action, qty)
+                
+                return {
+                    "status": "ok", 
+                    "sl_price": None,
+                    "tp_result": tp_result
+                }
 
         except Exception as e:
             logger.error(f"Order Processing Critical Error: {e}")
@@ -239,5 +257,152 @@ class BybitTradingBot:
 
     def get_available_balance(self):
         return self.get_bal()
+    
+    # ⭐ НОВІ МЕТОДИ v2.4 - TAKE PROFIT STRATEGIES
+    
+    def set_take_profit_levels(self, symbol: str, entry_price: float, side: str, 
+                               quantity: float, strategy_name: str = None):
+        """
+        Встановити рівні Take Profit за обраною стратегією
+        
+        Args:
+            symbol: Символ монети (BTCUSDT)
+            entry_price: Ціна входу
+            side: 'Buy' (Long) або 'Sell' (Short)
+            quantity: Загальна кількість позиції
+            strategy_name: Назва стратегії (None = поточна)
+        """
+        try:
+            norm = self.normalize(symbol)
+            
+            # Отримати стратегію
+            strategy = tp_config.get_strategy(strategy_name)
+            
+            # Якщо стратегія = 'none', не встановлювати TP
+            if not strategy['enabled'] or strategy_name == 'none':
+                logger.info(f"ℹ️ TP Strategy 'none' selected - no TP will be set for {symbol}")
+                return {'status': 'ok', 'tp_levels': 0, 'message': 'TP not set (strategy: none)'}
+            
+            # Розрахувати ціни TP
+            tp_levels = tp_config.calculate_tp_prices(entry_price, side, strategy_name)
+            
+            if not tp_levels:
+                logger.warning(f"⚠️ No TP levels calculated for {symbol}")
+                return {'status': 'warning', 'message': 'No TP levels'}
+            
+            # Отримати інструмент для округлення
+            lot, tick = self.get_instr(norm)
+            if not lot or not tick:
+                logger.error(f"❌ Failed to get instrument info for {symbol}")
+                return {'status': 'error', 'message': 'Failed to get instrument info'}
+            
+            qty_step = float(lot['qtyStep'])
+            tick_size = float(tick['tickSize'])
+            
+            logger.info(f"🎯 SETTING {len(tp_levels)} TP LEVELS for {symbol} ({strategy['name_ua']})")
+            
+            set_tps = []
+            for i, level in enumerate(tp_levels):
+                tp_price = self.round_val(level['price'], tick_size)
+                tp_qty_pct = level['quantity_percent']
+                tp_qty = self.round_val(quantity * (tp_qty_pct / 100), qty_step)
+                
+                # Мінімальна кількість
+                min_qty = float(lot['minOrderQty'])
+                if tp_qty < min_qty:
+                    tp_qty = min_qty
+                
+                logger.info(f"   Level {i+1}: Price={tp_price} ({level['profit_percent']:.2f}%), "
+                           f"Qty={tp_qty} ({tp_qty_pct}%)")
+                
+                # Встановити TP через limit order
+                try:
+                    # Для TP потрібен зворотний side
+                    tp_side = 'Sell' if side == 'Buy' else 'Buy'
+                    
+                    result = self.session.place_order(
+                        category="linear",
+                        symbol=norm,
+                        side=tp_side,
+                        orderType="Limit",
+                        qty=str(tp_qty),
+                        price=str(tp_price),
+                        reduceOnly=True,  # Важливо!
+                        timeInForce="GTC"
+                    )
+                    
+                    if result.get('retCode') == 0:
+                        order_id = result['result']['orderId']
+                        set_tps.append({
+                            'level': i + 1,
+                            'price': tp_price,
+                            'quantity': tp_qty,
+                            'profit_percent': level['profit_percent'],
+                            'order_id': order_id
+                        })
+                        logger.info(f"   ✅ TP Level {i+1} set: Order ID {order_id}")
+                    else:
+                        logger.error(f"   ❌ Failed to set TP Level {i+1}: {result}")
+                
+                except Exception as e:
+                    logger.error(f"   ❌ Error setting TP Level {i+1}: {e}")
+            
+            if set_tps:
+                logger.info(f"✅ Successfully set {len(set_tps)}/{len(tp_levels)} TP levels for {symbol}")
+                return {
+                    'status': 'ok',
+                    'tp_levels': len(set_tps),
+                    'strategy': strategy['name_ua'],
+                    'levels': set_tps
+                }
+            else:
+                logger.warning(f"⚠️ No TP levels were set for {symbol}")
+                return {'status': 'warning', 'message': 'Failed to set TP levels'}
+        
+        except Exception as e:
+            logger.error(f"❌ Error in set_take_profit_levels: {e}")
+            return {'status': 'error', 'message': str(e)}
+    
+    def apply_tp_from_json(self, data: Dict, symbol: str, entry_price: float, 
+                          side: str, quantity: float):
+        """
+        Застосувати TP з JSON повідомлення
+        
+        Підтримує різні формати:
+        1. "tpStrategy": "balanced" - використати стратегію
+        2. "takeProfitPercent": 2.0 - один рівень TP
+        3. "tpLevels": [{percent: 1.0, quantity_percent: 50}, ...] - власні рівні
+        """
+        try:
+            # Перевірка 1: Чи є tpStrategy?
+            if 'tpStrategy' in data:
+                strategy = data['tpStrategy']
+                logger.info(f"📊 Using TP strategy from JSON: {strategy}")
+                return self.set_take_profit_levels(symbol, entry_price, side, quantity, strategy)
+            
+            # Перевірка 2: Чи є tpLevels (custom)?
+            elif 'tpLevels' in data and isinstance(data['tpLevels'], list):
+                tp_levels = data['tpLevels']
+                logger.info(f"📊 Using custom TP levels from JSON: {len(tp_levels)} levels")
+                tp_config.set_custom_targets(tp_levels)
+                return self.set_take_profit_levels(symbol, entry_price, side, quantity, 'custom')
+            
+            # Перевірка 3: Чи є takeProfitPercent (single)?
+            elif 'takeProfitPercent' in data:
+                tp_pct = float(data['takeProfitPercent'])
+                logger.info(f"📊 Using single TP from JSON: {tp_pct}%")
+                # Створити single strategy
+                single_target = [{'percent': tp_pct, 'quantity_percent': 100}]
+                tp_config.set_custom_targets(single_target)
+                return self.set_take_profit_levels(symbol, entry_price, side, quantity, 'custom')
+            
+            # Якщо нічого немає - використати дефолтну стратегію
+            else:
+                logger.info(f"📊 Using default TP strategy: {tp_config.current_strategy}")
+                return self.set_take_profit_levels(symbol, entry_price, side, quantity)
+        
+        except Exception as e:
+            logger.error(f"❌ Error applying TP from JSON: {e}")
+            return {'status': 'error', 'message': str(e)}
 
 bot_instance = BybitTradingBot()
