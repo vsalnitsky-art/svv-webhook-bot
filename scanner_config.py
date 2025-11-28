@@ -136,7 +136,17 @@ class ScannerConfig:
         # Загрузить параметры из выбранных пресетов
         self._apply_presets()
         
-        logger.info("✅ Scanner config initialized with defaults")
+        # ⭐ НОВИЙ v2.5: Завантажити з БД
+        try:
+            from config_persistence import config_persistence
+            loaded = config_persistence.load_config(self)
+            if loaded:
+                logger.info("✅ Scanner config loaded from database")
+            else:
+                logger.info("✅ Scanner config initialized with defaults")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not load config from DB: {e}, using defaults")
+            logger.info("✅ Scanner config initialized with defaults")
     
     def _apply_presets(self):
         """Применить выбранные пресеты"""
@@ -291,6 +301,8 @@ class ScannerConfig:
             self.trading_style = style
             self._apply_presets()
             logger.info(f"✅ Trading style updated: {style}")
+            # ⭐ Автозбереження
+            self._save_to_db()
         else:
             logger.warning(f"⚠️ Unknown trading style: {style}")
     
@@ -300,6 +312,8 @@ class ScannerConfig:
             self.aggressiveness = mode
             self._apply_presets()
             logger.info(f"✅ Aggressiveness updated: {mode}")
+            # ⭐ Автозбереження
+            self._save_to_db()
         else:
             logger.warning(f"⚠️ Unknown aggressiveness mode: {mode}")
     
@@ -309,6 +323,8 @@ class ScannerConfig:
             self.automation_mode = mode
             self._apply_presets()
             logger.info(f"✅ Automation mode updated: {mode}")
+            # ⭐ Автозбереження
+            self._save_to_db()
         else:
             logger.warning(f"⚠️ Unknown automation mode: {mode}")
     
@@ -334,6 +350,9 @@ class ScannerConfig:
             return
         
         logger.info(f"✅ Parameter updated: {category}.{key} = {value}")
+        
+        # ⭐ НОВИЙ v2.5: Автозбереження в БД
+        self._save_to_db()
     
     def get_current_volatility(self, market_data: Dict) -> float:
         """
@@ -441,6 +460,9 @@ class ScannerConfig:
         
         self.indicator_timeframe = timeframe
         logger.info(f"✅ Timeframe set to {timeframe}")
+        
+        # ⭐ НОВИЙ v2.5: Автозбереження
+        self._save_to_db()
     
     def get_timeframe_minutes(self) -> int:
         """Получить таймфрейм в минутах (для расчётов)"""
@@ -464,6 +486,9 @@ class ScannerConfig:
             # Якщо параметра немає, додати його
             self.scanner_params[key] = value
             logger.warning(f"⚠️ Added new scanner param: {key} = {value}")
+        
+        # ⭐ НОВИЙ v2.5: Автозбереження
+        self._save_to_db()
     
     def update_entry_param(self, key: str, value: Any):
         """Оновити параметр входу (для сумісності з v2.2)"""
@@ -477,12 +502,18 @@ class ScannerConfig:
         else:
             self.indicator_params[key] = value
             logger.info(f"✅ Entry param updated: {key} = {value}")
+        
+        # ⭐ Автозбереження
+        self._save_to_db()
     
     def update_exit_param(self, key: str, value: Any):
         """Оновити параметр виходу (для сумісності з v2.2)"""
         # Поки що зберігаємо в indicator_params
         self.indicator_params[f'exit_{key}'] = value
         logger.info(f"✅ Exit param updated: {key} = {value}")
+        
+        # ⭐ Автозбереження
+        self._save_to_db()
     
     def get_entry_params(self) -> Dict[str, Any]:
         """Отримати параметри входу (для сумісності)"""
@@ -491,6 +522,14 @@ class ScannerConfig:
     def get_exit_params(self) -> Dict[str, Any]:
         """Отримати параметри виходу (для сумісності)"""
         return self.indicator_params.copy()
+    
+    def _save_to_db(self):
+        """Зберегти конфігурацію в БД (внутрішній метод)"""
+        try:
+            from config_persistence import config_persistence
+            config_persistence.save_config(self)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not save config to DB: {e}")
     
     def __repr__(self):
         return f"ScannerConfig(style={self.trading_style}, agg={self.aggressiveness}, auto={self.automation_mode})"
