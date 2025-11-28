@@ -567,6 +567,15 @@ def parameters_page():
                 scanner_config.update_param('auto_close', 'rsi_exit_mode', request.form.get('rsi_exit_mode', 'wait_zone_exit'))
                 scanner_config.update_param('auto_close', 'mfi_check_mode', request.form.get('mfi_check_mode', 'after_obv'))
                 
+                # ⭐ НОВЕ v2.4: TP Strategy
+                tp_strategy = request.form.get('tp_strategy', 'balanced')
+                try:
+                    from tp_strategy_config import tp_config
+                    tp_config.set_strategy(tp_strategy)
+                    logger.info(f"✅ TP Strategy set to: {tp_strategy}")
+                except Exception as e:
+                    logger.error(f"❌ Error setting TP strategy: {e}")
+                
                 # Scanner
                 scanner_config.update_param('scanner', 'enabled', 'scanner_enabled' in request.form)
                 scanner_config.update_param('scanner', 'scan_interval', int(request.form.get('scan_interval', 60)))
@@ -626,9 +635,17 @@ def parameters_page():
         except:
             candidates_count = 0
         
+        # Отримати поточну TP стратегію
+        try:
+            from tp_strategy_config import tp_config
+            current_tp_strategy = tp_config.current_strategy
+        except:
+            current_tp_strategy = 'balanced'
+        
         return render_template('parameters.html',
                              params=params,
                              current_style=scanner_config.trading_style,
+                             current_tp_strategy=current_tp_strategy,  # ⭐ НОВЕ
                              message=message,
                              message_type=message_type,
                              # Для навигации ⭐

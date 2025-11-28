@@ -324,6 +324,66 @@
                 </div>
             </div>
 
+            <!-- ⭐ НОВА СЕКЦІЯ v2.4: Take Profit Strategies -->
+            <div class="card">
+                <div class="card-header">
+                    🎯 TAKE PROFIT СТРАТЕГІЇ
+                </div>
+                <div class="card-body">
+                    <div class="param-section">
+                        <div class="param-group">
+                            <label class="param-label">Стратегія Take Profit</label>
+                            <select name="tp_strategy" class="param-input" id="tpStrategySelect" onchange="updateTPPreview()">
+                                <option value="none" {% if current_tp_strategy == 'none' %}selected{% endif %}>Без TP (закриття по сигналу)</option>
+                                <option value="single" {% if current_tp_strategy == 'single' %}selected{% endif %}>Одиночний TP (1.5%)</option>
+                                <option value="conservative" {% if current_tp_strategy == 'conservative' %}selected{% endif %}>Консервативний (2 рівні: 0.8%, 2.0%)</option>
+                                <option value="balanced" {% if current_tp_strategy == 'balanced' or not current_tp_strategy %}selected{% endif %}>Збалансований (3 рівні: 1%, 2%, 3.5%) ⭐</option>
+                                <option value="aggressive" {% if current_tp_strategy == 'aggressive' %}selected{% endif %}>Агресивний (4 рівні: 0.5%, 1.5%, 3%, 5%)</option>
+                                <option value="scalper" {% if current_tp_strategy == 'scalper' %}selected{% endif %}>Скальпер (2 рівні: 0.3%, 0.8%)</option>
+                                <option value="hodler" {% if current_tp_strategy == 'hodler' %}selected{% endif %}>Тримач (3 рівні: 3%, 6%, 10%)</option>
+                                <option value="fibonacci" {% if current_tp_strategy == 'fibonacci' %}selected{% endif %}>Фібоначчі (4 рівні)</option>
+                                <option value="custom" {% if current_tp_strategy == 'custom' %}selected{% endif %}>Власний</option>
+                            </select>
+                            <div class="param-help">Оберіть стратегію для автоматичного встановлення Take Profit</div>
+                        </div>
+
+                        <!-- Опис стратегії -->
+                        <div id="tpDescription" style="background: var(--bg-secondary); padding: 1rem; border-radius: 6px; margin-top: 1rem; border-left: 3px solid var(--blue);">
+                            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                                <strong>Збалансований (Дефолт):</strong>
+                            </div>
+                            <div style="font-size: 0.85rem; color: var(--text-disabled); line-height: 1.5;">
+                                • Level 1: +1.0% → Закрити 33% позиції<br>
+                                • Level 2: +2.0% → Закрити 33% позиції<br>
+                                • Level 3: +3.5% → Закрити 34% позиції<br>
+                                <br>
+                                <em>Поступове фіксування прибутку. Гарантує прибуток на першому рівні, залишок може дати більше.</em>
+                            </div>
+                        </div>
+
+                        <!-- Власні рівні (якщо custom) -->
+                        <div id="customTPLevels" style="display: none; margin-top: 1rem;">
+                            <div style="font-weight: bold; margin-bottom: 0.5rem; color: var(--text-secondary);">
+                                Власні рівні TP:
+                            </div>
+                            <div id="customLevelsList"></div>
+                            <button type="button" onclick="addCustomTPLevel()" class="btn btn-secondary" style="margin-top: 0.5rem;">
+                                ➕ Додати рівень
+                            </button>
+                        </div>
+
+                        <!-- Трейлінг TP (майбутня функція) -->
+                        <div class="param-group" style="margin-top: 1.5rem;">
+                            <label class="param-label" style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="checkbox" name="use_trailing_tp" disabled>
+                                <span>Використовувати Trailing TP (Coming Soon)</span>
+                            </label>
+                            <div class="param-help">Динамічне переміщення TP за ціною (в розробці)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Auto-Close Parameters -->
             <div class="card">
                 <div class="card-header">
@@ -596,6 +656,119 @@
                 })
                 .catch(err => alert('Export error: ' + err.message));
         }
+
+        // ⭐ НОВІ ФУНКЦІЇ v2.4 - TP Strategies
+        const tpStrategies = {
+            none: {
+                name: 'Без TP',
+                description: 'TP не встановлюється. Закриття тільки вручну або по сигналу.',
+                levels: []
+            },
+            single: {
+                name: 'Одиночний TP',
+                description: 'Один рівень Take Profit на всю позицію.',
+                levels: ['Level 1: +1.5% → Закрити 100%']
+            },
+            conservative: {
+                name: 'Консервативний',
+                description: 'Швидкий невеликий прибуток + залишок позиції.',
+                levels: [
+                    'Level 1: +0.8% → Закрити 50%',
+                    'Level 2: +2.0% → Закрити 50%'
+                ]
+            },
+            balanced: {
+                name: 'Збалансований (Дефолт)',
+                description: 'Поступове фіксування прибутку.',
+                levels: [
+                    'Level 1: +1.0% → Закрити 33%',
+                    'Level 2: +2.0% → Закрити 33%',
+                    'Level 3: +3.5% → Закрити 34%'
+                ]
+            },
+            aggressive: {
+                name: 'Агресивний',
+                description: 'Максимальний потенціал прибутку.',
+                levels: [
+                    'Level 1: +0.5% → Закрити 25%',
+                    'Level 2: +1.5% → Закрити 25%',
+                    'Level 3: +3.0% → Закрити 25%',
+                    'Level 4: +5.0% → Закрити 25%'
+                ]
+            },
+            scalper: {
+                name: 'Скальпер',
+                description: 'Швидкі невеликі прибутки.',
+                levels: [
+                    'Level 1: +0.3% → Закрити 50%',
+                    'Level 2: +0.8% → Закрити 50%'
+                ]
+            },
+            hodler: {
+                name: 'Тримач',
+                description: 'Дати прибутковим угодам рости.',
+                levels: [
+                    'Level 1: +3.0% → Закрити 30%',
+                    'Level 2: +6.0% → Закрити 30%',
+                    'Level 3: +10.0% → Закрити 40%'
+                ]
+            },
+            fibonacci: {
+                name: 'Фібоначчі',
+                description: 'На основі рівнів Фібоначчі.',
+                levels: [
+                    'Level 1: +0.618% → Закрити 25%',
+                    'Level 2: +1.618% (Golden) → Закрити 25%',
+                    'Level 3: +2.618% → Закрити 25%',
+                    'Level 4: +4.236% → Закрити 25%'
+                ]
+            },
+            custom: {
+                name: 'Власний',
+                description: 'Налаштовані користувачем рівні.',
+                levels: ['Налаштуйте власні рівні нижче']
+            }
+        };
+
+        function updateTPPreview() {
+            const select = document.getElementById('tpStrategySelect');
+            const strategy = select.value;
+            const info = tpStrategies[strategy];
+            const descDiv = document.getElementById('tpDescription');
+            const customDiv = document.getElementById('customTPLevels');
+
+            if (strategy === 'custom') {
+                customDiv.style.display = 'block';
+            } else {
+                customDiv.style.display = 'none';
+            }
+
+            let html = `
+                <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                    <strong>${info.name}:</strong>
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-disabled); line-height: 1.5;">
+            `;
+
+            if (info.levels.length > 0) {
+                info.levels.forEach(level => {
+                    html += `• ${level}<br>`;
+                });
+                html += '<br>';
+            }
+
+            html += `<em>${info.description}</em></div>`;
+            descDiv.innerHTML = html;
+        }
+
+        function addCustomTPLevel() {
+            alert('Custom TP levels - в розробці. Використовуйте JSON для налаштування.');
+        }
+
+        // Ініціалізація при завантаженні
+        document.addEventListener('DOMContentLoaded', function() {
+            updateTPPreview();
+        });
     </script>
 </body>
 </html>
