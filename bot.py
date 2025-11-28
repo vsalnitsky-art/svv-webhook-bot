@@ -1,11 +1,12 @@
 import logging
 import decimal
 from datetime import datetime
+from typing import Dict, Any  # ⭐ ДОДАНО
 from pybit.unified_trading import HTTP
 from bot_config import config
 from config import get_api_credentials
 from statistics_service import stats_service
-from tp_strategy_config import tp_config  # ⭐ НОВИЙ ІМПОРТ
+from tp_strategy_config import tp_config
 
 logger = logging.getLogger(__name__)
 
