@@ -6,14 +6,144 @@
     <title>Кандидати - Сканер v2.1</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/scanner.css') }}">
     <meta http-equiv="refresh" content="60">
+    <style>
+        /* Стилі для таблиці кандидатів */
+        .candidates-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .candidates-table thead {
+            background: var(--bg-tertiary);
+            border-bottom: 2px solid var(--border);
+        }
+        
+        .candidates-table th {
+            padding: 1rem 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .candidates-table th:first-child {
+            padding-left: 1.5rem;
+        }
+        
+        .candidates-table tbody tr {
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+        }
+        
+        .candidates-table tbody tr:hover {
+            background: var(--bg-tertiary);
+        }
+        
+        .candidates-table tbody tr:last-child {
+            border-bottom: none;
+        }
+        
+        .candidates-table td {
+            padding: 1rem 0.75rem;
+            font-size: 0.9rem;
+            color: var(--text-primary);
+        }
+        
+        .candidates-table td:first-child {
+            padding-left: 1.5rem;
+        }
+        
+        .symbol-cell {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .symbol-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+        }
+        
+        .symbol-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+        
+        .direction-long {
+            color: var(--green);
+            font-weight: 600;
+        }
+        
+        .direction-short {
+            color: var(--red);
+            font-weight: 600;
+        }
+        
+        .pnl-positive {
+            color: var(--green);
+            font-weight: 600;
+        }
+        
+        .pnl-negative {
+            color: var(--red);
+            font-weight: 600;
+        }
+        
+        .status-success {
+            background: rgba(39, 174, 96, 0.2);
+            color: var(--green);
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        
+        .status-loss {
+            background: rgba(231, 76, 60, 0.2);
+            color: var(--red);
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        
+        .signal-strong {
+            color: var(--yellow);
+        }
+        
+        .signal-regular {
+            color: var(--blue);
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-disabled);
+        }
+        
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+    </style>
 </head>
 <body>
-    <!-- Navigation Header -->
+    <!-- Навігація -->
     {% include 'nav_header.html' %}
 
-    <!-- Container -->
+    <!-- Контейнер -->
     <div class="container">
-        <!-- Stats Bar -->
+        <!-- Панель статистики -->
         <div class="stats-bar">
             <div class="stat-item">
                 <div class="stat-value">{{ total_scans }}</div>
@@ -21,11 +151,11 @@
             </div>
             <div class="stat-item">
                 <div class="stat-value">{{ candidates_count }}</div>
-                <div class="stat-label">Candidates Found</div>
+                <div class="stat-label">Знайдено кандидатів</div>
             </div>
             <div class="stat-item">
                 <div class="stat-value">{{ scan_duration }}s</div>
-                <div class="stat-label">Останнє сканування Duration</div>
+                <div class="stat-label">Тривалість сканування</div>
             </div>
             <div class="stat-item">
                 <div class="stat-value timestamp">{{ last_scan_time }}</div>
@@ -33,186 +163,135 @@
             </div>
         </div>
 
-        <!-- Filters -->
+        <!-- Фільтри -->
         <div class="card">
             <div class="card-header">
                 <span>🔍 ФІЛЬТРИ</span>
             </div>
             <div class="card-body">
-                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end;">
                     <div>
-                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Напрямок:</label>
+                        <label style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 0.5rem;">Напрямок:</label>
                         <select id="filterDirection" onchange="applyFilters()" style="padding: 0.5rem; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px;">
-                            <option value="all" {{ 'selected' if filter_direction == 'all' else '' }}>All</option>
-                            <option value="long" {{ 'selected' if filter_direction == 'long' else '' }}>Тільки Long</option>
-                            <option value="short" {{ 'selected' if filter_direction == 'short' else '' }}>Тільки Short</option>
+                            <option value="all">Всі напрямки</option>
+                            <option value="long">Тільки Long</option>
+                            <option value="short">Тільки Short</option>
                         </select>
                     </div>
                     <div>
-                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Сила сигналу:</label>
+                        <label style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 0.5rem;">Сила сигналу:</label>
                         <select id="filterStrength" onchange="applyFilters()" style="padding: 0.5rem; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px;">
-                            <option value="all" {{ 'selected' if filter_strength == 'all' else '' }}>All</option>
-                            <option value="strong" {{ 'selected' if filter_strength == 'strong' else '' }}>Тільки сильні</option>
-                            <option value="regular" {{ 'selected' if filter_strength == 'regular' else '' }}>Тільки звичайні</option>
+                            <option value="all">Всі сигнали</option>
+                            <option value="strong">Тільки сильні</option>
+                            <option value="regular">Тільки звичайні</option>
                         </select>
                     </div>
                     <div>
-                        <label style="font-size: 0.85rem; color: var(--text-secondary);">Мін рейтинг:</label>
-                        <input type="number" id="filterРейтинг" value="{{ min_rating }}" min="0" max="100" onchange="applyFilters()" style="padding: 0.5rem; width: 80px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px;">
+                        <label style="font-size: 0.85rem; color: var(--text-secondary); display: block; margin-bottom: 0.5rem;">Мін рейтинг:</label>
+                        <input type="number" id="filterRating" value="0" min="0" max="10" step="0.5" onchange="applyFilters()" style="padding: 0.5rem; width: 80px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px;">
                     </div>
-                    <div style="margin-left: auto;">
+                    <div style="margin-left: auto; display: flex; gap: 0.5rem;">
                         <button onclick="resetFilters()" class="btn btn-secondary">🔄 Скинути</button>
-                        <button onclick="manualScan()" class="btn btn-secondary" id="scanBtn">🔍 Scan Now</button>
+                        <button onclick="manualScan()" class="btn btn-primary" id="scanBtn">🔍 Сканувати зараз</button>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Candidates -->
+        <!-- Таблиця кандидатів -->
         <div class="card">
             <div class="card-header">
-                <span>🎯 ТОП КАНДИДАТИ ({{ candidates|length }})</span>
+                <span>🎯 КАНДИДАТИ ({{ candidates|length }})</span>
                 <span class="timestamp">Оновлено: {{ update_time }}</span>
             </div>
-            <div class="card-body">
+            <div class="card-body" style="padding: 0;">
                 {% if candidates %}
-                    {% for candidate in candidates %}
-                    <div class="position-card" data-direction="{{ candidate.direction.lower() }}" data-strength="{{ candidate.signal_strength.lower() }}" data-rating="{{ candidate.rating }}">
-                        <!-- Header -->
-                        <div class="position-header">
-                            <div>
-                                <span class="position-symbol">
-                                    {% if candidate.rank == 1 %}🥇{% elif candidate.rank == 2 %}🥈{% elif candidate.rank == 3 %}🥉{% else %}{{ candidate.rank }}.{% endif %}
-                                    {{ candidate.symbol }}
-                                </span>
-                                <span class="position-side {{ 'long' if candidate.direction == 'Long' else 'short' }}">
-                                    {{ '🟢 LONG' if candidate.direction == 'Long' else '🔴 SHORT' }}
-                                </span>
-                                <span class="badge badge-{{ 'success' if candidate.signal_strength == 'Strong' else 'warning' }}">
-                                    {{ '⭐⭐⭐ ' if candidate.signal_strength == 'Strong' else '⭐⭐ ' }}{{ candidate.signal_strength }}
-                                </span>
-                            </div>
-                            <div>
-                                <span class="badge badge-info" style="font-size: 1rem;">
-                                    Рейтинг: {{ candidate.rating }}/100
-                                </span>
-                            </div>
-                        </div>
-
-                        <!-- Рейтинг Bar -->
-                        <div style="margin-bottom: 1rem;">
-                            <div class="indicator-bar" style="height: 12px;">
-                                <div class="indicator-fill {{ 'rsi-green' if candidate.rating >= 80 else ('rsi-yellow' if candidate.rating >= 60 else 'rsi-red') }}" 
-                                     style="width: {{ candidate.rating }}%"></div>
-                            </div>
-                        </div>
-
-                        <!-- Main Info Grid -->
-                        <div class="position-grid">
-                            <div class="position-metric">
-                                <div class="metric-label">Поточна ціна</div>
-                                <div class="metric-value">${{ '%.2f'|format(candidate.price) }}</div>
-                            </div>
-                            <div class="position-metric">
-                                <div class="metric-label">24h Change</div>
-                                <div class="metric-value {{ 'positive' if candidate.change_24h > 0 else 'negative' }}">
-                                    {{ '+' if candidate.change_24h > 0 else '' }}{{ '%.2f'|format(candidate.change_24h) }}%
-                                </div>
-                            </div>
-                            <div class="position-metric">
-                                <div class="metric-label">24h Volume</div>
-                                <div class="metric-value">${{ candidate.volume_24h_formatted }}</div>
-                            </div>
-                        </div>
-
-                        <!-- Indicators -->
-                        <div class="indicators-row">
-                            <!-- RSI -->
-                            <div class="indicator-box">
-                                <div class="indicator-label">RSI</div>
-                                <div class="indicator-bar">
-                                    <div class="indicator-fill {{ candidate.rsi_color }}" style="width: {{ candidate.rsi }}%"></div>
-                                </div>
-                                <div class="indicator-value" style="color: {{ candidate.rsi_text_color }}">
-                                    {{ '%.2f'|format(candidate.rsi) }}
-                                    <span class="badge badge-{{ 'success' if candidate.rsi < 30 else ('danger' if candidate.rsi > 70 else 'warning') }}">
-                                        {{ 'Oversold' if candidate.rsi < 30 else ('Overbought' if candidate.rsi > 70 else 'Neutral') }}
+                    <table class="candidates-table" id="candidatesTable">
+                        <thead>
+                            <tr>
+                                <th>Контракт</th>
+                                <th style="text-align: center;">Рейтинг</th>
+                                <th style="text-align: right;">Ціна</th>
+                                <th style="text-align: center;">Тип сигналу</th>
+                                <th style="text-align: center;">Сила</th>
+                                <th style="text-align: right;">RSI</th>
+                                <th style="text-align: right;">MFI</th>
+                                <th style="text-align: right;">Об'єм 24г</th>
+                                <th style="text-align: right;">Зміна 24г</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for candidate in candidates %}
+                            <tr class="candidate-row" 
+                                data-direction="{{ candidate.direction.lower() }}" 
+                                data-strength="{{ candidate.signal_strength.lower() }}" 
+                                data-rating="{{ candidate.rating }}">
+                                <!-- Контракт -->
+                                <td>
+                                    <div class="symbol-cell">
+                                        <div class="symbol-icon" style="background: {{ '#1abc9c' if candidate.direction == 'Long' else '#e74c3c' }}20; color: {{ '#1abc9c' if candidate.direction == 'Long' else '#e74c3c' }};">
+                                            {{ '↗' if candidate.direction == 'Long' else '↘' }}
+                                        </div>
+                                        <span class="symbol-name">{{ candidate.symbol }}</span>
+                                    </div>
+                                </td>
+                                
+                                <!-- Рейтинг -->
+                                <td style="text-align: center;">
+                                    <span style="font-weight: 600; color: var(--yellow);">{{ '%.1f'|format(candidate.rating) }}/10</span>
+                                </td>
+                                
+                                <!-- Ціна -->
+                                <td style="text-align: right; font-family: monospace;">
+                                    ${{ '%.4f'|format(candidate.price) if candidate.price < 1 else '%.2f'|format(candidate.price) }}
+                                </td>
+                                
+                                <!-- Тип сигналу -->
+                                <td style="text-align: center;">
+                                    <span class="direction-{{ 'long' if candidate.direction == 'Long' else 'short' }}">
+                                        {{ 'Long' if candidate.direction == 'Long' else 'Short' }}
                                     </span>
-                                </div>
-                            </div>
-
-                            <!-- MFI -->
-                            <div class="indicator-box">
-                                <div class="indicator-label">MFI</div>
-                                <div class="indicator-bar">
-                                    <div class="indicator-fill rsi-yellow" style="width: {{ candidate.mfi }}%"></div>
-                                </div>
-                                <div class="indicator-value">
-                                    {{ '%.2f'|format(candidate.mfi) }}
-                                    <span class="indicator-trend trend-{{ candidate.mfi_trend_class }}">
-                                        {{ candidate.mfi_trend }}
+                                </td>
+                                
+                                <!-- Сила -->
+                                <td style="text-align: center;">
+                                    <span class="signal-{{ candidate.signal_strength.lower() }}">
+                                        {{ '⭐⭐⭐' if candidate.signal_strength == 'Strong' else '⭐⭐' }}
                                     </span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Reason -->
-                        <div class="signal-alert success" style="margin-bottom: 1rem;">
-                            <span class="signal-icon">💡</span>
-                            <strong>Recommendation:</strong> {{ candidate.reason }}
-                        </div>
-
-                        <!-- Strategy Suggestion -->
-                        {% if candidate.strategy %}
-                        <div class="position-grid">
-                            <div class="position-metric">
-                                <div class="metric-label">Suggested Entry</div>
-                                <div class="metric-value">${{ '%.2f'|format(candidate.strategy.entry) }}</div>
-                            </div>
-                            <div class="position-metric">
-                                <div class="metric-label">Stop Loss</div>
-                                <div class="metric-value negative">${{ '%.2f'|format(candidate.strategy.stop_loss) }} ({{ '%.1f'|format(candidate.strategy.sl_percent) }}%)</div>
-                            </div>
-                            <div class="position-metric">
-                                <div class="metric-label">Take Profit</div>
-                                <div class="metric-value positive">${{ '%.2f'|format(candidate.strategy.take_profit) }} (+{{ '%.1f'|format(candidate.strategy.tp_percent) }}%)</div>
-                            </div>
-                            <div class="position-metric">
-                                <div class="metric-label">Risk/Reward</div>
-                                <div class="metric-value">1:{{ '%.2f'|format(candidate.strategy.rr_ratio) }}</div>
-                            </div>
-                        </div>
-                        {% endif %}
-
-                        <!-- Actions -->
-                        <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
-                            <button class="btn btn-secondary" onclick="viewChart('{{ candidate.symbol }}')">
-                                📊 View Chart
-                            </button>
-                            <button class="btn btn-secondary" onclick="copyTradeInfo('{{ candidate.symbol }}', '{{ candidate.direction }}', {{ candidate.price }})">
-                                📋 Copy Info
-                            </button>
-                            <!-- Опциональная кнопка открытия позиции (закомментирована для безопасности) -->
-                            <!--
-                            <button class="btn" style="background: var(--green); color: white;" 
-                                    onclick="openPosition('{{ candidate.symbol }}', '{{ candidate.direction }}', {{ candidate.price }})">
-                                ✅ Open Position
-                            </button>
-                            -->
-                        </div>
-                    </div>
-                    {% endfor %}
+                                </td>
+                                
+                                <!-- RSI -->
+                                <td style="text-align: right; font-family: monospace;">
+                                    <span style="color: {{ '#e74c3c' if candidate.rsi > 70 else ('#1abc9c' if candidate.rsi < 30 else 'var(--text-primary)') }};">
+                                        {{ '%.1f'|format(candidate.rsi) }}
+                                    </span>
+                                </td>
+                                
+                                <!-- MFI -->
+                                <td style="text-align: right; font-family: monospace;">
+                                    {{ '%.1f'|format(candidate.mfi) }}
+                                </td>
+                                
+                                <!-- Об'єм 24г -->
+                                <td style="text-align: right; font-family: monospace;">
+                                    ${{ '{:,.0f}'.format(candidate.volume_24h) if candidate.volume_24h > 1000000 else '{:,.0f}'.format(candidate.volume_24h) }}
+                                </td>
+                                
+                                <!-- Зміна 24г -->
+                                <td style="text-align: right;">
+                                    <span class="pnl-{{ 'positive' if candidate.change_24h > 0 else 'negative' }}">
+                                        {{ '+' if candidate.change_24h > 0 else '' }}{{ '%.2f'|format(candidate.change_24h) }}%
+                                    </span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 {% else %}
                     <div class="empty-state">
-                        <div class="empty-state-icon">🔍</div>
-                        <div>Кандидатів не знайдено</div>
-                        <div class="timestamp">
-                            {% if scanning %}
-                                <div class="pulse">Scanning in progress...</div>
-                            {% else %}
-                                Waiting for next scan ({{ next_scan_in }}s)
-                            {% endif %}
-                        </div>
+                        <div class="empty-state-icon">📭</div>
+                        <div style="font-size: 1.1rem; margin-bottom: 0.5rem;">Кандидатів не знайдено</div>
+                        <div class="timestamp">Спробуйте змінити фільтри або запустити сканування</div>
                     </div>
                 {% endif %}
             </div>
@@ -223,108 +302,65 @@
         function applyFilters() {
             const direction = document.getElementById('filterDirection').value;
             const strength = document.getElementById('filterStrength').value;
-            const rating = parseInt(document.getElementById('filterРейтинг').value) || 0;
-
-            const cards = document.querySelectorAll('.position-card');
+            const minRating = parseFloat(document.getElementById('filterRating').value) || 0;
             
-            cards.forEach(card => {
-                const cardDirection = card.getAttribute('data-direction');
-                const cardStrength = card.getAttribute('data-strength');
-                const cardРейтинг = parseInt(card.getAttribute('data-rating'));
-
+            const rows = document.querySelectorAll('.candidate-row');
+            
+            rows.forEach(row => {
+                const rowDirection = row.dataset.direction;
+                const rowStrength = row.dataset.strength;
+                const rowRating = parseFloat(row.dataset.rating) || 0;
+                
                 let show = true;
-
-                // Direction filter
-                if (direction !== 'all' && cardDirection !== direction) {
+                
+                if (direction !== 'all' && rowDirection !== direction) {
                     show = false;
                 }
-
-                // Strength filter
-                if (strength !== 'all' && cardStrength !== strength) {
+                
+                if (strength !== 'all' && rowStrength !== strength) {
                     show = false;
                 }
-
-                // Рейтинг filter
-                if (cardРейтинг < rating) {
+                
+                if (rowRating < minRating) {
                     show = false;
                 }
-
-                card.style.display = show ? 'block' : 'none';
+                
+                row.style.display = show ? '' : 'none';
             });
         }
-
+        
         function resetFilters() {
             document.getElementById('filterDirection').value = 'all';
             document.getElementById('filterStrength').value = 'all';
-            document.getElementById('filterРейтинг').value = 0;
+            document.getElementById('filterRating').value = '0';
             applyFilters();
         }
-
+        
         function manualScan() {
             const btn = document.getElementById('scanBtn');
             btn.disabled = true;
-            btn.textContent = '⏳ Scanning...';
-
-            fetch('/api/scan', { method: 'POST' })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === 'ok') {
-                        alert('Scan completed! Found ' + data.candidates_count + ' candidates. Refreshing...');
-                        location.reload();
-                    } else {
-                        alert('Scan error: ' + (data.message || 'Unknown error'));
-                        btn.disabled = false;
-                        btn.textContent = '🔍 Scan Now';
-                    }
-                })
-                .catch(err => {
-                    alert('Error: ' + err.message);
-                    btn.disabled = false;
-                    btn.textContent = '🔍 Scan Now';
-                });
-        }
-
-        function viewChart(symbol) {
-            // Открыть TradingView
-            window.open(`https://www.tradingview.com/chart/?symbol=BYBIT:${symbol}`, '_blank');
-        }
-
-        function copyTradeInfo(symbol, direction, price) {
-            const text = `${symbol} ${direction} @ $${price.toFixed(2)}`;
+            btn.textContent = '⏳ Сканування...';
             
-            navigator.clipboard.writeText(text).then(() => {
-                alert('Copied to clipboard: ' + text);
-            }).catch(err => {
-                alert('Failed to copy: ' + err.message);
-            });
-        }
-
-        // Закомментирована для безопасности
-        /*
-        function openPosition(symbol, direction, price) {
-            if (!confirm(`Open ${direction} position on ${symbol} @ $${price.toFixed(2)}?`)) return;
-
-            fetch('/webhook', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    action: direction,
-                    symbol: symbol,
-                    reason: 'Manual open from candidates UI'
-                })
+            fetch('/api/scan', {
+                method: 'POST'
             })
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'ok') {
-                    alert('Position opened successfully!');
-                    window.location.href = '/scanner';
+                    alert('Сканування завершено! Знайдено: ' + data.candidates_count + ' кандидатів');
+                    location.reload();
                 } else {
-                    alert('Error: ' + (data.reason || 'Unknown error'));
+                    alert('Помилка сканування: ' + (data.reason || 'Невідома помилка'));
                 }
             })
-            .catch(err => alert('Error: ' + err.message));
+            .catch(err => {
+                alert('Помилка: ' + err.message);
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.textContent = '🔍 Сканувати зараз';
+            });
         }
-        */
     </script>
 </body>
 </html>

@@ -546,7 +546,10 @@ def parameters_page():
                 # Risk Management
                 scanner_config.update_param('risk', 'max_positions', int(request.form.get('max_positions', 3)))
                 scanner_config.update_param('risk', 'position_size_percent', float(request.form.get('position_size_percent', 10)))
-                scanner_config.update_param('risk', 'daily_loss_limit_percent', float(request.form.get('daily_loss_limit_percent', -5)))
+                # Daily Loss Limit: конвертуємо позитивне значення в негативне
+                daily_loss = float(request.form.get('daily_loss_limit_percent', 5))
+                daily_loss = -abs(daily_loss)  # Завжди негативне
+                scanner_config.update_param('risk', 'daily_loss_limit_percent', daily_loss)
                 scanner_config.update_param('risk', 'default_leverage', int(request.form.get('default_leverage', 20)))
                 scanner_config.update_param('risk', 'reserve_balance', float(request.form.get('reserve_balance', 100)))
                 
