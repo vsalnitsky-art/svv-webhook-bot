@@ -228,8 +228,8 @@ class ScannerConfig:
             'use_cache': True,
             'cache_ttl': 30,
             'parallel_processing': False,   # ✅ ВИМКНЕНО для стабільності на Render
-            'min_rsi_for_long': 35,         # ✅ НОВИЙ параметр (ширша зона)
-            'max_rsi_for_short': 65,        # ✅ НОВИЙ параметр (ширша зона)
+            'min_rsi_for_long': 45,         # ✅ РОЗШИРЕНО 35→45 для бокового ринку
+            'max_rsi_for_short': 55,        # ✅ РОЗШИРЕНО 65→55 для бокового ринку
         }
     
     def get_indicator_params(self) -> Dict[str, Any]:
@@ -240,10 +240,10 @@ class ScannerConfig:
             # Timeframe (ВАЖНО!)
             'timeframe': self.indicator_timeframe,
             
-            # RSI
+            # RSI - РОЗШИРЕНІ ЗОНИ ДЛЯ БОКОВОГО РИНКУ
             'rsi_length': self.indicator_params.get('rsi_length', 14),
-            'oversold': self.indicator_params.get('oversold', 30),
-            'overbought': self.indicator_params.get('overbought', 70),
+            'oversold': self.indicator_params.get('oversold', 45),     # ✅ 30→45 для бокового ринку
+            'overbought': self.indicator_params.get('overbought', 55), # ✅ 70→55 для бокового ринку
             
             # MFI
             'mfi_length': 20,
@@ -251,10 +251,10 @@ class ScannerConfig:
             'slow_mfi_ema': 13,
             'cloud_opacity': 40,
             
-            # Фильтры
-            'require_volume': self.indicator_params.get('require_volume', True),
-            'trend_confirmation': self.indicator_params.get('trend_confirmation', True),
-            'min_peak_strength': self.indicator_params.get('min_peak_strength', 2),
+            # Фильтры - М'ЯКШІ для бокового ринку
+            'require_volume': self.indicator_params.get('require_volume', False),  # ✅ Вимкнено
+            'trend_confirmation': self.indicator_params.get('trend_confirmation', False),  # ✅ Вимкнено
+            'min_peak_strength': self.indicator_params.get('min_peak_strength', 1),  # ✅ Зменшено з 2
             
             # Визуализация
             'show_signals': True,
