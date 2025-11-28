@@ -296,16 +296,22 @@ class MarketScanner:
         candidates = []
         
         logger.info(f"🔬 АНАЛІЗ RSI/MFI ({len(coins)} монет):")
+        start_time = time.time()
         
         for i, coin in enumerate(coins):
-            if i % 10 == 0:
-                logger.info(f"   Прогрес: {i}/{len(coins)} ({i*100//len(coins)}%)")
+            # Логування прогресу кожні 5 монет
+            if i % 5 == 0 and i > 0:
+                elapsed = time.time() - start_time
+                avg_time = elapsed / i
+                remaining = (len(coins) - i) * avg_time
+                logger.info(f"   Прогрес: {i}/{len(coins)} ({i*100//len(coins)}%) | Залишилось: ~{remaining:.0f}s | Знайдено: {len(candidates)}")
             
             candidate = self._analyze_coin(coin)
             if candidate:
                 candidates.append(candidate)
         
-        logger.info(f"   ✅ Завершено аналіз: знайдено {len(candidates)} кандидатів")
+        total_time = time.time() - start_time
+        logger.info(f"   ✅ Завершено аналіз за {total_time:.1f}s: знайдено {len(candidates)} кандидатів")
         
         if len(candidates) == 0 and len(coins) > 0:
             logger.warning("⚠️ УВАГА: Жодного кандидата не знайдено після RSI/MFI аналізу!")

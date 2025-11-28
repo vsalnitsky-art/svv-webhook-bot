@@ -217,9 +217,9 @@ class ScannerConfig:
         return {
             'enabled': False,  # ⭐ По умолчанию ВЫКЛЮЧЕНО
             'scan_interval': 60,
-            'batch_size': 50,
-            'min_volume_24h': 1_000_000,    # $1M ✅ (було $10M - занадто жорстко!)
-            'min_price_change_24h': 0.5,    # 0.5% ✅ (було 2% - занадто жорстко!)
+            'batch_size': 30,              # ✅ Зменшено з 50 до 30
+            'min_volume_24h': 3_000_000,    # $3M ✅ (збільшено з $1M для швидкості)
+            'min_price_change_24h': 0.8,    # 0.8% ✅ (збільшено з 0.5% для швидкості)
             'max_spread_percent': 0.5,
             'min_market_cap': 50_000_000,   # $50M ✅ (було $100M)
             'top_candidates_count': 10,
@@ -227,7 +227,7 @@ class ScannerConfig:
             'min_signal_strength': 'regular',  # ✅ Залишаємо regular (не strong!)
             'use_cache': True,
             'cache_ttl': 30,
-            'parallel_processing': True,
+            'parallel_processing': False,   # ✅ ВИМКНЕНО для стабільності на Render
             'min_rsi_for_long': 35,         # ✅ НОВИЙ параметр (ширша зона)
             'max_rsi_for_short': 65,        # ✅ НОВИЙ параметр (ширша зона)
         }
