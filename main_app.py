@@ -555,33 +555,33 @@ def parameters_page():
                 scanner_config.keep_alive_interval = safe_int(request.form.get('keep_alive_interval'), 300)
                 
                 # Indicator Parameters
-                scanner_config.update_param('indicator', 'rsi_period', safe_int(request.form.get('rsi_period', 14)))
-                scanner_config.update_param('indicator', 'rsi_oversold', safe_int(request.form.get('rsi_oversold', 30)))
-                scanner_config.update_param('indicator', 'rsi_overbought', safe_int(request.form.get('rsi_overbought', 70)))
-                scanner_config.update_param('indicator', 'mfi_period', safe_int(request.form.get('mfi_period', 20)))
-                scanner_config.update_param('indicator', 'mfi_fast_ema', safe_int(request.form.get('mfi_fast_ema', 5)))
-                scanner_config.update_param('indicator', 'mfi_slow_ema', safe_int(request.form.get('mfi_slow_ema', 13)))
+                scanner_config.update_param('indicator', 'rsi_period', safe_int(request.form.get('rsi_period'), 14))
+                scanner_config.update_param('indicator', 'rsi_oversold', safe_int(request.form.get('rsi_oversold'), 30))
+                scanner_config.update_param('indicator', 'rsi_overbought', safe_int(request.form.get('rsi_overbought'), 70))
+                scanner_config.update_param('indicator', 'mfi_period', safe_int(request.form.get('mfi_period'), 20))
+                scanner_config.update_param('indicator', 'mfi_fast_ema', safe_int(request.form.get('mfi_fast_ema'), 5))
+                scanner_config.update_param('indicator', 'mfi_slow_ema', safe_int(request.form.get('mfi_slow_ema'), 13))
                 
                 # Risk Management
-                scanner_config.update_param('risk', 'max_positions', safe_int(request.form.get('max_positions', 3)))
-                scanner_config.update_param('risk', 'position_size_percent', safe_float(request.form.get('position_size_percent', 10)))
+                scanner_config.update_param('risk', 'max_positions', safe_int(request.form.get('max_positions'), 3))
+                scanner_config.update_param('risk', 'position_size_percent', safe_float(request.form.get('position_size_percent'), 10))
                 # Daily Loss Limit: конвертуємо позитивне значення в негативне
-                daily_loss = safe_float(request.form.get('daily_loss_limit_percent', 5))
+                daily_loss = safe_float(request.form.get('daily_loss_limit_percent'), 5)
                 daily_loss = -abs(daily_loss)  # Завжди негативне
                 scanner_config.update_param('risk', 'daily_loss_limit_percent', daily_loss)
-                scanner_config.update_param('risk', 'default_leverage', safe_int(request.form.get('default_leverage', 20)))
-                scanner_config.update_param('risk', 'reserve_balance', safe_float(request.form.get('reserve_balance', 100)))
+                scanner_config.update_param('risk', 'default_leverage', safe_int(request.form.get('default_leverage'), 20))
+                scanner_config.update_param('risk', 'reserve_balance', safe_float(request.form.get('reserve_balance'), 100))
                 
                 # Auto-Close
                 scanner_config.update_param('auto_close', 'enabled', 'auto_close_enabled' in request.form)
                 scanner_config.update_param('auto_close', 'use_strong_signals', 'use_strong_signals' in request.form)
                 scanner_config.update_param('auto_close', 'confirm_with_mfi', 'confirm_with_mfi' in request.form)
-                scanner_config.update_param('auto_close', 'min_hold_time', safe_int(request.form.get('min_hold_time', 300)))
+                scanner_config.update_param('auto_close', 'min_hold_time', safe_int(request.form.get('min_hold_time'), 300))
                 
                 # OBV Parameters (НОВОЕ) ⭐
                 scanner_config.update_param('auto_close', 'use_obv_confirmation', 'use_obv_confirmation' in request.form)
-                scanner_config.update_param('auto_close', 'obv_ema_period', safe_int(request.form.get('obv_ema_period', 20)))
-                scanner_config.update_param('auto_close', 'obv_trend_candles', safe_int(request.form.get('obv_trend_candles', 3)))
+                scanner_config.update_param('auto_close', 'obv_ema_period', safe_int(request.form.get('obv_ema_period'), 20))
+                scanner_config.update_param('auto_close', 'obv_trend_candles', safe_int(request.form.get('obv_trend_candles'), 3))
                 scanner_config.update_param('auto_close', 'obv_sensitivity', request.form.get('obv_sensitivity', 'high'))
                 scanner_config.update_param('auto_close', 'rsi_exit_mode', request.form.get('rsi_exit_mode', 'wait_zone_exit'))
                 scanner_config.update_param('auto_close', 'mfi_check_mode', request.form.get('mfi_check_mode', 'after_obv'))
