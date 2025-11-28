@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Налаштування - Сканер v2.1</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/scanner.css') }}">
+    <style>
+        .param-section {
+            background: var(--bg-tertiary);
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+        .param-group {
+            margin-bottom: 1.5rem;
+        }
+        .param-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .param-input {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.95rem;
+        }
+        .param-input:focus {
+            outline: none;
+            border-color: var(--blue);
+        }
+        .param-help {
+            font-size: 0.75rem;
+            color: var(--text-disabled);
+            margin-top: 0.25rem;
+        }
+        .preset-btn {
+            padding: 0.75rem 1.5rem;
+            border: 2px solid var(--border);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .preset-btn:hover {
+            border-color: var(--blue);
+            background: var(--bg-hover);
+        }
+        .preset-btn.active {
+            border-color: var(--blue);
+            background: var(--blue);
+            color: white;
+        }
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border);
+            transition: .4s;
+            border-radius: 26px;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--text-disabled);
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .toggle-slider {
+            background-color: var(--green);
+            border-color: var(--green);
+        }
+        input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+            background-color: white;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation Header -->
+    {% include 'nav_header.html' %}
+
+    <!-- Container -->
+    <div class="container">
+        <!-- Success/Error Messages -->
+        {% if message %}
+        <div class="signal-alert {{ 'success' if message_type == 'success' else 'danger' }}" style="margin-bottom: 1rem;">
+            <span class="signal-icon">{{ '✅' if message_type == 'success' else '❌' }}</span>
+            <strong>{{ message }}</strong>
+        </div>
+        {% endif %}
+
+        <!-- Quick Presets -->
+        <div class="card">
+            <div class="card-header">
+                🎯 QUICK PRESETS
+            </div>
+            <div class="card-body">
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                    <button class="preset-btn {{ 'active' if current_style == 'scalping' else '' }}" 
+                            onclick="applyPreset('scalping')">
+                        ⚡ Scalping
+                    </button>
+                    <button class="preset-btn {{ 'active' if current_style == 'daytrading' else '' }}" 
+                            onclick="applyPreset('daytrading')">
+                        📊 Day Trading
+                    </button>
+                    <button class="preset-btn {{ 'active' if current_style == 'swing' else '' }}" 
+                            onclick="applyPreset('swing')">
+                        📈 Swing Trading
+                    </button>
+                </div>
+                <div class="param-help" style="margin-top: 1rem;">
+                    Quick presets automatically configure all parameters for the selected trading style.
+                </div>
+            </div>
+        </div>
+
+        <form method="POST" action="/parameters">
+            <!-- Стиль торгівлі -->
+            <div class="card">
+                <div class="card-header">
+                    🎨 TRADING STYLE
+                </div>
+                <div class="card-body">
+                    <div class="param-section">
+                        <div class="param-group">
+                            <label class="param-label">
+                                Стиль торгівлі
+                                <span class="badge badge-info">{{ params.trading_style }}</span>
+                            </label>
+                            <select name="trading_style" class="param-input">
+                                <option value="scalping" {{ 'selected' if params.trading_style == 'scalping' else '' }}>Скальпінг</option>
+                                <option value="daytrading" {{ 'selected' if params.trading_style == 'daytrading' else '' }}>Денна торгівля</option>
+                                <option value="swing" {{ 'selected' if params.trading_style == 'swing' else '' }}>Свінг-торгівля</option>
+                            </select>
+                            <div class="param-help">Determines RSI period, scan interval, and hold time</div>
+                        </div>
+
+                        <div class="param-group">
+                            <label class="param-label">
+                                Агресивнийness
+                                <span class="badge badge-warning">{{ params.aggressiveness }}</span>
+                            </label>
+                            <select name="aggressiveness" class="param-input">
+                                <option value="auto" {{ 'selected' if params.aggressiveness == 'auto' else '' }}>Auto (Adapts to volatility)</option>
+                                <option value="conservative" {{ 'selected' if params.aggressiveness == 'conservative' else '' }}>Консервативний</option>
+                                <option value="aggressive" {{ 'selected' if params.aggressiveness == 'aggressive' else '' }}>Агресивний</option>
+                            </select>
+                            <div class="param-help">Auto mode adjusts RSI levels based on market volatility</div>
+                        </div>
+
+                        <div class="param-group">
+                            <label class="param-label">
+                                Режим автоматизації
+                                <span class="badge badge-success">{{ params.automation_mode }}</span>
+                            </label>
+                            <select name="automation_mode" class="param-input">
+                                <option value="semi_auto" {{ 'selected' if params.automation_mode == 'semi_auto' else '' }}>Semi-Auto (Close only)</option>
+                                <option value="full_auto" {{ 'selected' if params.automation_mode == 'full_auto' else '' }}>Full Auto (Open + Close)</option>
+                            </select>
+                            <div class="param-help">Semi-auto: only auto-close positions. Full-auto: open and close automatically</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Indicator Parameters -->
+            <div class="card">
+                <div class="card-header">
+                    📊 ПАРАМЕТРИ ІНДИКАТОРА
+                </div>
+                <div class="card-body">
+                    <div class="param-section">
+                        <h4 style="color: var(--text-primary); margin-bottom: 1rem;">⏰ Timeframe</h4>
+                        
+                        <div class="param-group">
+                            <label class="param-label">
+                                Indicator Timeframe
+                                <span class="badge badge-info">{{ params.indicator_timeframe_label }}</span>
+                            </label>
+                            <select name="indicator_timeframe" class="param-input">
+                                <option value="1" {{ 'selected' if params.indicator_timeframe == '1' else '' }}>1 Minute</option>
+                                <option value="5" {{ 'selected' if params.indicator_timeframe == '5' else '' }}>5 Minutes</option>
+                                <option value="15" {{ 'selected' if params.indicator_timeframe == '15' else '' }}>15 Minutes</option>
+                                <option value="60" {{ 'selected' if params.indicator_timeframe == '60' else '' }}>1 Hour</option>
+                                <option value="240" {{ 'selected' if params.indicator_timeframe == '240' else '' }}>4 Hours (Default)</option>
+                                <option value="D" {{ 'selected' if params.indicator_timeframe == 'D' else '' }}>1 Day</option>
+                            </select>
+                            <div class="param-help">⚠️ ВАЖНО: Все индикаторы и сигналы будут работать на выбранном таймфрейме. По умолчанию: 4 часа.</div>
+                        </div>
+                    </div>
+                    
+                    <div class="param-section">
+                        <h4 style="color: var(--text-primary); margin-bottom: 1rem;">RSI Settings</h4>
+                        
+                        <div class="param-group">
+                            <label class="param-label">Період RSI</label>
+                            <input type="number" name="rsi_period" value="{{ params.indicator.rsi_period }}" 
+                                   class="param-input" min="5" max="50">
+                            <div class="param-help">Number of candles for RSI calculation (default: 14)</div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="param-group">
+                                <label class="param-label">Oversold Level</label>
+                                <input type="number" name="rsi_oversold" value="{{ params.indicator.rsi_oversold }}" 
+                                       class="param-input" min="10" max="40">
+                                <div class="param-help">Buy signal below this (default: 30)</div>
+                            </div>
+
+                            <div class="param-group">
+                                <label class="param-label">Overbought Level</label>
+                                <input type="number" name="rsi_overbought" value="{{ params.indicator.rsi_overbought }}" 
+                                       class="param-input" min="60" max="90">
+                                <div class="param-help">Sell signal above this (default: 70)</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="param-section">
+                        <h4 style="color: var(--text-primary); margin-bottom: 1rem;">MFI Settings</h4>
+                        
+                        <div class="param-group">
+                            <label class="param-label">Період MFI</label>
+                            <input type="number" name="mfi_period" value="{{ params.indicator.mfi_period }}" 
+                                   class="param-input" min="5" max="50">
+                            <div class="param-help">Number of candles for MFI calculation (default: 20)</div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="param-group">
+                                <label class="param-label">Fast EMA Period</label>
+                                <input type="number" name="mfi_fast_ema" value="{{ params.indicator.mfi_fast_ema }}" 
+                                       class="param-input" min="3" max="20">
+                                <div class="param-help">Fast EMA for cloud (default: 5)</div>
+                            </div>
+
+                            <div class="param-group">
+                                <label class="param-label">Slow EMA Period</label>
+                                <input type="number" name="mfi_slow_ema" value="{{ params.indicator.mfi_slow_ema }}" 
+                                       class="param-input" min="5" max="30">
+                                <div class="param-help">Slow EMA for cloud (default: 13)</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Risk Management -->
+            <div class="card">
+                <div class="card-header">
+                    🛡️ УПРАВЛІННЯ РИЗИКАМИ
+                </div>
+                <div class="card-body">
+                    <div class="param-section">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="param-group">
+                                <label class="param-label">Максимум позицій</label>
+                                <input type="number" name="max_positions" value="{{ params.risk.max_positions }}" 
+                                       class="param-input" min="1" max="10">
+                                <div class="param-help">Maximum concurrent positions (default: 3)</div>
+                            </div>
+
+                            <div class="param-group">
+                                <label class="param-label">Розмір позиції (%)</label>
+                                <input type="number" name="position_size_percent" value="{{ params.risk.position_size_percent }}" 
+                                       class="param-input" min="1" max="50">
+                                <div class="param-help">Percent of balance per trade (default: 10%)</div>
+                            </div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="param-group">
+                                <label class="param-label">Daily Loss Limit (%)</label>
+                                <input type="number" name="daily_loss_limit_percent" value="{{ params.risk.daily_loss_limit_percent|abs }}" 
+                                       class="param-input" min="0" max="20" step="0.1">
+                                <div class="param-help">Зупинити торгівлю при збитку (за замовчуванням: 5%)</div>
+                            </div>
+
+                            <div class="param-group">
+                                <label class="param-label">Стандартне плече</label>
+                                <input type="number" name="default_leverage" value="{{ params.risk.default_leverage }}" 
+                                       class="param-input" min="1" max="100">
+                                <div class="param-help">Leverage for new positions (default: 20x)</div>
+                            </div>
+                        </div>
+
+                        <div class="param-group">
+                            <label class="param-label">Reserve Balance ($)</label>
+                            <input type="number" name="reserve_balance" value="{{ params.risk.reserve_balance }}" 
+                                   class="param-input" min="0" step="10">
+                            <div class="param-help">Keep this amount untouched (default: $100)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto-Close Parameters -->
+            <div class="card">
+                <div class="card-header">
+                    🔴 AUTO-CLOSE PARAMETERS
+                </div>
+                <div class="card-body">
+                    <div class="param-section">
+                        <div class="param-group">
+                            <label class="param-label">
+                                <span>Увімкнути автозакриття</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" name="auto_close_enabled" 
+                                           {{ 'checked' if params.auto_close.enabled else '' }}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </label>
+                            <div class="param-help">⚠️ Automatically close positions based on signals (default: OFF)</div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="param-group">
+                                <label class="param-label">
+                                    <span>Використовувати сильні сигнали</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" name="use_strong_signals" 
+                                               {{ 'checked' if params.auto_close.use_strong_signals else '' }}>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </label>
+                                <div class="param-help">Close on strong opposite signals</div>
+                            </div>
+
+                            <div class="param-group">
+                                <label class="param-label">
+                                    <span>Використовувати підтвердження OBV</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" name="use_obv_confirmation" 
+                                               {{ 'checked' if params.auto_close.use_obv_confirmation else '' }}>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </label>
+                                <div class="param-help">✅ Wait for OBV trend (recommended, default: ON)</div>
+                            </div>
+                        </div>
+
+                        <!-- OBV Parameters -->
+                        <div id="obv-params" style="background: var(--bg-secondary); padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+                            <h5 style="color: var(--text-primary); margin-bottom: 1rem;">📊 Налаштування OBV</h5>
+                            
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+                                <div class="param-group">
+                                    <label class="param-label">Період EMA для OBV</label>
+                                    <input type="number" name="obv_ema_period" 
+                                           value="{{ params.auto_close.obv_ema_period }}" 
+                                           class="param-input" min="5" max="100">
+                                    <div class="param-help">EMA for OBV (default: 20)</div>
+                                </div>
+
+                                <div class="param-group">
+                                    <label class="param-label">Свічок для тренду OBV</label>
+                                    <input type="number" name="obv_trend_candles" 
+                                           value="{{ params.auto_close.obv_trend_candles }}" 
+                                           class="param-input" min="2" max="10">
+                                    <div class="param-help">N candles for trend (default: 3)</div>
+                                </div>
+
+                                <div class="param-group">
+                                    <label class="param-label">Чутливість OBV</label>
+                                    <select name="obv_sensitivity" class="param-input">
+                                        <option value="low" {{ 'selected' if params.auto_close.obv_sensitivity == 'low' else '' }}>
+                                            Low (5 candles)
+                                        </option>
+                                        <option value="medium" {{ 'selected' if params.auto_close.obv_sensitivity == 'medium' else '' }}>
+                                            Medium (3 candles)
+                                        </option>
+                                        <option value="high" {{ 'selected' if params.auto_close.obv_sensitivity == 'high' else '' }}>
+                                            High (2 candles) ⭐
+                                        </option>
+                                    </select>
+                                    <div class="param-help">Default: High (2 candles)</div>
+                                </div>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+                                <div class="param-group">
+                                    <label class="param-label">Режим виходу RSI (if OBV OFF)</label>
+                                    <select name="rsi_exit_mode" class="param-input">
+                                        <option value="immediate" {{ 'selected' if params.auto_close.rsi_exit_mode == 'immediate' else '' }}>
+                                            Immediate (close on RSI zone entry)
+                                        </option>
+                                        <option value="wait_zone_exit" {{ 'selected' if params.auto_close.rsi_exit_mode == 'wait_zone_exit' else '' }}>
+                                            Wait Zone Exit ⭐
+                                        </option>
+                                    </select>
+                                    <div class="param-help">Default: Wait for RSI to exit zone</div>
+                                </div>
+
+                                <div class="param-group">
+                                    <label class="param-label">Режим перевірки MFI</label>
+                                    <select name="mfi_check_mode" class="param-input">
+                                        <option value="before_obv" {{ 'selected' if params.auto_close.mfi_check_mode == 'before_obv' else '' }}>
+                                            Before OBV (RSI → MFI → OBV)
+                                        </option>
+                                        <option value="after_obv" {{ 'selected' if params.auto_close.mfi_check_mode == 'after_obv' else '' }}>
+                                            After OBV ⭐ (RSI → OBV → MFI)
+                                        </option>
+                                        <option value="with_obv" {{ 'selected' if params.auto_close.mfi_check_mode == 'with_obv' else '' }}>
+                                            With OBV (RSI → OBV+MFI together)
+                                        </option>
+                                    </select>
+                                    <div class="param-help">Default: After OBV</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="param-group">
+                                <label class="param-label">
+                                    <span>Підтвердження MFI</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" name="confirm_with_mfi" 
+                                               {{ 'checked' if params.auto_close.confirm_with_mfi else '' }}>
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </label>
+                                <div class="param-help">⚠️ Optional - may reduce exits (default: OFF)</div>
+                            </div>
+
+                            <div class="param-group">
+                                <label class="param-label">Мінімальний час утримання (секунд)</label>
+                                <input type="number" name="min_hold_time" value="{{ params.auto_close.min_hold_time }}" 
+                                       class="param-input" min="60" max="3600" step="60">
+                                <div class="param-help">Minimum time before auto-close (default: 300s = 5min)</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Keep-Alive Parameters (НОВОЕ) -->
+            <div class="card">
+                <div class="card-header">
+                    💓 KEEP-ALIVE (ПІДТРИМКА ЗВ'ЯЗКУ) (САМОПІНГ)
+                </div>
+                <div class="card-body">
+                    <div class="param-section">
+                        <div class="param-group">
+                            <label class="param-label">
+                                <span>Увімкнути Keep-Alive</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" name="keep_alive_enabled" 
+                                           {{ 'checked' if params.keep_alive_enabled else '' }}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </label>
+                            <div class="param-help">✅ Self-ping to prevent sleep on Render (default: ON)</div>
+                        </div>
+
+                        <div class="param-group">
+                            <label class="param-label">Інтервал пінгу (секунд)</label>
+                            <input type="number" name="keep_alive_interval" value="{{ params.keep_alive_interval }}" 
+                                   class="param-input" min="60" max="900" step="30">
+                            <div class="param-help">How often to ping (default: 300s = 5 хвилин)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scanner Parameters -->
+            <div class="card">
+                <div class="card-header">
+                    🔍 ПАРАМЕТРИ СКАНЕРА
+                </div>
+                <div class="card-body">
+                    <div class="param-section">
+                        <div class="param-group">
+                            <label class="param-label">
+                                <span>Увімкнути сканер ринку</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" name="scanner_enabled" 
+                                           {{ 'checked' if params.scanner.enabled else '' }}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </label>
+                            <div class="param-help">⚠️ Scan market for new opportunities (default: OFF)</div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="param-group">
+                                <label class="param-label">Інтервал сканування (секунд)</label>
+                                <input type="number" name="scan_interval" value="{{ params.scanner.scan_interval }}" 
+                                       class="param-input" min="30" max="600" step="30">
+                                <div class="param-help">Time between scans (default: 60s)</div>
+                            </div>
+
+                            <div class="param-group">
+                                <label class="param-label">Top Candidates</label>
+                                <input type="number" name="top_candidates_count" value="{{ params.scanner.top_candidates_count }}" 
+                                       class="param-input" min="5" max="50">
+                                <div class="param-help">Show top N candidates (default: 10)</div>
+                            </div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="param-group">
+                                <label class="param-label">Min Volume 24h ($M)</label>
+                                <input type="number" name="min_volume_24h" value="{{ params.scanner.min_volume_24h / 1000000 }}" 
+                                       class="param-input" min="1" max="100" step="1">
+                                <div class="param-help">Minimum daily volume (default: $10M)</div>
+                            </div>
+
+                            <div class="param-group">
+                                <label class="param-label">Min Price Change 24h (%)</label>
+                                <input type="number" name="min_price_change_24h" value="{{ params.scanner.min_price_change_24h }}" 
+                                       class="param-input" min="0" max="10" step="0.5">
+                                <div class="param-help">Minimum volatility (default: 2%)</div>
+                            </div>
+                        </div>
+
+                        <div class="param-group">
+                            <label class="param-label">Min Signal Strength</label>
+                            <select name="min_signal_strength" class="param-input">
+                                <option value="regular" {{ 'selected' if params.scanner.min_signal_strength == 'regular' else '' }}>Regular (Any signal)</option>
+                                <option value="strong" {{ 'selected' if params.scanner.min_signal_strength == 'strong' else '' }}>Strong (Strong signals only)</option>
+                            </select>
+                            <div class="param-help">Filter candidates by signal strength</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button type="submit" class="btn" style="background: var(--green); color: white; flex: 1;">
+                    💾 Save All Parameters
+                </button>
+                <button type="button" onclick="resetToDefaults()" class="btn btn-secondary">
+                    🔄 Скинути до типових
+                </button>
+                <button type="button" onclick="exportConfig()" class="btn btn-secondary">
+                    📥 Export Config
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        function applyPreset(preset) {
+            if (!confirm(`Apply ${preset} preset? This will override current settings.`)) return;
+            
+            window.location.href = `/parameters?preset=${preset}`;
+        }
+
+        function resetToDefaults() {
+            if (!confirm('Reset all parameters to defaults?')) return;
+            
+            window.location.href = '/parameters?reset=true';
+        }
+
+        function exportConfig() {
+            fetch('/api/config/export')
+                .then(res => res.json())
+                .then(data => {
+                    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'scanner_config.json';
+                    a.click();
+                })
+                .catch(err => alert('Export error: ' + err.message));
+        }
+    </script>
+</body>
+</html>

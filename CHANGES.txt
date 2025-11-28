@@ -1,0 +1,33 @@
+СПИСОК ИЗМЕНЁННЫХ ФАЙЛОВ
+========================
+
+1. scanner_config.py
+   - Добавлен параметр indicator_timeframe = '240'
+   - Добавлены методы: get_timeframe(), set_timeframe(), get_timeframe_minutes()
+   - Обновлены: to_dict(), from_dict(), get_indicator_params()
+
+2. scanner.py
+   - Метод _get_historical_data: использует config.get_timeframe()
+   - Изменён hardcoded interval="60" на динамический timeframe
+
+3. market_scanner.py
+   - Метод _get_coin_historical_data: использует config.get_timeframe()
+   - Изменён hardcoded interval="60" на динамический timeframe
+
+4. rsi_mfi_indicator.py
+   - Добавлен параметр timeframe в __init__
+   - Добавлена строка self.timeframe = timeframe
+
+5. templates/parameters.html
+   - Добавлена секция "Timeframe" с выбором таймфрейма
+   - Добавлен select с опциями (1m/5m/15m/1h/4h/1d)
+
+6. main_app.py
+   - Добавлена обработка indicator_timeframe в POST
+   - Добавлен timeframe в данные для UI
+   - Вызов scanner_config.set_timeframe()
+
+7. test_timeframe.py (новый файл)
+   - 10 тестов для проверки timeframe
+
+ИТОГО: 6 изменённых + 1 новый = 7 файлов
