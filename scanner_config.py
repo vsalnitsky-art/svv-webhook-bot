@@ -454,6 +454,44 @@ class ScannerConfig:
         }
         return timeframe_map.get(self.indicator_timeframe, 240)
     
+    # ⭐ НОВІ МЕТОДИ v2.3 для оновлення параметрів сканера
+    def update_scanner_param(self, key: str, value: Any):
+        """Оновити окремий параметр сканера"""
+        if key in self.scanner_params:
+            self.scanner_params[key] = value
+            logger.info(f"✅ Scanner param updated: {key} = {value}")
+        else:
+            # Якщо параметра немає, додати його
+            self.scanner_params[key] = value
+            logger.warning(f"⚠️ Added new scanner param: {key} = {value}")
+    
+    def update_entry_param(self, key: str, value: Any):
+        """Оновити параметр входу (для сумісності з v2.2)"""
+        # Оновлюємо indicator_params
+        if key in ['rsi_oversold', 'rsi_overbought', 'rsi_period']:
+            param_key = key.replace('rsi_', '')
+            if param_key == 'period':
+                param_key = 'rsi_length'
+            self.indicator_params[param_key] = value
+            logger.info(f"✅ Entry param updated: {key} = {value}")
+        else:
+            self.indicator_params[key] = value
+            logger.info(f"✅ Entry param updated: {key} = {value}")
+    
+    def update_exit_param(self, key: str, value: Any):
+        """Оновити параметр виходу (для сумісності з v2.2)"""
+        # Поки що зберігаємо в indicator_params
+        self.indicator_params[f'exit_{key}'] = value
+        logger.info(f"✅ Exit param updated: {key} = {value}")
+    
+    def get_entry_params(self) -> Dict[str, Any]:
+        """Отримати параметри входу (для сумісності)"""
+        return self.indicator_params.copy()
+    
+    def get_exit_params(self) -> Dict[str, Any]:
+        """Отримати параметри виходу (для сумісності)"""
+        return self.indicator_params.copy()
+    
     def __repr__(self):
         return f"ScannerConfig(style={self.trading_style}, agg={self.aggressiveness}, auto={self.automation_mode})"
 
