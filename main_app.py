@@ -1,6 +1,6 @@
 """
 Main App - Clean & Professional
-Updated: Logs RAW payload before parsing to debug invalid JSON errors.
+Updated: Fixed Jinja2 'str is undefined' error by using '|string' filter.
 """
 import logging
 import threading
@@ -72,16 +72,12 @@ threading.Thread(target=keep_alive, daemon=True).start()
 def webhook():
     raw_data = ""
     try:
-        # 1. Отримуємо сирий текст запиту
         raw_data = request.get_data(as_text=True)
-        
-        # 2. Логуємо його ВІДРАЗУ (щоб бачити навіть помилковий JSON)
         logger.info(f"📥 RAW PAYLOAD: {raw_data}")
         
-        # 3. Тільки тепер пробуємо парсити
         data = json.loads(raw_data)
-        
         logger.info(f"🔔 SIGNAL PARSED: {data.get('symbol')} {data.get('action')}")
+        
         result = bot_instance.place_order(data)
         
         if result.get("status") in ["ok", "ignored"]:
@@ -91,7 +87,6 @@ def webhook():
             return jsonify(result), 400
             
     except Exception as e:
-        # Якщо впало - показуємо помилку і ще раз текст, який її викликав
         logger.error(f"❌ Webhook Error: {e} | Payload was: {raw_data}")
         return jsonify({"error": str(e)}), 400
 
@@ -145,9 +140,9 @@ def settings_page():
                         <div class="col-md-4">
                             <label class="form-label">Глобальний TF (хв)</label>
                             <select class="form-select" name="htfSelection">
-                                <option value="60" {{ 'selected' if str(conf.get('htfSelection')) == '60' }}>1 Година</option>
-                                <option value="240" {{ 'selected' if str(conf.get('htfSelection')) == '240' }}>4 Години</option>
-                                <option value="D" {{ 'selected' if str(conf.get('htfSelection')) == 'D' }}>1 День</option>
+                                <option value="60" {{ 'selected' if conf.get('htfSelection')|string == '60' }}>1 Година</option>
+                                <option value="240" {{ 'selected' if conf.get('htfSelection')|string == '240' }}>4 Години</option>
+                                <option value="D" {{ 'selected' if conf.get('htfSelection')|string == 'D' }}>1 День</option>
                             </select>
                         </div>
                         <div class="col-md-4"><label class="form-label">Cloud Fast EMA</label><input type="number" class="form-control" name="cloudFastLen" value="{{ conf.get('cloudFastLen') }}"></div>
