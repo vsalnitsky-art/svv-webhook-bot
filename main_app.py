@@ -1,6 +1,6 @@
 """
-Main App - Clean & Professional 
-Updated with proper logging and self-ping mechanism
+Main App - Clean & Professional
+Updated: Scanner page now shows ONLY active trades.
 """
 import logging
 import threading
@@ -26,11 +26,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Сканер для моніторингу
+# Сканер для моніторингу (тільки активні позиції)
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
-# Монітор для запису логів в базу
+# Монітор для запису логів в базу (фоновий запис історії для майбутнього аналізу)
 def monitor_active():
     """Фоновий потік для запису стану позицій в БД"""
     logger.info("Starting active position monitor...")
@@ -107,11 +107,13 @@ def webhook():
 def scanner_page():
     active = []
     try:
+        # Отримуємо дані тільки про відкриті позиції
         r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
         if r['retCode'] == 0:
             for p in r['result']['list']:
                 if float(p['size']) > 0:
                     sym = p['symbol']
+                    # Отримуємо аналітику від сканера (RSI, Pressure)
                     rsi = scanner.get_current_rsi(sym)
                     press = scanner.get_market_pressure(sym)
                     active.append({
@@ -128,34 +130,94 @@ def scanner_page():
     except Exception as e:
         logger.error(f"Error rendering scanner page: {e}")
     
-    logs = stats_service.get_monitor_logs(30)
-    history = stats_service.get_trades(1) 
-    
+    # Спрощений HTML - тільки активні угоди
     html = """
-    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Scanner</title>
+    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Active Trades</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>body{background:#f7f9fc;font-size:13px} .card{border:none;box-shadow:0 2px 5px rgba(0,0,0,0.02)} .text-up{color:#20b26c;font-weight:bold} .text-down{color:#ef454a;font-weight:bold}</style>
-    <meta http-equiv="refresh" content="5"></head><body>
-    <nav class="navbar bg-white mb-3 px-3 border-bottom"><strong>🐋 Whale Scanner</strong><a href="/report" class="btn btn-sm btn-outline-secondary">Report</a></nav>
-    <div class="container-fluid">
-        <div class="card mb-3"><div class="card-header bg-white">АКТИВНІ</div><table class="table table-hover mb-0"><thead><tr><th>Монета</th><th>Тип</th><th>Вхід</th><th>P&L</th><th>RSI</th><th>Тиск</th></tr></thead><tbody>
-        {% for a in active %}<tr><td>{{a.symbol}}</td><td><span class="badge {{ 'bg-success' if a.side=='Buy' else 'bg-danger' }}">{{a.side}}</span></td><td>{{a.entry}}</td><td class="{{ 'text-up' if a.pnl>0 else 'text-down' }}">{{a.pnl}}$</td><td>{{a.rsi}}</td><td>{{a.pressure}}</td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted">--</td></tr>{% endfor %}
-        </tbody></table></div>
-        <div class="row"><div class="col-6"><div class="card"><div class="card-header bg-white">МОНІТОРИНГ</div><table class="table table-striped mb-0">{% for l in logs %}<tr><td>{{l.time}}</td><td>{{l.symbol}}</td><td>{{l.price}}</td><td class="{{ 'text-up' if l.pnl>0 else 'text-down' }}">{{l.pnl}}</td></tr>{% endfor %}</table></div></div>
-        <div class="col-6"><div class="card"><div class="card-header bg-white">ІСТОРІЯ</div><table class="table table-hover mb-0">{% for t in history %}<tr><td>{{t.exit_time}}</td><td>{{t.symbol}}</td><td class="{{ 'text-up' if t.pnl>0 else 'text-down' }}">{{t.pnl}}</td></tr>{% endfor %}</table></div></div></div>
-    </div></body></html>
+    <style>
+        body{background:#f7f9fc;font-size:14px} 
+        .card{border:none;box-shadow:0 2px 5px rgba(0,0,0,0.02)} 
+        .text-up{color:#20b26c;font-weight:bold} 
+        .text-down{color:#ef454a;font-weight:bold}
+        .badge-buy{background-color:#20b26c}
+        .badge-sell{background-color:#ef454a}
+    </style>
+    <meta http-equiv="refresh" content="5">
+    </head><body>
+    
+    <nav class="navbar bg-white mb-4 px-3 border-bottom shadow-sm">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">🐋 Active Monitor</span>
+            <a href="/report" class="btn btn-sm btn-outline-secondary">Звіт P&L</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="card">
+            <div class="card-header bg-white fw-bold py-3">
+                ВІДКРИТІ ПОЗИЦІЇ
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Монета</th>
+                            <th>Тип</th>
+                            <th>Розмір</th>
+                            <th>Вхід</th>
+                            <th>RSI</th>
+                            <th>Тиск</th>
+                            <th>P&L (USDT)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for a in active %}
+                        <tr>
+                            <td class="fw-bold">{{a.symbol}}</td>
+                            <td><span class="badge {{ 'badge-buy' if a.side=='Buy' else 'badge-sell' }}">{{a.side}}</span></td>
+                            <td>{{a.size}}</td>
+                            <td>{{a.entry}}</td>
+                            <td>
+                                <span class="{{ 'text-danger' if a.rsi > 70 else 'text-success' if a.rsi < 30 else '' }}">
+                                    {{a.rsi}}
+                                </span>
+                            </td>
+                            <td>{{a.pressure}}</td>
+                            <td class="{{ 'text-up' if a.pnl>0 else 'text-down' }}" style="font-size: 1.1em;">
+                                {{ "+" if a.pnl > 0 }}{{a.pnl}}$
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-5">
+                                Немає активних угод 💤
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    </body></html>
     """
-    return render_template_string(html, active=active, logs=logs, history=history)
+    return render_template_string(html, active=active)
 
 @app.route('/report', methods=['GET'])
 def report_route():
+    # Сторінка зі звітами
     from report import render_report_page
     return render_report_page(bot_instance, request)
 
 @app.route('/')
-def home(): return "<script>window.location.href='/scanner';</script>"
+def home(): 
+    # Редірект з головної на сканер
+    return "<script>window.location.href='/scanner';</script>"
+
 @app.route('/health')
-def health(): return jsonify({"status": "ok"})
+def health(): 
+    # Ендпоінт для Self-Ping
+    return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
     app.run(host=config.HOST, port=config.PORT)
