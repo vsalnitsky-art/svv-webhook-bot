@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
+import os
 
 Base = declarative_base()
 
@@ -29,6 +30,12 @@ class TradeMonitorLog(Base):
     rsi = Column(Float)
     pressure = Column(Float)
 
+# === НОВА МОДЕЛЬ: НАЛАШТУВАННЯ БОТА ===
+class BotSetting(Base):
+    __tablename__ = 'bot_settings'
+    key = Column(String(50), primary_key=True)  # Назва параметру (напр. 'riskPercent')
+    value = Column(String(255))                 # Значення завжди зберігаємо як текст
+
 # Заглушки для сумісності (якщо старий код їх викличе)
 class WhaleSignal(Base):
     __tablename__ = 'whale_signals'
@@ -43,7 +50,12 @@ class CoinPerformance(Base):
 
 class DatabaseManager:
     def __init__(self, db_path='trading_bot_final.db'):
-        self.engine = create_engine(f'sqlite:///{db_path}', echo=False)
+        # Підтримка PostgreSQL для Render
+        db_url = os.environ.get('DATABASE_URL')
+        if db_url and db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+        self.engine = create_engine(db_url or f'sqlite:///{db_path}', echo=False)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
     
