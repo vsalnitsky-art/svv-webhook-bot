@@ -1,6 +1,6 @@
 """
 Main App - Clean & Professional
-Updated: Fixed Timeframe Selection bug (String/Int mismatch).
+Updated: Fixed Jinja2 error (replaced str() with |string filter).
 """
 import logging
 import threading
@@ -19,7 +19,7 @@ from scanner import EnhancedMarketScanner
 from report import render_report_page
 from settings_manager import settings
 
-# Запобігання сну у Windows (якщо запускається локально)
+# Запобігання сну у Windows
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
@@ -27,7 +27,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Сканер для моніторингу (тільки активні позиції)
+# Сканер
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
@@ -54,9 +54,6 @@ def monitor_active():
 threading.Thread(target=monitor_active, daemon=True).start()
 
 def keep_alive():
-    """
-    Механізм запобігання засипанню (Self-Ping).
-    """
     time.sleep(5)
     external_url = os.environ.get('RENDER_EXTERNAL_URL')
     local_url = f'http://127.0.0.1:{config.PORT}/health'
@@ -89,11 +86,10 @@ def webhook():
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_page():
     if request.method == 'POST':
-        # Зберігаємо дані з форми
         settings.save_settings(request.form)
         return redirect(url_for('settings_page'))
     
-    conf = settings._cache # Отримуємо поточні налаштування з кешу
+    conf = settings._cache
     
     html = """
     <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Bot Settings</title>
@@ -105,7 +101,6 @@ def settings_page():
         .form-label{font-weight:500; font-size: 0.9rem;}
         .input-group-text{font-size: 0.85rem;}
         .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-bottom: 15px; margin-top: 10px; font-weight: bold; }
-        .rsi-block { border-left: 3px solid #6f42c1; padding-left: 15px; background: #fdfdff; }
         .btn-save { background-color: #20b26c; color: white; border: none; padding: 10px 30px; }
         .btn-save:hover { background-color: #1a965a; color: white; }
     </style>
@@ -128,49 +123,23 @@ def settings_page():
                 <div class="card-header">🎛️ Логіка та Фільтри</div>
                 <div class="card-body">
                     <div class="row">
-                        <div class="col-md-3">
-                            <div class="form-check form-switch mb-3">
-                                <input class="form-check-input" type="checkbox" name="useCloudFilter" id="cloud" {{ 'checked' if conf.get('useCloudFilter') }}>
-                                <label class="form-check-label" for="cloud">Cloud Filter</label>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="form-check form-switch mb-3">
-                                <input class="form-check-input" type="checkbox" name="useObvFilter" id="obv" {{ 'checked' if conf.get('useObvFilter') }}>
-                                <label class="form-check-label" for="obv">OBV Filter</label>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="form-check form-switch mb-3">
-                                <input class="form-check-input" type="checkbox" name="useRsiFilter" id="rsi" {{ 'checked' if conf.get('useRsiFilter') }}>
-                                <label class="form-check-label" for="rsi">RSI Filter</label>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="form-check form-switch mb-3">
-                                <input class="form-check-input" type="checkbox" name="useMfiFilter" id="mfi" {{ 'checked' if conf.get('useMfiFilter') }}>
-                                <label class="form-check-label" for="mfi">MFI Filter</label>
-                            </div>
-                        </div>
+                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useCloudFilter" id="cloud" {{ 'checked' if conf.get('useCloudFilter') }}><label class="form-check-label" for="cloud">Cloud Filter</label></div></div>
+                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useObvFilter" id="obv" {{ 'checked' if conf.get('useObvFilter') }}><label class="form-check-label" for="obv">OBV Filter</label></div></div>
+                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useRsiFilter" id="rsi" {{ 'checked' if conf.get('useRsiFilter') }}><label class="form-check-label" for="rsi">RSI Filter</label></div></div>
+                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useMfiFilter" id="mfi" {{ 'checked' if conf.get('useMfiFilter') }}><label class="form-check-label" for="mfi">MFI Filter</label></div></div>
                     </div>
                     
                     <div class="row mt-2">
                         <div class="col-md-4">
                             <label class="form-label">Глобальний TF (хв)</label>
                             <select class="form-select" name="htfSelection">
-                                <option value="60" {{ 'selected' if str(conf.get('htfSelection')) == '60' }}>1 Година</option>
-                                <option value="240" {{ 'selected' if str(conf.get('htfSelection')) == '240' }}>4 Години</option>
-                                <option value="D" {{ 'selected' if str(conf.get('htfSelection')) == 'D' }}>1 День</option>
+                                <option value="60" {{ 'selected' if conf.get('htfSelection')|string == '60' }}>1 Година</option>
+                                <option value="240" {{ 'selected' if conf.get('htfSelection')|string == '240' }}>4 Години</option>
+                                <option value="D" {{ 'selected' if conf.get('htfSelection')|string == 'D' }}>1 День</option>
                             </select>
                         </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Cloud Fast EMA</label>
-                            <input type="number" class="form-control" name="cloudFastLen" value="{{ conf.get('cloudFastLen') }}">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Cloud Slow EMA</label>
-                            <input type="number" class="form-control" name="cloudSlowLen" value="{{ conf.get('cloudSlowLen') }}">
-                        </div>
+                        <div class="col-md-4"><label class="form-label">Cloud Fast EMA</label><input type="number" class="form-control" name="cloudFastLen" value="{{ conf.get('cloudFastLen') }}"></div>
+                        <div class="col-md-4"><label class="form-label">Cloud Slow EMA</label><input type="number" class="form-control" name="cloudSlowLen" value="{{ conf.get('cloudSlowLen') }}"></div>
                     </div>
                 </div>
             </div>
@@ -180,98 +149,31 @@ def settings_page():
                 <div class="card-body">
                     <div class="row g-3">
                         <div class="col-md-12"><div class="section-title">Основні параметри</div></div>
-                        
-                        <div class="col-md-4">
-                            <label class="form-label">RSI Length</label>
-                            <input type="number" class="form-control" name="rsiLength" value="{{ conf.get('rsiLength') }}">
-                            <div class="form-text">Період індикатора (стандарт 14)</div>
-                        </div>
-                        
-                        <div class="col-md-4">
-                            <label class="form-label">MFI Length</label>
-                            <input type="number" class="form-control" name="mfiLength" value="{{ conf.get('mfiLength') }}">
-                        </div>
+                        <div class="col-md-4"><label class="form-label">RSI Length</label><input type="number" class="form-control" name="rsiLength" value="{{ conf.get('rsiLength') }}"></div>
+                        <div class="col-md-4"><label class="form-label">MFI Length</label><input type="number" class="form-control" name="mfiLength" value="{{ conf.get('mfiLength') }}"></div>
 
                         <div class="col-md-12"><div class="section-title">Рівні Входу (Signal Entry)</div></div>
-                        
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold text-success">Buy Level (Oversold)</label>
-                            <div class="input-group">
-                                <span class="input-group-text"><=</span>
-                                <input type="number" class="form-control" name="entryRsiOversold" value="{{ conf.get('entryRsiOversold') }}">
-                            </div>
-                            <div class="form-text">Вхід у Long, якщо RSI нижче цього рівня</div>
-                        </div>
-                        
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold text-danger">Sell Level (Overbought)</label>
-                            <div class="input-group">
-                                <span class="input-group-text">>=</span>
-                                <input type="number" class="form-control" name="entryRsiOverbought" value="{{ conf.get('entryRsiOverbought') }}">
-                            </div>
-                            <div class="form-text">Вхід у Short, якщо RSI вище цього рівня</div>
-                        </div>
+                        <div class="col-md-6"><label class="form-label fw-bold text-success">Buy Level (Oversold)</label><div class="input-group"><span class="input-group-text"><=</span><input type="number" class="form-control" name="entryRsiOversold" value="{{ conf.get('entryRsiOversold') }}"></div></div>
+                        <div class="col-md-6"><label class="form-label fw-bold text-danger">Sell Level (Overbought)</label><div class="input-group"><span class="input-group-text">>=</span><input type="number" class="form-control" name="entryRsiOverbought" value="{{ conf.get('entryRsiOverbought') }}"></div></div>
 
                         <div class="col-md-12"><div class="section-title">Рівні Виходу (Exit Signal)</div></div>
-                        
-                        <div class="col-md-6">
-                            <label class="form-label text-muted">Close Short Level</label>
-                            <input type="number" class="form-control" name="exitRsiOversold" value="{{ conf.get('exitRsiOversold') }}">
-                        </div>
-                        <div class="col-md-6">
-                            <label class="form-label text-muted">Close Long Level</label>
-                            <input type="number" class="form-control" name="exitRsiOverbought" value="{{ conf.get('exitRsiOverbought') }}">
-                        </div>
+                        <div class="col-md-6"><label class="form-label text-muted">Close Short Level</label><input type="number" class="form-control" name="exitRsiOversold" value="{{ conf.get('exitRsiOversold') }}"></div>
+                        <div class="col-md-6"><label class="form-label text-muted">Close Long Level</label><input type="number" class="form-control" name="exitRsiOverbought" value="{{ conf.get('exitRsiOverbought') }}"></div>
                     </div>
                 </div>
             </div>
 
             <div class="row">
-                <div class="col-md-6">
-                    <div class="card h-100">
-                        <div class="card-header">💰 Ризик Менеджмент</div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <label class="form-label">Ризик на угоду (%)</label>
-                                <input type="number" step="0.1" class="form-control" name="riskPercent" value="{{ conf.get('riskPercent') }}">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Кредитне плече (x)</label>
-                                <input type="number" class="form-control" name="leverage" value="{{ conf.get('leverage') }}">
-                            </div>
-                            <div class="row">
-                                <div class="col-6">
-                                    <label class="form-label">ATR SL Mult</label>
-                                    <input type="number" step="0.1" class="form-control" name="atrMultiplierSL" value="{{ conf.get('atrMultiplierSL') }}">
-                                </div>
-                                <div class="col-6">
-                                    <label class="form-label">ATR TP Mult</label>
-                                    <input type="number" step="0.1" class="form-control" name="atrMultiplierTP" value="{{ conf.get('atrMultiplierTP') }}">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="col-md-6">
-                    <div class="card h-100">
-                        <div class="card-header">🌊 Інші Налаштування</div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <label class="form-label">OBV Length</label>
-                                <input type="number" class="form-control" name="obvEntryLen" value="{{ conf.get('obvEntryLen') }}">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Swing Length (Order Blocks)</label>
-                                <input type="number" class="form-control" name="swingLength" value="{{ conf.get('swingLength') }}">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Volume Spike Threshold</label>
-                                <input type="number" step="0.1" class="form-control" name="volumeSpikeThreshold" value="{{ conf.get('volumeSpikeThreshold') }}">
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <div class="col-md-6"><div class="card h-100"><div class="card-header">💰 Ризик Менеджмент</div><div class="card-body">
+                    <div class="mb-3"><label class="form-label">Ризик на угоду (%)</label><input type="number" step="0.1" class="form-control" name="riskPercent" value="{{ conf.get('riskPercent') }}"></div>
+                    <div class="mb-3"><label class="form-label">Кредитне плече (x)</label><input type="number" class="form-control" name="leverage" value="{{ conf.get('leverage') }}"></div>
+                    <div class="row"><div class="col-6"><label class="form-label">ATR SL Mult</label><input type="number" step="0.1" class="form-control" name="atrMultiplierSL" value="{{ conf.get('atrMultiplierSL') }}"></div><div class="col-6"><label class="form-label">ATR TP Mult</label><input type="number" step="0.1" class="form-control" name="atrMultiplierTP" value="{{ conf.get('atrMultiplierTP') }}"></div></div>
+                </div></div></div>
+                <div class="col-md-6"><div class="card h-100"><div class="card-header">🌊 Інші Налаштування</div><div class="card-body">
+                    <div class="mb-3"><label class="form-label">OBV Length</label><input type="number" class="form-control" name="obvEntryLen" value="{{ conf.get('obvEntryLen') }}"></div>
+                    <div class="mb-3"><label class="form-label">Swing Length (Order Blocks)</label><input type="number" class="form-control" name="swingLength" value="{{ conf.get('swingLength') }}"></div>
+                    <div class="mb-3"><label class="form-label">Volume Spike Threshold</label><input type="number" step="0.1" class="form-control" name="volumeSpikeThreshold" value="{{ conf.get('volumeSpikeThreshold') }}"></div>
+                </div></div></div>
             </div>
 
             <div class="text-center my-4">
