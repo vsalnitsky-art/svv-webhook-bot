@@ -1,5 +1,5 @@
 """
-Main App - Clean & Professional
+Main App - Clean & Professional 
 Updated with proper logging and self-ping mechanism
 """
 import logging
