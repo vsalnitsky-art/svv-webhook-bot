@@ -4,17 +4,17 @@ from models import db_manager, BotSetting
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
-    # General
+    # === GENERAL SETTINGS ===
     "scanner_quote_coin": "USDT",
     "scanner_mode": "Manual",
     "scan_limit": 100,
     
-    # Telegram
+    # === TELEGRAM ===
     "telegram_enabled": False,
     "telegram_bot_token": "",
     "telegram_chat_id": "",
 
-    # Strategy
+    # === STRATEGY SETTINGS ===
     "useCloudFilter": True,
     "useObvFilter": True,
     "useRsiFilter": True,
@@ -29,16 +29,28 @@ DEFAULT_SETTINGS = {
     "entryRsiOversold": 45,
     "entryRsiOverbought": 55,
     "rsiLength": 14,
+    "exitRsiOversold": 30,
+    "exitRsiOverbought": 70,
     "mfiLength": 20,
     "obvEntryLen": 20,
+    "obvExitLen": 20,
     
     "riskPercent": 2.0,
     "leverage": 20,
+    "fixedTP": 3.0,
+    "fixedSL": 1.5,
+    "atrMultiplierSL": 1.5,
+    "atrMultiplierTP": 3.0,
+    
     "swingLength": 5,
-    "volumeSpikeThreshold": 1.8
+    "volumeSpikeThreshold": 1.8,
+
+    # === НОВІ НАЛАШТУВАННЯ TP ===
+    "tp_mode": "None", # Варіанти: "None", "Fixed_1_50", "Ladder_3"
 }
 
 class SettingsManager:
+    # ... (решта класу без змін, копіюйте з попередньої версії) ...
     def __init__(self):
         self.db = db_manager
         self._cache = {}
@@ -68,8 +80,10 @@ class SettingsManager:
             else:
                 loaded = {}
                 for s in db_settings: loaded[s.key] = self._cast_value(s.key, s.value)
-                self._cache = DEFAULT_SETTINGS.copy()
-                self._cache.update(loaded)
+                # Merge with defaults to pick up new keys like tp_mode
+                merged = DEFAULT_SETTINGS.copy()
+                merged.update(loaded)
+                self._cache = merged
         except Exception as e:
             logger.error(f"Error loading settings: {e}")
             self._cache = DEFAULT_SETTINGS.copy()

@@ -13,20 +13,14 @@
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <label class="form-label d-flex align-items-center">
-                            Валюта Торгівлі
-                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Базова валюта (Quote Coin), до якої торгуються пари. Зазвичай USDT або USDC."></i>
-                        </label>
+                        <label class="form-label">Валюта Торгівлі</label>
                         <select class="form-select" name="scanner_quote_coin">
                             <option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin')=='USDT' }}>USDT</option>
                             <option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin')=='USDC' }}>USDC</option>
                         </select>
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label d-flex align-items-center">
-                            Режим Сканера
-                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Manual: сканування запускається тільки кнопкою. Auto: сканування відбувається автоматично кожні 15 хвилин у фоні."></i>
-                        </label>
+                        <label class="form-label">Режим Сканера</label>
                         <select class="form-select" name="scanner_mode">
                             <option value="Manual" {{ 'selected' if conf.get('scanner_mode')=='Manual' }}>Manual (Кнопка)</option>
                             <option value="Auto" {{ 'selected' if conf.get('scanner_mode')=='Auto' }}>Auto (15 хв)</option>
@@ -43,7 +37,7 @@
                     <div class="col-md-6">
                         <label class="form-label d-flex align-items-center">
                             Ризик на угоду (%)
-                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Відсоток від вашого загального балансу, який буде використано для входу в одну позицію. Рекомендовано 1-5%."></i>
+                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Відсоток від депозиту на одну угоду."></i>
                         </label>
                         <div class="input-group">
                             <input type="number" step="0.1" class="form-control" name="riskPercent" value="{{ conf.get('riskPercent') }}">
@@ -53,12 +47,23 @@
                     <div class="col-md-6">
                         <label class="form-label d-flex align-items-center">
                             Кредитне Плече (x)
-                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Множник позикових коштів біржі. Вище плече = вищий ризик ліквідації. Рекомендовано до 20x."></i>
                         </label>
                         <div class="input-group">
                             <span class="input-group-text">x</span>
                             <input type="number" class="form-control" name="leverage" value="{{ conf.get('leverage') }}">
                         </div>
+                    </div>
+                    
+                    <div class="col-md-12">
+                        <label class="form-label d-flex align-items-center fw-bold">
+                            Стратегія Take Profit
+                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Оберіть, як бот буде фіксувати прибуток. 'Драбинка' ділить TP з сигналу на 3 частини."></i>
+                        </label>
+                        <select class="form-select" name="tp_mode">
+                            <option value="None" {{ 'selected' if conf.get('tp_mode')=='None' }}>Вимкнено (Без TP)</option>
+                            <option value="Fixed_1_50" {{ 'selected' if conf.get('tp_mode')=='Fixed_1_50' }}>Фіксований 1% (Закрити 50%)</option>
+                            <option value="Ladder_3" {{ 'selected' if conf.get('tp_mode')=='Ladder_3' }}>Драбинка (3 цілі з сигналу)</option>
+                        </select>
                     </div>
                 </div>
             </div>
@@ -69,23 +74,14 @@
             <div class="card-body">
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" name="telegram_enabled" {{ 'checked' if conf.get('telegram_enabled') }}>
-                    <label class="form-check-label fw-bold d-flex align-items-center">
-                        Увімкнути сповіщення
-                        <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Якщо увімкнено, бот буде надсилати повідомлення про знайдені сигнали у ваш Telegram."></i>
-                    </label>
+                    <label class="form-check-label fw-bold">Увімкнути сповіщення</label>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label d-flex align-items-center">
-                        Bot Token
-                        <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Токен, отриманий від @BotFather при створенні бота."></i>
-                    </label>
+                    <label class="form-label">Bot Token</label>
                     <input type="text" class="form-control" name="telegram_bot_token" value="{{ conf.get('telegram_bot_token','') }}" placeholder="123456:ABC...">
                 </div>
                 <div class="mb-3">
-                    <label class="form-label d-flex align-items-center">
-                        Chat ID
-                        <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Ваш числовий ID або ID каналу/групи, куди бот має писати. Можна дізнатися через @userinfobot."></i>
-                    </label>
+                    <label class="form-label">Chat ID</label>
                     <input type="text" class="form-control" name="telegram_chat_id" value="{{ conf.get('telegram_chat_id','') }}" placeholder="-100...">
                 </div>
             </div>

@@ -1,10 +1,9 @@
 import logging
 import decimal
-from datetime import datetime
 from pybit.unified_trading import HTTP
 from bot_config import config
 from config import get_api_credentials
-from statistics_service import stats_service
+from settings_manager import settings # Імпорт налаштувань
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +37,6 @@ class BybitTradingBot:
             r = self.session.get_tickers(category="linear")
             if r['retCode'] == 0:
                 return r['result']['list']
-            else:
-                logger.warning(f"Get all tickers API Error: {r}")
         except Exception as e:
              logger.error(f"Error getting all tickers: {e}")
         return []
@@ -64,180 +61,167 @@ class BybitTradingBot:
     def set_lev(self, s, l):
         try: 
             self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
-        except Exception as e:
-            logger.info(f"Set leverage info for {s}: {e}")
+        except: pass
 
+    # === ОСНОВНА ФУНКЦІЯ ОРДЕРІВ ===
     def place_order(self, data):
         try:
-            action = data.get('action') # "Buy", "Sell" або "Close"
+            action = data.get('action') # Buy/Sell/Close
             symbol = data.get('symbol')
             norm = self.normalize(symbol)
             
-            # ==========================================
-            # ЛОГІКА ЗАКРИТТЯ ПОЗИЦІЇ (CLOSE)
-            # ==========================================
+            # --- CLOSE LOGIC ---
             if action == "Close":
-                direction = data.get('direction') # "Long" або "Short"
-                reason = data.get('reason', 'Signal')
+                direction = data.get('direction') 
+                logger.info(f"🛑 CLOSE SIGNAL: {symbol} | Dir: {direction}")
                 
-                logger.info(f"🛑 RECEIVED CLOSE SIGNAL: {symbol} | Direction: {direction} | Reason: {reason}")
-                
-                # 1. Отримуємо поточну позицію
                 pos_data = self.session.get_positions(category="linear", symbol=norm)
-                if pos_data['retCode'] != 0:
-                    return {"status": "error", "reason": "API Error getting positions"}
-                
                 target_position = None
                 for p in pos_data['result']['list']:
                     if float(p['size']) > 0:
                         target_position = p
                         break
                 
-                # 2. Перевірка: чи існує позиція?
                 if not target_position:
-                    logger.warning(f"⚠️ CLOSE IGNORED: No open position for {symbol}")
-                    return {"status": "ignored", "reason": "No open position found"}
+                    return {"status": "ignored", "reason": "No position"}
                 
-                # 3. Перевірка: чи співпадає напрямок?
-                # Bybit повертає side як "Buy" (це Long) або "Sell" (це Short)
-                current_side = target_position['side'] # "Buy" or "Sell"
-                current_size = target_position['size']
+                current_side = target_position['side'] # Buy/Sell
                 
-                match_long = (direction == "Long" and current_side == "Buy")
-                match_short = (direction == "Short" and current_side == "Sell")
-                
-                if not (match_long or match_short):
-                    logger.warning(f"⚠️ CLOSE IGNORED: Direction mismatch. Signal: {direction}, Actual: {current_side}")
-                    return {"status": "ignored", "reason": f"Direction mismatch. Holding {current_side}"}
-                
-                # 4. Виконання закриття
-                # Щоб закрити Long (Buy), треба зробити Sell. Щоб закрити Short (Sell), треба зробити Buy.
-                close_side = "Sell" if current_side == "Buy" else "Buy"
-                
-                logger.info(f"📉 CLOSING {current_side} {symbol} | Size: {current_size} | Reason: {reason}")
-                
-                self.session.place_order(
-                    category="linear",
-                    symbol=norm,
-                    side=close_side,
-                    orderType="Market",
-                    qty=current_size,
-                    reduceOnly=True, # Важливо! Тільки зменшує/закриває
-                    timeInForce="IOC"
-                )
-                
-                return {"status": "ok", "message": f"Closed {direction} position"}
+                # Закриваємо тільки якщо напрямок співпадає
+                if (direction == "Long" and current_side == "Buy") or (direction == "Short" and current_side == "Sell"):
+                    close_side = "Sell" if current_side == "Buy" else "Buy"
+                    self.session.place_order(category="linear", symbol=norm, side=close_side, orderType="Market", qty=target_position['size'], reduceOnly=True)
+                    
+                    # Скасовуємо всі лімітні ордери (TP), які могли залишитися
+                    try:
+                        self.session.cancel_all_orders(category="linear", symbol=norm)
+                    except: pass
+                    
+                    return {"status": "ok", "message": f"Closed {direction}"}
+                else:
+                    return {"status": "ignored", "reason": "Direction mismatch"}
 
-            # ==========================================
-            # ЛОГІКА ВІДКРИТТЯ ПОЗИЦІЇ (OPEN)
-            # ==========================================
+            # --- OPEN LOGIC ---
             
-            # --- ПЕРЕВІРКА ВІДКРИТИХ ПОЗИЦІЙ (Щоб не дублювати) ---
-            try:
-                pos_data = self.session.get_positions(category="linear", symbol=norm)
-                if pos_data['retCode'] == 0:
-                    for p in pos_data['result']['list']:
-                        if float(p['size']) > 0:
-                            logger.warning(f"⚠️ IGNORING OPEN SIGNAL {action} {symbol}: Position already exists!")
-                            return {
-                                "status": "ignored", 
-                                "reason": f"Position for {symbol} already exists. Size: {p['size']}"
-                            }
-            except Exception as e:
-                logger.error(f"Error checking existing positions: {e}")
-                return {"status": "error", "reason": "Failed to check existing positions"}
+            # 1. Check existing
+            pos_data = self.session.get_positions(category="linear", symbol=norm)
+            for p in pos_data['result']['list']:
+                if float(p['size']) > 0:
+                    return {"status": "ignored", "reason": "Position exists"}
             
-            # --- РОЗРАХУНОК ВХОДУ ---
-            risk = float(data.get('riskPercent', config.DEFAULT_RISK_PERCENT))
-            lev = int(data.get('leverage', config.DEFAULT_LEVERAGE))
+            # 2. Calc Size
+            risk = float(data.get('riskPercent', settings.get('riskPercent')))
+            lev = int(data.get('leverage', settings.get('leverage')))
             
             price = self.get_price(norm)
             lot, tick = self.get_instr(norm)
-            if not price or not lot: 
-                return {"status": "error", "reason": "Failed to get price/instrument info"}
+            if not price or not lot: return {"status": "error", "reason": "No price/info"}
             
             bal = self.get_bal()
-            if bal < 5: 
-                return {"status": "no_balance", "balance": bal}
+            if bal < 5: return {"status": "no_balance", "balance": bal}
 
             qty_step = float(lot['qtyStep'])
             min_qty = float(lot['minOrderQty'])
             tick_size = float(tick['tickSize'])
             
+            # Розмір позиції в монетах
             raw_qty = (bal * (risk/100) * 0.98 * lev) / price
             qty = self.round_val(raw_qty, qty_step)
             if qty < min_qty: qty = min_qty
             
             self.set_lev(norm, lev)
             
-            # 1. MARKET ORDER (ВХІД)
-            logger.info(f"🚀 OPENING {action} {symbol} | Price: {price} | Qty: {qty}")
+            # 3. OPEN MARKET ORDER
+            logger.info(f"🚀 OPEN {action} {symbol} | Qty: {qty}")
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
             
-            # 2. FIXED STOP LOSS (ТІЛЬКИ З JSON)
-            sl_pct = float(data.get('stopLossPercent', 0.0))
-            
+            # 4. SET STOP LOSS
+            sl_pct = float(data.get('stopLossPercent', settings.get('fixedSL')))
             if sl_pct > 0:
-                dist = price * (sl_pct / 100)
-                dist = self.round_val(dist, tick_size)
-                
-                if action == "Buy":
-                    sl_price = price - dist
-                else: # Sell
-                    sl_price = price + dist
-                    
+                sl_dist = price * (sl_pct / 100)
+                sl_price = price - sl_dist if action == "Buy" else price + sl_dist
                 sl_price = self.round_val(sl_price, tick_size)
-                
-                logger.info(f"🛡️ SETTING SL for {symbol} from JSON: {sl_price} ({sl_pct}%)")
                 self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_price), positionIdx=0)
-                return {"status": "ok", "sl_price": sl_price}
-            else:
-                logger.info(f"⚠️ NO SL in JSON for {symbol}. Position opened without SL.")
-                return {"status": "ok", "sl_price": None}
+
+            # 5. === TAKE PROFIT LOGIC (NEW) ===
+            self._place_take_profits(norm, action, price, qty, data, tick_size, qty_step)
+
+            return {"status": "ok", "qty": qty}
 
         except Exception as e:
-            logger.error(f"Order Processing Critical Error: {e}")
+            logger.error(f"Trading Error: {e}")
             return {"status": "error", "reason": str(e)}
 
-    def sync_history(self):
+    def _place_take_profits(self, symbol, side, entry_price, total_qty, data, tick_size, qty_step):
+        """Розрахунок і розміщення TP ордерів"""
         try:
-            import time
-            end = int(time.time()*1000)
-            start = end - (24*60*60*1000)
-            r = self.session.get_closed_pnl(category="linear", startTime=start, endTime=end, limit=50)
-            if r['retCode']==0:
-                for t in r['result']['list']:
-                    stats_service.save_trade({
-                        'order_id': t['orderId'], 'symbol': t['symbol'],
-                        'side': 'Long' if t['side']=='Sell' else 'Short',
-                        'qty': float(t['qty']), 'entry_price': float(t['avgEntryPrice']),
-                        'exit_price': float(t['avgExitPrice']), 'pnl': float(t['closedPnl']),
-                        'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
-                        'exit_reason': 'Manual/SL/Signal'
-                    })
-        except Exception as e:
-             logger.error(f"Sync history error: {e}")
+            tp_mode = settings.get("tp_mode")
+            logger.info(f"Setting TP | Mode: {tp_mode}")
 
-    def sync_trades(self, days=7):
-        try:
-            import time
-            end = int(time.time()*1000)
-            start = end - (days*24*60*60*1000)
-            r = self.session.get_closed_pnl(category="linear", startTime=start, endTime=end, limit=100)
-            if r['retCode']==0:
-                for t in r['result']['list']:
-                    stats_service.save_trade({
-                        'order_id': t['orderId'], 'symbol': t['symbol'],
-                        'side': 'Long' if t['side']=='Sell' else 'Short',
-                        'qty': float(t['qty']), 'entry_price': float(t['avgEntryPrice']),
-                        'exit_price': float(t['avgExitPrice']), 'pnl': float(t['closedPnl']),
-                        'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
-                        'exit_reason': 'Manual/SL/Signal'
-                    })
-        except Exception as e:
-            logger.error(f"Sync trades error: {e}")
+            # Режим 1: Немає TP
+            if tp_mode == "None":
+                return
 
-    def get_available_balance(self):
-        return self.get_bal()
+            # Спільні змінні
+            exit_side = "Sell" if side == "Buy" else "Buy"
+            
+            # Режим 2: Фіксований 1% руху, закрити 50%
+            if tp_mode == "Fixed_1_50":
+                percent = 0.01 # 1%
+                qty_to_close = self.round_val(total_qty * 0.5, qty_step)
+                
+                if side == "Buy":
+                    tp_price = entry_price * (1 + percent)
+                else:
+                    tp_price = entry_price * (1 - percent)
+                
+                tp_price = self.round_val(tp_price, tick_size)
+                
+                if qty_to_close > 0:
+                    self.session.place_order(
+                        category="linear", symbol=symbol, side=exit_side, orderType="Limit",
+                        qty=str(qty_to_close), price=str(tp_price), reduceOnly=True
+                    )
+                    logger.info(f"🎯 TP Placed: 1% target @ {tp_price}, Qty: {qty_to_close}")
+
+            # Режим 3: Драбинка (3 кроки на основі сигналу)
+            elif tp_mode == "Ladder_3":
+                # Беремо TP % з сигналу (або дефолт 3%, якщо немає)
+                total_tp_pct = float(data.get('takeProfitPercent', settings.get('fixedTP'))) / 100
+                
+                # Ділимо на 3 рівні
+                step_pct = total_tp_pct / 3
+                
+                # Розподіл об'єму: 33%, 33%, 34%
+                q1 = self.round_val(total_qty * 0.33, qty_step)
+                q2 = self.round_val(total_qty * 0.33, qty_step)
+                # Третій шматок - це залишок, щоб у сумі було 100% (але reduceOnly і так не дасть продати більше)
+                q3 = self.round_val(total_qty - q1 - q2, qty_step) 
+                
+                targets = [
+                    (step_pct, q1),
+                    (step_pct * 2, q2),
+                    (total_tp_pct, q3)
+                ]
+                
+                for pct, q in targets:
+                    if q <= 0: continue
+                    
+                    if side == "Buy":
+                        price = entry_price * (1 + pct)
+                    else:
+                        price = entry_price * (1 - pct)
+                        
+                    price = self.round_val(price, tick_size)
+                    
+                    self.session.place_order(
+                        category="linear", symbol=symbol, side=exit_side, orderType="Limit",
+                        qty=str(q), price=str(price), reduceOnly=True
+                    )
+                
+                logger.info(f"🪜 Ladder TP Placed: {len(targets)} steps up to {total_tp_pct*100}%")
+
+        except Exception as e:
+            logger.error(f"TP Placement Error: {e}")
 
 bot_instance = BybitTradingBot()
