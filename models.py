@@ -67,37 +67,43 @@ class CoinPerformance(Base):
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         
-        # 1. Спроба підключення до PostgreSQL (Render)
+        # 1. Спроба підключення до PostgreSQL (Render Env)
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
+            print("Using PostgreSQL connection.")
         
-        # 2. Якщо PostgreSQL немає — використовуємо локальну SQLite у папці BASE
+        # 2. Локальна SQLite (Якщо немає Postgres)
         if not db_url:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            target_folder = os.path.join(base_dir, 'BASE')
             
-            # Спроба створити папку BASE
+            # Спроба використати папку BASE
             try:
-                if not os.path.exists(target_folder):
-                    os.makedirs(target_folder)
-                    print(f"📁 Created database folder: {target_folder}")
+                target_folder = os.path.join(base_dir, 'BASE')
+                # exist_ok=True не видає помилку, якщо папка вже існує
+                os.makedirs(target_folder, exist_ok=True)
                 
-                # Якщо папка є/створена — шлях веде в неї
                 db_path = os.path.join(target_folder, db_filename)
-            
+                print(f"✅ SQLite initialized in BASE folder: {db_path}")
+                
             except Exception as e:
-                # Якщо немає прав на створення папки (помилка Render) — кладемо в корінь
-                print(f"⚠️ Could not create 'BASE' folder: {e}. Using root directory.")
+                # Якщо немає прав на створення папки (Fallback)
+                print(f"⚠️ Error creating BASE folder: {e}. Falling back to root.")
                 db_path = os.path.join(base_dir, db_filename)
 
             db_url = f'sqlite:///{db_path}'
-            print(f"💾 Database initialized at: {db_path}")
 
-        # 3. Підключення
-        self.engine = create_engine(db_url, echo=False)
-        Base.metadata.create_all(self.engine)
-        self.Session = sessionmaker(bind=self.engine)
+        # 3. Створення Engine
+        try:
+            self.engine = create_engine(db_url, echo=False)
+            Base.metadata.create_all(self.engine)
+            self.Session = sessionmaker(bind=self.engine)
+        except Exception as e:
+            print(f"❌ CRITICAL DATABASE ERROR: {e}")
+            # Аварійний режим, щоб бот не впав повністю
+            self.engine = create_engine('sqlite:///:memory:', echo=False)
+            Base.metadata.create_all(self.engine)
+            self.Session = sessionmaker(bind=self.engine)
     
     def get_session(self): return self.Session()
 
