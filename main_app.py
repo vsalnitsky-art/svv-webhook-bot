@@ -1,5 +1,6 @@
 """
-Main App - Clean MVC Architecture
+Main App - Modular MVC Architecture
+Updated: Time formatting in Scanner, full routing.
 """
 import logging
 import threading
@@ -18,7 +19,7 @@ from scanner import EnhancedMarketScanner
 from settings_manager import settings
 from market_analyzer import market_analyzer
 
-# Запобігання сну
+# Запобігання сну у Windows
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
@@ -51,7 +52,13 @@ def monitor_active():
 def keep_alive():
     """Self-Ping"""
     time.sleep(5)
-    target = os.environ.get('RENDER_EXTERNAL_URL', f'http://127.0.0.1:{config.PORT}') + "/health"
+    base_url = os.environ.get('RENDER_EXTERNAL_URL')
+    if not base_url:
+        base_url = f'http://127.0.0.1:{config.PORT}'
+    
+    target = f"{base_url}/health"
+    logger.info(f"💓 Keep-alive target: {target}")
+    
     while True:
         try: requests.get(target, timeout=10)
         except: pass
@@ -74,14 +81,25 @@ def scanner_page():
         if r['retCode'] == 0:
             for p in r['result']['list']:
                 if float(p['size']) > 0:
+                    symbol = p['symbol']
+                    
+                    # --- КОНВЕРТАЦІЯ ЧАСУ ---
+                    c_time = p.get('createdTime')
+                    if not c_time or c_time == '0':
+                        c_time = p.get('updatedTime', time.time() * 1000)
+                    
+                    dt_obj = datetime.fromtimestamp(int(c_time) / 1000)
+                    formatted_time = dt_obj.strftime('%d.%m %H:%M')
+                    
                     active.append({
-                        'symbol': p['symbol'], 
+                        'symbol': symbol, 
                         'side': p['side'], 
                         'pnl': round(float(p['unrealisedPnl']), 2), 
-                        'rsi': scanner.get_current_rsi(p['symbol']), 
-                        'pressure': round(scanner.get_market_pressure(p['symbol'])), 
+                        'rsi': scanner.get_current_rsi(symbol), 
+                        'pressure': round(scanner.get_market_pressure(symbol)), 
                         'size': p['size'], 
-                        'entry': p['avgPrice']
+                        'entry': p['avgPrice'],
+                        'time': formatted_time
                     })
     except Exception as e: logger.error(f"Scanner error: {e}")
     return render_template('scanner.html', active=active)
@@ -123,6 +141,10 @@ def run_scan():
     if request.form:
         form_data = request.form.to_dict()
         if 'useOBRetest' not in form_data: form_data['useOBRetest'] = 'off'
+        # Чекбокси фільтрів теж треба обробити тут, якщо вони приходять з форми analyzer.html
+        for cb in ['useCloudFilter', 'useObvFilter', 'useRsiFilter']:
+             if cb not in form_data: form_data[cb] = 'off'
+             
         settings.save_settings(form_data)
     market_analyzer.run_scan_thread()
     return jsonify({"status": "started"})
@@ -148,9 +170,6 @@ def webhook():
 
 @app.route('/report', methods=['GET'])
 def report_route():
-    # Report поки що складний для перенесення в HTML template швидко, 
-    # тому залишимо його як є (він генерує HTML всередині report.py)
-    # АБО ми можемо переписати report.py пізніше.
     from report import render_report_page
     return render_report_page(bot_instance, request)
 
