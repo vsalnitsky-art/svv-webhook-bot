@@ -62,35 +62,35 @@ class CoinPerformance(Base):
     __tablename__ = 'coin_performance'
     id = Column(Integer, primary_key=True)
 
-# === МЕНЕДЖЕР БАЗИ ДАНИХ (З папкою BASE) ===
+# === МЕНЕДЖЕР БАЗИ ДАНИХ ===
 
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         
-        # 1. Спроба підключення до PostgreSQL (для Render)
-        # Якщо змінна DATABASE_URL задана в Environment, використовуємо її.
+        # 1. Спроба підключення до PostgreSQL (Render)
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         
         # 2. Якщо PostgreSQL немає — використовуємо локальну SQLite у папці BASE
         if not db_url:
-            # Отримуємо шлях до папки, де лежить цей скрипт (root проекту)
             base_dir = os.path.dirname(os.path.abspath(__file__))
+            target_folder = os.path.join(base_dir, 'BASE')
             
-            # Формуємо шлях до папки BASE
-            base_folder_path = os.path.join(base_dir, 'BASE')
+            # Спроба створити папку BASE
+            try:
+                if not os.path.exists(target_folder):
+                    os.makedirs(target_folder)
+                    print(f"📁 Created database folder: {target_folder}")
+                
+                # Якщо папка є/створена — шлях веде в неї
+                db_path = os.path.join(target_folder, db_filename)
             
-            # Створюємо папку BASE, якщо її не існує
-            if not os.path.exists(base_folder_path):
-                try:
-                    os.makedirs(base_folder_path)
-                    print(f"📁 Created folder: {base_folder_path}")
-                except Exception as e:
-                    print(f"⚠️ Error creating folder: {e}")
-            
-            # Формуємо повний шлях до файлу бази даних
-            db_path = os.path.join(base_folder_path, db_filename)
+            except Exception as e:
+                # Якщо немає прав на створення папки (помилка Render) — кладемо в корінь
+                print(f"⚠️ Could not create 'BASE' folder: {e}. Using root directory.")
+                db_path = os.path.join(base_dir, db_filename)
+
             db_url = f'sqlite:///{db_path}'
             print(f"💾 Database initialized at: {db_path}")
 
