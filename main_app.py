@@ -1,6 +1,6 @@
 """
 Main App - Modular Architecture
-Updated: Added 'useOBRetest' checkbox to UI.
+Updated: Added 'useOBRetest' checkbox.
 """
 import logging
 import threading
@@ -94,7 +94,6 @@ def settings_general_page():
 def analyzer_settings_page():
     if request.method == 'POST':
         form_data = request.form.to_dict()
-        # Explicit check for all checkboxes
         for cb in ['useCloudFilter', 'useObvFilter', 'useRsiFilter', 'useMfiFilter', 'useOBRetest']:
             form_data[cb] = request.form.get(cb) == 'on'
         settings.save_settings(form_data)
@@ -139,7 +138,7 @@ def analyzer_page():
         <div class="row mb-3"><div class="col-md-3"><label class="small text-muted">Currency</label><select class="form-select form-select-sm" name="scanner_quote_coin"><option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin')=='USDT' }}>USDT</option><option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin')=='USDC' }}>USDC</option></select></div>
         <div class="col-md-3"><label class="small text-muted">HTF</label><select class="form-select form-select-sm" name="htfSelection"><option value="60" {{ 'selected' if conf.get('htfSelection')|string=='60' }}>1H</option><option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4H</option></select></div>
         <div class="col-md-3"><label class="small text-muted">LTF</label><select class="form-select form-select-sm" name="ltfSelection"><option value="5" {{ 'selected' if conf.get('ltfSelection')|string=='5' }}>5m</option><option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15m</option></select></div>
-        <div class="col-md-3 pt-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="useOBRetest" {{ 'checked' if conf.get('useOBRetest') }}><label class="form-check-label small fw-bold">OB Retest</label></div></div></div>
+        <div class="col-md-3 pt-4"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="useOBRetest" {{ 'checked' if conf.get('useOBRetest') }}><label class="form-check-label small fw-bold text-primary">OB Retest</label></div></div></div>
         </form></div></div></div></div>
 
         <div class="card mb-4 border-0 shadow-sm"><div class="card-body text-center py-4"><h5 id="status-text" class="text-muted mb-3">{{ status }}</h5><div class="progress mb-4 w-75 mx-auto"><div id="progress-bar" class="progress-bar bg-primary" style="width: {{ progress }}%"></div></div><button id="btn-scan" class="btn btn-primary btn-lg px-5" onclick="startScan()" {{ 'disabled' if is_scanning }}>{{ 'Scanning...' if is_scanning else 'START SCAN 🚀' }}</button></div></div>
@@ -174,7 +173,6 @@ def analyzer_page():
 def run_scan():
     if request.form:
         form_data = request.form.to_dict()
-        # Explicit check for checkboxes from the quick menu
         if 'useOBRetest' not in form_data: form_data['useOBRetest'] = 'off'
         settings.save_settings(form_data)
     market_analyzer.run_scan_thread()

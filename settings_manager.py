@@ -20,9 +20,10 @@ DEFAULT_SETTINGS = {
     "useRsiFilter": True,
     "useMfiFilter": False,
     
-    # НОВИЙ ПАРАМЕТР: Вимагати ретест зони? (False = вхід по тренду)
-    "useOBRetest": False, 
-    
+    # --- НОВИЙ ПАРАМЕТР ---
+    "useOBRetest": False, # False = Вхід по тренду (відразу), True = Чекати дотику до зони
+    # ----------------------
+
     "htfSelection": "240",
     "ltfSelection": "15",
     
