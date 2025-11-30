@@ -1,6 +1,6 @@
 """
-Main App - Clean & Professional
-Updated: Fixed Jinja2 'str is undefined' error by using '|string' filter.
+Main App - Modular Architecture
+Updated: Added Market Analyzer pages and separated General/Strategy settings.
 """
 import logging
 import threading
@@ -18,6 +18,7 @@ from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from report import render_report_page
 from settings_manager import settings
+from market_analyzer import market_analyzer
 
 # Запобігання сну у Windows
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
@@ -27,7 +28,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Сканер
+# Сканер активних позицій
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
@@ -68,131 +69,290 @@ def keep_alive():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
+# --- WEBHOOK ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     raw_data = ""
     try:
         raw_data = request.get_data(as_text=True)
         logger.info(f"📥 RAW PAYLOAD: {raw_data}")
-        
         data = json.loads(raw_data)
         logger.info(f"🔔 SIGNAL PARSED: {data.get('symbol')} {data.get('action')}")
-        
         result = bot_instance.place_order(data)
-        
         if result.get("status") in ["ok", "ignored"]:
             return jsonify(result)
         else:
             logger.error(f"Order action failed: {result}")
             return jsonify(result), 400
-            
     except Exception as e:
         logger.error(f"❌ Webhook Error: {e} | Payload was: {raw_data}")
         return jsonify({"error": str(e)}), 400
 
+# --- GENERAL SETTINGS ---
 @app.route('/settings', methods=['GET', 'POST'])
-def settings_page():
+def settings_general_page():
     if request.method == 'POST':
-        settings.save_settings(request.form)
-        return redirect(url_for('settings_page'))
+        form_data = request.form.to_dict()
+        # Чекбокс Telegram треба обробити явно
+        form_data['telegram_enabled'] = request.form.get('telegram_enabled') == 'on'
+        settings.save_settings(form_data)
+        return redirect(url_for('settings_general_page'))
     
     conf = settings._cache
     
     html = """
-    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Bot Settings</title>
+    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>General Settings</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body{background:#f7f9fc; color:#333; font-size:14px;}
-        .card{border:none; box-shadow:0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px;}
-        .card-header{background:white; border-bottom:1px solid #eee; font-weight:bold; color:#20b26c;}
-        .form-label{font-weight:500; font-size: 0.9rem;}
-        .input-group-text{font-size: 0.85rem;}
-        .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #888; margin-bottom: 15px; margin-top: 10px; font-weight: bold; }
-        .btn-save { background-color: #20b26c; color: white; border: none; padding: 10px 30px; }
-        .btn-save:hover { background-color: #1a965a; color: white; }
-    </style>
+    <style>body{background:#f7f9fc;font-size:14px} .card{margin-bottom:20px; border:none; box-shadow:0 2px 10px rgba(0,0,0,0.05)} .navbar{background:white;}</style>
     </head><body>
-    
-    <nav class="navbar bg-white mb-4 px-3 border-bottom shadow-sm">
-        <div class="container">
-            <span class="navbar-brand mb-0 h1">⚙️ Bot Configuration</span>
-            <div>
-                <a href="/scanner" class="btn btn-sm btn-outline-secondary me-2">Scanner</a>
-                <a href="/report" class="btn btn-sm btn-outline-secondary">Report</a>
-            </div>
-        </div>
+    <nav class="navbar mb-4 px-3 border-bottom shadow-sm">
+        <div class="container-fluid"><span class="navbar-brand mb-0 h1">⚙️ Загальні Налаштування</span>
+        <div><a href="/scanner" class="btn btn-sm btn-outline-secondary">Монітор</a><a href="/analyzer" class="btn btn-sm btn-outline-primary">Аналізатор Ринку</a></div></div>
     </nav>
-
-    <div class="container" style="max-width: 900px;">
+    <div class="container" style="max-width: 700px;">
         <form method="POST">
+            <div class="card">
+                <div class="card-header bg-white fw-bold text-primary">🌍 Параметри Аналізатора</div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Валюта торгівлі (Quote Coin)</label>
+                        <select class="form-select" name="scanner_quote_coin">
+                            <option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin') == 'USDT' }}>USDT</option>
+                            <option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin') == 'USDC' }}>USDC</option>
+                        </select>
+                        <div class="form-text">Сканер буде шукати тільки пари з цією валютою.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Режим Сканера</label>
+                        <select class="form-select" name="scanner_mode">
+                            <option value="Manual" {{ 'selected' if conf.get('scanner_mode') == 'Manual' }}>Manual (Тільки кнопка)</option>
+                            <option value="Auto" {{ 'selected' if conf.get('scanner_mode') == 'Auto' }}>Auto (Кожні 15 хв)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Глибина сканування (Top N)</label>
+                        <input type="number" class="form-control" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}">
+                        <div class="form-text">Макс. 200 монет за раз (щоб не перевищити ліміти API).</div>
+                    </div>
+                </div>
+            </div>
             
             <div class="card">
-                <div class="card-header">🎛️ Логіка та Фільтри</div>
+                <div class="card-header bg-white fw-bold text-info">✈️ Telegram Інтеграція</div>
+                <div class="card-body">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" name="telegram_enabled" id="tg_on" {{ 'checked' if conf.get('telegram_enabled') }}>
+                        <label class="form-check-label" for="tg_on">Увімкнути сповіщення</label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Bot Token</label>
+                        <input type="text" class="form-control" name="telegram_bot_token" value="{{ conf.get('telegram_bot_token', '') }}" placeholder="123456:ABC...">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Chat ID</label>
+                        <input type="text" class="form-control" name="telegram_chat_id" value="{{ conf.get('telegram_chat_id', '') }}">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-white fw-bold text-danger">💰 Ризик Менеджмент (Глобальний)</div>
                 <div class="card-body">
                     <div class="row">
-                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useCloudFilter" id="cloud" {{ 'checked' if conf.get('useCloudFilter') }}><label class="form-check-label" for="cloud">Cloud Filter</label></div></div>
-                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useObvFilter" id="obv" {{ 'checked' if conf.get('useObvFilter') }}><label class="form-check-label" for="obv">OBV Filter</label></div></div>
-                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useRsiFilter" id="rsi" {{ 'checked' if conf.get('useRsiFilter') }}><label class="form-check-label" for="rsi">RSI Filter</label></div></div>
-                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useMfiFilter" id="mfi" {{ 'checked' if conf.get('useMfiFilter') }}><label class="form-check-label" for="mfi">MFI Filter</label></div></div>
-                    </div>
-                    
-                    <div class="row mt-2">
-                        <div class="col-md-4">
-                            <label class="form-label">Глобальний TF (хв)</label>
-                            <select class="form-select" name="htfSelection">
-                                <option value="60" {{ 'selected' if conf.get('htfSelection')|string == '60' }}>1 Година</option>
-                                <option value="240" {{ 'selected' if conf.get('htfSelection')|string == '240' }}>4 Години</option>
-                                <option value="D" {{ 'selected' if conf.get('htfSelection')|string == 'D' }}>1 День</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4"><label class="form-label">Cloud Fast EMA</label><input type="number" class="form-control" name="cloudFastLen" value="{{ conf.get('cloudFastLen') }}"></div>
-                        <div class="col-md-4"><label class="form-label">Cloud Slow EMA</label><input type="number" class="form-control" name="cloudSlowLen" value="{{ conf.get('cloudSlowLen') }}"></div>
+                        <div class="col-6"><label class="form-label">Ризик на угоду (%)</label><input type="number" step="0.1" class="form-control" name="riskPercent" value="{{ conf.get('riskPercent') }}"></div>
+                        <div class="col-6"><label class="form-label">Плече (x)</label><input type="number" class="form-control" name="leverage" value="{{ conf.get('leverage') }}"></div>
                     </div>
                 </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header" style="color: #6f42c1;">📊 RSI Indicator Settings</div>
-                <div class="card-body">
-                    <div class="row g-3">
-                        <div class="col-md-12"><div class="section-title">Основні параметри</div></div>
-                        <div class="col-md-4"><label class="form-label">RSI Length</label><input type="number" class="form-control" name="rsiLength" value="{{ conf.get('rsiLength') }}"></div>
-                        <div class="col-md-4"><label class="form-label">MFI Length</label><input type="number" class="form-control" name="mfiLength" value="{{ conf.get('mfiLength') }}"></div>
-
-                        <div class="col-md-12"><div class="section-title">Рівні Входу (Signal Entry)</div></div>
-                        <div class="col-md-6"><label class="form-label fw-bold text-success">Buy Level (Oversold)</label><div class="input-group"><span class="input-group-text"><=</span><input type="number" class="form-control" name="entryRsiOversold" value="{{ conf.get('entryRsiOversold') }}"></div></div>
-                        <div class="col-md-6"><label class="form-label fw-bold text-danger">Sell Level (Overbought)</label><div class="input-group"><span class="input-group-text">>=</span><input type="number" class="form-control" name="entryRsiOverbought" value="{{ conf.get('entryRsiOverbought') }}"></div></div>
-
-                        <div class="col-md-12"><div class="section-title">Рівні Виходу (Exit Signal)</div></div>
-                        <div class="col-md-6"><label class="form-label text-muted">Close Short Level</label><input type="number" class="form-control" name="exitRsiOversold" value="{{ conf.get('exitRsiOversold') }}"></div>
-                        <div class="col-md-6"><label class="form-label text-muted">Close Long Level</label><input type="number" class="form-control" name="exitRsiOverbought" value="{{ conf.get('exitRsiOverbought') }}"></div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="row">
-                <div class="col-md-6"><div class="card h-100"><div class="card-header">💰 Ризик Менеджмент</div><div class="card-body">
-                    <div class="mb-3"><label class="form-label">Ризик на угоду (%)</label><input type="number" step="0.1" class="form-control" name="riskPercent" value="{{ conf.get('riskPercent') }}"></div>
-                    <div class="mb-3"><label class="form-label">Кредитне плече (x)</label><input type="number" class="form-control" name="leverage" value="{{ conf.get('leverage') }}"></div>
-                    <div class="row"><div class="col-6"><label class="form-label">ATR SL Mult</label><input type="number" step="0.1" class="form-control" name="atrMultiplierSL" value="{{ conf.get('atrMultiplierSL') }}"></div><div class="col-6"><label class="form-label">ATR TP Mult</label><input type="number" step="0.1" class="form-control" name="atrMultiplierTP" value="{{ conf.get('atrMultiplierTP') }}"></div></div>
-                </div></div></div>
-                <div class="col-md-6"><div class="card h-100"><div class="card-header">🌊 Інші Налаштування</div><div class="card-body">
-                    <div class="mb-3"><label class="form-label">OBV Length</label><input type="number" class="form-control" name="obvEntryLen" value="{{ conf.get('obvEntryLen') }}"></div>
-                    <div class="mb-3"><label class="form-label">Swing Length (Order Blocks)</label><input type="number" class="form-control" name="swingLength" value="{{ conf.get('swingLength') }}"></div>
-                    <div class="mb-3"><label class="form-label">Volume Spike Threshold</label><input type="number" step="0.1" class="form-control" name="volumeSpikeThreshold" value="{{ conf.get('volumeSpikeThreshold') }}"></div>
-                </div></div></div>
-            </div>
-
-            <div class="text-center my-4">
-                <button type="submit" class="btn btn-save btn-lg shadow">Зберегти налаштування</button>
             </div>
             
+            <div class="text-center pb-5">
+                <button type="submit" class="btn btn-primary btn-lg shadow">Зберегти Загальні</button>
+                <a href="/analyzer/settings" class="btn btn-outline-secondary btn-lg ms-2">Налаштування Стратегії →</a>
+            </div>
         </form>
-    </div>
-    </body></html>
+    </div></body></html>
     """
     return render_template_string(html, conf=conf)
 
+# --- ANALYZER SETTINGS ---
+@app.route('/analyzer/settings', methods=['GET', 'POST'])
+def analyzer_settings_page():
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        checkboxes = ['useCloudFilter', 'useObvFilter', 'useRsiFilter', 'useMfiFilter']
+        for cb in checkboxes:
+            form_data[cb] = request.form.get(cb) == 'on'
+        settings.save_settings(form_data)
+        return redirect(url_for('analyzer_settings_page'))
+    
+    conf = settings._cache
+    
+    html = """
+    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Strategy Settings</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>body{background:#f7f9fc;font-size:14px} .card{margin-bottom:20px; border:none; box-shadow:0 2px 10px rgba(0,0,0,0.05)}</style>
+    </head><body>
+    <nav class="navbar bg-white mb-4 px-3 border-bottom shadow-sm">
+        <div class="container-fluid"><span class="navbar-brand mb-0 h1">📊 Налаштування Стратегії</span>
+        <div><a href="/settings" class="btn btn-sm btn-outline-secondary">← Назад</a></div></div>
+    </nav>
+    <div class="container" style="max-width: 900px;">
+        <form method="POST">
+            <div class="card">
+                <div class="card-header fw-bold text-success">🎛️ Логіка та Фільтри</div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useCloudFilter" {{ 'checked' if conf.get('useCloudFilter') }}><label class="form-check-label">Cloud Filter</label></div></div>
+                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useObvFilter" {{ 'checked' if conf.get('useObvFilter') }}><label class="form-check-label">OBV Filter</label></div></div>
+                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useRsiFilter" {{ 'checked' if conf.get('useRsiFilter') }}><label class="form-check-label">RSI Filter</label></div></div>
+                        <div class="col-md-3"><div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" name="useMfiFilter" {{ 'checked' if conf.get('useMfiFilter') }}><label class="form-check-label">MFI Filter</label></div></div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-md-6"><label class="form-label">Глобальний TF (HTF)</label><select class="form-select" name="htfSelection">
+                            <option value="60" {{ 'selected' if conf.get('htfSelection')|string == '60' }}>1 Година</option>
+                            <option value="240" {{ 'selected' if conf.get('htfSelection')|string == '240' }}>4 Години</option>
+                            <option value="D" {{ 'selected' if conf.get('htfSelection')|string == 'D' }}>1 День</option>
+                        </select></div>
+                        <div class="col-md-6"><label class="form-label">Вхід TF (LTF)</label><select class="form-select" name="ltfSelection">
+                            <option value="5" {{ 'selected' if conf.get('ltfSelection')|string == '5' }}>5 Хвилин</option>
+                            <option value="15" {{ 'selected' if conf.get('ltfSelection')|string == '15' }}>15 Хвилин</option>
+                            <option value="60" {{ 'selected' if conf.get('ltfSelection')|string == '60' }}>1 Година</option>
+                        </select></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header fw-bold" style="color: #6f42c1;">📈 Параметри Індикаторів</div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-4"><label class="form-label">RSI Length</label><input type="number" class="form-control" name="rsiLength" value="{{ conf.get('rsiLength') }}"></div>
+                        <div class="col-md-4"><label class="form-label">RSI Buy (<=)</label><input type="number" class="form-control" name="entryRsiOversold" value="{{ conf.get('entryRsiOversold') }}"></div>
+                        <div class="col-md-4"><label class="form-label">RSI Sell (>=)</label><input type="number" class="form-control" name="entryRsiOverbought" value="{{ conf.get('entryRsiOverbought') }}"></div>
+                        
+                        <div class="col-md-4"><label class="form-label">Cloud Fast</label><input type="number" class="form-control" name="cloudFastLen" value="{{ conf.get('cloudFastLen') }}"></div>
+                        <div class="col-md-4"><label class="form-label">Cloud Slow</label><input type="number" class="form-control" name="cloudSlowLen" value="{{ conf.get('cloudSlowLen') }}"></div>
+                        <div class="col-md-4"><label class="form-label">Swing Length (OB)</label><input type="number" class="form-control" name="swingLength" value="{{ conf.get('swingLength') }}"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="text-center pb-5"><button type="submit" class="btn btn-success btn-lg shadow">Зберегти Стратегію</button></div>
+        </form>
+    </div></body></html>
+    """
+    return render_template_string(html, conf=conf)
+
+# --- MARKET ANALYZER DASHBOARD ---
+@app.route('/analyzer')
+def analyzer_page():
+    results = market_analyzer.get_results()
+    
+    html = """
+    <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Market Analyzer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body{background:#f0f2f5; font-size:14px;}
+        .score-high{color:#20b26c;font-weight:bold}
+        .badge-buy{background:#20b26c} .badge-sell{background:#ef454a}
+        .progress{height: 8px; border-radius: 4px;}
+    </style>
+    </head><body>
+    
+    <nav class="navbar bg-white mb-4 px-3 border-bottom">
+        <div class="container-fluid"><span class="navbar-brand fw-bold">🚀 Market Analyzer</span>
+        <div><a href="/settings" class="btn btn-sm btn-outline-secondary">Налаштування</a></div></div>
+    </nav>
+
+    <div class="container">
+        <div class="card mb-4 border-0 shadow-sm">
+            <div class="card-body text-center py-4">
+                <h5 id="status-text" class="text-muted mb-3">{{ status }}</h5>
+                <div class="progress mb-4 w-75 mx-auto">
+                    <div id="progress-bar" class="progress-bar bg-primary" style="width: {{ progress }}%"></div>
+                </div>
+                <button id="btn-scan" class="btn btn-primary btn-lg px-5 shadow-sm" onclick="startScan()" {{ 'disabled' if is_scanning }}>
+                    {{ 'SCANNING...' if is_scanning else 'START SCAN 🔎' }}
+                </button>
+            </div>
+        </div>
+
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white fw-bold py-3">ЗНАЙДЕНІ МОЖЛИВОСТІ</div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr><th>Pair</th><th>Price</th><th>Signal</th><th>Score</th><th>RSI (4H)</th><th>RSI (15m)</th><th>Time</th><th>Details</th></tr>
+                    </thead>
+                    <tbody>
+                    {% for r in results %}
+                        <tr>
+                            <td class="fw-bold">{{ r.symbol }}</td>
+                            <td>{{ r.price }}</td>
+                            <td><span class="badge {{ 'badge-buy' if r.signal=='Buy' else 'badge-sell' }}">{{ r.signal }}</span></td>
+                            <td class="score-high">{{ r.score }}</td>
+                            <td>{{ r.rsi_htf }}</td>
+                            <td>{{ r.rsi_ltf }}</td>
+                            <td class="text-muted">{{ r.time }}</td>
+                            <td class="small text-muted">{{ r.details }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="8" class="text-center py-5 text-muted">Сигналів не знайдено. Натисніть Start Scan!</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function startScan() {
+            $('#btn-scan').prop('disabled', true).text('Starting...');
+            $.post('/analyzer/scan', function(data) {
+                pollStatus();
+            });
+        }
+
+        function pollStatus() {
+            let interval = setInterval(function() {
+                $.get('/analyzer/status', function(data) {
+                    $('#progress-bar').css('width', data.progress + '%');
+                    $('#status-text').text(data.message);
+                    if (data.is_scanning) {
+                        $('#btn-scan').text('Scanning (' + data.progress + '%)...').prop('disabled', true);
+                    } else {
+                        clearInterval(interval);
+                        location.reload(); 
+                    }
+                });
+            }, 1000);
+        }
+        
+        {% if is_scanning %} pollStatus(); {% endif %}
+    </script>
+    </body></html>
+    """
+    return render_template_string(html, 
+                                  results=results, 
+                                  progress=market_analyzer.progress, 
+                                  status=market_analyzer.status_message,
+                                  is_scanning=market_analyzer.is_scanning)
+
+@app.route('/analyzer/scan', methods=['POST'])
+def run_scan():
+    market_analyzer.run_scan_thread()
+    return jsonify({"status": "started"})
+
+@app.route('/analyzer/status')
+def get_scan_status():
+    return jsonify({
+        "progress": market_analyzer.progress,
+        "message": market_analyzer.status_message,
+        "is_scanning": market_analyzer.is_scanning
+    })
+
+# --- ACTIVE SCANNER PAGE (Main) ---
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
     active = []
@@ -212,86 +372,26 @@ def scanner_page():
                         'entry': p['avgPrice']
                     })
     except Exception as e:
-        logger.error(f"Error rendering scanner page: {e}")
+        logger.error(f"Scanner Page Error: {e}")
     
     html = """
     <!DOCTYPE html><html lang="uk"><head><meta charset="UTF-8"><title>Active Trades</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body{background:#f7f9fc;font-size:14px} 
-        .card{border:none;box-shadow:0 2px 5px rgba(0,0,0,0.02)} 
-        .text-up{color:#20b26c;font-weight:bold} 
-        .text-down{color:#ef454a;font-weight:bold}
-        .badge-buy{background-color:#20b26c}
-        .badge-sell{background-color:#ef454a}
-    </style>
-    <meta http-equiv="refresh" content="5">
-    </head><body>
-    
+    <style>body{background:#f7f9fc;font-size:14px} .text-up{color:#20b26c} .text-down{color:#ef454a} .badge-buy{background-color:#20b26c} .badge-sell{background-color:#ef454a}</style>
+    <meta http-equiv="refresh" content="5"></head><body>
     <nav class="navbar bg-white mb-4 px-3 border-bottom shadow-sm">
-        <div class="container-fluid">
-            <span class="navbar-brand mb-0 h1">🐋 Active Monitor</span>
-            <div>
-                <a href="/settings" class="btn btn-sm btn-outline-primary me-2">⚙️ Налаштування</a>
-                <a href="/report" class="btn btn-sm btn-outline-secondary">Звіт P&L</a>
-            </div>
-        </div>
+        <div class="container-fluid"><span class="navbar-brand mb-0 h1">🐋 Active Monitor</span>
+        <div><a href="/settings" class="btn btn-sm btn-outline-primary me-2">Налаштування</a><a href="/report" class="btn btn-sm btn-outline-secondary">Звіт</a></div></div>
     </nav>
-
-    <div class="container">
-        <div class="card">
-            <div class="card-header bg-white fw-bold py-3">
-                ВІДКРИТІ ПОЗИЦІЇ
-            </div>
-            <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Монета</th>
-                            <th>Тип</th>
-                            <th>Розмір</th>
-                            <th>Вхід</th>
-                            <th>RSI</th>
-                            <th>Тиск</th>
-                            <th>P&L (USDT)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    {% for a in active %}
-                        <tr>
-                            <td class="fw-bold">{{a.symbol}}</td>
-                            <td><span class="badge {{ 'badge-buy' if a.side=='Buy' else 'badge-sell' }}">{{a.side}}</span></td>
-                            <td>{{a.size}}</td>
-                            <td>{{a.entry}}</td>
-                            <td>
-                                <span class="{{ 'text-danger' if a.rsi > 70 else 'text-success' if a.rsi < 30 else '' }}">
-                                    {{a.rsi}}
-                                </span>
-                            </td>
-                            <td>{{a.pressure}}</td>
-                            <td class="{{ 'text-up' if a.pnl>0 else 'text-down' }}" style="font-size: 1.1em;">
-                                {{ "+" if a.pnl > 0 }}{{a.pnl}}$
-                            </td>
-                        </tr>
-                    {% else %}
-                        <tr>
-                            <td colspan="7" class="text-center text-muted py-5">
-                                Немає активних угод 💤
-                            </td>
-                        </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    </body></html>
+    <div class="container"><div class="card"><div class="card-header bg-white fw-bold py-3">ВІДКРИТІ ПОЗИЦІЇ</div>
+            <div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead class="table-light"><tr><th>Монета</th><th>Тип</th><th>Розмір</th><th>Вхід</th><th>RSI</th><th>Тиск</th><th>P&L</th></tr></thead><tbody>
+    {% for a in active %}<tr><td class="fw-bold">{{a.symbol}}</td><td><span class="badge {{ 'badge-buy' if a.side=='Buy' else 'badge-sell' }}">{{a.side}}</span></td><td>{{a.size}}</td><td>{{a.entry}}</td><td><span class="{{ 'text-danger' if a.rsi > 70 else 'text-success' if a.rsi < 30 else '' }}">{{a.rsi}}</span></td><td>{{a.pressure}}</td><td class="{{ 'text-up' if a.pnl>0 else 'text-down' }}">{{ "+" if a.pnl > 0 }}{{a.pnl}}$</td></tr>{% else %}<tr><td colspan="7" class="text-center text-muted py-5">Немає активних угод 💤</td></tr>{% endfor %}
+    </tbody></table></div></div></div></body></html>
     """
     return render_template_string(html, active=active)
 
 @app.route('/report', methods=['GET'])
 def report_route():
-    from report import render_report_page
     return render_report_page(bot_instance, request)
 
 @app.route('/')
