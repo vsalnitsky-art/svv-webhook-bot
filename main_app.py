@@ -1,6 +1,6 @@
 """
 Main App - Modular Architecture
-Updated: Added Market Analyzer pages and separated General/Strategy settings.
+Updated: Added Dashboard Home Page with navigation buttons.
 """
 import logging
 import threading
@@ -19,6 +19,7 @@ from scanner import EnhancedMarketScanner
 from report import render_report_page
 from settings_manager import settings
 from market_analyzer import market_analyzer
+from models import AnalysisResult # Додано імпорт для відображення статистики на головній (опціонально)
 
 # Запобігання сну у Windows
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
@@ -88,12 +89,107 @@ def webhook():
         logger.error(f"❌ Webhook Error: {e} | Payload was: {raw_data}")
         return jsonify({"error": str(e)}), 400
 
+# --- HOME PAGE (DASHBOARD) ---
+@app.route('/')
+def home():
+    html = """
+    <!DOCTYPE html>
+    <html lang="uk">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Trading Bot Dashboard</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+        <style>
+            body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+            .hero-section { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px 0; margin-bottom: 30px; border-radius: 0 0 20px 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+            .dashboard-card { transition: all 0.3s ease; border: none; border-radius: 15px; height: 100%; background: white; box-shadow: 0 2px 10px rgba(0,0,0,0.05); cursor: pointer; text-decoration: none; color: inherit; }
+            .dashboard-card:hover { transform: translateY(-5px); box-shadow: 0 8px 20px rgba(0,0,0,0.15); }
+            .card-icon { font-size: 3.5rem; margin-bottom: 15px; }
+            .card-title { font-weight: 700; color: #2d3748; }
+            .card-text { color: #718096; font-size: 0.9rem; }
+            .status-badge { position: absolute; top: 15px; right: 15px; background: #48bb78; color: white; padding: 5px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: bold; }
+            a { text-decoration: none; }
+        </style>
+    </head>
+    <body>
+        
+        <div class="hero-section text-center">
+            <div class="container">
+                <h1 class="display-5 fw-bold">🤖 Trading Bot Hub</h1>
+                <p class="lead">Центр керування вашою торговою системою</p>
+            </div>
+        </div>
+
+        <div class="container mb-5">
+            <div class="row g-4">
+                
+                <div class="col-md-6 col-lg-3">
+                    <a href="/scanner">
+                        <div class="card dashboard-card p-4 text-center">
+                            <div class="status-badge">Live</div>
+                            <div class="card-body">
+                                <div class="card-icon">🐋</div>
+                                <h4 class="card-title">Монітор</h4>
+                                <p class="card-text">Відслідковування активних угод, P&L та RSI в реальному часі.</p>
+                            </div>
+                        </div>
+                    </a>
+                </div>
+
+                <div class="col-md-6 col-lg-3">
+                    <a href="/analyzer">
+                        <div class="card dashboard-card p-4 text-center">
+                            <div class="card-body">
+                                <div class="card-icon">🚀</div>
+                                <h4 class="card-title">Сканер Ринку</h4>
+                                <p class="card-text">Пошук нових сигналів (Order Blocks) та аналіз топ-монет.</p>
+                            </div>
+                        </div>
+                    </a>
+                </div>
+
+                <div class="col-md-6 col-lg-3">
+                    <a href="/settings">
+                        <div class="card dashboard-card p-4 text-center">
+                            <div class="card-body">
+                                <div class="card-icon">⚙️</div>
+                                <h4 class="card-title">Налаштування</h4>
+                                <p class="card-text">Конфігурація стратегії, індикаторів та ризик-менеджменту.</p>
+                            </div>
+                        </div>
+                    </a>
+                </div>
+
+                <div class="col-md-6 col-lg-3">
+                    <a href="/report">
+                        <div class="card dashboard-card p-4 text-center">
+                            <div class="card-body">
+                                <div class="card-icon">📊</div>
+                                <h4 class="card-title">Звітність</h4>
+                                <p class="card-text">Історія торгів, аналіз прибутковості та статистика.</p>
+                            </div>
+                        </div>
+                    </a>
+                </div>
+
+            </div>
+            
+            <div class="text-center mt-5 text-muted small">
+                <p>System Status: <strong>Operational</strong> | Server Time: {{ time }}</p>
+            </div>
+        </div>
+
+    </body>
+    </html>
+    """
+    return render_template_string(html, time=datetime.utcnow().strftime('%H:%M:%S UTC'))
+
 # --- GENERAL SETTINGS ---
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_general_page():
     if request.method == 'POST':
         form_data = request.form.to_dict()
-        # Чекбокс Telegram треба обробити явно
         form_data['telegram_enabled'] = request.form.get('telegram_enabled') == 'on'
         settings.save_settings(form_data)
         return redirect(url_for('settings_general_page'))
@@ -106,8 +202,8 @@ def settings_general_page():
     <style>body{background:#f7f9fc;font-size:14px} .card{margin-bottom:20px; border:none; box-shadow:0 2px 10px rgba(0,0,0,0.05)} .navbar{background:white;}</style>
     </head><body>
     <nav class="navbar mb-4 px-3 border-bottom shadow-sm">
-        <div class="container-fluid"><span class="navbar-brand mb-0 h1">⚙️ Загальні Налаштування</span>
-        <div><a href="/scanner" class="btn btn-sm btn-outline-secondary">Монітор</a><a href="/analyzer" class="btn btn-sm btn-outline-primary">Аналізатор Ринку</a></div></div>
+        <div class="container-fluid"><a href="/" class="btn btn-sm btn-outline-dark me-2">🏠 Головна</a><span class="navbar-brand mb-0 h1">⚙️ Загальні Налаштування</span>
+        <div><a href="/scanner" class="btn btn-sm btn-outline-secondary">Монітор</a><a href="/analyzer" class="btn btn-sm btn-outline-primary">Аналізатор</a></div></div>
     </nav>
     <div class="container" style="max-width: 700px;">
         <form method="POST">
@@ -193,7 +289,7 @@ def analyzer_settings_page():
     <style>body{background:#f7f9fc;font-size:14px} .card{margin-bottom:20px; border:none; box-shadow:0 2px 10px rgba(0,0,0,0.05)}</style>
     </head><body>
     <nav class="navbar bg-white mb-4 px-3 border-bottom shadow-sm">
-        <div class="container-fluid"><span class="navbar-brand mb-0 h1">📊 Налаштування Стратегії</span>
+        <div class="container-fluid"><a href="/" class="btn btn-sm btn-outline-dark me-2">🏠</a><span class="navbar-brand mb-0 h1">📊 Налаштування Стратегії</span>
         <div><a href="/settings" class="btn btn-sm btn-outline-secondary">← Назад</a></div></div>
     </nav>
     <div class="container" style="max-width: 900px;">
@@ -261,7 +357,7 @@ def analyzer_page():
     </head><body>
     
     <nav class="navbar bg-white mb-4 px-3 border-bottom">
-        <div class="container-fluid"><span class="navbar-brand fw-bold">🚀 Market Analyzer</span>
+        <div class="container-fluid"><a href="/" class="btn btn-sm btn-outline-dark me-2">🏠</a><span class="navbar-brand fw-bold">🚀 Market Analyzer</span>
         <div><a href="/settings" class="btn btn-sm btn-outline-secondary">Налаштування</a></div></div>
     </nav>
 
@@ -380,7 +476,7 @@ def scanner_page():
     <style>body{background:#f7f9fc;font-size:14px} .text-up{color:#20b26c} .text-down{color:#ef454a} .badge-buy{background-color:#20b26c} .badge-sell{background-color:#ef454a}</style>
     <meta http-equiv="refresh" content="5"></head><body>
     <nav class="navbar bg-white mb-4 px-3 border-bottom shadow-sm">
-        <div class="container-fluid"><span class="navbar-brand mb-0 h1">🐋 Active Monitor</span>
+        <div class="container-fluid"><a href="/" class="btn btn-sm btn-outline-dark me-2">🏠</a><span class="navbar-brand mb-0 h1">🐋 Active Monitor</span>
         <div><a href="/settings" class="btn btn-sm btn-outline-primary me-2">Налаштування</a><a href="/report" class="btn btn-sm btn-outline-secondary">Звіт</a></div></div>
     </nav>
     <div class="container"><div class="card"><div class="card-header bg-white fw-bold py-3">ВІДКРИТІ ПОЗИЦІЇ</div>
@@ -392,10 +488,8 @@ def scanner_page():
 
 @app.route('/report', methods=['GET'])
 def report_route():
+    from report import render_report_page
     return render_report_page(bot_instance, request)
-
-@app.route('/')
-def home(): return "<script>window.location.href='/scanner';</script>"
 
 @app.route('/health')
 def health(): return jsonify({"status": "ok"})
