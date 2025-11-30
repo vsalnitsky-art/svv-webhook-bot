@@ -1,6 +1,6 @@
 """
 Main App - Modular Architecture
-Updated: Added Dashboard Home Page with navigation buttons.
+Full version with corrected Analyzer navigation links.
 """
 import logging
 import threading
@@ -19,9 +19,8 @@ from scanner import EnhancedMarketScanner
 from report import render_report_page
 from settings_manager import settings
 from market_analyzer import market_analyzer
-from models import AnalysisResult # Додано імпорт для відображення статистики на головній (опціонально)
 
-# Запобігання сну у Windows
+# Запобігання сну у Windows (якщо запускається локально)
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
@@ -29,7 +28,7 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Сканер активних позицій
+# Сканер активних позицій (Active Monitor)
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
@@ -56,6 +55,7 @@ def monitor_active():
 threading.Thread(target=monitor_active, daemon=True).start()
 
 def keep_alive():
+    """Механізм запобігання засипанню (Self-Ping)"""
     time.sleep(5)
     external_url = os.environ.get('RENDER_EXTERNAL_URL')
     local_url = f'http://127.0.0.1:{config.PORT}/health'
@@ -70,7 +70,7 @@ def keep_alive():
 
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# --- WEBHOOK ---
+# --- WEBHOOK (Прийом сигналів) ---
 @app.route('/webhook', methods=['POST'])
 def webhook():
     raw_data = ""
@@ -89,7 +89,7 @@ def webhook():
         logger.error(f"❌ Webhook Error: {e} | Payload was: {raw_data}")
         return jsonify({"error": str(e)}), 400
 
-# --- HOME PAGE (DASHBOARD) ---
+# --- HOME PAGE (Головне Меню) ---
 @app.route('/')
 def home():
     html = """
@@ -155,7 +155,7 @@ def home():
                             <div class="card-body">
                                 <div class="card-icon">⚙️</div>
                                 <h4 class="card-title">Налаштування</h4>
-                                <p class="card-text">Конфігурація стратегії, індикаторів та ризик-менеджменту.</p>
+                                <p class="card-text">Конфігурація загальних параметрів та ризик-менеджменту.</p>
                             </div>
                         </div>
                     </a>
@@ -270,7 +270,7 @@ def settings_general_page():
     """
     return render_template_string(html, conf=conf)
 
-# --- ANALYZER SETTINGS ---
+# --- ANALYZER SETTINGS (Стратегія) ---
 @app.route('/analyzer/settings', methods=['GET', 'POST'])
 def analyzer_settings_page():
     if request.method == 'POST':
@@ -290,7 +290,7 @@ def analyzer_settings_page():
     </head><body>
     <nav class="navbar bg-white mb-4 px-3 border-bottom shadow-sm">
         <div class="container-fluid"><a href="/" class="btn btn-sm btn-outline-dark me-2">🏠</a><span class="navbar-brand mb-0 h1">📊 Налаштування Стратегії</span>
-        <div><a href="/settings" class="btn btn-sm btn-outline-secondary">← Назад</a></div></div>
+        <div><a href="/settings" class="btn btn-sm btn-outline-secondary">← Загальні</a></div></div>
     </nav>
     <div class="container" style="max-width: 900px;">
         <form method="POST">
@@ -353,12 +353,18 @@ def analyzer_page():
         .score-high{color:#20b26c;font-weight:bold}
         .badge-buy{background:#20b26c} .badge-sell{background:#ef454a}
         .progress{height: 8px; border-radius: 4px;}
+        .navbar{background:white; box-shadow: 0 2px 4px rgba(0,0,0,0.05);}
     </style>
     </head><body>
     
-    <nav class="navbar bg-white mb-4 px-3 border-bottom">
-        <div class="container-fluid"><a href="/" class="btn btn-sm btn-outline-dark me-2">🏠</a><span class="navbar-brand fw-bold">🚀 Market Analyzer</span>
-        <div><a href="/settings" class="btn btn-sm btn-outline-secondary">Налаштування</a></div></div>
+    <nav class="navbar mb-4 px-3 border-bottom">
+        <div class="container-fluid">
+            <span class="navbar-brand fw-bold">🚀 Market Analyzer</span>
+            <div>
+                <a href="/analyzer/settings" class="btn btn-sm btn-outline-primary me-2">⚙️ Стратегія</a>
+                <a href="/" class="btn btn-sm btn-outline-secondary">🏠 Меню</a>
+            </div>
+        </div>
     </nav>
 
     <div class="container">
