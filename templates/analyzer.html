@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Market Analyzer{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <form id="scan-form">
+                <div class="row align-items-end g-3">
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted">Валюта</label>
+                        <select class="form-select form-select-sm" name="scanner_quote_coin">
+                            <option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin')=='USDT' }}>USDT</option>
+                            <option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin')=='USDC' }}>USDC</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted">Глибина (Топ)</label>
+                        <input type="number" class="form-control form-control-sm" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted">HTF (Тренд)</label>
+                        <select class="form-select form-select-sm" name="htfSelection">
+                            <option value="60" {{ 'selected' if conf.get('htfSelection')|string=='60' }}>1H</option>
+                            <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4H</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small text-muted">LTF (Вхід)</label>
+                        <select class="form-select form-select-sm" name="ltfSelection">
+                            <option value="5" {{ 'selected' if conf.get('ltfSelection')|string=='5' }}>5m</option>
+                            <option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15m</option>
+                        </select>
+                    </div>
+                    
+                    <div class="col-md-2">
+                        <div class="form-check form-switch mb-2 p-2 rounded" style="border: 1px solid #e5e7eb;">
+                            <input class="form-check-input" type="checkbox" name="useOBRetest" {{ 'checked' if conf.get('useOBRetest') }}>
+                            <label class="form-check-label fw-bold text-primary" style="font-size: 0.8rem;">OB Retest</label>
+                        </div>
+                    </div>
+
+                    <div class="col-md-2">
+                        <button type="button" id="btn-scan" class="btn btn-primary btn-sm w-100 fw-bold" onclick="startScan()" {{ 'disabled' if is_scanning }}>
+                            {{ 'SCANNING...' if is_scanning else 'START SCAN 🚀' }}
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="mt-3 pt-3 border-top d-flex gap-3">
+                    <span class="badge bg-light text-dark border">Cloud: {{ 'ON' if conf.get('useCloudFilter') else 'OFF' }}</span>
+                    <span class="badge bg-light text-dark border">OBV: {{ 'ON' if conf.get('useObvFilter') else 'OFF' }}</span>
+                    <span class="badge bg-light text-dark border">RSI: {{ 'ON' if conf.get('useRsiFilter') else 'OFF' }}</span>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card mb-4 border-0 shadow-sm" style="display: {{ 'block' if is_scanning else 'none' }}" id="status-card">
+        <div class="card-body py-3 bg-light">
+            <div class="d-flex justify-content-between mb-2">
+                <span id="status-text" class="fw-bold text-primary">{{ status }}</span>
+                <span id="status-percent" class="fw-bold">{{ progress }}%</span>
+            </div>
+            <div class="progress" style="height: 10px; border-radius: 5px;">
+                <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: {{ progress }}%"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>ЗНАЙДЕНІ СИГНАЛИ</span>
+            <span class="badge bg-secondary">{{ results|length }}</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr><th>Монета</th><th>Ціна</th><th>Сигнал</th><th>Score</th><th>RSI (H)</th><th>RSI (L)</th><th>Час</th><th>Деталі</th></tr>
+                </thead>
+                <tbody>
+                {% for r in results %}
+                    <tr>
+                        <td class="fw-bold text-primary">{{ r.symbol }}</td>
+                        <td>{{ r.price }}</td>
+                        <td><span class="badge {{ 'badge-buy' if r.signal=='Buy' else 'badge-sell' }}">{{ r.signal }}</span></td>
+                        <td class="fw-bold">{{ r.score }}</td>
+                        <td>{{ r.rsi_htf }}</td>
+                        <td>{{ r.rsi_ltf }}</td>
+                        <td class="text-muted small">{{ r.time }}</td>
+                        <td class="small text-muted">{{ r.details }}</td>
+                    </tr>
+                {% else %}
+                    <tr><td colspan="8" class="text-center py-5 text-muted">
+                        <div style="font-size: 2rem; margin-bottom: 1rem;">🔍</div>
+                        Сигналів не знайдено. Перевірте фільтри та натисніть Start Scan!
+                    </td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function startScan() {
+    $('#btn-scan').prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Saving...');
+    $('#status-card').slideDown();
+    
+    var formData = {};
+    $('#scan-form').serializeArray().forEach(function(item) { formData[item.name] = item.value; });
+    $('#scan-form input[type=checkbox]').each(function() { formData[this.name] = this.checked ? 'on' : 'off'; });
+    
+    $.post('/analyzer/scan', formData, function(data) { 
+        pollStatus(); 
+    }).fail(function() {
+        alert('Error starting scan');
+        $('#btn-scan').prop('disabled', false).text('START SCAN 🚀');
+    });
+}
+
+function pollStatus() {
+    let interval = setInterval(function() {
+        $.get('/analyzer/status', function(data) {
+            $('#progress-bar').css('width', data.progress + '%');
+            $('#status-percent').text(data.progress + '%');
+            $('#status-text').text(data.message);
+            
+            if (data.is_scanning) {
+                $('#btn-scan').prop('disabled', true).text('SCANNING...');
+                $('#status-card').show();
+            } else {
+                clearInterval(interval);
+                location.reload(); 
+            }
+        });
+    }, 1000);
+}
+
+{% if is_scanning %} pollStatus(); {% endif %}
+</script>
+{% endblock %}
