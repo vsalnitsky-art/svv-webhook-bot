@@ -4,12 +4,12 @@ from models import db_manager, BotSetting
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
-    # === GENERAL SETTINGS (Нові) ===
-    "scanner_quote_coin": "USDT", # Валюта торгівлі
-    "scanner_mode": "Manual",     # Manual або Auto
-    "scan_limit": 100,            # Топ N монет
+    # === GENERAL SETTINGS ===
+    "scanner_quote_coin": "USDT",
+    "scanner_mode": "Manual",
+    "scan_limit": 100,
     
-    # === TELEGRAM (Підготовка) ===
+    # === TELEGRAM ===
     "telegram_enabled": False,
     "telegram_bot_token": "",
     "telegram_chat_id": "",
@@ -20,8 +20,11 @@ DEFAULT_SETTINGS = {
     "useRsiFilter": True,
     "useMfiFilter": False,
     
-    "htfSelection": "240",    # 4H
-    "ltfSelection": "15",     # 15m
+    # НОВИЙ ПАРАМЕТР: Вимагати ретест зони? (False = вхід по тренду)
+    "useOBRetest": False, 
+    
+    "htfSelection": "240",
+    "ltfSelection": "15",
     
     "cloudFastLen": 10,
     "cloudSlowLen": 40,
@@ -87,7 +90,6 @@ class SettingsManager:
     def save_settings(self, new_settings_dict):
         session = self.db.get_session()
         try:
-            # Upsert логіка
             for k, v in new_settings_dict.items():
                 if k in DEFAULT_SETTINGS:
                     val_to_store = v
@@ -101,7 +103,6 @@ class SettingsManager:
                     existing = session.query(BotSetting).filter_by(key=k).first()
                     if existing: existing.value = val_to_store
                     else: session.add(BotSetting(key=k, value=val_to_store))
-            
             session.commit()
         except Exception as e:
             session.rollback()
