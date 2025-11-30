@@ -1,6 +1,5 @@
 """
-Main App - Clean MVC Architecture
-Production version.
+Main App - Final Production Version
 """
 import logging
 import threading
@@ -27,12 +26,12 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Запуск фонових процесів
+# Сканер активних позицій
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
 def monitor_active():
-    """Фоновий потік для запису стану позицій в БД"""
+    """Фоновий потік моніторингу"""
     logger.info("Starting active position monitor...")
     while True:
         try:
@@ -51,15 +50,11 @@ def monitor_active():
         time.sleep(10)
 
 def keep_alive():
-    """Self-Ping для Render"""
+    """Self-Ping"""
     time.sleep(5)
     base_url = os.environ.get('RENDER_EXTERNAL_URL')
-    if not base_url:
-        base_url = f'http://127.0.0.1:{config.PORT}'
-    
+    if not base_url: base_url = f'http://127.0.0.1:{config.PORT}'
     target = f"{base_url}/health"
-    logger.info(f"💓 Keep-alive target: {target}")
-    
     while True:
         try: requests.get(target, timeout=10)
         except: pass
@@ -68,7 +63,7 @@ def keep_alive():
 threading.Thread(target=monitor_active, daemon=True).start()
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# --- ROUTES (МАРШРУТИ) ---
+# --- ROUTES ---
 
 @app.route('/')
 def home():
@@ -83,12 +78,8 @@ def scanner_page():
             for p in r['result']['list']:
                 if float(p['size']) > 0:
                     symbol = p['symbol']
-                    
-                    # --- КОНВЕРТАЦІЯ ЧАСУ ---
                     c_time = p.get('createdTime')
-                    if not c_time or c_time == '0':
-                        c_time = p.get('updatedTime', time.time() * 1000)
-                    
+                    if not c_time or c_time == '0': c_time = p.get('updatedTime', time.time() * 1000)
                     dt_obj = datetime.fromtimestamp(int(c_time) / 1000)
                     formatted_time = dt_obj.strftime('%d.%m %H:%M')
                     
@@ -135,18 +126,16 @@ def analyzer_settings_page():
         return redirect(url_for('analyzer_settings_page'))
     return render_template('strategy.html', conf=settings._cache)
 
-# --- API ENDPOINTS (Дії) ---
+# --- API ENDPOINTS ---
 
 @app.route('/analyzer/scan', methods=['POST'])
 def run_scan():
     if request.form:
         form_data = request.form.to_dict()
-        
         # Обробка чекбоксів (якщо не прийшли - значить OFF)
         if 'useOBRetest' not in form_data: form_data['useOBRetest'] = 'off'
         for cb in ['useCloudFilter', 'useObvFilter', 'useRsiFilter']:
              if cb not in form_data: form_data[cb] = 'off'
-             
         settings.save_settings(form_data)
     
     market_analyzer.run_scan_thread()

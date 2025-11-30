@@ -17,7 +17,10 @@
                 
                 <div class="row g-3 mb-4">
                     <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Таймфрейм Тренду</label>
+                        <label class="form-label fw-bold small text-muted text-uppercase d-flex align-items-center">
+                            Таймфрейм Тренду
+                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="HTF (Higher Timeframe). На цьому таймфреймі бот визначає глобальний напрямок ринку (через Cloud та OBV)."></i>
+                        </label>
                         <select class="form-select" name="htfSelection">
                             <option value="60" {{ 'selected' if conf.get('htfSelection')|string=='60' }}>1 Година (1H)</option>
                             <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4 Години (4H)</option>
@@ -25,7 +28,10 @@
                         </select>
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Таймфрейм Входу</label>
+                        <label class="form-label fw-bold small text-muted text-uppercase d-flex align-items-center">
+                            Таймфрейм Входу
+                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="LTF (Lower Timeframe). На цьому таймфреймі бот шукає конкретну точку входу (Order Block) в напрямку глобального тренду."></i>
+                        </label>
                         <select class="form-select" name="ltfSelection">
                             <option value="5" {{ 'selected' if conf.get('ltfSelection')|string=='5' }}>5 Хвилин (5m)</option>
                             <option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15 Хвилин (15m)</option>
@@ -33,7 +39,10 @@
                         </select>
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Глибина (Топ)</label>
+                        <label class="form-label fw-bold small text-muted text-uppercase d-flex align-items-center">
+                            Глибина (Топ)
+                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Кількість монет з найбільшим об'ємом торгів, які будуть проскановані. Більше число = довше сканування."></i>
+                        </label>
                         <div class="input-group">
                             <span class="input-group-text bg-white">#</span>
                             <input type="number" class="form-control" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}" min="10" max="400">
@@ -41,7 +50,10 @@
                     </div>
                     
                     <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Режим Входу</label>
+                        <label class="form-label fw-bold small text-muted text-uppercase d-flex align-items-center">
+                            Режим Входу
+                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="OFF: Вхід по тренду одразу. ON: Вхід тільки при відкаті ціни до зони Order Block (надійніше, але менше сигналів)."></i>
+                        </label>
                         <div class="form-check form-switch p-2 bg-white border rounded d-flex align-items-center justify-content-between px-3 shadow-sm" style="min-height: 38px;">
                             <label class="form-check-label fw-bold text-primary m-0" for="obRetestSwitch">OB Retest</label>
                             <input class="form-check-input m-0" type="checkbox" id="obRetestSwitch" name="useOBRetest" {{ 'checked' if conf.get('useOBRetest') }}>
@@ -53,26 +65,38 @@
 
                 <div class="row align-items-end g-3">
                     <div class="col-md-9">
-                        <label class="form-label fw-bold small text-muted text-uppercase mb-2">Активні Фільтри</label>
+                        <label class="form-label fw-bold small text-muted text-uppercase mb-2 d-flex align-items-center">
+                            Активні Фільтри
+                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Увімкніть індикатори, які обов'язково повинні підтвердити вхід."></i>
+                        </label>
                         <div class="row g-3">
                             
                             <div class="col-md-4">
                                 <div class="form-check form-switch p-2 bg-white border rounded d-flex align-items-center justify-content-between px-3 shadow-sm">
-                                    <label class="form-check-label fw-bold text-primary m-0" for="switchCloud">Cloud HMA</label>
+                                    <label class="form-check-label fw-bold text-primary m-0" for="switchCloud">
+                                        Cloud HMA
+                                        <i class="bi bi-info-circle help-icon" style="font-size: 0.75rem;" data-bs-toggle="tooltip" title="Trend Cloud: Використовує дві HMA (швидку і повільну) для визначення глобального тренду."></i>
+                                    </label>
                                     <input class="form-check-input m-0" type="checkbox" id="switchCloud" name="useCloudFilter" {{ 'checked' if conf.get('useCloudFilter') }}>
                                 </div>
                             </div>
 
                             <div class="col-md-4">
                                 <div class="form-check form-switch p-2 bg-white border rounded d-flex align-items-center justify-content-between px-3 shadow-sm">
-                                    <label class="form-check-label fw-bold text-primary m-0" for="switchObv">OBV Trend</label>
+                                    <label class="form-check-label fw-bold text-primary m-0" for="switchObv">
+                                        OBV Trend
+                                        <i class="bi bi-info-circle help-icon" style="font-size: 0.75rem;" data-bs-toggle="tooltip" title="On-Balance Volume: Підтверджує тренд об'ємом торгів."></i>
+                                    </label>
                                     <input class="form-check-input m-0" type="checkbox" id="switchObv" name="useObvFilter" {{ 'checked' if conf.get('useObvFilter') }}>
                                 </div>
                             </div>
 
                             <div class="col-md-4">
                                 <div class="form-check form-switch p-2 bg-white border rounded d-flex align-items-center justify-content-between px-3 shadow-sm">
-                                    <label class="form-check-label fw-bold text-primary m-0" for="switchRsi">RSI Logic</label>
+                                    <label class="form-check-label fw-bold text-primary m-0" for="switchRsi">
+                                        RSI Logic
+                                        <i class="bi bi-info-circle help-icon" style="font-size: 0.75rem;" data-bs-toggle="tooltip" title="Relative Strength Index: Перевіряє зони перекупленості/перепроданості на HTF."></i>
+                                    </label>
                                     <input class="form-check-input m-0" type="checkbox" id="switchRsi" name="useRsiFilter" {{ 'checked' if conf.get('useRsiFilter') }}>
                                 </div>
                             </div>
@@ -114,7 +138,7 @@
                         <th class="py-3">Монета</th>
                         <th class="py-3">Ціна</th>
                         <th class="py-3">Сигнал</th>
-                        <th class="py-3">Score</th>
+                        <th class="py-3">Score <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Рейтинг якості сигналу (0-100), базується на силі тренду та об'ємах."></i></th>
                         <th class="py-3">RSI (HTF)</th>
                         <th class="py-3">RSI (LTF)</th>
                         <th class="py-3">Час</th>

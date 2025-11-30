@@ -4,23 +4,21 @@ from models import db_manager, BotSetting
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
-    # === GENERAL SETTINGS ===
+    # General
     "scanner_quote_coin": "USDT",
     "scanner_mode": "Manual",
     "scan_limit": 100,
     
-    # === TELEGRAM ===
+    # Telegram
     "telegram_enabled": False,
     "telegram_bot_token": "",
     "telegram_chat_id": "",
 
-    # === STRATEGY SETTINGS ===
+    # Strategy
     "useCloudFilter": True,
     "useObvFilter": True,
     "useRsiFilter": True,
     "useMfiFilter": False,
-    
-    # ВАЖЛИВО: Цей параметр ми хотіли додати
     "useOBRetest": False, 
     
     "htfSelection": "240",
@@ -28,24 +26,14 @@ DEFAULT_SETTINGS = {
     
     "cloudFastLen": 10,
     "cloudSlowLen": 40,
-    
     "entryRsiOversold": 45,
     "entryRsiOverbought": 55,
     "rsiLength": 14,
-    "exitRsiOversold": 30,
-    "exitRsiOverbought": 70,
-    
     "mfiLength": 20,
     "obvEntryLen": 20,
-    "obvExitLen": 20,
     
     "riskPercent": 2.0,
     "leverage": 20,
-    "fixedTP": 3.0,
-    "fixedSL": 1.5,
-    "atrMultiplierSL": 1.5,
-    "atrMultiplierTP": 3.0,
-    
     "swingLength": 5,
     "volumeSpikeThreshold": 1.8
 }

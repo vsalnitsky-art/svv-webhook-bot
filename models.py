@@ -6,7 +6,6 @@ import os
 
 Base = declarative_base()
 
-# === МОДЕЛІ ===
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True)
@@ -49,7 +48,6 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
-# Заглушки
 class WhaleSignal(Base):
     __tablename__ = 'whale_signals'
     id = Column(Integer, primary_key=True)
@@ -61,23 +59,23 @@ class CoinPerformance(Base):
     __tablename__ = 'coin_performance'
     id = Column(Integer, primary_key=True)
 
-# === МЕНЕДЖЕР БАЗИ ДАНИХ (Виправлений шлях) ===
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
-        
-        # 1. Перевірка на PostgreSQL (Render)
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         
-        # 2. Локальна SQLite (У КОРЕНЕВІЙ ПАПЦІ)
         if not db_url:
-            # Отримуємо шлях до папки, де лежить цей файл
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            # Формуємо шлях прямо в цій папці
-            db_path = os.path.join(base_dir, db_filename)
+            target_folder = os.path.join(base_dir, 'BASE')
+            try:
+                os.makedirs(target_folder, exist_ok=True)
+                db_path = os.path.join(target_folder, db_filename)
+            except Exception as e:
+                print(f"⚠️ Error creating folder: {e}")
+                db_path = os.path.join(base_dir, db_filename)
             db_url = f'sqlite:///{db_path}'
-            print(f"💾 Database initialized at: {db_path}")
+            print(f"💾 Database: {db_path}")
 
         self.engine = create_engine(db_url, echo=False)
         Base.metadata.create_all(self.engine)
