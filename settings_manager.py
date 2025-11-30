@@ -20,10 +20,9 @@ DEFAULT_SETTINGS = {
     "useRsiFilter": True,
     "useMfiFilter": False,
     
-    # --- НОВИЙ ПАРАМЕТР ---
-    "useOBRetest": False, # False = Вхід по тренду (відразу), True = Чекати дотику до зони
-    # ----------------------
-
+    # ВАЖЛИВО: Цей параметр ми хотіли додати
+    "useOBRetest": False, 
+    
     "htfSelection": "240",
     "ltfSelection": "15",
     

@@ -7,6 +7,9 @@ from settings_manager import settings
 logger = logging.getLogger(__name__)
 
 class StrategyEngine:
+    """
+    Python implementation of: OB + Trend Cloud Strategy (Multi-TF) v8.9
+    """
     def __init__(self):
         pass
         
@@ -37,7 +40,8 @@ class StrategyEngine:
         return df
 
     def check_htf_filters(self, htf_row):
-        if htf_row is None or htf_row.empty: return {'bull': False, 'bear': False}
+        if htf_row is None or htf_row.empty: 
+            return {'bull': False, 'bear': False}
         
         use_cloud = self.get_param('useCloudFilter')
         use_rsi = self.get_param('useRsiFilter')
@@ -60,7 +64,7 @@ class StrategyEngine:
             mfi_bull = (htf_row['mfi_fast'] > htf_row['mfi_slow']) if use_mfi else True
             mfi_bear = (htf_row['mfi_fast'] < htf_row['mfi_slow']) if use_mfi else True
             
-            # ВИПРАВЛЕНО: розрахунок без моржового оператора :=
+            # ВИПРАВЛЕННЯ: Розраховуємо окремо, без :=
             is_valid_bull = bool(cloud_bull and obv_bull and rsi_bull and mfi_bull)
             is_valid_bear = bool(cloud_bear and obv_bear and rsi_bear and mfi_bear)
             
@@ -134,19 +138,23 @@ class StrategyEngine:
         tp_sl = {}
         reason = ""
 
-        # --- ЛОГІКА ВХОДУ ---
+        # === ЛОГІКА ВХОДУ (З врахуванням useOBRetest) ===
+        
         if filters['bull']:
             entry_triggered = False
+            
             if use_ob_retest:
+                # Вхід ТІЛЬКИ якщо ціна в зоні OB
                 bull_obs, _ = self.detect_order_blocks(df_ltf)
                 for ob in bull_obs:
                     if ob['bottom'] <= current_price <= ob['top']:
                         entry_triggered = True
-                        reason = f"Trend Bull + OB Retest"
+                        reason = f"Trend Bull + OB Retest (RSI: {filters['details'].get('rsi',0):.1f})"
                         break
             else:
+                # Вхід відразу, якщо тренд бичачий
                 entry_triggered = True
-                reason = f"Trend Bull (No Retest)"
+                reason = f"Trend Bull (No Retest) (RSI: {filters['details'].get('rsi',0):.1f})"
 
             if entry_triggered:
                 signal = "Buy"
@@ -155,16 +163,17 @@ class StrategyEngine:
 
         elif filters['bear']:
             entry_triggered = False
+            
             if use_ob_retest:
                 _, bear_obs = self.detect_order_blocks(df_ltf)
                 for ob in bear_obs:
                     if ob['bottom'] <= current_price <= ob['top']:
                         entry_triggered = True
-                        reason = f"Trend Bear + OB Retest"
+                        reason = f"Trend Bear + OB Retest (RSI: {filters['details'].get('rsi',0):.1f})"
                         break
             else:
                 entry_triggered = True
-                reason = f"Trend Bear (No Retest)"
+                reason = f"Trend Bear (No Retest) (RSI: {filters['details'].get('rsi',0):.1f})"
 
             if entry_triggered:
                 signal = "Sell"
