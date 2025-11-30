@@ -3,9 +3,11 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
+import sys
 
 Base = declarative_base()
 
+# === МОДЕЛІ ДАНИХ (Без змін) ===
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True)
@@ -48,6 +50,7 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
+# Заглушки
 class WhaleSignal(Base):
     __tablename__ = 'whale_signals'
     id = Column(Integer, primary_key=True)
@@ -59,26 +62,52 @@ class CoinPerformance(Base):
     __tablename__ = 'coin_performance'
     id = Column(Integer, primary_key=True)
 
+# === МЕНЕДЖЕР БАЗИ ДАНИХ ===
+
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
+        
+        # 1. Перевірка на PostgreSQL
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
+            print("🔵 Using PostgreSQL connection.")
         
-        if not db_url:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            target_folder = os.path.join(base_dir, 'BASE')
+        # 2. SQLite (Локальна папка BASE)
+        else:
+            # Отримуємо абсолютний шлях до папки, де лежить ЦЕЙ файл (models.py)
+            # Це і є корінь проекту, де лежить templates/
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # Жорстко задаємо шлях до папки BASE
+            base_folder = os.path.join(current_dir, 'BASE')
+            
+            # Повний шлях до файлу
+            db_abs_path = os.path.join(base_folder, db_filename)
+            
+            print(f"🟡 TARGET DB PATH: {db_abs_path}")
+
+            # Створюємо папку примусово
             try:
-                os.makedirs(target_folder, exist_ok=True)
-                db_path = os.path.join(target_folder, db_filename)
-            except Exception as e:
-                print(f"⚠️ Error creating folder: {e}")
-                db_path = os.path.join(base_dir, db_filename)
-            db_url = f'sqlite:///{db_path}'
-            print(f"💾 Database: {db_path}")
+                os.makedirs(base_folder, exist_ok=True)
+                print(f"✅ Folder 'BASE' checked/created at: {base_folder}")
+            except OSError as e:
+                print(f"❌ CRITICAL ERROR: Cannot create folder 'BASE'. Reason: {e}")
+                # Якщо тут помилка - значить немає прав запису.
+                # Але ми все одно спробуємо, щоб побачити помилку в логах.
+            
+            # Використовуємо 4 слеші для абсолютного шляху в Linux/Unix (Render)
+            # або 3 для Windows, але sqlite:/// працює універсально
+            db_url = f'sqlite:///{db_abs_path}'
 
         self.engine = create_engine(db_url, echo=False)
-        Base.metadata.create_all(self.engine)
+        
+        try:
+            Base.metadata.create_all(self.engine)
+            print("✅ Database tables created successfully.")
+        except Exception as e:
+            print(f"❌ ERROR CREATING TABLES: {e}")
+
         self.Session = sessionmaker(bind=self.engine)
     
     def get_session(self): return self.Session()
