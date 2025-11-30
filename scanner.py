@@ -1,13 +1,15 @@
 """
-Scanner Module - Active Position Monitor Only 🎯
-Цей модуль більше не шукає нові сигнали.
-Він моніторить ТІЛЬКИ відкриті угоди, щоб надавати дані (RSI, Тиск) для UI.
+Scanner Module - Active Position Monitor
+Updated: RSI now uses the Strategy Timeframe (LTF) from settings.
 """
 
 import threading
 import time
 import logging
+import pandas as pd
+import pandas_ta as ta
 from datetime import datetime
+from settings_manager import settings
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +19,16 @@ class EnhancedMarketScanner:
         self.config = config
         self.running = True
         
-        # Тут зберігаємо дані тільки по активним монетам
-        # Структура: { 'BTCUSDT': { 'rsi': 55, 'pressure': 12000, ... } }
+        # Кеш даних
         self.active_coins_data = {} 
         self.last_scan_time = None
         
-        # Скануємо часто, бо монет мало (тільки активні)
+        # Інтервал оновлення (секунд)
         self.scan_interval = 5 
 
     def start(self):
         threading.Thread(target=self.loop, daemon=True).start()
-        logger.info("🚀 Position Monitor Started (Tracking active trades only)")
+        logger.info("🚀 Position Monitor Started (Syncing with Strategy TF)")
     
     def loop(self):
         while self.running:
@@ -38,114 +39,111 @@ class EnhancedMarketScanner:
             time.sleep(self.scan_interval)
     
     def get_active_symbols(self):
-        """Отримати список монет, де у нас є позиція"""
+        """Отримати список монет, де є відкрита позиція"""
         symbols = []
         try:
-            # Запитуємо у біржі, що ми зараз тримаємо
             resp = self.bot.session.get_positions(category="linear", settleCoin="USDT")
             if resp['retCode'] == 0:
                 for p in resp['result']['list']:
                     if float(p['size']) > 0:
                         symbols.append(p['symbol'])
-            else:
-                logger.warning(f"Error getting positions: {resp}")
         except Exception as e:
             logger.error(f"Active symbols error: {e}")
         return symbols
 
-    def calculate_rsi(self, symbol, current_price):
-        """Локальний розрахунок RSI для активної монети"""
-        if symbol not in self.active_coins_data:
-            self.active_coins_data[symbol] = {'prices': [], 'rsi': 50, 'pressure': 0, 'last_turnover': 0}
-        
-        data = self.active_coins_data[symbol]
-        data['prices'].append(current_price)
-        
-        # Зберігаємо історію (30 точок достатньо для динаміки)
-        if len(data['prices']) > 30: data['prices'].pop(0)
-        
-        # Якщо даних мало - повертаємо нейтральне значення
-        if len(data['prices']) < 5: return 50
-        
-        gains = 0
-        losses = 0
-        for i in range(1, len(data['prices'])):
-            diff = data['prices'][i] - data['prices'][i-1]
-            if diff > 0: gains += diff
-            else: losses -= diff
+    def fetch_rsi_from_api(self, symbol):
+        """
+        Завантажує свічки з Bybit та рахує точний RSI
+        використовуючи таймфрейм із налаштувань (LTF).
+        """
+        try:
+            # 1. Отримуємо таймфрейм входу з налаштувань
+            tf = settings.get("ltfSelection") # напр. "15" або "60"
+            if not tf: tf = "15" # Дефолт
             
-        if losses == 0: return 99 if gains > 0 else 50
-        rs = gains / losses
-        rsi = 100 - (100 / (1 + rs))
-        return round(rsi, 1)
+            # 2. Запит до Bybit (беремо останні 30 свічок)
+            resp = self.bot.session.get_kline(
+                category="linear",
+                symbol=symbol,
+                interval=str(tf),
+                limit=30
+            )
+            
+            if resp['retCode'] == 0 and resp['result']['list']:
+                # Конвертуємо в DataFrame
+                data = resp['result']['list']
+                # Bybit повертає: [time, open, high, low, close, ...]
+                # Нам треба лише close (індекс 4)
+                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'turn'])
+                df['close'] = df['close'].astype(float)
+                
+                # Сортуємо від старого до нового (Bybit дає нові першими)
+                df = df.iloc[::-1] 
+                
+                # 3. Рахуємо RSI
+                rsi_series = ta.rsi(df['close'], length=14)
+                if rsi_series is not None and not rsi_series.empty:
+                    return round(rsi_series.iloc[-1], 1)
+                    
+        except Exception as e:
+            # Не спамимо в лог, щоб не забивати його, якщо просто помилка мережі
+            pass
+            
+        return 50.0 # Якщо помилка, повертаємо нейтральне значення
 
     def monitor_positions(self):
-        # 1. Які монети зараз в роботі?
         target_symbols = self.get_active_symbols()
         
-        # Якщо угод немає - очищуємо пам'ять і чекаємо
+        # Очищаємо кеш для закритих позицій
+        current_keys = list(self.active_coins_data.keys())
+        for k in current_keys:
+            if k not in target_symbols:
+                del self.active_coins_data[k]
+
         if not target_symbols:
-            self.active_coins_data = {}
-            self.last_scan_time = datetime.now()
             return
 
-        # 2. Отримуємо дані тільки по цим монетам
         try:
+            # Отримуємо тікери для "Тиску" (Pressure) - це миттєві дані
             all_tickers = self.bot.get_all_tickers()
             
             for t in all_tickers:
                 symbol = t['symbol']
-                # Ігноруємо все, що не в роботі
                 if symbol not in target_symbols: continue
                 
                 price = float(t['lastPrice'])
                 turnover = float(t['turnover24h']) 
                 
-                # Ініціалізація
                 if symbol not in self.active_coins_data:
                     self.active_coins_data[symbol] = {
-                        'prices': [], 'rsi': 50, 'pressure': 0, 'last_turnover': turnover, 'prev_price': price
+                        'rsi': 50, 'pressure': 0, 'last_turnover': turnover, 'prev_price': price
                     }
                 
                 coin_data = self.active_coins_data[symbol]
                 
-                # --- РОЗРАХУНОК RSI ---
-                coin_data['rsi'] = self.calculate_rsi(symbol, price)
+                # --- РОЗРАХУНОК RSI (Тільки раз на цикл) ---
+                # Тепер ми беремо його з API відповідно до таймфрейму
+                coin_data['rsi'] = self.fetch_rsi_from_api(symbol)
                 
-                # --- РОЗРАХУНОК ТИСКУ (VOLUME PRESSURE) ---
-                # Тиск = (Зміна об'єму) * (Напрямок ціни)
+                # --- РОЗРАХУНОК ТИСКУ (Real-time Flow) ---
                 if coin_data['last_turnover'] > 0:
                     vol_diff = turnover - coin_data['last_turnover']
-                    if vol_diff < 0: vol_diff = 0 # Фільтр глюків API
+                    if vol_diff < 0: vol_diff = 0
                     
                     price_dir = 1 if price >= coin_data.get('prev_price', price) else -1
-                    
-                    # Накопичувальний тиск з коефіцієнтом згасання (0.9)
-                    # Це показує імпульс саме за останні хвилини
                     current_flow = vol_diff * price_dir
                     coin_data['pressure'] = (coin_data['pressure'] * 0.9) + current_flow
                 
-                # Оновлюємо попередні значення
                 coin_data['last_turnover'] = turnover
                 coin_data['prev_price'] = price
                 
         except Exception as e:
             logger.error(f"Monitor calculation error: {e}")
-            
-        self.last_scan_time = datetime.now()
 
-    # === МЕТОДИ ДЛЯ UI (main_app.py) ===
+    # === МЕТОДИ ДЛЯ UI ===
     
     def get_current_rsi(self, symbol):
         return self.active_coins_data.get(symbol, {}).get('rsi', 50)
 
     def get_market_pressure(self, symbol):
         return self.active_coins_data.get(symbol, {}).get('pressure', 0)
-
-    def get_aggregated_data(self, hours=24):
-        # Повертаємо пустий all_signals, бо ми не шукаємо нові
-        return {
-            'all_signals': [], 
-            'last_scan': self.last_scan_time,
-            'snapshots': self.active_coins_data
-        }
