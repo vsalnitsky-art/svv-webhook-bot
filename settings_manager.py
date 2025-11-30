@@ -1,174 +1,113 @@
-import threading
-import time
-import pandas as pd
 import logging
-from datetime import datetime
-from bot import bot_instance
-from settings_manager import settings
-from strategy import strategy_engine
-from models import db_manager, AnalysisResult
+from models import db_manager, BotSetting
 
 logger = logging.getLogger(__name__)
 
-class MarketAnalyzer:
+DEFAULT_SETTINGS = {
+    # === GENERAL SETTINGS (Нові) ===
+    "scanner_quote_coin": "USDT", # Валюта торгівлі
+    "scanner_mode": "Manual",     # Manual або Auto
+    "scan_limit": 100,            # Топ N монет
+    
+    # === TELEGRAM (Підготовка) ===
+    "telegram_enabled": False,
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+
+    # === STRATEGY SETTINGS ===
+    "useCloudFilter": True,
+    "useObvFilter": True,
+    "useRsiFilter": True,
+    "useMfiFilter": False,
+    
+    "htfSelection": "240",    # 4H
+    "ltfSelection": "15",     # 15m
+    
+    "cloudFastLen": 10,
+    "cloudSlowLen": 40,
+    
+    "entryRsiOversold": 45,
+    "entryRsiOverbought": 55,
+    "rsiLength": 14,
+    "exitRsiOversold": 30,
+    "exitRsiOverbought": 70,
+    
+    "mfiLength": 20,
+    "obvEntryLen": 20,
+    "obvExitLen": 20,
+    
+    "riskPercent": 2.0,
+    "leverage": 20,
+    "fixedTP": 3.0,
+    "fixedSL": 1.5,
+    "atrMultiplierSL": 1.5,
+    "atrMultiplierTP": 3.0,
+    
+    "swingLength": 5,
+    "volumeSpikeThreshold": 1.8
+}
+
+class SettingsManager:
     def __init__(self):
-        self.is_scanning = False
-        self.progress = 0
-        self.status_message = "Ready"
-        self.last_scan_time = None
-        self._stop_event = threading.Event()
+        self.db = db_manager
+        self._cache = {}
+        self.reload_settings()
 
-    def get_top_tickers(self, limit=100):
-        """Отримує список пар, відфільтрованих по валюті та відсортованих по об'єму"""
+    def _cast_value(self, key, value_str):
+        if key not in DEFAULT_SETTINGS: return value_str
+        default_val = DEFAULT_SETTINGS[key]
         try:
-            quote_coin = settings.get("scanner_quote_coin")
-            all_tickers = bot_instance.get_all_tickers()
-            
-            # Фільтр по USDT/USDC
-            filtered = [t for t in all_tickers if t['symbol'].endswith(quote_coin)]
-            
-            # Сортування по обороту (turnover24h)
-            sorted_tickers = sorted(filtered, key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
-            
-            return sorted_tickers[:limit]
+            if isinstance(default_val, bool): return str(value_str).lower() == 'true'
+            elif isinstance(default_val, int): return int(value_str)
+            elif isinstance(default_val, float): return float(value_str)
+            else: return str(value_str)
+        except: return default_val
+
+    def reload_settings(self):
+        session = self.db.get_session()
+        try:
+            db_settings = session.query(BotSetting).all()
+            if not db_settings:
+                logger.info("Seeding default settings...")
+                self._cache = DEFAULT_SETTINGS.copy()
+                for k, v in DEFAULT_SETTINGS.items():
+                    val_str = "true" if v is True else "false" if v is False else str(v)
+                    session.add(BotSetting(key=k, value=val_str))
+                session.commit()
+            else:
+                loaded = {}
+                for s in db_settings: loaded[s.key] = self._cast_value(s.key, s.value)
+                self._cache = DEFAULT_SETTINGS.copy()
+                self._cache.update(loaded)
         except Exception as e:
-            logger.error(f"Error fetching tickers: {e}")
-            return []
+            logger.error(f"Error loading settings: {e}")
+            self._cache = DEFAULT_SETTINGS.copy()
+        finally: session.close()
 
-    def fetch_candles(self, symbol, timeframe, limit=200):
-        """Завантажує свічки з Bybit"""
+    def save_settings(self, new_settings_dict):
+        session = self.db.get_session()
         try:
-            tf_map = {'15': '15', '60': '60', '240': '240', 'D': 'D'}
-            bybit_tf = tf_map.get(str(timeframe), '240')
+            # Upsert логіка
+            for k, v in new_settings_dict.items():
+                if k in DEFAULT_SETTINGS:
+                    val_to_store = v
+                    if isinstance(DEFAULT_SETTINGS[k], bool):
+                        val_to_store = "true" if v == 'on' or v is True else "false"
+                        self._cache[k] = (val_to_store == "true")
+                    else:
+                        val_to_store = str(v)
+                        self._cache[k] = self._cast_value(k, v)
+                    
+                    existing = session.query(BotSetting).filter_by(key=k).first()
+                    if existing: existing.value = val_to_store
+                    else: session.add(BotSetting(key=k, value=val_to_store))
             
-            resp = bot_instance.session.get_kline(
-                category="linear",
-                symbol=symbol,
-                interval=bybit_tf,
-                limit=limit
-            )
-            
-            if resp['retCode'] == 0 and resp['result']['list']:
-                # Bybit: [time, open, high, low, close, volume, turnover]
-                data = resp['result']['list']
-                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-                df['time'] = pd.to_numeric(df['time'])
-                df['time'] = pd.to_datetime(df['time'], unit='ms')
-                
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    df[col] = df[col].astype(float)
-                
-                # Сортуємо від старого до нового
-                df = df.sort_values('time').reset_index(drop=True)
-                return df
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching candles for {symbol}: {e}")
-            return None
-
-    def run_scan_thread(self):
-        if self.is_scanning: return
-        threading.Thread(target=self._scan_process, daemon=True).start()
-
-    def _scan_process(self):
-        self.is_scanning = True
-        self.progress = 0
-        self.status_message = "Starting..."
-        
-        session = db_manager.get_session()
-        try:
-            # 1. Очистка старих результатів
-            session.query(AnalysisResult).delete()
             session.commit()
-            
-            # 2. Отримання списку
-            limit = settings.get("scan_limit")
-            tickers = self.get_top_tickers(limit)
-            total = len(tickers)
-            
-            self.status_message = f"Found {total} pairs. Scanning..."
-            logger.info(f"Starting scan for {total} pairs")
-            
-            htf = settings.get("htfSelection")
-            ltf = settings.get("ltfSelection")
-
-            for i, ticker in enumerate(tickers):
-                symbol = ticker['symbol']
-                self.status_message = f"Scanning {symbol} ({i+1}/{total})"
-                self.progress = int((i / total) * 100)
-                
-                try:
-                    # А. Старший ТФ (фільтри)
-                    df_htf = self.fetch_candles(symbol, htf)
-                    if df_htf is None: continue
-                    
-                    df_htf = strategy_engine.calculate_indicators(df_htf)
-                    filters = strategy_engine.check_htf_filters(df_htf.iloc[-1])
-                    
-                    if not (filters['bull'] or filters['bear']):
-                        time.sleep(0.1)
-                        continue 
-                    
-                    # Б. Молодший ТФ (вхід)
-                    time.sleep(0.1) 
-                    df_ltf = self.fetch_candles(symbol, ltf)
-                    if df_ltf is None: continue
-                    
-                    # В. Аналіз
-                    signal = strategy_engine.get_signal(df_ltf, df_htf)
-                    
-                    if signal['action']:
-                        # Знайдено сигнал
-                        score_base = 50
-                        if filters['bull'] and signal['action'] == 'Buy': score_base += 20
-                        if filters['bear'] and signal['action'] == 'Sell': score_base += 20
-                        
-                        res = AnalysisResult(
-                            symbol=symbol,
-                            signal_type=signal['action'],
-                            status="Zone Retest", 
-                            score=score_base, 
-                            price=float(df_ltf['close'].iloc[-1]),
-                            htf_rsi=float(filters['details'].get('rsi', 0)),
-                            ltf_rsi=float(df_ltf['rsi'].iloc[-1] if 'rsi' in df_ltf else 0),
-                            details=signal['reason']
-                        )
-                        session.add(res)
-                        session.commit()
-                        logger.info(f"🚀 FOUND: {symbol} {signal['action']}")
-                
-                except Exception as e:
-                    logger.error(f"Error scanning {symbol}: {e}")
-                
-                time.sleep(0.15) # Пауза для лімітів
-
-            self.progress = 100
-            self.status_message = "Scan Completed"
-            self.last_scan_time = datetime.now()
-            
         except Exception as e:
-            self.status_message = f"Error: {str(e)}"
-            logger.error(f"Scan failed: {e}")
-        finally:
-            self.is_scanning = False
-            session.close()
+            session.rollback()
+            logger.error(f"Save error: {e}")
+        finally: session.close()
 
-    def get_results(self):
-        session = db_manager.get_session()
-        try:
-            res = session.query(AnalysisResult).order_by(AnalysisResult.score.desc()).all()
-            return [{
-                'symbol': r.symbol,
-                'signal': r.signal_type,
-                'status': r.status,
-                'score': r.score,
-                'price': r.price,
-                'rsi_htf': round(r.htf_rsi, 1),
-                'rsi_ltf': round(r.ltf_rsi, 1),
-                'time': r.found_at.strftime('%H:%M'),
-                'details': r.details
-            } for r in res]
-        finally:
-            session.close()
+    def get(self, key): return self._cache.get(key, DEFAULT_SETTINGS.get(key))
 
-market_analyzer = MarketAnalyzer()
+settings = SettingsManager()
