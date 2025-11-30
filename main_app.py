@@ -1,73 +1,38 @@
 """
-Main App - Debug Version
-Ця версія допоможе знайти причину помилки запуску.
+Main App - Clean MVC Architecture
+Production version.
 """
 import logging
-import sys
-import os
-import ctypes
 import threading
 import time
 import json
+import ctypes
+import os
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, redirect, url_for
 import requests
 
-# Налаштування логування, щоб бачити помилки відразу
-logging.basicConfig(stream=sys.stdout, level=logging.INFO, format='%(asctime)s - %(message)s')
-logger = logging.getLogger(__name__)
+from bot_config import config
+from bot import bot_instance
+from statistics_service import stats_service
+from scanner import EnhancedMarketScanner
+from settings_manager import settings
+from market_analyzer import market_analyzer
 
-print("--------------------------------------------------")
-print("🚀 ПОЧАТОК ЗАВАНТАЖЕННЯ БОТА...")
-print("--------------------------------------------------")
-
-try:
-    print("1. Імпорт bot_config...")
-    from bot_config import config
-    
-    print("2. Імпорт models...")
-    from models import db_manager, AnalysisResult
-    
-    print("3. Імпорт bot (перевірка config.py)...")
-    from bot import bot_instance
-    
-    print("4. Імпорт statistics_service...")
-    from statistics_service import stats_service
-    
-    print("5. Імпорт scanner...")
-    from scanner import EnhancedMarketScanner
-    
-    print("6. Імпорт settings_manager...")
-    from settings_manager import settings
-    
-    print("7. Імпорт market_analyzer (перевірка strategy.py)...")
-    from market_analyzer import market_analyzer
-    
-    print("8. Імпорт report...")
-    from report import render_report_page
-    
-    print("✅ ВСІ МОДУЛІ УСПІШНО ЗАВАНТАЖЕНО!")
-
-except ImportError as e:
-    print(f"\n❌❌❌ КРИТИЧНА ПОМИЛКА ІМПОРТУ: {e}")
-    print("Швидше за все, ви забули створити один із файлів або в ньому є помилка.\n")
-    raise e
-except Exception as e:
-    print(f"\n❌❌❌ КРИТИЧНА ПОМИЛКА ЗАПУСКУ: {e}\n")
-    raise e
-
-# --- ДАЛІ ЙДЕ СТАНДАРТНИЙ КОД ---
-
+# Запобігання сну у Windows
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Запуск сканера
+# Запуск фонових процесів
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
 def monitor_active():
+    """Фоновий потік для запису стану позицій в БД"""
     logger.info("Starting active position monitor...")
     while True:
         try:
@@ -86,11 +51,15 @@ def monitor_active():
         time.sleep(10)
 
 def keep_alive():
+    """Self-Ping для Render"""
     time.sleep(5)
     base_url = os.environ.get('RENDER_EXTERNAL_URL')
-    if not base_url: base_url = f'http://127.0.0.1:{config.PORT}'
+    if not base_url:
+        base_url = f'http://127.0.0.1:{config.PORT}'
+    
     target = f"{base_url}/health"
     logger.info(f"💓 Keep-alive target: {target}")
+    
     while True:
         try: requests.get(target, timeout=10)
         except: pass
@@ -99,7 +68,8 @@ def keep_alive():
 threading.Thread(target=monitor_active, daemon=True).start()
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# --- ROUTES ---
+# --- ROUTES (МАРШРУТИ) ---
+
 @app.route('/')
 def home():
     return render_template('index.html', time=datetime.utcnow().strftime('%H:%M:%S UTC'))
@@ -113,14 +83,24 @@ def scanner_page():
             for p in r['result']['list']:
                 if float(p['size']) > 0:
                     symbol = p['symbol']
+                    
+                    # --- КОНВЕРТАЦІЯ ЧАСУ ---
                     c_time = p.get('createdTime')
-                    if not c_time or c_time == '0': c_time = p.get('updatedTime', time.time() * 1000)
+                    if not c_time or c_time == '0':
+                        c_time = p.get('updatedTime', time.time() * 1000)
+                    
                     dt_obj = datetime.fromtimestamp(int(c_time) / 1000)
                     formatted_time = dt_obj.strftime('%d.%m %H:%M')
+                    
                     active.append({
-                        'symbol': symbol, 'side': p['side'], 'pnl': round(float(p['unrealisedPnl']), 2), 
-                        'rsi': scanner.get_current_rsi(symbol), 'pressure': round(scanner.get_market_pressure(symbol)), 
-                        'size': p['size'], 'entry': p['avgPrice'], 'time': formatted_time
+                        'symbol': symbol, 
+                        'side': p['side'], 
+                        'pnl': round(float(p['unrealisedPnl']), 2), 
+                        'rsi': scanner.get_current_rsi(symbol), 
+                        'pressure': round(scanner.get_market_pressure(symbol)), 
+                        'size': p['size'], 
+                        'entry': p['avgPrice'],
+                        'time': formatted_time
                     })
     except Exception as e: logger.error(f"Scanner error: {e}")
     return render_template('scanner.html', active=active)
@@ -129,7 +109,12 @@ def scanner_page():
 def analyzer_page():
     results = market_analyzer.get_results()
     conf = settings._cache
-    return render_template('analyzer.html', results=results, conf=conf, progress=market_analyzer.progress, status=market_analyzer.status_message, is_scanning=market_analyzer.is_scanning)
+    return render_template('analyzer.html', 
+                           results=results, 
+                           conf=conf, 
+                           progress=market_analyzer.progress,
+                           status=market_analyzer.status_message,
+                           is_scanning=market_analyzer.is_scanning)
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_general_page():
@@ -150,20 +135,30 @@ def analyzer_settings_page():
         return redirect(url_for('analyzer_settings_page'))
     return render_template('strategy.html', conf=settings._cache)
 
+# --- API ENDPOINTS (Дії) ---
+
 @app.route('/analyzer/scan', methods=['POST'])
 def run_scan():
     if request.form:
         form_data = request.form.to_dict()
+        
+        # Обробка чекбоксів (якщо не прийшли - значить OFF)
         if 'useOBRetest' not in form_data: form_data['useOBRetest'] = 'off'
         for cb in ['useCloudFilter', 'useObvFilter', 'useRsiFilter']:
              if cb not in form_data: form_data[cb] = 'off'
+             
         settings.save_settings(form_data)
+    
     market_analyzer.run_scan_thread()
     return jsonify({"status": "started"})
 
 @app.route('/analyzer/status')
 def get_scan_status():
-    return jsonify({"progress": market_analyzer.progress, "message": market_analyzer.status_message, "is_scanning": market_analyzer.is_scanning})
+    return jsonify({
+        "progress": market_analyzer.progress,
+        "message": market_analyzer.status_message,
+        "is_scanning": market_analyzer.is_scanning
+    })
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
