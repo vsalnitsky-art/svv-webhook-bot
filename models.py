@@ -6,8 +6,7 @@ import os
 
 Base = declarative_base()
 
-# === МОДЕЛІ ДАНИХ ===
-
+# === МОДЕЛІ ===
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True)
@@ -50,7 +49,7 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
-# Заглушки для сумісності
+# Заглушки
 class WhaleSignal(Base):
     __tablename__ = 'whale_signals'
     id = Column(Integer, primary_key=True)
@@ -62,48 +61,27 @@ class CoinPerformance(Base):
     __tablename__ = 'coin_performance'
     id = Column(Integer, primary_key=True)
 
-# === МЕНЕДЖЕР БАЗИ ДАНИХ ===
-
+# === МЕНЕДЖЕР БАЗИ ДАНИХ (Виправлений шлях) ===
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         
-        # 1. Спроба підключення до PostgreSQL (Render Env)
+        # 1. Перевірка на PostgreSQL (Render)
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
-            print("Using PostgreSQL connection.")
         
-        # 2. Локальна SQLite (Якщо немає Postgres)
+        # 2. Локальна SQLite (У КОРЕНЕВІЙ ПАПЦІ)
         if not db_url:
+            # Отримуємо шлях до папки, де лежить цей файл
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            
-            # Спроба використати папку BASE
-            try:
-                target_folder = os.path.join(base_dir, 'BASE')
-                # exist_ok=True не видає помилку, якщо папка вже існує
-                os.makedirs(target_folder, exist_ok=True)
-                
-                db_path = os.path.join(target_folder, db_filename)
-                print(f"✅ SQLite initialized in BASE folder: {db_path}")
-                
-            except Exception as e:
-                # Якщо немає прав на створення папки (Fallback)
-                print(f"⚠️ Error creating BASE folder: {e}. Falling back to root.")
-                db_path = os.path.join(base_dir, db_filename)
-
+            # Формуємо шлях прямо в цій папці
+            db_path = os.path.join(base_dir, db_filename)
             db_url = f'sqlite:///{db_path}'
+            print(f"💾 Database initialized at: {db_path}")
 
-        # 3. Створення Engine
-        try:
-            self.engine = create_engine(db_url, echo=False)
-            Base.metadata.create_all(self.engine)
-            self.Session = sessionmaker(bind=self.engine)
-        except Exception as e:
-            print(f"❌ CRITICAL DATABASE ERROR: {e}")
-            # Аварійний режим, щоб бот не впав повністю
-            self.engine = create_engine('sqlite:///:memory:', echo=False)
-            Base.metadata.create_all(self.engine)
-            self.Session = sessionmaker(bind=self.engine)
+        self.engine = create_engine(db_url, echo=False)
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine)
     
     def get_session(self): return self.Session()
 

@@ -1,88 +1,188 @@
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Index, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime
+"""
+Main App - Debug Version
+Ця версія допоможе знайти причину помилки запуску.
+"""
+import logging
+import sys
 import os
+import ctypes
+import threading
+import time
+import json
+from datetime import datetime
+from flask import Flask, request, jsonify, render_template, redirect, url_for
+import requests
 
-Base = declarative_base()
+# Налаштування логування, щоб бачити помилки відразу
+logging.basicConfig(stream=sys.stdout, level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# === МОДЕЛІ ===
-class Trade(Base):
-    __tablename__ = 'trades'
-    id = Column(Integer, primary_key=True)
-    order_id = Column(String(50), unique=True, index=True)
-    symbol = Column(String(20), nullable=False, index=True)
-    side = Column(String(10)) 
-    qty = Column(Float)
-    entry_price = Column(Float)
-    exit_price = Column(Float)
-    pnl = Column(Float)
-    is_win = Column(Boolean)
-    exit_time = Column(DateTime, default=datetime.utcnow)
-    exit_reason = Column(String(100))
+print("--------------------------------------------------")
+print("🚀 ПОЧАТОК ЗАВАНТАЖЕННЯ БОТА...")
+print("--------------------------------------------------")
 
-class TradeMonitorLog(Base):
-    __tablename__ = 'trade_monitor_logs'
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    current_price = Column(Float)
-    current_pnl = Column(Float)
-    rsi = Column(Float)
-    pressure = Column(Float)
-
-class BotSetting(Base):
-    __tablename__ = 'bot_settings'
-    key = Column(String(50), primary_key=True)
-    value = Column(String(255))
-
-class AnalysisResult(Base):
-    __tablename__ = 'analysis_results'
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), index=True)
-    signal_type = Column(String(10))
-    status = Column(String(50))      
-    score = Column(Integer)          
-    price = Column(Float)
-    htf_rsi = Column(Float)
-    ltf_rsi = Column(Float)
-    found_at = Column(DateTime, default=datetime.utcnow)
-    details = Column(Text)
-
-# Заглушки
-class WhaleSignal(Base):
-    __tablename__ = 'whale_signals'
-    id = Column(Integer, primary_key=True)
-    timestamp = Column(DateTime)
-class CoinStatistics(Base):
-    __tablename__ = 'coin_statistics'
-    id = Column(Integer, primary_key=True)
-class CoinPerformance(Base):
-    __tablename__ = 'coin_performance'
-    id = Column(Integer, primary_key=True)
-
-# === МЕНЕДЖЕР БАЗИ ДАНИХ (Виправлений шлях) ===
-class DatabaseManager:
-    def __init__(self, db_filename='trading_bot_final.db'):
-        
-        # 1. Перевірка на PostgreSQL (Render)
-        db_url = os.environ.get('DATABASE_URL')
-        if db_url and db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql://", 1)
-        
-        # 2. Локальна SQLite (У КОРЕНЕВІЙ ПАПЦІ)
-        if not db_url:
-            # Отримуємо шлях до папки, де лежить цей файл
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            # Формуємо шлях прямо в цій папці
-            db_path = os.path.join(base_dir, db_filename)
-            db_url = f'sqlite:///{db_path}'
-            print(f"💾 Database initialized at: {db_path}")
-
-        self.engine = create_engine(db_url, echo=False)
-        Base.metadata.create_all(self.engine)
-        self.Session = sessionmaker(bind=self.engine)
+try:
+    print("1. Імпорт bot_config...")
+    from bot_config import config
     
-    def get_session(self): return self.Session()
+    print("2. Імпорт models...")
+    from models import db_manager, AnalysisResult
+    
+    print("3. Імпорт bot (перевірка config.py)...")
+    from bot import bot_instance
+    
+    print("4. Імпорт statistics_service...")
+    from statistics_service import stats_service
+    
+    print("5. Імпорт scanner...")
+    from scanner import EnhancedMarketScanner
+    
+    print("6. Імпорт settings_manager...")
+    from settings_manager import settings
+    
+    print("7. Імпорт market_analyzer (перевірка strategy.py)...")
+    from market_analyzer import market_analyzer
+    
+    print("8. Імпорт report...")
+    from report import render_report_page
+    
+    print("✅ ВСІ МОДУЛІ УСПІШНО ЗАВАНТАЖЕНО!")
 
-db_manager = DatabaseManager()
+except ImportError as e:
+    print(f"\n❌❌❌ КРИТИЧНА ПОМИЛКА ІМПОРТУ: {e}")
+    print("Швидше за все, ви забули створити один із файлів або в ньому є помилка.\n")
+    raise e
+except Exception as e:
+    print(f"\n❌❌❌ КРИТИЧНА ПОМИЛКА ЗАПУСКУ: {e}\n")
+    raise e
+
+# --- ДАЛІ ЙДЕ СТАНДАРТНИЙ КОД ---
+
+try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
+except: pass
+
+app = Flask(__name__)
+
+# Запуск сканера
+scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
+scanner.start()
+
+def monitor_active():
+    logger.info("Starting active position monitor...")
+    while True:
+        try:
+            r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
+            if r['retCode'] == 0:
+                for p in r['result']['list']:
+                    if float(p['size']) > 0:
+                        stats_service.save_monitor_log({
+                            'symbol': p['symbol'], 
+                            'price': float(p['avgPrice']), 
+                            'pnl': float(p['unrealisedPnl']), 
+                            'rsi': scanner.get_current_rsi(p['symbol']), 
+                            'pressure': scanner.get_market_pressure(p['symbol'])
+                        })
+        except Exception as e: logger.error(f"Monitor error: {e}")
+        time.sleep(10)
+
+def keep_alive():
+    time.sleep(5)
+    base_url = os.environ.get('RENDER_EXTERNAL_URL')
+    if not base_url: base_url = f'http://127.0.0.1:{config.PORT}'
+    target = f"{base_url}/health"
+    logger.info(f"💓 Keep-alive target: {target}")
+    while True:
+        try: requests.get(target, timeout=10)
+        except: pass
+        time.sleep(300)
+
+threading.Thread(target=monitor_active, daemon=True).start()
+threading.Thread(target=keep_alive, daemon=True).start()
+
+# --- ROUTES ---
+@app.route('/')
+def home():
+    return render_template('index.html', time=datetime.utcnow().strftime('%H:%M:%S UTC'))
+
+@app.route('/scanner', methods=['GET'])
+def scanner_page():
+    active = []
+    try:
+        r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
+        if r['retCode'] == 0:
+            for p in r['result']['list']:
+                if float(p['size']) > 0:
+                    symbol = p['symbol']
+                    c_time = p.get('createdTime')
+                    if not c_time or c_time == '0': c_time = p.get('updatedTime', time.time() * 1000)
+                    dt_obj = datetime.fromtimestamp(int(c_time) / 1000)
+                    formatted_time = dt_obj.strftime('%d.%m %H:%M')
+                    active.append({
+                        'symbol': symbol, 'side': p['side'], 'pnl': round(float(p['unrealisedPnl']), 2), 
+                        'rsi': scanner.get_current_rsi(symbol), 'pressure': round(scanner.get_market_pressure(symbol)), 
+                        'size': p['size'], 'entry': p['avgPrice'], 'time': formatted_time
+                    })
+    except Exception as e: logger.error(f"Scanner error: {e}")
+    return render_template('scanner.html', active=active)
+
+@app.route('/analyzer')
+def analyzer_page():
+    results = market_analyzer.get_results()
+    conf = settings._cache
+    return render_template('analyzer.html', results=results, conf=conf, progress=market_analyzer.progress, status=market_analyzer.status_message, is_scanning=market_analyzer.is_scanning)
+
+@app.route('/settings', methods=['GET', 'POST'])
+def settings_general_page():
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        form_data['telegram_enabled'] = request.form.get('telegram_enabled') == 'on'
+        settings.save_settings(form_data)
+        return redirect(url_for('settings_general_page'))
+    return render_template('settings.html', conf=settings._cache)
+
+@app.route('/analyzer/settings', methods=['GET', 'POST'])
+def analyzer_settings_page():
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        for cb in ['useCloudFilter', 'useObvFilter', 'useRsiFilter', 'useMfiFilter', 'useOBRetest']:
+            form_data[cb] = request.form.get(cb) == 'on'
+        settings.save_settings(form_data)
+        return redirect(url_for('analyzer_settings_page'))
+    return render_template('strategy.html', conf=settings._cache)
+
+@app.route('/analyzer/scan', methods=['POST'])
+def run_scan():
+    if request.form:
+        form_data = request.form.to_dict()
+        if 'useOBRetest' not in form_data: form_data['useOBRetest'] = 'off'
+        for cb in ['useCloudFilter', 'useObvFilter', 'useRsiFilter']:
+             if cb not in form_data: form_data[cb] = 'off'
+        settings.save_settings(form_data)
+    market_analyzer.run_scan_thread()
+    return jsonify({"status": "started"})
+
+@app.route('/analyzer/status')
+def get_scan_status():
+    return jsonify({"progress": market_analyzer.progress, "message": market_analyzer.status_message, "is_scanning": market_analyzer.is_scanning})
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        data = json.loads(request.get_data(as_text=True))
+        logger.info(f"🔔 SIGNAL: {data.get('symbol')} {data.get('action')}")
+        result = bot_instance.place_order(data)
+        return jsonify(result), (200 if result.get("status") in ["ok", "ignored"] else 400)
+    except Exception as e:
+        logger.error(f"Webhook Error: {e}")
+        return jsonify({"error": str(e)}), 400
+
+@app.route('/report', methods=['GET'])
+def report_route():
+    from report import render_report_page
+    return render_report_page(bot_instance, request)
+
+@app.route('/health')
+def health(): return jsonify({"status": "ok"})
+
+if __name__ == '__main__':
+    app.run(host=config.HOST, port=config.PORT)
