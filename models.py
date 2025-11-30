@@ -6,6 +6,8 @@ import os
 
 Base = declarative_base()
 
+# === МОДЕЛІ ТАБЛИЦЬ ===
+
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True)
@@ -35,19 +37,18 @@ class BotSetting(Base):
     key = Column(String(50), primary_key=True)
     value = Column(String(255))
 
-# === НОВА ТАБЛИЦЯ: РЕЗУЛЬТАТИ СКАНЕРА ===
 class AnalysisResult(Base):
     __tablename__ = 'analysis_results'
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), index=True)
-    signal_type = Column(String(10)) # "Buy" або "Sell"
-    status = Column(String(50))      # "Zone Retest", "Approaching"
-    score = Column(Integer)          # 0-100
+    signal_type = Column(String(10)) 
+    status = Column(String(50))      
+    score = Column(Integer)          
     price = Column(Float)
     htf_rsi = Column(Float)
     ltf_rsi = Column(Float)
     found_at = Column(DateTime, default=datetime.utcnow)
-    details = Column(Text)           # Деталі стратегії
+    details = Column(Text)
 
 # Заглушки для сумісності
 class WhaleSignal(Base):
@@ -61,15 +62,47 @@ class CoinPerformance(Base):
     __tablename__ = 'coin_performance'
     id = Column(Integer, primary_key=True)
 
+# === МЕНЕДЖЕР БАЗИ ДАНИХ ===
+
 class DatabaseManager:
-    def __init__(self, db_path='trading_bot_final.db'):
+    def __init__(self, db_filename='trading_bot_final.db', data_folder='BASE'):
+        """
+        Ініціалізація бази даних.
+        Якщо використовується SQLite, файл буде створено у папці data_folder (за замовчуванням 'BASE').
+        """
+        
+        # 1. Перевірка на наявність зовнішньої бази (PostgreSQL на Render)
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
-        self.engine = create_engine(db_url or f'sqlite:///{db_path}', echo=False)
+        
+        # 2. Якщо зовнішньої бази немає — використовуємо локальну SQLite у папці
+        if not db_url:
+            # Отримуємо абсолютний шлях до папки, де лежить цей скрипт (models.py)
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # Формуємо шлях до папки з даними (наприклад: /app/BASE)
+            target_folder = os.path.join(base_dir, data_folder)
+            
+            # Створюємо папку, якщо її немає
+            if not os.path.exists(target_folder):
+                try:
+                    os.makedirs(target_folder)
+                    print(f"📁 Created database folder: {target_folder}")
+                except Exception as e:
+                    print(f"⚠️ Error creating folder: {e}")
+            
+            # Формуємо повний шлях до файлу
+            db_path = os.path.join(target_folder, db_filename)
+            db_url = f'sqlite:///{db_path}'
+            print(f"💾 Using SQLite database at: {db_path}")
+
+        # 3. Підключення
+        self.engine = create_engine(db_url, echo=False)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
     
     def get_session(self): return self.Session()
 
+# Ініціалізація (створить папку BASE автоматично при імпорті)
 db_manager = DatabaseManager()
