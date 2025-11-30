@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}General Settings{% endblock %}
+{% block title %}Загальні Налаштування{% endblock %}
 
 {% block content %}
 <div class="container mt-4" style="max-width: 700px;">
@@ -8,8 +8,8 @@
     
     <form method="POST">
         
-        <div class="card">
-            <div class="card-header text-primary">🌍 Глобальні Параметри</div>
+        <div class="card mb-4">
+            <div class="card-header text-primary fw-bold">🌍 Глобальні Параметри</div>
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-6">
@@ -18,6 +18,7 @@
                             <option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin')=='USDT' }}>USDT</option>
                             <option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin')=='USDC' }}>USDC</option>
                         </select>
+                        <div class="form-text">Базова валюта для всіх пар.</div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Режим Сканера</label>
@@ -25,18 +26,14 @@
                             <option value="Manual" {{ 'selected' if conf.get('scanner_mode')=='Manual' }}>Manual (Кнопка)</option>
                             <option value="Auto" {{ 'selected' if conf.get('scanner_mode')=='Auto' }}>Auto (15 хв)</option>
                         </select>
-                    </div>
-                    <div class="col-md-12">
-                        <label class="form-label">Глибина сканування (Топ монет)</label>
-                        <input type="number" class="form-control" name="scan_limit" value="{{ conf.get('scan_limit') }}">
-                        <div class="form-text">Максимальна кількість монет для аналізу за один раз (рекомендовано 100-200).</div>
+                        <div class="form-text">Авто-режим працює у фоні.</div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <div class="card">
-            <div class="card-header text-danger">💰 Ризик Менеджмент</div>
+        <div class="card mb-4">
+            <div class="card-header text-danger fw-bold">💰 Ризик Менеджмент</div>
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-6">
@@ -57,8 +54,8 @@
             </div>
         </div>
 
-        <div class="card">
-            <div class="card-header" style="color: #0891b2;">✈️ Telegram Сповіщення</div>
+        <div class="card mb-4">
+            <div class="card-header fw-bold" style="color: #0891b2;">✈️ Telegram Сповіщення</div>
             <div class="card-body">
                 <div class="form-check form-switch mb-3">
                     <input class="form-check-input" type="checkbox" name="telegram_enabled" {{ 'checked' if conf.get('telegram_enabled') }}>
@@ -76,7 +73,7 @@
         </div>
         
         <div class="d-grid gap-2 mb-5">
-            <button type="submit" class="btn btn-primary btn-lg">💾 Зберегти Зміни</button>
+            <button type="submit" class="btn btn-primary btn-lg shadow-sm">💾 Зберегти Зміни</button>
         </div>
     </form>
 </div>
