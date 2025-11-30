@@ -1,38 +1,66 @@
 {% extends "base.html" %}
+
 {% block title %}Active Monitor{% endblock %}
+
 {% block content %}
 <div class="container mt-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h4 class="fw-bold mb-0">🐋 Монітор Активних Угод</h4>
         <span class="badge bg-primary fs-6">{{ active|length }} Позицій</span>
     </div>
+
     <div class="card shadow-sm border-0">
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
+            <table class="table table-hover align-middle mb-0" style="font-family: 'Inter', sans-serif;">
                 <thead class="table-light">
                     <tr>
-                        <th class="py-3">Час</th>
-                        <th class="py-3">Монета</th>
-                        <th class="py-3">Тип</th>
-                        <th class="py-3">Розмір</th>
-                        <th class="py-3">Вхід</th>
-                        <th class="py-3">RSI</th>
-                        <th class="py-3">P&L (USDT)</th>
+                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Час</th>
+                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Монета</th>
+                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Тип</th>
+                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Розмір</th>
+                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Вхід</th>
+                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">RSI</th>
+                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">P&L (USDT)</th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for a in active %}
                     <tr>
-                        <td class="text-muted small fw-bold">{{ a.time }}</td>
-                        <td class="fw-bold text-primary">{{ a.symbol }}</td>
-                        <td><span class="badge {{ 'badge-buy' if a.side=='Buy' else 'badge-sell' }}">{{ a.side }}</span></td>
-                        <td>{{ a.size }}</td>
-                        <td>{{ a.entry }}</td>
-                        <td><span class="{{ 'text-danger fw-bold' if a.rsi > 70 else 'text-success fw-bold' if a.rsi < 30 else 'text-muted' }}">{{ a.rsi }}</span></td>
-                        <td class="{{ 'text-up' if a.pnl > 0 else 'text-down' }}" style="font-size: 1.1em;">{{ "+" if a.pnl > 0 }}{{ a.pnl }}$</td>
+                        <td class="text-secondary fw-medium" style="font-size: 0.9rem;">
+                            {{ a.time }}
+                        </td>
+                        
+                        <td class="fw-bold text-primary" style="font-size: 0.95rem;">
+                            {{ a.symbol }}
+                        </td>
+                        
+                        <td>
+                            <span class="badge {{ 'badge-buy' if a.side=='Buy' else 'badge-sell' }}">
+                                {{ a.side }}
+                            </span>
+                        </td>
+                        
+                        <td class="fw-medium">{{ a.size }}</td>
+                        <td class="fw-medium">{{ a.entry }}</td>
+                        
+                        <td>
+                            <span class="{{ 'text-danger fw-bold' if a.rsi > 70 else 'text-success fw-bold' if a.rsi < 30 else 'text-muted' }}">
+                                {{ a.rsi }}
+                            </span>
+                        </td>
+                        
+                        <td class="{{ 'text-up' if a.pnl > 0 else 'text-down' }}" style="font-size: 1rem; font-weight: 700;">
+                            {{ "+" if a.pnl > 0 }}{{ a.pnl }}$
+                        </td>
                     </tr>
                 {% else %}
-                    <tr><td colspan="7" class="text-center py-5 text-muted"><div style="font-size: 2.5rem; margin-bottom: 1rem;">💤</div><h5>Немає активних угод</h5></td></tr>
+                    <tr>
+                        <td colspan="7" class="text-center py-5 text-muted">
+                            <div style="font-size: 2.5rem; margin-bottom: 1rem;">💤</div>
+                            <h5>Немає активних угод</h5>
+                            <p class="small">Бот очікує нових сигналів...</p>
+                        </td>
+                    </tr>
                 {% endfor %}
                 </tbody>
             </table>

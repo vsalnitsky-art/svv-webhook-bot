@@ -1,61 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}P&L Аналітика{% endblock %}
+{% block title %}P&L Аналіз{% endblock %}
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
 <style>
-    /* BYBIT STYLE COLORS & CARDS */
-    :root {
-        --up-color: #20b26c; /* Bybit Green */
-        --down-color: #ef454a; /* Bybit Red */
-        --text-sub: #848e9c;
-        --card-bg: #ffffff;
-    }
-    
-    .kpi-card {
-        background: var(--card-bg);
-        border: none;
-        border-radius: 12px;
-        padding: 20px;
-        height: 100%;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.04);
-        transition: transform 0.2s;
-    }
-    .kpi-card:hover { transform: translateY(-2px); }
-    
-    .kpi-label { color: var(--text-sub); font-size: 0.85rem; font-weight: 500; margin-bottom: 8px; display: flex; align-items: center; }
+    .kpi-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); height: 100%; }
     .kpi-value { font-size: 1.5rem; font-weight: 700; color: #1e2329; }
-    .kpi-value.pnl-plus { color: var(--up-color); }
-    .kpi-value.pnl-minus { color: var(--down-color); }
-    
-    .chart-container {
-        position: relative;
-        height: 300px;
-        width: 100%;
-        margin-top: 10px;
-    }
-    
-    .filter-btn {
-        border: 1px solid #eaecef;
-        color: #1e2329;
-        font-weight: 500;
-        padding: 6px 16px;
-        border-radius: 20px;
-        background: white;
-        text-decoration: none;
-        font-size: 0.9rem;
-        margin-left: 5px;
-        transition: all 0.2s;
-    }
-    .filter-btn:hover { background: #f5f5f5; color: #1e2329; border-color: #eaecef; }
-    .filter-btn.active { background: #fcd535; color: #1e2329; border-color: #fcd535; font-weight: 600; box-shadow: 0 2px 5px rgba(252, 213, 53, 0.3); }
-    
-    .table-custom th { font-size: 12px; color: var(--text-sub); font-weight: 500; border-bottom: 1px solid #eaecef; padding-top: 15px; padding-bottom: 15px; }
-    .table-custom td { font-size: 14px; font-weight: 500; padding-top: 15px; padding-bottom: 15px; border-bottom: 1px solid #f7f8fa; }
-    .type-long { color: var(--up-color); background: rgba(32, 178, 108, 0.1); padding: 4px 8px; border-radius: 4px; font-size: 12px; }
-    .type-short { color: var(--down-color); background: rgba(239, 69, 74, 0.1); padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    .filter-btn { border: 1px solid #eaecef; color: #1e2329; padding: 6px 16px; border-radius: 20px; text-decoration: none; font-size: 0.9rem; margin-left: 5px; }
+    .filter-btn.active { background: #fcd535; border-color: #fcd535; font-weight: 600; }
+    .type-long { color: #20b26c; background: rgba(32, 178, 108, 0.1); padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    .type-short { color: #ef454a; background: rgba(239, 69, 74, 0.1); padding: 4px 8px; border-radius: 4px; font-size: 12px; }
 </style>
 {% endblock %}
 
@@ -65,7 +20,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h4 class="fw-bold mb-1">P&L Аналіз</h4>
-            <p class="text-muted small mb-0">Огляд ефективності торгової стратегії</p>
+            <p class="text-muted small mb-0">Статистика ефективності</p>
         </div>
         <div>
             <a href="/report?days=7" class="filter-btn {{ 'active' if days==7 }}">7 Днів</a>
@@ -77,40 +32,29 @@
     <div class="row g-3 mb-4">
         <div class="col-md-3">
             <div class="kpi-card">
-                <div class="kpi-label">Реалізований P&L (USDT) 💰</div>
-                <div class="kpi-value {{ 'pnl-plus' if stats.total_pnl >= 0 else 'pnl-minus' }}">
-                    {{ "+" if stats.total_pnl > 0 }}{{ stats.total_pnl }}
+                <div class="text-muted small mb-2">Реалізований P&L (USDT)</div>
+                <div class="kpi-value {{ 'text-success' if stats.total_pnl >= 0 else 'text-danger' }}">
+                    {{ "+" if stats.total_pnl > 0 }}{{ stats.total_pnl | round(2) }}
                 </div>
-                <div class="small text-muted mt-2">Оборот: {{ stats.volume }} USDT</div>
             </div>
         </div>
-        
         <div class="col-md-3">
             <div class="kpi-card">
-                <div class="kpi-label">Win Rate (Успішність) 🎯</div>
+                <div class="text-muted small mb-2">Win Rate</div>
                 <div class="kpi-value">{{ stats.win_rate }}%</div>
-                <div class="progress mt-2" style="height: 6px;">
-                    <div class="progress-bar bg-success" style="width: {{ stats.win_rate }}%"></div>
-                </div>
-                <div class="small text-muted mt-2">{{ stats.wins }} Wins / {{ stats.losses }} Losses</div>
+                <div class="progress mt-2" style="height: 4px;"><div class="progress-bar bg-success" style="width: {{ stats.win_rate }}%"></div></div>
             </div>
         </div>
-
         <div class="col-md-3">
             <div class="kpi-card">
-                <div class="kpi-label">Profit Factor ⚖️</div>
-                <div class="kpi-value" style="color: {{ '#20b26c' if stats.profit_factor >= 1.5 else '#f0b90b' }}">
-                    {{ stats.profit_factor }}
-                </div>
-                <div class="small text-muted mt-2">Avg. Profit: {{ "+" if stats.avg_profit > 0 }}{{ stats.avg_profit }}$</div>
+                <div class="text-muted small mb-2">Profit Factor</div>
+                <div class="kpi-value">{{ stats.profit_factor }}</div>
             </div>
         </div>
-
         <div class="col-md-3">
             <div class="kpi-card">
-                <div class="kpi-label">Всього Угод 📊</div>
+                <div class="text-muted small mb-2">Всього Угод</div>
                 <div class="kpi-value">{{ stats.total_trades }}</div>
-                <div class="small text-muted mt-2">За останні {{ days }} днів</div>
             </div>
         </div>
     </div>
@@ -118,64 +62,45 @@
     <div class="row g-4 mb-4">
         <div class="col-lg-8">
             <div class="card shadow-sm border-0 h-100">
-                <div class="card-header bg-white">
-                    <span class="fw-bold">📈 Крива Дохідності (Cumulative P&L)</span>
-                </div>
-                <div class="card-body">
-                    <div class="chart-container">
-                        <canvas id="equityChart"></canvas>
-                    </div>
-                </div>
+                <div class="card-header bg-white fw-bold">📈 Крива Дохідності</div>
+                <div class="card-body"><canvas id="equityChart" height="250"></canvas></div>
             </div>
         </div>
-        
         <div class="col-lg-4">
             <div class="card shadow-sm border-0 h-100">
-                <div class="card-header bg-white">
-                    <span class="fw-bold">📅 Щоденний P&L</span>
-                </div>
-                <div class="card-body">
-                    <div class="chart-container">
-                        <canvas id="dailyChart"></canvas>
-                    </div>
-                </div>
+                <div class="card-header bg-white fw-bold">📅 Щоденний P&L</div>
+                <div class="card-body"><canvas id="dailyChart" height="250"></canvas></div>
             </div>
         </div>
     </div>
 
     <div class="card shadow-sm border-0">
-        <div class="card-header bg-white py-3">
-            <span class="fw-bold">📜 Історія Угод</span>
-        </div>
+        <div class="card-header bg-white py-3 fw-bold">📜 Історія Угод</div>
         <div class="table-responsive">
-            <table class="table table-custom table-hover align-middle mb-0">
-                <thead>
+            <table class="table table-hover align-middle mb-0" style="font-family: 'Inter', sans-serif;">
+                <thead class="table-light">
                     <tr>
-                        <th class="ps-4">Час закриття</th>
+                        <th class="ps-4">Час</th>
                         <th>Пара</th>
-                        <th>Напрямок</th>
+                        <th>Тип</th>
                         <th>Вхід</th>
                         <th>Вихід</th>
-                        <th>Кількість</th>
+                        <th>К-сть</th>
                         <th>P&L</th>
-                        <th>Результат</th>
+                        <th>Статус</th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for t in trades %}
                     <tr>
-                        <td class="ps-4 text-muted">{{ t.exit_time.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td class="ps-4 text-muted small">{{ t.exit_time.strftime('%d.%m %H:%M') }}</td>
                         <td class="fw-bold text-primary">{{ t.symbol }}</td>
-                        <td>
-                            <span class="{{ 'type-long' if t.side == 'Long' else 'type-short' }}">
-                                {{ t.side }}
-                            </span>
-                        </td>
-                        <td>{{ t.entry_price }}</td>
-                        <td>{{ t.exit_price }}</td>
+                        <td><span class="{{ 'type-long' if t.side == 'Long' else 'type-short' }}">{{ t.side }}</span></td>
+                        <td>{{ t.entry_price | round(4) }}</td>
+                        <td>{{ t.exit_price | round(4) }}</td>
                         <td>{{ t.qty }}</td>
                         <td class="fw-bold {{ 'text-success' if t.pnl > 0 else 'text-danger' }}">
-                            {{ "+" if t.pnl > 0 }}{{ t.pnl }}$
+                            {{ "+" if t.pnl > 0 }}{{ t.pnl | round(2) }}$
                         </td>
                         <td>
                             {% if t.is_win %}
@@ -186,26 +111,18 @@
                         </td>
                     </tr>
                 {% else %}
-                    <tr>
-                        <td colspan="8" class="text-center py-5 text-muted">
-                            Історія угод порожня за цей період
-                        </td>
-                    </tr>
+                    <tr><td colspan="8" class="text-center py-5 text-muted">Історія порожня</td></tr>
                 {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
-
 </div>
 
 <script>
-    // --- 1. EQUITY CHART (LINE) ---
     const ctxEquity = document.getElementById('equityChart').getContext('2d');
-    
-    // Градієнт для краси
-    let gradient = ctxEquity.createLinearGradient(0, 0, 0, 400);
-    gradient.addColorStop(0, 'rgba(32, 178, 108, 0.2)'); // Greenish
+    let gradient = ctxEquity.createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, 'rgba(32, 178, 108, 0.2)');
     gradient.addColorStop(1, 'rgba(32, 178, 108, 0.0)');
 
     new Chart(ctxEquity, {
@@ -213,62 +130,42 @@
         data: {
             labels: {{ chart_labels | safe }},
             datasets: [{
-                label: 'Cumulative P&L ($)',
+                label: 'Cumulative P&L',
                 data: {{ chart_equity | safe }},
                 borderColor: '#20b26c',
                 backgroundColor: gradient,
                 borderWidth: 2,
-                pointRadius: 0, // Приховуємо точки для чистоти
-                pointHoverRadius: 4,
+                pointRadius: 0,
                 fill: true,
-                tension: 0.4 // Плавність ліній
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: { mode: 'index', intersect: false }
-            },
-            scales: {
-                x: { grid: { display: false }, ticks: { maxTicksLimit: 8, color: '#848e9c' } },
-                y: { 
-                    grid: { color: '#f7f8fa' }, 
-                    ticks: { color: '#848e9c' },
-                    suggestedMin: 0
-                }
-            },
-            interaction: { mode: 'nearest', axis: 'x', intersect: false }
-        }
-    });
-
-    // --- 2. DAILY P&L CHART (BAR) ---
-    const ctxDaily = document.getElementById('dailyChart').getContext('2d');
-    const dailyData = {{ daily_values | safe }};
-    
-    // Фарбуємо стовпчики: Зелений для +, Червоний для -
-    const barColors = dailyData.map(val => val >= 0 ? '#20b26c' : '#ef454a');
-
-    new Chart(ctxDaily, {
-        type: 'bar',
-        data: {
-            labels: {{ daily_labels | safe }},
-            datasets: [{
-                label: 'Daily P&L',
-                data: dailyData,
-                backgroundColor: barColors,
-                borderRadius: 4
+                tension: 0.3
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
-            scales: {
-                x: { display: false }, // Приховуємо дати, щоб не забивати графік
-                y: { grid: { display: false }, ticks: { display: false } }
-            }
+            scales: { x: { grid: { display: false } }, y: { grid: { color: '#f7f8fa' } } },
+            interaction: { mode: 'index', intersect: false }
+        }
+    });
+
+    const ctxDaily = document.getElementById('dailyChart').getContext('2d');
+    const dailyData = {{ daily_values | safe }};
+    new Chart(ctxDaily, {
+        type: 'bar',
+        data: {
+            labels: {{ daily_labels | safe }},
+            datasets: [{
+                data: dailyData,
+                backgroundColor: dailyData.map(v => v >= 0 ? '#20b26c' : '#ef454a'),
+                borderRadius: 3
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { display: false }, y: { display: false } }
         }
     });
 </script>
