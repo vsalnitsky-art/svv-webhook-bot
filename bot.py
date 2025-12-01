@@ -1,9 +1,12 @@
 import logging
 import decimal
+import time
+from datetime import datetime
 from pybit.unified_trading import HTTP
 from bot_config import config
 from config import get_api_credentials
-from settings_manager import settings # Імпорт налаштувань
+from settings_manager import settings
+from statistics_service import stats_service  # Потрібно для збереження історії
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,39 @@ class BybitTradingBot:
         try: 
             self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
         except: pass
+
+    # === СИНХРОНІЗАЦІЯ ІСТОРІЇ (ВІДНОВЛЕНО) ===
+    def sync_trades(self, days=7):
+        """Завантажує історію закритих угод з Bybit у БД"""
+        try:
+            end_time = int(time.time() * 1000)
+            start_time = end_time - (days * 24 * 60 * 60 * 1000)
+            
+            # Отримуємо Closed PnL
+            r = self.session.get_closed_pnl(category="linear", startTime=start_time, endTime=end_time, limit=50)
+            
+            if r['retCode'] == 0:
+                for t in r['result']['list']:
+                    # Визначаємо напрямок (Sell у PnL означає закриття Long, Buy - закриття Short)
+                    trade_side = 'Long' if t['side'] == 'Sell' else 'Short'
+                    
+                    stats_service.save_trade({
+                        'order_id': t['orderId'], 
+                        'symbol': t['symbol'],
+                        'side': trade_side,
+                        'qty': float(t['qty']), 
+                        'entry_price': float(t['avgEntryPrice']),
+                        'exit_price': float(t['avgExitPrice']), 
+                        'pnl': float(t['closedPnl']),
+                        'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
+                        'exit_reason': 'Signal/TP/SL'
+                    })
+                logger.info(f"Synced trades for last {days} days")
+            else:
+                logger.warning(f"Sync API Error: {r}")
+                
+        except Exception as e:
+            logger.error(f"Sync trades error: {e}")
 
     # === ОСНОВНА ФУНКЦІЯ ОРДЕРІВ ===
     def place_order(self, data):
@@ -124,7 +160,6 @@ class BybitTradingBot:
             min_qty = float(lot['minOrderQty'])
             tick_size = float(tick['tickSize'])
             
-            # Розмір позиції в монетах
             raw_qty = (bal * (risk/100) * 0.98 * lev) / price
             qty = self.round_val(raw_qty, qty_step)
             if qty < min_qty: qty = min_qty
@@ -143,7 +178,7 @@ class BybitTradingBot:
                 sl_price = self.round_val(sl_price, tick_size)
                 self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_price), positionIdx=0)
 
-            # 5. === TAKE PROFIT LOGIC (NEW) ===
+            # 5. === TAKE PROFIT LOGIC ===
             self._place_take_profits(norm, action, price, qty, data, tick_size, qty_step)
 
             return {"status": "ok", "qty": qty}
@@ -158,11 +193,9 @@ class BybitTradingBot:
             tp_mode = settings.get("tp_mode")
             logger.info(f"Setting TP | Mode: {tp_mode}")
 
-            # Режим 1: Немає TP
             if tp_mode == "None":
                 return
 
-            # Спільні змінні
             exit_side = "Sell" if side == "Buy" else "Buy"
             
             # Режим 2: Фіксований 1% руху, закрити 50%
@@ -186,16 +219,11 @@ class BybitTradingBot:
 
             # Режим 3: Драбинка (3 кроки на основі сигналу)
             elif tp_mode == "Ladder_3":
-                # Беремо TP % з сигналу (або дефолт 3%, якщо немає)
                 total_tp_pct = float(data.get('takeProfitPercent', settings.get('fixedTP'))) / 100
-                
-                # Ділимо на 3 рівні
                 step_pct = total_tp_pct / 3
                 
-                # Розподіл об'єму: 33%, 33%, 34%
                 q1 = self.round_val(total_qty * 0.33, qty_step)
                 q2 = self.round_val(total_qty * 0.33, qty_step)
-                # Третій шматок - це залишок, щоб у сумі було 100% (але reduceOnly і так не дасть продати більше)
                 q3 = self.round_val(total_qty - q1 - q2, qty_step) 
                 
                 targets = [
