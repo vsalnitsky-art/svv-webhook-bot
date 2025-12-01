@@ -3,11 +3,11 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
-import sys
 
 Base = declarative_base()
 
-# === МОДЕЛІ ДАНИХ (Без змін) ===
+# === МОДЕЛІ ДАНИХ ===
+
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True)
@@ -50,7 +50,7 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
-# Заглушки
+# Заглушки для сумісності
 class WhaleSignal(Base):
     __tablename__ = 'whale_signals'
     id = Column(Integer, primary_key=True)
@@ -67,47 +67,49 @@ class CoinPerformance(Base):
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         
-        # 1. Перевірка на PostgreSQL
+        # 1. Спроба підключення до PostgreSQL (Render Env)
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
             print("🔵 Using PostgreSQL connection.")
         
-        # 2. SQLite (Локальна папка BASE)
+        # 2. SQLite (Локальна файлова система)
         else:
-            # Отримуємо абсолютний шлях до папки, де лежить ЦЕЙ файл (models.py)
-            # Це і є корінь проекту, де лежить templates/
+            # --- ВАШ ЗАПИТ: Конкретний шлях ---
+            preferred_path = '/workspaces/svv-webhook-bot/BASE'
+            
+            # Резервний шлях (поруч зі скриптом, для Render/інших серверів)
             current_dir = os.path.dirname(os.path.abspath(__file__))
+            fallback_path = os.path.join(current_dir, 'BASE')
             
-            # Жорстко задаємо шлях до папки BASE
-            base_folder = os.path.join(current_dir, 'BASE')
+            target_folder = fallback_path # Початок з резервного
             
-            # Повний шлях до файлу
-            db_abs_path = os.path.join(base_folder, db_filename)
-            
-            print(f"🟡 TARGET DB PATH: {db_abs_path}")
-
-            # Створюємо папку примусово
+            # Спроба використати бажаний шлях
             try:
-                os.makedirs(base_folder, exist_ok=True)
-                print(f"✅ Folder 'BASE' checked/created at: {base_folder}")
-            except OSError as e:
-                print(f"❌ CRITICAL ERROR: Cannot create folder 'BASE'. Reason: {e}")
-                # Якщо тут помилка - значить немає прав запису.
-                # Але ми все одно спробуємо, щоб побачити помилку в логах.
-            
-            # Використовуємо 4 слеші для абсолютного шляху в Linux/Unix (Render)
-            # або 3 для Windows, але sqlite:/// працює універсально
+                # Перевіряємо, чи можемо ми писати в /workspaces/...
+                os.makedirs(preferred_path, exist_ok=True)
+                # Перевірка запису (іноді папка є, а прав немає)
+                test_file = os.path.join(preferred_path, '.test_write')
+                with open(test_file, 'w') as f: f.write('test')
+                os.remove(test_file)
+                
+                # Якщо все ок - використовуємо його
+                target_folder = preferred_path
+                print(f"✅ Using custom path: {target_folder}")
+            except OSError:
+                # Якщо не вийшло - використовуємо локальну папку
+                print(f"⚠️ Custom path unavailable. Using local: {fallback_path}")
+                os.makedirs(fallback_path, exist_ok=True)
+                target_folder = fallback_path
+
+            # Формуємо фінальний шлях
+            db_abs_path = os.path.join(target_folder, db_filename)
             db_url = f'sqlite:///{db_abs_path}'
+            print(f"💾 Database initialized at: {db_abs_path}")
 
+        # 3. Підключення
         self.engine = create_engine(db_url, echo=False)
-        
-        try:
-            Base.metadata.create_all(self.engine)
-            print("✅ Database tables created successfully.")
-        except Exception as e:
-            print(f"❌ ERROR CREATING TABLES: {e}")
-
+        Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
     
     def get_session(self): return self.Session()
