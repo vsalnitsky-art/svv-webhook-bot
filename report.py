@@ -1,6 +1,5 @@
 """
 Report Module - Professional Bybit-style P&L Analytics
-Updated: Auto-sync enabled.
 """
 from flask import render_template, request
 from models import db_manager, Trade
@@ -11,8 +10,7 @@ import json
 def render_report_page(bot_instance, request):
     days_filter = int(request.args.get('days', 7))
     
-    # === ВАЖЛИВО: СИНХРОНІЗАЦІЯ ===
-    # Примусово тягнемо історію з Bybit, щоб графіки не були пустими
+    # Спроба синхронізації
     try:
         bot_instance.sync_trades(days=days_filter)
     except Exception as e:
@@ -27,6 +25,8 @@ def render_report_page(bot_instance, request):
         total_volume = 0.0
         wins = 0
         losses = 0
+        cnt_long = 0
+        cnt_short = 0
         
         chart_labels = []       
         chart_equity = []       
@@ -44,6 +44,9 @@ def render_report_page(bot_instance, request):
             
             if pnl > 0: wins += 1
             else: losses += 1
+            
+            if t.side == 'Long': cnt_long += 1
+            else: cnt_short += 1
             
             date_str = t.exit_time.strftime('%Y-%m-%d %H:%M')
             chart_labels.append(date_str)
@@ -71,7 +74,9 @@ def render_report_page(bot_instance, request):
             'losses': losses,
             'volume': round(total_volume, 2),
             'profit_factor': profit_factor,
-            'avg_profit': avg_profit
+            'avg_profit': avg_profit,
+            'longs': cnt_long,
+            'shorts': cnt_short
         }
         
         recent_trades = sorted(trades, key=lambda x: x.exit_time, reverse=True)

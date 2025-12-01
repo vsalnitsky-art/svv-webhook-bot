@@ -50,7 +50,7 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
-# Заглушки для сумісності
+# Заглушки для сумісності (якщо викликаються старим кодом)
 class WhaleSignal(Base):
     __tablename__ = 'whale_signals'
     id = Column(Integer, primary_key=True)
@@ -75,39 +75,26 @@ class DatabaseManager:
         
         # 2. SQLite (Локальна файлова система)
         else:
-            # --- ВАШ ЗАПИТ: Конкретний шлях ---
-            preferred_path = '/workspaces/svv-webhook-bot/BASE'
-            
-            # Резервний шлях (поруч зі скриптом, для Render/інших серверів)
+            # Отримуємо абсолютний шлях до папки, де лежить ЦЕЙ файл
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            fallback_path = os.path.join(current_dir, 'BASE')
             
-            target_folder = fallback_path # Початок з резервного
+            # Жорстко задаємо шлях до папки BASE
+            base_folder = os.path.join(current_dir, 'BASE')
             
-            # Спроба використати бажаний шлях
+            # Повний шлях до файлу
+            db_abs_path = os.path.join(base_folder, db_filename)
+            
+            # Створюємо папку примусово (exist_ok=True не видає помилку, якщо папка вже є)
             try:
-                # Перевіряємо, чи можемо ми писати в /workspaces/...
-                os.makedirs(preferred_path, exist_ok=True)
-                # Перевірка запису (іноді папка є, а прав немає)
-                test_file = os.path.join(preferred_path, '.test_write')
-                with open(test_file, 'w') as f: f.write('test')
-                os.remove(test_file)
-                
-                # Якщо все ок - використовуємо його
-                target_folder = preferred_path
-                print(f"✅ Using custom path: {target_folder}")
-            except OSError:
-                # Якщо не вийшло - використовуємо локальну папку
-                print(f"⚠️ Custom path unavailable. Using local: {fallback_path}")
-                os.makedirs(fallback_path, exist_ok=True)
-                target_folder = fallback_path
-
-            # Формуємо фінальний шлях
-            db_abs_path = os.path.join(target_folder, db_filename)
+                os.makedirs(base_folder, exist_ok=True)
+                print(f"✅ Folder 'BASE' ready at: {base_folder}")
+            except OSError as e:
+                print(f"❌ ERROR: Cannot create folder 'BASE'. Using root. Reason: {e}")
+                db_abs_path = os.path.join(current_dir, db_filename)
+            
             db_url = f'sqlite:///{db_abs_path}'
             print(f"💾 Database initialized at: {db_abs_path}")
 
-        # 3. Підключення
         self.engine = create_engine(db_url, echo=False)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
