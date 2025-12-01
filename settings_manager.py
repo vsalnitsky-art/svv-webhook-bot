@@ -1,4 +1,5 @@
 import logging
+import json
 from models import db_manager, BotSetting
 
 logger = logging.getLogger(__name__)
@@ -26,11 +27,13 @@ DEFAULT_SETTINGS = {
     
     "cloudFastLen": 10,
     "cloudSlowLen": 40,
+    
     "entryRsiOversold": 45,
     "entryRsiOverbought": 55,
     "rsiLength": 14,
     "exitRsiOversold": 30,
     "exitRsiOverbought": 70,
+    
     "mfiLength": 20,
     "obvEntryLen": 20,
     "obvExitLen": 20,
@@ -44,13 +47,12 @@ DEFAULT_SETTINGS = {
     
     "swingLength": 5,
     "volumeSpikeThreshold": 1.8,
-
-    # === НОВІ НАЛАШТУВАННЯ TP ===
-    "tp_mode": "None", # Варіанти: "None", "Fixed_1_50", "Ladder_3"
+    
+    # === TP MODE ===
+    "tp_mode": "None"
 }
 
 class SettingsManager:
-    # ... (решта класу без змін, копіюйте з попередньої версії) ...
     def __init__(self):
         self.db = db_manager
         self._cache = {}
@@ -80,7 +82,7 @@ class SettingsManager:
             else:
                 loaded = {}
                 for s in db_settings: loaded[s.key] = self._cast_value(s.key, s.value)
-                # Merge with defaults to pick up new keys like tp_mode
+                # Merge to ensure new keys exist
                 merged = DEFAULT_SETTINGS.copy()
                 merged.update(loaded)
                 self._cache = merged
@@ -95,9 +97,11 @@ class SettingsManager:
             for k, v in new_settings_dict.items():
                 if k in DEFAULT_SETTINGS:
                     val_to_store = v
+                    # Handle HTML form checkboxes ('on'/'off')
                     if isinstance(DEFAULT_SETTINGS[k], bool):
-                        val_to_store = "true" if v == 'on' or v is True else "false"
-                        self._cache[k] = (val_to_store == "true")
+                        is_true = (v == 'on' or v is True or str(v).lower() == 'true')
+                        val_to_store = "true" if is_true else "false"
+                        self._cache[k] = is_true
                     else:
                         val_to_store = str(v)
                         self._cache[k] = self._cast_value(k, v)
@@ -110,6 +114,31 @@ class SettingsManager:
             session.rollback()
             logger.error(f"Save error: {e}")
         finally: session.close()
+
+    # === НОВИЙ МЕТОД ДЛЯ ІМПОРТУ З JSON ===
+    def import_settings(self, json_data):
+        session = self.db.get_session()
+        try:
+            for k, v in json_data.items():
+                if k in DEFAULT_SETTINGS:
+                    # При імпорті JSON булеві значення вже є bool, а не 'on'/'off'
+                    val_to_store = str(v).lower() if isinstance(v, bool) else str(v)
+                    
+                    self._cache[k] = v # Оновлюємо кеш
+                    
+                    existing = session.query(BotSetting).filter_by(key=k).first()
+                    if existing: existing.value = val_to_store
+                    else: session.add(BotSetting(key=k, value=val_to_store))
+            session.commit()
+            logger.info("Settings imported successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Import error: {e}")
+            return False
+        finally: session.close()
+
+    def get_all(self):
+        return self._cache.copy()
 
     def get(self, key): return self._cache.get(key, DEFAULT_SETTINGS.get(key))
 
