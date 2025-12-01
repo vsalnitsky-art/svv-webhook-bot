@@ -69,42 +69,79 @@ class BybitTradingBot:
             self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
         except: pass
 
-    # === СИНХРОНІЗАЦІЯ ІСТОРІЇ ===
+    # === СИНХРОНІЗАЦІЯ ІСТОРІЇ (ВИПРАВЛЕНА ЛОГІКА 7 ДНІВ) ===
     def sync_trades(self, days=7):
-        """Завантажує історію закритих угод з Bybit у БД"""
+        """
+        Завантажує історію. Розбиває запит на шматки по 7 днів,
+        оскільки Bybit API має ліміт.
+        """
         try:
-            end_time = int(time.time() * 1000)
-            start_time = end_time - (days * 24 * 60 * 60 * 1000)
+            now_ms = int(time.time() * 1000)
+            # Загальний час початку (наприклад, 90 днів тому)
+            total_start_ms = now_ms - (days * 24 * 60 * 60 * 1000)
             
-            # ЗБІЛЬШЕНО ЛІМІТ ДО 100
-            r = self.session.get_closed_pnl(category="linear", startTime=start_time, endTime=end_time, limit=100)
+            # 7 днів у мілісекундах (безпечний ліміт)
+            chunk_size_ms = 7 * 24 * 60 * 60 * 1000
             
-            if r['retCode'] == 0:
-                for t in r['result']['list']:
-                    trade_side = 'Long' if t['side'] == 'Sell' else 'Short'
+            current_end = now_ms
+            
+            logger.info(f"🔄 Starting history sync for {days} days (in 7-day chunks)...")
+
+            # Цикл: йдемо від сьогодення назад у минуле по 7 днів
+            while current_end > total_start_ms:
+                current_start = current_end - chunk_size_ms
+                
+                # Не виходимо за межі запитаного періоду
+                if current_start < total_start_ms:
+                    current_start = total_start_ms
+                
+                try:
+                    # Запит до Bybit (максимум 7 днів різниці)
+                    r = self.session.get_closed_pnl(
+                        category="linear", 
+                        startTime=int(current_start), 
+                        endTime=int(current_end), 
+                        limit=100
+                    )
                     
-                    stats_service.save_trade({
-                        'order_id': t['orderId'], 
-                        'symbol': t['symbol'],
-                        'side': trade_side,
-                        'qty': float(t['qty']), 
-                        'entry_price': float(t['avgEntryPrice']),
-                        'exit_price': float(t['avgExitPrice']), 
-                        'pnl': float(t['closedPnl']),
-                        'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
-                        'exit_reason': 'Signal/TP/SL'
-                    })
-                logger.info(f"Synced trades for last {days} days")
-            else:
-                logger.warning(f"Sync API Error: {r}")
+                    if r['retCode'] == 0:
+                        count = 0
+                        for t in r['result']['list']:
+                            trade_side = 'Long' if t['side'] == 'Sell' else 'Short'
+                            
+                            stats_service.save_trade({
+                                'order_id': t['orderId'], 
+                                'symbol': t['symbol'],
+                                'side': trade_side,
+                                'qty': float(t['qty']), 
+                                'entry_price': float(t['avgEntryPrice']),
+                                'exit_price': float(t['avgExitPrice']), 
+                                'pnl': float(t['closedPnl']),
+                                'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
+                                'exit_reason': 'Signal/TP/SL'
+                            })
+                            count += 1
+                        # logger.info(f"   Chunk synced: {count} trades found.")
+                    else:
+                        logger.warning(f"Sync Chunk Error: {r}")
+                
+                except Exception as e:
+                    logger.error(f"Sync chunk exception: {e}")
+                
+                # Зсуваємо вікно назад
+                current_end = current_start
+                # Пауза, щоб не отримати бан (Rate Limit)
+                time.sleep(0.2)
+                
+            logger.info("✅ Full history sync completed.")
                 
         except Exception as e:
-            logger.error(f"Sync trades error: {e}")
+            logger.error(f"Global sync error: {e}")
 
     # === ОСНОВНА ФУНКЦІЯ ОРДЕРІВ ===
     def place_order(self, data):
         try:
-            action = data.get('action') # Buy/Sell/Close
+            action = data.get('action') 
             symbol = data.get('symbol')
             norm = self.normalize(symbol)
             
@@ -123,7 +160,7 @@ class BybitTradingBot:
                 if not target_position:
                     return {"status": "ignored", "reason": "No position"}
                 
-                current_side = target_position['side'] # Buy/Sell
+                current_side = target_position['side'] 
                 
                 if (direction == "Long" and current_side == "Buy") or (direction == "Short" and current_side == "Sell"):
                     close_side = "Sell" if current_side == "Buy" else "Buy"
@@ -190,7 +227,6 @@ class BybitTradingBot:
             if tp_mode == "Fixed_1_50":
                 percent = 0.01
                 qty_to_close = self.round_val(total_qty * 0.5, qty_step)
-                
                 tp_price = entry_price * (1 + percent) if side == "Buy" else entry_price * (1 - percent)
                 tp_price = self.round_val(tp_price, tick_size)
                 
@@ -200,7 +236,6 @@ class BybitTradingBot:
             elif tp_mode == "Ladder_3":
                 total_tp_pct = float(data.get('takeProfitPercent', settings.get('fixedTP'))) / 100
                 step_pct = total_tp_pct / 3
-                
                 q1 = self.round_val(total_qty * 0.33, qty_step)
                 q2 = self.round_val(total_qty * 0.33, qty_step)
                 q3 = self.round_val(total_qty - q1 - q2, qty_step) 
