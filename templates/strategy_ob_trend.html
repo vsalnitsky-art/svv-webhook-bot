@@ -1,101 +1,37 @@
 {% extends "base.html" %}
-
-{% block title %}OB + Trend Strategy{% endblock %}
-
+{% block title %}OB + Trend{% endblock %}
 {% block content %}
 <div class="container mt-4" style="max-width: 800px;">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h4 class="fw-bold mb-0">📈 Налаштування Стратегії</h4>
         <a href="/" class="btn btn-outline-secondary btn-sm">← На Головну</a>
     </div>
-
     <form method="POST">
-        
         <div class="card shadow-sm border-0">
             <div class="card-header bg-white py-3">
                 <h5 class="fw-bold mb-0 text-primary">🎛️ Параметри Стратегії</h5>
             </div>
             <div class="card-body">
-                
                 <h6 class="text-muted text-uppercase small fw-bold mb-3">Активні Фільтри</h6>
                 <div class="row g-3 mb-4">
-                    <div class="col-6 col-md-3">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="cloudFilter" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
-                            <label class="form-check-label fw-bold" for="cloudFilter">Cloud Filter</label>
-                        </div>
-                    </div>
-                    <div class="col-6 col-md-3">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="obvFilter" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
-                            <label class="form-check-label fw-bold" for="obvFilter">OBV Filter</label>
-                        </div>
-                    </div>
-                    <div class="col-6 col-md-3">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="rsiFilter" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
-                            <label class="form-check-label fw-bold" for="rsiFilter">RSI Filter</label>
-                        </div>
-                    </div>
-                    <div class="col-6 col-md-3">
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="btcFilter" name="obt_useBtcDominance" {{ 'checked' if conf.get('obt_useBtcDominance') }}>
-                            <label class="form-check-label fw-bold" for="btcFilter">BTC.D Filter</label>
-                        </div>
-                    </div>
+                    <div class="col-6 col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}><label class="form-check-label fw-bold">Cloud</label></div></div>
+                    <div class="col-6 col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}><label class="form-check-label fw-bold">OBV</label></div></div>
+                    <div class="col-6 col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}><label class="form-check-label fw-bold">RSI</label></div></div>
+                    <div class="col-6 col-md-3"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="obt_useBtcDominance" {{ 'checked' if conf.get('obt_useBtcDominance') }}><label class="form-check-label fw-bold">BTC.D</label></div></div>
                 </div>
-
                 <hr class="opacity-10 my-4">
-
                 <h6 class="text-muted text-uppercase small fw-bold mb-3">Технічні Індикатори</h6>
-                
                 <div class="row g-3">
-                    <div class="col-6 col-md-3">
-                        <label class="form-label small text-muted">Cloud Fast</label>
-                        <input type="number" class="form-control" name="obt_cloudFastLen" value="{{ conf.get('obt_cloudFastLen') }}">
-                    </div>
-                    <div class="col-6 col-md-3">
-                        <label class="form-label small text-muted">Cloud Slow</label>
-                        <input type="number" class="form-control" name="obt_cloudSlowLen" value="{{ conf.get('obt_cloudSlowLen') }}">
-                    </div>
-                    
-                    <div class="col-6 col-md-3">
-                        <label class="form-label small text-muted">OBV Length</label>
-                        <input type="number" class="form-control" name="obt_obvEntryLen" value="{{ conf.get('obt_obvEntryLen') }}">
-                    </div>
-                    <div class="col-6 col-md-3">
-                        <label class="form-label small text-muted">OBV Type</label>
-                        <select class="form-select" name="obt_obvEntryType">
-                            <option value="SMA" {{ 'selected' if conf.get('obt_obvEntryType')=='SMA' }}>SMA</option>
-                            <option value="EMA" {{ 'selected' if conf.get('obt_obvEntryType')=='EMA' }}>EMA</option>
-                        </select>
-                    </div>
-
-                    <div class="col-6 col-md-3">
-                        <label class="form-label small text-muted">RSI Length</label>
-                        <input type="number" class="form-control" name="obt_rsiLength" value="{{ conf.get('obt_rsiLength') }}">
-                    </div>
-                    <div class="col-6 col-md-3">
-                        <label class="form-label small text-success fw-bold">RSI Buy &le;</label>
-                        <input type="number" class="form-control" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold') }}">
-                    </div>
-                    <div class="col-6 col-md-3">
-                        <label class="form-label small text-danger fw-bold">RSI Sell &ge;</label>
-                        <input type="number" class="form-control" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought') }}">
-                    </div>
-
-                    <div class="col-6 col-md-3">
-                        <label class="form-label small fw-bold text-primary">Swing Length</label>
-                        <input type="number" class="form-control border-primary" name="obt_swingLength" value="{{ conf.get('obt_swingLength') }}">
-                    </div>
+                    <div class="col-6 col-md-3"><label class="form-label small text-muted">Cloud Fast</label><input type="number" class="form-control" name="obt_cloudFastLen" value="{{ conf.get('obt_cloudFastLen') }}"></div>
+                    <div class="col-6 col-md-3"><label class="form-label small text-muted">Cloud Slow</label><input type="number" class="form-control" name="obt_cloudSlowLen" value="{{ conf.get('obt_cloudSlowLen') }}"></div>
+                    <div class="col-6 col-md-3"><label class="form-label small text-muted">RSI Len</label><input type="number" class="form-control" name="obt_rsiLength" value="{{ conf.get('obt_rsiLength') }}"></div>
+                    <div class="col-6 col-md-3"><label class="form-label small text-success fw-bold">RSI Buy &le;</label><input type="number" class="form-control" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold') }}"></div>
+                    <div class="col-6 col-md-3"><label class="form-label small text-danger fw-bold">RSI Sell &ge;</label><input type="number" class="form-control" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought') }}"></div>
+                    <div class="col-6 col-md-3"><label class="form-label small fw-bold text-primary">Swing Len</label><input type="number" class="form-control border-primary" name="obt_swingLength" value="{{ conf.get('obt_swingLength') }}"></div>
                 </div>
-
             </div>
         </div>
-
-        <div class="d-grid gap-2 mt-4 mb-5">
-            <button type="submit" class="btn btn-primary btn-lg shadow-sm">💾 Зберегти Налаштування</button>
-        </div>
+        <div class="d-grid gap-2 mt-4 mb-5"><button type="submit" class="btn btn-primary btn-lg shadow-sm">💾 Зберегти Налаштування</button></div>
     </form>
 </div>
 {% endblock %}
