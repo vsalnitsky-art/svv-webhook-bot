@@ -1,6 +1,6 @@
 """
 Scanner Module - Active Position Monitor
-Updated: RSI now uses the Strategy Timeframe (LTF) from settings.
+Updated: Added Rate Limit protection.
 """
 
 import threading
@@ -54,14 +54,11 @@ class EnhancedMarketScanner:
     def fetch_rsi_from_api(self, symbol):
         """
         Завантажує свічки з Bybit та рахує точний RSI
-        використовуючи таймфрейм із налаштувань (LTF).
         """
         try:
-            # 1. Отримуємо таймфрейм входу з налаштувань
-            tf = settings.get("ltfSelection") # напр. "15" або "60"
-            if not tf: tf = "15" # Дефолт
+            tf = settings.get("ltfSelection")
+            if not tf: tf = "15"
             
-            # 2. Запит до Bybit (беремо останні 30 свічок)
             resp = self.bot.session.get_kline(
                 category="linear",
                 symbol=symbol,
@@ -70,31 +67,23 @@ class EnhancedMarketScanner:
             )
             
             if resp['retCode'] == 0 and resp['result']['list']:
-                # Конвертуємо в DataFrame
                 data = resp['result']['list']
-                # Bybit повертає: [time, open, high, low, close, ...]
-                # Нам треба лише close (індекс 4)
                 df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'turn'])
                 df['close'] = df['close'].astype(float)
-                
-                # Сортуємо від старого до нового (Bybit дає нові першими)
                 df = df.iloc[::-1] 
                 
-                # 3. Рахуємо RSI
                 rsi_series = ta.rsi(df['close'], length=14)
                 if rsi_series is not None and not rsi_series.empty:
                     return round(rsi_series.iloc[-1], 1)
                     
         except Exception as e:
-            # Не спамимо в лог, щоб не забивати його, якщо просто помилка мережі
             pass
             
-        return 50.0 # Якщо помилка, повертаємо нейтральне значення
+        return 50.0
 
     def monitor_positions(self):
         target_symbols = self.get_active_symbols()
         
-        # Очищаємо кеш для закритих позицій
         current_keys = list(self.active_coins_data.keys())
         for k in current_keys:
             if k not in target_symbols:
@@ -104,7 +93,6 @@ class EnhancedMarketScanner:
             return
 
         try:
-            # Отримуємо тікери для "Тиску" (Pressure) - це миттєві дані
             all_tickers = self.bot.get_all_tickers()
             
             for t in all_tickers:
@@ -121,11 +109,13 @@ class EnhancedMarketScanner:
                 
                 coin_data = self.active_coins_data[symbol]
                 
-                # --- РОЗРАХУНОК RSI (Тільки раз на цикл) ---
-                # Тепер ми беремо його з API відповідно до таймфрейму
+                # --- РОЗРАХУНОК RSI ---
                 coin_data['rsi'] = self.fetch_rsi_from_api(symbol)
                 
-                # --- РОЗРАХУНОК ТИСКУ (Real-time Flow) ---
+                # Пауза між запитами RSI для кожної активної монети, щоб не перевищити ліміт
+                time.sleep(0.2) 
+                
+                # --- РОЗРАХУНОК ТИСКУ ---
                 if coin_data['last_turnover'] > 0:
                     vol_diff = turnover - coin_data['last_turnover']
                     if vol_diff < 0: vol_diff = 0

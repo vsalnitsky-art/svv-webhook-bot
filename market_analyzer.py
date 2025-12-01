@@ -100,17 +100,21 @@ class MarketAnalyzer:
                 try:
                     # А. Старший ТФ (фільтри)
                     df_htf = self.fetch_candles(symbol, htf)
-                    if df_htf is None: continue
+                    if df_htf is None: 
+                        time.sleep(0.1)
+                        continue
                     
                     df_htf = strategy_engine.calculate_indicators(df_htf)
                     filters = strategy_engine.check_htf_filters(df_htf.iloc[-1])
                     
                     if not (filters['bull'] or filters['bear']):
-                        time.sleep(0.1)
+                        # === ЗБІЛЬШЕНА ПАУЗА ===
+                        time.sleep(0.3) 
                         continue 
                     
                     # Б. Молодший ТФ (вхід)
-                    time.sleep(0.1) 
+                    # === ПАУЗА МІЖ ЗАПИТАМИ ===
+                    time.sleep(0.2) 
                     df_ltf = self.fetch_candles(symbol, ltf)
                     if df_ltf is None: continue
                     
@@ -140,7 +144,8 @@ class MarketAnalyzer:
                 except Exception as e:
                     logger.error(f"Error scanning {symbol}: {e}")
                 
-                time.sleep(0.15) # Пауза для лімітів
+                # === ГЛАВНА ПАУЗА: Збільшено до 0.5 сек, щоб уникнути бану ===
+                time.sleep(0.5) 
 
             self.progress = 100
             self.status_message = "Scan Completed"
