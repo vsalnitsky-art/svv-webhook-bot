@@ -31,7 +31,11 @@
                         <div>
                             <div class="small text-muted fw-bold text-uppercase mb-1">Робочий Таймфрейм</div>
                             <span class="badge bg-light text-dark border p-2 font-mono fs-6">
-                                {{ conf.get('htfSelection') }} Min (HTF)
+                                {% set htf = conf.get('htfSelection')|string %}
+                                {% if htf == '60' %}1H (Hour)
+                                {% elif htf == '240' %}4H (Swing)
+                                {% elif htf == 'D' %}1D (Day)
+                                {% else %}{{ htf }}m (Intraday){% endif %}
                             </span>
                         </div>
                     </div>
@@ -72,7 +76,8 @@
                         <th class="py-3 border-bottom">Об'єм</th>
                         <th class="py-3 border-bottom">Вхід</th>
                         <th class="py-3 border-bottom">HTF RSI</th>
-                        <th class="py-3 border-bottom">Статус Виходу</th> <th class="py-3 border-bottom">Нереал. P&L</th>
+                        <th class="py-3 border-bottom">Статус Виходу</th>
+                        <th class="py-3 border-bottom">Нереал. P&L</th>
                         <th class="py-3 pe-4 text-end border-bottom">Час</th>
                     </tr>
                 </thead>

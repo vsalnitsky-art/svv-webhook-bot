@@ -36,11 +36,11 @@
                             <option value="15" {{ 'selected' if conf.get('htfSelection')|string=='15' }}>15 Хвилин (Scalp)</option>
                             <option value="30" {{ 'selected' if conf.get('htfSelection')|string=='30' }}>30 Хвилин</option>
                             <option value="45" {{ 'selected' if conf.get('htfSelection')|string=='45' }}>45 Хвилин</option>
-                            <option value="60" {{ 'selected' if conf.get('htfSelection')|string=='60' }}>1 Година</option>
-                            <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4 Години (Swing)</option>
-                            <option value="D" {{ 'selected' if conf.get('htfSelection')|string=='D' }}>1 День</option>
+                            <option value="60" {{ 'selected' if conf.get('htfSelection')|string=='60' }}>1H (Intraday)</option>
+                            <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4H (Swing)</option>
+                            <option value="D" {{ 'selected' if conf.get('htfSelection')|string=='D' }}>1D (Long Term)</option>
                         </select>
-                        <div class="form-text small text-primary"><i class="ri-magic-line"></i> При зміні автоматично підставить рекомендовані параметри індикаторів.</div>
+                        <div class="form-text small text-primary"><i class="ri-magic-line"></i> Зміна цього поля автоматично оновить параметри нижче.</div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small text-muted text-uppercase fw-bold">Таймфрейм Входу (LTF)</label>
@@ -69,17 +69,17 @@
                 <div class="row g-3">
                      <div class="col-md-4">
                         <label class="form-label small text-success fw-bold">RSI Exit Short (<)</label>
-                        <input type="number" class="form-control" name="exit_rsiOversold" value="{{ conf.get('exit_rsiOversold', 30) }}">
+                        <input type="number" class="form-control" id="exitRsiShort" name="exit_rsiOversold" value="{{ conf.get('exit_rsiOversold', 30) }}">
                         <div class="form-text small">Закривати Short, якщо RSI нижче.</div>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label small text-danger fw-bold">RSI Exit Long (>)</label>
-                        <input type="number" class="form-control" name="exit_rsiOverbought" value="{{ conf.get('exit_rsiOverbought', 70) }}">
+                        <input type="number" class="form-control" id="exitRsiLong" name="exit_rsiOverbought" value="{{ conf.get('exit_rsiOverbought', 70) }}">
                         <div class="form-text small">Закривати Long, якщо RSI вище.</div>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label small text-muted fw-bold">OBV Exit Length</label>
-                        <input type="number" class="form-control" name="exit_obvLength" value="{{ conf.get('exit_obvLength', 10) }}">
+                        <input type="number" class="form-control" id="exitObvLen" name="exit_obvLength" value="{{ conf.get('exit_obvLength', 10) }}">
                         <div class="form-text small">Довжина MA для підтвердження об'ємом.</div>
                     </div>
                 </div>
@@ -116,12 +116,12 @@
                         <input type="number" class="form-control" name="obt_rsiLength" value="{{ conf.get('obt_rsiLength', 14) }}">
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label small text-success fw-bold">RSI Buy (<=)</label>
-                        <input type="number" class="form-control" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold', 45) }}">
+                        <label class="form-label small text-success fw-bold">RSI Buy (Entry)</label>
+                        <input type="number" class="form-control" id="entryRsiBuy" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold', 45) }}">
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label small text-danger fw-bold">RSI Sell (>=)</label>
-                        <input type="number" class="form-control" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought', 55) }}">
+                        <label class="form-label small text-danger fw-bold">RSI Sell (Entry)</label>
+                        <input type="number" class="form-control" id="entryRsiSell" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought', 55) }}">
                     </div>
                 </div>
             </div>
@@ -210,15 +210,44 @@
 </div>
 
 <script>
-    // Матриця параметрів для кожного таймфрейму
-    // Чим менший ТФ, тим більший період згладжування (шумоподавлення)
+    // Розширена матриця параметрів для кожного таймфрейму (з шумом)
     const paramsMatrix = {
-        '15':  { fast: 20, slow: 60, obv: 50, swing: 10 },
-        '30':  { fast: 15, slow: 50, obv: 40, swing: 8 },
-        '45':  { fast: 12, slow: 45, obv: 30, swing: 7 },
-        '60':  { fast: 10, slow: 40, obv: 20, swing: 5 },
-        '240': { fast: 10, slow: 40, obv: 20, swing: 5 },
-        'D':   { fast: 10, slow: 40, obv: 20, swing: 5 }
+        '15':  { 
+            cloud: {f: 20, s: 60}, 
+            obv: {entry: 50, exit: 25}, 
+            swing: 10,
+            rsi: {len: 14, buy: 25, sell: 75, exitShort: 25, exitLong: 75}
+        },
+        '30':  { 
+            cloud: {f: 15, s: 50}, 
+            obv: {entry: 40, exit: 20}, 
+            swing: 8,
+            rsi: {len: 14, buy: 25, sell: 75, exitShort: 25, exitLong: 75}
+        },
+        '45':  { 
+            cloud: {f: 12, s: 45}, 
+            obv: {entry: 30, exit: 15}, 
+            swing: 7,
+            rsi: {len: 14, buy: 30, sell: 70, exitShort: 30, exitLong: 70}
+        },
+        '60':  { 
+            cloud: {f: 10, s: 40}, 
+            obv: {entry: 20, exit: 12}, 
+            swing: 5,
+            rsi: {len: 14, buy: 30, sell: 70, exitShort: 30, exitLong: 70}
+        },
+        '240': { 
+            cloud: {f: 10, s: 40}, 
+            obv: {entry: 20, exit: 10}, 
+            swing: 5,
+            rsi: {len: 14, buy: 30, sell: 70, exitShort: 30, exitLong: 70}
+        },
+        'D':   { 
+            cloud: {f: 10, s: 40}, 
+            obv: {entry: 20, exit: 10}, 
+            swing: 5,
+            rsi: {len: 14, buy: 30, sell: 70, exitShort: 30, exitLong: 70}
+        }
     };
 
     function updateIndicators() {
@@ -226,11 +255,20 @@
         const config = paramsMatrix[tf];
 
         if (config) {
-            // Анімація для візуального підтвердження зміни
-            flashField('cloudFast', config.fast);
-            flashField('cloudSlow', config.slow);
-            flashField('obvLen', config.obv);
+            // Анімація для візуального підтвердження
+            
+            // 1. Entry Strategy Params
+            flashField('cloudFast', config.cloud.f);
+            flashField('cloudSlow', config.cloud.s);
+            flashField('obvLen', config.obv.entry);
             flashField('swingLen', config.swing);
+            flashField('entryRsiBuy', config.rsi.buy);
+            flashField('entryRsiSell', config.rsi.sell);
+            
+            // 2. Exit Strategy Params
+            flashField('exitRsiShort', config.rsi.exitShort);
+            flashField('exitRsiLong', config.rsi.exitLong);
+            flashField('exitObvLen', config.obv.exit);
         }
     }
 
