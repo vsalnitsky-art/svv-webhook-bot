@@ -38,7 +38,7 @@ class BotSetting(Base):
     key = Column(String(50), primary_key=True)
     value = Column(String(255))
 
-# === РЕЗУЛЬТАТИ СКАНЕРА (Лог пошуку) ===
+# === РЕЗУЛЬТАТИ СКАНЕРА ===
 class AnalysisResult(Base):
     __tablename__ = 'analysis_results'
     id = Column(Integer, primary_key=True)
@@ -57,31 +57,30 @@ class OrderBlock(Base):
     __tablename__ = 'order_blocks'
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), index=True)
-    timeframe = Column(String(10))      # "45", "240"
-    ob_type = Column(String(10))        # "Buy" (Bull) або "Sell" (Bear)
+    timeframe = Column(String(10))      # "15", "60", "240"
+    ob_type = Column(String(10))        # "Buy" або "Sell"
     
     # Координати зони
     top = Column(Float)
     bottom = Column(Float)
     
-    # Параметри входу
-    entry_price = Column(Float)         # Ціна, де чекаємо вхід
-    sl_price = Column(Float)            # Стоп-лосс
+    # Параметри
+    entry_price = Column(Float)
+    sl_price = Column(Float)
     
     created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Статуси: 'PENDING' (Чекаємо), 'FILLED' (Війшли), 'INVALID' (Пробито/Скасовано)
     status = Column(String(20), default='PENDING') 
-    
-    volume_score = Column(Float, default=0.0) # Сила об'єму
+    volume_score = Column(Float, default=0.0)
 
 # === DATABASE MANAGER ===
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
+        # Підтримка PostgreSQL для Render
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         else:
+            # Локальна SQLite
             current_dir = os.path.dirname(os.path.abspath(__file__))
             base_folder = os.path.join(current_dir, 'BASE')
             try:
@@ -92,7 +91,13 @@ class DatabaseManager:
             db_url = f'sqlite:///{db_path}'
 
         self.engine = create_engine(db_url, echo=False)
-        Base.metadata.create_all(self.engine)
+        
+        # Створюємо таблиці, якщо їх немає
+        try:
+            Base.metadata.create_all(self.engine)
+        except Exception as e:
+            print(f"DB Init Error (ignore if tables exist): {e}")
+            
         self.Session = sessionmaker(bind=self.engine)
     
     def get_session(self): return self.Session()
