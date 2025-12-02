@@ -19,11 +19,10 @@ DEFAULT_SETTINGS = {
     "obt_useObvFilter": True,
     "obt_useRsiFilter": True,
     "obt_useOBRetest": True,
-    # BTC.D REMOVED
 
     # === TIMEFRAMES ===
-    "htfSelection": "240", # 4H
-    "ltfSelection": "45",  # 45m
+    "htfSelection": "240", # 4H (Тренд)
+    "ltfSelection": "45",  # 45m (Вхід)
     
     # === INDICATORS ===
     "obt_cloudFastLen": 10,
@@ -32,7 +31,10 @@ DEFAULT_SETTINGS = {
     "obt_entryRsiOversold": 45,
     "obt_entryRsiOverbought": 55,
     "obt_obvEntryLen": 20,
-    "obt_swingLength": 5,
+    
+    # === ORDER BLOCK LOGIC (SMART MONEY) ===
+    "obt_swingLength": 5,          # Довжина свінгу
+    "obt_volumeSpikeThreshold": 1.5, # Коефіцієнт аномального об'єму (x1.5 від середнього)
 
     # === RISK & MONEY MANAGEMENT ===
     "riskPercent": 2.0,
