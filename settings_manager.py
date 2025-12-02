@@ -33,8 +33,8 @@ DEFAULT_SETTINGS = {
     "obt_obvEntryLen": 20,
     "obt_swingLength": 5,
 
-    # === SMART EXIT ===
-    "exit_enableStrategy": False,
+    # === SMART EXIT (ENABLED BY DEFAULT) ===
+    "exit_enableStrategy": True,  # <--- ЗМІНЕНО НА TRUE
     "exit_rsiOverbought": 70,
     "exit_rsiOversold": 30,
     "exit_obvLength": 10,
