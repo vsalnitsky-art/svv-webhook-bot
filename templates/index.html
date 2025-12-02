@@ -98,7 +98,7 @@
                                 <div class="d-flex justify-content-between align-items-center">
                                     <div>
                                         <div class="fw-bold text-dark font-mono">{{ t.symbol }}</div>
-                                        <div class="small text-muted">{{ t.side }} • {{ t.exit_time.strftime('%d.%m %H:%M') }}</div>
+                                        <div class="small text-muted">{{ t.side }} • {{ t.exit_time }}</div>
                                     </div>
                                     <div class="text-end">
                                         <div class="fw-bold font-mono {{ 'text-up' if t.pnl > 0 else 'text-down' }}">
