@@ -7,12 +7,14 @@ from bot import bot_instance
 from settings_manager import settings
 from models import db_manager, AnalysisResult
 
-# !!! ВИКОРИСТОВУЄМО НОВИЙ МОДУЛЬ СТРАТЕГІЇ !!!
+# !!! ПЕРЕВІРТЕ ЦЕЙ РЯДОК: Має бути strategy_ob_trend !!!
 from strategy_ob_trend import ob_trend_strategy as strategy_engine
 
 logger = logging.getLogger(__name__)
 
 class MarketAnalyzer:
+    # ... (решта коду без змін, якщо він у вас є)
+    # Якщо потрібно, я можу надати весь файл, але головне - це імпорт.
     def __init__(self):
         self.is_scanning = False
         self.progress = 0
@@ -31,10 +33,8 @@ class MarketAnalyzer:
 
     def fetch_candles(self, symbol, timeframe, limit=300):
         try:
-            # Для 45m ми все одно тягнемо 15m з біржі
             if str(timeframe) == "45":
                 req_tf = "15"
-                # Потрібно в 3 рази більше свічок для ресемплінгу
                 req_limit = limit * 3 
             else:
                 req_tf = str(timeframe)
@@ -73,50 +73,30 @@ class MarketAnalyzer:
             limit = settings.get("scan_limit")
             tickers = self.get_top_tickers(limit)
             total = len(tickers)
-            
-            htf = settings.get("htfSelection") # 240 (4H)
-            ltf = settings.get("ltfSelection") # 45 (45m)
+            htf = settings.get("htfSelection")
+            ltf = settings.get("ltfSelection")
 
             for i, ticker in enumerate(tickers):
                 symbol = ticker['symbol']
                 self.status_message = f"Scanning {symbol} ({i+1}/{total})"
                 self.progress = int((i / total) * 100)
-                
                 try:
-                    # 1. HTF Data
                     df_htf = self.fetch_candles(symbol, htf)
-                    if df_htf is None: 
-                        time.sleep(0.1); continue
-                    
+                    if df_htf is None: time.sleep(0.1); continue
                     time.sleep(0.1)
-                    
-                    # 2. LTF Data (Will fetch 15m if ltf=45)
                     df_ltf = self.fetch_candles(symbol, ltf)
                     if df_ltf is None: continue
                     
-                    # 3. Strategy Analysis
                     signal_data = strategy_engine.analyze(df_ltf, df_htf)
                     
                     if signal_data['action']:
                         score = 85
                         sl_info = f" | SL: {round(signal_data.get('sl_price', 0), 4)}" if signal_data.get('sl_price') else ""
-                        
-                        res = AnalysisResult(
-                            symbol=symbol, 
-                            signal_type=signal_data['action'], 
-                            status="Signal", 
-                            score=score, 
-                            price=signal_data.get('price', 0), 
-                            htf_rsi=0, 
-                            ltf_rsi=0, 
-                            details=f"{signal_data['reason']}{sl_info}"
-                        )
+                        res = AnalysisResult(symbol=symbol, signal_type=signal_data['action'], status="Signal", score=score, price=signal_data.get('price', 0), htf_rsi=0, ltf_rsi=0, details=f"{signal_data['reason']}{sl_info}")
                         session.add(res); session.commit()
                         logger.info(f"🚀 FOUND: {symbol} {signal_data['action']}")
-                
                 except Exception as e:
                     logger.error(f"Scan error {symbol}: {e}")
-                
                 time.sleep(0.2)
 
             self.progress = 100

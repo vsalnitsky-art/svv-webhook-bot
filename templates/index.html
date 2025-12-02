@@ -52,7 +52,7 @@
 
         <div class="col-md-3">
             <div class="card-custom p-3 h-100 d-flex flex-column justify-content-center">
-                <div class="d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center justify-content-between gap-3">
                     
                     <div class="flex-grow-1">
                         <div class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 11px;">Всього угод</div>
@@ -180,6 +180,7 @@
     const longs = {{ longs }};
     const shorts = {{ shorts }};
     
+    // Якщо даних немає, показуємо сіре коло
     const total = longs + shorts;
     const dataValues = (total === 0) ? [1] : [longs, shorts];
     const bgColors = (total === 0) ? ['#e2e8f0'] : ['#10b981', '#ef4444']; 
