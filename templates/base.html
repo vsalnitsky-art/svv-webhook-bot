@@ -8,22 +8,23 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
     
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
         :root {
-            --bg-app: #0f172a;       /* Slate 900 */
-            --bg-sidebar: #1e293b;   /* Slate 800 */
-            --bg-card: #1e293b;
-            --accent: #6366f1;       /* Indigo 500 */
-            --accent-hover: #4f46e5;
-            --success: #10b981;      /* Emerald 500 */
-            --danger: #ef4444;       /* Red 500 */
-            --text-main: #f1f5f9;
-            --text-muted: #94a3b8;
-            --border-color: #334155;
+            --bg-app: #0b1120;       /* Deepest Navy */
+            --bg-sidebar: #111827;   /* Darker Gray */
+            --bg-card: #1f2937;      /* Card Gray */
+            --accent: #6366f1;       /* Indigo */
+            --accent-hover: #818cf8;
+            --success: #10b981;
+            --danger: #ef4444;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --border-color: #374151;
         }
 
         body {
@@ -31,14 +32,15 @@
             color: var(--text-main);
             font-family: 'Inter', sans-serif;
             overflow-x: hidden;
+            font-size: 0.9rem;
         }
 
         /* Sidebar Layout */
         .wrapper { display: flex; width: 100%; align-items: stretch; min-height: 100vh; }
         
         #sidebar {
-            min-width: 260px;
-            max-width: 260px;
+            min-width: 250px;
+            max-width: 250px;
             background: var(--bg-sidebar);
             border-right: 1px solid var(--border-color);
             transition: all 0.3s;
@@ -49,41 +51,41 @@
         
         #content {
             width: 100%;
-            padding: 20px;
+            padding: 24px;
             min-height: 100vh;
             transition: all 0.3s;
-            margin-left: 260px; /* Width of sidebar */
+            margin-left: 250px;
         }
 
         /* Custom Components */
         .card-custom {
             background: var(--bg-card);
             border: 1px solid var(--border-color);
-            border-radius: 12px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            border-radius: 8px; /* Більш строгі кути */
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
         }
         
         .nav-link {
             color: var(--text-muted);
-            padding: 12px 20px;
+            padding: 10px 20px;
             font-weight: 500;
             display: flex;
             align-items: center;
             border-left: 3px solid transparent;
             transition: 0.2s;
+            font-size: 0.95rem;
         }
         
-        .nav-link:hover, .nav-link.active {
-            color: #fff;
-            background: rgba(255, 255, 255, 0.05);
-        }
+        .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.03); }
         
         .nav-link.active {
+            color: #fff;
             border-left-color: var(--accent);
-            background: linear-gradient(90deg, rgba(99, 102, 241, 0.1) 0%, transparent 100%);
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.15) 0%, transparent 100%);
         }
         
-        .nav-icon { font-size: 1.2rem; margin-right: 12px; width: 24px; text-align: center; }
+        .nav-icon { font-size: 1.25rem; margin-right: 12px; opacity: 0.8; }
+        .nav-link.active .nav-icon { opacity: 1; color: var(--accent); }
 
         /* Typography & Utilities */
         .font-mono { font-family: 'JetBrains Mono', monospace; }
@@ -93,19 +95,22 @@
         
         /* Mobile */
         @media (max-width: 768px) {
-            #sidebar { margin-left: -260px; }
+            #sidebar { margin-left: -250px; }
             #content { margin-left: 0; }
             #sidebar.active { margin-left: 0; }
         }
         
         /* Table overrides */
         .table { --bs-table-bg: transparent; --bs-table-color: var(--text-main); border-color: var(--border-color); }
-        .table > :not(caption) > * > * { padding: 1rem 0.75rem; border-bottom-color: var(--border-color); }
+        .table > :not(caption) > * > * { padding: 1rem 1rem; border-bottom-color: var(--border-color); }
         
         /* Badge Pulse Animation */
-        .status-dot { height: 8px; width: 8px; background-color: var(--success); border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-
+        .status-dot { height: 6px; width: 6px; background-color: var(--success); border-radius: 50%; display: inline-block; box-shadow: 0 0 10px var(--success); }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-app); }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
     </style>
     {% block head %}{% endblock %}
 </head>
@@ -113,44 +118,46 @@
 
 <div class="wrapper">
     <nav id="sidebar">
-        <div class="sidebar-header p-4 border-bottom border-secondary border-opacity-25">
-            <h5 class="fw-bold m-0 d-flex align-items-center">
-                <i class="bi bi-cpu-fill text-accent me-2"></i> AlgoBot <span class="badge bg-primary ms-2" style="font-size: 0.6em;">PRO</span>
-            </h5>
+        <div class="sidebar-header p-4 d-flex align-items-center border-bottom border-secondary border-opacity-10">
+            <i class="ri-code-s-slash-line text-accent fs-3 me-2"></i>
+            <div>
+                <h6 class="fw-bold m-0 text-white" style="letter-spacing: 0.5px;">ALGOBOT</h6>
+                <span class="text-muted" style="font-size: 10px; text-transform: uppercase;">Professional</span>
+            </div>
         </div>
 
         <ul class="list-unstyled components py-3">
+            <li class="px-3 mb-2"><small class="text-muted text-uppercase fw-bold" style="font-size: 10px;">Menu</small></li>
             <li>
                 <a href="/" class="nav-link {{ 'active' if request.path == '/' }}">
-                    <i class="bi bi-grid-1x2-fill nav-icon"></i> Дашборд
+                    <i class="ri-dashboard-3-line nav-icon"></i> Дашборд
                 </a>
             </li>
-            <li class="my-1 border-top border-secondary border-opacity-10"></li>
             <li>
                 <a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}">
-                    <i class="bi bi-activity nav-icon"></i> Монітор Угод
-                    <span class="badge bg-success ms-auto rounded-pill" style="font-size: 0.7em;">LIVE</span>
+                    <i class="ri-pulse-line nav-icon"></i> Монітор Угод
                 </a>
             </li>
             <li>
                 <a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}">
-                    <i class="bi bi-radar nav-icon"></i> Сканер Ринку
+                    <i class="ri-radar-line nav-icon"></i> Сканер Ринку
                 </a>
             </li>
-            <li class="my-1 border-top border-secondary border-opacity-10"></li>
+            
+            <li class="px-3 mb-2 mt-4"><small class="text-muted text-uppercase fw-bold" style="font-size: 10px;">System</small></li>
             <li>
                 <a href="/settings" class="nav-link {{ 'active' if '/settings' in request.path }}">
-                    <i class="bi bi-sliders nav-icon"></i> Налаштування
+                    <i class="ri-settings-4-line nav-icon"></i> Налаштування
                 </a>
             </li>
         </ul>
         
-        <div class="mt-auto p-4">
-            <div class="p-3 rounded bg-dark bg-opacity-50 border border-secondary border-opacity-25">
-                <small class="text-muted d-block mb-1">Status</small>
-                <div class="d-flex align-items-center">
-                    <span class="status-dot me-2"></span>
-                    <span class="fw-bold text-success small">System Online</span>
+        <div class="mt-auto p-4 position-absolute bottom-0 w-100">
+            <div class="d-flex align-items-center px-3 py-2 rounded bg-black bg-opacity-20 border border-secondary border-opacity-10">
+                <span class="status-dot me-3"></span>
+                <div style="line-height: 1.2;">
+                    <span class="d-block text-white small fw-bold">API Connected</span>
+                    <span class="d-block text-muted" style="font-size: 10px;">V5.0 Stable</span>
                 </div>
             </div>
         </div>
@@ -159,10 +166,10 @@
     <div id="content">
         <nav class="navbar navbar-expand-lg navbar-dark d-md-none mb-4 rounded card-custom p-2">
             <div class="container-fluid">
-                <button type="button" id="sidebarCollapse" class="btn btn-dark">
-                    <i class="bi bi-list"></i>
+                <button type="button" id="sidebarCollapse" class="btn btn-dark btn-sm">
+                    <i class="ri-menu-2-line"></i>
                 </button>
-                <span class="navbar-brand ms-3 fw-bold">AlgoBot Pro</span>
+                <span class="navbar-brand ms-3 fw-bold fs-6">AlgoBot Pro</span>
             </div>
         </nav>
 
@@ -177,8 +184,6 @@
         $('#sidebarCollapse').on('click', function () {
             $('#sidebar').toggleClass('active');
         });
-        
-        // Tooltips init
         var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
         var tooltipList = tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) })
     });
