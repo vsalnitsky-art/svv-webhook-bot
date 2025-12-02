@@ -14,38 +14,38 @@ DEFAULT_SETTINGS = {
     "telegram_bot_token": "",
     "telegram_chat_id": "",
 
-    # === STRATEGY FILTERS ===
-    "useCloudFilter": True,
-    "useObvFilter": True,
-    "useRsiFilter": True,
-    "useMfiFilter": False,
-    "useOBRetest": True, # Рекомендую True для коректної роботи SL від OB
+    # === STRATEGY FILTERS (OB Cloud) ===
+    "obt_useCloudFilter": True,
+    "obt_useObvFilter": True,
+    "obt_useRsiFilter": True,
+    "obt_useBtcDominance": False, # Вимкнено за замовчуванням
+    "obt_useOBRetest": True,
 
     # === TIMEFRAMES ===
-    "htfSelection": "240",
-    "ltfSelection": "15",
+    "htfSelection": "240", # 4H
+    "ltfSelection": "45",  # 45m (Будемо емулювати з 15m)
     
     # === INDICATORS ===
-    "cloudFastLen": 10,
-    "cloudSlowLen": 40,
-    "entryRsiOversold": 45,
-    "entryRsiOverbought": 55,
-    "rsiLength": 14,
-    "obvEntryLen": 20,
-    "swingLength": 5,
+    "obt_cloudFastLen": 10,
+    "obt_cloudSlowLen": 40,
+    "obt_rsiLength": 14,
+    "obt_entryRsiOversold": 45, # Оптимізовано для 45m
+    "obt_entryRsiOverbought": 55,
+    "obt_obvEntryLen": 20,
+    "obt_swingLength": 5,       # Swing 5 для 45m
 
     # === RISK & MONEY MANAGEMENT ===
     "riskPercent": 2.0,
     "leverage": 20,
     
     # TP
-    "tp_mode": "Fixed_1_50", # Варіанти: 'None', 'Fixed_1_50', 'Ladder_3'
+    "tp_mode": "Fixed_1_50", 
     "fixedTP": 3.0,
     
-    # SL (NEW LOGIC)
-    "sl_mode": "OB_Extremity", # Варіанти: 'Fixed', 'OB_Extremity'
-    "fixedSL": 1.5,            # Використовується, якщо sl_mode='Fixed' або OB не знайдено
-    "obBufferPercent": 0.1,    # Буфер від краю OB (0.1%)
+    # SL
+    "sl_mode": "OB_Extremity",
+    "fixedSL": 1.5,
+    "obBufferPercent": 0.2,    # 0.2% для 45m таймфрейму
 }
 
 class SettingsManager:

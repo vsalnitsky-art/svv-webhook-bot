@@ -179,6 +179,7 @@
     const ctxLs = document.getElementById('lsChart').getContext('2d');
     const longs = {{ longs }};
     const shorts = {{ shorts }};
+    
     const total = longs + shorts;
     const dataValues = (total === 0) ? [1] : [longs, shorts];
     const bgColors = (total === 0) ? ['#e2e8f0'] : ['#10b981', '#ef4444']; 
