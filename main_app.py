@@ -21,7 +21,6 @@ from models import db_manager, OrderBlock
 # Імпортуємо аналізатор
 from market_analyzer import market_analyzer
 
-# Запобігання сну у Windows
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
@@ -31,7 +30,6 @@ app.secret_key = 'super_secret_key_for_flask'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Запуск фонових процесів
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
@@ -67,30 +65,23 @@ threading.Thread(target=monitor_active, daemon=True).start()
 threading.Thread(target=keep_alive, daemon=True).start()
 
 # --- ROUTES ---
-
 @app.route('/')
 def home():
     try: days_param = int(request.args.get('days', 7))
     except: days_param = 7
     if days_param not in [7, 30, 90]: days_param = 7
-    
     try: bot_instance.sync_trades(days=days_param)
     except: pass
-
+    
     balance = bot_instance.get_bal()
     active_count = len(scanner.get_active_symbols())
     trades = stats_service.get_trades(days=days_param)
-    
     period_pnl = sum(t['pnl'] for t in trades)
     wins = sum(1 for t in trades if t['pnl'] > 0)
     longs = sum(1 for t in trades if t['side'] == 'Long')
     shorts = sum(1 for t in trades if t['side'] == 'Short')
     
-    return render_template('index.html', 
-                           date=datetime.utcnow().strftime('%d %b %Y'),
-                           balance=balance, active_count=active_count,
-                           period_pnl=period_pnl, longs=longs, shorts=shorts,
-                           days=days_param, trades=trades[:10])
+    return render_template('index.html', date=datetime.utcnow().strftime('%d %b %Y'), balance=balance, active_count=active_count, period_pnl=period_pnl, longs=longs, shorts=shorts, days=days_param, trades=trades[:10])
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -101,14 +92,7 @@ def scanner_page():
             for p in r['result']['list']:
                 if float(p['size']) > 0:
                     symbol = p['symbol']
-                    active.append({
-                        'symbol': symbol, 'side': p['side'], 
-                        'pnl': round(float(p['unrealisedPnl']), 2), 
-                        'rsi': scanner.get_current_rsi(symbol), 
-                        'pressure': round(scanner.get_market_pressure(symbol), 1), 
-                        'size': p['size'], 'entry': p['avgPrice'],
-                        'time': datetime.now().strftime('%H:%M')
-                    })
+                    active.append({'symbol': symbol, 'side': p['side'], 'pnl': round(float(p['unrealisedPnl']), 2), 'rsi': scanner.get_current_rsi(symbol), 'pressure': round(scanner.get_market_pressure(symbol), 1), 'size': p['size'], 'entry': p['avgPrice'], 'time': datetime.now().strftime('%H:%M')})
     except: pass
     return render_template('scanner.html', active=active)
 
@@ -116,11 +100,7 @@ def scanner_page():
 def analyzer_page():
     results = market_analyzer.get_results()
     conf = settings._cache
-    return render_template('analyzer.html', 
-                           results=results, conf=conf, 
-                           progress=market_analyzer.progress,
-                           status=market_analyzer.status_message,
-                           is_scanning=market_analyzer.is_scanning)
+    return render_template('analyzer.html', results=results, conf=conf, progress=market_analyzer.progress, status=market_analyzer.status_message, is_scanning=market_analyzer.is_scanning)
 
 @app.route('/smart_money')
 def smart_money_page():
@@ -128,10 +108,8 @@ def smart_money_page():
     try:
         blocks = session.query(OrderBlock).order_by(desc(OrderBlock.created_at)).limit(50).all()
         return render_template('smart_money.html', blocks=blocks)
-    except Exception as e:
-        return f"Error: {e}"
-    finally:
-        session.close()
+    except: return "DB Error"
+    finally: session.close()
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_general_page():
@@ -146,7 +124,9 @@ def settings_general_page():
 def ob_trend_settings_page():
     if request.method == 'POST':
         form_data = request.form.to_dict()
-        for cb in ['obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter']:
+        # Список всіх 4 фільтрів
+        filters = ['obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter', 'obt_useOBRetest']
+        for cb in filters:
             form_data[cb] = request.form.get(cb) == 'on'
         settings.save_settings(form_data)
         return redirect(url_for('ob_trend_settings_page'))
@@ -156,19 +136,13 @@ def ob_trend_settings_page():
 def run_scan():
     if request.form:
         form_data = request.form.to_dict()
-        
-        # Обробка чекбоксів (Оновлена логіка)
-        # Оскільки в analyzer.html ми використовуємо прямі імена (obt_...),
-        # нам просто треба переконатися, що якщо чекбокса немає в формі, ми ставимо його в False.
-        
+        # Обробка чекбоксів (Оновлена логіка для 4 фільтрів)
         checkboxes = ['obt_useOBRetest', 'obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter']
-        
         for cb in checkboxes:
             if cb in form_data and form_data[cb] == 'on':
                 form_data[cb] = True
             else:
                 form_data[cb] = False
-                
         settings.save_settings(form_data)
     
     market_analyzer.run_scan_thread()

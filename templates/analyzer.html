@@ -7,12 +7,12 @@
 <style>
     .btn-toggle-custom {
         border: 1px solid var(--border-subtle); background-color: #fff; color: var(--text-muted);
-        font-weight: 600; border-radius: 50px; padding: 6px 14px; transition: all 0.2s ease;
-        cursor: pointer; display: block; text-align: center; font-size: 0.85rem;
+        font-weight: 600; border-radius: 8px; padding: 10px; transition: all 0.2s ease;
+        cursor: pointer; display: flex; align-items: center; justify-content: space-between; width: 100%;
     }
     .btn-check:checked + .btn-toggle-custom {
-        background-color: var(--accent); color: white; border-color: var(--accent);
-        box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.3);
+        background-color: #e0e7ff; color: var(--accent); border-color: var(--accent);
+        box-shadow: inset 0 0 0 1px var(--accent);
     }
     .badge-buy { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
     .badge-sell { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
@@ -30,68 +30,72 @@
             </div>
             <div>
                 <a href="/settings" class="btn btn-outline-secondary btn-sm me-2">
-                    <i class="ri-settings-line me-1"></i> Змінити Таймфрейми
+                    <i class="ri-settings-line me-1"></i> Налаштування
                 </a>
                 <a href="/smart_money" class="btn btn-outline-warning btn-sm fw-bold">
-                    <i class="ri-eye-2-line me-1"></i> Smart Money Tracker
+                    <i class="ri-eye-2-line me-1"></i> Smart Money
                 </a>
             </div>
         </div>
         <div class="card-body bg-light bg-opacity-50">
             <form id="scan-form">
                 
-                <div class="row g-3 align-items-end mb-3">
+                <div class="row g-3 align-items-end mb-4">
                     <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Глибина</label>
+                        <label class="form-label fw-bold small text-muted text-uppercase">Глибина (Топ)</label>
                         <div class="input-group">
                             <span class="input-group-text bg-white border-end-0">#</span>
                             <input type="number" class="form-control border-start-0 ps-0" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}" min="10" max="400">
                         </div>
                     </div>
                     
-                    <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Поточні Таймфрейми</label>
+                    <div class="col-md-5">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Активні Таймфрейми</label>
                         <div class="d-flex gap-2">
-                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono">HTF: {{ conf.get('htfSelection') }}m</span>
-                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono">LTF: {{ conf.get('ltfSelection') }}m</span>
+                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
+                                <span class="text-muted me-2 small">TREND:</span> {{ conf.get('htfSelection') }}m
+                            </span>
+                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
+                                <span class="text-muted me-2 small">ENTRY:</span> {{ conf.get('ltfSelection') }}m
+                            </span>
                         </div>
                     </div>
 
-                    <div class="col-md-6">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Режим входу (OB Retest)</label>
-                         <div class="form-check form-switch bg-white border rounded p-2 d-flex align-items-center justify-content-between px-3">
-                            <label class="form-check-label fw-bold text-dark m-0 small" for="obRetestSwitch">Увімкнути OB Retest</label>
-                            <input class="form-check-input m-0" type="checkbox" id="obRetestSwitch" name="obt_useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="row g-3 align-items-center">
-                    <div class="col-md-9">
-                        <label class="form-label fw-bold small text-muted text-uppercase mb-2">Активні Фільтри</label>
-                        <div class="row g-2">
-                            <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="fCloud" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
-                                <label class="btn-toggle-custom shadow-sm" for="fCloud">Cloud HMA</label>
-                            </div>
-                            <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="fObv" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
-                                <label class="btn-toggle-custom shadow-sm" for="fObv">OBV Trend</label>
-                            </div>
-                            <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="fRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
-                                <label class="btn-toggle-custom shadow-sm" for="fRsi">RSI Logic</label>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="col-md-3">
-                        <label class="d-none d-md-block form-label small">&nbsp;</label>
+                    <div class="col-md-4">
                         <button type="button" id="btn-scan" class="btn btn-primary btn-lg w-100 shadow fw-bold" onclick="startScan()" {{ 'disabled' if is_scanning }}>
                             {{ '⏳ СКАНУВАННЯ...' if is_scanning else 'ЗАПУСТИТИ 🚀' }}
                         </button>
                     </div>
                 </div>
+
+                <label class="form-label fw-bold small text-muted text-uppercase mb-2">Активні Фільтри</label>
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <input type="checkbox" class="btn-check" id="fCloud" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
+                        <label class="btn-toggle-custom shadow-sm" for="fCloud">
+                            <span>Cloud HMA</span> <i class="ri-checkbox-circle-line"></i>
+                        </label>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="checkbox" class="btn-check" id="fObv" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
+                        <label class="btn-toggle-custom shadow-sm" for="fObv">
+                            <span>OBV Trend</span> <i class="ri-bar-chart-line"></i>
+                        </label>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="checkbox" class="btn-check" id="fRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
+                        <label class="btn-toggle-custom shadow-sm" for="fRsi">
+                            <span>RSI Logic</span> <i class="ri-pulse-line"></i>
+                        </label>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="checkbox" class="btn-check" id="fRetest" name="obt_useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
+                        <label class="btn-toggle-custom shadow-sm" for="fRetest">
+                            <span>OB Retest</span> <i class="ri-arrow-go-back-line"></i>
+                        </label>
+                    </div>
+                </div>
+
             </form>
         </div>
     </div>
@@ -163,7 +167,7 @@ function startScan() {
     var formData = {};
     $('#scan-form').serializeArray().forEach(function(item) { formData[item.name] = item.value; });
     
-    // Передаємо чекбокси явно
+    // Явно збираємо стан чекбоксів
     $('#scan-form input[type=checkbox]').each(function() { formData[this.name] = this.checked ? 'on' : 'off'; });
     
     $.post('/analyzer/scan', formData, function(data) { pollStatus(); })
