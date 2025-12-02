@@ -1,64 +1,86 @@
 {% extends "base.html" %}
 
-{% block title %}Монітор Активних Угод{% endblock %}
+{% block title %}Scanner | AlgoBot Pro{% endblock %}
 
 {% block content %}
-<div class="container mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h4 class="fw-bold mb-0">🐋 Монітор Активних Угод</h4>
-        <span class="badge bg-primary fs-6">{{ active|length }} Позицій</span>
+<div class="container-fluid">
+    
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="fw-bold mb-0">Активні Позиції</h3>
+        <span class="badge bg-primary fs-6 font-mono">{{ active|length }} OPEN</span>
     </div>
 
-    <div class="card shadow-sm border-0">
+    <div class="card-custom overflow-hidden">
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0" style="font-family: 'Inter', sans-serif;">
-                <thead class="table-light">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-dark bg-opacity-50 text-uppercase small text-muted">
                     <tr>
-                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Час</th>
-                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Монета</th>
-                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Тип</th>
-                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Розмір</th>
-                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">Вхід</th>
-                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">RSI</th>
-                        <th class="py-3 text-muted text-uppercase" style="font-size: 0.75rem;">P&L (USDT)</th>
+                        <th class="ps-4">Символ</th>
+                        <th>Сторона</th>
+                        <th>Розмір</th>
+                        <th>Вхід</th>
+                        <th>RSI (15m)</th>
+                        <th>Тиск</th>
+                        <th>P&L (USDT)</th>
+                        <th class="text-end pe-4">Час</th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for a in active %}
                     <tr>
-                        <td class="text-secondary fw-medium" style="font-size: 0.9rem;">
+                        <td class="ps-4">
+                            <div class="d-flex align-items-center">
+                                <div class="bg-dark rounded-circle p-2 me-2 d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
+                                    <span class="fw-bold small">{{ a.symbol[0] }}</span>
+                                </div>
+                                <span class="fw-bold font-mono">{{ a.symbol }}</span>
+                            </div>
+                        </td>
+                        
+                        <td>
+                            {% if a.side == 'Buy' %}
+                                <span class="badge bg-success bg-opacity-20 text-success border border-success border-opacity-25">LONG</span>
+                            {% else %}
+                                <span class="badge bg-danger bg-opacity-20 text-danger border border-danger border-opacity-25">SHORT</span>
+                            {% endif %}
+                        </td>
+                        
+                        <td class="font-mono text-muted">{{ a.size }}</td>
+                        <td class="font-mono">{{ a.entry }}</td>
+                        
+                        <td>
+                            <div class="d-flex align-items-center" style="width: 100px;">
+                                <span class="small me-2 font-mono {{ 'text-danger' if a.rsi > 70 else 'text-success' if a.rsi < 30 else 'text-muted' }}">{{ a.rsi }}</span>
+                                <div class="progress flex-grow-1" style="height: 4px; background: #334155;">
+                                    <div class="progress-bar {{ 'bg-danger' if a.rsi > 70 else 'bg-success' if a.rsi < 30 else 'bg-secondary' }}" style="width: {{ a.rsi }}%"></div>
+                                </div>
+                            </div>
+                        </td>
+                        
+                        <td>
+                             <span class="{{ 'text-success' if a.pressure > 0 else 'text-danger' if a.pressure < 0 else 'text-muted' }} font-mono small">
+                                 {{ '▲' if a.pressure > 0 else '▼' if a.pressure < 0 else '-' }} {{ a.pressure | abs | round(1) }}
+                             </span>
+                        </td>
+                        
+                        <td>
+                            <span class="fw-bold font-mono fs-6 {{ 'text-up' if a.pnl > 0 else 'text-down' }}">
+                                {{ "+" if a.pnl > 0 }}{{ a.pnl }}$
+                            </span>
+                        </td>
+                        
+                        <td class="text-end pe-4 text-muted small font-mono">
                             {{ a.time }}
-                        </td>
-                        
-                        <td class="fw-bold text-primary" style="font-size: 0.95rem;">
-                            {{ a.symbol }}
-                        </td>
-                        
-                        <td>
-                            <span class="badge {{ 'badge-buy' if a.side=='Buy' else 'badge-sell' }}">
-                                {{ a.side }}
-                            </span>
-                        </td>
-                        
-                        <td class="fw-medium">{{ a.size }}</td>
-                        <td class="fw-medium">{{ a.entry }}</td>
-                        
-                        <td>
-                            <span class="{{ 'text-danger fw-bold' if a.rsi > 70 else 'text-success fw-bold' if a.rsi < 30 else 'text-muted' }}">
-                                {{ a.rsi }}
-                            </span>
-                        </td>
-                        
-                        <td class="{{ 'text-up' if a.pnl > 0 else 'text-down' }}" style="font-size: 1rem; font-weight: 700;">
-                            {{ "+" if a.pnl > 0 }}{{ a.pnl }}$
                         </td>
                     </tr>
                 {% else %}
                     <tr>
-                        <td colspan="7" class="text-center py-5 text-muted">
-                            <div style="font-size: 2.5rem; margin-bottom: 1rem;">💤</div>
-                            <h5>Немає активних угод</h5>
-                            <p class="small">Бот очікує нових сигналів...</p>
+                        <td colspan="8" class="text-center py-5">
+                            <div class="d-flex flex-column align-items-center">
+                                <i class="bi bi-inbox text-secondary display-4 mb-3 opacity-50"></i>
+                                <h5 class="text-muted fw-normal">Немає активних позицій</h5>
+                                <p class="text-secondary small">Бот очікує нових сигналів на ринку.</p>
+                            </div>
                         </td>
                     </tr>
                 {% endfor %}

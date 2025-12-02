@@ -1,76 +1,188 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="uk" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}Trading Bot{% endblock %}</title>
+    <title>{% block title %}AlgoBot Pro{% endblock %}</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
         :root {
-            --primary: #4f46e5; --primary-hover: #4338ca;
-            --bg-body: #f3f4f6; --bg-card: #ffffff;
-            --text-main: #111827; --text-muted: #6b7280;
-            --success: #10b981; --danger: #ef4444;
+            --bg-app: #0f172a;       /* Slate 900 */
+            --bg-sidebar: #1e293b;   /* Slate 800 */
+            --bg-card: #1e293b;
+            --accent: #6366f1;       /* Indigo 500 */
+            --accent-hover: #4f46e5;
+            --success: #10b981;      /* Emerald 500 */
+            --danger: #ef4444;       /* Red 500 */
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border-color: #334155;
         }
-        body { background-color: var(--bg-body); font-family: 'Inter', sans-serif; color: var(--text-main); font-size: 14px; }
-        
-        .navbar { background: var(--bg-card); box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1); padding: 0.8rem 1rem; }
-        .navbar-brand { font-weight: 700; color: var(--primary) !important; font-size: 1.25rem; }
-        
-        .nav-link-custom {
-            color: var(--text-muted); font-weight: 500; padding: 0.5rem 1rem; border-radius: 8px;
-            text-decoration: none; transition: all 0.2s; border: 1px solid transparent; margin-left: 5px;
+
+        body {
+            background-color: var(--bg-app);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
         }
-        .nav-link-custom:hover { background-color: #f9fafb; color: var(--primary); border-color: #e5e7eb; }
+
+        /* Sidebar Layout */
+        .wrapper { display: flex; width: 100%; align-items: stretch; min-height: 100vh; }
         
-        .text-up { color: var(--success); font-weight: 700; }
-        .text-down { color: var(--danger); font-weight: 700; }
-        .badge-buy { background-color: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
-        .badge-sell { background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        #sidebar {
+            min-width: 260px;
+            max-width: 260px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border-color);
+            transition: all 0.3s;
+            position: fixed;
+            height: 100vh;
+            z-index: 999;
+        }
         
-        /* Стиль для іконки допомоги */
-        .help-icon { font-size: 0.9rem; color: #9ca3af; cursor: help; margin-left: 5px; transition: color 0.2s; }
-        .help-icon:hover { color: var(--primary); }
+        #content {
+            width: 100%;
+            padding: 20px;
+            min-height: 100vh;
+            transition: all 0.3s;
+            margin-left: 260px; /* Width of sidebar */
+        }
+
+        /* Custom Components */
+        .card-custom {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        
+        .nav-link {
+            color: var(--text-muted);
+            padding: 12px 20px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            border-left: 3px solid transparent;
+            transition: 0.2s;
+        }
+        
+        .nav-link:hover, .nav-link.active {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        .nav-link.active {
+            border-left-color: var(--accent);
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.1) 0%, transparent 100%);
+        }
+        
+        .nav-icon { font-size: 1.2rem; margin-right: 12px; width: 24px; text-align: center; }
+
+        /* Typography & Utilities */
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .text-accent { color: var(--accent); }
+        .text-up { color: var(--success); }
+        .text-down { color: var(--danger); }
+        
+        /* Mobile */
+        @media (max-width: 768px) {
+            #sidebar { margin-left: -260px; }
+            #content { margin-left: 0; }
+            #sidebar.active { margin-left: 0; }
+        }
+        
+        /* Table overrides */
+        .table { --bs-table-bg: transparent; --bs-table-color: var(--text-main); border-color: var(--border-color); }
+        .table > :not(caption) > * > * { padding: 1rem 0.75rem; border-bottom-color: var(--border-color); }
+        
+        /* Badge Pulse Animation */
+        .status-dot { height: 8px; width: 8px; background-color: var(--success); border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
+
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-light sticky-top">
-        <div class="container">
-            <a class="navbar-brand d-flex align-items-center" href="/">
-                <span style="font-size: 1.5rem; margin-right: 8px;">🤖</span> AlgoBot Pro
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto align-items-center">
-                    <li class="nav-item"><a class="nav-link-custom" href="/scanner">🐋 Монітор</a></li>
-                    <li class="nav-item"><a class="nav-link-custom" href="/analyzer">🚀 Сканер</a></li>
-                    <li class="nav-item"><a class="nav-link-custom" href="/settings">⚙️ Налаштування</a></li>
-                    <li class="nav-item">
-                        <a class="nav-link-custom" href="/report" style="background: var(--primary); color: white;">📊 Звіт</a>
-                    </li>
-                </ul>
+
+<div class="wrapper">
+    <nav id="sidebar">
+        <div class="sidebar-header p-4 border-bottom border-secondary border-opacity-25">
+            <h5 class="fw-bold m-0 d-flex align-items-center">
+                <i class="bi bi-cpu-fill text-accent me-2"></i> AlgoBot <span class="badge bg-primary ms-2" style="font-size: 0.6em;">PRO</span>
+            </h5>
+        </div>
+
+        <ul class="list-unstyled components py-3">
+            <li>
+                <a href="/" class="nav-link {{ 'active' if request.path == '/' }}">
+                    <i class="bi bi-grid-1x2-fill nav-icon"></i> Дашборд
+                </a>
+            </li>
+            <li class="my-1 border-top border-secondary border-opacity-10"></li>
+            <li>
+                <a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}">
+                    <i class="bi bi-activity nav-icon"></i> Монітор Угод
+                    <span class="badge bg-success ms-auto rounded-pill" style="font-size: 0.7em;">LIVE</span>
+                </a>
+            </li>
+            <li>
+                <a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}">
+                    <i class="bi bi-radar nav-icon"></i> Сканер Ринку
+                </a>
+            </li>
+            <li class="my-1 border-top border-secondary border-opacity-10"></li>
+            <li>
+                <a href="/settings" class="nav-link {{ 'active' if '/settings' in request.path }}">
+                    <i class="bi bi-sliders nav-icon"></i> Налаштування
+                </a>
+            </li>
+        </ul>
+        
+        <div class="mt-auto p-4">
+            <div class="p-3 rounded bg-dark bg-opacity-50 border border-secondary border-opacity-25">
+                <small class="text-muted d-block mb-1">Status</small>
+                <div class="d-flex align-items-center">
+                    <span class="status-dot me-2"></span>
+                    <span class="fw-bold text-success small">System Online</span>
+                </div>
             </div>
         </div>
     </nav>
-    {% block content %}{% endblock %}
-    
-    <script>
-        // Ініціалізація всіх підказок на сторінці
+
+    <div id="content">
+        <nav class="navbar navbar-expand-lg navbar-dark d-md-none mb-4 rounded card-custom p-2">
+            <div class="container-fluid">
+                <button type="button" id="sidebarCollapse" class="btn btn-dark">
+                    <i class="bi bi-list"></i>
+                </button>
+                <span class="navbar-brand ms-3 fw-bold">AlgoBot Pro</span>
+            </div>
+        </nav>
+
+        {% block content %}{% endblock %}
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    $(document).ready(function () {
+        $('#sidebarCollapse').on('click', function () {
+            $('#sidebar').toggleClass('active');
+        });
+        
+        // Tooltips init
         var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
-        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-            return new bootstrap.Tooltip(tooltipTriggerEl)
-        })
-    </script>
+        var tooltipList = tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) })
+    });
+</script>
+
 </body>
 </html>
