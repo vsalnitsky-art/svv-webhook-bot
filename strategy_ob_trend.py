@@ -1,179 +1,119 @@
+import threading
+import time
 import pandas as pd
-import pandas_ta as ta
-import numpy as np
-from dataclasses import dataclass
-from typing import List, Optional
+import logging
+from datetime import datetime
+from bot import bot_instance
 from settings_manager import settings
+from models import db_manager, AnalysisResult
 
-# === CONFIG HELPER ===
-class StrategyConfigAdapter:
-    """
-    Адаптер конфігурації. 
-    Зв'язує логіку стратегії з конкретними ключами (obt_*) в базі налаштувань.
-    """
-    # Фільтри
-    @property
-    def useCloudFilter(self): return settings.get("obt_useCloudFilter")
-    @property
-    def useObvFilter(self): return settings.get("obt_useObvFilter")
-    @property
-    def useRsiFilter(self): return settings.get("obt_useRsiFilter")
-    @property
-    def useBtcDominanceEntryFilter(self): return settings.get("obt_useBtcDominance")
-    
-    # Технічні
-    @property
-    def cloudFastLen(self): return settings.get("obt_cloudFastLen")
-    @property
-    def cloudSlowLen(self): return settings.get("obt_cloudSlowLen")
-    @property
-    def entryRsiOversold(self): return settings.get("obt_entryRsiOversold")
-    @property
-    def entryRsiOverbought(self): return settings.get("obt_entryRsiOverbought")
-    @property
-    def rsiLength(self): return settings.get("obt_rsiLength")
-    @property
-    def obvEntryLenInput(self): return settings.get("obt_obvEntryLen")
-    @property
-    def obvEntryType(self): return settings.get("obt_obvEntryType")
-    @property
-    def swingLength(self): return settings.get("obt_swingLength")
-    @property
-    def maxATRMult(self): return settings.get("obt_maxATRMult")
-    
-    # Ризик (АВТОНОМНІ)
-    @property
-    def botRisk(self): return settings.get("obt_riskPercent")
-    @property
-    def botLev(self): return settings.get("obt_leverage")
-    @property
-    def fixedTP(self): return settings.get("obt_fixedTP")
-    @property
-    def fixedSL(self): return settings.get("obt_fixedSL")
-    @property
-    def tpMode(self): return settings.get("obt_tp_mode")
-    @property
-    def slMode(self): return settings.get("obt_sl_mode")
-    @property
-    def obBufferPercent(self): return settings.get("obt_obBufferPercent")
-    
-    @property
-    def atrLength(self): return 14 
-    @property
-    def obEndMethod(self): return "Wick"
+# !!! ВИКОРИСТОВУЄМО НОВУ СТРАТЕГІЮ !!!
+from strategy_ob_trend import ob_trend_strategy as strategy_engine
 
-# === DATA STRUCTURES ===
-@dataclass
-class OrderBlockInfo:
-    top: float
-    bottom: float
-    obVolume: float
-    obType: str 
-    startTime: pd.Timestamp 
-    startIndex: int 
-    breaker: bool = False
-    retestCount: int = 0
-    rsiConfirmed: bool = False
-    obvConfirmed: bool = False
-    pocLevel: float = np.nan
-    optimalEntryPrice: float = np.nan
-    strengthScore: float = 0.0
+logger = logging.getLogger(__name__)
 
-@dataclass
-class OBSwing:
-    index: int = -1
-    price: float = np.nan
-    volume: float = np.nan
-    crossed: bool = False
-
-# === STRATEGY LOGIC ===
-class OBTrendStrategy:
+class MarketAnalyzer:
     def __init__(self):
-        self.cfg = StrategyConfigAdapter()
+        self.is_scanning = False
+        self.progress = 0
+        self.status_message = "Ready"
+        self._stop_event = threading.Event()
 
-    def prepare_data(self, df_ltf, df_htf):
-        if df_ltf is None or df_htf is None or len(df_ltf) < 50: return None
-        df_ltf = df_ltf.copy(); df_htf = df_htf.copy()
+    def get_top_tickers(self, limit=100):
+        try:
+            quote_coin = settings.get("scanner_quote_coin")
+            all_tickers = bot_instance.get_all_tickers()
+            filtered = [t for t in all_tickers if t['symbol'].endswith(quote_coin)]
+            sorted_tickers = sorted(filtered, key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
+            return sorted_tickers[:limit]
+        except Exception as e:
+            logger.error(f"Error fetching tickers: {e}")
+            return []
 
-        df_ltf['ATR'] = ta.atr(df_ltf['high'], df_ltf['low'], df_ltf['close'], length=self.cfg.atrLength)
-        df_ltf['VolMA'] = ta.sma(df_ltf['volume'], length=20)
+    def fetch_candles(self, symbol, timeframe, limit=200):
+        try:
+            tf_map = {'15': '15', '60': '60', '240': '240', 'D': 'D'}
+            bybit_tf = tf_map.get(str(timeframe), '240')
+            resp = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=bybit_tf, limit=limit)
+            if resp['retCode'] == 0 and resp['result']['list']:
+                data = resp['result']['list']
+                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+                df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='ms')
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = df[col].astype(float)
+                return df.sort_values('time').reset_index(drop=True)
+            return None
+        except: return None
 
-        df_htf['HTF_HMA_Fast'] = ta.hma(df_htf['close'], length=self.cfg.cloudFastLen)
-        df_htf['HTF_HMA_Slow'] = ta.hma(df_htf['close'], length=self.cfg.cloudSlowLen)
-        df_htf['HTF_RSI'] = ta.rsi(df_htf['close'], length=self.cfg.rsiLength)
-        
-        df_htf['HTF_OBV'] = ta.obv(df_htf['close'], df_htf['volume'])
-        if self.cfg.obvEntryType == "SMA": df_htf['HTF_OBV_EntryMA'] = ta.sma(df_htf['HTF_OBV'], length=self.cfg.obvEntryLenInput)
-        else: df_htf['HTF_OBV_EntryMA'] = ta.ema(df_htf['HTF_OBV'], length=self.cfg.obvEntryLenInput)
+    def run_scan_thread(self):
+        if self.is_scanning: return
+        threading.Thread(target=self._scan_process, daemon=True).start()
 
-        df_ltf = df_ltf.sort_values('time'); df_htf = df_htf.sort_values('time')
-        merged = pd.merge_asof(df_ltf, df_htf[['time', 'HTF_HMA_Fast', 'HTF_HMA_Slow', 'HTF_RSI', 'HTF_OBV', 'HTF_OBV_EntryMA']], on='time', direction='backward')
-        return merged.ffill().bfill()
+    def _scan_process(self):
+        self.is_scanning = True
+        self.progress = 0
+        self.status_message = "Starting..."
+        session = db_manager.get_session()
+        try:
+            session.query(AnalysisResult).delete()
+            session.commit()
+            limit = settings.get("scan_limit")
+            tickers = self.get_top_tickers(limit)
+            total = len(tickers)
+            htf = settings.get("htfSelection")
+            ltf = settings.get("ltfSelection")
 
-    def check_filters(self, row, direction):
-        if self.cfg.useCloudFilter:
-            if direction == "Bull" and not (row['HTF_HMA_Fast'] > row['HTF_HMA_Slow']): return False
-            if direction == "Bear" and not (row['HTF_HMA_Fast'] < row['HTF_HMA_Slow']): return False
-        if self.cfg.useObvFilter:
-            if direction == "Bull" and not (row['HTF_OBV'] > row['HTF_OBV_EntryMA']): return False
-            if direction == "Bear" and not (row['HTF_OBV'] < row['HTF_OBV_EntryMA']): return False
-        if self.cfg.useRsiFilter:
-            if direction == "Bull" and row['HTF_RSI'] > self.cfg.entryRsiOversold: return False
-            if direction == "Bear" and row['HTF_RSI'] < self.cfg.entryRsiOverbought: return False
-        return True
-
-    def analyze(self, df_ltf, df_htf):
-        df = self.prepare_data(df_ltf, df_htf)
-        if df is None: return []
-
-        length = self.cfg.swingLength
-        bullish_obs, bearish_obs, results = [], [], []
-        start_scan = max(length + 1, len(df) - 200)
-        last_swing_high, last_swing_low = OBSwing(), OBSwing()
-
-        for i in range(start_scan, len(df)):
-            current_close = df['close'].iloc[i]
-            idx_swing = i - length
-            window_high = df['high'].iloc[i-length : i+1]
-            window_low = df['low'].iloc[i-length : i+1]
-            
-            is_pivot_high = df['high'].iloc[idx_swing] == window_high.max()
-            is_pivot_low = df['low'].iloc[idx_swing] == window_low.min()
-            
-            if is_pivot_high: last_swing_high = OBSwing(idx_swing, df['high'].iloc[idx_swing], df['volume'].iloc[idx_swing])
-            if last_swing_high.index != -1 and not last_swing_high.crossed:
-                if current_close > last_swing_high.price:
-                    last_swing_high.crossed = True
-                    range_slice = df.iloc[last_swing_high.index : i]
-                    min_idx = range_slice['low'].idxmin()
-                    box_btm, box_top = df['low'][min_idx], df['high'][min_idx]
+            for i, ticker in enumerate(tickers):
+                symbol = ticker['symbol']
+                self.status_message = f"Scanning {symbol} ({i+1}/{total})"
+                self.progress = int((i / total) * 100)
+                try:
+                    df_htf = self.fetch_candles(symbol, htf)
+                    if df_htf is None: 
+                        time.sleep(0.1); continue
                     
-                    atr = df['ATR'].iloc[i]
-                    if atr > 0 and abs(box_top - box_btm) <= atr * self.cfg.maxATRMult:
-                        new_ob = OrderBlockInfo(top=box_top, bottom=box_btm, obVolume=df['volume'][min_idx], obType="Bull", startTime=df['time'][min_idx], startIndex=min_idx)
-                        bullish_obs.append(new_ob)
-                        if self.check_filters(df.iloc[i], "Bull"):
-                            # Розрахунок SL/TP для звіту
-                            sl = box_btm * (1 - self.cfg.obBufferPercent/100) if self.cfg.slMode == "OB_Level" else box_top * (1 - self.cfg.fixedSL/100)
-                            tp = box_top * (1 + self.cfg.fixedTP/100)
-                            results.append({'type': 'Bull', 'price': box_top, 'time': df['time'].iloc[i], 'rsi': df['HTF_RSI'].iloc[i], 'sl': sl, 'tp': tp})
-
-            if is_pivot_low: last_swing_low = OBSwing(idx_swing, df['low'].iloc[idx_swing], df['volume'].iloc[idx_swing])
-            if last_swing_low.index != -1 and not last_swing_low.crossed:
-                if current_close < last_swing_low.price:
-                    last_swing_low.crossed = True
-                    range_slice = df.iloc[last_swing_low.index : i]
-                    max_idx = range_slice['high'].idxmax()
-                    box_top, box_btm = df['high'][max_idx], df['low'][max_idx]
+                    time.sleep(0.2) 
+                    df_ltf = self.fetch_candles(symbol, ltf)
+                    if df_ltf is None: continue
                     
-                    atr = df['ATR'].iloc[i]
-                    if atr > 0 and abs(box_top - box_btm) <= atr * self.cfg.maxATRMult:
-                        new_ob = OrderBlockInfo(top=box_top, bottom=box_btm, obVolume=df['volume'][max_idx], obType="Bear", startTime=df['time'][max_idx], startIndex=max_idx)
-                        bearish_obs.append(new_ob)
-                        if self.check_filters(df.iloc[i], "Bear"):
-                            sl = box_top * (1 + self.cfg.obBufferPercent/100) if self.cfg.slMode == "OB_Level" else box_btm * (1 + self.cfg.fixedSL/100)
-                            tp = box_btm * (1 - self.cfg.fixedTP/100)
-                            results.append({'type': 'Bear', 'price': box_btm, 'time': df['time'].iloc[i], 'rsi': df['HTF_RSI'].iloc[i], 'sl': sl, 'tp': tp})
-        return results
+                    # ВИКЛИК НОВОЇ СТРАТЕГІЇ
+                    signals = strategy_engine.analyze(df_ltf, df_htf)
+                    
+                    for sig in signals:
+                        score = 70 
+                        res = AnalysisResult(
+                            symbol=symbol, 
+                            signal_type=sig.get('type'), 
+                            status="Signal", 
+                            score=score, 
+                            price=sig.get('price'), 
+                            htf_rsi=sig.get('rsi', 0),
+                            ltf_rsi=sig.get('rsi', 0), 
+                            details=sig.get('details', 'OB Trend Signal')
+                        )
+                        session.add(res); session.commit()
+                        logger.info(f"🚀 FOUND: {symbol} {sig.get('type')}")
+                except: pass
+                time.sleep(0.5) 
 
-ob_trend_strategy = OBTrendStrategy()
+            self.progress = 100
+            self.status_message = "Scan Completed"
+        except Exception as e:
+            self.status_message = f"Error: {str(e)}"
+        finally:
+            self.is_scanning = False
+            session.close()
+
+    def get_results(self):
+        session = db_manager.get_session()
+        try:
+            res = session.query(AnalysisResult).order_by(AnalysisResult.score.desc()).all()
+            return [{
+                'symbol': r.symbol, 'signal': r.signal_type, 'status': r.status, 'score': r.score, 'price': r.price, 
+                'rsi_htf': round(r.htf_rsi, 1), 'rsi_ltf': round(r.ltf_rsi, 1), 
+                'time': r.found_at.strftime('%H:%M'), 'details': r.details
+            } for r in res]
+        finally:
+            session.close()
+
+market_analyzer = MarketAnalyzer()
