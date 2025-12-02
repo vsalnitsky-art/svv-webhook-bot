@@ -49,7 +49,6 @@ class OBCloudStrategyEngine:
         return df
 
     def find_smart_money_blocks(self, df):
-        """Logic: Swing -> BOS -> Volume Validation"""
         if df is None or len(df) < 50: return [], []
         
         swing_len = self.get_param('obt_swingLength')
@@ -77,9 +76,11 @@ class OBCloudStrategyEngine:
                 for k in range(i + 1, len(df)):
                     if closes[k] < swing_low_level:
                         if np.isnan(vol_mas[i]) or np.isnan(vol_mas[k]): continue
-                        is_high_volume = (volumes[i] > vol_mas[i] * vol_threshold) or (volumes[k] > vol_mas[k] * vol_threshold)
-                        if is_high_volume:
-                            bear_obs.append({'top': highs[i], 'bottom': lows[i], 'index': i, 'type': 'Bear'})
+                        if (volumes[i] > vol_mas[i] * vol_threshold) or (volumes[k] > vol_mas[k] * vol_threshold):
+                            bear_obs.append({
+                                'top': float(highs[i]), 'bottom': float(lows[i]), 
+                                'time': int(df['time'].iloc[i].timestamp())
+                            })
                         break
                         
             if is_swing_low:
@@ -87,9 +88,11 @@ class OBCloudStrategyEngine:
                 for k in range(i + 1, len(df)):
                     if closes[k] > swing_high_level:
                         if np.isnan(vol_mas[i]) or np.isnan(vol_mas[k]): continue
-                        is_high_volume = (volumes[i] > vol_mas[i] * vol_threshold) or (volumes[k] > vol_mas[k] * vol_threshold)
-                        if is_high_volume:
-                            bull_obs.append({'top': highs[i], 'bottom': lows[i], 'index': i, 'type': 'Bull'})
+                        if (volumes[i] > vol_mas[i] * vol_threshold) or (volumes[k] > vol_mas[k] * vol_threshold):
+                            bull_obs.append({
+                                'top': float(highs[i]), 'bottom': float(lows[i]), 
+                                'time': int(df['time'].iloc[i].timestamp())
+                            })
                         break
         
         current_price = closes[-1]
@@ -97,77 +100,84 @@ class OBCloudStrategyEngine:
         active_bear = [ob for ob in bear_obs if current_price < ob['top']]
         return active_bull[-5:], active_bear[-5:]
 
+    # === НОВИЙ МЕТОД ДЛЯ ВІЗУАЛІЗАЦІЇ ===
+    def get_chart_data(self, df_ltf):
+        """Готує JSON для графіка"""
+        ltf_tf_setting = str(self.get_param("ltfSelection"))
+        if ltf_tf_setting == "45": df = self.resample_candles(df_ltf, 45)
+        else: df = df_ltf
+            
+        if df is None or df.empty: return {}
+        
+        df = self.calculate_indicators(df)
+        bulls, bears = self.find_smart_money_blocks(df)
+        
+        # Формуємо свічки
+        candles = []
+        hma_fast = []
+        hma_slow = []
+        
+        for i, row in df.iterrows():
+            ts = int(row['time'].timestamp())
+            candles.append({'time': ts, 'open': row['open'], 'high': row['high'], 'low': row['low'], 'close': row['close']})
+            if not pd.isna(row['hma_fast']): hma_fast.append({'time': ts, 'value': row['hma_fast']})
+            if not pd.isna(row['hma_slow']): hma_slow.append({'time': ts, 'value': row['hma_slow']})
+            
+        return {
+            "candles": candles,
+            "hma_fast": hma_fast,
+            "hma_slow": hma_slow,
+            "bull_obs": bulls,
+            "bear_obs": bears
+        }
+
     def analyze(self, df_ltf, df_htf):
+        # ... (Код analyze залишається без змін, він використовує ті самі методи)
         ltf_tf_setting = str(self.get_param("ltfSelection"))
         if ltf_tf_setting == "45": df_trade = self.resample_candles(df_ltf, 45)
         else: df_trade = df_ltf
-            
         if df_trade is None or df_trade.empty: return {'action': None}
-        
         df_trade = self.calculate_indicators(df_trade)
         df_htf = self.calculate_indicators(df_htf)
-        
         if 'hma_fast' not in df_htf.columns: return {'action': None}
-        
         htf_row = df_htf.iloc[-1]
         use_cloud = self.get_param('obt_useCloudFilter')
         use_rsi = self.get_param('obt_useRsiFilter')
         use_obv = self.get_param('obt_useObvFilter')
-        
         cloud_bull = (htf_row['hma_fast'] > htf_row['hma_slow']) if use_cloud else True
         cloud_bear = (htf_row['hma_fast'] < htf_row['hma_slow']) if use_cloud else True
         rsi_bull = (htf_row['rsi'] <= self.get_param('obt_entryRsiOversold')) if use_rsi else True
         rsi_bear = (htf_row['rsi'] >= self.get_param('obt_entryRsiOverbought')) if use_rsi else True
         obv_bull = (htf_row['obv'] > htf_row['obv_ma']) if use_obv else True
         obv_bear = (htf_row['obv'] < htf_row['obv_ma']) if use_obv else True
-        
         is_bull_trend = cloud_bull and obv_bull and rsi_bull
         is_bear_trend = cloud_bear and obv_bear and rsi_bear
-        
         current_price = df_trade['close'].iloc[-1]
         signal = {'action': None, 'reason': '', 'sl_price': None, 'price': current_price}
-        
         use_retest = self.get_param('obt_useOBRetest')
         buffer_pct = self.get_param('obBufferPercent')
-        
         if is_bull_trend:
             bulls, _ = self.find_smart_money_blocks(df_trade)
             active_ob = None
             if use_retest:
                 for ob in reversed(bulls):
                     if ob['bottom'] < current_price <= (ob['top'] * 1.001): 
-                        active_ob = ob
-                        signal['action'] = "Buy"
-                        signal['reason'] = "Smart Money OB Retest"
-                        break
-            else:
-                signal['action'] = "Buy"
-                signal['reason'] = "Trend Only"
-                if bulls: active_ob = bulls[-1]
-            
+                        active_ob = ob; signal['action'] = "Buy"; signal['reason'] = "Smart Money OB Retest"; break
+            else: signal['action'] = "Buy"; signal['reason'] = "Trend Only"; 
             if signal['action'] == "Buy":
                 if active_ob: signal['sl_price'] = active_ob['bottom'] * (1 - buffer_pct/100)
                 elif use_retest: signal['action'] = None
-                    
         elif is_bear_trend:
             _, bears = self.find_smart_money_blocks(df_trade)
             active_ob = None
             if use_retest:
                 for ob in reversed(bears):
                     if (ob['bottom'] * 0.999) <= current_price < ob['top']:
-                        active_ob = ob
-                        signal['action'] = "Sell"
-                        signal['reason'] = "Smart Money OB Retest"
-                        break
-            else:
-                signal['action'] = "Sell"
-                signal['reason'] = "Trend Only"
-                if bears: active_ob = bears[-1]
-                
+                        active_ob = ob; signal['action'] = "Sell"; signal['reason'] = "Smart Money OB Retest"; break
+            else: signal['action'] = "Sell"; signal['reason'] = "Trend Only";
             if signal['action'] == "Sell":
                 if active_ob: signal['sl_price'] = active_ob['top'] * (1 + buffer_pct/100)
                 elif use_retest: signal['action'] = None
-
         return signal
 
 ob_trend_strategy = OBCloudStrategyEngine()

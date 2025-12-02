@@ -14,6 +14,7 @@ from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from settings_manager import settings
 from market_analyzer import market_analyzer
+from strategy_ob_trend import ob_trend_strategy # Імпорт стратегії для чарту
 
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
@@ -66,28 +67,20 @@ def home():
         days_param = int(request.args.get('days', 7))
         if days_param not in [7, 30]: days_param = 7
     except: days_param = 7
-    
     try: bot_instance.sync_trades(days=days_param)
-    except Exception as e: logger.error(f"Sync error: {e}")
-
+    except: pass
     balance = bot_instance.get_bal()
     active_count = len(scanner.get_active_symbols())
     trades = stats_service.get_trades(days=days_param)
-    
     period_pnl = 0.0; wins = 0; longs = 0; shorts = 0
     for t in trades:
         period_pnl += t['pnl']
         if t['pnl'] > 0: wins += 1
         if t['side'] == 'Long': longs += 1
         elif t['side'] == 'Short': shorts += 1
-            
     win_rate = int((wins / len(trades)) * 100) if len(trades) > 0 else 0
     current_date = datetime.utcnow().strftime('%d %b %Y')
-    
-    return render_template('index.html', 
-                           date=current_date, balance=balance, active_count=active_count,
-                           period_pnl=period_pnl, win_rate=win_rate, longs=longs, shorts=shorts,
-                           days=days_param, trades=trades[:7])
+    return render_template('index.html', date=current_date, balance=balance, active_count=active_count, period_pnl=period_pnl, win_rate=win_rate, longs=longs, shorts=shorts, days=days_param, trades=trades[:7])
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -112,16 +105,36 @@ def analyzer_page():
                            progress=market_analyzer.progress, status=market_analyzer.status_message, 
                            is_scanning=market_analyzer.is_scanning)
 
+# === VIZUALIZATION ROUTES (NEW) ===
+@app.route('/chart/<symbol>')
+def chart_page(symbol):
+    return render_template('chart_view.html', symbol=symbol)
+
+@app.route('/api/chart_data/<symbol>')
+def get_chart_data(symbol):
+    try:
+        # Завантажуємо свічки для візуалізації
+        ltf = settings.get("ltfSelection")
+        # Беремо більше свічок для красивого графіка
+        df = market_analyzer.fetch_candles(symbol, ltf, limit=500) 
+        if df is None: return jsonify({})
+        
+        # Викликаємо стратегію для розрахунку ліній та блоків
+        chart_data = ob_trend_strategy.get_chart_data(df)
+        return jsonify(chart_data)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_general_page():
     if request.method == 'POST':
         form_data = request.form.to_dict()
-        form_data['telegram_enabled'] = request.form.get('telegram_enabled') == 'on'
+        for cb in ['telegram_enabled', 'obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter', 'obt_useOBRetest']:
+            form_data[cb] = request.form.get(cb) == 'on'
         settings.save_settings(form_data)
         return redirect(url_for('settings_general_page'))
     return render_template('settings.html', conf=settings._cache)
 
-# === СТРАТЕГІЯ ROUTE ===
 @app.route('/ob_trend/settings', methods=['GET', 'POST'])
 def ob_trend_settings_page():
     if request.method == 'POST':
@@ -146,8 +159,7 @@ def run_scan():
     return jsonify({"status": "started"})
 
 @app.route('/analyzer/status')
-def get_scan_status():
-    return jsonify({"progress": market_analyzer.progress, "message": market_analyzer.status_message, "is_scanning": market_analyzer.is_scanning})
+def get_scan_status(): return jsonify({"progress": market_analyzer.progress, "message": market_analyzer.status_message, "is_scanning": market_analyzer.is_scanning})
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
