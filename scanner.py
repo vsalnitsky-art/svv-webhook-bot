@@ -1,14 +1,12 @@
-"""
-Scanner Module - Active Position Monitor
-Role: Monitors open positions in real-time (RSI, Pressure, P&L).
-"""
-
 import threading
 import time
 import logging
 import pandas as pd
 import pandas_ta as ta
 from settings_manager import settings
+from bot import bot_instance
+# Імпорт стратегії для перевірки виходу
+from strategy_ob_trend import ob_trend_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +16,13 @@ class EnhancedMarketScanner:
         self.config = config
         self.running = True
         
-        # Кеш даних для активних монет
+        # Кеш даних для активних монет (включаючи статус виходу)
         self.active_coins_data = {} 
-        self.scan_interval = 5 
+        self.scan_interval = 10 # Трохи рідше, бо вантажимо HTF
 
     def start(self):
         threading.Thread(target=self.loop, daemon=True).start()
-        logger.info("🚀 Active Position Monitor Started")
+        logger.info(f"🚀 Active Position Monitor & Smart Exit Started")
     
     def loop(self):
         while self.running:
@@ -35,117 +33,118 @@ class EnhancedMarketScanner:
             time.sleep(self.scan_interval)
     
     def get_active_symbols(self):
-        """Отримати список монет, де є відкрита позиція"""
         symbols = []
         try:
             resp = self.bot.session.get_positions(category="linear", settleCoin="USDT")
             if resp['retCode'] == 0:
                 for p in resp['result']['list']:
                     if float(p['size']) > 0:
-                        symbols.append(p['symbol'])
+                        symbols.append(p)
         except Exception as e:
             logger.error(f"Active symbols error: {e}")
         return symbols
 
-    def fetch_rsi_from_api(self, symbol):
-        """
-        Завантажує свічки та рахує RSI для моніторингу.
-        Використовує налаштування LTF з settings.
-        """
+    def fetch_htf_candles(self, symbol):
+        """Завантажує свічки Глобального ТФ для аналізу виходу"""
         try:
-            tf = settings.get("ltfSelection")
-            if not tf: tf = "15"
+            htf = settings.get("htfSelection")
+            # Мапінг для Bybit
+            tf_map = {'60': '60', '240': '240', 'D': 'D'}
+            req_tf = tf_map.get(str(htf), '240')
             
-            # Завантажуємо трохи більше свічок для точності EMA/RSI
             resp = self.bot.session.get_kline(
-                category="linear",
-                symbol=symbol,
-                interval=str(tf),
-                limit=50 
+                category="linear", symbol=symbol, interval=req_tf, limit=50 
             )
             
             if resp['retCode'] == 0 and resp['result']['list']:
                 data = resp['result']['list']
-                # Bybit віддає у зворотному порядку, тому iloc[::-1] не завжди потрібен, 
-                # але для pandas_ta краще мати хронологічний порядок (старі -> нові).
-                # API Bybit: [Time, Open, High, Low, Close...] від нових до старих.
-                
-                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'turn'])
-                df['close'] = df['close'].astype(float)
-                
-                # Розвертаємо: Старі зверху, Нові знизу
-                df = df.iloc[::-1]
-                
-                rsi_series = ta.rsi(df['close'], length=14)
-                if rsi_series is not None and not rsi_series.empty:
-                    return round(rsi_series.iloc[-1], 1)
-                    
-        except Exception as e:
-            pass # Тиха помилка, щоб не спамити логи
-            
-        return 50.0
+                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+                df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='ms')
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    df[col] = df[col].astype(float)
+                return df.sort_values('time').reset_index(drop=True)
+        except: pass
+        return None
 
     def monitor_positions(self):
-        target_symbols = self.get_active_symbols()
+        active_positions = self.get_active_symbols()
+        target_symbols = [p['symbol'] for p in active_positions]
         
-        # Видаляємо з кешу монети, які ми вже закрили
+        # Чистка кешу
         current_keys = list(self.active_coins_data.keys())
         for k in current_keys:
             if k not in target_symbols:
                 del self.active_coins_data[k]
 
-        if not target_symbols:
-            return
+        if not active_positions: return
 
-        try:
-            # Отримуємо тікери для розрахунку "Тиску" (Volume Pressure)
-            all_tickers = self.bot.get_all_tickers()
+        # Чи увімкнена стратегія виходу?
+        smart_exit_enabled = settings.get("exit_enableStrategy", False)
+
+        for pos in active_positions:
+            symbol = pos['symbol']
+            side = pos['side'] # Buy / Sell
             
-            for t in all_tickers:
-                symbol = t['symbol']
-                if symbol not in target_symbols: continue
+            if symbol not in self.active_coins_data:
+                self.active_coins_data[symbol] = {
+                    'rsi': 0, 'pressure': 0, 'exit_status': 'Safe', 'exit_details': '-'
+                }
+            
+            # 1. Завантаження даних HTF (якщо стратегія активна або для відображення RSI)
+            df_htf = self.fetch_htf_candles(symbol)
+            
+            # --- РОЗУМНИЙ ВИХІД ---
+            exit_info = {'close': False, 'reason': '', 'details': {}}
+            
+            if df_htf is not None:
+                # Викликаємо стратегію
+                exit_info = ob_trend_strategy.check_exit_signal(df_htf, side)
                 
-                price = float(t['lastPrice'])
-                turnover = float(t['turnover24h']) 
+                # Оновлюємо дані для UI
+                self.active_coins_data[symbol]['rsi'] = exit_info['details'].get('rsi', 0)
                 
-                if symbol not in self.active_coins_data:
-                    self.active_coins_data[symbol] = {
-                        'rsi': 50, 'pressure': 0, 'last_turnover': turnover, 'prev_price': price
-                    }
-                
-                coin_data = self.active_coins_data[symbol]
-                
-                # --- RSI UPDATE ---
-                # Оновлюємо RSI
-                coin_data['rsi'] = self.fetch_rsi_from_api(symbol)
-                
-                # Пауза, щоб не перевищити ліміт API Bybit (Rate Limit)
-                time.sleep(0.2) 
-                
-                # --- PRESSURE CALCULATION ---
-                # Логіка: Якщо об'єм росте і ціна росте -> тиск покупців.
-                if coin_data['last_turnover'] > 0:
-                    vol_diff = turnover - coin_data['last_turnover']
+                # Формуємо статус
+                if exit_info['close']:
+                    self.active_coins_data[symbol]['exit_status'] = 'EXIT NOW'
+                    self.active_coins_data[symbol]['exit_details'] = exit_info['reason']
                     
-                    # Фільтруємо аномалії (наприклад, перехід доби)
-                    if vol_diff < 0: vol_diff = 0 
+                    # === ВИКОНАННЯ ЗАКРИТТЯ ===
+                    if smart_exit_enabled:
+                        logger.info(f"🚨 SMART EXIT TRIGGERED: {symbol} ({side}) -> {exit_info['reason']}")
+                        self.bot.place_order({
+                            "action": "Close",
+                            "symbol": symbol,
+                            "direction": "Long" if side == "Buy" else "Short"
+                        })
+                else:
+                    # Статуси попередження
+                    rsi_val = exit_info['details'].get('rsi', 50)
+                    limit_long = float(settings.get('exit_rsiOverbought', 70))
+                    limit_short = float(settings.get('exit_rsiOversold', 30))
                     
-                    price_dir = 1 if price >= coin_data.get('prev_price', price) else -1
-                    current_flow = vol_diff * price_dir
+                    status = "Safe"
+                    if side == "Buy" and rsi_val >= (limit_long - 5): status = "Warning"
+                    if side == "Sell" and rsi_val <= (limit_short + 5): status = "Warning"
                     
-                    # Exponential smoothing для плавності
-                    coin_data['pressure'] = (coin_data['pressure'] * 0.9) + current_flow
-                
-                coin_data['last_turnover'] = turnover
-                coin_data['prev_price'] = price
-                
-        except Exception as e:
-            logger.error(f"Monitor calculation error: {e}")
+                    self.active_coins_data[symbol]['exit_status'] = status
+                    self.active_coins_data[symbol]['exit_details'] = f"RSI: {rsi_val}"
+
+            time.sleep(0.5)
 
     # === GETTERS FOR UI ===
-    
+    def get_coin_data(self, symbol):
+        return self.active_coins_data.get(symbol, {})
+
     def get_current_rsi(self, symbol):
-        return self.active_coins_data.get(symbol, {}).get('rsi', 50)
+        return self.active_coins_data.get(symbol, {}).get('rsi', 0)
 
     def get_market_pressure(self, symbol):
+        # Pressure поки спрощено (можна відновити стару логіку, якщо треба),
+        # але тут фокус на Exit Strategy. Повернемо 0 або старе значення.
         return self.active_coins_data.get(symbol, {}).get('pressure', 0)
+    
+    def get_exit_status(self, symbol):
+        return self.active_coins_data.get(symbol, {}).get('exit_status', 'N/A')
+    
+    def get_exit_details(self, symbol):
+        return self.active_coins_data.get(symbol, {}).get('exit_details', '-')
