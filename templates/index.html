@@ -1,157 +1,189 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard | AlgoBot{% endblock %}
+{% block title %}Overview | AlgoBot{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
+<div class="container-fluid p-0">
     
-    <div class="d-flex justify-content-between align-items-end mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-5">
         <div>
-            <h4 class="fw-bold text-white mb-0">Огляд Ринку</h4>
-            <p class="text-muted mb-0 font-mono small" style="font-size: 11px;">SERVER TIME: {{ time }} UTC</p>
+            <h4 class="fw-bold text-white mb-1">Market Overview</h4>
+            <div class="d-flex align-items-center text-muted small font-mono">
+                <span class="status-indicator me-2" style="width: 8px; height: 8px; background: #10b981; border-radius: 50%; display: inline-block;"></span>
+                <span>SYSTEM ONLINE</span>
+                <span class="mx-2">|</span>
+                <span>{{ time }} UTC</span>
+            </div>
         </div>
-        <div>
-            <a href="/analyzer" class="btn btn-primary btn-sm px-3 shadow-sm" style="background-color: var(--accent); border: none;">
-                <i class="ri-search-line me-1"></i> Новий Скан
+        <div class="d-flex gap-3">
+             <div class="d-flex flex-column align-items-end me-4">
+                 <span class="text-muted small" style="font-size: 10px; text-transform: uppercase;">Balance (Est.)</span>
+                 <span class="fw-bold font-mono text-white">1,240.50 USDT</span>
+             </div>
+             <a href="/analyzer" class="btn btn-primary d-flex align-items-center px-4" style="background-color: var(--accent); border: none;">
+                <i class="ri-search-2-line me-2"></i> Scan Market
             </a>
         </div>
     </div>
 
-    <div class="row g-4 mb-4">
-        <div class="col-md-4">
-            <div class="card-custom p-4 h-100 position-relative overflow-hidden">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <p class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 10px; letter-spacing: 1px;">System Health</p>
-                        <h4 class="fw-bold text-white m-0">Operational</h4>
-                    </div>
-                    <div class="bg-success bg-opacity-10 p-2 rounded-2">
-                        <i class="ri-server-line text-success fs-5"></i>
-                    </div>
+    <div class="row g-4 mb-5">
+        <div class="col-md-3">
+            <div class="card-custom p-4 h-100">
+                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Open Positions</div>
+                <div class="d-flex justify-content-between align-items-end">
+                    <h2 class="m-0 fw-bold text-white font-mono">3</h2>
+                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-10 font-mono">Long-bias</span>
                 </div>
-                <div class="mt-4 d-flex align-items-center">
-                     <i class="ri-check-double-line text-success me-1"></i>
-                     <span class="text-muted small font-mono">Uptime: 99.99%</span>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card-custom p-4 h-100">
+                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Today's P&L</div>
+                <div class="d-flex justify-content-between align-items-end">
+                    <h2 class="m-0 fw-bold text-success font-mono">+42.50</h2>
+                    <span class="text-muted small font-mono">USDT</span>
                 </div>
             </div>
         </div>
 
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <p class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 10px; letter-spacing: 1px;">Last Action</p>
-                        <h4 class="fw-bold text-white m-0">BTC/USDT</h4>
+                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Win Rate (24h)</div>
+                <div class="d-flex justify-content-between align-items-end">
+                    <h2 class="m-0 fw-bold text-white font-mono">68%</h2>
+                    <div class="progress w-50" style="height: 4px; background: #27272a;">
+                        <div class="progress-bar bg-primary" style="width: 68%;"></div>
                     </div>
-                    <div class="bg-primary bg-opacity-10 p-2 rounded-2">
-                        <i class="ri-flashlight-fill text-accent fs-5"></i>
-                    </div>
-                </div>
-                <div class="mt-4">
-                    <span class="badge bg-dark border border-secondary text-light font-mono fw-normal">Scan Mode</span>
                 </div>
             </div>
         </div>
-
-        <div class="col-md-4">
-            <div class="card-custom p-4 h-100">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <p class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 10px; letter-spacing: 1px;">Latency</p>
-                        <h4 class="fw-bold text-white m-0">34 ms</h4>
-                    </div>
-                    <div class="bg-warning bg-opacity-10 p-2 rounded-2">
-                        <i class="ri-wifi-line text-warning fs-5"></i>
-                    </div>
-                </div>
-                <div class="mt-4">
-                     <div class="progress" style="height: 4px; background: #374151;">
-                         <div class="progress-bar bg-warning" style="width: 20%"></div>
-                     </div>
+        
+        <div class="col-md-3">
+             <div class="card-custom p-4 h-100">
+                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">API Latency</div>
+                <div class="d-flex justify-content-between align-items-end">
+                    <h2 class="m-0 fw-bold text-white font-mono">45<span class="fs-6 text-muted">ms</span></h2>
+                    <i class="ri-wifi-line text-success"></i>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card-custom p-4">
-                <div class="d-flex justify-content-between align-items-center mb-4">
-                    <div>
-                        <h6 class="fw-bold text-white m-0">Торгова Активність</h6>
-                        <small class="text-muted">Кількість сигналів за 24г</small>
-                    </div>
-                    <button class="btn btn-outline-secondary btn-sm border-0"><i class="ri-more-2-fill"></i></button>
-                </div>
-                <div style="height: 280px;">
-                    <canvas id="dashboardChart"></canvas>
-                </div>
-            </div>
-        </div>
-    </div>
-    
     <div class="row g-4">
-        <div class="col-md-6">
-            <a href="/scanner" class="card-custom p-3 text-decoration-none d-flex align-items-center hover-card">
-                <div class="me-3 bg-dark p-3 rounded-3 border border-secondary border-opacity-25">
-                    <i class="ri-stock-line text-info fs-4"></i>
+        <div class="col-lg-8">
+            <div class="card-custom p-4 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h6 class="fw-bold text-white m-0">Signal Activity</h6>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-secondary text-white border-subtle active">24H</button>
+                        <button class="btn btn-outline-secondary text-muted border-subtle">7D</button>
+                        <button class="btn btn-outline-secondary text-muted border-subtle">30D</button>
+                    </div>
                 </div>
-                <div>
-                    <h6 class="fw-bold text-white mb-1">Моніторинг Позицій</h6>
-                    <p class="text-muted small m-0">Керування відкритими угодами (P&L, SL/TP).</p>
+                <div style="height: 320px; width: 100%;">
+                    <canvas id="mainChart"></canvas>
                 </div>
-                <i class="ri-arrow-right-s-line ms-auto text-muted fs-4"></i>
-            </a>
+            </div>
         </div>
-        <div class="col-md-6">
-            <a href="/settings" class="card-custom p-3 text-decoration-none d-flex align-items-center hover-card">
-                <div class="me-3 bg-dark p-3 rounded-3 border border-secondary border-opacity-25">
-                    <i class="ri-equalizer-line text-muted fs-4"></i>
+
+        <div class="col-lg-4">
+            <div class="card-custom p-0 h-100 overflow-hidden d-flex flex-column">
+                <div class="p-4 border-bottom" style="border-color: var(--border-subtle) !important;">
+                    <h6 class="fw-bold text-white m-0">System Logs</h6>
                 </div>
-                <div>
-                    <h6 class="fw-bold text-white mb-1">Конфігурація</h6>
-                    <p class="text-muted small m-0">Налаштування ризиків та стратегії.</p>
+                <div class="flex-grow-1 p-0 overflow-auto" style="max-height: 320px;">
+                    <div class="list-group list-group-flush">
+                        <div class="list-group-item bg-transparent border-bottom border-secondary border-opacity-10 py-3 px-4">
+                            <div class="d-flex justify-content-between">
+                                <span class="text-white small fw-bold">Scan Completed</span>
+                                <span class="text-muted font-mono" style="font-size: 10px;">10:42:05</span>
+                            </div>
+                            <small class="text-muted" style="font-size: 11px;">Found 3 potential setups (BTC, ETH, SOL)</small>
+                        </div>
+                        <div class="list-group-item bg-transparent border-bottom border-secondary border-opacity-10 py-3 px-4">
+                            <div class="d-flex justify-content-between">
+                                <span class="text-success small fw-bold">Order Filled</span>
+                                <span class="text-muted font-mono" style="font-size: 10px;">09:15:22</span>
+                            </div>
+                            <small class="text-muted" style="font-size: 11px;">Long BTCUSDT @ 96,500</small>
+                        </div>
+                         <div class="list-group-item bg-transparent border-0 py-3 px-4">
+                            <div class="d-flex justify-content-between">
+                                <span class="text-primary small fw-bold">Bot Started</span>
+                                <span class="text-muted font-mono" style="font-size: 10px;">08:00:00</span>
+                            </div>
+                            <small class="text-muted" style="font-size: 11px;">System initialized successfully.</small>
+                        </div>
+                    </div>
                 </div>
-                <i class="ri-arrow-right-s-line ms-auto text-muted fs-4"></i>
-            </a>
+                <div class="p-3 bg-element mt-auto border-top" style="border-color: var(--border-subtle) !important; background: var(--bg-element);">
+                    <a href="/scanner" class="btn btn-sm btn-outline-secondary w-100 text-white border-subtle">View All Logs</a>
+                </div>
+            </div>
         </div>
     </div>
 
 </div>
 
 <style>
-    .hover-card:hover { background-color: #27303f; border-color: var(--accent); }
+    .btn-outline-secondary.border-subtle { border-color: var(--border-subtle); }
+    .btn-outline-secondary.border-subtle:hover { background-color: var(--bg-element); border-color: var(--text-muted); }
+    .bg-element { background-color: var(--bg-element); }
 </style>
 
 <script>
-    const ctx = document.getElementById('dashboardChart').getContext('2d');
+    const ctx = document.getElementById('mainChart').getContext('2d');
+    
+    // Gradient for the chart
     const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-    gradient.addColorStop(0, 'rgba(99, 102, 241, 0.2)');
+    gradient.addColorStop(0, 'rgba(99, 102, 241, 0.25)'); // Indigo
     gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
 
     new Chart(ctx, {
         type: 'line',
         data: {
-            labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Now'],
+            labels: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00'],
             datasets: [{
-                label: 'Активність',
-                data: [5, 12, 8, 15, 12, 20, 18],
+                label: 'Signal Intensity',
+                data: [12, 19, 15, 25, 22, 30, 28, 35],
                 borderColor: '#6366f1',
                 backgroundColor: gradient,
                 borderWidth: 2,
-                pointRadius: 0,
+                pointBackgroundColor: '#18181b',
+                pointBorderColor: '#6366f1',
+                pointBorderWidth: 2,
+                pointRadius: 4,
                 pointHoverRadius: 6,
                 fill: true,
-                tension: 0.4
+                tension: 0.3
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#27272a',
+                    titleColor: '#fff',
+                    bodyColor: '#a1a1aa',
+                    borderColor: '#3f3f46',
+                    borderWidth: 1,
+                    displayColors: false,
+                    padding: 10
+                }
+            },
             scales: {
-                x: { grid: { display: false, color: '#374151' }, ticks: { color: '#9ca3b8', font: {family: 'Inter'} } },
-                y: { grid: { color: '#374151', borderDash: [5, 5] }, ticks: { color: '#9ca3b8', font: {family: 'Inter'} } }
+                x: {
+                    grid: { display: false, color: '#27272a' },
+                    ticks: { color: '#71717a', font: { family: 'JetBrains Mono', size: 10 } }
+                },
+                y: {
+                    grid: { color: '#27272a', borderDash: [4, 4] },
+                    ticks: { color: '#71717a', font: { family: 'JetBrains Mono', size: 10 } },
+                    beginAtZero: true
+                }
             }
         }
     });

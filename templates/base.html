@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}AlgoBot Pro{% endblock %}</title>
+    <title>{% block title %}AlgoBot Terminal{% endblock %}</title>
     
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     
@@ -15,175 +15,253 @@
 
     <style>
         :root {
-            --bg-app: #0b1120;       /* Deepest Navy */
-            --bg-sidebar: #111827;   /* Darker Gray */
-            --bg-card: #1f2937;      /* Card Gray */
-            --accent: #6366f1;       /* Indigo */
-            --accent-hover: #818cf8;
-            --success: #10b981;
-            --danger: #ef4444;
-            --text-main: #f3f4f6;
-            --text-muted: #9ca3af;
-            --border-color: #374151;
+            /* Professional Zinc Palette */
+            --bg-body: #09090b;       /* Майже чорний */
+            --bg-sidebar: #18181b;    /* Zinc 900 */
+            --bg-card: #18181b;       /* Zinc 900 */
+            --bg-element: #27272a;    /* Zinc 800 */
+            
+            --border-subtle: #27272a; /* Zinc 800 */
+            --border-strong: #3f3f46; /* Zinc 700 */
+            
+            --text-main: #e4e4e7;     /* Zinc 200 */
+            --text-muted: #a1a1aa;    /* Zinc 400 */
+            
+            --accent: #6366f1;        /* Indigo */
+            --success: #10b981;       /* Emerald */
+            --danger: #ef4444;        /* Red */
+            
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 72px;
+            --transition-speed: 0.3s;
         }
 
         body {
-            background-color: var(--bg-app);
+            background-color: var(--bg-body);
             color: var(--text-main);
-            font-family: 'Inter', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 0.875rem; /* 14px base */
             overflow-x: hidden;
-            font-size: 0.9rem;
         }
 
-        /* Sidebar Layout */
-        .wrapper { display: flex; width: 100%; align-items: stretch; min-height: 100vh; }
-        
+        /* --- SIDEBAR LOGIC --- */
         #sidebar {
-            min-width: 250px;
-            max-width: 250px;
+            width: var(--sidebar-width);
             background: var(--bg-sidebar);
-            border-right: 1px solid var(--border-color);
-            transition: all 0.3s;
+            border-right: 1px solid var(--border-subtle);
             position: fixed;
+            top: 0;
+            left: 0;
             height: 100vh;
-            z-index: 999;
-        }
-        
-        #content {
-            width: 100%;
-            padding: 24px;
-            min-height: 100vh;
-            transition: all 0.3s;
-            margin-left: 250px;
+            z-index: 1000;
+            transition: width var(--transition-speed) ease;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
 
-        /* Custom Components */
-        .card-custom {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 8px; /* Більш строгі кути */
-            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        /* Collapsed State */
+        body.sidebar-collapsed #sidebar {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        /* Hiding text labels when collapsed */
+        .nav-label, .sidebar-footer-text, .logo-text {
+            opacity: 1;
+            transition: opacity 0.1s ease;
+            white-space: nowrap;
         }
         
+        body.sidebar-collapsed .nav-label,
+        body.sidebar-collapsed .sidebar-footer-text,
+        body.sidebar-collapsed .logo-text {
+            opacity: 0;
+            pointer-events: none;
+            display: none; /* Important for alignment */
+        }
+        
+        body.sidebar-collapsed .logo-icon {
+            margin-right: 0 !important;
+            font-size: 1.5rem;
+        }
+
+        body.sidebar-collapsed .sidebar-header {
+            justify-content: center;
+            padding-left: 0;
+            padding-right: 0;
+        }
+
+        /* --- CONTENT AREA --- */
+        #content {
+            margin-left: var(--sidebar-width);
+            padding: 2rem;
+            min-height: 100vh;
+            transition: margin-left var(--transition-speed) ease;
+        }
+
+        body.sidebar-collapsed #content {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* --- NAVIGATION LINKS --- */
         .nav-link {
             color: var(--text-muted);
-            padding: 10px 20px;
-            font-weight: 500;
+            padding: 12px 20px;
             display: flex;
             align-items: center;
-            border-left: 3px solid transparent;
-            transition: 0.2s;
-            font-size: 0.95rem;
+            border-left: 2px solid transparent;
+            transition: all 0.2s;
+            height: 48px;
+            margin-bottom: 4px;
         }
-        
-        .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.03); }
-        
+
+        .nav-link:hover {
+            color: var(--text-main);
+            background: var(--bg-element);
+        }
+
         .nav-link.active {
             color: #fff;
+            background: rgba(99, 102, 241, 0.1);
             border-left-color: var(--accent);
-            background: linear-gradient(90deg, rgba(99, 102, 241, 0.15) 0%, transparent 100%);
         }
-        
-        .nav-icon { font-size: 1.25rem; margin-right: 12px; opacity: 0.8; }
-        .nav-link.active .nav-icon { opacity: 1; color: var(--accent); }
 
-        /* Typography & Utilities */
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        .text-accent { color: var(--accent); }
-        .text-up { color: var(--success); }
-        .text-down { color: var(--danger); }
-        
-        /* Mobile */
-        @media (max-width: 768px) {
-            #sidebar { margin-left: -250px; }
-            #content { margin-left: 0; }
-            #sidebar.active { margin-left: 0; }
+        .nav-icon {
+            font-size: 1.25rem;
+            min-width: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
         }
         
-        /* Table overrides */
-        .table { --bs-table-bg: transparent; --bs-table-color: var(--text-main); border-color: var(--border-color); }
-        .table > :not(caption) > * > * { padding: 1rem 1rem; border-bottom-color: var(--border-color); }
+        body.sidebar-collapsed .nav-link {
+            justify-content: center;
+            padding: 0;
+        }
         
-        /* Badge Pulse Animation */
-        .status-dot { height: 6px; width: 6px; background-color: var(--success); border-radius: 50%; display: inline-block; box-shadow: 0 0 10px var(--success); }
+        body.sidebar-collapsed .nav-icon {
+            margin-right: 0;
+        }
+
+        /* --- UI COMPONENTS --- */
+        .card-custom {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 6px; /* Менш округлі, більш суворі */
+        }
         
+        .font-mono { 
+            font-family: 'JetBrains Mono', monospace; 
+            font-variant-numeric: tabular-nums; /* Рівні цифри в таблицях */
+        }
+
+        /* Toggle Button */
+        #sidebarToggle {
+            cursor: pointer;
+            color: var(--text-muted);
+            transition: color 0.2s;
+        }
+        #sidebarToggle:hover { color: var(--text-main); }
+
         /* Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: var(--bg-app); }
-        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg-body); }
+        ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #71717a; }
+
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
 
-<div class="wrapper">
-    <nav id="sidebar">
-        <div class="sidebar-header p-4 d-flex align-items-center border-bottom border-secondary border-opacity-10">
-            <i class="ri-code-s-slash-line text-accent fs-3 me-2"></i>
-            <div>
-                <h6 class="fw-bold m-0 text-white" style="letter-spacing: 0.5px;">ALGOBOT</h6>
-                <span class="text-muted" style="font-size: 10px; text-transform: uppercase;">Professional</span>
-            </div>
+<nav id="sidebar">
+    <div class="sidebar-header h-16 d-flex align-items-center px-4 py-4 border-bottom" style="border-color: var(--border-subtle) !important; height: 70px;">
+        <i class="ri-terminal-box-fill text-accent logo-icon me-3 fs-4"></i>
+        <div class="logo-text lh-1">
+            <div class="fw-bold tracking-tight">ALGOBOT</div>
+            <div class="small text-muted" style="font-size: 10px; letter-spacing: 1px;">TERMINAL</div>
         </div>
+    </div>
 
-        <ul class="list-unstyled components py-3">
-            <li class="px-3 mb-2"><small class="text-muted text-uppercase fw-bold" style="font-size: 10px;">Menu</small></li>
+    <div class="py-4 flex-grow-1">
+        <ul class="list-unstyled mb-0">
             <li>
-                <a href="/" class="nav-link {{ 'active' if request.path == '/' }}">
-                    <i class="ri-dashboard-3-line nav-icon"></i> Дашборд
+                <a href="/" class="nav-link {{ 'active' if request.path == '/' }}" title="Дашборд">
+                    <i class="ri-dashboard-line nav-icon"></i>
+                    <span class="nav-label">Overview</span>
                 </a>
             </li>
             <li>
-                <a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}">
-                    <i class="ri-pulse-line nav-icon"></i> Монітор Угод
+                <a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}" title="Монітор">
+                    <i class="ri-bar-chart-box-line nav-icon"></i>
+                    <span class="nav-label">Positions</span>
                 </a>
             </li>
             <li>
-                <a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}">
-                    <i class="ri-radar-line nav-icon"></i> Сканер Ринку
+                <a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}" title="Сканер">
+                    <i class="ri-radar-line nav-icon"></i>
+                    <span class="nav-label">Scanner</span>
                 </a>
             </li>
-            
-            <li class="px-3 mb-2 mt-4"><small class="text-muted text-uppercase fw-bold" style="font-size: 10px;">System</small></li>
+            <li class="my-3 border-top" style="border-color: var(--border-subtle) !important;"></li>
             <li>
-                <a href="/settings" class="nav-link {{ 'active' if '/settings' in request.path }}">
-                    <i class="ri-settings-4-line nav-icon"></i> Налаштування
+                <a href="/settings" class="nav-link {{ 'active' if '/settings' in request.path }}" title="Налаштування">
+                    <i class="ri-equalizer-line nav-icon"></i>
+                    <span class="nav-label">Settings</span>
                 </a>
             </li>
         </ul>
-        
-        <div class="mt-auto p-4 position-absolute bottom-0 w-100">
-            <div class="d-flex align-items-center px-3 py-2 rounded bg-black bg-opacity-20 border border-secondary border-opacity-10">
-                <span class="status-dot me-3"></span>
-                <div style="line-height: 1.2;">
-                    <span class="d-block text-white small fw-bold">API Connected</span>
-                    <span class="d-block text-muted" style="font-size: 10px;">V5.0 Stable</span>
-                </div>
-            </div>
-        </div>
-    </nav>
-
-    <div id="content">
-        <nav class="navbar navbar-expand-lg navbar-dark d-md-none mb-4 rounded card-custom p-2">
-            <div class="container-fluid">
-                <button type="button" id="sidebarCollapse" class="btn btn-dark btn-sm">
-                    <i class="ri-menu-2-line"></i>
-                </button>
-                <span class="navbar-brand ms-3 fw-bold fs-6">AlgoBot Pro</span>
-            </div>
-        </nav>
-
-        {% block content %}{% endblock %}
     </div>
-</div>
+
+    <div class="p-3 border-top" style="border-color: var(--border-subtle) !important;">
+        <button id="sidebarToggle" class="btn w-100 d-flex align-items-center justify-content-center p-2 text-muted hover-bg-element">
+            <i class="ri-arrow-left-s-line fs-5" id="toggleIcon"></i>
+            <span class="nav-label ms-2 small">Collapse</span>
+        </button>
+    </div>
+</nav>
+
+<main id="content">
+    {% block content %}{% endblock %}
+</main>
 
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
 <script>
-    $(document).ready(function () {
-        $('#sidebarCollapse').on('click', function () {
-            $('#sidebar').toggleClass('active');
+    document.addEventListener('DOMContentLoaded', function() {
+        const toggleBtn = document.getElementById('sidebarToggle');
+        const toggleIcon = document.getElementById('toggleIcon');
+        const body = document.body;
+        
+        // 1. Check local storage for saved state
+        const isCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+        if (isCollapsed) {
+            body.classList.add('sidebar-collapsed');
+            toggleIcon.classList.remove('ri-arrow-left-s-line');
+            toggleIcon.classList.add('ri-arrow-right-s-line');
+        }
+
+        // 2. Toggle Logic
+        toggleBtn.addEventListener('click', function() {
+            body.classList.toggle('sidebar-collapsed');
+            
+            // Save state
+            const collapsed = body.classList.contains('sidebar-collapsed');
+            localStorage.setItem('sidebar-collapsed', collapsed);
+            
+            // Rotate icon
+            if (collapsed) {
+                toggleIcon.classList.remove('ri-arrow-left-s-line');
+                toggleIcon.classList.add('ri-arrow-right-s-line');
+            } else {
+                toggleIcon.classList.remove('ri-arrow-right-s-line');
+                toggleIcon.classList.add('ri-arrow-left-s-line');
+            }
         });
+
+        // Initialize tooltips
         var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
         var tooltipList = tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) })
     });
