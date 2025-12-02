@@ -163,6 +163,20 @@ def settings_general_page():
         return redirect(url_for('settings_general_page'))
     return render_template('settings.html', conf=settings._cache)
 
+# !!! ВІДНОВЛЕНИЙ МАРШРУТ ДЛЯ СТРАТЕГІЇ !!!
+@app.route('/ob_trend/settings', methods=['GET', 'POST'])
+def ob_trend_settings_page():
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        # Обробка чекбоксів для стратегії (префікс obt_)
+        for cb in ['obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter', 'obt_useBtcDominance']:
+            form_data[cb] = request.form.get(cb) == 'on'
+        
+        settings.save_settings(form_data)
+        return redirect(url_for('ob_trend_settings_page'))
+    
+    return render_template('strategy_ob_trend.html', conf=settings._cache)
+
 @app.route('/analyzer/scan', methods=['POST'])
 def run_scan():
     if request.form:
