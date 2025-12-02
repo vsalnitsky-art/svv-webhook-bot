@@ -50,11 +50,15 @@ def monitor_active():
         time.sleep(10)
 
 def keep_alive():
+    """Self-Ping для Render"""
     time.sleep(5)
     base_url = os.environ.get('RENDER_EXTERNAL_URL')
-    if not base_url: base_url = f'http://127.0.0.1:{config.PORT}'
+    if not base_url:
+        base_url = f'http://127.0.0.1:{config.PORT}'
+    
     target = f"{base_url}/health"
     logger.info(f"💓 Keep-alive target: {target}")
+    
     while True:
         try: requests.get(target, timeout=10)
         except: pass
@@ -71,14 +75,17 @@ def home():
         days_param = int(request.args.get('days', 7))
         if days_param not in [7, 30]: days_param = 7
     except: days_param = 7
-    try: bot_instance.sync_trades(days=days_param)
-    except Exception as e: logger.error(f"Sync error: {e}")
+    
+    try:
+        bot_instance.sync_trades(days=days_param)
+    except Exception as e:
+        logger.error(f"Sync error on home load: {e}")
 
     balance = bot_instance.get_bal()
     active_count = len(scanner.get_active_symbols())
     trades = stats_service.get_trades(days=days_param)
-    period_pnl = 0.0; wins = 0; longs = 0; shorts = 0
     
+    period_pnl = 0.0; wins = 0; longs = 0; shorts = 0
     for t in trades:
         period_pnl += t['pnl']
         if t['pnl'] > 0: wins += 1
@@ -88,11 +95,12 @@ def home():
     win_rate = int((wins / len(trades)) * 100) if len(trades) > 0 else 0
     current_date = datetime.utcnow().strftime('%d %b %Y')
     
-    return render_template('index.html', date=current_date, balance=balance, active_count=active_count,
+    return render_template('index.html', 
+                           date=current_date, balance=balance, active_count=active_count,
                            period_pnl=period_pnl, win_rate=win_rate, longs=longs, shorts=shorts,
                            days=days_param, trades=trades[:7])
 
-@app.route('/scanner')
+@app.route('/scanner', methods=['GET'])
 def scanner_page():
     active = []
     try:
@@ -111,31 +119,31 @@ def scanner_page():
 
 @app.route('/analyzer')
 def analyzer_page():
-    return render_template('analyzer.html', results=market_analyzer.get_results(), conf=settings._cache, 
-                           progress=market_analyzer.progress, status=market_analyzer.status_message, 
-                           is_scanning=market_analyzer.is_scanning)
+    results = market_analyzer.get_results()
+    conf = settings._cache
+    return render_template('analyzer.html', 
+                           results=results, conf=conf, progress=market_analyzer.progress,
+                           status=market_analyzer.status_message, is_scanning=market_analyzer.is_scanning)
 
-# === CENTRALIZED SETTINGS ROUTE ===
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_general_page():
     if request.method == 'POST':
         form_data = request.form.to_dict()
-        
-        # Обробка ВСІХ чекбоксів (Global + Strategy)
-        checkboxes = [
-            'telegram_enabled', 
-            'obt_useCloudFilter', 
-            'obt_useObvFilter', 
-            'obt_useRsiFilter', 
-            'obt_useOBRetest'
-        ]
-        
-        for cb in checkboxes:
-            form_data[cb] = request.form.get(cb) == 'on'
-        
+        form_data['telegram_enabled'] = request.form.get('telegram_enabled') == 'on'
         settings.save_settings(form_data)
         return redirect(url_for('settings_general_page'))
     return render_template('settings.html', conf=settings._cache)
+
+# === СТРАТЕГІЯ OB + CLOUD (СТОРІНКА НАЛАШТУВАНЬ) ===
+@app.route('/ob_trend/settings', methods=['GET', 'POST'])
+def ob_trend_settings_page():
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        for cb in ['obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter']:
+            form_data[cb] = request.form.get(cb) == 'on'
+        settings.save_settings(form_data)
+        return redirect(url_for('ob_trend_settings_page'))
+    return render_template('strategy_ob_trend.html', conf=settings._cache)
 
 @app.route('/analyzer/scan', methods=['POST'])
 def run_scan():
