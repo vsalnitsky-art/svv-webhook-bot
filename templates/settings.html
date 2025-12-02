@@ -137,4 +137,43 @@
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <label class="form-label
+                        <label class="form-label small text-muted fw-bold">Валюта</label>
+                        <select class="form-select" name="scanner_quote_coin">
+                            <option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin')=='USDT' }}>USDT</option>
+                            <option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin')=='USDC' }}>USDC</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted fw-bold">Режим Сканера</label>
+                        <select class="form-select" name="scanner_mode">
+                            <option value="Manual" {{ 'selected' if conf.get('scanner_mode')=='Manual' }}>Ручний</option>
+                            <option value="Auto" {{ 'selected' if conf.get('scanner_mode')=='Auto' }}>Авто</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-custom mb-4 border-0">
+            <div class="card-body py-3">
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" name="telegram_enabled" {{ 'checked' if conf.get('telegram_enabled') }}>
+                    <label class="form-check-label fw-bold small text-muted">Telegram Сповіщення</label>
+                </div>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <input type="text" class="form-control form-control-sm" name="telegram_bot_token" value="{{ conf.get('telegram_bot_token','') }}" placeholder="Token">
+                    </div>
+                    <div class="col-6">
+                        <input type="text" class="form-control form-control-sm" name="telegram_chat_id" value="{{ conf.get('telegram_chat_id','') }}" placeholder="Chat ID">
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mb-5 d-grid">
+            <button type="submit" class="btn btn-primary btn-lg shadow-sm fw-bold">Зберегти Налаштування</button>
+        </div>
+    </form>
+</div>
+{% endblock %}
