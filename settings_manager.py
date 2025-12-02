@@ -14,17 +14,17 @@ DEFAULT_SETTINGS = {
     "telegram_bot_token": "",
     "telegram_chat_id": "",
 
-    # === STRATEGY FILTERS (ENTRY) ===
+    # === STRATEGY FILTERS ===
     "obt_useCloudFilter": True,
     "obt_useObvFilter": True,
     "obt_useRsiFilter": True,
     "obt_useOBRetest": True,
 
     # === TIMEFRAMES ===
-    "htfSelection": "240", # 4H (Global Trend & Exit)
-    "ltfSelection": "45",  # 45m (Entry)
+    "htfSelection": "240", # 4H (Default HTF)
+    "ltfSelection": "45",  # 45m (Default LTF)
     
-    # === ENTRY INDICATORS ===
+    # === INDICATORS (DEFAULT FOR 4H) ===
     "obt_cloudFastLen": 10,
     "obt_cloudSlowLen": 40,
     "obt_rsiLength": 14,
@@ -33,11 +33,11 @@ DEFAULT_SETTINGS = {
     "obt_obvEntryLen": 20,
     "obt_swingLength": 5,
 
-    # === SMART EXIT STRATEGY (NEW) ===
-    "exit_enableStrategy": False, # Майстер-перемикач
-    "exit_rsiOverbought": 70,     # Поріг закриття Long
-    "exit_rsiOversold": 30,       # Поріг закриття Short
-    "exit_obvLength": 10,         # Довжина OBV для виходу (швидша реакція)
+    # === SMART EXIT ===
+    "exit_enableStrategy": False,
+    "exit_rsiOverbought": 70,
+    "exit_rsiOversold": 30,
+    "exit_obvLength": 10,
 
     # === RISK ===
     "riskPercent": 2.0,

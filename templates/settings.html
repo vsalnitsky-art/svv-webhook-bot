@@ -26,18 +26,21 @@
     <form method="POST">
         <div class="card-custom mb-4 border-0">
             <div class="card-header bg-white border-bottom border-light py-3">
-                <h6 class="fw-bold text-primary m-0">⏳ Глобальні Таймфрейми</h6>
+                <h6 class="fw-bold text-primary m-0">⏳ Глобальні Таймфрейми (Сканер)</h6>
             </div>
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label class="form-label small text-muted text-uppercase fw-bold">Глобальний Тренд (HTF)</label>
-                        <select class="form-select" name="htfSelection">
+                        <select class="form-select" name="htfSelection" id="htfSelector" onchange="updateIndicators()">
+                            <option value="15" {{ 'selected' if conf.get('htfSelection')|string=='15' }}>15 Хвилин (Scalp)</option>
+                            <option value="30" {{ 'selected' if conf.get('htfSelection')|string=='30' }}>30 Хвилин</option>
+                            <option value="45" {{ 'selected' if conf.get('htfSelection')|string=='45' }}>45 Хвилин</option>
                             <option value="60" {{ 'selected' if conf.get('htfSelection')|string=='60' }}>1 Година</option>
-                            <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4 Години (Реком.)</option>
+                            <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4 Години (Swing)</option>
                             <option value="D" {{ 'selected' if conf.get('htfSelection')|string=='D' }}>1 День</option>
                         </select>
-                        <div class="form-text small">Цей ТФ також використовується для <b>Стратегії Виходу</b>.</div>
+                        <div class="form-text small text-primary"><i class="ri-magic-line"></i> При зміні автоматично підставить рекомендовані параметри індикаторів.</div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small text-muted text-uppercase fw-bold">Таймфрейм Входу (LTF)</label>
@@ -45,9 +48,10 @@
                             <option value="5" {{ 'selected' if conf.get('ltfSelection')|string=='5' }}>5 Хвилин</option>
                             <option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15 Хвилин</option>
                             <option value="30" {{ 'selected' if conf.get('ltfSelection')|string=='30' }}>30 Хвилин</option>
-                            <option value="45" {{ 'selected' if conf.get('ltfSelection')|string=='45' }}>45 Хвилин (Custom)</option>
+                            <option value="45" {{ 'selected' if conf.get('ltfSelection')|string=='45' }}>45 Хвилин (Default)</option>
                             <option value="60" {{ 'selected' if conf.get('ltfSelection')|string=='60' }}>1 Година</option>
                         </select>
+                        <div class="form-text small">На цьому ТФ шукаються сигнали входу та Order Blocks.</div>
                     </div>
                 </div>
             </div>
@@ -84,25 +88,25 @@
 
         <div class="card-custom mb-4 border-0">
             <div class="card-header bg-white border-bottom border-light py-3">
-                <h6 class="fw-bold text-info m-0">📊 Параметри Входу (Стратегія)</h6>
+                <h6 class="fw-bold text-info m-0">📊 Параметри Входу (Адаптивні)</h6>
             </div>
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-4">
                         <label class="form-label small text-muted fw-bold">Cloud Fast / Slow</label>
                         <div class="input-group">
-                            <input type="number" class="form-control" name="obt_cloudFastLen" value="{{ conf.get('obt_cloudFastLen', 10) }}">
+                            <input type="number" class="form-control" id="cloudFast" name="obt_cloudFastLen" value="{{ conf.get('obt_cloudFastLen', 10) }}">
                             <span class="input-group-text">/</span>
-                            <input type="number" class="form-control" name="obt_cloudSlowLen" value="{{ conf.get('obt_cloudSlowLen', 40) }}">
+                            <input type="number" class="form-control" id="cloudSlow" name="obt_cloudSlowLen" value="{{ conf.get('obt_cloudSlowLen', 40) }}">
                         </div>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label small text-muted fw-bold">OBV Entry Length</label>
-                        <input type="number" class="form-control" name="obt_obvEntryLen" value="{{ conf.get('obt_obvEntryLen', 20) }}">
+                        <input type="number" class="form-control" id="obvLen" name="obt_obvEntryLen" value="{{ conf.get('obt_obvEntryLen', 20) }}">
                     </div>
                     <div class="col-md-4">
                         <label class="form-label small text-primary fw-bold">OB Swing Length</label>
-                        <input type="number" class="form-control" name="obt_swingLength" value="{{ conf.get('obt_swingLength', 5) }}">
+                        <input type="number" class="form-control" id="swingLen" name="obt_swingLength" value="{{ conf.get('obt_swingLength', 5) }}">
                     </div>
                     
                     <div class="col-12"><hr class="my-1 opacity-10"></div>
@@ -204,4 +208,42 @@
         </div>
     </form>
 </div>
+
+<script>
+    // Матриця параметрів для кожного таймфрейму
+    // Чим менший ТФ, тим більший період згладжування (шумоподавлення)
+    const paramsMatrix = {
+        '15':  { fast: 20, slow: 60, obv: 50, swing: 10 },
+        '30':  { fast: 15, slow: 50, obv: 40, swing: 8 },
+        '45':  { fast: 12, slow: 45, obv: 30, swing: 7 },
+        '60':  { fast: 10, slow: 40, obv: 20, swing: 5 },
+        '240': { fast: 10, slow: 40, obv: 20, swing: 5 },
+        'D':   { fast: 10, slow: 40, obv: 20, swing: 5 }
+    };
+
+    function updateIndicators() {
+        const tf = document.getElementById('htfSelector').value;
+        const config = paramsMatrix[tf];
+
+        if (config) {
+            // Анімація для візуального підтвердження зміни
+            flashField('cloudFast', config.fast);
+            flashField('cloudSlow', config.slow);
+            flashField('obvLen', config.obv);
+            flashField('swingLen', config.swing);
+        }
+    }
+
+    function flashField(id, newValue) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.style.transition = "background-color 0.2s";
+            el.style.backgroundColor = "#d1fae5"; // Light green flash
+            el.value = newValue;
+            setTimeout(() => {
+                el.style.backgroundColor = "white";
+            }, 300);
+        }
+    }
+</script>
 {% endblock %}
