@@ -46,9 +46,7 @@ def monitor_active():
                             'rsi': scanner.get_current_rsi(p['symbol']), 
                             'pressure': scanner.get_market_pressure(p['symbol'])
                         })
-        except Exception as e:
-            # logger.error(f"Monitor error: {e}") # Можна розкоментувати для дебагу
-            pass
+        except: pass
         time.sleep(10)
 
 def keep_alive():
@@ -62,8 +60,7 @@ def keep_alive():
     logger.info(f"💓 Keep-alive target: {target}")
     
     while True:
-        try:
-            requests.get(target, timeout=10)
+        try: requests.get(target, timeout=10)
         except: pass
         time.sleep(300)
 
@@ -74,43 +71,53 @@ threading.Thread(target=keep_alive, daemon=True).start()
 
 @app.route('/')
 def home():
-    # 1. Отримуємо параметр днів (за замовчуванням 7)
+    # 1. Обробка періоду (7 або 30 днів)
     try:
         days_param = int(request.args.get('days', 7))
         if days_param not in [7, 30]: days_param = 7
     except: days_param = 7
     
-    # 2. Синхронізуємо дані з біржі за цей період
-    # (В реальному продакшні це краще робити фоново, але тут для точності робимо при завантаженні)
+    # 2. Синхронізація (оновлення даних з біржі)
     try:
         bot_instance.sync_trades(days=days_param)
     except Exception as e:
         logger.error(f"Sync error on home load: {e}")
 
-    # 3. Отримуємо поточні дані
+    # 3. Базові дані
     balance = bot_instance.get_bal()
     active_count = len(scanner.get_active_symbols())
     
-    # 4. Рахуємо статистику за вибраний період
+    # 4. Статистика угод
     trades = stats_service.get_trades(days=days_param)
     
     period_pnl = 0.0
     wins = 0
+    longs = 0
+    shorts = 0
     total_trades = len(trades)
     
     for t in trades:
         period_pnl += t['pnl']
         if t['pnl'] > 0: wins += 1
+        
+        # Підрахунок типів для графіка
+        if t['side'] == 'Long': longs += 1
+        elif t['side'] == 'Short': shorts += 1
             
     win_rate = int((wins / total_trades) * 100) if total_trades > 0 else 0
     
+    # Дата замість часу (напр. 02.12.2025)
+    current_date = datetime.utcnow().strftime('%d.%m.%Y')
+    
     return render_template('index.html', 
-                           time=datetime.utcnow().strftime('%H:%M:%S UTC'),
+                           date=current_date,
                            balance=balance,
                            active_count=active_count,
                            period_pnl=period_pnl,
                            win_rate=win_rate,
-                           days=days_param, # Передаємо вибраний період в шаблон
+                           longs=longs,
+                           shorts=shorts,
+                           days=days_param, 
                            trades=trades[:7]) # Останні 7 угод для списку
 
 @app.route('/scanner', methods=['GET'])
@@ -122,13 +129,6 @@ def scanner_page():
             for p in r['result']['list']:
                 if float(p['size']) > 0:
                     symbol = p['symbol']
-                    c_time = p.get('createdTime')
-                    if not c_time or c_time == '0':
-                        c_time = p.get('updatedTime', time.time() * 1000)
-                    
-                    dt_obj = datetime.fromtimestamp(int(c_time) / 1000)
-                    formatted_time = dt_obj.strftime('%d.%m %H:%M')
-                    
                     active.append({
                         'symbol': symbol, 
                         'side': p['side'], 
@@ -137,7 +137,7 @@ def scanner_page():
                         'pressure': round(scanner.get_market_pressure(symbol)), 
                         'size': p['size'], 
                         'entry': p['avgPrice'],
-                        'time': formatted_time
+                        'time': datetime.now().strftime('%H:%M')
                     })
     except Exception as e:
         logger.error(f"Scanner page error: {e}")
@@ -154,8 +154,6 @@ def analyzer_page():
                            status=market_analyzer.status_message,
                            is_scanning=market_analyzer.is_scanning)
 
-# === SETTINGS ROUTES ===
-
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_general_page():
     if request.method == 'POST':
@@ -164,8 +162,6 @@ def settings_general_page():
         settings.save_settings(form_data)
         return redirect(url_for('settings_general_page'))
     return render_template('settings.html', conf=settings._cache)
-
-# === SCANNER ACTION ===
 
 @app.route('/analyzer/scan', methods=['POST'])
 def run_scan():
@@ -203,8 +199,6 @@ def get_scan_status():
         "is_scanning": market_analyzer.is_scanning
     })
 
-# === WEBHOOK & EXPORT ===
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -220,11 +214,7 @@ def webhook():
 def export_settings():
     data = settings.get_all()
     json_str = json.dumps(data, indent=4)
-    return Response(
-        json_str,
-        mimetype='application/json',
-        headers={'Content-Disposition': 'attachment;filename=bot_settings.json'}
-    )
+    return Response(json_str, mimetype='application/json', headers={'Content-Disposition': 'attachment;filename=bot_settings.json'})
 
 @app.route('/settings/import', methods=['POST'])
 def import_settings():
@@ -233,16 +223,12 @@ def import_settings():
     if file.filename == '': return "No selected file", 400
     try:
         data = json.load(file)
-        if settings.import_settings(data):
-            return redirect(url_for('settings_general_page'))
-        else:
-            return "Error importing settings", 500
-    except Exception as e:
-        return f"Invalid JSON: {e}", 400
+        if settings.import_settings(data): return redirect(url_for('settings_general_page'))
+        else: return "Error importing settings", 500
+    except Exception as e: return f"Invalid JSON: {e}", 400
 
 @app.route('/health')
-def health():
-    return jsonify({"status": "ok"})
+def health(): return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
     app.run(host=config.HOST, port=config.PORT)
