@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}AlgoBot Terminal{% endblock %}</title>
+    <title>{% block title %}AlgoBot Термінал{% endblock %}</title>
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     
@@ -148,12 +148,12 @@
         .card-custom {
             background: var(--bg-card);
             border: 1px solid var(--border-subtle);
-            border-radius: 6px; /* Менш округлі, більш суворі */
+            border-radius: 6px;
         }
         
         .font-mono { 
             font-family: 'JetBrains Mono', monospace; 
-            font-variant-numeric: tabular-nums; /* Рівні цифри в таблицях */
+            font-variant-numeric: tabular-nums;
         }
 
         /* Toggle Button */
@@ -180,7 +180,7 @@
         <i class="ri-terminal-box-fill text-accent logo-icon me-3 fs-4"></i>
         <div class="logo-text lh-1">
             <div class="fw-bold tracking-tight">ALGOBOT</div>
-            <div class="small text-muted" style="font-size: 10px; letter-spacing: 1px;">TERMINAL</div>
+            <div class="small text-muted" style="font-size: 10px; letter-spacing: 1px;">ТЕРМІНАЛ</div>
         </div>
     </div>
 
@@ -189,26 +189,26 @@
             <li>
                 <a href="/" class="nav-link {{ 'active' if request.path == '/' }}" title="Дашборд">
                     <i class="ri-dashboard-line nav-icon"></i>
-                    <span class="nav-label">Overview</span>
+                    <span class="nav-label">Огляд</span>
                 </a>
             </li>
             <li>
-                <a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}" title="Монітор">
+                <a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}" title="Монітор Угод">
                     <i class="ri-bar-chart-box-line nav-icon"></i>
-                    <span class="nav-label">Positions</span>
+                    <span class="nav-label">Позиції</span>
                 </a>
             </li>
             <li>
-                <a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}" title="Сканер">
+                <a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}" title="Сканер Ринку">
                     <i class="ri-radar-line nav-icon"></i>
-                    <span class="nav-label">Scanner</span>
+                    <span class="nav-label">Сканер</span>
                 </a>
             </li>
             <li class="my-3 border-top" style="border-color: var(--border-subtle) !important;"></li>
             <li>
                 <a href="/settings" class="nav-link {{ 'active' if '/settings' in request.path }}" title="Налаштування">
                     <i class="ri-equalizer-line nav-icon"></i>
-                    <span class="nav-label">Settings</span>
+                    <span class="nav-label">Налаштування</span>
                 </a>
             </li>
         </ul>
@@ -217,7 +217,7 @@
     <div class="p-3 border-top" style="border-color: var(--border-subtle) !important;">
         <button id="sidebarToggle" class="btn w-100 d-flex align-items-center justify-content-center p-2 text-muted hover-bg-element">
             <i class="ri-arrow-left-s-line fs-5" id="toggleIcon"></i>
-            <span class="nav-label ms-2 small">Collapse</span>
+            <span class="nav-label ms-2 small">Згорнути</span>
         </button>
     </div>
 </nav>
@@ -235,7 +235,7 @@
         const toggleIcon = document.getElementById('toggleIcon');
         const body = document.body;
         
-        // 1. Check local storage for saved state
+        // 1. Check local storage
         const isCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
         if (isCollapsed) {
             body.classList.add('sidebar-collapsed');
@@ -247,11 +247,9 @@
         toggleBtn.addEventListener('click', function() {
             body.classList.toggle('sidebar-collapsed');
             
-            // Save state
             const collapsed = body.classList.contains('sidebar-collapsed');
             localStorage.setItem('sidebar-collapsed', collapsed);
             
-            // Rotate icon
             if (collapsed) {
                 toggleIcon.classList.remove('ri-arrow-left-s-line');
                 toggleIcon.classList.add('ri-arrow-right-s-line');
@@ -261,7 +259,6 @@
             }
         });
 
-        // Initialize tooltips
         var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
         var tooltipList = tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) })
     });

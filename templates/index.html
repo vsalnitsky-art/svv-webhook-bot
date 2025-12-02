@@ -1,27 +1,27 @@
 {% extends "base.html" %}
 
-{% block title %}Overview | AlgoBot{% endblock %}
+{% block title %}Огляд | AlgoBot{% endblock %}
 
 {% block content %}
 <div class="container-fluid p-0">
     
     <div class="d-flex justify-content-between align-items-center mb-5">
         <div>
-            <h4 class="fw-bold text-white mb-1">Market Overview</h4>
+            <h4 class="fw-bold text-white mb-1">Огляд Ринку</h4>
             <div class="d-flex align-items-center text-muted small font-mono">
                 <span class="status-indicator me-2" style="width: 8px; height: 8px; background: #10b981; border-radius: 50%; display: inline-block;"></span>
-                <span>SYSTEM ONLINE</span>
+                <span>СИСТЕМА АКТИВНА</span>
                 <span class="mx-2">|</span>
                 <span>{{ time }} UTC</span>
             </div>
         </div>
         <div class="d-flex gap-3">
              <div class="d-flex flex-column align-items-end me-4">
-                 <span class="text-muted small" style="font-size: 10px; text-transform: uppercase;">Balance (Est.)</span>
+                 <span class="text-muted small" style="font-size: 10px; text-transform: uppercase;">Баланс (Прибл.)</span>
                  <span class="fw-bold font-mono text-white">1,240.50 USDT</span>
              </div>
              <a href="/analyzer" class="btn btn-primary d-flex align-items-center px-4" style="background-color: var(--accent); border: none;">
-                <i class="ri-search-2-line me-2"></i> Scan Market
+                <i class="ri-search-2-line me-2"></i> Новий Скан
             </a>
         </div>
     </div>
@@ -29,17 +29,17 @@
     <div class="row g-4 mb-5">
         <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Open Positions</div>
+                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Відкриті Позиції</div>
                 <div class="d-flex justify-content-between align-items-end">
                     <h2 class="m-0 fw-bold text-white font-mono">3</h2>
-                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-10 font-mono">Long-bias</span>
+                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-10 font-mono">Long</span>
                 </div>
             </div>
         </div>
         
         <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Today's P&L</div>
+                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Прибуток (Сьогодні)</div>
                 <div class="d-flex justify-content-between align-items-end">
                     <h2 class="m-0 fw-bold text-success font-mono">+42.50</h2>
                     <span class="text-muted small font-mono">USDT</span>
@@ -49,7 +49,7 @@
 
         <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Win Rate (24h)</div>
+                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Win Rate (24г)</div>
                 <div class="d-flex justify-content-between align-items-end">
                     <h2 class="m-0 fw-bold text-white font-mono">68%</h2>
                     <div class="progress w-50" style="height: 4px; background: #27272a;">
@@ -61,7 +61,7 @@
         
         <div class="col-md-3">
              <div class="card-custom p-4 h-100">
-                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">API Latency</div>
+                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Пінг API</div>
                 <div class="d-flex justify-content-between align-items-end">
                     <h2 class="m-0 fw-bold text-white font-mono">45<span class="fs-6 text-muted">ms</span></h2>
                     <i class="ri-wifi-line text-success"></i>
@@ -74,11 +74,11 @@
         <div class="col-lg-8">
             <div class="card-custom p-4 h-100">
                 <div class="d-flex justify-content-between align-items-center mb-4">
-                    <h6 class="fw-bold text-white m-0">Signal Activity</h6>
+                    <h6 class="fw-bold text-white m-0">Активність Сигналів</h6>
                     <div class="btn-group btn-group-sm">
-                        <button class="btn btn-outline-secondary text-white border-subtle active">24H</button>
-                        <button class="btn btn-outline-secondary text-muted border-subtle">7D</button>
-                        <button class="btn btn-outline-secondary text-muted border-subtle">30D</button>
+                        <button class="btn btn-outline-secondary text-white border-subtle active">24Г</button>
+                        <button class="btn btn-outline-secondary text-muted border-subtle">7Д</button>
+                        <button class="btn btn-outline-secondary text-muted border-subtle">30Д</button>
                     </div>
                 </div>
                 <div style="height: 320px; width: 100%;">
@@ -90,35 +90,35 @@
         <div class="col-lg-4">
             <div class="card-custom p-0 h-100 overflow-hidden d-flex flex-column">
                 <div class="p-4 border-bottom" style="border-color: var(--border-subtle) !important;">
-                    <h6 class="fw-bold text-white m-0">System Logs</h6>
+                    <h6 class="fw-bold text-white m-0">Системний Лог</h6>
                 </div>
                 <div class="flex-grow-1 p-0 overflow-auto" style="max-height: 320px;">
                     <div class="list-group list-group-flush">
                         <div class="list-group-item bg-transparent border-bottom border-secondary border-opacity-10 py-3 px-4">
                             <div class="d-flex justify-content-between">
-                                <span class="text-white small fw-bold">Scan Completed</span>
+                                <span class="text-white small fw-bold">Сканування Завершено</span>
                                 <span class="text-muted font-mono" style="font-size: 10px;">10:42:05</span>
                             </div>
-                            <small class="text-muted" style="font-size: 11px;">Found 3 potential setups (BTC, ETH, SOL)</small>
+                            <small class="text-muted" style="font-size: 11px;">Знайдено 3 потенційні угоди (BTC, ETH, SOL)</small>
                         </div>
                         <div class="list-group-item bg-transparent border-bottom border-secondary border-opacity-10 py-3 px-4">
                             <div class="d-flex justify-content-between">
-                                <span class="text-success small fw-bold">Order Filled</span>
+                                <span class="text-success small fw-bold">Ордер Виконано</span>
                                 <span class="text-muted font-mono" style="font-size: 10px;">09:15:22</span>
                             </div>
                             <small class="text-muted" style="font-size: 11px;">Long BTCUSDT @ 96,500</small>
                         </div>
                          <div class="list-group-item bg-transparent border-0 py-3 px-4">
                             <div class="d-flex justify-content-between">
-                                <span class="text-primary small fw-bold">Bot Started</span>
+                                <span class="text-primary small fw-bold">Бот Запущено</span>
                                 <span class="text-muted font-mono" style="font-size: 10px;">08:00:00</span>
                             </div>
-                            <small class="text-muted" style="font-size: 11px;">System initialized successfully.</small>
+                            <small class="text-muted" style="font-size: 11px;">Ініціалізація системи успішна.</small>
                         </div>
                     </div>
                 </div>
                 <div class="p-3 bg-element mt-auto border-top" style="border-color: var(--border-subtle) !important; background: var(--bg-element);">
-                    <a href="/scanner" class="btn btn-sm btn-outline-secondary w-100 text-white border-subtle">View All Logs</a>
+                    <a href="/scanner" class="btn btn-sm btn-outline-secondary w-100 text-white border-subtle">Всі події</a>
                 </div>
             </div>
         </div>
@@ -145,7 +145,7 @@
         data: {
             labels: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00'],
             datasets: [{
-                label: 'Signal Intensity',
+                label: 'Інтенсивність',
                 data: [12, 19, 15, 25, 22, 30, 28, 35],
                 borderColor: '#6366f1',
                 backgroundColor: gradient,
