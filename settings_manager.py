@@ -18,21 +18,21 @@ DEFAULT_SETTINGS = {
     "obt_useCloudFilter": True,
     "obt_useObvFilter": True,
     "obt_useRsiFilter": True,
-    "obt_useBtcDominance": False, # Вимкнено за замовчуванням
     "obt_useOBRetest": True,
+    # BTC.D REMOVED
 
     # === TIMEFRAMES ===
     "htfSelection": "240", # 4H
-    "ltfSelection": "45",  # 45m (Будемо емулювати з 15m)
+    "ltfSelection": "45",  # 45m
     
     # === INDICATORS ===
     "obt_cloudFastLen": 10,
     "obt_cloudSlowLen": 40,
     "obt_rsiLength": 14,
-    "obt_entryRsiOversold": 45, # Оптимізовано для 45m
+    "obt_entryRsiOversold": 45,
     "obt_entryRsiOverbought": 55,
     "obt_obvEntryLen": 20,
-    "obt_swingLength": 5,       # Swing 5 для 45m
+    "obt_swingLength": 5,
 
     # === RISK & MONEY MANAGEMENT ===
     "riskPercent": 2.0,
@@ -45,7 +45,7 @@ DEFAULT_SETTINGS = {
     # SL
     "sl_mode": "OB_Extremity",
     "fixedSL": 1.5,
-    "obBufferPercent": 0.2,    # 0.2% для 45m таймфрейму
+    "obBufferPercent": 0.2,
 }
 
 class SettingsManager:
