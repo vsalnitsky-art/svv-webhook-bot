@@ -7,8 +7,8 @@ from bot import bot_instance
 from settings_manager import settings
 from models import db_manager, AnalysisResult
 
-# !!! ВИКОРИСТОВУЄМО НОВУ СТРАТЕГІЮ !!!
-from strategy_ob_trend import ob_trend_strategy as strategy_engine
+# !!! IMPORT FIXED: Using the unified strategy file !!!
+from strategy import strategy_engine 
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,6 @@ class MarketAnalyzer:
         self.is_scanning = False
         self.progress = 0
         self.status_message = "Ready"
-        self._stop_event = threading.Event()
 
     def get_top_tickers(self, limit=100):
         try:
@@ -30,9 +29,9 @@ class MarketAnalyzer:
             logger.error(f"Error fetching tickers: {e}")
             return []
 
-    def fetch_candles(self, symbol, timeframe, limit=200):
+    def fetch_candles(self, symbol, timeframe, limit=300):
         try:
-            tf_map = {'15': '15', '60': '60', '240': '240', 'D': 'D'}
+            tf_map = {'5':'5', '15':'15', '60':'60', '240':'240', 'D':'D'}
             bybit_tf = tf_map.get(str(timeframe), '240')
             resp = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=bybit_tf, limit=limit)
             if resp['retCode'] == 0 and resp['result']['list']:
@@ -43,8 +42,7 @@ class MarketAnalyzer:
                     df[col] = df[col].astype(float)
                 return df.sort_values('time').reset_index(drop=True)
             return None
-        except Exception as e:
-            return None
+        except: return None
 
     def run_scan_thread(self):
         if self.is_scanning: return
@@ -73,38 +71,35 @@ class MarketAnalyzer:
                     if df_htf is None: 
                         time.sleep(0.1); continue
                     
-                    # Попередня перевірка (оптимізація)
-                    # (Тут можна додати перевірку тренду з нової стратегії, якщо є метод)
-                    
-                    time.sleep(0.2) 
+                    # Легка пауза, щоб не бити ліміти API
+                    time.sleep(0.1) 
                     df_ltf = self.fetch_candles(symbol, ltf)
                     if df_ltf is None: continue
                     
-                    # АНАЛІЗ ЧЕРЕЗ НОВУ СТРАТЕГІЮ
-                    signals = strategy_engine.analyze(df_ltf, df_htf)
+                    # === АНАЛІЗ ЧЕРЕЗ ЄДИНУ СТРАТЕГІЮ ===
+                    signal_data = strategy_engine.get_signal(df_ltf, df_htf)
                     
-                    # strategy_ob_trend повертає список сигналів
-                    for sig in signals:
-                        # Розрахунок Score
-                        score = 70 # База
+                    if signal_data['action']:
+                        # Формування результату
+                        score = 80 # Базовий скор при наявності сигналу
                         
                         res = AnalysisResult(
                             symbol=symbol, 
-                            signal_type=sig.get('type'), 
+                            signal_type=signal_data['action'], 
                             status="Signal", 
                             score=score, 
-                            price=sig.get('price'), 
-                            htf_rsi=0, # Можна дістати з даних, якщо треба
-                            ltf_rsi=sig.get('rsi', 0), 
-                            details=sig.get('details', 'OB Trend Signal')
+                            price=signal_data.get('price', 0), 
+                            htf_rsi=0, 
+                            ltf_rsi=0, 
+                            details=f"{signal_data['reason']} | SL: {round(signal_data.get('sl_price', 0), 2)}"
                         )
                         session.add(res); session.commit()
-                        logger.info(f"🚀 FOUND: {symbol} {sig.get('type')}")
+                        logger.info(f"🚀 FOUND: {symbol} {signal_data['action']}")
                 
                 except Exception as e:
                     logger.error(f"Error scanning {symbol}: {e}")
                 
-                time.sleep(0.5) 
+                time.sleep(0.2) 
 
             self.progress = 100
             self.status_message = "Scan Completed"

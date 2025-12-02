@@ -14,15 +14,13 @@
         <div class="card-body">
             <div class="row align-items-center">
                 <div class="col-md-6 mb-3 mb-md-0 border-end">
-                    <h6 class="fw-bold text-muted mb-2">Експорт налаштувань</h6>
-                    <p class="small text-muted mb-3">Завантажити поточні налаштування у JSON файл.</p>
+                    <h6 class="fw-bold text-muted mb-2">Експорт</h6>
                     <a href="/settings/export" class="btn btn-outline-primary btn-sm w-100">
                         <i class="bi bi-download me-2"></i>Завантажити файл
                     </a>
                 </div>
                 <div class="col-md-6 ps-md-4">
-                    <h6 class="fw-bold text-muted mb-2">Імпорт налаштувань</h6>
-                    <p class="small text-muted mb-2">Відновити налаштування з файлу.</p>
+                    <h6 class="fw-bold text-muted mb-2">Імпорт</h6>
                     <form action="/settings/import" method="POST" enctype="multipart/form-data" class="d-flex gap-2">
                         <input class="form-control form-control-sm" type="file" name="file" accept=".json" required>
                         <button type="submit" class="btn btn-primary btn-sm">
@@ -40,20 +38,14 @@
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <label class="form-label d-flex align-items-center">
-                            Валюта Торгівлі
-                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Базова валюта (Quote Coin)."></i>
-                        </label>
+                        <label class="form-label">Валюта Торгівлі</label>
                         <select class="form-select" name="scanner_quote_coin">
                             <option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin')=='USDT' }}>USDT</option>
                             <option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin')=='USDC' }}>USDC</option>
                         </select>
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label d-flex align-items-center">
-                            Режим Сканера
-                            <i class="bi bi-info-circle help-icon" data-bs-toggle="tooltip" title="Manual або Auto."></i>
-                        </label>
+                        <label class="form-label">Режим Сканера</label>
                         <select class="form-select" name="scanner_mode">
                             <option value="Manual" {{ 'selected' if conf.get('scanner_mode')=='Manual' }}>Manual (Кнопка)</option>
                             <option value="Auto" {{ 'selected' if conf.get('scanner_mode')=='Auto' }}>Auto (15 хв)</option>
@@ -75,13 +67,28 @@
                         </div>
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label">Кредитне Плече (x)</label>
+                        <label class="form-label">Плече (x)</label>
                         <div class="input-group">
                             <span class="input-group-text">x</span>
                             <input type="number" class="form-control" name="leverage" value="{{ conf.get('leverage') }}">
                         </div>
                     </div>
                     
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold text-danger">Stop Loss Strategy</label>
+                        <select class="form-select" name="sl_mode">
+                            <option value="Fixed" {{ 'selected' if conf.get('sl_mode')=='Fixed' }}>Fixed % (Фіксований)</option>
+                            <option value="OB_Extremity" {{ 'selected' if conf.get('sl_mode')=='OB_Extremity' }}>OB Extremity (Авто від блоку)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">OB Buffer (%)</label>
+                        <div class="input-group">
+                            <input type="number" step="0.01" class="form-control" name="obBufferPercent" value="{{ conf.get('obBufferPercent') }}">
+                            <span class="input-group-text">%</span>
+                        </div>
+                        <div class="form-text text-muted" style="font-size: 0.7rem">Відступ SL від краю Order Block</div>
+                    </div>
                     <div class="col-md-12">
                         <label class="form-label fw-bold">Стратегія Take Profit</label>
                         <select class="form-select" name="tp_mode">
@@ -103,11 +110,11 @@
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Bot Token</label>
-                    <input type="text" class="form-control" name="telegram_bot_token" value="{{ conf.get('telegram_bot_token','') }}" placeholder="123456:ABC...">
+                    <input type="text" class="form-control" name="telegram_bot_token" value="{{ conf.get('telegram_bot_token','') }}">
                 </div>
                 <div class="mb-3">
                     <label class="form-label">Chat ID</label>
-                    <input type="text" class="form-control" name="telegram_chat_id" value="{{ conf.get('telegram_chat_id','') }}" placeholder="-100...">
+                    <input type="text" class="form-control" name="telegram_chat_id" value="{{ conf.get('telegram_chat_id','') }}">
                 </div>
             </div>
         </div>

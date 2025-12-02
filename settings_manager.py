@@ -4,7 +4,7 @@ from models import db_manager, BotSetting
 logger = logging.getLogger(__name__)
 
 DEFAULT_SETTINGS = {
-    # === GENERAL SETTINGS ===
+    # === GENERAL ===
     "scanner_quote_coin": "USDT",
     "scanner_mode": "Manual",
     "scan_limit": 100,
@@ -14,41 +14,38 @@ DEFAULT_SETTINGS = {
     "telegram_bot_token": "",
     "telegram_chat_id": "",
 
-    # === АВТОНОМНА СТРАТЕГІЯ (OB + TREND) ===
-    # Фільтри
-    "obt_useCloudFilter": True,
-    "obt_useObvFilter": True,
-    "obt_useRsiFilter": True,
-    "obt_useBtcDominance": True,
-    "obt_useOBRetest": False,
-    
-    # Таймфрейми
-    "htfSelection": "240", # Залишили старі ключі для сумісності UI сканера
+    # === STRATEGY FILTERS ===
+    "useCloudFilter": True,
+    "useObvFilter": True,
+    "useRsiFilter": True,
+    "useMfiFilter": False,
+    "useOBRetest": True, # Рекомендую True для коректної роботи SL від OB
+
+    # === TIMEFRAMES ===
+    "htfSelection": "240",
     "ltfSelection": "15",
     
-    # Технічні
-    "obt_cloudFastLen": 10,
-    "obt_cloudSlowLen": 40,
-    "obt_rsiLength": 14,
-    "obt_entryRsiOversold": 40,
-    "obt_entryRsiOverbought": 60,
-    "obt_obvEntryLen": 20,
-    "obt_obvEntryType": "SMA",
-    "obt_swingLength": 5,
-    "obt_maxATRMult": 3.0,
-    "obt_obBufferPercent": 0.1,
+    # === INDICATORS ===
+    "cloudFastLen": 10,
+    "cloudSlowLen": 40,
+    "entryRsiOversold": 45,
+    "entryRsiOverbought": 55,
+    "rsiLength": 14,
+    "obvEntryLen": 20,
+    "swingLength": 5,
 
-    # Ризик (Автономний)
-    "obt_riskPercent": 2.0,
-    "obt_leverage": 20,
-    "obt_fixedTP": 3.0,
-    "obt_fixedSL": 1.5,
-    "obt_tp_mode": "Fixed",    # None, Fixed, Ladder
-    "obt_sl_mode": "OB_Level", # Fixed, OB_Level
+    # === RISK & MONEY MANAGEMENT ===
+    "riskPercent": 2.0,
+    "leverage": 20,
     
-    # Старі ключі (щоб не ламався bot.py, якщо він їх читає)
-    "riskPercent": 2.0, "leverage": 20, "fixedTP": 3.0, "fixedSL": 1.5,
-    "atrMultiplierSL": 1.5, "atrMultiplierTP": 3.0, "tp_mode": "None"
+    # TP
+    "tp_mode": "Fixed_1_50", # Варіанти: 'None', 'Fixed_1_50', 'Ladder_3'
+    "fixedTP": 3.0,
+    
+    # SL (NEW LOGIC)
+    "sl_mode": "OB_Extremity", # Варіанти: 'Fixed', 'OB_Extremity'
+    "fixedSL": 1.5,            # Використовується, якщо sl_mode='Fixed' або OB не знайдено
+    "obBufferPercent": 0.1,    # Буфер від краю OB (0.1%)
 }
 
 class SettingsManager:
@@ -84,7 +81,7 @@ class SettingsManager:
                 merged.update(loaded)
                 self._cache = merged
         except Exception as e:
-            logger.error(f"Error loading settings: {e}")
+            logger.error(f"Settings load error: {e}")
             self._cache = DEFAULT_SETTINGS.copy()
         finally: session.close()
 
@@ -95,7 +92,7 @@ class SettingsManager:
                 if k in DEFAULT_SETTINGS:
                     val_to_store = v
                     if isinstance(DEFAULT_SETTINGS[k], bool):
-                        val_to_store = "true" if v == 'on' or v is True else "false"
+                        val_to_store = "true" if (v == 'on' or v is True) else "false"
                         self._cache[k] = (val_to_store == "true")
                     else:
                         val_to_store = str(v)
@@ -107,7 +104,7 @@ class SettingsManager:
             session.commit()
         except Exception as e:
             session.rollback()
-            logger.error(f"Save error: {e}")
+            logger.error(f"Settings save error: {e}")
         finally: session.close()
 
     def get_all(self): return self._cache.copy()
