@@ -52,25 +52,25 @@
 
         <div class="col-md-3">
             <div class="card-custom p-3 h-100 d-flex flex-column justify-content-center">
-                <div class="d-flex align-items-center justify-content-between gap-3">
+                <div class="d-flex align-items-center justify-content-between">
                     
                     <div class="flex-grow-1">
                         <div class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 11px;">Всього угод</div>
                         <h2 class="m-0 fw-bold text-dark font-mono mb-2">{{ longs + shorts }}</h2>
                         
-                        <div class="d-flex flex-column gap-1">
-                            <div class="d-flex align-items-center font-mono small">
-                                <span class="badge bg-success-subtle text-success me-2" style="width: 20px;">L</span>
-                                <span class="fw-bold text-dark">{{ longs }}</span>
+                        <div class="d-flex align-items-center gap-3 font-mono small">
+                            <div class="d-flex align-items-center text-success">
+                                <span class="badge bg-success-subtle text-success me-1 rounded-pill" style="font-size: 10px;">●</span>
+                                <span class="fw-bold">Longs: {{ longs }}</span>
                             </div>
-                            <div class="d-flex align-items-center font-mono small">
-                                <span class="badge bg-danger-subtle text-danger me-2" style="width: 20px;">S</span>
-                                <span class="fw-bold text-dark">{{ shorts }}</span>
+                            <div class="d-flex align-items-center text-danger">
+                                <span class="badge bg-danger-subtle text-danger me-1 rounded-pill" style="font-size: 10px;">●</span>
+                                <span class="fw-bold">Shorts: {{ shorts }}</span>
                             </div>
                         </div>
                     </div>
                     
-                    <div style="width: 80px; height: 80px; position: relative;">
+                    <div style="width: 70px; height: 70px; position: relative;">
                         <canvas id="lsChart"></canvas>
                     </div>
                 </div>
@@ -179,8 +179,6 @@
     const ctxLs = document.getElementById('lsChart').getContext('2d');
     const longs = {{ longs }};
     const shorts = {{ shorts }};
-    
-    // Якщо даних немає, показуємо сіре коло
     const total = longs + shorts;
     const dataValues = (total === 0) ? [1] : [longs, shorts];
     const bgColors = (total === 0) ? ['#e2e8f0'] : ['#10b981', '#ef4444']; 
@@ -188,7 +186,7 @@
     new Chart(ctxLs, {
         type: 'doughnut',
         data: {
-            labels: ['Long', 'Short'],
+            labels: ['Longs', 'Shorts'],
             datasets: [{
                 data: dataValues,
                 backgroundColor: bgColors,
