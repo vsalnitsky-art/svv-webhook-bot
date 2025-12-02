@@ -5,7 +5,6 @@
 {% block head %}
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <style>
-    /* Стиль кнопок-перемикачів (відновлено) */
     .btn-toggle-custom {
         border: 1px solid #e5e7eb;
         background-color: #f9fafb;
@@ -35,7 +34,6 @@
         content: " ON"; font-size: 0.8em; margin-left: 5px; opacity: 0.8;
     }
     
-    .score-high { color: #20b26c; font-weight: bold; }
     .badge-buy { background: #d1fae5; color: #065f46; }
     .badge-sell { background: #fee2e2; color: #991b1b; }
 </style>
@@ -83,7 +81,7 @@
                         <label class="form-label fw-bold small text-muted text-uppercase">Режим Входу</label>
                         <div class="form-check form-switch p-2 bg-white border rounded d-flex align-items-center justify-content-between px-3 shadow-sm" style="min-height: 38px;">
                             <label class="form-check-label fw-bold text-primary m-0" for="obRetestSwitch">OB Retest</label>
-                            <input class="form-check-input m-0" type="checkbox" id="obRetestSwitch" name="obt_useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
+                            <input class="form-check-input m-0" type="checkbox" id="obRetestSwitch" name="useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
                         </div>
                     </div>
                 </div>
@@ -96,17 +94,17 @@
                         <div class="row g-3">
                             
                             <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="switchCloud" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
+                                <input type="checkbox" class="btn-check" id="switchCloud" name="useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
                                 <label class="btn-toggle-custom shadow-sm" for="switchCloud">Cloud HMA</label>
                             </div>
 
                             <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="switchObv" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
+                                <input type="checkbox" class="btn-check" id="switchObv" name="useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
                                 <label class="btn-toggle-custom shadow-sm" for="switchObv">OBV Trend</label>
                             </div>
 
                             <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="switchRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
+                                <input type="checkbox" class="btn-check" id="switchRsi" name="useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
                                 <label class="btn-toggle-custom shadow-sm" for="switchRsi">RSI Logic</label>
                             </div>
                             
@@ -148,8 +146,6 @@
                         <th class="py-3">Ціна</th>
                         <th class="py-3">Сигнал</th>
                         <th class="py-3">Score</th>
-                        <th class="py-3">RSI (HTF)</th>
-                        <th class="py-3">RSI (LTF)</th>
                         <th class="py-3">Час</th>
                         <th class="py-3">Деталі</th>
                     </tr>
@@ -168,8 +164,6 @@
                                 </div>
                             </div>
                         </td>
-                        <td>{{ r.rsi_htf }}</td>
-                        <td>{{ r.rsi_ltf }}</td>
                         <td class="text-muted small">{{ r.time }}</td>
                         <td class="small text-muted" title="{{ r.details }}" style="max-width: 250px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                             {{ r.details }}
@@ -177,7 +171,7 @@
                     </tr>
                 {% else %}
                     <tr>
-                        <td colspan="8" class="text-center py-5">
+                        <td colspan="6" class="text-center py-5">
                             <div class="text-muted mb-2" style="font-size: 2.5rem;">🔍</div>
                             <h5 class="text-muted">Сигналів поки не знайдено</h5>
                             <p class="text-muted small">Налаштуйте параметри вище та натисніть "Сканувати"</p>
@@ -198,7 +192,7 @@ function startScan() {
     var formData = {};
     $('#scan-form').serializeArray().forEach(function(item) { formData[item.name] = item.value; });
     
-    // Обробка чекбоксів
+    // Explicitly handle checkboxes
     $('#scan-form input[type=checkbox]').each(function() { 
         formData[this.name] = this.checked ? 'on' : 'off'; 
     });
