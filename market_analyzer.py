@@ -5,9 +5,9 @@ import logging
 from datetime import datetime
 from bot import bot_instance
 from settings_manager import settings
-from models import db_manager, AnalysisResult, OrderBlock
+from models import db_manager, AnalysisResult
 
-# Smart Money Strategy
+# ВАЖЛИВО: Імпортуємо стратегію ТІЛЬКИ тут, щоб уникнути циклів
 from strategy_ob_trend import ob_trend_strategy as strategy_engine
 
 logger = logging.getLogger(__name__)
@@ -26,11 +26,12 @@ class MarketAnalyzer:
             sorted_tickers = sorted(filtered, key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
             return sorted_tickers[:limit]
         except Exception as e:
-            logger.error(f"Ticker fetch error: {e}")
+            logger.error(f"Error fetching tickers: {e}")
             return []
 
     def fetch_candles(self, symbol, timeframe, limit=300):
         try:
+            # Логіка для 45 хвилин
             if str(timeframe) == "45":
                 req_tf = "15"
                 req_limit = limit * 3 
@@ -62,11 +63,9 @@ class MarketAnalyzer:
     def _scan_process(self):
         self.is_scanning = True
         self.progress = 0
-        self.status_message = "Scan Started..."
+        self.status_message = "Starting..."
         session = db_manager.get_session()
-        
         try:
-            # Очищаємо лог аналізу (але НЕ чіпаємо таблицю order_blocks, бо там історія!)
             session.query(AnalysisResult).delete()
             session.commit()
             
@@ -76,75 +75,41 @@ class MarketAnalyzer:
             
             htf = settings.get("htfSelection")
             ltf = settings.get("ltfSelection")
-            
-            # Режим Auto тепер означає "Додавати в Трекер"
-            is_auto_mode = settings.get("scanner_mode") == "Auto"
 
             for i, ticker in enumerate(tickers):
                 symbol = ticker['symbol']
-                self.status_message = f"Analysing {symbol} ({i+1}/{total})"
+                self.status_message = f"Scanning {symbol} ({i+1}/{total})"
                 self.progress = int((i / total) * 100)
-                
                 try:
                     df_htf = self.fetch_candles(symbol, htf)
-                    if df_htf is None: 
-                        time.sleep(0.1); continue
+                    if df_htf is None: time.sleep(0.1); continue
                     
                     time.sleep(0.1)
                     
                     df_ltf = self.fetch_candles(symbol, ltf)
                     if df_ltf is None: continue
                     
-                    # === АНАЛІЗ ===
+                    # Виклик стратегії
                     signal_data = strategy_engine.analyze(df_ltf, df_htf)
                     
                     if signal_data['action']:
-                        sl_price = signal_data.get('sl_price', 0)
+                        score = 85
+                        sl_info = f" | SL: {round(signal_data.get('sl_price', 0), 4)}" if signal_data.get('sl_price') else ""
                         
-                        # 1. Запис в лог сканера (для UI)
                         res = AnalysisResult(
                             symbol=symbol, 
                             signal_type=signal_data['action'], 
-                            status="Smart Money Found", 
-                            score=85, 
+                            status="Signal", 
+                            score=score, 
                             price=signal_data.get('price', 0), 
-                            htf_rsi=0, ltf_rsi=0, 
-                            details=f"Pending: {signal_data['reason']}"
+                            htf_rsi=0, 
+                            ltf_rsi=0, 
+                            details=f"{signal_data['reason']}{sl_info}"
                         )
                         session.add(res)
-                        
-                        # 2. Якщо режим AUTO -> Додаємо в базу для Трекера
-                        if is_auto_mode:
-                            # Перевірка, чи вже є такий активний блок, щоб не дублювати
-                            existing = session.query(OrderBlock).filter_by(
-                                symbol=symbol, 
-                                status='PENDING',
-                                ob_type=signal_data['action']
-                            ).first()
-                            
-                            if not existing:
-                                # Отримуємо межі блоку (приблизно)
-                                # У реальній стратегії ми могли б повертати точні top/bottom
-                                # Тут беремо SL як орієнтир: 
-                                # Для Buy: SL < Entry. Top ~ Entry. Bottom = SL / (1-buff)
-                                # Спрощено зберігаємо поточні дані як орієнтир
-                                
-                                new_ob = OrderBlock(
-                                    symbol=symbol,
-                                    timeframe=ltf,
-                                    ob_type=signal_data['action'],
-                                    entry_price=signal_data.get('price'), # Ціна на момент сигналу
-                                    sl_price=sl_price,
-                                    status='PENDING',
-                                    # Умовно: зона десь поруч з ціною
-                                    top=signal_data.get('price') * 1.01,
-                                    bottom=signal_data.get('price') * 0.99
-                                )
-                                session.add(new_ob)
-                                logger.info(f"🧱 NEW OB SAVED: {symbol} {signal_data['action']}")
-
                         session.commit()
-                            
+                        logger.info(f"🚀 FOUND: {symbol} {signal_data['action']}")
+                
                 except Exception as e:
                     logger.error(f"Scan error {symbol}: {e}")
                 
@@ -155,7 +120,7 @@ class MarketAnalyzer:
             
         except Exception as e:
             self.status_message = f"Error: {str(e)}"
-            logger.error(f"Scan fatal error: {e}")
+            logger.error(f"Scan failed: {e}")
         finally:
             self.is_scanning = False
             session.close()
@@ -172,4 +137,5 @@ class MarketAnalyzer:
         finally:
             session.close()
 
+# Створюємо екземпляр тут, щоб main_app міг його імпортувати
 market_analyzer = MarketAnalyzer()
