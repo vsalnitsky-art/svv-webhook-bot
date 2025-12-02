@@ -1,183 +1,215 @@
-import pandas as pd
 import pandas_ta as ta
+import pandas as pd
 import numpy as np
-import logging
 from settings_manager import settings
 
-logger = logging.getLogger(__name__)
-
-class OBCloudStrategyEngine:
+class OBTrendStrategy:
     def __init__(self):
         pass
 
-    def get_param(self, key):
-        return settings.get(key)
-
-    def resample_candles(self, df_15m, target_tf_minutes=45):
-        if df_15m is None or df_15m.empty: return None
-        df = df_15m.copy()
-        if 'time' in df.columns: df.set_index('time', inplace=True)
-        
-        conversion = {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}
-        rule = f"{target_tf_minutes}T"
-        
-        try:
-            df_resampled = df.resample(rule).agg(conversion).dropna()
-            df_resampled.reset_index(inplace=True)
-            return df_resampled
-        except: return df
+    def _get_param(self, key, default=None):
+        val = settings.get(key)
+        return val if val is not None else default
 
     def calculate_indicators(self, df):
+        """Розрахунок HMA Cloud, RSI, OBV для переданого DataFrame"""
         if df is None or len(df) < 50: return df
+        
         try:
-            prefix = "obt_" 
-            fast_len = self.get_param(f'{prefix}cloudFastLen')
-            slow_len = self.get_param(f'{prefix}cloudSlowLen')
+            # 1. Cloud (HMA)
+            fast_len = int(self._get_param('obt_cloudFastLen', 10))
+            slow_len = int(self._get_param('obt_cloudSlowLen', 40))
+            
             df['hma_fast'] = ta.hma(df['close'], length=fast_len)
             df['hma_slow'] = ta.hma(df['close'], length=slow_len)
             
-            rsi_len = self.get_param(f'{prefix}rsiLength')
+            # 2. RSI
+            rsi_len = int(self._get_param('obt_rsiLength', 14))
             df['rsi'] = ta.rsi(df['close'], length=rsi_len)
             
-            obv_len = self.get_param(f'{prefix}obvEntryLen')
+            # 3. OBV + Trend
             df['obv'] = ta.obv(df['close'], df['volume'])
-            if 'obv' in df: df['obv_ma'] = ta.sma(df['obv'], length=obv_len)
+            obv_len = int(self._get_param('obt_obvEntryLen', 20))
             
-            df['vol_ma'] = ta.sma(df['volume'], length=20)
-            df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
-        except: pass
+            # Перевірка, чи розрахувався OBV (інколи буває NaN на початку)
+            if 'obv' in df:
+                df['obv_ma'] = ta.sma(df['obv'], length=obv_len)
+
+        except Exception as e:
+            # Логування помилки можна додати, якщо потрібно
+            print(f"Indicator calc error: {e}")
+            pass
+            
         return df
 
-    def find_smart_money_blocks(self, df):
-        if df is None or len(df) < 50: return [], []
+    def find_order_blocks(self, df):
+        """
+        Знаходить прості фрактальні Order Blocks (Swing High/Low).
+        Повертає словник зі списками зон buy та sell.
+        """
+        obs = {'buy': [], 'sell': []}
+        if df is None or len(df) < 100: return obs
         
-        swing_len = self.get_param('obt_swingLength')
-        vol_threshold = self.get_param('obt_volumeSpikeThreshold')
+        swing = int(self._get_param('obt_swingLength', 5))
         
-        bull_obs, bear_obs = [], []
+        # Проходимо по історії (оптимізовано: останні 300 свічок)
+        subset = df.tail(300).reset_index(drop=True)
         
-        highs = df['high'].values
-        lows = df['low'].values
-        closes = df['close'].values
-        volumes = df['volume'].values
-        vol_mas = df['vol_ma'].values 
-        
-        for i in range(swing_len, len(df) - swing_len):
-            is_swing_low = True
-            for j in range(1, swing_len + 1):
-                if lows[i] >= lows[i-j] or lows[i] >= lows[i+j]: is_swing_low = False; break
+        for i in range(swing, len(subset) - swing):
+            current_low = subset['low'].iloc[i]
+            current_high = subset['high'].iloc[i]
             
+            # --- BULLISH OB (Swing Low) ---
+            # Мінімум посередині нижчий за сусідні зліва і справа
+            is_swing_low = True
+            for j in range(1, swing + 1):
+                if subset['low'].iloc[i-j] <= current_low or subset['low'].iloc[i+j] <= current_low:
+                    is_swing_low = False
+                    break
+            
+            if is_swing_low:
+                # Перевірка на злам структури (BOS) або імпульс вгору після свічки
+                if subset['close'].iloc[i+1] > subset['high'].iloc[i]:
+                    obs['buy'].append({
+                        'top': subset['high'].iloc[i],
+                        'bottom': subset['low'].iloc[i],
+                        'created_at': subset['time'].iloc[i]
+                    })
+
+            # --- BEARISH OB (Swing High) ---
             is_swing_high = True
-            for j in range(1, swing_len + 1):
-                if highs[i] <= highs[i-j] or highs[i] <= highs[i+j]: is_swing_high = False; break
+            for j in range(1, swing + 1):
+                if subset['high'].iloc[i-j] >= current_high or subset['high'].iloc[i+j] >= current_high:
+                    is_swing_high = False
+                    break
             
             if is_swing_high:
-                swing_low_level = lows[i]
-                for k in range(i + 1, len(df)):
-                    if closes[k] < swing_low_level:
-                        if np.isnan(vol_mas[i]) or np.isnan(vol_mas[k]): continue
-                        if (volumes[i] > vol_mas[i] * vol_threshold) or (volumes[k] > vol_mas[k] * vol_threshold):
-                            bear_obs.append({
-                                'top': float(highs[i]), 'bottom': float(lows[i]), 
-                                'time': int(df['time'].iloc[i].timestamp())
-                            })
-                        break
-                        
-            if is_swing_low:
-                swing_high_level = highs[i]
-                for k in range(i + 1, len(df)):
-                    if closes[k] > swing_high_level:
-                        if np.isnan(vol_mas[i]) or np.isnan(vol_mas[k]): continue
-                        if (volumes[i] > vol_mas[i] * vol_threshold) or (volumes[k] > vol_mas[k] * vol_threshold):
-                            bull_obs.append({
-                                'top': float(highs[i]), 'bottom': float(lows[i]), 
-                                'time': int(df['time'].iloc[i].timestamp())
-                            })
-                        break
+                if subset['close'].iloc[i+1] < subset['low'].iloc[i]:
+                    obs['sell'].append({
+                        'top': subset['high'].iloc[i],
+                        'bottom': subset['low'].iloc[i],
+                        'created_at': subset['time'].iloc[i]
+                    })
         
-        current_price = closes[-1]
-        active_bull = [ob for ob in bull_obs if current_price > ob['bottom']]
-        active_bear = [ob for ob in bear_obs if current_price < ob['top']]
-        return active_bull[-5:], active_bear[-5:]
-
-    # === НОВИЙ МЕТОД ДЛЯ ВІЗУАЛІЗАЦІЇ ===
-    def get_chart_data(self, df_ltf):
-        """Готує JSON для графіка"""
-        ltf_tf_setting = str(self.get_param("ltfSelection"))
-        if ltf_tf_setting == "45": df = self.resample_candles(df_ltf, 45)
-        else: df = df_ltf
-            
-        if df is None or df.empty: return {}
-        
-        df = self.calculate_indicators(df)
-        bulls, bears = self.find_smart_money_blocks(df)
-        
-        # Формуємо свічки
-        candles = []
-        hma_fast = []
-        hma_slow = []
-        
-        for i, row in df.iterrows():
-            ts = int(row['time'].timestamp())
-            candles.append({'time': ts, 'open': row['open'], 'high': row['high'], 'low': row['low'], 'close': row['close']})
-            if not pd.isna(row['hma_fast']): hma_fast.append({'time': ts, 'value': row['hma_fast']})
-            if not pd.isna(row['hma_slow']): hma_slow.append({'time': ts, 'value': row['hma_slow']})
-            
-        return {
-            "candles": candles,
-            "hma_fast": hma_fast,
-            "hma_slow": hma_slow,
-            "bull_obs": bulls,
-            "bear_obs": bears
-        }
+        # Повертаємо лише 3 останні актуальні блоки для кожного напрямку
+        return {'buy': obs['buy'][-3:], 'sell': obs['sell'][-3:]}
 
     def analyze(self, df_ltf, df_htf):
-        # ... (Код analyze залишається без змін, він використовує ті самі методи)
-        ltf_tf_setting = str(self.get_param("ltfSelection"))
-        if ltf_tf_setting == "45": df_trade = self.resample_candles(df_ltf, 45)
-        else: df_trade = df_ltf
-        if df_trade is None or df_trade.empty: return {'action': None}
-        df_trade = self.calculate_indicators(df_trade)
+        """
+        Головна функція аналізу.
+        Приймає LTF (Low Timeframe) та HTF (High Timeframe) дані.
+        Повертає список сигналів.
+        """
+        signals = []
+        
+        # 1. Розрахунок індикаторів
         df_htf = self.calculate_indicators(df_htf)
-        if 'hma_fast' not in df_htf.columns: return {'action': None}
-        htf_row = df_htf.iloc[-1]
-        use_cloud = self.get_param('obt_useCloudFilter')
-        use_rsi = self.get_param('obt_useRsiFilter')
-        use_obv = self.get_param('obt_useObvFilter')
-        cloud_bull = (htf_row['hma_fast'] > htf_row['hma_slow']) if use_cloud else True
-        cloud_bear = (htf_row['hma_fast'] < htf_row['hma_slow']) if use_cloud else True
-        rsi_bull = (htf_row['rsi'] <= self.get_param('obt_entryRsiOversold')) if use_rsi else True
-        rsi_bear = (htf_row['rsi'] >= self.get_param('obt_entryRsiOverbought')) if use_rsi else True
-        obv_bull = (htf_row['obv'] > htf_row['obv_ma']) if use_obv else True
-        obv_bear = (htf_row['obv'] < htf_row['obv_ma']) if use_obv else True
-        is_bull_trend = cloud_bull and obv_bull and rsi_bull
-        is_bear_trend = cloud_bear and obv_bear and rsi_bear
-        current_price = df_trade['close'].iloc[-1]
-        signal = {'action': None, 'reason': '', 'sl_price': None, 'price': current_price}
-        use_retest = self.get_param('obt_useOBRetest')
-        buffer_pct = self.get_param('obBufferPercent')
-        if is_bull_trend:
-            bulls, _ = self.find_smart_money_blocks(df_trade)
-            active_ob = None
-            if use_retest:
-                for ob in reversed(bulls):
-                    if ob['bottom'] < current_price <= (ob['top'] * 1.001): 
-                        active_ob = ob; signal['action'] = "Buy"; signal['reason'] = "Smart Money OB Retest"; break
-            else: signal['action'] = "Buy"; signal['reason'] = "Trend Only"; 
-            if signal['action'] == "Buy":
-                if active_ob: signal['sl_price'] = active_ob['bottom'] * (1 - buffer_pct/100)
-                elif use_retest: signal['action'] = None
-        elif is_bear_trend:
-            _, bears = self.find_smart_money_blocks(df_trade)
-            active_ob = None
-            if use_retest:
-                for ob in reversed(bears):
-                    if (ob['bottom'] * 0.999) <= current_price < ob['top']:
-                        active_ob = ob; signal['action'] = "Sell"; signal['reason'] = "Smart Money OB Retest"; break
-            else: signal['action'] = "Sell"; signal['reason'] = "Trend Only";
-            if signal['action'] == "Sell":
-                if active_ob: signal['sl_price'] = active_ob['top'] * (1 + buffer_pct/100)
-                elif use_retest: signal['action'] = None
-        return signal
+        df_ltf = self.calculate_indicators(df_ltf)
+        
+        if df_htf is None or df_ltf is None: return []
+        if df_ltf.empty or df_htf.empty: return []
 
-ob_trend_strategy = OBCloudStrategyEngine()
+        # Останні значення
+        curr_price = df_ltf['close'].iloc[-1]
+        
+        # --- ФІЛЬТРИ ТРЕНДУ (HTF) ---
+        # Беремо останню закриту свічку HTF
+        htf_row = df_htf.iloc[-1]
+        
+        use_cloud = self._get_param('obt_useCloudFilter', True)
+        use_obv = self._get_param('obt_useObvFilter', True)
+        
+        is_bull_trend = True
+        is_bear_trend = True
+        
+        # Cloud Filter
+        if use_cloud:
+            if htf_row['hma_fast'] <= htf_row['hma_slow']: is_bull_trend = False
+            if htf_row['hma_fast'] >= htf_row['hma_slow']: is_bear_trend = False
+            
+        # OBV Filter
+        if use_obv and 'obv_ma' in htf_row:
+            if htf_row['obv'] <= htf_row['obv_ma']: is_bull_trend = False
+            if htf_row['obv'] >= htf_row['obv_ma']: is_bear_trend = False
+            
+        # Якщо немає чіткого тренду згідно фільтрів - вихід
+        if not is_bull_trend and not is_bear_trend:
+            return []
+
+        # --- ЛОГІКА ВХОДУ (LTF) ---
+        ltf_row = df_ltf.iloc[-1]
+        use_retest = self._get_param('obt_useOBRetest', True)
+        
+        signal = None
+        details = []
+        sl_price = 0.0
+        
+        # LONG SCENARIO
+        if is_bull_trend:
+            rsi_ok = ltf_row['rsi'] <= float(self._get_param('obt_entryRsiOversold', 45))
+            
+            if use_retest:
+                # Перевірка чи ціна в зоні OB
+                obs = self.find_order_blocks(df_ltf)
+                in_zone = False
+                active_ob = None
+                
+                for ob in obs['buy']:
+                    # Ціна знаходиться в межах OB або трохи вище (buffer)
+                    # top * 1.002 = 0.2% допуску зверху
+                    if ob['bottom'] <= curr_price <= (ob['top'] * 1.003):
+                        in_zone = True
+                        active_ob = ob
+                        break
+                
+                if in_zone and rsi_ok:
+                    signal = 'Buy'
+                    details.append("Trend+OB Retest")
+                    # SL трохи нижче блоку
+                    sl_price = active_ob['bottom'] * 0.995 
+            
+            elif rsi_ok:
+                signal = 'Buy'
+                details.append("Trend+RSI")
+                # SL фіксований %
+                sl_price = curr_price * (1 - float(self._get_param('fixedSL', 1.5))/100)
+
+        # SHORT SCENARIO
+        elif is_bear_trend:
+            rsi_ok = ltf_row['rsi'] >= float(self._get_param('obt_entryRsiOverbought', 55))
+            
+            if use_retest:
+                obs = self.find_order_blocks(df_ltf)
+                in_zone = False
+                active_ob = None
+                
+                for ob in obs['sell']:
+                    if (ob['bottom'] * 0.997) <= curr_price <= ob['top']:
+                        in_zone = True
+                        active_ob = ob
+                        break
+                        
+                if in_zone and rsi_ok:
+                    signal = 'Sell'
+                    details.append("Trend+OB Retest")
+                    sl_price = active_ob['top'] * 1.005
+            
+            elif rsi_ok:
+                signal = 'Sell'
+                details.append("Trend+RSI")
+                sl_price = curr_price * (1 + float(self._get_param('fixedSL', 1.5))/100)
+
+        # Формування результату
+        if signal:
+            signals.append({
+                'action': signal,
+                'price': curr_price,
+                'rsi': ltf_row['rsi'],
+                'reason': ", ".join(details),
+                'sl_price': sl_price
+            })
+            
+        return signals
+
+# Екземпляр стратегії для імпорту
+ob_trend_strategy = OBTrendStrategy()

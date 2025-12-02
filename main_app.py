@@ -7,6 +7,7 @@ import os
 import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, redirect, url_for, Response
+from sqlalchemy import desc
 
 from bot_config import config
 from bot import bot_instance
@@ -14,10 +15,13 @@ from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from settings_manager import settings
 
-# Імпортуємо аналізатор останнім, щоб уникнути проблем з ініціалізацією
+# Імпорт моделей
+from models import db_manager, OrderBlock
+
+# Імпортуємо аналізатор
 from market_analyzer import market_analyzer
 
-# Запобігання сну у Windows
+# Запобігання сну у Windows (якщо локально)
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
@@ -27,14 +31,14 @@ app.secret_key = 'super_secret_key_for_flask'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Запуск фонових процесів
+# Запуск фонових процесів (монітор активних позицій)
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
 # --- BACKGROUND TASKS ---
 
 def monitor_active():
-    """Фоновий потік для запису стану позицій в БД"""
+    """Фоновий потік для запису стану позицій в БД та оновлення PnL"""
     while True:
         try:
             r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
@@ -52,14 +56,13 @@ def monitor_active():
         time.sleep(10)
 
 def keep_alive():
-    """Self-Ping для Render"""
+    """Self-Ping для Render, щоб сервіс не засинав"""
     time.sleep(5)
     base_url = os.environ.get('RENDER_EXTERNAL_URL')
     if not base_url:
         base_url = f'http://127.0.0.1:{config.PORT}'
     
     target = f"{base_url}/health"
-    logger.info(f"💓 Keep-alive target: {target}")
     
     while True:
         try: requests.get(target, timeout=10)
@@ -73,42 +76,33 @@ threading.Thread(target=keep_alive, daemon=True).start()
 
 @app.route('/')
 def home():
-    # 1. Обробка періоду (7 або 30 днів)
+    # Обробка періоду (7, 30, 90 днів)
     try:
         days_param = int(request.args.get('days', 7))
-        if days_param not in [7, 30]: days_param = 7
+        if days_param not in [7, 30, 90]: days_param = 7
     except: days_param = 7
     
-    # 2. Синхронізація (оновлення даних з біржі)
+    # Спроба синхронізації угод (не блокуюча)
     try:
         bot_instance.sync_trades(days=days_param)
-    except Exception as e:
-        logger.error(f"Sync error on home load: {e}")
+    except: pass
 
-    # 3. Базові дані
+    # Базові дані
     balance = bot_instance.get_bal()
     active_count = len(scanner.get_active_symbols())
     
-    # 4. Статистика угод
+    # Статистика
     trades = stats_service.get_trades(days=days_param)
     
     period_pnl = 0.0
-    wins = 0
     longs = 0
     shorts = 0
-    total_trades = len(trades)
     
     for t in trades:
         period_pnl += t['pnl']
-        if t['pnl'] > 0: wins += 1
-        
-        # Підрахунок типів для графіка
         if t['side'] == 'Long': longs += 1
         elif t['side'] == 'Short': shorts += 1
             
-    win_rate = int((wins / total_trades) * 100) if total_trades > 0 else 0
-    
-    # Дата замість часу (напр. 02 Dec 2025)
     current_date = datetime.utcnow().strftime('%d %b %Y')
     
     return render_template('index.html', 
@@ -116,11 +110,10 @@ def home():
                            balance=balance,
                            active_count=active_count,
                            period_pnl=period_pnl,
-                           win_rate=win_rate,
                            longs=longs,
                            shorts=shorts,
                            days=days_param, 
-                           trades=trades[:7])
+                           trades=trades[:10])
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -136,7 +129,7 @@ def scanner_page():
                         'side': p['side'], 
                         'pnl': round(float(p['unrealisedPnl']), 2), 
                         'rsi': scanner.get_current_rsi(symbol), 
-                        'pressure': round(scanner.get_market_pressure(symbol)), 
+                        'pressure': round(scanner.get_market_pressure(symbol), 1), 
                         'size': p['size'], 
                         'entry': p['avgPrice'],
                         'time': datetime.now().strftime('%H:%M')
@@ -156,6 +149,18 @@ def analyzer_page():
                            status=market_analyzer.status_message,
                            is_scanning=market_analyzer.is_scanning)
 
+@app.route('/smart_money')
+def smart_money_page():
+    session = db_manager.get_session()
+    try:
+        # Виводимо останні 50 знайдених зон
+        blocks = session.query(OrderBlock).order_by(desc(OrderBlock.created_at)).limit(50).all()
+        return render_template('smart_money.html', blocks=blocks)
+    except Exception as e:
+        return f"Database Error: {e}"
+    finally:
+        session.close()
+
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_general_page():
     if request.method == 'POST':
@@ -165,7 +170,6 @@ def settings_general_page():
         return redirect(url_for('settings_general_page'))
     return render_template('settings.html', conf=settings._cache)
 
-# === СТРАТЕГІЯ ROUTE (ВІДНОВЛЕНО) ===
 @app.route('/ob_trend/settings', methods=['GET', 'POST'])
 def ob_trend_settings_page():
     if request.method == 'POST':
@@ -183,22 +187,25 @@ def ob_trend_settings_page():
 def run_scan():
     if request.form:
         form_data = request.form.to_dict()
-        if 'useOBRetest' in form_data and form_data['useOBRetest'] == 'on':
-            form_data['obt_useOBRetest'] = True
-        else:
-            form_data['obt_useOBRetest'] = False
+        
+        # Обробка checkbox-ів, які можуть не прийти, якщо unchecked
+        if form_data.get('useOBRetest') == 'on': form_data['obt_useOBRetest'] = True
+        else: form_data['obt_useOBRetest'] = False
             
-        filters_map = {
+        # Мапінг імен з форми HTML на ключі налаштувань (якщо відрізняються)
+        # У HTML формі names: useCloudFilter, useObvFilter...
+        # У settings_manager keys: obt_useCloudFilter...
+        mapping = {
             'useCloudFilter': 'obt_useCloudFilter',
             'useObvFilter': 'obt_useObvFilter',
             'useRsiFilter': 'obt_useRsiFilter'
         }
         
-        for short_key, long_key in filters_map.items():
-            if short_key in form_data and form_data[short_key] == 'on':
-                form_data[long_key] = True
+        for form_key, settings_key in mapping.items():
+            if form_data.get(form_key) == 'on':
+                form_data[settings_key] = True
             else:
-                form_data[long_key] = False
+                form_data[settings_key] = False
         
         settings.save_settings(form_data)
     
