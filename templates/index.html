@@ -51,22 +51,28 @@
         </div>
 
         <div class="col-md-3">
-            <div class="card-custom p-3 h-100 d-flex align-items-center">
-                <div class="flex-grow-1">
-                    <div class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 11px;">L/S Ratio</div>
-                    <div class="d-flex flex-column gap-1">
-                        <div class="d-flex align-items-center justify-content-between font-mono small">
-                            <span class="text-success fw-bold">Longs</span>
-                            <span>{{ longs }}</span>
-                        </div>
-                        <div class="d-flex align-items-center justify-content-between font-mono small">
-                            <span class="text-danger fw-bold">Shorts</span>
-                            <span>{{ shorts }}</span>
+            <div class="card-custom p-3 h-100 d-flex flex-column justify-content-center">
+                <div class="d-flex align-items-center justify-content-between gap-3">
+                    
+                    <div class="flex-grow-1">
+                        <div class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 11px;">Всього угод</div>
+                        <h2 class="m-0 fw-bold text-dark font-mono mb-2">{{ longs + shorts }}</h2>
+                        
+                        <div class="d-flex flex-column gap-1">
+                            <div class="d-flex align-items-center font-mono small">
+                                <span class="badge bg-success-subtle text-success me-2" style="width: 20px;">L</span>
+                                <span class="fw-bold text-dark">{{ longs }}</span>
+                            </div>
+                            <div class="d-flex align-items-center font-mono small">
+                                <span class="badge bg-danger-subtle text-danger me-2" style="width: 20px;">S</span>
+                                <span class="fw-bold text-dark">{{ shorts }}</span>
+                            </div>
                         </div>
                     </div>
-                </div>
-                <div style="width: 70px; height: 70px; position: relative;">
-                    <canvas id="lsChart"></canvas>
+                    
+                    <div style="width: 80px; height: 80px; position: relative;">
+                        <canvas id="lsChart"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
@@ -134,7 +140,7 @@
 </div>
 
 <script>
-    // 1. Main P&L Chart (Visual Placeholder with accumulated P&L)
+    // 1. Main P&L Chart
     const ctxMain = document.getElementById('mainChart').getContext('2d');
     const gradient = ctxMain.createLinearGradient(0, 0, 0, 300);
     gradient.addColorStop(0, 'rgba(79, 70, 229, 0.2)'); 
@@ -143,7 +149,6 @@
     new Chart(ctxMain, {
         type: 'line',
         data: {
-            // У продакшні тут мають бути реальні дати з БД
             labels: ['Start', 'Day 1', 'Day 2', 'Day 3', 'Today'],
             datasets: [{
                 label: 'Accumulated P&L',
@@ -175,9 +180,10 @@
     const longs = {{ longs }};
     const shorts = {{ shorts }};
     
-    // Якщо даних немає, показуємо пусте коло
-    const dataValues = (longs + shorts === 0) ? [1] : [longs, shorts];
-    const bgColors = (longs + shorts === 0) ? ['#e2e8f0'] : ['#10b981', '#ef4444']; // Green/Red or Gray
+    // Якщо даних немає, показуємо сіре коло
+    const total = longs + shorts;
+    const dataValues = (total === 0) ? [1] : [longs, shorts];
+    const bgColors = (total === 0) ? ['#e2e8f0'] : ['#10b981', '#ef4444']; 
 
     new Chart(ctxLs, {
         type: 'doughnut',
@@ -193,10 +199,10 @@
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            cutout: '75%', // Тонке кільце
+            cutout: '70%', 
             plugins: {
                 legend: { display: false },
-                tooltip: { enabled: (longs + shorts > 0) }
+                tooltip: { enabled: (total > 0) }
             }
         }
     });
