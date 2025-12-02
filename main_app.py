@@ -47,7 +47,8 @@ def monitor_active():
                             'pressure': scanner.get_market_pressure(p['symbol'])
                         })
         except Exception as e:
-            logger.error(f"Monitor error: {e}")
+            # logger.error(f"Monitor error: {e}") # Можна розкоментувати для дебагу
+            pass
         time.sleep(10)
 
 def keep_alive():
@@ -61,7 +62,8 @@ def keep_alive():
     logger.info(f"💓 Keep-alive target: {target}")
     
     while True:
-        try: requests.get(target, timeout=10)
+        try:
+            requests.get(target, timeout=10)
         except: pass
         time.sleep(300)
 
@@ -72,25 +74,33 @@ threading.Thread(target=keep_alive, daemon=True).start()
 
 @app.route('/')
 def home():
-    # 1. Отримуємо реальний баланс з біржі
+    # 1. Отримуємо параметр днів (за замовчуванням 7)
+    try:
+        days_param = int(request.args.get('days', 7))
+        if days_param not in [7, 30]: days_param = 7
+    except: days_param = 7
+    
+    # 2. Синхронізуємо дані з біржі за цей період
+    # (В реальному продакшні це краще робити фоново, але тут для точності робимо при завантаженні)
+    try:
+        bot_instance.sync_trades(days=days_param)
+    except Exception as e:
+        logger.error(f"Sync error on home load: {e}")
+
+    # 3. Отримуємо поточні дані
     balance = bot_instance.get_bal()
+    active_count = len(scanner.get_active_symbols())
     
-    # 2. Отримуємо кількість активних позицій
-    active_positions = scanner.get_active_symbols()
-    active_count = len(active_positions)
+    # 4. Рахуємо статистику за вибраний період
+    trades = stats_service.get_trades(days=days_param)
     
-    # 3. Рахуємо P&L за сьогодні та Win Rate (з БД)
-    # Беремо угоди за останні 24 години (1 день)
-    trades_today = stats_service.get_trades(days=1)
-    
-    daily_pnl = 0.0
+    period_pnl = 0.0
     wins = 0
-    total_trades = len(trades_today)
+    total_trades = len(trades)
     
-    for t in trades_today:
-        daily_pnl += t['pnl']
-        if t['pnl'] > 0:
-            wins += 1
+    for t in trades:
+        period_pnl += t['pnl']
+        if t['pnl'] > 0: wins += 1
             
     win_rate = int((wins / total_trades) * 100) if total_trades > 0 else 0
     
@@ -98,8 +108,10 @@ def home():
                            time=datetime.utcnow().strftime('%H:%M:%S UTC'),
                            balance=balance,
                            active_count=active_count,
-                           daily_pnl=daily_pnl,
-                           win_rate=win_rate)
+                           period_pnl=period_pnl,
+                           win_rate=win_rate,
+                           days=days_param, # Передаємо вибраний період в шаблон
+                           trades=trades[:7]) # Останні 7 угод для списку
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -159,6 +171,8 @@ def settings_general_page():
 def run_scan():
     if request.form:
         form_data = request.form.to_dict()
+        
+        # Обробка чекбоксів
         if 'useOBRetest' in form_data and form_data['useOBRetest'] == 'on':
             form_data['obt_useOBRetest'] = True
         else:
@@ -171,8 +185,11 @@ def run_scan():
         }
         
         for short_key, long_key in filters_map.items():
-             form_data[long_key] = (short_key in form_data and form_data[short_key] == 'on')
-
+            if short_key in form_data and form_data[short_key] == 'on':
+                form_data[long_key] = True
+            else:
+                form_data[long_key] = False
+        
         settings.save_settings(form_data)
     
     market_analyzer.run_scan_thread()
@@ -203,7 +220,11 @@ def webhook():
 def export_settings():
     data = settings.get_all()
     json_str = json.dumps(data, indent=4)
-    return Response(json_str, mimetype='application/json', headers={'Content-Disposition': 'attachment;filename=bot_settings.json'})
+    return Response(
+        json_str,
+        mimetype='application/json',
+        headers={'Content-Disposition': 'attachment;filename=bot_settings.json'}
+    )
 
 @app.route('/settings/import', methods=['POST'])
 def import_settings():
@@ -212,12 +233,16 @@ def import_settings():
     if file.filename == '': return "No selected file", 400
     try:
         data = json.load(file)
-        if settings.import_settings(data): return redirect(url_for('settings_general_page'))
-        else: return "Error importing settings", 500
-    except Exception as e: return f"Invalid JSON: {e}", 400
+        if settings.import_settings(data):
+            return redirect(url_for('settings_general_page'))
+        else:
+            return "Error importing settings", 500
+    except Exception as e:
+        return f"Invalid JSON: {e}", 400
 
 @app.route('/health')
-def health(): return jsonify({"status": "ok"})
+def health():
+    return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
     app.run(host=config.HOST, port=config.PORT)

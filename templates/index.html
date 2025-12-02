@@ -7,20 +7,21 @@
     
     <div class="d-flex justify-content-between align-items-center mb-5">
         <div>
-            <h4 class="fw-bold text-white mb-1">Огляд Ринку</h4>
+            <h4 class="fw-bold text-dark mb-1">Огляд Ринку</h4>
             <div class="d-flex align-items-center text-muted small font-mono">
-                <span class="status-indicator me-2" style="width: 8px; height: 8px; background: #10b981; border-radius: 50%; display: inline-block;"></span>
-                <span>СИСТЕМА АКТИВНА</span>
-                <span class="mx-2">|</span>
+                <span class="status-indicator me-2" style="width: 8px; height: 8px; background: var(--success); border-radius: 50%; display: inline-block;"></span>
+                <span class="fw-bold">ОНЛАЙН</span>
+                <span class="mx-2 text-muted">|</span>
                 <span>{{ time }}</span>
             </div>
         </div>
         <div class="d-flex gap-3">
-             <div class="d-flex flex-column align-items-end me-4">
-                 <span class="text-muted small" style="font-size: 10px; text-transform: uppercase;">Баланс (USDT)</span>
-                 <span class="fw-bold font-mono text-white">{{ balance | round(2) }} USDT</span>
+             <div class="btn-group shadow-sm">
+                <a href="/?days=7" class="btn btn-sm {{ 'btn-white text-dark border' if days != 7 else 'btn-primary' }} px-3 fw-bold">7 Днів</a>
+                <a href="/?days=30" class="btn btn-sm {{ 'btn-white text-dark border' if days != 30 else 'btn-primary' }} px-3 fw-bold">30 Днів</a>
              </div>
-             <a href="/analyzer" class="btn btn-primary d-flex align-items-center px-4" style="background-color: var(--accent); border: none;">
+             
+             <a href="/analyzer" class="btn btn-primary d-flex align-items-center px-4 shadow-sm">
                 <i class="ri-search-2-line me-2"></i> Новий Скан
             </a>
         </div>
@@ -29,32 +30,32 @@
     <div class="row g-4 mb-5">
         <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Відкриті Позиції</div>
+                <div class="text-muted small text-uppercase fw-bold mb-2" style="font-size: 11px;">Загальний Баланс</div>
                 <div class="d-flex justify-content-between align-items-end">
-                    <h2 class="m-0 fw-bold text-white font-mono">{{ active_count }}</h2>
-                    <span class="badge bg-secondary bg-opacity-10 text-muted border border-secondary border-opacity-10 font-mono">Live</span>
+                    <h2 class="m-0 fw-bold text-dark font-mono">{{ balance | round(2) }}</h2>
+                    <span class="text-muted small font-mono fw-bold">USDT</span>
                 </div>
             </div>
         </div>
         
         <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Прибуток (24г)</div>
+                <div class="text-muted small text-uppercase fw-bold mb-2" style="font-size: 11px;">Прибуток ({{ days }} дн.)</div>
                 <div class="d-flex justify-content-between align-items-end">
-                    <h2 class="m-0 fw-bold font-mono {{ 'text-success' if daily_pnl >= 0 else 'text-danger' }}">
-                        {{ "+" if daily_pnl > 0 }}{{ daily_pnl | round(2) }}
+                    <h2 class="m-0 fw-bold font-mono {{ 'text-up' if period_pnl >= 0 else 'text-down' }}">
+                        {{ "+" if period_pnl > 0 }}{{ period_pnl | round(2) }}
                     </h2>
-                    <span class="text-muted small font-mono">USDT</span>
+                    <span class="text-muted small font-mono fw-bold">USDT</span>
                 </div>
             </div>
         </div>
 
         <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Win Rate (24г)</div>
+                <div class="text-muted small text-uppercase fw-bold mb-2" style="font-size: 11px;">Win Rate ({{ days }} дн.)</div>
                 <div class="d-flex justify-content-between align-items-end">
-                    <h2 class="m-0 fw-bold text-white font-mono">{{ win_rate }}%</h2>
-                    <div class="progress w-50" style="height: 4px; background: #27272a;">
+                    <h2 class="m-0 fw-bold text-dark font-mono">{{ win_rate }}%</h2>
+                    <div class="progress w-50 bg-light" style="height: 6px;">
                         <div class="progress-bar bg-primary" style="width: {{ win_rate }}%;"></div>
                     </div>
                 </div>
@@ -63,10 +64,10 @@
         
         <div class="col-md-3">
              <div class="card-custom p-4 h-100">
-                <div class="text-muted small text-uppercase mb-2" style="font-size: 11px; letter-spacing: 0.5px;">Статус API</div>
+                <div class="text-muted small text-uppercase fw-bold mb-2" style="font-size: 11px;">Відкриті Угоди</div>
                 <div class="d-flex justify-content-between align-items-end">
-                    <h2 class="m-0 fw-bold text-success font-mono fs-4">OK</h2>
-                    <i class="ri-wifi-line text-success"></i>
+                    <h2 class="m-0 fw-bold text-dark font-mono">{{ active_count }}</h2>
+                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-10 small">Live</span>
                 </div>
             </div>
         </div>
@@ -76,51 +77,71 @@
         <div class="col-lg-8">
             <div class="card-custom p-4 h-100">
                 <div class="d-flex justify-content-between align-items-center mb-4">
-                    <h6 class="fw-bold text-white m-0">Активність Сигналів</h6>
+                    <h6 class="fw-bold text-dark m-0">Динаміка Прибутку</h6>
                 </div>
-                <div style="height: 320px; width: 100%;">
+                <div style="height: 300px; width: 100%;">
                     <canvas id="mainChart"></canvas>
                 </div>
             </div>
         </div>
 
         <div class="col-lg-4">
-            <div class="card-custom p-0 h-100 overflow-hidden d-flex flex-column">
+            <div class="card-custom h-100 overflow-hidden d-flex flex-column p-0">
                 <div class="p-4 border-bottom" style="border-color: var(--border-subtle) !important;">
-                    <h6 class="fw-bold text-white m-0">Системний Лог</h6>
+                    <h6 class="fw-bold text-dark m-0">Останні Закриті Угоди</h6>
                 </div>
-                <div class="flex-grow-1 p-0 overflow-auto" style="max-height: 320px;">
-                    <div class="d-flex flex-column justify-content-center align-items-center h-100 text-muted">
-                        <i class="ri-terminal-line fs-1 opacity-25"></i>
-                        <small class="mt-2">Система готова до роботи</small>
-                    </div>
+                <div class="flex-grow-1 overflow-auto" style="max-height: 300px;">
+                    {% if trades %}
+                        <div class="list-group list-group-flush">
+                            {% for t in trades %}
+                            <div class="list-group-item border-bottom border-light py-3 px-4">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div class="fw-bold text-dark font-mono">{{ t.symbol }}</div>
+                                        <div class="small text-muted">{{ t.side }} • {{ t.exit_time.strftime('%d.%m %H:%M') }}</div>
+                                    </div>
+                                    <div class="text-end">
+                                        <div class="fw-bold font-mono {{ 'text-up' if t.pnl > 0 else 'text-down' }}">
+                                            {{ "+" if t.pnl > 0 }}{{ t.pnl | round(2) }}$
+                                        </div>
+                                        <span class="badge {{ 'bg-success-subtle text-success' if t.pnl > 0 else 'bg-danger-subtle text-danger' }} rounded-pill" style="font-size: 9px;">
+                                            {{ "WIN" if t.pnl > 0 else "LOSS" }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="d-flex flex-column justify-content-center align-items-center h-100 text-muted p-4">
+                            <i class="ri-file-list-3-line fs-1 opacity-25"></i>
+                            <small class="mt-2">Немає історії за цей період</small>
+                        </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
     </div>
-
 </div>
 
 <script>
     const ctx = document.getElementById('mainChart').getContext('2d');
-    
-    // Gradient for the chart
     const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-    gradient.addColorStop(0, 'rgba(99, 102, 241, 0.25)'); // Indigo
-    gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
+    gradient.addColorStop(0, 'rgba(79, 70, 229, 0.2)'); 
+    gradient.addColorStop(1, 'rgba(79, 70, 229, 0)');
 
     new Chart(ctx, {
         type: 'line',
         data: {
-            labels: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00'],
+            labels: ['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Today'],
             datasets: [{
-                label: 'Інтенсивність',
-                data: [0, 0, 0, 0, 0, 0, 0, 0], // Поки нулі, поки немає історії
-                borderColor: '#6366f1',
+                label: 'P&L Accumulation',
+                data: [0, 0, 0, 0, 0, 0, {{ period_pnl }}], 
+                borderColor: '#4f46e5',
                 backgroundColor: gradient,
                 borderWidth: 2,
-                pointBackgroundColor: '#18181b',
-                pointBorderColor: '#6366f1',
+                pointBackgroundColor: '#ffffff',
+                pointBorderColor: '#4f46e5',
                 pointBorderWidth: 2,
                 pointRadius: 4,
                 pointHoverRadius: 6,
@@ -134,25 +155,15 @@
             plugins: {
                 legend: { display: false },
                 tooltip: {
-                    backgroundColor: '#27272a',
-                    titleColor: '#fff',
-                    bodyColor: '#a1a1aa',
-                    borderColor: '#3f3f46',
-                    borderWidth: 1,
-                    displayColors: false,
-                    padding: 10
+                    backgroundColor: '#1e293b',
+                    padding: 10,
+                    titleFont: { family: 'Inter' },
+                    bodyFont: { family: 'JetBrains Mono' }
                 }
             },
             scales: {
-                x: {
-                    grid: { display: false, color: '#27272a' },
-                    ticks: { color: '#71717a', font: { family: 'JetBrains Mono', size: 10 } }
-                },
-                y: {
-                    grid: { color: '#27272a', borderDash: [4, 4] },
-                    ticks: { color: '#71717a', font: { family: 'JetBrains Mono', size: 10 } },
-                    beginAtZero: true
-                }
+                x: { grid: { display: false }, ticks: { color: '#64748b' } },
+                y: { grid: { color: '#f1f5f9', borderDash: [4, 4] }, ticks: { color: '#64748b' }, beginAtZero: true }
             }
         }
     });

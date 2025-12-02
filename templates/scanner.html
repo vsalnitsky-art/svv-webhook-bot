@@ -7,7 +7,7 @@
     
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h4 class="fw-bold text-white mb-0">Активні Позиції</h4>
+            <h4 class="fw-bold text-dark mb-0">Активні Позиції</h4>
             <p class="text-muted small mb-0">Live оновлення з біржі</p>
         </div>
         <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 px-3 py-2 font-mono">
@@ -18,40 +18,40 @@
     <div class="card-custom overflow-hidden">
         <div class="table-responsive">
             <table class="table align-middle mb-0">
-                <thead style="background-color: #111827; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;">
+                <thead class="bg-light text-uppercase small text-muted" style="font-size: 11px; letter-spacing: 1px;">
                     <tr>
-                        <th class="py-3 ps-4 text-muted border-0">Символ</th>
-                        <th class="py-3 text-muted border-0">Сторона</th>
-                        <th class="py-3 text-muted border-0">Об'єм</th>
-                        <th class="py-3 text-muted border-0">Вхід</th>
-                        <th class="py-3 text-muted border-0">RSI (15m)</th>
-                        <th class="py-3 text-muted border-0">Тиск</th>
-                        <th class="py-3 text-muted border-0">Нереал. P&L</th>
-                        <th class="py-3 pe-4 text-end text-muted border-0">Час</th>
+                        <th class="py-3 ps-4 border-bottom">Символ</th>
+                        <th class="py-3 border-bottom">Сторона</th>
+                        <th class="py-3 border-bottom">Об'єм</th>
+                        <th class="py-3 border-bottom">Вхід</th>
+                        <th class="py-3 border-bottom">RSI (15m)</th>
+                        <th class="py-3 border-bottom">Тиск</th>
+                        <th class="py-3 border-bottom">Нереал. P&L</th>
+                        <th class="py-3 pe-4 text-end border-bottom">Час</th>
                     </tr>
                 </thead>
-                <tbody class="border-top border-secondary border-opacity-10">
+                <tbody>
                 {% for a in active %}
                     <tr>
                         <td class="ps-4">
-                            <span class="fw-bold text-white font-mono">{{ a.symbol }}</span>
+                            <span class="fw-bold text-dark font-mono">{{ a.symbol }}</span>
                         </td>
                         
                         <td>
                             {% if a.side == 'Buy' %}
-                                <span class="text-success fw-bold small"><i class="ri-arrow-up-line"></i> LONG</span>
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">LONG</span>
                             {% else %}
-                                <span class="text-danger fw-bold small"><i class="ri-arrow-down-line"></i> SHORT</span>
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">SHORT</span>
                             {% endif %}
                         </td>
                         
                         <td class="font-mono text-muted small">{{ a.size }}</td>
-                        <td class="font-mono text-white small">{{ a.entry }}</td>
+                        <td class="font-mono text-dark small">{{ a.entry }}</td>
                         
                         <td>
                             <div class="d-flex align-items-center">
                                 <span class="font-mono small me-2 w-25 text-end {{ 'text-danger' if a.rsi > 70 else 'text-success' if a.rsi < 30 else 'text-muted' }}">{{ a.rsi }}</span>
-                                <div class="progress flex-grow-1 bg-dark" style="height: 3px;">
+                                <div class="progress flex-grow-1 bg-light" style="height: 4px;">
                                     <div class="progress-bar {{ 'bg-danger' if a.rsi > 70 else 'bg-success' if a.rsi < 30 else 'bg-secondary' }}" style="width: {{ a.rsi }}%"></div>
                                 </div>
                             </div>
