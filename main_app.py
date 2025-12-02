@@ -15,7 +15,6 @@ from scanner import EnhancedMarketScanner
 from settings_manager import settings
 from market_analyzer import market_analyzer
 
-# Запобігання сну у Windows
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
 except: pass
 
@@ -25,14 +24,10 @@ app.secret_key = 'super_secret_key_for_flask'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Запуск фонових процесів
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
-# --- BACKGROUND TASKS ---
-
 def monitor_active():
-    """Фоновий потік для запису стану позицій в БД"""
     while True:
         try:
             r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
@@ -50,15 +45,11 @@ def monitor_active():
         time.sleep(10)
 
 def keep_alive():
-    """Self-Ping для Render"""
     time.sleep(5)
     base_url = os.environ.get('RENDER_EXTERNAL_URL')
-    if not base_url:
-        base_url = f'http://127.0.0.1:{config.PORT}'
-    
+    if not base_url: base_url = f'http://127.0.0.1:{config.PORT}'
     target = f"{base_url}/health"
     logger.info(f"💓 Keep-alive target: {target}")
-    
     while True:
         try: requests.get(target, timeout=10)
         except: pass
@@ -76,10 +67,8 @@ def home():
         if days_param not in [7, 30]: days_param = 7
     except: days_param = 7
     
-    try:
-        bot_instance.sync_trades(days=days_param)
-    except Exception as e:
-        logger.error(f"Sync error on home load: {e}")
+    try: bot_instance.sync_trades(days=days_param)
+    except Exception as e: logger.error(f"Sync error: {e}")
 
     balance = bot_instance.get_bal()
     active_count = len(scanner.get_active_symbols())
@@ -119,11 +108,9 @@ def scanner_page():
 
 @app.route('/analyzer')
 def analyzer_page():
-    results = market_analyzer.get_results()
-    conf = settings._cache
-    return render_template('analyzer.html', 
-                           results=results, conf=conf, progress=market_analyzer.progress,
-                           status=market_analyzer.status_message, is_scanning=market_analyzer.is_scanning)
+    return render_template('analyzer.html', results=market_analyzer.get_results(), conf=settings._cache, 
+                           progress=market_analyzer.progress, status=market_analyzer.status_message, 
+                           is_scanning=market_analyzer.is_scanning)
 
 @app.route('/settings', methods=['GET', 'POST'])
 def settings_general_page():
@@ -134,7 +121,7 @@ def settings_general_page():
         return redirect(url_for('settings_general_page'))
     return render_template('settings.html', conf=settings._cache)
 
-# === СТРАТЕГІЯ OB + CLOUD (СТОРІНКА НАЛАШТУВАНЬ) ===
+# === СТРАТЕГІЯ ROUTE ===
 @app.route('/ob_trend/settings', methods=['GET', 'POST'])
 def ob_trend_settings_page():
     if request.method == 'POST':
@@ -169,8 +156,7 @@ def webhook():
         logger.info(f"🔔 SIGNAL: {data.get('symbol')} {data.get('action')}")
         result = bot_instance.place_order(data)
         return jsonify(result), (200 if result.get("status") in ["ok", "ignored"] else 400)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    except Exception as e: return jsonify({"error": str(e)}), 400
 
 @app.route('/settings/export')
 def export_settings():

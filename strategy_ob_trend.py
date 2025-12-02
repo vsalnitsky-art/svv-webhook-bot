@@ -43,32 +43,27 @@ class OBCloudStrategyEngine:
             df['obv'] = ta.obv(df['close'], df['volume'])
             if 'obv' in df: df['obv_ma'] = ta.sma(df['obv'], length=obv_len)
             
-            # Volume MA для Smart Money детектору
             df['vol_ma'] = ta.sma(df['volume'], length=20)
             df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
         except: pass
         return df
 
     def find_smart_money_blocks(self, df):
-        """Пошук OB з валідацією об'єму"""
+        """Logic: Swing -> BOS -> Volume Validation"""
         if df is None or len(df) < 50: return [], []
         
         swing_len = self.get_param('obt_swingLength')
         vol_threshold = self.get_param('obt_volumeSpikeThreshold')
         
-        bull_obs = [] 
-        bear_obs = []
+        bull_obs, bear_obs = [], []
         
         highs = df['high'].values
         lows = df['low'].values
         closes = df['close'].values
         volumes = df['volume'].values
-        vol_mas = df['vol_ma'].values # Moving Average of Volume
+        vol_mas = df['vol_ma'].values 
         
-        # Ітерація по свічках
         for i in range(swing_len, len(df) - swing_len):
-            
-            # 1. Swing High/Low detection
             is_swing_low = True
             for j in range(1, swing_len + 1):
                 if lows[i] >= lows[i-j] or lows[i] >= lows[i+j]: is_swing_low = False; break
@@ -77,45 +72,29 @@ class OBCloudStrategyEngine:
             for j in range(1, swing_len + 1):
                 if highs[i] <= highs[i-j] or highs[i] <= highs[i+j]: is_swing_high = False; break
             
-            # 2. Bearish OB (Swing High + BOS Down + Volume)
             if is_swing_high:
                 swing_low_level = lows[i]
                 for k in range(i + 1, len(df)):
-                    if closes[k] < swing_low_level: # Break of Structure
-                        # Перевірка на Volume Spike (на свічці формування АБО пробою)
-                        # Якщо vol_mas[i] ще не розрахований (NaN), ігноруємо
+                    if closes[k] < swing_low_level:
                         if np.isnan(vol_mas[i]) or np.isnan(vol_mas[k]): continue
-                        
-                        is_high_volume = (volumes[i] > vol_mas[i] * vol_threshold) or \
-                                         (volumes[k] > vol_mas[k] * vol_threshold)
-                        
+                        is_high_volume = (volumes[i] > vol_mas[i] * vol_threshold) or (volumes[k] > vol_mas[k] * vol_threshold)
                         if is_high_volume:
-                            bear_obs.append({
-                                'top': highs[i], 'bottom': lows[i], 'index': i, 'type': 'Bear'
-                            })
+                            bear_obs.append({'top': highs[i], 'bottom': lows[i], 'index': i, 'type': 'Bear'})
                         break
                         
-            # 3. Bullish OB (Swing Low + BOS Up + Volume)
             if is_swing_low:
                 swing_high_level = highs[i]
                 for k in range(i + 1, len(df)):
-                    if closes[k] > swing_high_level: # Break of Structure
+                    if closes[k] > swing_high_level:
                         if np.isnan(vol_mas[i]) or np.isnan(vol_mas[k]): continue
-                        
-                        is_high_volume = (volumes[i] > vol_mas[i] * vol_threshold) or \
-                                         (volumes[k] > vol_mas[k] * vol_threshold)
-                        
+                        is_high_volume = (volumes[i] > vol_mas[i] * vol_threshold) or (volumes[k] > vol_mas[k] * vol_threshold)
                         if is_high_volume:
-                            bull_obs.append({
-                                'top': highs[i], 'bottom': lows[i], 'index': i, 'type': 'Bull'
-                            })
+                            bull_obs.append({'top': highs[i], 'bottom': lows[i], 'index': i, 'type': 'Bull'})
                         break
         
-        # Фільтрація активних (не пробитих) блоків
         current_price = closes[-1]
         active_bull = [ob for ob in bull_obs if current_price > ob['bottom']]
         active_bear = [ob for ob in bear_obs if current_price < ob['top']]
-        
         return active_bull[-5:], active_bear[-5:]
 
     def analyze(self, df_ltf, df_htf):
@@ -151,11 +130,9 @@ class OBCloudStrategyEngine:
         use_retest = self.get_param('obt_useOBRetest')
         buffer_pct = self.get_param('obBufferPercent')
         
-        # ВИКЛИК НОВОЇ ЛОГІКИ ПОШУКУ
         if is_bull_trend:
             bulls, _ = self.find_smart_money_blocks(df_trade)
             active_ob = None
-            
             if use_retest:
                 for ob in reversed(bulls):
                     if ob['bottom'] < current_price <= (ob['top'] * 1.001): 
@@ -175,7 +152,6 @@ class OBCloudStrategyEngine:
         elif is_bear_trend:
             _, bears = self.find_smart_money_blocks(df_trade)
             active_ob = None
-            
             if use_retest:
                 for ob in reversed(bears):
                     if (ob['bottom'] * 0.999) <= current_price < ob['top']:

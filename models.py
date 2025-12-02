@@ -52,19 +52,6 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
-# === НОВА ТАБЛИЦЯ: ORDER BLOCKS ===
-class OrderBlock(Base):
-    __tablename__ = 'order_blocks'
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), index=True)
-    timeframe = Column(String(10))      # напр. "45"
-    ob_type = Column(String(10))        # "Bull" або "Bear"
-    top = Column(Float)
-    bottom = Column(Float)
-    created_at_candle = Column(DateTime) # Час свічки, яка створила блок
-    is_active = Column(Boolean, default=True)
-    strength_score = Column(Float, default=0.0)
-
 # === МЕНЕДЖЕР БАЗИ ДАНИХ ===
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):

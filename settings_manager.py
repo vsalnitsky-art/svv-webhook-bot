@@ -14,15 +14,15 @@ DEFAULT_SETTINGS = {
     "telegram_bot_token": "",
     "telegram_chat_id": "",
 
-    # === STRATEGY FILTERS (OB Cloud) ===
+    # === STRATEGY FILTERS ===
     "obt_useCloudFilter": True,
     "obt_useObvFilter": True,
     "obt_useRsiFilter": True,
     "obt_useOBRetest": True,
 
     # === TIMEFRAMES ===
-    "htfSelection": "240", # 4H (Тренд)
-    "ltfSelection": "45",  # 45m (Вхід)
+    "htfSelection": "240", # 4H
+    "ltfSelection": "45",  # 45m
     
     # === INDICATORS ===
     "obt_cloudFastLen": 10,
@@ -32,19 +32,15 @@ DEFAULT_SETTINGS = {
     "obt_entryRsiOverbought": 55,
     "obt_obvEntryLen": 20,
     
-    # === ORDER BLOCK LOGIC (SMART MONEY) ===
-    "obt_swingLength": 5,          # Довжина свінгу
-    "obt_volumeSpikeThreshold": 1.5, # Коефіцієнт аномального об'єму (x1.5 від середнього)
+    # === SMART MONEY OB LOGIC ===
+    "obt_swingLength": 5,
+    "obt_volumeSpikeThreshold": 1.5, # Поріг аномального об'єму
 
-    # === RISK & MONEY MANAGEMENT ===
+    # === RISK ===
     "riskPercent": 2.0,
     "leverage": 20,
-    
-    # TP
     "tp_mode": "Fixed_1_50", 
     "fixedTP": 3.0,
-    
-    # SL
     "sl_mode": "OB_Extremity",
     "fixedSL": 1.5,
     "obBufferPercent": 0.2,
