@@ -12,76 +12,33 @@
 
     <style>
         :root {
-            /* Professional Light Palette (Slate/Zinc) */
-            --bg-body: #f8fafc;       /* Slate 50 */
-            --bg-sidebar: #ffffff;    /* White */
-            --bg-card: #ffffff;       /* White */
-            --bg-element: #f1f5f9;    /* Slate 100 */
-            
-            --border-subtle: #e2e8f0; /* Slate 200 */
-            --border-strong: #cbd5e1; /* Slate 300 */
-            
-            --text-main: #0f172a;     /* Slate 900 (Dark text) */
-            --text-muted: #64748b;    /* Slate 500 */
-            
-            --accent: #4f46e5;        /* Indigo 600 */
-            --success: #059669;       /* Emerald 600 */
-            --danger: #dc2626;        /* Red 600 */
-            
-            --sidebar-width: 260px;
-            --sidebar-collapsed-width: 72px;
-            --transition-speed: 0.3s;
-            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            /* Professional Light Palette */
+            --bg-body: #f8fafc; --bg-sidebar: #ffffff; --bg-card: #ffffff; --bg-element: #f1f5f9;
+            --border-subtle: #e2e8f0; --border-strong: #cbd5e1;
+            --text-main: #0f172a; --text-muted: #64748b;
+            --accent: #4f46e5; --success: #059669; --danger: #dc2626;
+            --sidebar-width: 260px; --sidebar-collapsed-width: 72px; --transition-speed: 0.3s;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05); --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
         }
-
-        body {
-            background-color: var(--bg-body);
-            color: var(--text-main);
-            font-family: 'Inter', sans-serif;
-            font-size: 0.875rem;
-            overflow-x: hidden;
-        }
-
-        /* Sidebar */
-        #sidebar {
-            width: var(--sidebar-width);
-            background: var(--bg-sidebar);
-            border-right: 1px solid var(--border-subtle);
-            position: fixed;
-            top: 0; left: 0; height: 100vh;
-            z-index: 1000;
-            transition: width var(--transition-speed) ease;
-            display: flex; flex-direction: column;
-            overflow: hidden;
-            box-shadow: var(--shadow-sm);
-        }
-
-        body.sidebar-collapsed #sidebar { width: var(--sidebar-collapsed-width); }
+        body { background-color: var(--bg-body); color: var(--text-main); font-family: 'Inter', sans-serif; font-size: 0.875rem; overflow-x: hidden; }
         
+        #sidebar {
+            width: var(--sidebar-width); background: var(--bg-sidebar); border-right: 1px solid var(--border-subtle);
+            position: fixed; top: 0; left: 0; height: 100vh; z-index: 1000;
+            transition: width var(--transition-speed) ease; display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-sm);
+        }
+        body.sidebar-collapsed #sidebar { width: var(--sidebar-collapsed-width); }
         .nav-label, .logo-text { opacity: 1; transition: opacity 0.1s ease; white-space: nowrap; }
         body.sidebar-collapsed .nav-label, body.sidebar-collapsed .logo-text { opacity: 0; pointer-events: none; display: none; }
         body.sidebar-collapsed .logo-icon { margin-right: 0 !important; font-size: 1.5rem; }
         body.sidebar-collapsed .sidebar-header { justify-content: center; padding-left: 0; padding-right: 0; }
 
-        /* Content */
-        #content {
-            margin-left: var(--sidebar-width);
-            padding: 2rem;
-            min-height: 100vh;
-            transition: margin-left var(--transition-speed) ease;
-        }
+        #content { margin-left: var(--sidebar-width); padding: 2rem; min-height: 100vh; transition: margin-left var(--transition-speed) ease; }
         body.sidebar-collapsed #content { margin-left: var(--sidebar-collapsed-width); }
 
-        /* Links */
         .nav-link {
-            color: var(--text-muted);
-            padding: 12px 20px;
-            display: flex; align-items: center;
-            border-left: 3px solid transparent;
-            transition: all 0.2s;
-            height: 48px; margin-bottom: 4px;
-            font-weight: 500;
+            color: var(--text-muted); padding: 12px 20px; display: flex; align-items: center; border-left: 3px solid transparent;
+            transition: all 0.2s; height: 48px; margin-bottom: 4px; font-weight: 500;
         }
         .nav-link:hover { color: var(--accent); background: var(--bg-element); }
         .nav-link.active { color: var(--accent); background: #eef2ff; border-left-color: var(--accent); }
@@ -89,25 +46,13 @@
         body.sidebar-collapsed .nav-link { justify-content: center; padding: 0; }
         body.sidebar-collapsed .nav-icon { margin-right: 0; }
 
-        /* Components */
-        .card-custom {
-            background: var(--bg-card);
-            border: 1px solid var(--border-subtle);
-            border-radius: 8px;
-            box-shadow: var(--shadow-sm);
-            transition: box-shadow 0.2s;
-        }
+        .card-custom { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: var(--shadow-sm); transition: box-shadow 0.2s; }
         .card-custom:hover { box-shadow: var(--shadow-md); }
-        
         .font-mono { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
-        .text-up { color: var(--success); }
-        .text-down { color: var(--danger); }
+        .text-up { color: var(--success); } .text-down { color: var(--danger); }
 
-        /* Toggle */
         #sidebarToggle { cursor: pointer; color: var(--text-muted); transition: 0.2s; }
         #sidebarToggle:hover { color: var(--text-main); background-color: var(--bg-element); }
-
-        /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: var(--bg-body); }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -130,9 +75,6 @@
         <ul class="list-unstyled mb-0">
             <li><a href="/" class="nav-link {{ 'active' if request.path == '/' }}"><i class="ri-layout-grid-line nav-icon"></i><span class="nav-label">Огляд</span></a></li>
             <li><a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}"><i class="ri-pulse-line nav-icon"></i><span class="nav-label">Позиції</span></a></li>
-            
-            <li><a href="/ob_trend/settings" class="nav-link {{ 'active' if '/ob_trend' in request.path }}"><i class="ri-git-branch-line nav-icon"></i><span class="nav-label">Стратегія</span></a></li>
-            
             <li><a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}"><i class="ri-radar-line nav-icon"></i><span class="nav-label">Сканер</span></a></li>
             
             <li class="my-3 border-top w-75 mx-auto" style="border-color: var(--border-subtle) !important;"></li>
