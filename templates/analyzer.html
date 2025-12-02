@@ -28,11 +28,14 @@
 <div class="container-fluid">
     
     <div class="card-custom mb-4 border-0">
-        <div class="card-header bg-white py-3 border-bottom border-light">
+        <div class="card-header bg-white py-3 border-bottom border-light d-flex justify-content-between align-items-center">
             <div class="d-flex align-items-center">
                 <i class="ri-radar-line fs-4 text-accent me-2"></i>
                 <h5 class="fw-bold mb-0 text-dark">Параметри Сканування</h5>
             </div>
+            <a href="/ob_trend/settings" class="btn btn-outline-primary btn-sm fw-bold">
+                <i class="ri-settings-3-line me-1"></i> Налаштування Стратегії
+            </a>
         </div>
         <div class="card-body bg-light bg-opacity-50">
             <form id="scan-form">
@@ -49,9 +52,10 @@
                     <div class="col-md-3">
                         <label class="form-label fw-bold small text-muted text-uppercase">Таймфрейм Входу</label>
                         <select class="form-select" name="ltfSelection">
-                            <option value="5" {{ 'selected' if conf.get('ltfSelection')|string=='5' }}>5 Хвилин (5m)</option>
-                            <option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15 Хвилин (15m)</option>
-                            <option value="60" {{ 'selected' if conf.get('ltfSelection')|string=='60' }}>1 Година (1H)</option>
+                            <option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15 Хвилин</option>
+                            <option value="30" {{ 'selected' if conf.get('ltfSelection')|string=='30' }}>30 Хвилин</option>
+                            <option value="45" {{ 'selected' if conf.get('ltfSelection')|string=='45' }}>45 Хвилин (Pro)</option>
+                            <option value="60" {{ 'selected' if conf.get('ltfSelection')|string=='60' }}>1 Година</option>
                         </select>
                     </div>
                     <div class="col-md-3">
