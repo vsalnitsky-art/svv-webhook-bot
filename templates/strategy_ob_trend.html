@@ -7,7 +7,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h4 class="fw-bold text-dark mb-1">Фільтри Стратегії</h4>
-            <p class="text-muted small m-0">Увімкнення/Вимкнення логічних блоків. Параметри знаходяться в "Налаштуваннях".</p>
+            <p class="text-muted small m-0">Керування логічними блоками (ON/OFF).</p>
         </div>
         <a href="/analyzer" class="btn btn-outline-secondary btn-sm">Повернутися до Сканера</a>
     </div>
@@ -32,21 +32,6 @@
                     <div class="form-check form-switch p-3 border rounded bg-light h-100 d-flex align-items-center justify-content-between">
                         <label class="form-check-label fw-bold" for="swRsi">RSI Logic Filter</label>
                         <input class="form-check-input ms-2" type="checkbox" id="swRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="alert alert-light border mt-4 mb-0">
-                <div class="d-flex">
-                    <i class="ri-information-line fs-4 me-3 text-primary"></i>
-                    <div>
-                        <h6 class="fw-bold mb-1">Як це працює?</h6>
-                        <p class="small text-muted mb-0">
-                            Сканер використовує ці перемикачі для перевірки умов входу. 
-                            Якщо фільтр вимкнено, відповідна умова ігнорується (завжди True).
-                            Щоб змінити довжину RSI, Cloud або OBV, перейдіть в меню 
-                            <a href="/settings" class="fw-bold text-primary">Налаштування</a>.
-                        </p>
                     </div>
                 </div>
             </div>

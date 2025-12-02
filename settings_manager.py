@@ -22,7 +22,7 @@ DEFAULT_SETTINGS = {
 
     # === TIMEFRAMES ===
     "htfSelection": "240", # 4H
-    "ltfSelection": "15",  # 15m
+    "ltfSelection": "45",  # 45m (DEFAULT NOW)
     
     # === INDICATORS (PREFIX OBT_) ===
     "obt_cloudFastLen": 10,
@@ -50,15 +50,13 @@ class SettingsManager:
         self.reload_settings()
 
     def _cast_value(self, key, value_str):
-        # Якщо ключ новий і його немає в дефолтних - просто повертаємо рядок
         if key not in DEFAULT_SETTINGS: return value_str
-        
         default_val = DEFAULT_SETTINGS[key]
         try:
             if isinstance(default_val, bool): 
                 return str(value_str).lower() in ['true', 'on', '1']
             elif isinstance(default_val, int): 
-                return int(float(value_str)) # float->int для безпеки
+                return int(float(value_str))
             elif isinstance(default_val, float): 
                 return float(value_str)
             else: 
@@ -70,8 +68,6 @@ class SettingsManager:
         session = self.db.get_session()
         try:
             db_settings = session.query(BotSetting).all()
-            
-            # Якщо база порожня - заповнюємо дефолтними
             if not db_settings:
                 self._cache = DEFAULT_SETTINGS.copy()
                 for k, v in DEFAULT_SETTINGS.items():
@@ -79,15 +75,12 @@ class SettingsManager:
                     session.add(BotSetting(key=k, value=val_str))
                 session.commit()
             else:
-                # Завантажуємо з бази + додаємо нові ключі з DEFAULT, яких немає в базі
                 loaded = {}
                 db_keys = set()
-                
                 for s in db_settings: 
                     loaded[s.key] = self._cast_value(s.key, s.value)
                     db_keys.add(s.key)
                 
-                # Перевірка на відсутні ключі (якщо ми оновили код)
                 missing_keys = set(DEFAULT_SETTINGS.keys()) - db_keys
                 if missing_keys:
                     for k in missing_keys:
@@ -100,7 +93,6 @@ class SettingsManager:
                 merged = DEFAULT_SETTINGS.copy()
                 merged.update(loaded)
                 self._cache = merged
-                
         except Exception as e:
             logger.error(f"Settings load error: {e}")
             self._cache = DEFAULT_SETTINGS.copy()
@@ -111,11 +103,7 @@ class SettingsManager:
         session = self.db.get_session()
         try:
             for k, v in new_settings_dict.items():
-                # Зберігаємо навіть ті ключі, яких немає в DEFAULT (динамічні)
-                # Але для відомих ключів робимо правильне перетворення типів
-                
                 val_to_store = str(v)
-                
                 if k in DEFAULT_SETTINGS:
                     default_type = type(DEFAULT_SETTINGS[k])
                     if default_type == bool:
@@ -128,19 +116,14 @@ class SettingsManager:
                 else:
                     self._cache[k] = v
                 
-                # Upsert в базу
                 existing = session.query(BotSetting).filter_by(key=k).first()
-                if existing: 
-                    existing.value = val_to_store
-                else: 
-                    session.add(BotSetting(key=k, value=val_to_store))
-                    
+                if existing: existing.value = val_to_store
+                else: session.add(BotSetting(key=k, value=val_to_store))
             session.commit()
         except Exception as e:
             session.rollback()
             logger.error(f"Settings save error: {e}")
-        finally: 
-            session.close()
+        finally: session.close()
 
     def get_all(self): return self._cache.copy()
     def get(self, key, default=None): 
