@@ -8,7 +8,7 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h4 class="fw-bold text-dark mb-1">Системні Налаштування</h4>
-            <p class="text-muted small m-0">Конфігурація бота та таймфреймів</p>
+            <p class="text-muted small m-0">Конфігурація бота, таймфреймів та індикаторів</p>
         </div>
         <div class="d-flex gap-2">
             <a href="/settings/export" class="btn btn-white border shadow-sm btn-sm text-dark font-mono">
@@ -37,15 +37,59 @@
                             <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4 Години (Реком.)</option>
                             <option value="D" {{ 'selected' if conf.get('htfSelection')|string=='D' }}>1 День</option>
                         </select>
+                        <div class="form-text small">Використовується для визначення тренду (Cloud/OBV).</div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small text-muted text-uppercase fw-bold">Таймфрейм Входу (LTF)</label>
                         <select class="form-select" name="ltfSelection">
+                            <option value="5" {{ 'selected' if conf.get('ltfSelection')|string=='5' }}>5 Хвилин</option>
                             <option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15 Хвилин</option>
                             <option value="30" {{ 'selected' if conf.get('ltfSelection')|string=='30' }}>30 Хвилин</option>
                             <option value="45" {{ 'selected' if conf.get('ltfSelection')|string=='45' }}>45 Хвилин (Custom)</option>
                             <option value="60" {{ 'selected' if conf.get('ltfSelection')|string=='60' }}>1 Година</option>
                         </select>
+                        <div class="form-text small">На цьому ТФ шукаються сигнали входу та Order Blocks.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-custom mb-4 border-0">
+            <div class="card-header bg-white border-bottom border-light py-3">
+                <h6 class="fw-bold text-info m-0">📊 Параметри Індикаторів</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">Cloud Fast / Slow</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control" name="obt_cloudFastLen" value="{{ conf.get('obt_cloudFastLen', 10) }}">
+                            <span class="input-group-text">/</span>
+                            <input type="number" class="form-control" name="obt_cloudSlowLen" value="{{ conf.get('obt_cloudSlowLen', 40) }}">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">OBV Length</label>
+                        <input type="number" class="form-control" name="obt_obvEntryLen" value="{{ conf.get('obt_obvEntryLen', 20) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-primary fw-bold">OB Swing Length</label>
+                        <input type="number" class="form-control" name="obt_swingLength" value="{{ conf.get('obt_swingLength', 5) }}">
+                    </div>
+                    
+                    <div class="col-12"><hr class="my-1 opacity-10"></div>
+                    
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">RSI Length</label>
+                        <input type="number" class="form-control" name="obt_rsiLength" value="{{ conf.get('obt_rsiLength', 14) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-success fw-bold">RSI Buy (<=)</label>
+                        <input type="number" class="form-control" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold', 45) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-danger fw-bold">RSI Sell (>=)</label>
+                        <input type="number" class="form-control" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought', 55) }}">
                     </div>
                 </div>
             </div>
@@ -79,8 +123,8 @@
                         </select>
                     </div>
                     <div class="col-md-6">
-                        <label class="form-label small text-muted fw-bold">OB Buffer (%)</label>
-                        <input type="number" step="0.01" class="form-control" name="obBufferPercent" value="{{ conf.get('obBufferPercent') }}">
+                        <label class="form-label small text-muted fw-bold">Fixed SL %</label>
+                        <input type="number" step="0.1" class="form-control" name="fixedSL" value="{{ conf.get('fixedSL', 1.5) }}">
                     </div>
                 </div>
             </div>
@@ -93,43 +137,4 @@
             <div class="card-body">
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <label class="form-label small text-muted fw-bold">Валюта</label>
-                        <select class="form-select" name="scanner_quote_coin">
-                            <option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin')=='USDT' }}>USDT</option>
-                            <option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin')=='USDC' }}>USDC</option>
-                        </select>
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label small text-muted fw-bold">Режим Сканера</label>
-                        <select class="form-select" name="scanner_mode">
-                            <option value="Manual" {{ 'selected' if conf.get('scanner_mode')=='Manual' }}>Ручний</option>
-                            <option value="Auto" {{ 'selected' if conf.get('scanner_mode')=='Auto' }}>Авто</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card-custom mb-4 border-0">
-            <div class="card-body py-3">
-                <div class="form-check form-switch mb-2">
-                    <input class="form-check-input" type="checkbox" name="telegram_enabled" {{ 'checked' if conf.get('telegram_enabled') }}>
-                    <label class="form-check-label fw-bold small text-muted">Telegram Сповіщення</label>
-                </div>
-                <div class="row g-2">
-                    <div class="col-6">
-                        <input type="text" class="form-control form-control-sm" name="telegram_bot_token" value="{{ conf.get('telegram_bot_token','') }}" placeholder="Token">
-                    </div>
-                    <div class="col-6">
-                        <input type="text" class="form-control form-control-sm" name="telegram_chat_id" value="{{ conf.get('telegram_chat_id','') }}" placeholder="Chat ID">
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="mb-5 d-grid">
-            <button type="submit" class="btn btn-primary btn-lg shadow-sm fw-bold">Зберегти Налаштування</button>
-        </div>
-    </form>
-</div>
-{% endblock %}
+                        <label class="form-label

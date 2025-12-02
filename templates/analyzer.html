@@ -26,73 +26,48 @@
         <div class="card-header bg-white py-3 border-bottom border-light d-flex justify-content-between align-items-center">
             <div class="d-flex align-items-center">
                 <i class="ri-radar-line fs-4 text-accent me-2"></i>
-                <h5 class="fw-bold mb-0 text-dark">Параметри Сканування</h5>
+                <h5 class="fw-bold mb-0 text-dark">Панель Сканування</h5>
             </div>
-            <a href="/smart_money" class="btn btn-outline-warning btn-sm fw-bold">
-                <i class="ri-eye-2-line me-1"></i> Відкрити Smart Money Tracker
-            </a>
+            <div>
+                <a href="/settings" class="btn btn-outline-secondary btn-sm me-2">
+                    <i class="ri-settings-line me-1"></i> Змінити Таймфрейми
+                </a>
+                <a href="/smart_money" class="btn btn-outline-warning btn-sm fw-bold">
+                    <i class="ri-eye-2-line me-1"></i> Smart Money Tracker
+                </a>
+            </div>
         </div>
         <div class="card-body bg-light bg-opacity-50">
             <form id="scan-form">
                 
-                <div class="row g-3 mb-4">
+                <div class="row g-3 align-items-end">
                     <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Таймфрейм Тренду</label>
-                        <select class="form-select" name="htfSelection">
-                            <option value="60" {{ 'selected' if conf.get('htfSelection')|string=='60' }}>1 Година (1H)</option>
-                            <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4 Години (4H)</option>
-                            <option value="D" {{ 'selected' if conf.get('htfSelection')|string=='D' }}>1 День (1D)</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Таймфрейм Входу</label>
-                        <select class="form-select" name="ltfSelection">
-                            <option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15 Хвилин</option>
-                            <option value="30" {{ 'selected' if conf.get('ltfSelection')|string=='30' }}>30 Хвилин</option>
-                            <option value="45" {{ 'selected' if conf.get('ltfSelection')|string=='45' }}>45 Хвилин (Pro)</option>
-                            <option value="60" {{ 'selected' if conf.get('ltfSelection')|string=='60' }}>1 Година</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Глибина (Топ)</label>
+                        <label class="form-label fw-bold small text-muted text-uppercase">Глибина (Топ монет)</label>
                         <div class="input-group">
                             <span class="input-group-text bg-white border-end-0">#</span>
                             <input type="number" class="form-control border-start-0 ps-0" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}" min="10" max="400">
                         </div>
                     </div>
+                    
                     <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Режим Входу</label>
-                        <div class="form-check form-switch p-2 bg-white border rounded d-flex align-items-center justify-content-between px-3" style="min-height: 38px;">
-                            <label class="form-check-label fw-bold text-dark m-0" for="obRetestSwitch">OB Retest</label>
-                            <input class="form-check-input m-0" type="checkbox" id="obRetestSwitch" name="useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
+                        <label class="form-label fw-bold small text-muted text-uppercase">Поточні Таймфрейми</label>
+                        <div class="d-flex gap-2">
+                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono">HTF: {{ conf.get('htfSelection') }}m</span>
+                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono">LTF: {{ conf.get('ltfSelection') }}m</span>
                         </div>
                     </div>
-                </div>
 
-                <div class="border-top border-light my-4"></div>
-
-                <div class="row align-items-end g-3">
-                    <div class="col-md-9">
-                        <label class="form-label fw-bold small text-muted text-uppercase mb-2">Активні Фільтри</label>
-                        <div class="row g-3">
-                            <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="switchCloud" name="useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
-                                <label class="btn-toggle-custom shadow-sm" for="switchCloud">Cloud HMA</label>
-                            </div>
-                            <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="switchObv" name="useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
-                                <label class="btn-toggle-custom shadow-sm" for="switchObv">OBV Trend</label>
-                            </div>
-                            <div class="col-md-4">
-                                <input type="checkbox" class="btn-check" id="switchRsi" name="useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
-                                <label class="btn-toggle-custom shadow-sm" for="switchRsi">RSI Logic</label>
-                            </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Фільтри (Швидкий доступ)</label>
+                         <div class="form-check form-switch bg-white border rounded p-2 d-flex align-items-center justify-content-between px-3">
+                            <label class="form-check-label fw-bold text-dark m-0 small" for="obRetestSwitch">OB Retest Mode</label>
+                            <input class="form-check-input m-0" type="checkbox" id="obRetestSwitch" name="useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
                         </div>
                     </div>
                     
                     <div class="col-md-3">
                         <button type="button" id="btn-scan" class="btn btn-primary btn-lg w-100 shadow fw-bold" onclick="startScan()" {{ 'disabled' if is_scanning }}>
-                            {{ '⏳ СКАНУВАННЯ...' if is_scanning else 'ЗБЕРЕГТИ ТА СКАНУВАТИ' }}
+                            {{ '⏳ СКАНУВАННЯ...' if is_scanning else 'ЗАПУСТИТИ СКАНЕР 🚀' }}
                         </button>
                     </div>
                 </div>
@@ -166,9 +141,12 @@ function startScan() {
     $('#status-card').slideDown();
     var formData = {};
     $('#scan-form').serializeArray().forEach(function(item) { formData[item.name] = item.value; });
+    
+    // Передаємо також чекбокси
     $('#scan-form input[type=checkbox]').each(function() { formData[this.name] = this.checked ? 'on' : 'off'; });
+    
     $.post('/analyzer/scan', formData, function(data) { pollStatus(); })
-     .fail(function() { alert('Помилка.'); $('#btn-scan').prop('disabled', false).text('ЗБЕРЕГТИ ТА СКАНУВАТИ'); $('#status-card').hide(); });
+     .fail(function() { alert('Помилка.'); $('#btn-scan').prop('disabled', false).text('ЗАПУСТИТИ СКАНЕР 🚀'); $('#status-card').hide(); });
 }
 function pollStatus() {
     let interval = setInterval(function() {

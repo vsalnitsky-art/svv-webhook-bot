@@ -7,7 +7,7 @@ from bot import bot_instance
 from settings_manager import settings
 from models import db_manager, AnalysisResult, OrderBlock
 
-# Імпортуємо правильний клас стратегії з правильного файлу
+# Імпорт логіки стратегії
 from strategy_ob_trend import ob_trend_strategy as strategy_engine
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,6 @@ class MarketAnalyzer:
             quote_coin = settings.get("scanner_quote_coin")
             all_tickers = bot_instance.get_all_tickers()
             filtered = [t for t in all_tickers if t['symbol'].endswith(quote_coin)]
-            # Сортуємо за об'ємом за 24г
             sorted_tickers = sorted(filtered, key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
             return sorted_tickers[:int(limit)]
         except Exception as e:
@@ -32,12 +31,9 @@ class MarketAnalyzer:
 
     def fetch_candles(self, symbol, timeframe, limit=300):
         try:
-            # Мапінг таймфреймів для Bybit API
+            # Мапінг таймфреймів
             tf_map = {'5': '5', '15': '15', '30': '30', '45': '15', '60': '60', '240': '240', 'D': 'D'}
             req_tf = tf_map.get(str(timeframe), '240')
-            
-            # Якщо таймфрейм "45", беремо "15" і множимо ліміт, щоб потім зібрати (або просто аналізуємо на 15)
-            # Для простоти тут беремо базовий API запит
             
             resp = bot_instance.session.get_kline(
                 category="linear", symbol=symbol, interval=req_tf, limit=limit
@@ -49,8 +45,6 @@ class MarketAnalyzer:
                 df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='ms')
                 for col in ['open', 'high', 'low', 'close', 'volume']:
                     df[col] = df[col].astype(float)
-                
-                # Сортуємо: старі -> нові
                 return df.sort_values('time').reset_index(drop=True)
             return None
         except: return None
@@ -66,7 +60,6 @@ class MarketAnalyzer:
         session = db_manager.get_session()
         
         try:
-            # Очищуємо старі результати
             session.query(AnalysisResult).delete()
             session.commit()
             
@@ -74,57 +67,56 @@ class MarketAnalyzer:
             tickers = self.get_top_tickers(limit)
             total = len(tickers)
             
+            # --- ВАЖЛИВО: БЕРЕМО ТАЙМФРЕЙМИ З ГЛОБАЛЬНИХ НАЛАШТУВАНЬ ---
             htf = settings.get("htfSelection")
             ltf = settings.get("ltfSelection")
+            
+            logger.info(f"Starting scan: HTF={htf}, LTF={ltf}, Filters=Active")
 
             for i, ticker in enumerate(tickers):
-                if not self.is_scanning: break # Можливість зупинки (якщо реалізовано)
+                if not self.is_scanning: break 
                 
                 symbol = ticker['symbol']
                 self.status_message = f"Scanning {symbol} ({i+1}/{total})"
                 self.progress = int((i / total) * 100)
                 
                 try:
-                    # 1. Завантаження даних HTF
+                    # Завантаження HTF
                     df_htf = self.fetch_candles(symbol, htf)
                     if df_htf is None: 
                         time.sleep(0.1); continue
                     
                     time.sleep(0.1)
                     
-                    # 2. Завантаження даних LTF
+                    # Завантаження LTF
                     df_ltf = self.fetch_candles(symbol, ltf)
                     if df_ltf is None: continue
                     
-                    # 3. Аналіз стратегією
+                    # --- АНАЛІЗ СТРАТЕГІЄЮ ---
+                    # Стратегія сама візьме параметри індикаторів з settings
                     signals = strategy_engine.analyze(df_ltf, df_htf)
                     
-                    # 4. Збереження результатів
                     for sig in signals:
-                        score = 80 # Базовий скор
-                        
-                        # Формування запису в БД
                         res = AnalysisResult(
                             symbol=symbol, 
                             signal_type=sig.get('action'), 
                             status="New", 
-                            score=score, 
+                            score=85, 
                             price=sig.get('price'), 
-                            htf_rsi=0.0, # Можна дістати з df_htf якщо треба
+                            htf_rsi=0.0, 
                             ltf_rsi=sig.get('rsi', 0), 
                             details=f"{sig.get('reason')} | SL: {round(sig.get('sl_price',0),4)}"
                         )
                         session.add(res)
                         
-                        # Якщо використовуємо Smart Money Tracker, можна зберігати блоки в таблицю OrderBlock
-                        # (Це опціонально, але корисно для розділу Smart Money)
+                        # Smart Money Tracker Save
                         if 'OB' in sig.get('reason', ''):
-                            ob_type = sig.get('action') # Buy or Sell
+                            ob_type = sig.get('action') 
                             new_ob = OrderBlock(
                                 symbol=symbol,
                                 timeframe=str(ltf),
                                 ob_type=ob_type,
-                                top=sig.get('price') * 1.01, # Приблизно, бо стратегія повертає сигнал, а не сирий блок тут
+                                top=sig.get('price') * 1.01,
                                 bottom=sig.get('price') * 0.99,
                                 entry_price=sig.get('price'),
                                 sl_price=sig.get('sl_price', 0),
@@ -136,10 +128,8 @@ class MarketAnalyzer:
                         logger.info(f"🚀 FOUND: {symbol} {sig.get('action')}")
                 
                 except Exception as e:
-                    # logger.error(f"Scan error {symbol}: {e}")
                     pass
                 
-                # Пауза, щоб не перевищити ліміти API
                 time.sleep(0.2)
 
             self.progress = 100

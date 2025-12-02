@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}OB Cloud Strategy{% endblock %}
+{% block title %}OB Cloud Filters{% endblock %}
 
 {% block content %}
 <div class="container-fluid" style="max-width: 900px;">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h4 class="fw-bold text-dark mb-1">Стратегія OB + Cloud</h4>
-            <p class="text-muted small m-0">Налаштування специфічних індикаторів</p>
+            <h4 class="fw-bold text-dark mb-1">Фільтри Стратегії</h4>
+            <p class="text-muted small m-0">Увімкнення/Вимкнення логічних блоків. Параметри знаходяться в "Налаштуваннях".</p>
         </div>
         <a href="/analyzer" class="btn btn-outline-secondary btn-sm">Повернутися до Сканера</a>
     </div>
@@ -17,58 +17,43 @@
             <h6 class="fw-bold text-success mb-3">🎛️ Активні Фільтри</h6>
             <div class="row g-3">
                 <div class="col-md-4">
-                    <div class="form-check form-switch p-2 border rounded bg-light">
-                        <input class="form-check-input ms-0 me-2" type="checkbox" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
-                        <label class="form-check-label fw-bold">Cloud HMA Filter</label>
+                    <div class="form-check form-switch p-3 border rounded bg-light h-100 d-flex align-items-center justify-content-between">
+                        <label class="form-check-label fw-bold" for="swCloud">Cloud HMA Filter</label>
+                        <input class="form-check-input ms-2" type="checkbox" id="swCloud" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
                     </div>
                 </div>
                 <div class="col-md-4">
-                    <div class="form-check form-switch p-2 border rounded bg-light">
-                        <input class="form-check-input ms-0 me-2" type="checkbox" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
-                        <label class="form-check-label fw-bold">OBV Trend Filter</label>
+                    <div class="form-check form-switch p-3 border rounded bg-light h-100 d-flex align-items-center justify-content-between">
+                        <label class="form-check-label fw-bold" for="swObv">OBV Trend Filter</label>
+                        <input class="form-check-input ms-2" type="checkbox" id="swObv" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
                     </div>
                 </div>
                 <div class="col-md-4">
-                    <div class="form-check form-switch p-2 border rounded bg-light">
-                        <input class="form-check-input ms-0 me-2" type="checkbox" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
-                        <label class="form-check-label fw-bold">RSI Logic Filter</label>
+                    <div class="form-check form-switch p-3 border rounded bg-light h-100 d-flex align-items-center justify-content-between">
+                        <label class="form-check-label fw-bold" for="swRsi">RSI Logic Filter</label>
+                        <input class="form-check-input ms-2" type="checkbox" id="swRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
                     </div>
                 </div>
             </div>
-        </div>
-
-        <div class="card-custom mb-4 p-4 border-0">
-            <h6 class="fw-bold text-info mb-3">📊 Параметри Індикаторів</h6>
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <label class="form-label small text-muted fw-bold">Cloud Fast / Slow</label>
-                    <div class="input-group">
-                        <input type="number" class="form-control" name="obt_cloudFastLen" value="{{ conf.get('obt_cloudFastLen') }}">
-                        <span class="input-group-text">/</span>
-                        <input type="number" class="form-control" name="obt_cloudSlowLen" value="{{ conf.get('obt_cloudSlowLen') }}">
+            
+            <div class="alert alert-light border mt-4 mb-0">
+                <div class="d-flex">
+                    <i class="ri-information-line fs-4 me-3 text-primary"></i>
+                    <div>
+                        <h6 class="fw-bold mb-1">Як це працює?</h6>
+                        <p class="small text-muted mb-0">
+                            Сканер використовує ці перемикачі для перевірки умов входу. 
+                            Якщо фільтр вимкнено, відповідна умова ігнорується (завжди True).
+                            Щоб змінити довжину RSI, Cloud або OBV, перейдіть в меню 
+                            <a href="/settings" class="fw-bold text-primary">Налаштування</a>.
+                        </p>
                     </div>
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label small text-primary fw-bold">Volume Spike (x)</label>
-                    <input type="number" step="0.1" class="form-control border-primary" name="obt_volumeSpikeThreshold" value="{{ conf.get('obt_volumeSpikeThreshold', 1.5) }}">
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label small text-muted fw-bold">OBV Length</label>
-                    <input type="number" class="form-control" name="obt_obvEntryLen" value="{{ conf.get('obt_obvEntryLen') }}">
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label small text-success fw-bold">RSI Buy (<=)</label>
-                    <input type="number" class="form-control" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold') }}">
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label small text-danger fw-bold">RSI Sell (>=)</label>
-                    <input type="number" class="form-control" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought') }}">
                 </div>
             </div>
         </div>
 
         <div class="d-grid mb-5">
-            <button type="submit" class="btn btn-primary btn-lg shadow-sm fw-bold">Застосувати Зміни Стратегії</button>
+            <button type="submit" class="btn btn-primary btn-lg shadow-sm fw-bold">Застосувати Фільтри</button>
         </div>
     </form>
 </div>
