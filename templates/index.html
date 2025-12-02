@@ -15,15 +15,11 @@
                 <span>{{ date }}</span>
             </div>
         </div>
-        <div class="d-flex gap-3">
+        <div class="d-flex gap-2">
              <div class="btn-group shadow-sm">
                 <a href="/?days=7" class="btn btn-sm {{ 'btn-white text-dark border' if days != 7 else 'btn-primary' }} px-3 fw-bold">7 Днів</a>
                 <a href="/?days=30" class="btn btn-sm {{ 'btn-white text-dark border' if days != 30 else 'btn-primary' }} px-3 fw-bold">30 Днів</a>
              </div>
-             
-             <a href="/analyzer" class="btn btn-primary d-flex align-items-center px-4 shadow-sm">
-                <i class="ri-search-2-line me-2"></i> Новий Скан
-            </a>
         </div>
     </div>
 
@@ -53,11 +49,9 @@
         <div class="col-md-3">
             <div class="card-custom p-3 h-100 d-flex flex-column justify-content-center">
                 <div class="d-flex align-items-center justify-content-between gap-3">
-                    
                     <div class="flex-grow-1">
                         <div class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 11px;">Всього угод</div>
                         <h2 class="m-0 fw-bold text-dark font-mono mb-2">{{ longs + shorts }}</h2>
-                        
                         <div class="d-flex align-items-center gap-3 font-mono small">
                             <div class="d-flex align-items-center text-success">
                                 <span class="badge bg-success-subtle text-success me-1 rounded-pill" style="font-size: 10px;">●</span>
@@ -69,7 +63,6 @@
                             </div>
                         </div>
                     </div>
-                    
                     <div style="width: 70px; height: 70px; position: relative;">
                         <canvas id="lsChart"></canvas>
                     </div>
@@ -85,6 +78,42 @@
                     <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-10 small">Live</span>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <a href="/analyzer" class="card-custom p-3 text-decoration-none d-flex align-items-center bg-white border shadow-sm h-100 hover-card">
+                <div class="me-3 bg-primary bg-opacity-10 p-3 rounded-circle text-primary">
+                    <i class="ri-radar-line fs-4"></i>
+                </div>
+                <div>
+                    <h6 class="fw-bold text-dark mb-1">Запустити Сканер</h6>
+                    <p class="text-muted small m-0">Знайти нові Smart Money зони</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="/smart_money" class="card-custom p-3 text-decoration-none d-flex align-items-center bg-white border shadow-sm h-100 hover-card">
+                <div class="me-3 bg-warning bg-opacity-10 p-3 rounded-circle text-warning">
+                    <i class="ri-eye-2-line fs-4"></i>
+                </div>
+                <div>
+                    <h6 class="fw-bold text-dark mb-1">Watchlist (Трекер)</h6>
+                    <p class="text-muted small m-0">Перевірити зони очікування</p>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="/ob_trend/settings" class="card-custom p-3 text-decoration-none d-flex align-items-center bg-white border shadow-sm h-100 hover-card">
+                <div class="me-3 bg-info bg-opacity-10 p-3 rounded-circle text-info">
+                    <i class="ri-equalizer-line fs-4"></i>
+                </div>
+                <div>
+                    <h6 class="fw-bold text-dark mb-1">Налаштувати Стратегію</h6>
+                    <p class="text-muted small m-0">Змінити індикатори та ризик</p>
+                </div>
+            </a>
         </div>
     </div>
 
@@ -139,8 +168,11 @@
     </div>
 </div>
 
+<style>
+    .hover-card:hover { transform: translateY(-2px); border-color: var(--accent) !important; transition: all 0.2s; }
+</style>
+
 <script>
-    // 1. Main P&L Chart
     const ctxMain = document.getElementById('mainChart').getContext('2d');
     const gradient = ctxMain.createLinearGradient(0, 0, 0, 300);
     gradient.addColorStop(0, 'rgba(79, 70, 229, 0.2)'); 
@@ -175,12 +207,9 @@
         }
     });
 
-    // 2. Long/Short Doughnut Chart
     const ctxLs = document.getElementById('lsChart').getContext('2d');
     const longs = {{ longs }};
     const shorts = {{ shorts }};
-    
-    // Якщо даних немає, показуємо сіре коло
     const total = longs + shorts;
     const dataValues = (total === 0) ? [1] : [longs, shorts];
     const bgColors = (total === 0) ? ['#e2e8f0'] : ['#10b981', '#ef4444']; 
@@ -197,13 +226,8 @@
             }]
         },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            cutout: '70%', 
-            plugins: {
-                legend: { display: false },
-                tooltip: { enabled: (total > 0) }
-            }
+            responsive: true, maintainAspectRatio: false, cutout: '70%', 
+            plugins: { legend: { display: false }, tooltip: { enabled: (total > 0) } }
         }
     });
 </script>

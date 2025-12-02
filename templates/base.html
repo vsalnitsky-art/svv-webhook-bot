@@ -12,7 +12,6 @@
 
     <style>
         :root {
-            /* Professional Light Palette */
             --bg-body: #f8fafc; --bg-sidebar: #ffffff; --bg-card: #ffffff; --bg-element: #f1f5f9;
             --border-subtle: #e2e8f0; --border-strong: #cbd5e1;
             --text-main: #0f172a; --text-muted: #64748b;
@@ -74,11 +73,17 @@
     <div class="py-4 flex-grow-1">
         <ul class="list-unstyled mb-0">
             <li><a href="/" class="nav-link {{ 'active' if request.path == '/' }}"><i class="ri-layout-grid-line nav-icon"></i><span class="nav-label">Огляд</span></a></li>
-            <li><a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}"><i class="ri-pulse-line nav-icon"></i><span class="nav-label">Позиції</span></a></li>
-            <li><a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}"><i class="ri-radar-line nav-icon"></i><span class="nav-label">Сканер</span></a></li>
             
-            <li class="my-3 border-top w-75 mx-auto" style="border-color: var(--border-subtle) !important;"></li>
+            <li class="px-3 pt-3 pb-2 small text-muted fw-bold text-uppercase nav-label" style="font-size: 0.7rem;">Торгівля</li>
             
+            <li><a href="/scanner" class="nav-link {{ 'active' if '/scanner' in request.path }}"><i class="ri-pulse-line nav-icon"></i><span class="nav-label">Монітор Угод</span></a></li>
+            <li><a href="/analyzer" class="nav-link {{ 'active' if '/analyzer' in request.path }}"><i class="ri-radar-line nav-icon"></i><span class="nav-label">Сканер Ринку</span></a></li>
+            
+            <li><a href="/smart_money" class="nav-link {{ 'active' if '/smart_money' in request.path }}"><i class="ri-eye-2-line nav-icon"></i><span class="nav-label">Smart Money</span></a></li>
+            
+            <li class="px-3 pt-3 pb-2 small text-muted fw-bold text-uppercase nav-label" style="font-size: 0.7rem;">Система</li>
+            
+            <li><a href="/ob_trend/settings" class="nav-link {{ 'active' if '/ob_trend' in request.path }}"><i class="ri-git-branch-line nav-icon"></i><span class="nav-label">Стратегія</span></a></li>
             <li><a href="/settings" class="nav-link {{ 'active' if '/settings' in request.path }}"><i class="ri-settings-line nav-icon"></i><span class="nav-label">Налаштування</span></a></li>
         </ul>
     </div>

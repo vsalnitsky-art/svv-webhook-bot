@@ -38,7 +38,7 @@ class BotSetting(Base):
     key = Column(String(50), primary_key=True)
     value = Column(String(255))
 
-# === РЕЗУЛЬТАТИ СКАНЕРА ===
+# === РЕЗУЛЬТАТИ СКАНЕРА (Лог пошуку) ===
 class AnalysisResult(Base):
     __tablename__ = 'analysis_results'
     id = Column(Integer, primary_key=True)
@@ -52,7 +52,30 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
-# === МЕНЕДЖЕР БАЗИ ДАНИХ ===
+# === SMART MONEY ORDER BLOCKS (Накопичення) ===
+class OrderBlock(Base):
+    __tablename__ = 'order_blocks'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), index=True)
+    timeframe = Column(String(10))      # "45", "240"
+    ob_type = Column(String(10))        # "Buy" (Bull) або "Sell" (Bear)
+    
+    # Координати зони
+    top = Column(Float)
+    bottom = Column(Float)
+    
+    # Параметри входу
+    entry_price = Column(Float)         # Ціна, де чекаємо вхід
+    sl_price = Column(Float)            # Стоп-лосс
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Статуси: 'PENDING' (Чекаємо), 'FILLED' (Війшли), 'INVALID' (Пробито/Скасовано)
+    status = Column(String(20), default='PENDING') 
+    
+    volume_score = Column(Float, default=0.0) # Сила об'єму
+
+# === DATABASE MANAGER ===
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         db_url = os.environ.get('DATABASE_URL')
