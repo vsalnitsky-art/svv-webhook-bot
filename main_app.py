@@ -5,6 +5,7 @@ import json
 import ctypes
 import os
 import requests
+import pandas as pd
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, redirect, url_for, Response
 from sqlalchemy import desc
@@ -14,10 +15,7 @@ from bot import bot_instance
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from settings_manager import settings
-
-# Імпорт моделей (включаючи нову SmartMoneyTicker)
 from models import db_manager, OrderBlock, SmartMoneyTicker
-
 from market_analyzer import market_analyzer
 
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
@@ -61,6 +59,45 @@ def keep_alive():
 
 threading.Thread(target=monitor_active, daemon=True).start()
 threading.Thread(target=keep_alive, daemon=True).start()
+
+# --- NEW API ENDPOINT FOR CHART DATA ---
+@app.route('/api/chart_data/<symbol>')
+def get_chart_data(symbol):
+    try:
+        # 1. Get Candles (HTF)
+        # Використовуємо той самий метод, що і в сканері
+        htf = settings.get("htfSelection")
+        df = market_analyzer.fetch_candles(symbol, htf, limit=200)
+        
+        candles = []
+        if df is not None:
+            # Format for Lightweight Charts: { time: '2018-12-22', open: 75.16, high: 82.84, low: 36.16, close: 45.72 }
+            # Time needs to be unix timestamp in seconds
+            for _, row in df.iterrows():
+                candles.append({
+                    'time': int(row['time'].timestamp()),
+                    'open': row['open'],
+                    'high': row['high'],
+                    'low': row['low'],
+                    'close': row['close']
+                })
+
+        # 2. Get Order Blocks form DB
+        session = db_manager.get_session()
+        db_blocks = session.query(OrderBlock).filter_by(symbol=symbol).all()
+        blocks = []
+        for b in db_blocks:
+            blocks.append({
+                'type': b.ob_type, # 'Buy' or 'Sell'
+                'top': b.top,
+                'bottom': b.bottom,
+                'timeframe': b.timeframe
+            })
+        session.close()
+
+        return jsonify({'candles': candles, 'blocks': blocks})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/')
 def home():
@@ -111,7 +148,6 @@ def analyzer_page():
 def smart_money_page():
     session = db_manager.get_session()
     try:
-        # ЗАПИТ ДО НОВОЇ ТАБЛИЦІ (Watchlist)
         tickers = session.query(SmartMoneyTicker).order_by(desc(SmartMoneyTicker.added_at)).all()
         return render_template('smart_money.html', tickers=tickers)
     except Exception as e:
