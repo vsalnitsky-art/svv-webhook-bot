@@ -62,6 +62,13 @@ class OrderBlock(Base):
     status = Column(String(20), default='PENDING') 
     volume_score = Column(Float, default=0.0)
 
+# === ДОДАНО ВІДСУТНІЙ КЛАС ===
+class SmartMoneyTicker(Base):
+    __tablename__ = 'smart_money_watchlist'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), unique=True, index=True)
+    added_at = Column(DateTime, default=datetime.utcnow)
+
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         db_url = os.environ.get('DATABASE_URL')
