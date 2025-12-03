@@ -16,6 +16,7 @@
     }
     .badge-buy { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
     .badge-sell { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .param-tag { font-size: 0.75em; opacity: 0.7; font-family: 'JetBrains Mono', monospace; margin-left: 5px; }
 </style>
 {% endblock %}
 
@@ -53,10 +54,14 @@
                         <label class="form-label fw-bold small text-muted text-uppercase">Активні Таймфрейми</label>
                         <div class="d-flex gap-2">
                             <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
-                                <span class="text-muted me-2 small">TREND:</span> {{ conf.get('htfSelection') }}m
+                                <span class="text-muted me-2 small">HTF:</span> 
+                                {% set h = conf.get('htfSelection')|string %}
+                                {% if h == '60' %}1H{% elif h == '240' %}4H{% elif h == 'D' %}1D{% else %}{{ h }}m{% endif %}
                             </span>
                             <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
-                                <span class="text-muted me-2 small">ENTRY:</span> {{ conf.get('ltfSelection') }}m
+                                <span class="text-muted me-2 small">LTF:</span> 
+                                {% set l = conf.get('ltfSelection')|string %}
+                                {% if l == '60' %}1H{% else %}{{ l }}m{% endif %}
                             </span>
                         </div>
                     </div>
@@ -73,25 +78,29 @@
                     <div class="col-md-3">
                         <input type="checkbox" class="btn-check" id="fCloud" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
                         <label class="btn-toggle-custom shadow-sm" for="fCloud">
-                            <span>Cloud HMA</span> <i class="ri-checkbox-circle-line"></i>
+                            <span>Cloud <span class="param-tag">({{ conf.get('obt_cloudFastLen') }}/{{ conf.get('obt_cloudSlowLen') }})</span></span> 
+                            <i class="ri-checkbox-circle-line"></i>
                         </label>
                     </div>
                     <div class="col-md-3">
                         <input type="checkbox" class="btn-check" id="fObv" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
                         <label class="btn-toggle-custom shadow-sm" for="fObv">
-                            <span>OBV Trend</span> <i class="ri-bar-chart-line"></i>
+                            <span>OBV <span class="param-tag">({{ conf.get('obt_obvEntryLen') }})</span></span> 
+                            <i class="ri-bar-chart-line"></i>
                         </label>
                     </div>
                     <div class="col-md-3">
                         <input type="checkbox" class="btn-check" id="fRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
                         <label class="btn-toggle-custom shadow-sm" for="fRsi">
-                            <span>RSI Logic</span> <i class="ri-pulse-line"></i>
+                            <span>RSI <span class="param-tag">({{ conf.get('obt_rsiLength') }})</span></span> 
+                            <i class="ri-pulse-line"></i>
                         </label>
                     </div>
                     <div class="col-md-3">
                         <input type="checkbox" class="btn-check" id="fRetest" name="obt_useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
                         <label class="btn-toggle-custom shadow-sm" for="fRetest">
-                            <span>OB Retest</span> <i class="ri-arrow-go-back-line"></i>
+                            <span>Retest <span class="param-tag">(Sw {{ conf.get('obt_swingLength') }})</span></span> 
+                            <i class="ri-arrow-go-back-line"></i>
                         </label>
                     </div>
                 </div>
