@@ -1,9 +1,102 @@
-{% extends "base.html" %}{% block content %}
-<div class="container-fluid"><div class="d-flex justify-content-between mb-3"><h4 class="fw-bold">Smart Money Zones</h4><a href="/analyzer" class="btn btn-sm btn-outline-secondary">Scanner</a></div>
-<div class="card-custom"><table class="table align-middle"><thead><tr><th>Symbol</th><th>Zone</th><th>Range (Entry)</th><th>SL</th><th>Status</th><th>Time</th><th>Action</th></tr></thead><tbody>
-{% for b in blocks %}<tr><td class="fw-bold">{{b.symbol}}</td><td><span class="badge {{'bg-success' if b.ob_type=='Buy' else 'bg-danger'}}">{{b.ob_type}}</span></td>
-<td class="font-mono">{{b.bottom}} - {{b.top}}</td><td class="font-mono text-muted">{{b.sl_price}}</td>
-<td>{% if 'INSIDE' in b.status %}<span class="badge bg-success blink">INSIDE</span>{% elif 'NEAR' in b.status %}<span class="badge bg-warning text-dark">NEAR</span>{% elif 'BROKEN' in b.status %}<span class="badge bg-secondary text-decoration-line-through">BROKEN</span>{% else %}<span class="badge bg-light text-muted border">WAITING</span>{% endif %}</td>
-<td class="small">{{b.created_at.strftime('%H:%M')}}</td><td><a href="https://www.bybit.com/trade/usdt/{{b.symbol}}" target="_blank" class="btn btn-xs btn-primary">Bybit ↗</a></td></tr>
-{% else %}<tr><td colspan="7" class="text-center py-5">No active zones found.</td></tr>{% endfor %}</tbody></table></div></div>
-<style>.blink{animation:b 1s infinite}@keyframes b{50%{opacity:0}}</style>{% endblock %}
+{% extends "base.html" %}
+
+{% block title %}Smart Money Monitor{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h4 class="fw-bold text-dark mb-0">Smart Money Monitor</h4>
+            <p class="text-muted small mb-0">Активні зони по монетам з Watchlist (оновлюється в реальному часі).</p>
+        </div>
+        <div>
+            <a href="/analyzer" class="btn btn-primary btn-sm shadow-sm">
+                <i class="ri-radar-line me-1"></i> Сканер (Додати нові)
+            </a>
+        </div>
+    </div>
+
+    <div class="card-custom border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table align-middle mb-0 table-hover">
+                <thead class="bg-light text-uppercase small text-muted">
+                    <tr>
+                        <th class="py-3 ps-4 border-bottom">Символ</th>
+                        <th class="py-3 border-bottom">Тип</th>
+                        <th class="py-3 border-bottom">ТФ</th>
+                        <th class="py-3 border-bottom">Зона Входу</th>
+                        <th class="py-3 border-bottom">Stop Loss</th>
+                        <th class="py-3 border-bottom">Статус</th>
+                        <th class="py-3 border-bottom">Час</th>
+                        <th class="py-3 border-bottom text-end pe-4">Дія</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for b in blocks %}
+                    <tr>
+                        <td class="ps-4">
+                            <span class="fw-bold text-dark font-mono fs-6">{{ b.symbol }}</span>
+                        </td>
+                        
+                        <td>
+                            {% if b.ob_type == 'Buy' %}
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">BUY</span>
+                            {% else %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">SELL</span>
+                            {% endif %}
+                        </td>
+                        
+                        <td class="font-mono text-muted small">{{ b.timeframe }}m</td>
+                        
+                        <td class="font-mono fw-bold text-dark">
+                            {{ b.bottom }} - {{ b.top }}
+                        </td>
+                        
+                        <td class="font-mono text-muted">
+                            {{ b.sl_price }}
+                        </td>
+                        
+                        <td>
+                            {% if 'INSIDE' in b.status %}
+                                <span class="badge bg-success text-white blink-status">🔥 INSIDE</span>
+                            {% elif 'NEAR' in b.status %}
+                                <span class="badge bg-warning text-dark border border-warning">⚠️ NEAR</span>
+                            {% elif 'BROKEN' in b.status %}
+                                <span class="badge bg-secondary text-white text-decoration-line-through">BROKEN</span>
+                            {% else %}
+                                <span class="badge bg-light text-muted border">WAITING</span>
+                            {% endif %}
+                        </td>
+                        
+                        <td class="text-muted small font-mono">
+                            {{ b.created_at.strftime('%H:%M') }}
+                        </td>
+                        
+                        <td class="text-end pe-4">
+                            <a href="https://www.bybit.com/trade/usdt/{{ b.symbol }}" target="_blank" class="btn btn-sm btn-outline-primary py-1 px-2 font-mono" style="font-size: 0.75rem;">
+                                Bybit <i class="ri-external-link-line ms-1"></i>
+                            </a>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-5">
+                            <div class="py-4 opacity-50">
+                                <i class="ri-search-eye-line fs-1 text-muted"></i>
+                                <h5 class="text-muted mt-2">Немає активних зон</h5>
+                                <p class="small text-muted mb-0">Запустіть сканер, щоб наповнити список, або зачекайте оновлення.</p>
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    .blink-status { animation: blinker 1.5s linear infinite; }
+    @keyframes blinker { 50% { opacity: 0.6; } }
+</style>
+{% endblock %}

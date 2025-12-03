@@ -1,1 +1,96 @@
-{% extends "base.html" %}{% block title %}Dash{% endblock %}{% block content %}<div class="container-fluid"><h4 class="mb-4">Dashboard</h4><div class="row g-3 mb-4"><div class="col-md-3"><div class="card-custom p-3"><h6>Balance</h6><h3>{{balance}}</h3></div></div><div class="col-md-3"><div class="card-custom p-3"><h6>Active</h6><h3>{{active_count}}</h3></div></div><div class="col-md-3"><div class="card-custom p-3"><h6>P&L ({{days}}d)</h6><h3 class="{{'text-up' if period_pnl>0 else 'text-down'}}">{{period_pnl}}</h3></div></div></div><div class="card-custom"><div class="card-header bg-white">Recent Trades</div><table class="table mb-0">{% for t in trades %}<tr><td>{{t.symbol}}</td><td><span class="badge {{'bg-success' if t.side=='Long' else 'bg-danger'}}">{{t.side}}</span></td><td class="{{'text-up' if t.pnl>0 else 'text-down'}}">{{t.pnl}}</td><td>{{t.exit_time}}</td></tr>{% endfor %}</table></div></div>{% endblock %}
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <h4 class="mb-4 fw-bold text-dark">Dashboard</h4>
+    
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card-custom p-4 h-100">
+                <h6 class="text-muted small text-uppercase fw-bold mb-2">Balance</h6>
+                <div class="d-flex align-items-baseline">
+                    <h3 class="fw-bold m-0">{{ balance }}</h3>
+                    <small class="text-muted ms-2 fs-6">USDT</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card-custom p-4 h-100">
+                <h6 class="text-muted small text-uppercase fw-bold mb-2">Active Positions</h6>
+                <div class="d-flex align-items-baseline">
+                    <h3 class="fw-bold m-0">{{ active_count }}</h3>
+                    <span class="badge bg-primary bg-opacity-10 text-primary ms-2 rounded-pill">LIVE</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card-custom p-4 h-100">
+                <h6 class="text-muted small text-uppercase fw-bold mb-2">P&L ({{ days }}d)</h6>
+                <h3 class="fw-bold m-0 {{ 'text-up' if period_pnl > 0 else 'text-down' }}">
+                    {{ "+" if period_pnl > 0 }}{{ period_pnl }} $
+                </h3>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card-custom p-4 h-100">
+                <h6 class="text-muted small text-uppercase fw-bold mb-2">Trades</h6>
+                <div class="d-flex gap-2 mt-2">
+                    <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2">
+                        Longs: {{ longs }}
+                    </span>
+                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle px-3 py-2">
+                        Shorts: {{ shorts }}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card-custom">
+        <div class="card-header bg-white py-3 border-bottom border-light">
+            <h6 class="m-0 fw-bold text-dark">Recent Trades History</h6>
+        </div>
+        <div class="table-responsive">
+            <table class="table align-middle mb-0 table-hover">
+                <thead class="bg-light text-muted small text-uppercase">
+                    <tr>
+                        <th class="ps-4">Symbol</th>
+                        <th>Side</th>
+                        <th>P&L</th>
+                        <th>Exit Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for t in trades %}
+                    <tr>
+                        <td class="ps-4 fw-bold text-dark">{{ t.symbol }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if t.side=='Long' else 'bg-danger' }}">
+                                {{ t.side }}
+                            </span>
+                        </td>
+                        <td class="{{ 'text-up' if t.pnl > 0 else 'text-down' }} fw-bold font-mono">
+                            {{ "+" if t.pnl > 0 }}{{ t.pnl }} $
+                        </td>
+                        <td class="text-muted small font-mono">
+                            {{ t.exit_time.strftime('%d.%m %H:%M') }}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="4" class="text-center py-5 text-muted">
+                            No trades found for this period.
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
