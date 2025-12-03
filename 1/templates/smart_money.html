@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}Smart Money Monitor{% endblock %}
+
+{% block head %}
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+    .layout-container { display: flex; height: calc(100vh - 100px); gap: 15px; }
+    .sidebar { width: 280px; overflow-y: auto; background: white; border: 1px solid #e2e8f0; border-radius: 8px; }
+    .main-chart { flex-grow: 1; background: white; border: 1px solid #e2e8f0; border-radius: 8px; position: relative; }
+    .ticker-item { padding: 12px 15px; border-bottom: 1px solid #f1f5f9; cursor: pointer; transition: 0.2s; display: flex; justify-content: space-between; align-items: center; }
+    .ticker-item:hover { background-color: #f8fafc; }
+    .ticker-item.active { background-color: #eef2ff; border-left: 4px solid #4f46e5; }
+    .ticker-symbol { font-weight: 700; color: #1e293b; font-family: 'JetBrains Mono', monospace; }
+    .ticker-time { font-size: 0.75rem; color: #94a3b8; }
+    #chart-container { width: 100%; height: 100%; }
+    #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); display: none; justify-content: center; align-items: center; z-index: 10; backdrop-filter: blur(2px); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid h-100">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold m-0"><i class="ri-eye-2-line me-2 text-primary"></i>Smart Money Monitor</h5>
+        <a href="/analyzer" class="btn btn-sm btn-outline-secondary">Сканер</a>
+    </div>
+
+    <div class="layout-container">
+        <div class="sidebar shadow-sm">
+            <div class="p-3 border-bottom bg-light">
+                <span class="small fw-bold text-muted text-uppercase">Watchlist ({{ tickers|length }})</span>
+            </div>
+            <div id="ticker-list">
+                {% for t in tickers %}
+                <div class="ticker-item" onclick="loadChart('{{ t.symbol }}', this)">
+                    <div>
+                        <div class="ticker-symbol">{{ t.symbol }}</div>
+                        <div class="ticker-time">{{ t.added_at.strftime('%d.%m %H:%M') }}</div>
+                    </div>
+                    <i class="ri-arrow-right-s-line text-muted"></i>
+                </div>
+                {% else %}
+                <div class="p-4 text-center text-muted small">Список порожній.<br>Запустіть сканер.</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="main-chart shadow-sm">
+            <div id="loading-overlay">
+                <div class="spinner-border text-primary" role="status"></div>
+            </div>
+            <div id="chart-container"></div>
+            <div class="position-absolute top-0 start-0 p-3" style="z-index: 5; pointer-events: none;">
+                <h4 id="chart-title" class="fw-bold m-0" style="opacity: 0.3;">SELECT COIN</h4>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let chart, candleSeries;
+    let priceLines = []; // Зберігаємо лінії, щоб видаляти при зміні монети
+
+    // Ініціалізація графіка
+    function initChart() {
+        const container = document.getElementById('chart-container');
+        chart = LightweightCharts.createChart(container, {
+            layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#333' },
+            grid: { vertLines: { color: '#f1f5f9' }, horzLines: { color: '#f1f5f9' } },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+            rightPriceScale: { borderColor: '#e2e8f0' },
+            timeScale: { borderColor: '#e2e8f0', timeVisible: true }
+        });
+
+        candleSeries = chart.addCandlestickSeries({
+            upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
+        });
+
+        new ResizeObserver(entries => {
+            if (entries.length === 0 || entries[0].target !== container) { return; }
+            const newRect = entries[0].contentRect;
+            chart.applyOptions({ height: newRect.height, width: newRect.width });
+        }).observe(container);
+    }
+
+    // Завантаження даних
+    function loadChart(symbol, element) {
+        // UI Update
+        document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
+        if(element) element.classList.add('active');
+        document.getElementById('chart-title').innerText = symbol;
+        document.getElementById('loading-overlay').style.display = 'flex';
+
+        // Clear previous lines
+        priceLines.forEach(line => candleSeries.removePriceLine(line));
+        priceLines = [];
+
+        // Fetch Data
+        fetch(`/api/chart_data/${symbol}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.candles) {
+                    candleSeries.setData(data.candles);
+                }
+                
+                // Draw Order Blocks as Price Lines
+                if (data.blocks) {
+                    data.blocks.forEach(ob => {
+                        const color = ob.type === 'Buy' ? '#26a69a' : '#ef5350';
+                        
+                        // Top Line
+                        const topLine = candleSeries.createPriceLine({
+                            price: ob.top,
+                            color: color,
+                            lineWidth: 2,
+                            lineStyle: LightweightCharts.LineStyle.Solid,
+                            axisLabelVisible: true,
+                            title: `${ob.type} OB Top`,
+                        });
+                        
+                        // Bottom Line
+                        const bottomLine = candleSeries.createPriceLine({
+                            price: ob.bottom,
+                            color: color,
+                            lineWidth: 1,
+                            lineStyle: LightweightCharts.LineStyle.Dashed,
+                            axisLabelVisible: false,
+                            title: `Bot`,
+                        });
+
+                        priceLines.push(topLine, bottomLine);
+                    });
+                }
+                
+                document.getElementById('loading-overlay').style.display = 'none';
+                chart.timeScale().fitContent();
+            })
+            .catch(err => {
+                console.error(err);
+                document.getElementById('loading-overlay').style.display = 'none';
+                alert("Error loading data");
+            });
+    }
+
+    document.addEventListener("DOMContentLoaded", initChart);
+</script>
+{% endblock %}

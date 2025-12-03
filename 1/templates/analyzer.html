@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block title %}Сканер Ринку{% endblock %}
+
+{% block head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<style>
+    .btn-toggle-custom {
+        border: 1px solid var(--border-subtle); background-color: #fff; color: var(--text-muted);
+        font-weight: 600; border-radius: 8px; padding: 10px; transition: all 0.2s ease;
+        cursor: pointer; display: flex; align-items: center; justify-content: space-between; width: 100%;
+    }
+    .btn-check:checked + .btn-toggle-custom {
+        background-color: #e0e7ff; color: var(--accent); border-color: var(--accent);
+        box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    .badge-buy { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .badge-sell { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .param-tag { font-size: 0.75em; opacity: 0.7; font-family: 'JetBrains Mono', monospace; margin-left: 5px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    
+    <div class="card-custom mb-4 border-0">
+        <div class="card-header bg-white py-3 border-bottom border-light d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center">
+                <i class="ri-radar-line fs-4 text-accent me-2"></i>
+                <h5 class="fw-bold mb-0 text-dark">Панель Сканування</h5>
+            </div>
+            <div>
+                <a href="/settings" class="btn btn-outline-secondary btn-sm me-2">
+                    <i class="ri-settings-line me-1"></i> Налаштування
+                </a>
+                <a href="/smart_money" class="btn btn-outline-warning btn-sm fw-bold">
+                    <i class="ri-eye-2-line me-1"></i> Smart Money
+                </a>
+            </div>
+        </div>
+        <div class="card-body bg-light bg-opacity-50">
+            <form id="scan-form">
+                
+                <div class="row g-3 align-items-end mb-4">
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Глибина (Топ)</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-white border-end-0">#</span>
+                            <input type="number" class="form-control border-start-0 ps-0" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}" min="10" max="400">
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-5">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Активні Таймфрейми</label>
+                        <div class="d-flex gap-2">
+                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
+                                <span class="text-muted me-2 small">HTF:</span> 
+                                {% set h = conf.get('htfSelection')|string %}
+                                {% if h == '60' %}1H{% elif h == '240' %}4H{% elif h == 'D' %}1D{% else %}{{ h }}m{% endif %}
+                            </span>
+                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
+                                <span class="text-muted me-2 small">LTF:</span> 
+                                {% set l = conf.get('ltfSelection')|string %}
+                                {% if l == '60' %}1H{% else %}{{ l }}m{% endif %}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="col-md-4">
+                        <button type="button" id="btn-scan" class="btn btn-primary btn-lg w-100 shadow fw-bold" onclick="startScan()" {{ 'disabled' if is_scanning }}>
+                            {{ '⏳ СКАНУВАННЯ...' if is_scanning else 'ЗАПУСТИТИ 🚀' }}
+                        </button>
+                    </div>
+                </div>
+
+                <label class="form-label fw-bold small text-muted text-uppercase mb-2">Активні Фільтри</label>
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <input type="checkbox" class="btn-check" id="fCloud" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
+                        <label class="btn-toggle-custom shadow-sm" for="fCloud">
+                            <span>Cloud <span class="param-tag">({{ conf.get('obt_cloudFastLen') }}/{{ conf.get('obt_cloudSlowLen') }})</span></span> 
+                            <i class="ri-checkbox-circle-line"></i>
+                        </label>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="checkbox" class="btn-check" id="fObv" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
+                        <label class="btn-toggle-custom shadow-sm" for="fObv">
+                            <span>OBV <span class="param-tag">({{ conf.get('obt_obvEntryLen') }})</span></span> 
+                            <i class="ri-bar-chart-line"></i>
+                        </label>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="checkbox" class="btn-check" id="fRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
+                        <label class="btn-toggle-custom shadow-sm" for="fRsi">
+                            <span>RSI <span class="param-tag">({{ conf.get('obt_rsiLength') }}) <{{ conf.get('obt_entryRsiOversold') }} >{{ conf.get('obt_entryRsiOverbought') }}</span></span> 
+                            <i class="ri-pulse-line"></i>
+                        </label>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="checkbox" class="btn-check" id="fRetest" name="obt_useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
+                        <label class="btn-toggle-custom shadow-sm" for="fRetest">
+                            <span>Retest <span class="param-tag">(Sw {{ conf.get('obt_swingLength') }})</span></span> 
+                            <i class="ri-arrow-go-back-line"></i>
+                        </label>
+                    </div>
+                </div>
+
+            </form>
+        </div>
+    </div>
+
+    <div class="card-custom mb-4 border-0 shadow-sm" style="display: {{ 'block' if is_scanning else 'none' }}" id="status-card">
+        <div class="card-body py-3" style="background: #eff6ff;">
+            <div class="d-flex justify-content-between mb-2">
+                <span id="status-text" class="fw-bold text-primary">{{ status }}</span>
+                <span id="status-percent" class="fw-bold text-dark">{{ progress }}%</span>
+            </div>
+            <div class="progress" style="height: 8px; border-radius: 4px; background: white;">
+                <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: {{ progress }}%"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card-custom border-0">
+        <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between align-items-center border-bottom border-light">
+            <span class="text-dark">📋 РЕЗУЛЬТАТИ</span>
+            <span class="badge bg-secondary rounded-pill">{{ results|length }} Знахідок</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light text-uppercase small text-muted">
+                    <tr>
+                        <th class="py-3 ps-4 border-bottom">Монета</th>
+                        <th class="py-3 border-bottom">Ціна</th>
+                        <th class="py-3 border-bottom">Сигнал</th>
+                        <th class="py-3 border-bottom">Score</th>
+                        <th class="py-3 border-bottom">Час</th>
+                        <th class="py-3 border-bottom">Деталі</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for r in results %}
+                    <tr>
+                        <td class="fw-bold text-dark ps-4">{{ r.symbol }}</td>
+                        <td class="font-mono">{{ r.price }}</td>
+                        <td><span class="badge {{ 'badge-buy' if r.signal=='Buy' else 'badge-sell' }}">{{ r.signal }}</span></td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <span class="fw-bold me-2 font-mono">{{ r.score }}</span>
+                                <div class="progress flex-grow-1" style="height: 6px; width: 60px; border-radius: 3px;">
+                                    <div class="progress-bar {{ 'bg-success' if r.score >= 70 else 'bg-warning' }}" style="width: {{ r.score }}%"></div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="text-muted small font-mono">{{ r.time }}</td>
+                        <td class="small text-muted" title="{{ r.details }}">{{ r.details }}</td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="6" class="text-center py-5">
+                            <div class="text-muted mb-2 fs-1 opacity-25"><i class="ri-search-eye-line"></i></div>
+                            <h5 class="text-muted">Сигналів поки не знайдено</h5>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function startScan() {
+    $('#btn-scan').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span> Збереження...');
+    $('#status-card').slideDown();
+    var formData = {};
+    $('#scan-form').serializeArray().forEach(function(item) { formData[item.name] = item.value; });
+    $('#scan-form input[type=checkbox]').each(function() { formData[this.name] = this.checked ? 'on' : 'off'; });
+    $.post('/analyzer/scan', formData, function(data) { pollStatus(); })
+     .fail(function() { alert('Помилка.'); $('#btn-scan').prop('disabled', false).text('ЗАПУСТИТИ 🚀'); $('#status-card').hide(); });
+}
+function pollStatus() {
+    let interval = setInterval(function() {
+        $.get('/analyzer/status', function(data) {
+            $('#progress-bar').css('width', data.progress + '%');
+            $('#status-percent').text(data.progress + '%');
+            $('#status-text').text(data.message);
+            if (data.is_scanning) { $('#btn-scan').prop('disabled', true).html('Сканування...'); }
+            else { clearInterval(interval); location.reload(); }
+        });
+    }, 1000);
+}
+{% if is_scanning %} pollStatus(); {% endif %}
+</script>
+{% endblock %}
