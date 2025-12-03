@@ -102,7 +102,7 @@ class MarketAnalyzer:
         self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
-            # === ПРИМУСОВЕ ПЕРЕСТВОРЕННЯ ТАБЛИЦІ (Для нової колонки volume) ===
+            # === ПРИМУСОВЕ ПЕРЕСТВОРЕННЯ ТАБЛИЦІ (Fix for Postgres column update) ===
             db_manager.recreate_analysis_table()
             
             limit = settings.get("scan_limit")
@@ -119,7 +119,7 @@ class MarketAnalyzer:
                 if not self.is_scanning: break
                 sym = t['symbol']
                 
-                # Безпечне отримання об'єму для запису в БД
+                # Safe volume fetch
                 try:
                     vol_24h = float(t.get('turnover24h', 0))
                 except:
@@ -352,6 +352,7 @@ class MarketAnalyzer:
                                     time.sleep(1)
 
                             except Exception as e:
+                                # logger.error(f"Item error {sym}: {e}")
                                 pass
                             
                             time.sleep(0.5)
