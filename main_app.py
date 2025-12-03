@@ -62,14 +62,15 @@ def keep_alive():
 threading.Thread(target=monitor_active, daemon=True).start()
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# --- API ENDPOINT FOR CHART DATA ---
+# --- API ENDPOINT FOR CHART DATA (FIXED) ---
 @app.route('/api/chart_data/<symbol>')
 def get_chart_data(symbol):
     try:
-        # Нормалізація символу (видалення .P якщо є)
+        # 1. Нормалізація символу (видалення .P для API)
         clean_symbol = symbol.replace('.P', '')
+        # logger.info(f"📊 Chart Request: {symbol} -> {clean_symbol}")
         
-        # 1. Get Candles (HTF)
+        # 2. Get Candles (HTF)
         htf = settings.get("htfSelection")
         df = market_analyzer.fetch_candles(clean_symbol, htf, limit=200)
         
@@ -80,11 +81,12 @@ def get_chart_data(symbol):
                     'time': int(row['time'].timestamp()),
                     'open': row['open'], 'high': row['high'], 'low': row['low'], 'close': row['close']
                 })
+        else:
+            logger.warning(f"⚠️ No candles found for {clean_symbol}")
 
-        # 2. Get Order Blocks form DB
+        # 3. Get Order Blocks form DB
         session = db_manager.get_session()
-        # Шукаємо блоки для цього символу (в базі вони зазвичай без .P)
-        # Для надійності можна шукати і так і так, але зазвичай сканер пише без суфікса
+        # Шукаємо блоки і для "BTCUSDT" і для "BTCUSDT.P" (на всяк випадок)
         db_blocks = session.query(OrderBlock).filter(OrderBlock.symbol.in_([symbol, clean_symbol])).all()
         
         blocks = []
@@ -99,7 +101,7 @@ def get_chart_data(symbol):
 
         return jsonify({'candles': candles, 'blocks': blocks})
     except Exception as e:
-        logger.error(f"Chart Data Error: {e}")
+        logger.error(f"❌ Chart Data Error for {symbol}: {e}")
         return jsonify({'error': str(e)}), 500
 
 # --- ROUTES ---
@@ -166,7 +168,6 @@ def analyzer_page():
 def smart_money_page():
     session = db_manager.get_session()
     try:
-        # Відображаємо знайдені зони
         blocks = session.query(OrderBlock).order_by(desc(OrderBlock.created_at)).limit(50).all()
         return render_template('smart_money.html', blocks=blocks)
     except Exception as e:
