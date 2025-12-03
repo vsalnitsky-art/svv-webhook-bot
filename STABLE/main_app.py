@@ -15,7 +15,7 @@ from bot import bot_instance
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from settings_manager import settings
-from models import db_manager, OrderBlock, SmartMoneyTicker
+from models import db_manager, OrderBlock, PaperTrade, SmartMoneyTicker
 from market_analyzer import market_analyzer
 
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
@@ -60,41 +60,25 @@ def keep_alive():
 threading.Thread(target=monitor_active, daemon=True).start()
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# --- NEW API ENDPOINT FOR CHART DATA ---
 @app.route('/api/chart_data/<symbol>')
 def get_chart_data(symbol):
     try:
-        # 1. Get Candles (HTF)
-        # Використовуємо той самий метод, що і в сканері
+        clean_symbol = symbol.replace('.P', '')
         htf = settings.get("htfSelection")
-        df = market_analyzer.fetch_candles(symbol, htf, limit=200)
-        
+        df = market_analyzer.fetch_candles(clean_symbol, htf, limit=200)
         candles = []
         if df is not None:
-            # Format for Lightweight Charts: { time: '2018-12-22', open: 75.16, high: 82.84, low: 36.16, close: 45.72 }
-            # Time needs to be unix timestamp in seconds
             for _, row in df.iterrows():
                 candles.append({
                     'time': int(row['time'].timestamp()),
-                    'open': row['open'],
-                    'high': row['high'],
-                    'low': row['low'],
-                    'close': row['close']
+                    'open': row['open'], 'high': row['high'], 'low': row['low'], 'close': row['close']
                 })
-
-        # 2. Get Order Blocks form DB
         session = db_manager.get_session()
-        db_blocks = session.query(OrderBlock).filter_by(symbol=symbol).all()
+        db_blocks = session.query(OrderBlock).filter(OrderBlock.symbol.in_([symbol, clean_symbol])).all()
         blocks = []
         for b in db_blocks:
-            blocks.append({
-                'type': b.ob_type, # 'Buy' or 'Sell'
-                'top': b.top,
-                'bottom': b.bottom,
-                'timeframe': b.timeframe
-            })
+            blocks.append({'type': b.ob_type, 'top': b.top, 'bottom': b.bottom, 'timeframe': b.timeframe})
         session.close()
-
         return jsonify({'candles': candles, 'blocks': blocks})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -125,17 +109,12 @@ def scanner_page():
                     symbol = p['symbol']
                     coin_data = scanner.get_coin_data(symbol)
                     active.append({
-                        'symbol': symbol, 
-                        'side': p['side'], 
-                        'pnl': round(float(p['unrealisedPnl']), 2), 
-                        'rsi': coin_data.get('rsi', 0),
-                        'exit_status': coin_data.get('exit_status', 'Safe'),
-                        'exit_details': coin_data.get('exit_details', '-'),
-                        'size': p['size'], 
-                        'entry': p['avgPrice'],
-                        'time': datetime.now().strftime('%H:%M')
+                        'symbol': symbol, 'side': p['side'], 'pnl': round(float(p['unrealisedPnl']), 2), 
+                        'rsi': coin_data.get('rsi', 0), 'exit_status': coin_data.get('exit_status', 'Safe'),
+                        'exit_details': coin_data.get('exit_details', '-'), 'pressure': round(scanner.get_market_pressure(symbol), 1), 
+                        'size': p['size'], 'entry': p['avgPrice'], 'time': datetime.now().strftime('%H:%M')
                     })
-    except: pass
+    except Exception as e: logger.error(f"Scanner page error: {e}")
     return render_template('scanner.html', active=active, conf=settings._cache)
 
 @app.route('/analyzer')
@@ -144,14 +123,34 @@ def analyzer_page():
     conf = settings._cache
     return render_template('analyzer.html', results=results, conf=conf, progress=market_analyzer.progress, status=market_analyzer.status_message, is_scanning=market_analyzer.is_scanning)
 
-@app.route('/smart_money')
+@app.route('/smart_money', methods=['GET', 'POST'])
 def smart_money_page():
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        settings.save_settings(form_data)
+        return redirect(url_for('smart_money_page'))
+
     session = db_manager.get_session()
     try:
-        tickers = session.query(SmartMoneyTicker).order_by(desc(SmartMoneyTicker.added_at)).all()
-        return render_template('smart_money.html', tickers=tickers)
+        watchlist = session.query(SmartMoneyTicker).all()
+        active_trades = session.query(PaperTrade).filter(PaperTrade.status.in_(['OPEN', 'PENDING'])).order_by(desc(PaperTrade.created_at)).all()
+        history_trades = session.query(PaperTrade).filter(PaperTrade.status.in_(['CLOSED_WIN', 'CLOSED_LOSS', 'CANCELED'])).order_by(desc(PaperTrade.closed_at)).limit(50).all()
+        return render_template('smart_money.html', watchlist=watchlist, active_trades=active_trades, history_trades=history_trades, conf=settings._cache)
+    finally:
+        session.close()
+
+# === НОВИЙ РОУТ ДЛЯ ВИДАЛЕННЯ З WATCHLIST ===
+@app.route('/smart_money/delete/<symbol>', methods=['POST'])
+def delete_ticker(symbol):
+    session = db_manager.get_session()
+    try:
+        item = session.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
+        if item:
+            session.delete(item)
+            session.commit()
+        return jsonify({'status': 'ok'})
     except Exception as e:
-        return f"Database Error: {e}"
+        return jsonify({'error': str(e)}), 400
     finally:
         session.close()
 
@@ -170,8 +169,7 @@ def ob_trend_settings_page():
     if request.method == 'POST':
         form_data = request.form.to_dict()
         filters = ['obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter', 'obt_useOBRetest']
-        for cb in filters:
-            form_data[cb] = request.form.get(cb) == 'on'
+        for cb in filters: form_data[cb] = request.form.get(cb) == 'on'
         settings.save_settings(form_data)
         return redirect(url_for('ob_trend_settings_page'))
     return render_template('strategy_ob_trend.html', conf=settings._cache)
@@ -190,11 +188,7 @@ def run_scan():
 
 @app.route('/analyzer/status')
 def get_scan_status():
-    return jsonify({
-        "progress": market_analyzer.progress,
-        "message": market_analyzer.status_message,
-        "is_scanning": market_analyzer.is_scanning
-    })
+    return jsonify({"progress": market_analyzer.progress, "message": market_analyzer.status_message, "is_scanning": market_analyzer.is_scanning})
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -202,8 +196,7 @@ def webhook():
         data = json.loads(request.get_data(as_text=True))
         result = bot_instance.place_order(data)
         return jsonify(result), (200 if result.get("status") in ["ok", "ignored"] else 400)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+    except Exception as e: return jsonify({"error": str(e)}), 400
 
 @app.route('/settings/export')
 def export_settings():
