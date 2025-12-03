@@ -138,7 +138,11 @@ class MarketAnalyzer:
                             self.status_message = f"👀 Checking {sym} for Setup..."
                             
                             existing = session.query(PaperTrade).filter(PaperTrade.symbol == sym, PaperTrade.status.in_(['OPEN', 'PENDING'])).first()
-                            if existing: continue
+                            if existing: 
+                                # Якщо вже є активна угода, видаляємо з Watchlist (щоб не перевіряти дарма)
+                                # АЛЕ: Краще це робити при створенні угоди, щоб не видалити випадково те, що ще не спрацювало.
+                                # Тут ми просто пропускаємо ітерацію.
+                                continue
 
                             try:
                                 htf = settings.get("htfSelection")
@@ -192,8 +196,18 @@ class MarketAnalyzer:
                                     elif tp_mode == "RR":
                                         tp_price = entry_price + (dist_to_sl * tp_val) if trade_signal['dir'] == 'Long' else entry_price - (dist_to_sl * tp_val)
 
+                                    # 1. Створюємо угоду
                                     new_trade = PaperTrade(symbol=sym, direction=trade_signal['dir'], entry_mode=entry_mode, status='PENDING' if entry_mode == 'Limit' else 'OPEN', entry_price=entry_price, sl_price=trade_signal['sl'], tp_price=tp_price, details=f"Found on {ltf}m")
-                                    session.add(new_trade); session.commit()
+                                    session.add(new_trade)
+                                    
+                                    # 2. ВИДАЛЯЄМО З WATCHLIST (Гігієна списку)
+                                    # Ми знайшли вхід, відкрили "віртуальну" угоду, тому більше не потрібно моніторити пошук входу.
+                                    ticker_to_remove = session.query(SmartMoneyTicker).filter_by(symbol=sym).first()
+                                    if ticker_to_remove:
+                                        session.delete(ticker_to_remove)
+                                        logger.info(f"🗑️ Removed {sym} from Watchlist (Trade Opened)")
+
+                                    session.commit()
                                     time.sleep(1)
 
                             except: pass
