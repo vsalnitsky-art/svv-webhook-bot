@@ -92,7 +92,7 @@ class MarketAnalyzer:
         except: pass
         return None
 
-    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР) ===
+    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР - DIAGNOSTIC MODE) ===
     def run_scan_thread(self):
         if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
 
@@ -107,6 +107,11 @@ class MarketAnalyzer:
             
             limit = settings.get("scan_limit")
             tickers = self.get_top_tickers(limit)
+            
+            # --- DEBUG LOG ---
+            print(f"🔎 DEBUG: Found {len(tickers)} tickers to scan.")
+            # -----------------
+
             htf, ltf = settings.get("htfSelection"), settings.get("ltfSelection")
             
             total = len(tickers)
@@ -125,11 +130,22 @@ class MarketAnalyzer:
                 
                 try:
                     df_h = self.fetch_candles(sym, htf); time.sleep(0.05)
-                    if df_h is None: continue
+                    if df_h is None: 
+                        print(f"❌ {sym}: No HTF candles")
+                        continue
+                    
                     df_l = self.fetch_candles(sym, ltf)
-                    if df_l is None: continue
+                    if df_l is None: 
+                        print(f"❌ {sym}: No LTF candles")
+                        continue
                     
                     sigs = strategy_engine.analyze(df_l, df_h)
+                    
+                    # --- DEBUG LOG ---
+                    if sigs:
+                        print(f"👉 {sym}: Found {len(sigs)} signals.")
+                    # -----------------
+
                     for sg in sigs:
                         res = AnalysisResult(
                             symbol=sym, 
@@ -154,7 +170,7 @@ class MarketAnalyzer:
                         
                         session.commit()
                 except Exception as e:
-                    # logger.error(f"Error scanning {sym}: {e}")
+                    print(f"❌ Error scanning {sym}: {e}")
                     pass
                 
                 time.sleep(0.1)
@@ -240,16 +256,13 @@ class MarketAnalyzer:
                 session.commit()
 
                 # --- PHASE 2: SEEKING NEW ENTRIES (ПОШУК ВХОДУ) ---
-                # Працює тільки якщо ручний сканер НЕ запущений, щоб не перевантажувати API
                 if not self.is_scanning:
                     watchlist = session.query(SmartMoneyTicker).all()
-                    
                     if watchlist:
                         for item in watchlist:
                             sym = item.symbol
                             self.status_message = f"👀 Checking {sym} for Setup..."
                             
-                            # Не відкриваємо другу угоду по тій самій монеті
                             existing = session.query(PaperTrade).filter(
                                 PaperTrade.symbol == sym, 
                                 PaperTrade.status.in_(['OPEN', 'PENDING'])
@@ -301,7 +314,6 @@ class MarketAnalyzer:
                                 if trade_signal:
                                     self.status_message = f"💎 ENTRY FOUND: {sym} {trade_signal['dir']}"
                                     
-                                    # Розрахунок параметрів угоди
                                     entry_mode = settings.get("sm_entry_mode", "Market")
                                     current_price = df_l.iloc[-1]['close']
                                     
@@ -319,7 +331,6 @@ class MarketAnalyzer:
                                     elif tp_mode == "RR":
                                         tp_price = entry_price + (dist_to_sl * tp_val) if trade_signal['dir'] == 'Long' else entry_price - (dist_to_sl * tp_val)
 
-                                    # Створення Paper Trade
                                     new_trade = PaperTrade(
                                         symbol=sym, 
                                         direction=trade_signal['dir'], 
@@ -332,7 +343,7 @@ class MarketAnalyzer:
                                     )
                                     session.add(new_trade)
                                     
-                                    # ВИДАЛЕННЯ З WATCHLIST (щоб не відкрити повторно)
+                                    # ВИДАЛЕННЯ З WATCHLIST
                                     ticker_remove = session.query(SmartMoneyTicker).filter_by(symbol=sym).first()
                                     if ticker_remove:
                                         session.delete(ticker_remove)
@@ -341,7 +352,6 @@ class MarketAnalyzer:
                                     time.sleep(1)
 
                             except Exception as e:
-                                # logger.error(f"Item error {sym}: {e}")
                                 pass
                             
                             time.sleep(0.5)
