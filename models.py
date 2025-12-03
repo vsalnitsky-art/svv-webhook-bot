@@ -12,41 +12,55 @@ class Trade(Base):
     order_id = Column(String(50), unique=True, index=True)
     symbol = Column(String(20), nullable=False, index=True)
     side = Column(String(10)) 
-    qty = Column(Float); entry_price = Column(Float); exit_price = Column(Float); pnl = Column(Float)
-    is_win = Column(Boolean); exit_time = Column(DateTime, default=datetime.utcnow); exit_reason = Column(String(100))
+    qty = Column(Float)
+    entry_price = Column(Float)
+    exit_price = Column(Float)
+    pnl = Column(Float)
+    is_win = Column(Boolean)
+    exit_time = Column(DateTime, default=datetime.utcnow)
+    exit_reason = Column(String(100))
 
 class TradeMonitorLog(Base):
     __tablename__ = 'trade_monitor_logs'
-    id = Column(Integer, primary_key=True); symbol = Column(String(20), index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow); current_price = Column(Float); current_pnl = Column(Float)
-    rsi = Column(Float); pressure = Column(Float)
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    current_price = Column(Float)
+    current_pnl = Column(Float)
+    rsi = Column(Float)
+    pressure = Column(Float)
 
 class BotSetting(Base):
     __tablename__ = 'bot_settings'
-    key = Column(String(50), primary_key=True); value = Column(String(255))
+    key = Column(String(50), primary_key=True)
+    value = Column(String(255))
 
 class AnalysisResult(Base):
     __tablename__ = 'analysis_results'
-    id = Column(Integer, primary_key=True); symbol = Column(String(20), index=True)
-    signal_type = Column(String(10)); status = Column(String(50)); score = Column(Integer)
-    price = Column(Float); htf_rsi = Column(Float); ltf_rsi = Column(Float)
-    found_at = Column(DateTime, default=datetime.utcnow); details = Column(Text)
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), index=True)
+    signal_type = Column(String(10))
+    status = Column(String(50))      
+    score = Column(Integer)          
+    price = Column(Float)
+    htf_rsi = Column(Float)
+    ltf_rsi = Column(Float)
+    found_at = Column(DateTime, default=datetime.utcnow)
+    details = Column(Text)
 
 class OrderBlock(Base):
     __tablename__ = 'order_blocks'
-    id = Column(Integer, primary_key=True); symbol = Column(String(20), index=True)
-    timeframe = Column(String(10)); ob_type = Column(String(10))
-    top = Column(Float); bottom = Column(Float); entry_price = Column(Float); sl_price = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    # Status: WAITING, NEAR, INSIDE, BROKEN
-    status = Column(String(20), default='WAITING') 
-    volume_score = Column(Float, default=0.0)
-
-class SmartMoneyTicker(Base):
-    __tablename__ = 'smart_money_tickers'
     id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), unique=True, index=True)
-    added_at = Column(DateTime, default=datetime.utcnow)
+    symbol = Column(String(20), index=True)
+    timeframe = Column(String(10))
+    ob_type = Column(String(10))
+    top = Column(Float)
+    bottom = Column(Float)
+    entry_price = Column(Float)
+    sl_price = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(20), default='PENDING') 
+    volume_score = Column(Float, default=0.0)
 
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):

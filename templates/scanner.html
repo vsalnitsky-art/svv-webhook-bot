@@ -1,11 +1,149 @@
-{% extends "base.html" %}{% block title %}Monitor{% endblock %}{% block content %}
-<div class="container-fluid"><div class="card-custom mb-4 p-3"><div class="row align-items-center">
-<div class="col-md-4 border-end">Smart Exit: {% if conf.get('exit_enableStrategy') %}<span class="text-success fw-bold">ON 🟢</span>{% else %}<span class="text-danger fw-bold">OFF 🔴</span>{% endif %}</div>
-<div class="col-md-4 border-end text-center">Work TF: <span class="badge bg-light text-dark border">{% set h=conf.get('htfSelection')|string %}{% if h=='60'%}1H{% elif h=='240'%}4H{% elif h=='D'%}1D{% else %}{{h}}m{% endif %}</span></div>
-<div class="col-md-4 text-end">RSI Limits: <span class="text-danger">>{{conf.get('exit_rsiOverbought')}}</span> / <span class="text-success"><{{conf.get('exit_rsiOversold')}}</span></div></div></div>
-<div class="card-custom"><table class="table mb-0"><thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>RSI (HTF)</th><th>Status</th><th>P&L</th><th>Time</th></tr></thead><tbody>
-{% for a in active %}<tr><td class="fw-bold">{{a.symbol}}</td><td><span class="badge {{'bg-success' if a.side=='Buy' else 'bg-danger'}}">{{a.side}}</span></td><td>{{a.entry}}</td>
-<td><span class="{{'text-danger' if a.rsi>conf.get('exit_rsiOverbought')|float else 'text-success' if a.rsi<conf.get('exit_rsiOversold')|float else 'text-muted'}} fw-bold">{{a.rsi}}</span></td>
-<td>{% if 'EXIT' in a.exit_status %}<span class="badge bg-danger blink">EXIT</span>{% elif 'Warn' in a.exit_status %}<span class="badge bg-warning text-dark">WARN</span>{% else %}<span class="badge bg-light text-muted border">SAFE</span>{% endif %}<div class="small text-muted">{{a.exit_details}}</div></td>
-<td class="{{'text-up' if a.pnl>0 else 'text-down'}} fw-bold">{{a.pnl}}</td><td class="text-muted small">{{a.time}}</td></tr>{% else %}<tr><td colspan="7" class="text-center py-4">No positions</td></tr>{% endfor %}</tbody></table></div></div>
-<style>.blink{animation:b 1s infinite}@keyframes b{50%{opacity:0}}</style>{% endblock %}
+{% extends "base.html" %}
+
+{% block title %}Активні Позиції{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    
+    <div class="card-custom mb-4 border-0">
+        <div class="card-body py-3">
+            <div class="row align-items-center">
+                
+                <div class="col-md-4 border-end">
+                    <div class="d-flex align-items-center">
+                        <div class="me-3">
+                            <i class="ri-shield-star-line fs-2 text-primary"></i>
+                        </div>
+                        <div>
+                            <div class="small text-muted fw-bold text-uppercase">Стратегія Виходу</div>
+                            <div class="fw-bold fs-5">
+                                {% if conf.get('exit_enableStrategy') %}
+                                    <span class="text-success">АКТИВНА 🟢</span>
+                                {% else %}
+                                    <span class="text-danger">ВИМКНЕНА 🔴</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-4 border-end">
+                    <div class="d-flex align-items-center justify-content-center">
+                        <div>
+                            <div class="small text-muted fw-bold text-uppercase mb-1">Робочий Таймфрейм</div>
+                            <span class="badge bg-light text-dark border p-2 font-mono fs-6">
+                                {% set h = conf.get('htfSelection')|string %}
+                                {% if h == '60' %}1H (Hour)
+                                {% elif h == '240' %}4H (Swing)
+                                {% elif h == 'D' %}1D (Day)
+                                {% else %}{{ h }}m (Intraday){% endif %}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-md-4">
+                     <div class="d-flex align-items-center justify-content-end">
+                        <div class="text-end">
+                            <div class="small text-muted fw-bold text-uppercase mb-1">Пороги RSI</div>
+                            <div class="font-mono small">
+                                <span class="text-danger fw-bold">Long Exit: >{{ conf.get('exit_rsiOverbought') }}</span><br>
+                                <span class="text-success fw-bold">Short Exit: <{{ conf.get('exit_rsiOversold') }}</span>
+                            </div>
+                        </div>
+                         <div class="ms-3">
+                             <a href="/settings" class="btn btn-sm btn-outline-secondary"><i class="ri-settings-4-line"></i></a>
+                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="fw-bold text-dark mb-0">Монітор Угод</h4>
+        <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 px-3 py-2 font-mono">
+            {{ active|length }} LIVE
+        </span>
+    </div>
+
+    <div class="card-custom overflow-hidden">
+        <div class="table-responsive">
+            <table class="table align-middle mb-0">
+                <thead class="bg-light text-uppercase small text-muted" style="font-size: 11px; letter-spacing: 1px;">
+                    <tr>
+                        <th class="py-3 ps-4 border-bottom">Символ</th>
+                        <th class="py-3 border-bottom">Сторона</th>
+                        <th class="py-3 border-bottom">Об'єм</th>
+                        <th class="py-3 border-bottom">Вхід</th>
+                        <th class="py-3 border-bottom">HTF RSI</th>
+                        <th class="py-3 border-bottom">Статус Виходу</th> <th class="py-3 border-bottom">Нереал. P&L</th>
+                        <th class="py-3 pe-4 text-end border-bottom">Час</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for a in active %}
+                    <tr>
+                        <td class="ps-4">
+                            <span class="fw-bold text-dark font-mono">{{ a.symbol }}</span>
+                        </td>
+                        
+                        <td>
+                            {% if a.side == 'Buy' %}
+                                <span class="badge bg-success-subtle text-success border border-success-subtle">LONG</span>
+                            {% else %}
+                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">SHORT</span>
+                            {% endif %}
+                        </td>
+                        
+                        <td class="font-mono text-muted small">{{ a.size }}</td>
+                        <td class="font-mono text-dark small">{{ a.entry }}</td>
+                        
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <span class="font-mono small me-2 fw-bold {{ 'text-danger' if a.rsi > conf.get('exit_rsiOverbought')|float else 'text-success' if a.rsi < conf.get('exit_rsiOversold')|float else 'text-muted' }}">{{ a.rsi }}</span>
+                            </div>
+                        </td>
+
+                        <td>
+                            {% if 'EXIT' in a.exit_status %}
+                                <span class="badge bg-danger text-white blinking">CLOSING...</span>
+                            {% elif 'Warning' in a.exit_status %}
+                                <span class="badge bg-warning text-dark border border-warning">⚠️ ZONE</span>
+                            {% else %}
+                                <span class="badge bg-light text-muted border">SAFE</span>
+                            {% endif %}
+                            <div class="small text-muted font-mono" style="font-size: 0.75rem;">{{ a.exit_details }}</div>
+                        </td>
+                        
+                        <td>
+                            <span class="fw-bold font-mono {{ 'text-success' if a.pnl > 0 else 'text-danger' }}">
+                                {{ "+" if a.pnl > 0 }}{{ a.pnl }} USDT
+                            </span>
+                        </td>
+                        
+                        <td class="text-end pe-4 text-muted small font-mono">
+                            {{ a.time }}
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-5">
+                            <div class="py-4">
+                                <i class="ri-inbox-line text-secondary opacity-25" style="font-size: 3rem;"></i>
+                                <p class="text-muted small mt-2">Немає відкритих позицій</p>
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+.blinking { animation: blinker 1s linear infinite; }
+@keyframes blinker { 50% { opacity: 0; } }
+</style>
+{% endblock %}

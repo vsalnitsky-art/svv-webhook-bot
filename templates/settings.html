@@ -1,29 +1,306 @@
-{% extends "base.html" %}{% block title %}Config{% endblock %}{% block content %}
-<div class="container-fluid" style="max-width:900px"><h4 class="mb-4">⚙️ Налаштування</h4><form method="POST">
-<div class="card-custom mb-4 p-4"><h6 class="text-primary mb-3">⏳ Таймфрейми & Індикатори (Adaptive)</h6>
-<div class="row g-3"><div class="col-md-6"><label class="form-label fw-bold">Глобальний Тренд (HTF)</label>
-<select class="form-select" name="htfSelection" id="htfSelector" onchange="updateIndicators()">
-<option value="15" {{'selected' if conf.get('htfSelection')|string=='15'}}>15m (Scalp)</option>
-<option value="30" {{'selected' if conf.get('htfSelection')|string=='30'}}>30m</option>
-<option value="45" {{'selected' if conf.get('htfSelection')|string=='45'}}>45m</option>
-<option value="60" {{'selected' if conf.get('htfSelection')|string=='60'}}>1H (Intraday)</option>
-<option value="240" {{'selected' if conf.get('htfSelection')|string=='240'}}>4H (Swing)</option>
-<option value="D" {{'selected' if conf.get('htfSelection')|string=='D'}}>1D</option></select></div>
-<div class="col-md-6"><label class="form-label fw-bold">Вхід (LTF)</label><select class="form-select" name="ltfSelection"><option value="5" {{'selected' if conf.get('ltfSelection')|string=='5'}}>5m</option><option value="15" {{'selected' if conf.get('ltfSelection')|string=='15'}}>15m</option><option value="45" {{'selected' if conf.get('ltfSelection')|string=='45'}}>45m</option></select></div>
-<div class="col-12"><hr></div>
-<div class="col-md-3"><label>Cloud Fast</label><input type="number" class="form-control" id="cloudFast" name="obt_cloudFastLen" value="{{conf.get('obt_cloudFastLen')}}"></div>
-<div class="col-md-3"><label>Cloud Slow</label><input type="number" class="form-control" id="cloudSlow" name="obt_cloudSlowLen" value="{{conf.get('obt_cloudSlowLen')}}"></div>
-<div class="col-md-3"><label>OBV Len</label><input type="number" class="form-control" id="obvLen" name="obt_obvEntryLen" value="{{conf.get('obt_obvEntryLen')}}"></div>
-<div class="col-md-3"><label>Swing</label><input type="number" class="form-control" id="swingLen" name="obt_swingLength" value="{{conf.get('obt_swingLength')}}"></div>
-<div class="col-md-3"><label>RSI Buy</label><input type="number" class="form-control" id="entryRsiBuy" name="obt_entryRsiOversold" value="{{conf.get('obt_entryRsiOversold')}}"></div>
-<div class="col-md-3"><label>RSI Sell</label><input type="number" class="form-control" id="entryRsiSell" name="obt_entryRsiOverbought" value="{{conf.get('obt_entryRsiOverbought')}}"></div></div></div>
-<div class="card-custom mb-4 p-4"><div class="d-flex justify-content-between mb-3"><h6 class="text-danger m-0">🔴 Smart Exit Strategy</h6><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="exit_enableStrategy" id="exitSwitch" {{'checked' if conf.get('exit_enableStrategy')}}><label for="exitSwitch">Active</label></div></div>
-<div class="row g-3"><div class="col-md-4"><label>RSI Exit Short (<)</label><input type="number" class="form-control" id="exitRsiShort" name="exit_rsiOversold" value="{{conf.get('exit_rsiOversold')}}"></div>
-<div class="col-md-4"><label>RSI Exit Long (>)</label><input type="number" class="form-control" id="exitRsiLong" name="exit_rsiOverbought" value="{{conf.get('exit_rsiOverbought')}}"></div>
-<div class="col-md-4"><label>OBV Exit Len</label><input type="number" class="form-control" id="exitObvLen" name="exit_obvLength" value="{{conf.get('exit_obvLength')}}"></div></div></div>
-<button type="submit" class="btn btn-primary w-100">Зберегти</button></form></div>
+{% extends "base.html" %}
+
+{% block title %}Налаштування{% endblock %}
+
+{% block content %}
+<div class="container-fluid" style="max-width: 900px;">
+    
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h4 class="fw-bold text-dark mb-1">Системні Налаштування</h4>
+            <p class="text-muted small m-0">Конфігурація бота, таймфреймів та індикаторів</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="/settings/export" class="btn btn-white border shadow-sm btn-sm text-dark font-mono">
+                <i class="ri-download-line me-1"></i> JSON
+            </a>
+            <form action="/settings/import" method="POST" enctype="multipart/form-data" class="d-inline">
+                <label class="btn btn-primary btn-sm cursor-pointer shadow-sm">
+                    <i class="ri-upload-line me-1"></i> Імпорт
+                    <input type="file" name="file" accept=".json" hidden onchange="this.form.submit()">
+                </label>
+            </form>
+        </div>
+    </div>
+
+    <form method="POST">
+        <div class="card-custom mb-4 border-0">
+            <div class="card-header bg-white border-bottom border-light py-3">
+                <h6 class="fw-bold text-primary m-0">⏳ Глобальні Таймфрейми (Сканер)</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-bold">Глобальний Тренд (HTF)</label>
+                        <select class="form-select" name="htfSelection" id="htfSelector" onchange="updateIndicators()">
+                            <option value="15" {{ 'selected' if conf.get('htfSelection')|string=='15' }}>15 Хвилин (Scalp)</option>
+                            <option value="30" {{ 'selected' if conf.get('htfSelection')|string=='30' }}>30 Хвилин</option>
+                            <option value="45" {{ 'selected' if conf.get('htfSelection')|string=='45' }}>45 Хвилин</option>
+                            <option value="60" {{ 'selected' if conf.get('htfSelection')|string=='60' }}>1H (Intraday)</option>
+                            <option value="240" {{ 'selected' if conf.get('htfSelection')|string=='240' }}>4H (Swing)</option>
+                            <option value="D" {{ 'selected' if conf.get('htfSelection')|string=='D' }}>1D (Long Term)</option>
+                        </select>
+                        <div class="form-text small text-primary"><i class="ri-magic-line"></i> Зміна цього поля автоматично оновить параметри нижче.</div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-bold">Таймфрейм Входу (LTF)</label>
+                        <select class="form-select" name="ltfSelection">
+                            <option value="5" {{ 'selected' if conf.get('ltfSelection')|string=='5' }}>5 Хвилин</option>
+                            <option value="15" {{ 'selected' if conf.get('ltfSelection')|string=='15' }}>15 Хвилин</option>
+                            <option value="30" {{ 'selected' if conf.get('ltfSelection')|string=='30' }}>30 Хвилин</option>
+                            <option value="45" {{ 'selected' if conf.get('ltfSelection')|string=='45' }}>45 Хвилин (Default)</option>
+                            <option value="60" {{ 'selected' if conf.get('ltfSelection')|string=='60' }}>1 Година</option>
+                        </select>
+                        <div class="form-text small">На цьому ТФ шукаються сигнали входу та Order Blocks.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-custom mb-4 border-0">
+            <div class="card-header bg-white border-bottom border-light py-3 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold text-danger m-0">🔴 Стратегія Розумного Виходу (Smart Exit)</h6>
+                <div class="form-check form-switch m-0">
+                    <input class="form-check-input" type="checkbox" name="exit_enableStrategy" id="exitSwitch" {{ 'checked' if conf.get('exit_enableStrategy') }}>
+                    <label class="form-check-label fw-bold small text-dark" for="exitSwitch">АКТИВУВАТИ</label>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                     <div class="col-md-4">
+                        <label class="form-label small text-success fw-bold">RSI Exit Short (<)</label>
+                        <input type="number" class="form-control" id="exitRsiShort" name="exit_rsiOversold" value="{{ conf.get('exit_rsiOversold', 30) }}">
+                        <div class="form-text small">Закривати Short, якщо RSI нижче.</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-danger fw-bold">RSI Exit Long (>)</label>
+                        <input type="number" class="form-control" id="exitRsiLong" name="exit_rsiOverbought" value="{{ conf.get('exit_rsiOverbought', 70) }}">
+                        <div class="form-text small">Закривати Long, якщо RSI вище.</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">OBV Exit Length</label>
+                        <input type="number" class="form-control" id="exitObvLen" name="exit_obvLength" value="{{ conf.get('exit_obvLength', 10) }}">
+                        <div class="form-text small">Довжина MA для підтвердження об'ємом.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-custom mb-4 border-0">
+            <div class="card-header bg-white border-bottom border-light py-3">
+                <h6 class="fw-bold text-info m-0">📊 Параметри Входу (Адаптивні)</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">Cloud Fast / Slow</label>
+                        <div class="input-group">
+                            <input type="number" class="form-control" id="cloudFast" name="obt_cloudFastLen" value="{{ conf.get('obt_cloudFastLen', 10) }}">
+                            <span class="input-group-text">/</span>
+                            <input type="number" class="form-control" id="cloudSlow" name="obt_cloudSlowLen" value="{{ conf.get('obt_cloudSlowLen', 40) }}">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">OBV Entry Length</label>
+                        <input type="number" class="form-control" id="obvLen" name="obt_obvEntryLen" value="{{ conf.get('obt_obvEntryLen', 20) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-primary fw-bold">OB Swing Length</label>
+                        <input type="number" class="form-control" id="swingLen" name="obt_swingLength" value="{{ conf.get('obt_swingLength', 5) }}">
+                    </div>
+                    
+                    <div class="col-12"><hr class="my-1 opacity-10"></div>
+                    
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">RSI Length</label>
+                        <input type="number" class="form-control" name="obt_rsiLength" value="{{ conf.get('obt_rsiLength', 14) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-success fw-bold">RSI Buy (Entry <)</label>
+                        <input type="number" class="form-control" id="entryRsiBuy" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold', 45) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-danger fw-bold">RSI Sell (Entry >)</label>
+                        <input type="number" class="form-control" id="entryRsiSell" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought', 55) }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-custom mb-4 border-0">
+            <div class="card-header bg-white border-bottom border-light py-3">
+                <h6 class="fw-bold text-secondary m-0">💰 Ризик та Виконання</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-bold">Ризик на угоду (%)</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" step="0.1" class="form-control" name="riskPercent" value="{{ conf.get('riskPercent') }}">
+                            <span class="input-group-text">%</span>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted text-uppercase fw-bold">Плече (x)</label>
+                        <input type="number" class="form-control" name="leverage" value="{{ conf.get('leverage') }}">
+                    </div>
+                    
+                    <div class="col-12"><hr class="my-1 opacity-10"></div>
+
+                    <div class="col-md-6">
+                        <label class="form-label small text-danger fw-bold">Stop Loss Mode</label>
+                        <select class="form-select form-select-sm" name="sl_mode">
+                            <option value="OB_Extremity" {{ 'selected' if conf.get('sl_mode')=='OB_Extremity' }}>OB Extremity (Auto)</option>
+                            <option value="Fixed" {{ 'selected' if conf.get('sl_mode')=='Fixed' }}>Fixed % (Manual)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted fw-bold">Fixed SL %</label>
+                        <input type="number" step="0.1" class="form-control" name="fixedSL" value="{{ conf.get('fixedSL', 1.5) }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-custom mb-4 border-0">
+            <div class="card-header bg-white border-bottom border-light py-3">
+                <h6 class="fw-bold text-dark m-0">🌍 Параметри Біржі</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted fw-bold">Валюта</label>
+                        <select class="form-select" name="scanner_quote_coin">
+                            <option value="USDT" {{ 'selected' if conf.get('scanner_quote_coin')=='USDT' }}>USDT</option>
+                            <option value="USDC" {{ 'selected' if conf.get('scanner_quote_coin')=='USDC' }}>USDC</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small text-muted fw-bold">Режим Сканера</label>
+                        <select class="form-select" name="scanner_mode">
+                            <option value="Manual" {{ 'selected' if conf.get('scanner_mode')=='Manual' }}>Ручний</option>
+                            <option value="Auto" {{ 'selected' if conf.get('scanner_mode')=='Auto' }}>Авто</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-custom mb-4 border-0">
+            <div class="card-body py-3">
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" name="telegram_enabled" {{ 'checked' if conf.get('telegram_enabled') }}>
+                    <label class="form-check-label fw-bold small text-muted">Telegram Сповіщення</label>
+                </div>
+                <div class="row g-2">
+                    <div class="col-6">
+                        <input type="text" class="form-control form-control-sm" name="telegram_bot_token" value="{{ conf.get('telegram_bot_token','') }}" placeholder="Token">
+                    </div>
+                    <div class="col-6">
+                        <input type="text" class="form-control form-control-sm" name="telegram_chat_id" value="{{ conf.get('telegram_chat_id','') }}" placeholder="Chat ID">
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mb-5 d-grid">
+            <button type="submit" class="btn btn-primary btn-lg shadow-sm fw-bold">Зберегти Налаштування</button>
+        </div>
+    </form>
+</div>
+
 <script>
-const pM={'15':{cf:20,cs:60,ob:50,sw:10,rb:40,rs:60,exS:25,exL:75,exO:25},'30':{cf:15,cs:50,ob:40,sw:8,rb:40,rs:60,exS:25,exL:75,exO:20},'45':{cf:12,cs:45,ob:30,sw:7,rb:45,rs:55,exS:30,exL:70,exO:15},'60':{cf:10,cs:40,ob:20,sw:5,rb:45,rs:55,exS:30,exL:70,exO:12},'240':{cf:10,cs:40,ob:20,sw:5,rb:45,rs:55,exS:30,exL:70,exO:10},'D':{cf:10,cs:40,ob:20,sw:5,rb:45,rs:55,exS:30,exL:70,exO:10}};
-function updateIndicators(){const t=document.getElementById('htfSelector').value;const c=pM[t];if(c){ff('cloudFast',c.cf);ff('cloudSlow',c.cs);ff('obvLen',c.ob);ff('swingLen',c.sw);ff('entryRsiBuy',c.rb);ff('entryRsiSell',c.rs);ff('exitRsiShort',c.exS);ff('exitRsiLong',c.exL);ff('exitObvLen',c.exO);}}
-function ff(id,v){const e=document.getElementById(id);if(e){e.style.backgroundColor='#d1fae5';e.value=v;setTimeout(()=>e.style.backgroundColor='white',300);}}
-</script>{% endblock %}
+    // Матриця параметрів. ВХІД (Entry) виправлено на 40/60 та 45/55.
+    const paramsMatrix = {
+        '15':  { 
+            cloud: {f: 20, s: 60}, 
+            obv: {entry: 50, exit: 25}, 
+            swing: 10,
+            rsi: {len: 14, buy: 40, sell: 60, exitShort: 25, exitLong: 75} // Entry: 40/60
+        },
+        '30':  { 
+            cloud: {f: 15, s: 50}, 
+            obv: {entry: 40, exit: 20}, 
+            swing: 8,
+            rsi: {len: 14, buy: 40, sell: 60, exitShort: 25, exitLong: 75} // Entry: 40/60
+        },
+        '45':  { 
+            cloud: {f: 12, s: 45}, 
+            obv: {entry: 30, exit: 15}, 
+            swing: 7,
+            rsi: {len: 14, buy: 45, sell: 55, exitShort: 30, exitLong: 70} // Entry: 45/55
+        },
+        '60':  { 
+            cloud: {f: 10, s: 40}, 
+            obv: {entry: 20, exit: 12}, 
+            swing: 5,
+            rsi: {len: 14, buy: 45, sell: 55, exitShort: 30, exitLong: 70}
+        },
+        '240': { 
+            cloud: {f: 10, s: 40}, 
+            obv: {entry: 20, exit: 10}, 
+            swing: 5,
+            rsi: {len: 14, buy: 45, sell: 55, exitShort: 30, exitLong: 70}
+        },
+        'D':   { 
+            cloud: {f: 10, s: 40}, 
+            obv: {entry: 20, exit: 10}, 
+            swing: 5,
+            rsi: {len: 14, buy: 45, sell: 55, exitShort: 30, exitLong: 70}
+        }
+    };
+
+    function updateIndicators() {
+        const tf = document.getElementById('htfSelector').value;
+        const config = paramsMatrix[tf];
+
+        if (config) {
+            flashField('cloudFast', config.cloud.f);
+            flashField('cloudSlow', config.cloud.s);
+            flashField('obvLen', config.obv.entry);
+            flashField('swingLen', config.swing);
+            flashField('entryRsiBuy', config.rsi.buy);
+            flashField('entryRsiSell', config.rsi.sell);
+            flashField('exitRsiShort', config.rsi.exitShort);
+            flashField('exitRsiLong', config.rsi.exitLong);
+            flashField('exitObvLen', config.obv.exit);
+        }
+    }
+
+    function flashField(id, newValue) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.style.transition = "background-color 0.2s";
+            el.style.backgroundColor = "#d1fae5"; 
+            el.value = newValue;
+            setTimeout(() => {
+                el.style.backgroundColor = "white";
+            }, 300);
+        }
+    }
+</script>
+{% endblock %}
+""",
+
+    "templates/scanner.html": """{% extends "base.html" %}{% block title %}Monitor{% endblock %}{% block content %}
+<div class="container-fluid"><div class="card-custom mb-4 p-3"><div class="row align-items-center">
+<div class="col-md-4 border-end">Smart Exit: {% if conf.get('exit_enableStrategy') %}<span class="text-success fw-bold">ON 🟢</span>{% else %}<span class="text-danger fw-bold">OFF 🔴</span>{% endif %}</div>
+<div class="col-md-4 border-end text-center">Work TF: <span class="badge bg-light text-dark border">{% set h=conf.get('htfSelection')|string %}{% if h=='60'%}1H{% elif h=='240'%}4H{% elif h=='D'%}1D{% else %}{{h}}m{% endif %}</span></div>
+<div class="col-md-4 text-end">RSI Limits: <span class="text-danger">>{{conf.get('exit_rsiOverbought')}}</span> / <span class="text-success"><{{conf.get('exit_rsiOversold')}}</span></div></div></div>
+<div class="card-custom"><table class="table mb-0"><thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>RSI (HTF)</th><th>Status</th><th>P&L</th><th>Time</th></tr></thead><tbody>
+{% for a in active %}<tr><td class="fw-bold">{{a.symbol}}</td><td><span class="badge {{'bg-success' if a.side=='Buy' else 'bg-danger'}}">{{a.side}}</span></td><td>{{a.entry}}</td>
+<td><span class="{{'text-danger' if a.rsi>conf.get('exit_rsiOverbought')|float else 'text-success' if a.rsi<conf.get('exit_rsiOversold')|float else 'text-muted'}} fw-bold">{{a.rsi}}</span></td>
+<td>{% if 'EXIT' in a.exit_status %}<span class="badge bg-danger blink">EXIT</span>{% elif 'Warn' in a.exit_status %}<span class="badge bg-warning text-dark">WARN</span>{% else %}<span class="badge bg-light text-muted border">SAFE</span>{% endif %}<div class="small text-muted">{{a.exit_details}}</div></td>
+<td class="{{'text-up' if a.pnl>0 else 'text-down'}} fw-bold">{{a.pnl}}</td><td class="text-muted small">{{a.time}}</td></tr>{% else %}<tr><td colspan="7" class="text-center py-4">No positions</td></tr>{% endfor %}</tbody></table></div></div>
+<style>.blink{animation:b 1s infinite}@keyframes b{50%{opacity:0}}</style>{% endblock %}"""
+}
+
+import os
+
+for filename, content in files.items():
+    path = os.path.join(PROJECT_ROOT, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"✅ Updated: {filename}")
+
+print(f"\n🎉 Project RESTORED to Stable Version (03.12.2025)")
