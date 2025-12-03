@@ -25,36 +25,30 @@ class MarketAnalyzer:
         """
         try:
             q = settings.get("scanner_quote_coin")
-            # Безпечне отримання налаштувань (bool)
             use_vol_filter = settings.get("scan_use_min_volume")
             if isinstance(use_vol_filter, str):
                 use_vol_filter = use_vol_filter.lower() in ['true', 'on', '1']
             elif use_vol_filter is None:
-                use_vol_filter = True # Default
+                use_vol_filter = True
 
-            # Отримуємо всі тікери з біржі
             all_tickers = bot_instance.get_all_tickers()
             if not all_tickers:
                 logger.warning("⚠️ API returned empty ticker list")
                 return []
 
-            # 1. Фільтр по Quote Coin (наприклад, тільки USDT пари)
             usdt_tickers = [t for t in all_tickers if t['symbol'].endswith(q)]
             
-            # 2. Фільтр за об'ємом (Volume Filter)
             valid_tickers = []
-            
             if use_vol_filter:
                 try:
                     min_vol_mln = float(settings.get("scan_min_volume", 10))
                 except:
-                    min_vol_mln = 10.0 # Fallback default
+                    min_vol_mln = 10.0
                 
                 min_vol_raw = min_vol_mln * 1_000_000
                 
                 for t in usdt_tickers:
                     try:
-                        # Безпечна конвертація Turnover
                         vol_str = t.get('turnover24h', 0)
                         if vol_str is None or vol_str == "":
                             vol = 0.0
@@ -64,11 +58,10 @@ class MarketAnalyzer:
                         if vol >= min_vol_raw:
                             valid_tickers.append(t)
                     except Exception:
-                        continue # Пропускаємо "биту" монету, а не крашимо весь список
+                        continue
             else:
                 valid_tickers = usdt_tickers
 
-            # 3. Сортування за об'ємом (від найбільшого) та ліміт кількості
             sorted_tickers = sorted(valid_tickers, key=lambda x: float(x.get('turnover24h', 0) or 0), reverse=True)
             return sorted_tickers[:int(limit)]
 
@@ -80,7 +73,7 @@ class MarketAnalyzer:
         try:
             m = {'5':'5','15':'15','30':'30','45':'45','60':'60','240':'240','D':'D'}
             req_tf = m.get(str(timeframe), '240')
-            if req_tf == '45': req_tf = '15' # Bybit не має 45m, беремо 15m
+            if req_tf == '45': req_tf = '15'
             
             r = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=limit)
             if r['retCode'] == 0 and r['result']['list']:
@@ -92,17 +85,17 @@ class MarketAnalyzer:
         except: pass
         return None
 
-    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР - DIAGNOSTIC MODE) ===
     def run_scan_thread(self):
         if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
 
+    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР - З ДІАГНОСТИКОЮ) ===
     def _scan_process(self):
         self.is_scanning = True
         self.progress = 0
         self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
-            # === ПРИМУСОВЕ ПЕРЕСТВОРЕННЯ ТАБЛИЦІ (Fix for Postgres column update) ===
+            # === ПРИМУСОВЕ ПЕРЕСТВОРЕННЯ ТАБЛИЦІ (FIX SCHEMA) ===
             db_manager.recreate_analysis_table()
             
             limit = settings.get("scan_limit")
@@ -141,22 +134,21 @@ class MarketAnalyzer:
                     
                     sigs = strategy_engine.analyze(df_l, df_h)
                     
-                    # --- DEBUG LOG ---
                     if sigs:
                         print(f"👉 {sym}: Found {len(sigs)} signals.")
-                    # -----------------
 
                     for sg in sigs:
+                        # --- КРИТИЧНЕ ВИПРАВЛЕННЯ: ПРИМУСОВА КОНВЕРТАЦІЯ ТИПІВ (Fixes InvalidTextRepresentation) ---
                         res = AnalysisResult(
                             symbol=sym, 
                             signal_type=sg['action'], 
                             status="New", 
                             score=85, 
-                            price=sg['price'], 
-                            htf_rsi=0, 
-                            ltf_rsi=sg['rsi'], 
-                            volume_24h=vol_24h, # Зберігаємо об'єм
-                            details=f"{sg['reason']} | SL: {round(sg['sl_price'],4)}"
+                            price=float(sg['price']), 
+                            htf_rsi=float(df_h.iloc[-1]['rsi']), 
+                            ltf_rsi=float(sg['rsi']), 
+                            volume_24h=float(vol_24h),
+                            details=f"{sg['reason']} | SL: {round(float(sg['sl_price']),4)}"
                         )
                         session.add(res)
                         
@@ -352,7 +344,6 @@ class MarketAnalyzer:
                                     time.sleep(1)
 
                             except Exception as e:
-                                # logger.error(f"Item error {sym}: {e}")
                                 pass
                             
                             time.sleep(0.5)
