@@ -15,7 +15,7 @@ from bot import bot_instance
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from settings_manager import settings
-from models import db_manager, OrderBlock, SmartMoneyTicker
+from models import db_manager, OrderBlock
 from market_analyzer import market_analyzer
 
 try: ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
@@ -27,9 +27,11 @@ app.secret_key = 'super_secret_key_for_flask'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Запуск фонових процесів
 scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
 scanner.start()
 
+# --- BACKGROUND TASKS ---
 def monitor_active():
     while True:
         try:
@@ -60,35 +62,35 @@ def keep_alive():
 threading.Thread(target=monitor_active, daemon=True).start()
 threading.Thread(target=keep_alive, daemon=True).start()
 
-# --- NEW API ENDPOINT FOR CHART DATA ---
+# --- API ENDPOINT FOR CHART DATA ---
 @app.route('/api/chart_data/<symbol>')
 def get_chart_data(symbol):
     try:
+        # Нормалізація символу (видалення .P якщо є)
+        clean_symbol = symbol.replace('.P', '')
+        
         # 1. Get Candles (HTF)
-        # Використовуємо той самий метод, що і в сканері
         htf = settings.get("htfSelection")
-        df = market_analyzer.fetch_candles(symbol, htf, limit=200)
+        df = market_analyzer.fetch_candles(clean_symbol, htf, limit=200)
         
         candles = []
         if df is not None:
-            # Format for Lightweight Charts: { time: '2018-12-22', open: 75.16, high: 82.84, low: 36.16, close: 45.72 }
-            # Time needs to be unix timestamp in seconds
             for _, row in df.iterrows():
                 candles.append({
                     'time': int(row['time'].timestamp()),
-                    'open': row['open'],
-                    'high': row['high'],
-                    'low': row['low'],
-                    'close': row['close']
+                    'open': row['open'], 'high': row['high'], 'low': row['low'], 'close': row['close']
                 })
 
         # 2. Get Order Blocks form DB
         session = db_manager.get_session()
-        db_blocks = session.query(OrderBlock).filter_by(symbol=symbol).all()
+        # Шукаємо блоки для цього символу (в базі вони зазвичай без .P)
+        # Для надійності можна шукати і так і так, але зазвичай сканер пише без суфікса
+        db_blocks = session.query(OrderBlock).filter(OrderBlock.symbol.in_([symbol, clean_symbol])).all()
+        
         blocks = []
         for b in db_blocks:
             blocks.append({
-                'type': b.ob_type, # 'Buy' or 'Sell'
+                'type': b.ob_type,
                 'top': b.top,
                 'bottom': b.bottom,
                 'timeframe': b.timeframe
@@ -97,22 +99,32 @@ def get_chart_data(symbol):
 
         return jsonify({'candles': candles, 'blocks': blocks})
     except Exception as e:
+        logger.error(f"Chart Data Error: {e}")
         return jsonify({'error': str(e)}), 500
 
+# --- ROUTES ---
 @app.route('/')
 def home():
     try: days_param = int(request.args.get('days', 7))
     except: days_param = 7
     if days_param not in [7, 30, 90]: days_param = 7
+    
     try: bot_instance.sync_trades(days=days_param)
     except: pass
+
     balance = bot_instance.get_bal()
     active_count = len(scanner.get_active_symbols())
     trades = stats_service.get_trades(days=days_param)
+    
     period_pnl = sum(t['pnl'] for t in trades)
     longs = sum(1 for t in trades if t['side'] == 'Long')
     shorts = sum(1 for t in trades if t['side'] == 'Short')
-    return render_template('index.html', date=datetime.utcnow().strftime('%d %b %Y'), balance=balance, active_count=active_count, period_pnl=period_pnl, longs=longs, shorts=shorts, days=days_param, trades=trades[:10])
+    
+    return render_template('index.html', 
+                           date=datetime.utcnow().strftime('%d %b %Y'),
+                           balance=balance, active_count=active_count,
+                           period_pnl=period_pnl, longs=longs, shorts=shorts,
+                           days=days_param, trades=trades[:10])
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -131,25 +143,32 @@ def scanner_page():
                         'rsi': coin_data.get('rsi', 0),
                         'exit_status': coin_data.get('exit_status', 'Safe'),
                         'exit_details': coin_data.get('exit_details', '-'),
+                        'pressure': round(scanner.get_market_pressure(symbol), 1), 
                         'size': p['size'], 
                         'entry': p['avgPrice'],
                         'time': datetime.now().strftime('%H:%M')
                     })
-    except: pass
+    except Exception as e:
+        logger.error(f"Scanner page error: {e}")
     return render_template('scanner.html', active=active, conf=settings._cache)
 
 @app.route('/analyzer')
 def analyzer_page():
     results = market_analyzer.get_results()
     conf = settings._cache
-    return render_template('analyzer.html', results=results, conf=conf, progress=market_analyzer.progress, status=market_analyzer.status_message, is_scanning=market_analyzer.is_scanning)
+    return render_template('analyzer.html', 
+                           results=results, conf=conf, 
+                           progress=market_analyzer.progress,
+                           status=market_analyzer.status_message,
+                           is_scanning=market_analyzer.is_scanning)
 
 @app.route('/smart_money')
 def smart_money_page():
     session = db_manager.get_session()
     try:
-        tickers = session.query(SmartMoneyTicker).order_by(desc(SmartMoneyTicker.added_at)).all()
-        return render_template('smart_money.html', tickers=tickers)
+        # Відображаємо знайдені зони
+        blocks = session.query(OrderBlock).order_by(desc(OrderBlock.created_at)).limit(50).all()
+        return render_template('smart_money.html', blocks=blocks)
     except Exception as e:
         return f"Database Error: {e}"
     finally:
@@ -185,6 +204,7 @@ def run_scan():
             if cb in form_data and form_data[cb] == 'on': form_data[cb] = True
             else: form_data[cb] = False
         settings.save_settings(form_data)
+    
     market_analyzer.run_scan_thread()
     return jsonify({"status": "started"})
 

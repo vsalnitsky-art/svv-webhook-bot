@@ -6,7 +6,6 @@ import os
 
 Base = declarative_base()
 
-# === ТОРГОВА ІСТОРІЯ ===
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True)
@@ -21,7 +20,6 @@ class Trade(Base):
     exit_time = Column(DateTime, default=datetime.utcnow)
     exit_reason = Column(String(100))
 
-# === МОНІТОРИНГ АКТИВНИХ ===
 class TradeMonitorLog(Base):
     __tablename__ = 'trade_monitor_logs'
     id = Column(Integer, primary_key=True)
@@ -32,13 +30,11 @@ class TradeMonitorLog(Base):
     rsi = Column(Float)
     pressure = Column(Float)
 
-# === НАЛАШТУВАННЯ ===
 class BotSetting(Base):
     __tablename__ = 'bot_settings'
     key = Column(String(50), primary_key=True)
     value = Column(String(255))
 
-# === РЕЗУЛЬТАТИ СКАНЕРА ===
 class AnalysisResult(Base):
     __tablename__ = 'analysis_results'
     id = Column(Integer, primary_key=True)
@@ -52,7 +48,6 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
-# === СТАРА ТАБЛИЦЯ (ЗАЛИШАЄМО ДЛЯ СУМІСНОСТІ) ===
 class OrderBlock(Base):
     __tablename__ = 'order_blocks'
     id = Column(Integer, primary_key=True)
@@ -66,14 +61,6 @@ class OrderBlock(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default='PENDING') 
     volume_score = Column(Float, default=0.0)
-
-# === НОВА ТАБЛИЦЯ: SMART MONEY WATCHLIST ===
-# Зберігає тільки унікальні назви монет, які потрапили на радар
-class SmartMoneyTicker(Base):
-    __tablename__ = 'smart_money_tickers'
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), unique=True, index=True) # unique=True не дозволить дублікатів
-    added_at = Column(DateTime, default=datetime.utcnow)
 
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
