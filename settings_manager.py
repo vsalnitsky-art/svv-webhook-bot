@@ -18,7 +18,7 @@ DEFAULT_SETTINGS = {
     "obt_useCloudFilter": True,
     "obt_useObvFilter": True,
     "obt_useRsiFilter": True,
-    "obt_useOBRetest": True,
+    "obt_useOBRetest": False, # <--- ЗМІНЕНО НА FALSE (Вимкнено за замовчуванням)
 
     # === TIMEFRAMES ===
     "htfSelection": "240", # 4H (Default HTF)
@@ -34,7 +34,7 @@ DEFAULT_SETTINGS = {
     "obt_swingLength": 5,
 
     # === SMART EXIT (ENABLED BY DEFAULT) ===
-    "exit_enableStrategy": True,  # <--- ЗМІНЕНО НА TRUE
+    "exit_enableStrategy": True,
     "exit_rsiOverbought": 70,
     "exit_rsiOversold": 30,
     "exit_obvLength": 10,
