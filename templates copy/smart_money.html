@@ -1,9 +1,0 @@
-{% extends "base.html" %}{% block content %}
-<div class="container-fluid"><div class="d-flex justify-content-between mb-3"><h4 class="fw-bold">Smart Money Zones</h4><a href="/analyzer" class="btn btn-sm btn-outline-secondary">Scanner</a></div>
-<div class="card-custom"><table class="table align-middle"><thead><tr><th>Symbol</th><th>Zone</th><th>Range (Entry)</th><th>SL</th><th>Status</th><th>Time</th><th>Action</th></tr></thead><tbody>
-{% for b in blocks %}<tr><td class="fw-bold">{{b.symbol}}</td><td><span class="badge {{'bg-success' if b.ob_type=='Buy' else 'bg-danger'}}">{{b.ob_type}}</span></td>
-<td class="font-mono">{{b.bottom}} - {{b.top}}</td><td class="font-mono text-muted">{{b.sl_price}}</td>
-<td>{% if 'INSIDE' in b.status %}<span class="badge bg-success blink">INSIDE</span>{% elif 'NEAR' in b.status %}<span class="badge bg-warning text-dark">NEAR</span>{% elif 'BROKEN' in b.status %}<span class="badge bg-secondary text-decoration-line-through">BROKEN</span>{% else %}<span class="badge bg-light text-muted border">WAITING</span>{% endif %}</td>
-<td class="small">{{b.created_at.strftime('%H:%M')}}</td><td><a href="https://www.bybit.com/trade/usdt/{{b.symbol}}" target="_blank" class="btn btn-xs btn-primary">Bybit ↗</a></td></tr>
-{% else %}<tr><td colspan="7" class="text-center py-5">No active zones found.</td></tr>{% endfor %}</tbody></table></div></div>
-<style>.blink{animation:b 1s infinite}@keyframes b{50%{opacity:0}}</style>{% endblock %}

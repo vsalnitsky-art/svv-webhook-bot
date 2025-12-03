@@ -1,20 +1,14 @@
-import threading
-import time
-import pandas as pd
-import logging
-from bot import bot_instance
-from settings_manager import settings
-from models import db_manager, AnalysisResult, OrderBlock, SmartMoneyTicker
+import threading, time, pandas as pd, logging
+from bot import bot_instance; from settings_manager import settings
+from models import db_manager, AnalysisResult, OrderBlock, SmartMoneyTicker 
 from strategy_ob_trend import ob_trend_strategy as strategy_engine
 
 logger = logging.getLogger(__name__)
 
 class MarketAnalyzer:
     def __init__(self):
-        self.is_scanning = False
-        self.progress = 0
-        self.status_message = "Ready"
-        # Запускаємо фоновий моніторинг Smart Money окремо від сканера
+        self.is_scanning = False; self.progress = 0; self.status_message = "Ready"
+        # Фоновий потік оновлення статусів зон
         threading.Thread(target=self._monitor_smart_money, daemon=True).start()
 
     def get_top_tickers(self, limit=100):
@@ -23,129 +17,102 @@ class MarketAnalyzer:
             return sorted([t for t in bot_instance.get_all_tickers() if t['symbol'].endswith(q)], key=lambda x: float(x.get('turnover24h', 0)), reverse=True)[:int(limit)]
         except: return []
 
-    def fetch_candles(self, symbol, timeframe, limit=300):
+    def fetch_candles(self, s, tf, limit=300):
         try:
             m = {'5':'5','15':'15','30':'30','45':'15','60':'60','240':'240','D':'D'}
-            req_tf = m.get(str(timeframe), '240')
-            # Для 45m беремо 15m і покладаємось на стратегію або просто беремо 15m (спрощено)
-            # Тут використовуємо прямий мапінг для стабільності
-            
-            r = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=limit)
-            if r['retCode'] == 0 and r['result']['list']:
-                df = pd.DataFrame(r['result']['list'], columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+            r = bot_instance.session.get_kline(category="linear", symbol=s, interval=m.get(str(tf),'240'), limit=limit)
+            if r['retCode']==0: 
+                df = pd.DataFrame(r['result']['list'], columns=['time','open','high','low','close','vol','to'])
                 df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='ms')
-                for c in ['open', 'high', 'low', 'close', 'volume']:
-                    df[c] = df[c].astype(float)
+                for c in ['open','high','low','close','vol']: df[c] = df[c].astype(float)
                 return df.sort_values('time').reset_index(drop=True)
         except: pass
         return None
 
-    # === ОСНОВНИЙ СКАНЕР (ПОШУК НОВИХ) ===
     def run_scan_thread(self):
-        if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
+        if not self.is_scanning: threading.Thread(target=self._scan, daemon=True).start()
 
-    def _scan_process(self):
+    def _scan(self):
         self.is_scanning = True; self.progress = 0; self.status_message = "Starting..."
-        session = db_manager.get_session()
+        s = db_manager.get_session()
         try:
-            session.query(AnalysisResult).delete(); session.commit()
+            s.query(AnalysisResult).delete(); s.commit()
             limit = settings.get("scan_limit"); tickers = self.get_top_tickers(limit)
             htf, ltf = settings.get("htfSelection"), settings.get("ltfSelection")
-            
-            total = len(tickers)
             for i, t in enumerate(tickers):
                 if not self.is_scanning: break
-                sym = t['symbol']
-                self.status_message = f"Scanning {sym} ({i+1}/{total})"
-                self.progress = int((i / total) * 100)
-                
+                sym = t['symbol']; self.status_message = f"Scanning {sym} ({i+1}/{len(tickers)})"; self.progress = int((i/len(tickers))*100)
                 try:
                     df_h = self.fetch_candles(sym, htf); time.sleep(0.1)
                     if df_h is None: continue
                     df_l = self.fetch_candles(sym, ltf)
                     if df_l is None: continue
-                    
                     sigs = strategy_engine.analyze(df_l, df_h)
                     for sg in sigs:
-                        # 1. Результат для сканера
+                        # 1. Результат
                         res = AnalysisResult(symbol=sym, signal_type=sg['action'], status="New", score=85, price=sg['price'], htf_rsi=0, ltf_rsi=sg['rsi'], details=f"{sg['reason']} | SL: {round(sg['sl_price'],4)}")
-                        session.add(res)
-                        
-                        # 2. Додаємо в Watchlist, якщо ще немає
-                        if not session.query(SmartMoneyTicker).filter_by(symbol=sym).first():
-                            session.add(SmartMoneyTicker(symbol=sym))
-                            logger.info(f"🆕 Watchlist Add: {sym}")
-                        
-                        session.commit()
+                        s.add(res)
+                        # 2. Watchlist Add
+                        if not s.query(SmartMoneyTicker).filter_by(symbol=sym).first():
+                            s.add(SmartMoneyTicker(symbol=sym))
+                            logger.info(f"🆕 Added {sym} to Watchlist")
+                        s.commit()
                 except: pass
                 time.sleep(0.2)
             self.progress = 100; self.status_message = "Completed"
-        finally: self.is_scanning = False; session.close()
+        finally: self.is_scanning = False; s.close()
 
-    # === SMART MONEY MONITOR (ФОНОВЕ ОНОВЛЕННЯ ЗОН) ===
+    # === UPDATE ZONES STATUSES ===
     def _monitor_smart_money(self):
-        """Постійно оновлює зони Order Blocks для монет з Watchlist"""
-        logger.info("🕵️ Smart Money Monitor Started")
         while True:
             try:
                 session = db_manager.get_session()
                 watchlist = session.query(SmartMoneyTicker).all()
-                
                 if not watchlist:
-                    session.close()
-                    time.sleep(10)
-                    continue
-
-                htf = settings.get("htfSelection") # Шукаємо блоки на Глобальному ТФ (або можна на LTF)
-                # Для точності візьмемо той самий ТФ, що в налаштуваннях
+                    session.close(); time.sleep(10); continue
                 
+                htf = settings.get("htfSelection")
                 for item in watchlist:
                     sym = item.symbol
                     try:
                         df = self.fetch_candles(sym, htf, limit=300)
                         if df is not None:
-                            # Шукаємо блоки
+                            curr_price = df['close'].iloc[-1]
                             obs = strategy_engine.find_order_blocks(df)
                             
-                            # Очищаємо старі блоки для цієї монети (щоб не було дублікатів і пробитих)
-                            # Це найпростіший спосіб тримати базу актуальною
+                            # Refresh blocks
                             session.query(OrderBlock).filter_by(symbol=sym).delete()
                             
-                            # Записуємо актуальні Buy блоки
-                            for b in obs['buy']:
-                                session.add(OrderBlock(
-                                    symbol=sym, timeframe=str(htf), ob_type="Buy",
-                                    top=b['top'], bottom=b['bottom'], 
-                                    entry_price=b['top'], sl_price=b['bottom'], # Entry зверху блоку
-                                    created_at=b['created_at']
-                                ))
-                            
-                            # Записуємо актуальні Sell блоки
-                            for b in obs['sell']:
-                                session.add(OrderBlock(
-                                    symbol=sym, timeframe=str(htf), ob_type="Sell",
-                                    top=b['top'], bottom=b['bottom'],
-                                    entry_price=b['bottom'], sl_price=b['top'], # Entry знизу блоку
-                                    created_at=b['created_at']
-                                ))
-                            
+                            # Helper to add
+                            def add_ob(o_list, type_str):
+                                for b in o_list:
+                                    status = 'WAITING'
+                                    # Status Logic
+                                    entry = b['top'] if type_str=='Buy' else b['bottom']
+                                    sl = b['bottom'] if type_str=='Buy' else b['top']
+                                    
+                                    # Broken Check
+                                    if type_str=='Buy' and curr_price < sl: status = 'BROKEN'
+                                    elif type_str=='Sell' and curr_price > sl: status = 'BROKEN'
+                                    # Inside Check
+                                    elif type_str=='Buy' and b['bottom'] <= curr_price <= b['top']: status = '🔥 INSIDE'
+                                    elif type_str=='Sell' and b['bottom'] <= curr_price <= b['top']: status = '🔥 INSIDE'
+                                    # Near Check (0.5%)
+                                    elif abs(curr_price - entry)/entry < 0.005: status = '⚠️ NEAR'
+                                    
+                                    session.add(OrderBlock(symbol=sym, timeframe=str(htf), ob_type=type_str, top=b['top'], bottom=b['bottom'], entry_price=entry, sl_price=sl, created_at=b['created_at'], status=status))
+
+                            add_ob(obs['buy'], 'Buy')
+                            add_ob(obs['sell'], 'Sell')
                             session.commit()
-                    except Exception as e:
-                        # logger.error(f"SM Monitor error {sym}: {e}")
-                        pass
-                    
-                    time.sleep(1.5) # Пауза між монетами, щоб не спамити API
-                
+                    except: pass
+                    time.sleep(1.0)
                 session.close()
-                time.sleep(30) # Пауза після повного кола
-                
-            except Exception as e:
-                logger.error(f"SM Loop Error: {e}")
-                time.sleep(30)
+                time.sleep(15)
+            except: time.sleep(30)
 
     def get_results(self):
         s = db_manager.get_session()
         try: return [{'symbol':r.symbol,'signal':r.signal_type,'score':r.score,'price':r.price,'rsi_ltf':round(r.ltf_rsi,1),'time':r.found_at.strftime('%H:%M'),'details':r.details} for r in s.query(AnalysisResult).order_by(AnalysisResult.score.desc()).all()]
         finally: s.close()
-
 market_analyzer = MarketAnalyzer()
