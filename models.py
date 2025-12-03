@@ -62,12 +62,33 @@ class OrderBlock(Base):
     status = Column(String(20), default='PENDING') 
     volume_score = Column(Float, default=0.0)
 
-# === ВАЖЛИВО: ЦЕЙ КЛАС МАЄ БУТИ ТУТ ===
 class SmartMoneyTicker(Base):
     __tablename__ = 'smart_money_watchlist'
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), unique=True, index=True)
     added_at = Column(DateTime, default=datetime.utcnow)
+
+# === НОВА ТАБЛИЦЯ ДЛЯ СИМУЛЯЦІЇ ===
+class PaperTrade(Base):
+    __tablename__ = 'paper_trades'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), index=True)
+    direction = Column(String(10)) # Long / Short
+    entry_mode = Column(String(20)) # Market / Limit
+    status = Column(String(20)) # PENDING, OPEN, CLOSED_WIN, CLOSED_LOSS, CANCELED
+    
+    entry_price = Column(Float)
+    sl_price = Column(Float)
+    tp_price = Column(Float, nullable=True)
+    exit_price = Column(Float, nullable=True)
+    
+    pnl = Column(Float, default=0.0)
+    pnl_percent = Column(Float, default=0.0)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    closed_at = Column(DateTime, nullable=True)
+    
+    details = Column(String(255)) # Наприклад: "TP Hit", "SL Hit", "Manual"
 
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):

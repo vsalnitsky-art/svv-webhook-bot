@@ -18,13 +18,13 @@ DEFAULT_SETTINGS = {
     "obt_useCloudFilter": True,
     "obt_useObvFilter": True,
     "obt_useRsiFilter": True,
-    "obt_useOBRetest": False, # <--- ЗМІНЕНО НА FALSE (Вимкнено за замовчуванням)
+    "obt_useOBRetest": False, 
 
     # === TIMEFRAMES ===
     "htfSelection": "240", # 4H (Default HTF)
     "ltfSelection": "45",  # 45m (Default LTF)
     
-    # === INDICATORS (DEFAULT FOR 4H) ===
+    # === INDICATORS ===
     "obt_cloudFastLen": 10,
     "obt_cloudSlowLen": 40,
     "obt_rsiLength": 14,
@@ -33,7 +33,7 @@ DEFAULT_SETTINGS = {
     "obt_obvEntryLen": 20,
     "obt_swingLength": 5,
 
-    # === SMART EXIT (ENABLED BY DEFAULT) ===
+    # === SMART EXIT ===
     "exit_enableStrategy": True,
     "exit_rsiOverbought": 70,
     "exit_rsiOversold": 30,
@@ -47,6 +47,12 @@ DEFAULT_SETTINGS = {
     "sl_mode": "OB_Extremity",
     "fixedSL": 1.5,
     "obBufferPercent": 0.2,
+
+    # === SMART MONEY SIMULATOR (NEW) ===
+    "sm_entry_mode": "Limit", # Market or Limit
+    "sm_sl_buffer": 0.2,      # % відступу від блоку
+    "sm_tp_mode": "None",     # None, Fixed, RR
+    "sm_tp_value": 3.0        # Значення (RR 3 або 3%)
 }
 
 class SettingsManager:

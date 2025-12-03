@@ -1,147 +1,183 @@
 {% extends "base.html" %}
 
-{% block title %}Smart Money Monitor{% endblock %}
+{% block title %}Smart Money Simulator{% endblock %}
 
 {% block head %}
 <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 <style>
-    .layout-container { display: flex; height: calc(100vh - 100px); gap: 15px; }
-    .sidebar { width: 280px; overflow-y: auto; background: white; border: 1px solid #e2e8f0; border-radius: 8px; }
-    .main-chart { flex-grow: 1; background: white; border: 1px solid #e2e8f0; border-radius: 8px; position: relative; }
-    .ticker-item { padding: 12px 15px; border-bottom: 1px solid #f1f5f9; cursor: pointer; transition: 0.2s; display: flex; justify-content: space-between; align-items: center; }
-    .ticker-item:hover { background-color: #f8fafc; }
-    .ticker-item.active { background-color: #eef2ff; border-left: 4px solid #4f46e5; }
-    .ticker-symbol { font-weight: 700; color: #1e293b; font-family: 'JetBrains Mono', monospace; }
-    .ticker-time { font-size: 0.75rem; color: #94a3b8; }
-    #chart-container { width: 100%; height: 100%; }
-    #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); display: none; justify-content: center; align-items: center; z-index: 10; backdrop-filter: blur(2px); }
+    .layout-grid { display: grid; grid-template-columns: 280px 1fr; gap: 20px; height: calc(100vh - 100px); }
+    .sidebar { background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow-y: auto; display: flex; flex-direction: column; }
+    .main-content { overflow-y: auto; padding-right: 5px; }
+    
+    .watchlist-item { padding: 10px 15px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; }
+    .watchlist-item:hover { background: #f8fafc; cursor: pointer; }
+    
+    .panel-card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .table-custom th { font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 600; background: #f8fafc; }
+    .badge-long { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .badge-short { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .status-open { color: #2563eb; font-weight: bold; }
+    .status-pending { color: #d97706; font-weight: bold; }
+    .status-win { color: #16a34a; font-weight: bold; }
+    .status-loss { color: #dc2626; font-weight: bold; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="container-fluid h-100">
     <div class="d-flex justify-content-between align-items-center mb-3">
-        <h5 class="fw-bold m-0"><i class="ri-eye-2-line me-2 text-primary"></i>Smart Money Monitor</h5>
-        <a href="/analyzer" class="btn btn-sm btn-outline-secondary">Сканер</a>
+        <div>
+            <h4 class="fw-bold m-0 text-dark">🧠 Smart Money Simulator</h4>
+            <div class="small text-muted">Paper Trading & Backtesting Environment</div>
+        </div>
+        <a href="/analyzer" class="btn btn-outline-primary btn-sm"><i class="ri-search-line me-1"></i>Запустити Сканер</a>
     </div>
 
-    <div class="layout-container">
+    <div class="layout-grid">
         <div class="sidebar shadow-sm">
-            <div class="p-3 border-bottom bg-light">
-                <span class="small fw-bold text-muted text-uppercase">Watchlist ({{ tickers|length }})</span>
+            <div class="p-3 bg-light border-bottom fw-bold text-uppercase small text-muted">
+                Active Watchlist ({{ watchlist|length }})
             </div>
-            <div id="ticker-list">
-                {% for t in tickers %}
-                <div class="ticker-item" onclick="loadChart('{{ t.symbol }}', this)">
-                    <div>
-                        <div class="ticker-symbol">{{ t.symbol }}</div>
-                        <div class="ticker-time">{{ t.added_at.strftime('%d.%m %H:%M') }}</div>
-                    </div>
-                    <i class="ri-arrow-right-s-line text-muted"></i>
+            <div class="flex-grow-1">
+                {% for item in watchlist %}
+                <div class="watchlist-item">
+                    <span class="fw-bold">{{ item.symbol }}</span>
+                    <span class="text-muted small">{{ item.added_at.strftime('%H:%M') }}</span>
                 </div>
                 {% else %}
-                <div class="p-4 text-center text-muted small">Список порожній.<br>Запустіть сканер.</div>
+                <div class="text-center p-4 text-muted small">Список порожній.<br>Запустіть сканер для пошуку монет.</div>
                 {% endfor %}
             </div>
         </div>
 
-        <div class="main-chart shadow-sm">
-            <div id="loading-overlay">
-                <div class="spinner-border text-primary" role="status"></div>
+        <div class="main-content">
+            
+            <form method="POST" class="panel-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="fw-bold m-0 text-primary"><i class="ri-equalizer-line me-2"></i>Параметри Симуляції</h6>
+                    <button type="submit" class="btn btn-primary btn-sm px-4 fw-bold">Зберегти Налаштування</button>
+                </div>
+                
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold text-muted">Режим Входу</label>
+                        <select class="form-select form-select-sm" name="sm_entry_mode">
+                            <option value="Limit" {{ 'selected' if conf.get('sm_entry_mode') == 'Limit' }}>🔵 Limit (Retest)</option>
+                            <option value="Market" {{ 'selected' if conf.get('sm_entry_mode') == 'Market' }}>⚡ Market (Aggressive)</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold text-muted">Буфер SL (%)</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" step="0.1" class="form-control" name="sm_sl_buffer" value="{{ conf.get('sm_sl_buffer', 0.2) }}">
+                            <span class="input-group-text">%</span>
+                        </div>
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold text-muted">Режим TP</label>
+                        <select class="form-select form-select-sm" name="sm_tp_mode">
+                            <option value="None" {{ 'selected' if conf.get('sm_tp_mode') == 'None' }}>Без TP</option>
+                            <option value="Fixed" {{ 'selected' if conf.get('sm_tp_mode') == 'Fixed' }}>Фіксований %</option>
+                            <option value="RR" {{ 'selected' if conf.get('sm_tp_mode') == 'RR' }}>Risk : Reward</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold text-muted">Значення TP</label>
+                        <input type="number" step="0.1" class="form-control form-control-sm" name="sm_tp_value" value="{{ conf.get('sm_tp_value', 3.0) }}" placeholder="3.0">
+                    </div>
+                </div>
+                
+                <div class="mt-3 pt-3 border-top d-flex gap-3 small text-muted">
+                    <span><i class="ri-filter-line me-1"></i>Filters (HTF): <b>{{ conf.get('htfSelection') }}m</b></span>
+                    <span><i class="ri-time-line me-1"></i>Entry (LTF): <b>{{ conf.get('ltfSelection') }}m</b></span>
+                </div>
+            </form>
+
+            <div class="panel-card p-0 overflow-hidden">
+                <div class="p-3 border-bottom bg-light d-flex justify-content-between align-items-center">
+                    <h6 class="fw-bold m-0 text-dark">🔴 Активні Симуляції</h6>
+                    <span class="badge bg-white text-dark border">{{ active_trades|length }}</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover table-custom mb-0 align-middle">
+                        <thead>
+                            <tr>
+                                <th class="ps-4">Час</th>
+                                <th>Монета</th>
+                                <th>Тип</th>
+                                <th>Статус</th>
+                                <th>Вхід</th>
+                                <th>SL</th>
+                                <th>TP</th>
+                                <th class="pe-4 text-end">PnL</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for t in active_trades %}
+                            <tr>
+                                <td class="ps-4 font-mono text-muted">{{ t.created_at.strftime('%d.%m %H:%M') }}</td>
+                                <td class="fw-bold font-mono">{{ t.symbol }}</td>
+                                <td><span class="badge {{ 'badge-long' if t.direction=='Long' else 'badge-short' }}">{{ t.direction }}</span></td>
+                                <td class="small {{ 'status-open' if t.status=='OPEN' else 'status-pending' }}">{{ t.status }}</td>
+                                <td class="font-mono">{{ t.entry_price }}</td>
+                                <td class="font-mono text-danger">{{ t.sl_price }}</td>
+                                <td class="font-mono text-success">{{ t.tp_price if t.tp_price else '-' }}</td>
+                                <td class="pe-4 text-end fw-bold {{ 'text-success' if t.pnl_percent > 0 else 'text-danger' }}">
+                                    {{ "%0.2f"|format(t.pnl_percent) }}%
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="8" class="text-center py-4 text-muted">Немає активних угод</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-            <div id="chart-container"></div>
-            <div class="position-absolute top-0 start-0 p-3" style="z-index: 5; pointer-events: none;">
-                <h4 id="chart-title" class="fw-bold m-0" style="opacity: 0.3;">SELECT COIN</h4>
+
+            <div class="panel-card p-0 overflow-hidden">
+                <div class="p-3 border-bottom bg-light">
+                    <h6 class="fw-bold m-0 text-muted">📜 Історія Симуляцій</h6>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover table-custom mb-0 align-middle">
+                        <thead>
+                            <tr>
+                                <th class="ps-4">Закрито</th>
+                                <th>Монета</th>
+                                <th>Тип</th>
+                                <th>Статус</th>
+                                <th>Результат</th>
+                                <th class="pe-4 text-end">Деталі</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for h in history_trades %}
+                            <tr>
+                                <td class="ps-4 font-mono text-muted">{{ h.closed_at.strftime('%d.%m %H:%M') }}</td>
+                                <td class="fw-bold font-mono">{{ h.symbol }}</td>
+                                <td><span class="badge {{ 'badge-long' if h.direction=='Long' else 'badge-short' }}">{{ h.direction }}</span></td>
+                                <td>
+                                    {% if h.status == 'CLOSED_WIN' %}<span class="badge bg-success">WIN</span>
+                                    {% elif h.status == 'CLOSED_LOSS' %}<span class="badge bg-danger">LOSS</span>
+                                    {% else %}<span class="badge bg-secondary">CANCELED</span>{% endif %}
+                                </td>
+                                <td class="fw-bold {{ 'text-success' if h.pnl_percent > 0 else 'text-danger' }}">
+                                    {{ "%0.2f"|format(h.pnl_percent) }}%
+                                </td>
+                                <td class="pe-4 text-end small text-muted">{{ h.details }}</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="6" class="text-center py-4 text-muted">Історія порожня</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
+
         </div>
     </div>
 </div>
-
-<script>
-    let chart, candleSeries;
-    let priceLines = []; // Зберігаємо лінії, щоб видаляти при зміні монети
-
-    // Ініціалізація графіка
-    function initChart() {
-        const container = document.getElementById('chart-container');
-        chart = LightweightCharts.createChart(container, {
-            layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#333' },
-            grid: { vertLines: { color: '#f1f5f9' }, horzLines: { color: '#f1f5f9' } },
-            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-            rightPriceScale: { borderColor: '#e2e8f0' },
-            timeScale: { borderColor: '#e2e8f0', timeVisible: true }
-        });
-
-        candleSeries = chart.addCandlestickSeries({
-            upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350'
-        });
-
-        new ResizeObserver(entries => {
-            if (entries.length === 0 || entries[0].target !== container) { return; }
-            const newRect = entries[0].contentRect;
-            chart.applyOptions({ height: newRect.height, width: newRect.width });
-        }).observe(container);
-    }
-
-    // Завантаження даних
-    function loadChart(symbol, element) {
-        // UI Update
-        document.querySelectorAll('.ticker-item').forEach(el => el.classList.remove('active'));
-        if(element) element.classList.add('active');
-        document.getElementById('chart-title').innerText = symbol;
-        document.getElementById('loading-overlay').style.display = 'flex';
-
-        // Clear previous lines
-        priceLines.forEach(line => candleSeries.removePriceLine(line));
-        priceLines = [];
-
-        // Fetch Data
-        fetch(`/api/chart_data/${symbol}`)
-            .then(r => r.json())
-            .then(data => {
-                if (data.candles) {
-                    candleSeries.setData(data.candles);
-                }
-                
-                // Draw Order Blocks as Price Lines
-                if (data.blocks) {
-                    data.blocks.forEach(ob => {
-                        const color = ob.type === 'Buy' ? '#26a69a' : '#ef5350';
-                        
-                        // Top Line
-                        const topLine = candleSeries.createPriceLine({
-                            price: ob.top,
-                            color: color,
-                            lineWidth: 2,
-                            lineStyle: LightweightCharts.LineStyle.Solid,
-                            axisLabelVisible: true,
-                            title: `${ob.type} OB Top`,
-                        });
-                        
-                        // Bottom Line
-                        const bottomLine = candleSeries.createPriceLine({
-                            price: ob.bottom,
-                            color: color,
-                            lineWidth: 1,
-                            lineStyle: LightweightCharts.LineStyle.Dashed,
-                            axisLabelVisible: false,
-                            title: `Bot`,
-                        });
-
-                        priceLines.push(topLine, bottomLine);
-                    });
-                }
-                
-                document.getElementById('loading-overlay').style.display = 'none';
-                chart.timeScale().fitContent();
-            })
-            .catch(err => {
-                console.error(err);
-                document.getElementById('loading-overlay').style.display = 'none';
-                alert("Error loading data");
-            });
-    }
-
-    document.addEventListener("DOMContentLoaded", initChart);
-</script>
 {% endblock %}
