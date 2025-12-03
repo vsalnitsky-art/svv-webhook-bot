@@ -62,7 +62,7 @@ class OrderBlock(Base):
     status = Column(String(20), default='PENDING') 
     volume_score = Column(Float, default=0.0)
 
-# === ДОДАНО ВІДСУТНІЙ КЛАС ===
+# === ВАЖЛИВО: ЦЕЙ КЛАС МАЄ БУТИ ТУТ ===
 class SmartMoneyTicker(Base):
     __tablename__ = 'smart_money_watchlist'
     id = Column(Integer, primary_key=True)
