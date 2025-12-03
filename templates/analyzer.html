@@ -1,48 +1,15 @@
-{% extends "base.html" %}
-{% block title %}Scanner{% endblock %}
-{% block content %}
-<div class="container-fluid">
-    <div class="card-custom mb-4 p-3">
-        <form id="scan-form">
-            <div class="d-flex gap-3 align-items-end mb-3">
-                <div class="flex-grow-1"><label>Depth</label><input type="number" name="scan_limit" class="form-control" value="{{conf.get('scan_limit',100)}}"></div>
-                <div class="d-flex gap-2 align-items-end">
-                    <span class="badge bg-white text-dark border p-2">HTF: {% set h=conf.get('htfSelection')|string %}{% if h=='60'%}1H{% elif h=='240'%}4H{% elif h=='D'%}1D{% else %}{{h}}m{% endif %}</span>
-                    <span class="badge bg-white text-dark border p-2">LTF: {% set l=conf.get('ltfSelection')|string %}{% if l=='60'%}1H{% else %}{{l}}m{% endif %}</span>
-                </div>
-                <div><button type="button" onclick="go()" id="btn" class="btn btn-primary px-5">SCAN 🚀</button></div>
-            </div>
-            <div class="row g-2">
-                <div class="col-3"><input type="checkbox" class="btn-check" id="c1" name="obt_useCloudFilter" {{'checked' if conf.get('obt_useCloudFilter')}}><label class="btn btn-outline-secondary w-100 d-flex justify-content-between" for="c1"><span>Cloud <small>({{conf.get('obt_cloudFastLen')}}/{{conf.get('obt_cloudSlowLen')}})</small></span><i class="ri-checkbox-circle-line"></i></label></div>
-                <div class="col-3"><input type="checkbox" class="btn-check" id="c2" name="obt_useObvFilter" {{'checked' if conf.get('obt_useObvFilter')}}><label class="btn btn-outline-secondary w-100 d-flex justify-content-between" for="c2"><span>OBV <small>({{conf.get('obt_obvEntryLen')}})</small></span><i class="ri-bar-chart-line"></i></label></div>
-                <div class="col-3"><input type="checkbox" class="btn-check" id="c3" name="obt_useRsiFilter" {{'checked' if conf.get('obt_useRsiFilter')}}><label class="btn btn-outline-secondary w-100 d-flex justify-content-between" for="c3"><span>RSI <small>({{conf.get('obt_rsiLength')}})</small></span><i class="ri-pulse-line"></i></label></div>
-                <div class="col-3"><input type="checkbox" class="btn-check" id="c4" name="obt_useOBRetest" {{'checked' if conf.get('obt_useOBRetest')}}><label class="btn btn-outline-secondary w-100 d-flex justify-content-between" for="c4"><span>Retest <small>(Sw {{conf.get('obt_swingLength')}})</small></span><i class="ri-arrow-go-back-line"></i></label></div>
-            </div>
-        </form>
-    </div>
-    <div id="prog" class="card-custom mb-3 p-3 bg-light" style="display:none">
-        <div class="progress"><div id="bar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div></div>
-        <div class="text-center mt-2 fw-bold" id="txt">...</div>
-    </div>
-    <div class="card-custom">
-        <table class="table">
-            <thead><tr><th>Sym</th><th>Price</th><th>Signal</th><th>Score</th><th>Det</th></tr></thead>
-            <tbody>
-            {% for r in results %}
-            <tr>
-                <td class="fw-bold">{{r.symbol}}</td>
-                <td>{{r.price}}</td>
-                <td><span class="badge {{'bg-success' if r.signal=='Buy' else 'bg-danger'}}">{{r.signal}}</span></td>
-                <td>{{r.score}}</td>
-                <td class="small text-muted">{{r.details}}</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</div>
-<script>
-    function go(){$('#btn').prop('disabled',1);$('#prog').show();$.post('/analyzer/scan',$('#scan-form').serialize(),function(){p()})}
-    function p(){let i=setInterval(function(){$.get('/analyzer/status',function(d){$('#bar').css('width',d.progress+'%');$('#txt').text(d.message);if(!d.is_scanning){clearInterval(i);location.reload()}})},1000)}
-</script>
-{% endblock %}
+{% extends "base.html" %}{% block title %}Scanner{% endblock %}{% block content %}
+<div class="container-fluid"><div class="card-custom mb-4 p-3"><form id="scan-form">
+<div class="d-flex gap-3 align-items-end mb-3"><div class="flex-grow-1"><label>Depth</label><input type="number" name="scan_limit" class="form-control" value="{{conf.get('scan_limit',100)}}"></div>
+<div class="d-flex gap-2 align-items-end"><span class="badge bg-white text-dark border p-2">HTF: {% set h=conf.get('htfSelection')|string %}{% if h=='60'%}1H{% elif h=='240'%}4H{% elif h=='D'%}1D{% else %}{{h}}m{% endif %}</span><span class="badge bg-white text-dark border p-2">LTF: {% set l=conf.get('ltfSelection')|string %}{% if l=='60'%}1H{% else %}{{l}}m{% endif %}</span></div>
+<div><button type="button" onclick="go()" id="btn" class="btn btn-primary px-5">SCAN 🚀</button></div></div>
+<div class="row g-2">
+<div class="col-3"><input type="checkbox" class="btn-check" id="c1" name="obt_useCloudFilter" {{'checked' if conf.get('obt_useCloudFilter')}}><label class="btn btn-outline-secondary w-100 d-flex justify-content-between" for="c1"><span>Cloud <small>({{conf.get('obt_cloudFastLen')}}/{{conf.get('obt_cloudSlowLen')}})</small></span><i class="ri-checkbox-circle-line"></i></label></div>
+<div class="col-3"><input type="checkbox" class="btn-check" id="c2" name="obt_useObvFilter" {{'checked' if conf.get('obt_useObvFilter')}}><label class="btn btn-outline-secondary w-100 d-flex justify-content-between" for="c2"><span>OBV <small>({{conf.get('obt_obvEntryLen')}})</small></span><i class="ri-bar-chart-line"></i></label></div>
+<div class="col-3"><input type="checkbox" class="btn-check" id="c3" name="obt_useRsiFilter" {{'checked' if conf.get('obt_useRsiFilter')}}><label class="btn btn-outline-secondary w-100 d-flex justify-content-between" for="c3"><span>RSI <small>({{conf.get('obt_rsiLength')}})</small></span><i class="ri-pulse-line"></i></label></div>
+<div class="col-3"><input type="checkbox" class="btn-check" id="c4" name="obt_useOBRetest" {{'checked' if conf.get('obt_useOBRetest')}}><label class="btn btn-outline-secondary w-100 d-flex justify-content-between" for="c4"><span>Retest <small>(Sw {{conf.get('obt_swingLength')}})</small></span><i class="ri-arrow-go-back-line"></i></label></div>
+</div></form></div>
+<div id="prog" class="card-custom mb-3 p-3 bg-light" style="display:none"><div class="progress"><div id="bar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%"></div></div><div class="text-center mt-2 fw-bold" id="txt">...</div></div>
+<div class="card-custom"><table class="table"><thead><tr><th>Sym</th><th>Price</th><th>Signal</th><th>Score</th><th>Det</th></tr></thead><tbody>{% for r in results %}<tr><td class="fw-bold">{{r.symbol}}</td><td>{{r.price}}</td><td><span class="badge {{'bg-success' if r.signal=='Buy' else 'bg-danger'}}">{{r.signal}}</span></td><td>{{r.score}}</td><td class="small text-muted">{{r.details}}</td></tr>{% endfor %}</tbody></table></div></div>
+<script>function go(){$('#btn').prop('disabled',1);$('#prog').show();$.post('/analyzer/scan',$('#scan-form').serialize(),function(){p()})}
+function p(){let i=setInterval(function(){$.get('/analyzer/status',function(d){$('#bar').css('width',d.progress+'%');$('#txt').text(d.message);if(!d.is_scanning){clearInterval(i);location.reload()}})},1000)}</script>{% endblock %}
