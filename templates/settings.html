@@ -116,11 +116,11 @@
                         <input type="number" class="form-control" name="obt_rsiLength" value="{{ conf.get('obt_rsiLength', 14) }}">
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label small text-success fw-bold">RSI Buy (Entry)</label>
+                        <label class="form-label small text-success fw-bold">RSI Buy (Entry <)</label>
                         <input type="number" class="form-control" id="entryRsiBuy" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold', 45) }}">
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label small text-danger fw-bold">RSI Sell (Entry)</label>
+                        <label class="form-label small text-danger fw-bold">RSI Sell (Entry >)</label>
                         <input type="number" class="form-control" id="entryRsiSell" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought', 55) }}">
                     </div>
                 </div>
@@ -210,43 +210,43 @@
 </div>
 
 <script>
-    // Розширена матриця параметрів для кожного таймфрейму (з шумом)
+    // Матриця параметрів. ВХІД (Entry) виправлено на 40/60 та 45/55.
     const paramsMatrix = {
         '15':  { 
             cloud: {f: 20, s: 60}, 
             obv: {entry: 50, exit: 25}, 
             swing: 10,
-            rsi: {len: 14, buy: 25, sell: 75, exitShort: 25, exitLong: 75}
+            rsi: {len: 14, buy: 40, sell: 60, exitShort: 25, exitLong: 75} // Entry: 40/60
         },
         '30':  { 
             cloud: {f: 15, s: 50}, 
             obv: {entry: 40, exit: 20}, 
             swing: 8,
-            rsi: {len: 14, buy: 25, sell: 75, exitShort: 25, exitLong: 75}
+            rsi: {len: 14, buy: 40, sell: 60, exitShort: 25, exitLong: 75} // Entry: 40/60
         },
         '45':  { 
             cloud: {f: 12, s: 45}, 
             obv: {entry: 30, exit: 15}, 
             swing: 7,
-            rsi: {len: 14, buy: 30, sell: 70, exitShort: 30, exitLong: 70}
+            rsi: {len: 14, buy: 45, sell: 55, exitShort: 30, exitLong: 70} // Entry: 45/55
         },
         '60':  { 
             cloud: {f: 10, s: 40}, 
             obv: {entry: 20, exit: 12}, 
             swing: 5,
-            rsi: {len: 14, buy: 30, sell: 70, exitShort: 30, exitLong: 70}
+            rsi: {len: 14, buy: 45, sell: 55, exitShort: 30, exitLong: 70}
         },
         '240': { 
             cloud: {f: 10, s: 40}, 
             obv: {entry: 20, exit: 10}, 
             swing: 5,
-            rsi: {len: 14, buy: 30, sell: 70, exitShort: 30, exitLong: 70}
+            rsi: {len: 14, buy: 45, sell: 55, exitShort: 30, exitLong: 70}
         },
         'D':   { 
             cloud: {f: 10, s: 40}, 
             obv: {entry: 20, exit: 10}, 
             swing: 5,
-            rsi: {len: 14, buy: 30, sell: 70, exitShort: 30, exitLong: 70}
+            rsi: {len: 14, buy: 45, sell: 55, exitShort: 30, exitLong: 70}
         }
     };
 
@@ -255,17 +255,12 @@
         const config = paramsMatrix[tf];
 
         if (config) {
-            // Анімація для візуального підтвердження
-            
-            // 1. Entry Strategy Params
             flashField('cloudFast', config.cloud.f);
             flashField('cloudSlow', config.cloud.s);
             flashField('obvLen', config.obv.entry);
             flashField('swingLen', config.swing);
             flashField('entryRsiBuy', config.rsi.buy);
             flashField('entryRsiSell', config.rsi.sell);
-            
-            // 2. Exit Strategy Params
             flashField('exitRsiShort', config.rsi.exitShort);
             flashField('exitRsiLong', config.rsi.exitLong);
             flashField('exitObvLen', config.obv.exit);
@@ -276,7 +271,7 @@
         const el = document.getElementById(id);
         if (el) {
             el.style.transition = "background-color 0.2s";
-            el.style.backgroundColor = "#d1fae5"; // Light green flash
+            el.style.backgroundColor = "#d1fae5"; 
             el.value = newValue;
             setTimeout(() => {
                 el.style.backgroundColor = "white";

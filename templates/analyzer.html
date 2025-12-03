@@ -92,7 +92,7 @@
                     <div class="col-md-3">
                         <input type="checkbox" class="btn-check" id="fRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
                         <label class="btn-toggle-custom shadow-sm" for="fRsi">
-                            <span>RSI <span class="param-tag">({{ conf.get('obt_rsiLength') }})</span></span> 
+                            <span>RSI <span class="param-tag">({{ conf.get('obt_rsiLength') }}) <{{ conf.get('obt_entryRsiOversold') }} >{{ conf.get('obt_entryRsiOverbought') }}</span></span> 
                             <i class="ri-pulse-line"></i>
                         </label>
                     </div>
@@ -175,10 +175,7 @@ function startScan() {
     $('#status-card').slideDown();
     var formData = {};
     $('#scan-form').serializeArray().forEach(function(item) { formData[item.name] = item.value; });
-    
-    // Явно збираємо стан чекбоксів
     $('#scan-form input[type=checkbox]').each(function() { formData[this.name] = this.checked ? 'on' : 'off'; });
-    
     $.post('/analyzer/scan', formData, function(data) { pollStatus(); })
      .fail(function() { alert('Помилка.'); $('#btn-scan').prop('disabled', false).text('ЗАПУСТИТИ 🚀'); $('#status-card').hide(); });
 }

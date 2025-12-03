@@ -1,8 +1,0 @@
-flask
-requests
-pybit
-sqlalchemy
-pandas
-pandas_ta
-cryptography
-gunicorn
