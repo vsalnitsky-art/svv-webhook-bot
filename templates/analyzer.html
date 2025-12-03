@@ -50,15 +50,18 @@
                         </div>
                     </div>
 
-                    <div class="col-md-2">
+                    <div class="col-md-3">
                         <label class="form-label fw-bold small text-muted text-uppercase">Min Vol ($M)</label>
                         <div class="input-group">
-                            <span class="input-group-text bg-white border-end-0">M</span>
-                            <input type="number" class="form-control border-start-0 ps-0" name="scan_min_volume" value="{{ conf.get('scan_min_volume', 10) }}">
+                            <div class="input-group-text bg-white border-end-0">
+                                <input class="form-check-input mt-0" type="checkbox" name="scan_use_min_volume" {{ 'checked' if conf.get('scan_use_min_volume') }} aria-label="Toggle Volume Filter">
+                            </div>
+                            <input type="number" class="form-control border-start-0 border-end-0 ps-2" name="scan_min_volume" value="{{ conf.get('scan_min_volume', 10) }}">
+                            <span class="input-group-text bg-white border-start-0">M</span>
                         </div>
                     </div>
                     
-                    <div class="col-md-5">
+                    <div class="col-md-4">
                         <label class="form-label fw-bold small text-muted text-uppercase">Активні Таймфрейми</label>
                         <div class="d-flex gap-2">
                             <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
@@ -140,7 +143,8 @@
                     <tr>
                         <th class="py-3 ps-4 border-bottom">Монета</th>
                         <th class="py-3 border-bottom">Ціна</th>
-                        <th class="py-3 border-bottom">Vol 24h</th> <th class="py-3 border-bottom">Сигнал</th>
+                        <th class="py-3 border-bottom">Vol 24h</th>
+                        <th class="py-3 border-bottom">Сигнал</th>
                         <th class="py-3 border-bottom">Score</th>
                         <th class="py-3 border-bottom">Час</th>
                         <th class="py-3 border-bottom">Деталі</th>

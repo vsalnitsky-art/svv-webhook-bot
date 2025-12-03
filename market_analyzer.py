@@ -20,19 +20,19 @@ class MarketAnalyzer:
     def get_top_tickers(self, limit=100):
         try:
             q = settings.get("scanner_quote_coin")
-            min_vol_mln = float(settings.get("scan_min_volume", 10))
-            min_vol_raw = min_vol_mln * 1_000_000
+            use_vol_filter = settings.get("scan_use_min_volume", True) # Читаємо налаштування
             
-            # Отримуємо всі тікери
             all_tickers = bot_instance.get_all_tickers()
-            
-            # Фільтруємо спочатку за Quote coin (USDT)
             usdt_tickers = [t for t in all_tickers if t['symbol'].endswith(q)]
             
-            # Фільтруємо за об'ємом
-            valid_tickers = [t for t in usdt_tickers if float(t.get('turnover24h', 0)) >= min_vol_raw]
+            # Логіка фільтрації
+            if use_vol_filter:
+                min_vol_mln = float(settings.get("scan_min_volume", 10))
+                min_vol_raw = min_vol_mln * 1_000_000
+                valid_tickers = [t for t in usdt_tickers if float(t.get('turnover24h', 0)) >= min_vol_raw]
+            else:
+                valid_tickers = usdt_tickers # Пропускаємо всіх, якщо фільтр вимкнено
             
-            # Сортуємо та ріжемо ліміт
             return sorted(valid_tickers, key=lambda x: float(x.get('turnover24h', 0)), reverse=True)[:int(limit)]
         except: return []
 
@@ -60,9 +60,7 @@ class MarketAnalyzer:
         self.is_scanning = True; self.progress = 0; self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
-            # === ПРИМУСОВЕ ПЕРЕСТВОРЕННЯ ТАБЛИЦІ (Fix for Postgres column update) ===
             db_manager.recreate_analysis_table()
-            # ========================================================================
             
             limit = settings.get("scan_limit"); tickers = self.get_top_tickers(limit)
             htf, ltf = settings.get("htfSelection"), settings.get("ltfSelection")
@@ -85,14 +83,9 @@ class MarketAnalyzer:
                     sigs = strategy_engine.analyze(df_l, df_h)
                     for sg in sigs:
                         res = AnalysisResult(
-                            symbol=sym, 
-                            signal_type=sg['action'], 
-                            status="New", 
-                            score=85, 
-                            price=sg['price'], 
-                            htf_rsi=0, 
-                            ltf_rsi=sg['rsi'], 
-                            volume_24h=vol_24h, # Зберігаємо об'єм
+                            symbol=sym, signal_type=sg['action'], status="New", score=85, 
+                            price=sg['price'], htf_rsi=0, ltf_rsi=sg['rsi'], 
+                            volume_24h=vol_24h,
                             details=f"{sg['reason']} | SL: {round(sg['sl_price'],4)}"
                         )
                         session.add(res)
@@ -213,7 +206,6 @@ class MarketAnalyzer:
                                     new_trade = PaperTrade(symbol=sym, direction=trade_signal['dir'], entry_mode=entry_mode, status='PENDING' if entry_mode == 'Limit' else 'OPEN', entry_price=entry_price, sl_price=trade_signal['sl'], tp_price=tp_price, details=f"Found on {ltf}m")
                                     session.add(new_trade)
                                     
-                                    # Видаляємо з Watchlist після входу
                                     ticker_remove = session.query(SmartMoneyTicker).filter_by(symbol=sym).first()
                                     if ticker_remove: session.delete(ticker_remove)
 

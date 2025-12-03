@@ -8,7 +8,8 @@ DEFAULT_SETTINGS = {
     "scanner_quote_coin": "USDT",
     "scanner_mode": "Manual",
     "scan_limit": 100,
-    "scan_min_volume": 10, # <--- НОВЕ: Мін. об'єм у млн $
+    "scan_min_volume": 10,
+    "scan_use_min_volume": True, # <--- НОВИЙ ПАРАМЕТР (ON/OFF)
     
     # === TELEGRAM ===
     "telegram_enabled": False,
