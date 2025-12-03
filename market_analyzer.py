@@ -2,12 +2,10 @@ import threading
 import time
 import pandas as pd
 import logging
-from datetime import datetime
 from bot import bot_instance
 from settings_manager import settings
-from models import db_manager, AnalysisResult, OrderBlock
+from models import db_manager, AnalysisResult, OrderBlock, SmartMoneyTicker # Додано імпорт
 
-# Імпорт логіки стратегії
 from strategy_ob_trend import ob_trend_strategy as strategy_engine
 
 logger = logging.getLogger(__name__)
@@ -20,38 +18,26 @@ class MarketAnalyzer:
 
     def get_top_tickers(self, limit=100):
         try:
-            quote_coin = settings.get("scanner_quote_coin")
-            all_tickers = bot_instance.get_all_tickers()
-            filtered = [t for t in all_tickers if t['symbol'].endswith(quote_coin)]
-            sorted_tickers = sorted(filtered, key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
-            return sorted_tickers[:int(limit)]
+            q = settings.get("scanner_quote_coin")
+            return sorted([t for t in bot_instance.get_all_tickers() if t['symbol'].endswith(q)], key=lambda x: float(x.get('turnover24h', 0)), reverse=True)[:int(limit)]
         except Exception as e:
             logger.error(f"Error fetching tickers: {e}")
             return []
 
     def fetch_candles(self, symbol, timeframe, limit=300):
         try:
-            # Мапінг таймфреймів
-            tf_map = {'5': '5', '15': '15', '30': '30', '45': '15', '60': '60', '240': '240', 'D': 'D'}
-            req_tf = tf_map.get(str(timeframe), '240')
-            
-            resp = bot_instance.session.get_kline(
-                category="linear", symbol=symbol, interval=req_tf, limit=limit
-            )
-            
-            if resp['retCode'] == 0 and resp['result']['list']:
-                data = resp['result']['list']
-                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+            m = {'5':'5','15':'15','30':'30','45':'15','60':'60','240':'240','D':'D'}
+            r = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=m.get(str(timeframe),'240'), limit=limit)
+            if r['retCode']==0: 
+                df = pd.DataFrame(r['result']['list'], columns=['time','open','high','low','close','vol','to'])
                 df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='ms')
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    df[col] = df[col].astype(float)
+                for c in ['open','high','low','close','vol']: df[c] = df[c].astype(float)
                 return df.sort_values('time').reset_index(drop=True)
-            return None
-        except: return None
+        except: pass
+        return None
 
     def run_scan_thread(self):
-        if self.is_scanning: return
-        threading.Thread(target=self._scan_process, daemon=True).start()
+        if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
 
     def _scan_process(self):
         self.is_scanning = True
@@ -67,11 +53,8 @@ class MarketAnalyzer:
             tickers = self.get_top_tickers(limit)
             total = len(tickers)
             
-            # --- ВАЖЛИВО: БЕРЕМО ТАЙМФРЕЙМИ З ГЛОБАЛЬНИХ НАЛАШТУВАНЬ ---
             htf = settings.get("htfSelection")
             ltf = settings.get("ltfSelection")
-            
-            logger.info(f"Starting scan: HTF={htf}, LTF={ltf}, Filters=Active")
 
             for i, ticker in enumerate(tickers):
                 if not self.is_scanning: break 
@@ -81,22 +64,18 @@ class MarketAnalyzer:
                 self.progress = int((i / total) * 100)
                 
                 try:
-                    # Завантаження HTF
                     df_htf = self.fetch_candles(symbol, htf)
                     if df_htf is None: 
                         time.sleep(0.1); continue
                     
                     time.sleep(0.1)
-                    
-                    # Завантаження LTF
                     df_ltf = self.fetch_candles(symbol, ltf)
                     if df_ltf is None: continue
                     
-                    # --- АНАЛІЗ СТРАТЕГІЄЮ ---
-                    # Стратегія сама візьме параметри індикаторів з settings
                     signals = strategy_engine.analyze(df_ltf, df_htf)
                     
                     for sig in signals:
+                        # 1. Запис результату для Сканера
                         res = AnalysisResult(
                             symbol=symbol, 
                             signal_type=sig.get('action'), 
@@ -109,23 +88,23 @@ class MarketAnalyzer:
                         )
                         session.add(res)
                         
-                        # Smart Money Tracker Save
+                        # 2. WATCHLIST LOGIC: Перевіряємо та додаємо в список Smart Money
+                        existing_ticker = session.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
+                        
+                        if not existing_ticker:
+                            new_ticker = SmartMoneyTicker(symbol=symbol)
+                            session.add(new_ticker)
+                            logger.info(f"🆕 Added to Watchlist: {symbol}")
+                        
+                        # (Опціонально) Залишаємо запис в OrderBlock для сумісності, якщо треба
                         if 'OB' in sig.get('reason', ''):
-                            ob_type = sig.get('action') 
-                            new_ob = OrderBlock(
-                                symbol=symbol,
-                                timeframe=str(ltf),
-                                ob_type=ob_type,
-                                top=sig.get('price') * 1.01,
-                                bottom=sig.get('price') * 0.99,
-                                entry_price=sig.get('price'),
-                                sl_price=sig.get('sl_price', 0),
-                                status='PENDING'
-                            )
-                            session.add(new_ob)
+                             session.add(OrderBlock(
+                                symbol=symbol, timeframe=str(ltf), ob_type=sig.get('action'),
+                                top=sig.get('price')*1.01, bottom=sig.get('price')*0.99,
+                                entry_price=sig.get('price'), sl_price=sig.get('sl_price', 0)
+                            ))
 
                         session.commit()
-                        logger.info(f"🚀 FOUND: {symbol} {sig.get('action')}")
                 
                 except Exception as e:
                     pass

@@ -52,54 +52,43 @@ class AnalysisResult(Base):
     found_at = Column(DateTime, default=datetime.utcnow)
     details = Column(Text)
 
-# === SMART MONEY ORDER BLOCKS (Накопичення) ===
+# === СТАРА ТАБЛИЦЯ (ЗАЛИШАЄМО ДЛЯ СУМІСНОСТІ) ===
 class OrderBlock(Base):
     __tablename__ = 'order_blocks'
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), index=True)
-    timeframe = Column(String(10))      # "15", "60", "240"
-    ob_type = Column(String(10))        # "Buy" або "Sell"
-    
-    # Координати зони
+    timeframe = Column(String(10))
+    ob_type = Column(String(10))
     top = Column(Float)
     bottom = Column(Float)
-    
-    # Параметри
     entry_price = Column(Float)
     sl_price = Column(Float)
-    
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default='PENDING') 
     volume_score = Column(Float, default=0.0)
 
-# === DATABASE MANAGER ===
+# === НОВА ТАБЛИЦЯ: SMART MONEY WATCHLIST ===
+# Зберігає тільки унікальні назви монет, які потрапили на радар
+class SmartMoneyTicker(Base):
+    __tablename__ = 'smart_money_tickers'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), unique=True, index=True) # unique=True не дозволить дублікатів
+    added_at = Column(DateTime, default=datetime.utcnow)
+
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
-        # Підтримка PostgreSQL для Render
         db_url = os.environ.get('DATABASE_URL')
         if db_url and db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         else:
-            # Локальна SQLite
             current_dir = os.path.dirname(os.path.abspath(__file__))
             base_folder = os.path.join(current_dir, 'BASE')
-            try:
-                os.makedirs(base_folder, exist_ok=True)
-                db_path = os.path.join(base_folder, db_filename)
-            except OSError:
-                db_path = os.path.join(current_dir, db_filename)
+            try: os.makedirs(base_folder, exist_ok=True); db_path = os.path.join(base_folder, db_filename)
+            except OSError: db_path = os.path.join(current_dir, db_filename)
             db_url = f'sqlite:///{db_path}'
-
         self.engine = create_engine(db_url, echo=False)
-        
-        # Створюємо таблиці, якщо їх немає
-        try:
-            Base.metadata.create_all(self.engine)
-        except Exception as e:
-            print(f"DB Init Error (ignore if tables exist): {e}")
-            
+        try: Base.metadata.create_all(self.engine)
+        except: pass
         self.Session = sessionmaker(bind=self.engine)
-    
     def get_session(self): return self.Session()
-
 db_manager = DatabaseManager()
