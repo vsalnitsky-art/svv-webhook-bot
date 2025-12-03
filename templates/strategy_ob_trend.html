@@ -1,61 +1,62 @@
 {% extends "base.html" %}
 
-{% block title %}Strategy Filters{% endblock %}
+{% block title %}OB Cloud Filters{% endblock %}
 
 {% block content %}
-<div class="container-fluid" style="max-width: 600px;">
-    
+<div class="container-fluid" style="max-width: 900px;">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h4 class="fw-bold mb-1 text-dark">Фільтри Стратегії</h4>
-            <p class="text-muted small m-0">Увімкнення/вимкнення логічних блоків входу.</p>
+            <h4 class="fw-bold text-dark mb-1">Фільтри Стратегії</h4>
+            <p class="text-muted small m-0">Керування логічними блоками (ON/OFF).</p>
         </div>
-        <a href="/analyzer" class="btn btn-outline-secondary btn-sm">
-            <i class="ri-arrow-left-line me-1"></i> Назад
-        </a>
+        <a href="/analyzer" class="btn btn-outline-secondary btn-sm">Повернутися до Сканера</a>
     </div>
 
     <form method="POST">
-        <div class="card-custom p-4 mb-4">
-            <h6 class="text-success mb-4 fw-bold border-bottom pb-2">🎛️ Активні Фільтри (Entry Logic)</h6>
-            
-            <div class="form-check form-switch mb-3 p-3 border rounded bg-light d-flex justify-content-between align-items-center px-3">
-                <label class="form-check-label fw-bold text-dark" for="swCloud">
-                    Cloud HMA Filter
-                    <div class="small text-muted fw-normal mt-1">Перевірка тренду за хмарою HMA.</div>
-                </label>
-                <input class="form-check-input m-0" type="checkbox" id="swCloud" name="obt_useCloudFilter" style="width: 3em; height: 1.5em;" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
-            </div>
-
-            <div class="form-check form-switch mb-3 p-3 border rounded bg-light d-flex justify-content-between align-items-center px-3">
-                <label class="form-check-label fw-bold text-dark" for="swObv">
-                    OBV Trend Filter
-                    <div class="small text-muted fw-normal mt-1">Підтвердження напрямку об'ємом (OBV).</div>
-                </label>
-                <input class="form-check-input m-0" type="checkbox" id="swObv" name="obt_useObvFilter" style="width: 3em; height: 1.5em;" {{ 'checked' if conf.get('obt_useObvFilter') }}>
-            </div>
-
-            <div class="form-check form-switch mb-3 p-3 border rounded bg-light d-flex justify-content-between align-items-center px-3">
-                <label class="form-check-label fw-bold text-dark" for="swRsi">
-                    RSI Logic Filter
-                    <div class="small text-muted fw-normal mt-1">Вхід тільки в зонах перепроданості/перекупленості.</div>
-                </label>
-                <input class="form-check-input m-0" type="checkbox" id="swRsi" name="obt_useRsiFilter" style="width: 3em; height: 1.5em;" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
-            </div>
-
-            <div class="form-check form-switch p-3 border rounded bg-light d-flex justify-content-between align-items-center px-3">
-                <label class="form-check-label fw-bold text-primary" for="swRetest">
-                    OB Retest Mode
-                    <div class="small text-muted fw-normal mt-1">Вхід тільки при ретесті зони Order Block.</div>
-                </label>
-                <input class="form-check-input m-0" type="checkbox" id="swRetest" name="obt_useOBRetest" style="width: 3em; height: 1.5em;" {{ 'checked' if conf.get('obt_useOBRetest') }}>
+        <div class="card-custom mb-4 p-4 border-0">
+            <h6 class="fw-bold text-success mb-3">🎛️ Активні Фільтри</h6>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <div class="form-check form-switch p-3 border rounded bg-light h-100 d-flex flex-column align-items-start justify-content-center">
+                        <div class="d-flex justify-content-between w-100 mb-2">
+                            <label class="form-check-label fw-bold" for="swCloud">Cloud HMA</label>
+                            <input class="form-check-input" type="checkbox" id="swCloud" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
+                        </div>
+                        <small class="text-muted" style="font-size: 0.75rem;">Фільтр за хмарою</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check form-switch p-3 border rounded bg-light h-100 d-flex flex-column align-items-start justify-content-center">
+                        <div class="d-flex justify-content-between w-100 mb-2">
+                            <label class="form-check-label fw-bold" for="swObv">OBV Trend</label>
+                            <input class="form-check-input" type="checkbox" id="swObv" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
+                        </div>
+                        <small class="text-muted" style="font-size: 0.75rem;">Фільтр за об'ємом</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check form-switch p-3 border rounded bg-light h-100 d-flex flex-column align-items-start justify-content-center">
+                        <div class="d-flex justify-content-between w-100 mb-2">
+                            <label class="form-check-label fw-bold" for="swRsi">RSI Logic</label>
+                            <input class="form-check-input" type="checkbox" id="swRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
+                        </div>
+                        <small class="text-muted" style="font-size: 0.75rem;">Перекупленість/Перепроданість</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check form-switch p-3 border rounded bg-light h-100 d-flex flex-column align-items-start justify-content-center">
+                        <div class="d-flex justify-content-between w-100 mb-2">
+                            <label class="form-check-label fw-bold" for="swRetest">OB Retest</label>
+                            <input class="form-check-input" type="checkbox" id="swRetest" name="obt_useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
+                        </div>
+                        <small class="text-muted" style="font-size: 0.75rem;">Вхід тільки на ретесті</small>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div class="d-grid">
-            <button type="submit" class="btn btn-primary btn-lg shadow-sm fw-bold">
-                <i class="ri-save-line me-2"></i> Зберегти Налаштування
-            </button>
+        <div class="d-grid mb-5">
+            <button type="submit" class="btn btn-primary btn-lg shadow-sm fw-bold">Застосувати Фільтри</button>
         </div>
     </form>
 </div>

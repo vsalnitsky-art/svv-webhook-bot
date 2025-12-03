@@ -1,96 +1,206 @@
 {% extends "base.html" %}
 
-{% block title %}Dashboard{% endblock %}
+{% block title %}Огляд | AlgoBot{% endblock %}
 
 {% block content %}
-<div class="container-fluid">
-    <h4 class="mb-4 fw-bold text-dark">Dashboard</h4>
+<div class="container-fluid p-0">
     
-    <div class="row g-3 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-5">
+        <div>
+            <h4 class="fw-bold text-dark mb-1">Огляд Ринку</h4>
+            <div class="d-flex align-items-center text-muted small font-mono">
+                <span class="status-indicator me-2" style="width: 8px; height: 8px; background: var(--success); border-radius: 50%; display: inline-block;"></span>
+                <span class="fw-bold">ОНЛАЙН</span>
+                <span class="mx-2 text-muted">|</span>
+                <span>{{ date }}</span>
+            </div>
+        </div>
+        <div class="d-flex gap-3">
+             <div class="btn-group shadow-sm">
+                <a href="/?days=7" class="btn btn-sm {{ 'btn-white text-dark border' if days != 7 else 'btn-primary' }} px-3 fw-bold">7 Днів</a>
+                <a href="/?days=30" class="btn btn-sm {{ 'btn-white text-dark border' if days != 30 else 'btn-primary' }} px-3 fw-bold">30 Днів</a>
+             </div>
+             
+             <a href="/analyzer" class="btn btn-primary d-flex align-items-center px-4 shadow-sm">
+                <i class="ri-search-2-line me-2"></i> Новий Скан
+            </a>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-5">
         <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <h6 class="text-muted small text-uppercase fw-bold mb-2">Balance</h6>
-                <div class="d-flex align-items-baseline">
-                    <h3 class="fw-bold m-0">{{ balance }}</h3>
-                    <small class="text-muted ms-2 fs-6">USDT</small>
+                <div class="text-muted small text-uppercase fw-bold mb-2" style="font-size: 11px;">Загальний Баланс</div>
+                <div class="d-flex justify-content-between align-items-end">
+                    <h2 class="m-0 fw-bold text-dark font-mono">{{ balance | round(2) }}</h2>
+                    <span class="text-muted small font-mono fw-bold">USDT</span>
                 </div>
             </div>
         </div>
         
         <div class="col-md-3">
             <div class="card-custom p-4 h-100">
-                <h6 class="text-muted small text-uppercase fw-bold mb-2">Active Positions</h6>
-                <div class="d-flex align-items-baseline">
-                    <h3 class="fw-bold m-0">{{ active_count }}</h3>
-                    <span class="badge bg-primary bg-opacity-10 text-primary ms-2 rounded-pill">LIVE</span>
+                <div class="text-muted small text-uppercase fw-bold mb-2" style="font-size: 11px;">Прибуток ({{ days }} дн.)</div>
+                <div class="d-flex justify-content-between align-items-end">
+                    <h2 class="m-0 fw-bold font-mono {{ 'text-up' if period_pnl >= 0 else 'text-down' }}">
+                        {{ "+" if period_pnl > 0 }}{{ period_pnl | round(2) }}
+                    </h2>
+                    <span class="text-muted small font-mono fw-bold">USDT</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card-custom p-3 h-100 d-flex flex-column justify-content-center">
+                <div class="d-flex align-items-center justify-content-between gap-3">
+                    
+                    <div class="flex-grow-1">
+                        <div class="text-muted small text-uppercase fw-bold mb-1" style="font-size: 11px;">Всього угод</div>
+                        <h2 class="m-0 fw-bold text-dark font-mono mb-2">{{ longs + shorts }}</h2>
+                        
+                        <div class="d-flex align-items-center gap-3 font-mono small">
+                            <div class="d-flex align-items-center text-success">
+                                <span class="badge bg-success-subtle text-success me-1 rounded-pill" style="font-size: 10px;">●</span>
+                                <span class="fw-bold">Longs: {{ longs }}</span>
+                            </div>
+                            <div class="d-flex align-items-center text-danger">
+                                <span class="badge bg-danger-subtle text-danger me-1 rounded-pill" style="font-size: 10px;">●</span>
+                                <span class="fw-bold">Shorts: {{ shorts }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="width: 70px; height: 70px; position: relative;">
+                        <canvas id="lsChart"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
         
         <div class="col-md-3">
-            <div class="card-custom p-4 h-100">
-                <h6 class="text-muted small text-uppercase fw-bold mb-2">P&L ({{ days }}d)</h6>
-                <h3 class="fw-bold m-0 {{ 'text-up' if period_pnl > 0 else 'text-down' }}">
-                    {{ "+" if period_pnl > 0 }}{{ period_pnl }} $
-                </h3>
-            </div>
-        </div>
-        
-        <div class="col-md-3">
-            <div class="card-custom p-4 h-100">
-                <h6 class="text-muted small text-uppercase fw-bold mb-2">Trades</h6>
-                <div class="d-flex gap-2 mt-2">
-                    <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2">
-                        Longs: {{ longs }}
-                    </span>
-                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle px-3 py-2">
-                        Shorts: {{ shorts }}
-                    </span>
+             <div class="card-custom p-4 h-100">
+                <div class="text-muted small text-uppercase fw-bold mb-2" style="font-size: 11px;">Відкриті Угоди</div>
+                <div class="d-flex justify-content-between align-items-end">
+                    <h2 class="m-0 fw-bold text-dark font-mono">{{ active_count }}</h2>
+                    <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-10 small">Live</span>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="card-custom">
-        <div class="card-header bg-white py-3 border-bottom border-light">
-            <h6 class="m-0 fw-bold text-dark">Recent Trades History</h6>
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="card-custom p-4 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h6 class="fw-bold text-dark m-0">Динаміка Прибутку</h6>
+                </div>
+                <div style="height: 300px; width: 100%;">
+                    <canvas id="mainChart"></canvas>
+                </div>
+            </div>
         </div>
-        <div class="table-responsive">
-            <table class="table align-middle mb-0 table-hover">
-                <thead class="bg-light text-muted small text-uppercase">
-                    <tr>
-                        <th class="ps-4">Symbol</th>
-                        <th>Side</th>
-                        <th>P&L</th>
-                        <th>Exit Time</th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for t in trades %}
-                    <tr>
-                        <td class="ps-4 fw-bold text-dark">{{ t.symbol }}</td>
-                        <td>
-                            <span class="badge {{ 'bg-success' if t.side=='Long' else 'bg-danger' }}">
-                                {{ t.side }}
-                            </span>
-                        </td>
-                        <td class="{{ 'text-up' if t.pnl > 0 else 'text-down' }} fw-bold font-mono">
-                            {{ "+" if t.pnl > 0 }}{{ t.pnl }} $
-                        </td>
-                        <td class="text-muted small font-mono">
-                            {{ t.exit_time.strftime('%d.%m %H:%M') }}
-                        </td>
-                    </tr>
-                {% else %}
-                    <tr>
-                        <td colspan="4" class="text-center py-5 text-muted">
-                            No trades found for this period.
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
+
+        <div class="col-lg-4">
+            <div class="card-custom h-100 overflow-hidden d-flex flex-column p-0">
+                <div class="p-4 border-bottom" style="border-color: var(--border-subtle) !important;">
+                    <h6 class="fw-bold text-dark m-0">Останні Закриті Угоди</h6>
+                </div>
+                <div class="flex-grow-1 overflow-auto" style="max-height: 300px;">
+                    {% if trades %}
+                        <div class="list-group list-group-flush">
+                            {% for t in trades %}
+                            <div class="list-group-item border-bottom border-light py-3 px-4">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div class="fw-bold text-dark font-mono">{{ t.symbol }}</div>
+                                        <div class="small text-muted">{{ t.side }} • {{ t.exit_time }}</div>
+                                    </div>
+                                    <div class="text-end">
+                                        <div class="fw-bold font-mono {{ 'text-up' if t.pnl > 0 else 'text-down' }}">
+                                            {{ "+" if t.pnl > 0 }}{{ t.pnl | round(2) }}$
+                                        </div>
+                                        <span class="badge {{ 'bg-success-subtle text-success' if t.pnl > 0 else 'bg-danger-subtle text-danger' }} rounded-pill" style="font-size: 9px;">
+                                            {{ "WIN" if t.pnl > 0 else "LOSS" }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="d-flex flex-column justify-content-center align-items-center h-100 text-muted p-4">
+                            <i class="ri-file-list-3-line fs-1 opacity-25"></i>
+                            <small class="mt-2">Немає історії за цей період</small>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
         </div>
     </div>
 </div>
+
+<script>
+    const ctxMain = document.getElementById('mainChart').getContext('2d');
+    const gradient = ctxMain.createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, 'rgba(79, 70, 229, 0.2)'); 
+    gradient.addColorStop(1, 'rgba(79, 70, 229, 0)');
+
+    new Chart(ctxMain, {
+        type: 'line',
+        data: {
+            labels: ['Start', 'Day 1', 'Day 2', 'Day 3', 'Today'],
+            datasets: [{
+                label: 'Accumulated P&L',
+                data: [0, 0, 0, 0, {{ period_pnl }}], 
+                borderColor: '#4f46e5',
+                backgroundColor: gradient,
+                borderWidth: 2,
+                pointBackgroundColor: '#ffffff',
+                pointBorderColor: '#4f46e5',
+                pointBorderWidth: 2,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+                fill: true,
+                tension: 0.3
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { display: false }, ticks: { color: '#64748b' } },
+                y: { grid: { color: '#f1f5f9', borderDash: [4, 4] }, ticks: { color: '#64748b' }, beginAtZero: true }
+            }
+        }
+    });
+
+    const ctxLs = document.getElementById('lsChart').getContext('2d');
+    const longs = {{ longs }};
+    const shorts = {{ shorts }};
+    const total = longs + shorts;
+    const dataValues = (total === 0) ? [1] : [longs, shorts];
+    const bgColors = (total === 0) ? ['#e2e8f0'] : ['#10b981', '#ef4444']; 
+
+    new Chart(ctxLs, {
+        type: 'doughnut',
+        data: {
+            labels: ['Longs', 'Shorts'],
+            datasets: [{
+                data: dataValues,
+                backgroundColor: bgColors,
+                borderWidth: 0,
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%', 
+            plugins: {
+                legend: { display: false },
+                tooltip: { enabled: (total > 0) }
+            }
+        }
+    });
+</script>
 {% endblock %}
