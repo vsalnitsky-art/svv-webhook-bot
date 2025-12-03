@@ -14,8 +14,7 @@ class MarketAnalyzer:
     def __init__(self):
         self.is_scanning = False
         self.progress = 0
-        self.status_message = "Ready"
-        # Запускаємо фоновий симулятор
+        self.status_message = "Ready" # Це поле тепер буде показувати пульс сканера
         threading.Thread(target=self._monitor_smart_money, daemon=True).start()
 
     def get_top_tickers(self, limit=100):
@@ -27,9 +26,8 @@ class MarketAnalyzer:
     def fetch_candles(self, symbol, timeframe, limit=300):
         try:
             m = {'5':'5','15':'15','30':'30','45':'45','60':'60','240':'240','D':'D'}
-            # Bybit API mapping check
             req_tf = m.get(str(timeframe), '240')
-            if req_tf == '45': req_tf = '15' # Fallback if specific api issues, but usually fine. Let's try direct.
+            if req_tf == '45': req_tf = '15'
             
             r = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=limit)
             if r['retCode'] == 0 and r['result']['list']:
@@ -41,12 +39,12 @@ class MarketAnalyzer:
         except: pass
         return None
 
-    # === СКАНЕР ДЛЯ РУЧНОГО ЗАПУСКУ ===
+    # === MANUAL SCANNER ===
     def run_scan_thread(self):
         if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
 
     def _scan_process(self):
-        self.is_scanning = True; self.progress = 0; self.status_message = "Starting..."
+        self.is_scanning = True; self.progress = 0; self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
             session.query(AnalysisResult).delete(); session.commit()
@@ -57,7 +55,9 @@ class MarketAnalyzer:
             for i, t in enumerate(tickers):
                 if not self.is_scanning: break
                 sym = t['symbol']
-                self.status_message = f"Scanning {sym} ({i+1}/{total})"
+                
+                # VISUALIZATION: Show current coin being scanned
+                self.status_message = f"🔍 Analyzing {sym} ({i+1}/{total})"
                 self.progress = int((i / total) * 100)
                 
                 try:
@@ -71,213 +71,140 @@ class MarketAnalyzer:
                         res = AnalysisResult(symbol=sym, signal_type=sg['action'], status="New", score=85, price=sg['price'], htf_rsi=0, ltf_rsi=sg['rsi'], details=f"{sg['reason']} | SL: {round(sg['sl_price'],4)}")
                         session.add(res)
                         
-                        # Авто-додавання в Watchlist
+                        # --- WATCHLIST LOGIC (FIFO LIMIT 20) ---
                         if not session.query(SmartMoneyTicker).filter_by(symbol=sym).first():
+                            # Check limit
+                            count = session.query(SmartMoneyTicker).count()
+                            if count >= 20:
+                                # Delete oldest
+                                oldest = session.query(SmartMoneyTicker).order_by(SmartMoneyTicker.added_at.asc()).first()
+                                if oldest: session.delete(oldest)
+                            
                             session.add(SmartMoneyTicker(symbol=sym))
                         
                         session.commit()
                 except: pass
                 time.sleep(0.1)
-            self.progress = 100; self.status_message = "Completed"
+            self.progress = 100; self.status_message = "✅ Scan Completed"
         finally: self.is_scanning = False; session.close()
 
-    # === ГОЛОВНИЙ ЦИКЛ СИМУЛЯЦІЇ ===
+    # === BACKGROUND SIMULATOR ===
     def _monitor_smart_money(self):
-        """
-        1. Оновлює Paper Trades (перевіряє SL/TP).
-        2. Шукає нові входи для монет з Watchlist.
-        """
         logger.info("🧠 Smart Money Simulator Started")
         while True:
             try:
                 session = db_manager.get_session()
                 
-                # --- ЧАСТИНА 1: МЕНЕДЖМЕНТ ПОЗИЦІЙ ---
+                # --- PHASE 1: TRADE MANAGEMENT ---
                 active_trades = session.query(PaperTrade).filter(PaperTrade.status.in_(['OPEN', 'PENDING'])).all()
-                
                 for trade in active_trades:
                     current_price = bot_instance.get_price(trade.symbol)
                     if current_price == 0: continue
+                    
+                    self.status_message = f"⚡ Monitoring Trade: {trade.symbol}"
 
-                    # 1.1 Обробка PENDING (Limit Mode)
+                    # Logic for PENDING (Limit) and OPEN (PnL) remains same as previous...
                     if trade.status == 'PENDING':
                         triggered = False
-                        # Якщо ціна торкнулася входу
                         if trade.direction == 'Long' and current_price <= trade.entry_price: triggered = True
                         if trade.direction == 'Short' and current_price >= trade.entry_price: triggered = True
-                        
-                        # Якщо ціна пішла проти нас і пробила SL до входу - скасовуємо
                         sl_hit = False
                         if trade.direction == 'Long' and current_price <= trade.sl_price: sl_hit = True
                         if trade.direction == 'Short' and current_price >= trade.sl_price: sl_hit = True
-
                         if sl_hit:
-                            trade.status = 'CANCELED'
-                            trade.closed_at = datetime.utcnow()
-                            trade.details = "SL hit before Entry"
+                            trade.status = 'CANCELED'; trade.closed_at = datetime.utcnow(); trade.details = "SL hit before Entry"
                         elif triggered:
-                            trade.status = 'OPEN'
-                            trade.created_at = datetime.utcnow() # Reset time to entry
-                            trade.details = "Limit Triggered"
-
-                    # 1.2 Обробка OPEN
+                            trade.status = 'OPEN'; trade.created_at = datetime.utcnow(); trade.details = "Limit Triggered"
                     elif trade.status == 'OPEN':
-                        # Розрахунок PnL
-                        if trade.direction == 'Long':
-                            pnl = (current_price - trade.entry_price) / trade.entry_price * 100
-                        else:
-                            pnl = (trade.entry_price - current_price) / trade.entry_price * 100
-                        
-                        trade.pnl_percent = pnl
-                        trade.pnl = pnl # Спрощено, в %
-
-                        # Перевірка SL
-                        is_sl = False
-                        if trade.direction == 'Long' and current_price <= trade.sl_price: is_sl = True
-                        if trade.direction == 'Short' and current_price >= trade.sl_price: is_sl = True
-                        
-                        # Перевірка TP
+                        pnl = (current_price - trade.entry_price) / trade.entry_price * 100 if trade.direction == 'Long' else (trade.entry_price - current_price) / trade.entry_price * 100
+                        trade.pnl_percent = pnl; trade.pnl = pnl
+                        is_sl = (trade.direction == 'Long' and current_price <= trade.sl_price) or (trade.direction == 'Short' and current_price >= trade.sl_price)
                         is_tp = False
                         if trade.tp_price:
-                            if trade.direction == 'Long' and current_price >= trade.tp_price: is_tp = True
-                            if trade.direction == 'Short' and current_price <= trade.tp_price: is_tp = True
-                        
+                            is_tp = (trade.direction == 'Long' and current_price >= trade.tp_price) or (trade.direction == 'Short' and current_price <= trade.tp_price)
                         if is_sl:
-                            trade.status = 'CLOSED_LOSS'
-                            trade.exit_price = trade.sl_price # Slippage ігноруємо
-                            trade.closed_at = datetime.utcnow()
-                            trade.details = "Stop Loss"
+                            trade.status = 'CLOSED_LOSS'; trade.exit_price = trade.sl_price; trade.closed_at = datetime.utcnow(); trade.details = "Stop Loss"
                         elif is_tp:
-                            trade.status = 'CLOSED_WIN'
-                            trade.exit_price = trade.tp_price
-                            trade.closed_at = datetime.utcnow()
-                            trade.details = "Take Profit"
-
+                            trade.status = 'CLOSED_WIN'; trade.exit_price = trade.tp_price; trade.closed_at = datetime.utcnow(); trade.details = "Take Profit"
                 session.commit()
 
-                # --- ЧАСТИНА 2: ПОШУК НОВИХ ВХОДІВ ---
-                watchlist = session.query(SmartMoneyTicker).all()
-                if not watchlist:
-                    session.close()
-                    time.sleep(10)
-                    continue
-
-                htf = settings.get("htfSelection") 
-                ltf = settings.get("ltfSelection")
-                
-                # Налаштування входу
-                entry_mode = settings.get("sm_entry_mode", "Limit")
-                sl_buffer_pct = float(settings.get("sm_sl_buffer", 0.2)) / 100
-                tp_mode = settings.get("sm_tp_mode", "None")
-                tp_val = float(settings.get("sm_tp_value", 3.0))
-
-                for item in watchlist:
-                    sym = item.symbol
+                # --- PHASE 2: SEEKING NEW ENTRIES ---
+                if not self.is_scanning: # Only run background logic if manual scan is NOT running
+                    watchlist = session.query(SmartMoneyTicker).all()
                     
-                    # Перевірка: чи є вже активна угода по цій монеті?
-                    existing = session.query(PaperTrade).filter(
-                        PaperTrade.symbol == sym, 
-                        PaperTrade.status.in_(['OPEN', 'PENDING'])
-                    ).first()
-                    
-                    if existing: continue # Один символ - одна угода
-
-                    try:
-                        # 1. Отримуємо дані
-                        df_h = self.fetch_candles(sym, htf, limit=100)
-                        if df_h is None: continue
-                        
-                        # 2. Фільтри HTF (Тільки тренд)
-                        # Розраховуємо індикатори
-                        df_h = strategy_engine.calculate_indicators(df_h)
-                        last_h = df_h.iloc[-1]
-                        
-                        is_bull = True; is_bear = True
-                        # Cloud
-                        if settings.get('obt_useCloudFilter'):
-                            if last_h['hma_fast'] <= last_h['hma_slow']: is_bull = False
-                            if last_h['hma_fast'] >= last_h['hma_slow']: is_bear = False
-                        # RSI
-                        if settings.get('obt_useRsiFilter'):
-                            if last_h['rsi'] > 55: is_bull = False # Входимо в лонг тільки якщо є простір
-                            if last_h['rsi'] < 45: is_bear = False
-                        
-                        if not is_bull and not is_bear: continue
-
-                        # 3. Пошук блоків на LTF
-                        df_l = self.fetch_candles(sym, ltf, limit=100)
-                        if df_l is None: continue
-                        
-                        obs = strategy_engine.find_order_blocks(df_l)
-                        
-                        # Чи є СВІЖИЙ блок? (останні 3 свічки)
-                        last_candle_time = df_l.iloc[-1]['time']
-                        
-                        trade_signal = None
-                        
-                        if is_bull and obs['buy']:
-                            best_ob = obs['buy'][-1] # Останній
-                            # Перевіряємо свіжість (блок створений недавно)
-                            if (last_candle_time - best_ob['created_at']) < timedelta(minutes=int(ltf)*5):
-                                trade_signal = {
-                                    'dir': 'Long', 'ob': best_ob, 
-                                    'sl': best_ob['bottom'] * (1 - sl_buffer_pct)
-                                }
-                        
-                        elif is_bear and obs['sell']:
-                            best_ob = obs['sell'][-1]
-                            if (last_candle_time - best_ob['created_at']) < timedelta(minutes=int(ltf)*5):
-                                trade_signal = {
-                                    'dir': 'Short', 'ob': best_ob,
-                                    'sl': best_ob['top'] * (1 + sl_buffer_pct)
-                                }
-
-                        # 4. Створення угоди
-                        if trade_signal:
-                            current_price = df_l.iloc[-1]['close']
+                    if watchlist:
+                        for item in watchlist:
+                            sym = item.symbol
+                            self.status_message = f"👀 Checking {sym} for Setup..."
                             
-                            # Ціна входу
-                            entry_price = current_price
-                            if entry_mode == "Limit":
-                                # Для Long вхід від верху блоку, для Short від низу
-                                if trade_signal['dir'] == 'Long': entry_price = trade_signal['ob']['top']
-                                else: entry_price = trade_signal['ob']['bottom']
-                            
-                            # Тейк профіт
-                            tp_price = None
-                            dist_to_sl = abs(entry_price - trade_signal['sl'])
-                            
-                            if tp_mode == "Fixed":
-                                pct = tp_val / 100
-                                if trade_signal['dir'] == 'Long': tp_price = entry_price * (1 + pct)
-                                else: tp_price = entry_price * (1 - pct)
-                            elif tp_mode == "RR":
-                                if trade_signal['dir'] == 'Long': tp_price = entry_price + (dist_to_sl * tp_val)
-                                else: tp_price = entry_price - (dist_to_sl * tp_val)
+                            existing = session.query(PaperTrade).filter(PaperTrade.symbol == sym, PaperTrade.status.in_(['OPEN', 'PENDING'])).first()
+                            if existing: continue
 
-                            # Запис
-                            new_trade = PaperTrade(
-                                symbol=sym,
-                                direction=trade_signal['dir'],
-                                entry_mode=entry_mode,
-                                status='PENDING' if entry_mode == 'Limit' else 'OPEN',
-                                entry_price=entry_price,
-                                sl_price=trade_signal['sl'],
-                                tp_price=tp_price,
-                                details=f"Found on {ltf}m"
-                            )
-                            session.add(new_trade)
-                            session.commit()
-                            logger.info(f"✨ New Paper Trade: {sym} {trade_signal['dir']}")
+                            try:
+                                htf = settings.get("htfSelection")
+                                ltf = settings.get("ltfSelection")
+                                df_h = self.fetch_candles(sym, htf, limit=100)
+                                if df_h is None: continue
+                                
+                                # HTF Check
+                                df_h = strategy_engine.calculate_indicators(df_h); last_h = df_h.iloc[-1]
+                                is_bull = True; is_bear = True
+                                if settings.get('obt_useCloudFilter'):
+                                    if last_h['hma_fast'] <= last_h['hma_slow']: is_bull = False
+                                    if last_h['hma_fast'] >= last_h['hma_slow']: is_bear = False
+                                if settings.get('obt_useRsiFilter'):
+                                    if last_h['rsi'] > 55: is_bull = False
+                                    if last_h['rsi'] < 45: is_bear = False
+                                
+                                if not is_bull and not is_bear: 
+                                    self.status_message = f"❌ {sym}: Filter Rejected"; time.sleep(0.2); continue
 
-                    except Exception as e:
-                        # logger.error(f"Loop error {sym}: {e}")
-                        pass
-                    
-                    time.sleep(0.5) # Anti-spam API
-                
+                                # LTF Check
+                                df_l = self.fetch_candles(sym, ltf, limit=100)
+                                if df_l is None: continue
+                                obs = strategy_engine.find_order_blocks(df_l)
+                                last_candle_time = df_l.iloc[-1]['time']
+                                
+                                trade_signal = None
+                                sl_buffer_pct = float(settings.get("sm_sl_buffer", 0.2)) / 100
+                                
+                                if is_bull and obs['buy']:
+                                    best_ob = obs['buy'][-1]
+                                    if (last_candle_time - best_ob['created_at']) < timedelta(minutes=int(ltf)*5):
+                                        trade_signal = {'dir': 'Long', 'ob': best_ob, 'sl': best_ob['bottom'] * (1 - sl_buffer_pct)}
+                                elif is_bear and obs['sell']:
+                                    best_ob = obs['sell'][-1]
+                                    if (last_candle_time - best_ob['created_at']) < timedelta(minutes=int(ltf)*5):
+                                        trade_signal = {'dir': 'Short', 'ob': best_ob, 'sl': best_ob['top'] * (1 + sl_buffer_pct)}
+
+                                if trade_signal:
+                                    self.status_message = f"💎 ENTRY FOUND: {sym} {trade_signal['dir']}"
+                                    entry_mode = settings.get("sm_entry_mode", "Limit")
+                                    current_price = df_l.iloc[-1]['close']
+                                    entry_price = current_price if entry_mode == 'Market' else (trade_signal['ob']['top'] if trade_signal['dir'] == 'Long' else trade_signal['ob']['bottom'])
+                                    
+                                    tp_mode = settings.get("sm_tp_mode", "None")
+                                    tp_val = float(settings.get("sm_tp_value", 3.0))
+                                    tp_price = None
+                                    dist_to_sl = abs(entry_price - trade_signal['sl'])
+                                    if tp_mode == "Fixed":
+                                        tp_price = entry_price * (1 + tp_val/100) if trade_signal['dir'] == 'Long' else entry_price * (1 - tp_val/100)
+                                    elif tp_mode == "RR":
+                                        tp_price = entry_price + (dist_to_sl * tp_val) if trade_signal['dir'] == 'Long' else entry_price - (dist_to_sl * tp_val)
+
+                                    new_trade = PaperTrade(symbol=sym, direction=trade_signal['dir'], entry_mode=entry_mode, status='PENDING' if entry_mode == 'Limit' else 'OPEN', entry_price=entry_price, sl_price=trade_signal['sl'], tp_price=tp_price, details=f"Found on {ltf}m")
+                                    session.add(new_trade); session.commit()
+                                    time.sleep(1)
+
+                            except: pass
+                            time.sleep(0.5)
+                        
+                        self.status_message = "💤 Waiting for next cycle..."
+                    else:
+                        self.status_message = "⚠️ Watchlist Empty. Run Scanner."
+
                 session.close()
-                time.sleep(30) # Пауза циклу
+                time.sleep(5 if self.is_scanning else 30)
                 
             except Exception as e:
                 logger.error(f"SM Monitor Global Error: {e}")

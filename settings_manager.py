@@ -21,8 +21,8 @@ DEFAULT_SETTINGS = {
     "obt_useOBRetest": False, 
 
     # === TIMEFRAMES ===
-    "htfSelection": "240", # 4H (Default HTF)
-    "ltfSelection": "45",  # 45m (Default LTF)
+    "htfSelection": "240", # 4H
+    "ltfSelection": "45",  # 45m
     
     # === INDICATORS ===
     "obt_cloudFastLen": 10,
@@ -48,11 +48,11 @@ DEFAULT_SETTINGS = {
     "fixedSL": 1.5,
     "obBufferPercent": 0.2,
 
-    # === SMART MONEY SIMULATOR (NEW) ===
-    "sm_entry_mode": "Limit", # Market or Limit
-    "sm_sl_buffer": 0.2,      # % відступу від блоку
-    "sm_tp_mode": "None",     # None, Fixed, RR
-    "sm_tp_value": 3.0        # Значення (RR 3 або 3%)
+    # === SMART MONEY SIMULATOR ===
+    "sm_entry_mode": "Market", # <--- ЗМІНЕНО НА MARKET (Агресивний вхід за замовчуванням)
+    "sm_sl_buffer": 0.2,
+    "sm_tp_mode": "None",
+    "sm_tp_value": 3.0
 }
 
 class SettingsManager:

@@ -9,17 +9,23 @@
     .sidebar { background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow-y: auto; display: flex; flex-direction: column; }
     .main-content { overflow-y: auto; padding-right: 5px; }
     
-    .watchlist-item { padding: 10px 15px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; }
-    .watchlist-item:hover { background: #f8fafc; cursor: pointer; }
+    .watchlist-item { padding: 10px 15px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; transition: 0.2s; }
+    .watchlist-item:hover { background: #f8fafc; }
     
+    .delete-btn { opacity: 0; cursor: pointer; color: #cbd5e1; transition: 0.2s; padding: 5px; }
+    .watchlist-item:hover .delete-btn { opacity: 1; color: #ef4444; }
+    .delete-btn:hover { background: #fee2e2; border-radius: 4px; }
+
     .panel-card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
     .table-custom th { font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 600; background: #f8fafc; }
     .badge-long { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
     .badge-short { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
     .status-open { color: #2563eb; font-weight: bold; }
     .status-pending { color: #d97706; font-weight: bold; }
-    .status-win { color: #16a34a; font-weight: bold; }
-    .status-loss { color: #dc2626; font-weight: bold; }
+    
+    .scanner-pulse { background: #0f172a; color: #22d3ee; padding: 10px 15px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; display: flex; align-items: center; margin-bottom: 20px; border: 1px solid #1e293b; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+    .pulse-dot { width: 8px; height: 8px; background: #22d3ee; border-radius: 50%; display: inline-block; margin-right: 10px; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.7); } 70% { box-shadow: 0 0 0 6px rgba(34, 211, 238, 0); } 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); } }
 </style>
 {% endblock %}
 
@@ -33,19 +39,28 @@
         <a href="/analyzer" class="btn btn-outline-primary btn-sm"><i class="ri-search-line me-1"></i>Запустити Сканер</a>
     </div>
 
+    <div class="scanner-pulse">
+        <span class="pulse-dot"></span>
+        <span id="scanner-status-text">System Ready. Waiting for data...</span>
+    </div>
+
     <div class="layout-grid">
         <div class="sidebar shadow-sm">
-            <div class="p-3 bg-light border-bottom fw-bold text-uppercase small text-muted">
-                Active Watchlist ({{ watchlist|length }})
+            <div class="p-3 bg-light border-bottom fw-bold text-uppercase small text-muted d-flex justify-content-between">
+                <span>Active Watchlist</span>
+                <span class="badge bg-secondary rounded-pill">{{ watchlist|length }}</span>
             </div>
-            <div class="flex-grow-1">
+            <div class="flex-grow-1" id="watchlist-container">
                 {% for item in watchlist %}
-                <div class="watchlist-item">
-                    <span class="fw-bold">{{ item.symbol }}</span>
-                    <span class="text-muted small">{{ item.added_at.strftime('%H:%M') }}</span>
+                <div class="watchlist-item" id="ticker-{{ item.symbol }}">
+                    <div>
+                        <div class="fw-bold">{{ item.symbol }}</div>
+                        <div class="text-muted small" style="font-size: 0.75rem">{{ item.added_at.strftime('%H:%M') }}</div>
+                    </div>
+                    <i class="ri-delete-bin-line delete-btn" onclick="deleteTicker('{{ item.symbol }}')"></i>
                 </div>
                 {% else %}
-                <div class="text-center p-4 text-muted small">Список порожній.<br>Запустіть сканер для пошуку монет.</div>
+                <div class="text-center p-4 text-muted small">Список порожній.<br>Запустіть сканер.</div>
                 {% endfor %}
             </div>
         </div>
@@ -62,8 +77,8 @@
                     <div class="col-md-3">
                         <label class="form-label small fw-bold text-muted">Режим Входу</label>
                         <select class="form-select form-select-sm" name="sm_entry_mode">
-                            <option value="Limit" {{ 'selected' if conf.get('sm_entry_mode') == 'Limit' }}>🔵 Limit (Retest)</option>
                             <option value="Market" {{ 'selected' if conf.get('sm_entry_mode') == 'Market' }}>⚡ Market (Aggressive)</option>
+                            <option value="Limit" {{ 'selected' if conf.get('sm_entry_mode') == 'Limit' }}>🔵 Limit (Retest)</option>
                         </select>
                     </div>
 
@@ -180,4 +195,36 @@
         </div>
     </div>
 </div>
+
+<script>
+    // 1. Live Scanner Status Polling
+    function updateStatus() {
+        fetch('/analyzer/status')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('scanner-status-text').textContent = data.message;
+            })
+            .catch(err => console.log('Status Poll Error'));
+    }
+    // Poll every 1.5 seconds
+    setInterval(updateStatus, 1500);
+
+    // 2. Delete Ticker
+    function deleteTicker(symbol) {
+        if(!confirm('Видалити ' + symbol + ' зі списку спостереження?')) return;
+        
+        fetch('/smart_money/delete/' + symbol, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if(data.status === 'ok') {
+                    // Remove element from DOM nicely
+                    const el = document.getElementById('ticker-' + symbol);
+                    el.style.opacity = '0';
+                    setTimeout(() => el.remove(), 300);
+                } else {
+                    alert('Error deleting ticker');
+                }
+            });
+    }
+</script>
 {% endblock %}

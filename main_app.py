@@ -123,10 +123,8 @@ def analyzer_page():
     conf = settings._cache
     return render_template('analyzer.html', results=results, conf=conf, progress=market_analyzer.progress, status=market_analyzer.status_message, is_scanning=market_analyzer.is_scanning)
 
-# === ОНОВЛЕНИЙ РОУТ SMART MONEY ===
 @app.route('/smart_money', methods=['GET', 'POST'])
 def smart_money_page():
-    # Збереження налаштувань
     if request.method == 'POST':
         form_data = request.form.to_dict()
         settings.save_settings(form_data)
@@ -134,17 +132,25 @@ def smart_money_page():
 
     session = db_manager.get_session()
     try:
-        # Watchlist
         watchlist = session.query(SmartMoneyTicker).all()
-        # Active & History Trades
         active_trades = session.query(PaperTrade).filter(PaperTrade.status.in_(['OPEN', 'PENDING'])).order_by(desc(PaperTrade.created_at)).all()
         history_trades = session.query(PaperTrade).filter(PaperTrade.status.in_(['CLOSED_WIN', 'CLOSED_LOSS', 'CANCELED'])).order_by(desc(PaperTrade.closed_at)).limit(50).all()
-        
-        return render_template('smart_money.html', 
-                               watchlist=watchlist, 
-                               active_trades=active_trades, 
-                               history_trades=history_trades,
-                               conf=settings._cache)
+        return render_template('smart_money.html', watchlist=watchlist, active_trades=active_trades, history_trades=history_trades, conf=settings._cache)
+    finally:
+        session.close()
+
+# === НОВИЙ РОУТ ДЛЯ ВИДАЛЕННЯ З WATCHLIST ===
+@app.route('/smart_money/delete/<symbol>', methods=['POST'])
+def delete_ticker(symbol):
+    session = db_manager.get_session()
+    try:
+        item = session.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
+        if item:
+            session.delete(item)
+            session.commit()
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
     finally:
         session.close()
 
