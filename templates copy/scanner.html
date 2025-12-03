@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block title %}Monitor{% endblock %}{% block content %}
+<div class="container-fluid"><div class="card-custom mb-4 p-3"><div class="row align-items-center">
+<div class="col-md-4 border-end">Smart Exit: {% if conf.get('exit_enableStrategy') %}<span class="text-success fw-bold">ON 🟢</span>{% else %}<span class="text-danger fw-bold">OFF 🔴</span>{% endif %}</div>
+<div class="col-md-4 border-end text-center">Work TF: <span class="badge bg-light text-dark border">{% set h=conf.get('htfSelection')|string %}{% if h=='60'%}1H{% elif h=='240'%}4H{% elif h=='D'%}1D{% else %}{{h}}m{% endif %}</span></div>
+<div class="col-md-4 text-end">RSI Limits: <span class="text-danger">>{{conf.get('exit_rsiOverbought')}}</span> / <span class="text-success"><{{conf.get('exit_rsiOversold')}}</span></div></div></div>
+<div class="card-custom"><table class="table mb-0"><thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>RSI (HTF)</th><th>Status</th><th>P&L</th><th>Time</th></tr></thead><tbody>
+{% for a in active %}<tr><td class="fw-bold">{{a.symbol}}</td><td><span class="badge {{'bg-success' if a.side=='Buy' else 'bg-danger'}}">{{a.side}}</span></td><td>{{a.entry}}</td>
+<td><span class="{{'text-danger' if a.rsi>conf.get('exit_rsiOverbought')|float else 'text-success' if a.rsi<conf.get('exit_rsiOversold')|float else 'text-muted'}} fw-bold">{{a.rsi}}</span></td>
+<td>{% if 'EXIT' in a.exit_status %}<span class="badge bg-danger blink">EXIT</span>{% elif 'Warn' in a.exit_status %}<span class="badge bg-warning text-dark">WARN</span>{% else %}<span class="badge bg-light text-muted border">SAFE</span>{% endif %}<div class="small text-muted">{{a.exit_details}}</div></td>
+<td class="{{'text-up' if a.pnl>0 else 'text-down'}} fw-bold">{{a.pnl}}</td><td class="text-muted small">{{a.time}}</td></tr>{% else %}<tr><td colspan="7" class="text-center py-4">No positions</td></tr>{% endfor %}</tbody></table></div></div>
+<style>.blink{animation:b 1s infinite}@keyframes b{50%{opacity:0}}</style>{% endblock %}
