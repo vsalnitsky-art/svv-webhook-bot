@@ -42,11 +42,19 @@
             <form id="scan-form">
                 
                 <div class="row g-3 align-items-end mb-4">
-                    <div class="col-md-3">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Глибина (Топ)</label>
+                    <div class="col-md-2">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Топ (К-сть)</label>
                         <div class="input-group">
                             <span class="input-group-text bg-white border-end-0">#</span>
                             <input type="number" class="form-control border-start-0 ps-0" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}" min="10" max="400">
+                        </div>
+                    </div>
+
+                    <div class="col-md-2">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Min Vol ($M)</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-white border-end-0">M</span>
+                            <input type="number" class="form-control border-start-0 ps-0" name="scan_min_volume" value="{{ conf.get('scan_min_volume', 10) }}">
                         </div>
                     </div>
                     
@@ -66,7 +74,7 @@
                         </div>
                     </div>
 
-                    <div class="col-md-4">
+                    <div class="col-md-3">
                         <button type="button" id="btn-scan" class="btn btn-primary btn-lg w-100 shadow fw-bold" onclick="startScan()" {{ 'disabled' if is_scanning }}>
                             {{ '⏳ СКАНУВАННЯ...' if is_scanning else 'ЗАПУСТИТИ 🚀' }}
                         </button>
@@ -132,7 +140,7 @@
                     <tr>
                         <th class="py-3 ps-4 border-bottom">Монета</th>
                         <th class="py-3 border-bottom">Ціна</th>
-                        <th class="py-3 border-bottom">Сигнал</th>
+                        <th class="py-3 border-bottom">Vol 24h</th> <th class="py-3 border-bottom">Сигнал</th>
                         <th class="py-3 border-bottom">Score</th>
                         <th class="py-3 border-bottom">Час</th>
                         <th class="py-3 border-bottom">Деталі</th>
@@ -143,6 +151,11 @@
                     <tr>
                         <td class="fw-bold text-dark ps-4">{{ r.symbol }}</td>
                         <td class="font-mono">{{ r.price }}</td>
+                        
+                        <td class="font-mono text-muted small">
+                            {{ (r.volume / 1000000)|round(1) }}M
+                        </td>
+
                         <td><span class="badge {{ 'badge-buy' if r.signal=='Buy' else 'badge-sell' }}">{{ r.signal }}</span></td>
                         <td>
                             <div class="d-flex align-items-center">
@@ -157,7 +170,7 @@
                     </tr>
                 {% else %}
                     <tr>
-                        <td colspan="6" class="text-center py-5">
+                        <td colspan="7" class="text-center py-5">
                             <div class="text-muted mb-2 fs-1 opacity-25"><i class="ri-search-eye-line"></i></div>
                             <h5 class="text-muted">Сигналів поки не знайдено</h5>
                         </td>

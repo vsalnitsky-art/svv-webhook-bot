@@ -14,13 +14,26 @@ class MarketAnalyzer:
     def __init__(self):
         self.is_scanning = False
         self.progress = 0
-        self.status_message = "Ready" # Це поле тепер буде показувати пульс сканера
+        self.status_message = "Ready" 
         threading.Thread(target=self._monitor_smart_money, daemon=True).start()
 
     def get_top_tickers(self, limit=100):
         try:
             q = settings.get("scanner_quote_coin")
-            return sorted([t for t in bot_instance.get_all_tickers() if t['symbol'].endswith(q)], key=lambda x: float(x.get('turnover24h', 0)), reverse=True)[:int(limit)]
+            min_vol_mln = float(settings.get("scan_min_volume", 10))
+            min_vol_raw = min_vol_mln * 1_000_000
+            
+            # Отримуємо всі тікери
+            all_tickers = bot_instance.get_all_tickers()
+            
+            # Фільтруємо спочатку за Quote coin (USDT)
+            usdt_tickers = [t for t in all_tickers if t['symbol'].endswith(q)]
+            
+            # Фільтруємо за об'ємом
+            valid_tickers = [t for t in usdt_tickers if float(t.get('turnover24h', 0)) >= min_vol_raw]
+            
+            # Сортуємо та ріжемо ліміт
+            return sorted(valid_tickers, key=lambda x: float(x.get('turnover24h', 0)), reverse=True)[:int(limit)]
         except: return []
 
     def fetch_candles(self, symbol, timeframe, limit=300):
@@ -47,7 +60,10 @@ class MarketAnalyzer:
         self.is_scanning = True; self.progress = 0; self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
-            session.query(AnalysisResult).delete(); session.commit()
+            # === ПРИМУСОВЕ ПЕРЕСТВОРЕННЯ ТАБЛИЦІ (Fix for Postgres column update) ===
+            db_manager.recreate_analysis_table()
+            # ========================================================================
+            
             limit = settings.get("scan_limit"); tickers = self.get_top_tickers(limit)
             htf, ltf = settings.get("htfSelection"), settings.get("ltfSelection")
             
@@ -55,8 +71,8 @@ class MarketAnalyzer:
             for i, t in enumerate(tickers):
                 if not self.is_scanning: break
                 sym = t['symbol']
+                vol_24h = float(t.get('turnover24h', 0))
                 
-                # VISUALIZATION: Show current coin being scanned
                 self.status_message = f"🔍 Analyzing {sym} ({i+1}/{total})"
                 self.progress = int((i / total) * 100)
                 
@@ -68,18 +84,24 @@ class MarketAnalyzer:
                     
                     sigs = strategy_engine.analyze(df_l, df_h)
                     for sg in sigs:
-                        res = AnalysisResult(symbol=sym, signal_type=sg['action'], status="New", score=85, price=sg['price'], htf_rsi=0, ltf_rsi=sg['rsi'], details=f"{sg['reason']} | SL: {round(sg['sl_price'],4)}")
+                        res = AnalysisResult(
+                            symbol=sym, 
+                            signal_type=sg['action'], 
+                            status="New", 
+                            score=85, 
+                            price=sg['price'], 
+                            htf_rsi=0, 
+                            ltf_rsi=sg['rsi'], 
+                            volume_24h=vol_24h, # Зберігаємо об'єм
+                            details=f"{sg['reason']} | SL: {round(sg['sl_price'],4)}"
+                        )
                         session.add(res)
                         
-                        # --- WATCHLIST LOGIC (FIFO LIMIT 20) ---
                         if not session.query(SmartMoneyTicker).filter_by(symbol=sym).first():
-                            # Check limit
                             count = session.query(SmartMoneyTicker).count()
                             if count >= 20:
-                                # Delete oldest
                                 oldest = session.query(SmartMoneyTicker).order_by(SmartMoneyTicker.added_at.asc()).first()
                                 if oldest: session.delete(oldest)
-                            
                             session.add(SmartMoneyTicker(symbol=sym))
                         
                         session.commit()
@@ -103,7 +125,6 @@ class MarketAnalyzer:
                     
                     self.status_message = f"⚡ Monitoring Trade: {trade.symbol}"
 
-                    # Logic for PENDING (Limit) and OPEN (PnL) remains same as previous...
                     if trade.status == 'PENDING':
                         triggered = False
                         if trade.direction == 'Long' and current_price <= trade.entry_price: triggered = True
@@ -129,20 +150,15 @@ class MarketAnalyzer:
                 session.commit()
 
                 # --- PHASE 2: SEEKING NEW ENTRIES ---
-                if not self.is_scanning: # Only run background logic if manual scan is NOT running
+                if not self.is_scanning:
                     watchlist = session.query(SmartMoneyTicker).all()
-                    
                     if watchlist:
                         for item in watchlist:
                             sym = item.symbol
                             self.status_message = f"👀 Checking {sym} for Setup..."
                             
                             existing = session.query(PaperTrade).filter(PaperTrade.symbol == sym, PaperTrade.status.in_(['OPEN', 'PENDING'])).first()
-                            if existing: 
-                                # Якщо вже є активна угода, видаляємо з Watchlist (щоб не перевіряти дарма)
-                                # АЛЕ: Краще це робити при створенні угоди, щоб не видалити випадково те, що ще не спрацювало.
-                                # Тут ми просто пропускаємо ітерацію.
-                                continue
+                            if existing: continue
 
                             try:
                                 htf = settings.get("htfSelection")
@@ -150,7 +166,6 @@ class MarketAnalyzer:
                                 df_h = self.fetch_candles(sym, htf, limit=100)
                                 if df_h is None: continue
                                 
-                                # HTF Check
                                 df_h = strategy_engine.calculate_indicators(df_h); last_h = df_h.iloc[-1]
                                 is_bull = True; is_bear = True
                                 if settings.get('obt_useCloudFilter'):
@@ -163,7 +178,6 @@ class MarketAnalyzer:
                                 if not is_bull and not is_bear: 
                                     self.status_message = f"❌ {sym}: Filter Rejected"; time.sleep(0.2); continue
 
-                                # LTF Check
                                 df_l = self.fetch_candles(sym, ltf, limit=100)
                                 if df_l is None: continue
                                 obs = strategy_engine.find_order_blocks(df_l)
@@ -196,16 +210,12 @@ class MarketAnalyzer:
                                     elif tp_mode == "RR":
                                         tp_price = entry_price + (dist_to_sl * tp_val) if trade_signal['dir'] == 'Long' else entry_price - (dist_to_sl * tp_val)
 
-                                    # 1. Створюємо угоду
                                     new_trade = PaperTrade(symbol=sym, direction=trade_signal['dir'], entry_mode=entry_mode, status='PENDING' if entry_mode == 'Limit' else 'OPEN', entry_price=entry_price, sl_price=trade_signal['sl'], tp_price=tp_price, details=f"Found on {ltf}m")
                                     session.add(new_trade)
                                     
-                                    # 2. ВИДАЛЯЄМО З WATCHLIST (Гігієна списку)
-                                    # Ми знайшли вхід, відкрили "віртуальну" угоду, тому більше не потрібно моніторити пошук входу.
-                                    ticker_to_remove = session.query(SmartMoneyTicker).filter_by(symbol=sym).first()
-                                    if ticker_to_remove:
-                                        session.delete(ticker_to_remove)
-                                        logger.info(f"🗑️ Removed {sym} from Watchlist (Trade Opened)")
+                                    # Видаляємо з Watchlist після входу
+                                    ticker_remove = session.query(SmartMoneyTicker).filter_by(symbol=sym).first()
+                                    if ticker_remove: session.delete(ticker_remove)
 
                                     session.commit()
                                     time.sleep(1)
@@ -226,7 +236,7 @@ class MarketAnalyzer:
 
     def get_results(self):
         s = db_manager.get_session()
-        try: return [{'symbol':r.symbol,'signal':r.signal_type,'score':r.score,'price':r.price,'rsi_ltf':round(r.ltf_rsi,1),'time':r.found_at.strftime('%H:%M'),'details':r.details} for r in s.query(AnalysisResult).order_by(AnalysisResult.score.desc()).all()]
+        try: return [{'symbol':r.symbol,'signal':r.signal_type,'score':r.score,'price':r.price,'rsi_ltf':round(r.ltf_rsi,1),'volume': r.volume_24h,'time':r.found_at.strftime('%H:%M'),'details':r.details} for r in s.query(AnalysisResult).order_by(AnalysisResult.score.desc()).all()]
         finally: s.close()
 
 market_analyzer = MarketAnalyzer()
