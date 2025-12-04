@@ -15,8 +15,11 @@ class MarketAnalyzer:
         self.is_scanning = False
         self.progress = 0
         self.status_message = "Ready" 
-        # Запускаємо фоновий симулятор Smart Money
-        threading.Thread(target=self._monitor_smart_money, daemon=True).start()
+        
+        # === ВАЖЛИВО: ФОНОВИЙ МОНІТОР ТИМЧАСОВО ВИМКНЕНО ===
+        # Це зупинить переповнення пулу з'єднань з базою даних.
+        # threading.Thread(target=self._monitor_smart_money, daemon=True).start()
+        logger.info("⚠️ Smart Money Simulator is DISABLED to prevent DB crashes.")
 
     def get_top_tickers(self, limit=100):
         """
@@ -88,14 +91,14 @@ class MarketAnalyzer:
     def run_scan_thread(self):
         if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
 
-    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР - З ДІАГНОСТИКОЮ) ===
+    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР) ===
     def _scan_process(self):
         self.is_scanning = True
         self.progress = 0
         self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
-            # === КРИТИЧНО: ПРИМУСОВЕ ПЕРЕСТВОРЕННЯ ТАБЛИЦІ ===
+            # Примусове оновлення таблиці для нової колонки volume
             db_manager.recreate_analysis_table()
             
             limit = settings.get("scan_limit")
@@ -110,7 +113,6 @@ class MarketAnalyzer:
                 if not self.is_scanning: break
                 sym = t['symbol']
                 
-                # Safe volume fetch
                 try:
                     vol_24h = float(t.get('turnover24h', 0))
                 except:
@@ -136,7 +138,7 @@ class MarketAnalyzer:
                         print(f"👉 {sym}: Found {len(sigs)} signals.")
 
                     for sg in sigs:
-                        # --- КРИТИЧНЕ ВИПРАВЛЕННЯ: ПРИМУСОВА КОНВЕРТАЦІЯ ТИПІВ ---
+                        # Примусова конвертація у float() для PostgreSQL
                         res = AnalysisResult(
                             symbol=sym, 
                             signal_type=sg['action'], 
@@ -145,11 +147,12 @@ class MarketAnalyzer:
                             price=float(sg['price']), 
                             htf_rsi=float(df_h.iloc[-1]['rsi']), 
                             ltf_rsi=float(sg['rsi']), 
-                            volume_24h=float(vol_24h), # Конвертуємо
+                            volume_24h=float(vol_24h),
                             details=f"{sg['reason']} | SL: {round(float(sg['sl_price']),4)}"
                         )
                         session.add(res)
                         
+                        # Додаємо в Watchlist (Ліміт 20)
                         if not session.query(SmartMoneyTicker).filter_by(symbol=sym).first():
                             count = session.query(SmartMoneyTicker).count()
                             if count >= 20:
@@ -174,7 +177,7 @@ class MarketAnalyzer:
             self.is_scanning = False
             session.close()
 
-    # === BACKGROUND SIMULATOR (SMART MONEY ENGINE) ===
+    # === BACKGROUND SIMULATOR (ЗАЛИШЕНО, АЛЕ НЕ ВИКЛИКАЄТЬСЯ) ===
     def _monitor_smart_money(self):
         logger.info("🧠 Smart Money Simulator Started")
         while True:
@@ -238,7 +241,6 @@ class MarketAnalyzer:
                     if watchlist:
                         for item in watchlist:
                             sym = item.symbol
-                            self.status_message = f"👀 Checking {sym}..."
                             
                             existing = session.query(PaperTrade).filter(
                                 PaperTrade.symbol == sym, PaperTrade.status.in_(['OPEN', 'PENDING'])
@@ -254,7 +256,6 @@ class MarketAnalyzer:
                                 
                                 df_h = strategy_engine.calculate_indicators(df_h); last_h = df_h.iloc[-1]
                                 
-                                # Фільтри
                                 is_bull = True; is_bear = True
                                 if settings.get('obt_useCloudFilter'):
                                     if last_h['hma_fast'] <= last_h['hma_slow']: is_bull = False
@@ -263,8 +264,7 @@ class MarketAnalyzer:
                                     if last_h['rsi'] > 55: is_bull = False
                                     if last_h['rsi'] < 45: is_bear = False
                                 
-                                if not is_bull and not is_bear: 
-                                    time.sleep(0.1); continue
+                                if not is_bull and not is_bear: continue
 
                                 df_l = self.fetch_candles(sym, ltf, limit=100)
                                 if df_l is None: continue
@@ -284,7 +284,6 @@ class MarketAnalyzer:
                                         trade_signal = {'dir': 'Short', 'ob': best_ob, 'sl': best_ob['top'] * (1 + sl_buffer_pct)}
 
                                 if trade_signal:
-                                    self.status_message = f"💎 ENTRY FOUND: {sym}"
                                     entry_mode = settings.get("sm_entry_mode", "Market")
                                     current_price = df_l.iloc[-1]['close']
                                     
@@ -319,18 +318,13 @@ class MarketAnalyzer:
                                 pass
                             
                             time.sleep(0.5)
-                        
-                        self.status_message = "💤 Waiting..."
-                    else:
-                        self.status_message = "⚠️ Watchlist Empty"
 
-                time.sleep(5 if self.is_scanning else 30)
+                time.sleep(30)
                 
             except Exception as e:
                 logger.error(f"SM Monitor Error: {e}")
                 time.sleep(30)
             finally:
-                # === КРИТИЧНО ВАЖЛИВО ===
                 session.close()
 
     def get_results(self):
