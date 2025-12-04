@@ -1,5 +1,7 @@
 import os
 
+
+
 class Config:
     # Сервер
     PORT = int(os.environ.get("PORT", 10000))
