@@ -345,5 +345,5 @@ class MarketAnalyzer:
             ]
         finally: 
             s.close()
-
+            
 market_analyzer = MarketAnalyzer()
