@@ -75,31 +75,34 @@ class OBTrendStrategy:
         allow_long = True
         allow_short = True
         
-        # Cloud Filter
-        if self._get_param('obt_useCloudFilter', True):
-            if row_h.get('hma_fast',0) <= row_h.get('hma_slow',0): allow_long = False
-            if row_h.get('hma_fast',0) >= row_h.get('hma_slow',0): allow_short = False
-            
-        # OBV Filter
-        if self._get_param('obt_useObvFilter', True):
-            if row_h.get('obv',0) <= row_h.get('obv_ma',0): allow_long = False
-            if row_h.get('obv',0) >= row_h.get('obv_ma',0): allow_short = False
+        # Читаємо налаштування фільтрів
+        use_cloud = self._get_param('obt_useCloudFilter', True)
+        use_obv = self._get_param('obt_useObvFilter', True)
+        use_rsi = self._get_param('obt_useRsiFilter', True)
+        
+        is_trend_filter_active = use_cloud or use_obv or use_rsi
 
-        # HTF RSI Filter (Загальний тренд)
-        if self._get_param('obt_useRsiFilter', True):
-            if row_h.get('rsi', 50) > 55: allow_long = False
-            if row_h.get('rsi', 50) < 45: allow_short = False
+        if is_trend_filter_active:
+            # Cloud Filter
+            if use_cloud and (row_h.get('hma_fast',0) <= row_h.get('hma_slow',0)): allow_long = False
+            if use_cloud and (row_h.get('hma_fast',0) >= row_h.get('hma_slow',0)): allow_short = False
+            
+            # OBV Filter
+            if use_obv and (row_h.get('obv',0) <= row_h.get('obv_ma',0)): allow_long = False
+            if use_obv and (row_h.get('obv',0) >= row_h.get('obv_ma',0)): allow_short = False
+
+            # HTF RSI Filter (Загальний тренд)
+            if use_rsi and (row_h.get('rsi', 50) > 55): allow_long = False
+            if use_rsi and (row_h.get('rsi', 50) < 45): allow_short = False
 
         # 2. Логіка входу (Trigger)
-        use_rsi_filter = self._get_param('obt_useRsiFilter', True) # Чи перевіряти RSI для входу?
         use_retest = self._get_param('obt_useOBRetest', False)
-        
         rsi_val = row_l.get('rsi', 50)
         
         # --- LONG ---
         if allow_long:
-            # Якщо фільтр RSI увімкнено, вимагаємо перепроданність. Якщо ні - дозволяємо будь-який RSI.
-            rsi_condition = (rsi_val <= float(self._get_param('obt_entryRsiOversold', 45))) if use_rsi_filter else True
+            # RSI Entry Check: Якщо RSI Filter вимкнено, то rsi_condition завжди True
+            rsi_condition = (rsi_val <= float(self._get_param('obt_entryRsiOversold', 45))) if use_rsi else True
             
             if rsi_condition:
                 signal_found = False
@@ -108,7 +111,6 @@ class OBTrendStrategy:
                 
                 if use_retest:
                     obs = self.find_order_blocks(df_ltf)
-                    # Шукаємо, чи ми в зоні блоку
                     for ob in obs['buy']:
                         if ob['bottom'] <= curr_price <= (ob['top'] * 1.003):
                             signal_found = True
@@ -116,11 +118,9 @@ class OBTrendStrategy:
                             reason = "OB Retest"
                             break
                 else:
-                    # Якщо без ретесту, то просто сигнал по RSI/Тренду
-                    # АЛЕ: Якщо use_rsi_filter вимкнено і retest вимкнено - це вхід на кожній свічці.
-                    # Щоб уникнути спаму, в "No Filter Mode" вимагаємо хоча б наявності OB.
+                    # У RAW MODE/No Retest Mode шукаємо наявність OB для підтвердження
                     obs = self.find_order_blocks(df_ltf)
-                    if obs['buy']: # Якщо є хоч якісь блоки
+                    if obs['buy']: 
                         signal_found = True
                         sl = curr_price * 0.985
                         reason = "Trend+OB Exist"
@@ -130,7 +130,7 @@ class OBTrendStrategy:
 
         # --- SHORT ---
         if allow_short:
-            rsi_condition = (rsi_val >= float(self._get_param('obt_entryRsiOverbought', 55))) if use_rsi_filter else True
+            rsi_condition = (rsi_val >= float(self._get_param('obt_entryRsiOverbought', 55))) if use_rsi else True
             
             if rsi_condition:
                 signal_found = False
