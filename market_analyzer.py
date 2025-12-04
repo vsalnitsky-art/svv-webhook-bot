@@ -19,10 +19,6 @@ class MarketAnalyzer:
         threading.Thread(target=self._monitor_smart_money, daemon=True).start()
 
     def get_top_tickers(self, limit=100):
-        """
-        Отримує список тікерів з урахуванням фільтру об'єму (Min Vol).
-        Захищено від помилок конвертації даних.
-        """
         try:
             q = settings.get("scanner_quote_coin")
             use_vol_filter = settings.get("scan_use_min_volume")
@@ -88,22 +84,19 @@ class MarketAnalyzer:
     def run_scan_thread(self):
         if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
 
-    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР - З ДІАГНОСТИКОЮ) ===
+    # === MANUAL SCANNER ===
     def _scan_process(self):
         self.is_scanning = True
         self.progress = 0
         self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
-            # === ПРИМУСОВЕ ПЕРЕСТВОРЕННЯ ТАБЛИЦІ (FIX SCHEMA) ===
             db_manager.recreate_analysis_table()
             
             limit = settings.get("scan_limit")
             tickers = self.get_top_tickers(limit)
             
-            # --- DEBUG LOG ---
             print(f"🔎 DEBUG: Found {len(tickers)} tickers to scan.")
-            # -----------------
 
             htf, ltf = settings.get("htfSelection"), settings.get("ltfSelection")
             
@@ -112,7 +105,6 @@ class MarketAnalyzer:
                 if not self.is_scanning: break
                 sym = t['symbol']
                 
-                # Safe volume fetch
                 try:
                     vol_24h = float(t.get('turnover24h', 0))
                 except:
@@ -138,7 +130,7 @@ class MarketAnalyzer:
                         print(f"👉 {sym}: Found {len(sigs)} signals.")
 
                     for sg in sigs:
-                        # --- КРИТИЧНЕ ВИПРАВЛЕННЯ: ПРИМУСОВА КОНВЕРТАЦІЯ ТИПІВ (Fixes InvalidTextRepresentation) ---
+                        # Примусова конвертація в float для PostgreSQL
                         res = AnalysisResult(
                             symbol=sym, 
                             signal_type=sg['action'], 
@@ -152,7 +144,6 @@ class MarketAnalyzer:
                         )
                         session.add(res)
                         
-                        # Додаємо в Watchlist (Ліміт 20)
                         if not session.query(SmartMoneyTicker).filter_by(symbol=sym).first():
                             count = session.query(SmartMoneyTicker).count()
                             if count >= 20:
@@ -177,22 +168,21 @@ class MarketAnalyzer:
             self.is_scanning = False
             session.close()
 
-    # === BACKGROUND SIMULATOR (SMART MONEY ENGINE) ===
+    # === BACKGROUND SIMULATOR ===
     def _monitor_smart_money(self):
         logger.info("🧠 Smart Money Simulator Started")
         while True:
+            session = db_manager.get_session()
             try:
-                session = db_manager.get_session()
-                
-                # --- PHASE 1: TRADE MANAGEMENT (СУПРОВІД) ---
+                # --- PHASE 1: TRADE MANAGEMENT ---
                 active_trades = session.query(PaperTrade).filter(PaperTrade.status.in_(['OPEN', 'PENDING'])).all()
                 for trade in active_trades:
                     current_price = bot_instance.get_price(trade.symbol)
                     if current_price == 0: continue
                     
-                    self.status_message = f"⚡ Monitoring Trade: {trade.symbol}"
+                    self.status_message = f"⚡ Monitoring: {trade.symbol}"
 
-                    # 1. PENDING (LIMIT) LOGIC
+                    # 1. PENDING LOGIC
                     if trade.status == 'PENDING':
                         triggered = False
                         if trade.direction == 'Long' and current_price <= trade.entry_price: triggered = True
@@ -203,15 +193,11 @@ class MarketAnalyzer:
                         if trade.direction == 'Short' and current_price >= trade.sl_price: sl_hit = True
                         
                         if sl_hit:
-                            trade.status = 'CANCELED'
-                            trade.closed_at = datetime.utcnow()
-                            trade.details = "SL hit before Entry"
+                            trade.status = 'CANCELED'; trade.closed_at = datetime.utcnow(); trade.details = "SL hit before Entry"
                         elif triggered:
-                            trade.status = 'OPEN'
-                            trade.created_at = datetime.utcnow()
-                            trade.details = "Limit Triggered"
+                            trade.status = 'OPEN'; trade.created_at = datetime.utcnow(); trade.details = "Limit Triggered"
 
-                    # 2. OPEN TRADE LOGIC
+                    # 2. OPEN LOGIC
                     elif trade.status == 'OPEN':
                         pnl = 0.0
                         if trade.entry_price > 0:
@@ -223,41 +209,33 @@ class MarketAnalyzer:
                         trade.pnl_percent = pnl
                         trade.pnl = pnl
 
-                        # Check SL
                         is_sl = False
                         if trade.direction == 'Long' and current_price <= trade.sl_price: is_sl = True
                         if trade.direction == 'Short' and current_price >= trade.sl_price: is_sl = True
                         
-                        # Check TP
                         is_tp = False
                         if trade.tp_price:
                             if trade.direction == 'Long' and current_price >= trade.tp_price: is_tp = True
                             if trade.direction == 'Short' and current_price <= trade.tp_price: is_tp = True
                         
                         if is_sl:
-                            trade.status = 'CLOSED_LOSS'
-                            trade.exit_price = trade.sl_price
-                            trade.closed_at = datetime.utcnow()
-                            trade.details = "Stop Loss"
+                            trade.status = 'CLOSED_LOSS'; trade.exit_price = trade.sl_price; trade.closed_at = datetime.utcnow(); trade.details = "Stop Loss"
                         elif is_tp:
-                            trade.status = 'CLOSED_WIN'
-                            trade.exit_price = trade.tp_price
-                            trade.closed_at = datetime.utcnow()
-                            trade.details = "Take Profit"
+                            trade.status = 'CLOSED_WIN'; trade.exit_price = trade.tp_price; trade.closed_at = datetime.utcnow(); trade.details = "Take Profit"
                 
                 session.commit()
 
-                # --- PHASE 2: SEEKING NEW ENTRIES (ПОШУК ВХОДУ) ---
+                # --- PHASE 2: SEEKING NEW ENTRIES ---
                 if not self.is_scanning:
                     watchlist = session.query(SmartMoneyTicker).all()
+                    
                     if watchlist:
                         for item in watchlist:
                             sym = item.symbol
-                            self.status_message = f"👀 Checking {sym} for Setup..."
+                            self.status_message = f"👀 Checking {sym}..."
                             
                             existing = session.query(PaperTrade).filter(
-                                PaperTrade.symbol == sym, 
-                                PaperTrade.status.in_(['OPEN', 'PENDING'])
+                                PaperTrade.symbol == sym, PaperTrade.status.in_(['OPEN', 'PENDING'])
                             ).first()
                             
                             if existing: continue
@@ -268,10 +246,9 @@ class MarketAnalyzer:
                                 df_h = self.fetch_candles(sym, htf, limit=100)
                                 if df_h is None: continue
                                 
-                                # HTF Check (Global Trend)
-                                df_h = strategy_engine.calculate_indicators(df_h)
-                                last_h = df_h.iloc[-1]
+                                df_h = strategy_engine.calculate_indicators(df_h); last_h = df_h.iloc[-1]
                                 
+                                # Фільтри (перевіряємо, чи увімкнені)
                                 is_bull = True; is_bear = True
                                 if settings.get('obt_useCloudFilter'):
                                     if last_h['hma_fast'] <= last_h['hma_slow']: is_bull = False
@@ -281,11 +258,8 @@ class MarketAnalyzer:
                                     if last_h['rsi'] < 45: is_bear = False
                                 
                                 if not is_bull and not is_bear: 
-                                    self.status_message = f"❌ {sym}: Filter Rejected"
-                                    time.sleep(0.2)
-                                    continue
+                                    time.sleep(0.1); continue
 
-                                # LTF Check (Order Block)
                                 df_l = self.fetch_candles(sym, ltf, limit=100)
                                 if df_l is None: continue
                                 obs = strategy_engine.find_order_blocks(df_l)
@@ -304,8 +278,7 @@ class MarketAnalyzer:
                                         trade_signal = {'dir': 'Short', 'ob': best_ob, 'sl': best_ob['top'] * (1 + sl_buffer_pct)}
 
                                 if trade_signal:
-                                    self.status_message = f"💎 ENTRY FOUND: {sym} {trade_signal['dir']}"
-                                    
+                                    self.status_message = f"💎 ENTRY FOUND: {sym}"
                                     entry_mode = settings.get("sm_entry_mode", "Market")
                                     current_price = df_l.iloc[-1]['close']
                                     
@@ -324,58 +297,36 @@ class MarketAnalyzer:
                                         tp_price = entry_price + (dist_to_sl * tp_val) if trade_signal['dir'] == 'Long' else entry_price - (dist_to_sl * tp_val)
 
                                     new_trade = PaperTrade(
-                                        symbol=sym, 
-                                        direction=trade_signal['dir'], 
-                                        entry_mode=entry_mode, 
+                                        symbol=sym, direction=trade_signal['dir'], entry_mode=entry_mode, 
                                         status='PENDING' if entry_mode == 'Limit' else 'OPEN', 
-                                        entry_price=entry_price, 
-                                        sl_price=trade_signal['sl'], 
-                                        tp_price=tp_price, 
-                                        details=f"Found on {ltf}m"
+                                        entry_price=entry_price, sl_price=trade_signal['sl'], tp_price=tp_price, details=f"Found on {ltf}m"
                                     )
                                     session.add(new_trade)
                                     
-                                    # ВИДАЛЕННЯ З WATCHLIST
                                     ticker_remove = session.query(SmartMoneyTicker).filter_by(symbol=sym).first()
-                                    if ticker_remove:
-                                        session.delete(ticker_remove)
+                                    if ticker_remove: session.delete(ticker_remove)
 
                                     session.commit()
                                     time.sleep(1)
 
-                            except Exception as e:
+                            except Exception:
                                 pass
                             
                             time.sleep(0.5)
                         
-                        self.status_message = "💤 Waiting for next cycle..."
+                        self.status_message = "💤 Waiting..."
                     else:
-                        self.status_message = "⚠️ Watchlist Empty. Run Scanner."
+                        self.status_message = "⚠️ Watchlist Empty"
 
-                session.close()
                 time.sleep(5 if self.is_scanning else 30)
                 
             except Exception as e:
-                logger.error(f"SM Monitor Global Error: {e}")
+                logger.error(f"SM Monitor Error: {e}")
                 time.sleep(30)
-
-    def get_results(self):
-        s = db_manager.get_session()
-        try: 
-            return [
-                {
-                    'symbol': r.symbol,
-                    'signal': r.signal_type,
-                    'score': r.score,
-                    'price': r.price,
-                    'rsi_ltf': round(r.ltf_rsi, 1),
-                    'volume': r.volume_24h, # Повертаємо об'єм для шаблону
-                    'time': r.found_at.strftime('%H:%M'),
-                    'details': r.details
-                } 
-                for r in s.query(AnalysisResult).order_by(AnalysisResult.score.desc()).all()
-            ]
-        finally: 
-            s.close()
+            finally:
+                # === КРИТИЧНО ВАЖЛИВО ===
+                # Закриваємо сесію, навіть якщо виникла помилка.
+                # Це запобігає 'QueuePool limit reached'
+                session.close()
 
 market_analyzer = MarketAnalyzer()
