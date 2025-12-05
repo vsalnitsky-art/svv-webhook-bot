@@ -1,7 +1,3 @@
-{
-type: uploaded file
-fileName: scanner.html
-fullContent:
 {% extends "base.html" %}
 
 {% block title %}Активні Позиції{% endblock %}
@@ -22,9 +18,9 @@ fullContent:
                             <div class="small text-muted fw-bold text-uppercase">Стратегія Виходу</div>
                             <div class="fw-bold fs-5">
                                 {% if conf.get('exit_enableStrategy') %}
-                                    <span class="text-success">SMART EXIT ONLY 🟢</span>
+                                    <span class="text-success">АКТИВНА 🟢</span>
                                 {% else %}
-                                    <span class="text-danger">MANUAL ONLY 🔴</span>
+                                    <span class="text-danger">ВИМКНЕНА 🔴</span>
                                 {% endif %}
                             </div>
                         </div>
@@ -81,9 +77,8 @@ fullContent:
                         <th class="py-3 border-bottom">Об'єм</th>
                         <th class="py-3 border-bottom">Вхід</th>
                         <th class="py-3 border-bottom">HTF RSI</th>
-                        <th class="py-3 border-bottom">Статус Smart Exit</th>
-                        <th class="py-3 border-bottom">Нереал. P&L</th>
-                        <th class="py-3 border-bottom text-center">Дія</th>
+                        <th class="py-3 border-bottom">Статус Виходу</th> <th class="py-3 border-bottom">Нереал. P&L</th>
+                        <th class="py-3 pe-4 text-end border-bottom">Час</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -127,10 +122,8 @@ fullContent:
                             </span>
                         </td>
                         
-                        <td class="text-center">
-                            <button onclick="closePosition('{{ a.symbol }}', '{{ a.side }}')" class="btn btn-outline-danger btn-sm py-0 px-2 fw-bold" style="font-size: 11px;" title="Закрити по ринку">
-                                X
-                            </button>
+                        <td class="text-end pe-4 text-muted small font-mono">
+                            {{ a.time }}
                         </td>
                     </tr>
                 {% else %}
@@ -153,36 +146,4 @@ fullContent:
 .blinking { animation: blinker 1s linear infinite; }
 @keyframes blinker { 50% { opacity: 0; } }
 </style>
-
-<script>
-function closePosition(symbol, side) {
-    if(!confirm(`⚠️ Ви впевнені, що хочете закрити ${symbol} (${side}) по ринку?`)) return;
-
-    // Відправляємо запит на Webhook
-    fetch('/webhook', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            action: "Close",
-            symbol: symbol,
-            direction: side === 'Buy' ? 'Long' : 'Short' // API очікує 'Long'/'Short', а UI показує 'Buy'/'Sell'
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if(data.status === 'ok' || data.status === 'ignored') {
-            // Перезавантажуємо сторінку для оновлення
-            location.reload();
-        } else {
-            alert('Помилка: ' + (data.reason || 'Невідома помилка'));
-        }
-    })
-    .catch(error => {
-        alert('Помилка з\'єднання: ' + error);
-    });
-}
-</script>
 {% endblock %}
-}
