@@ -5,6 +5,8 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 
+from settings_manager import SettingsManager
+
 logger = logging.getLogger(__name__)
 
 class SmartExitStrategy:
@@ -34,7 +36,9 @@ class SmartExitStrategy:
         self.TRAILING_STOP_PERCENT = -0.005  # -0.5%
         self.MIN_DIVERGENCE_CANDLES = 2      # Мінімум 2 свічки дивергенції
         self.RSI_THRESHOLD = 70              # Для LONG
-        
+        self.settings = None
+        self.load_settings()
+
     def update_position(self, symbol, current_price, rsi_value, side='Long'):
         """
         Оновлюємо стан позиції та перевіряємо умови закриття
