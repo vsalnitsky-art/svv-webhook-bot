@@ -1,41 +1,24 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import threading
-import time
+
 import logging
+from datetime import datetime, timedelta
 import pandas as pd
 import pandas_ta as ta
-from settings_manager import settings
-from bot import bot_instance
-# Імпорт стратегії для перевірки виходу
-from strategy_ob_trend import ob_trend_strategy
+from smart_exit_strategy import smart_exit
 
 logger = logging.getLogger(__name__)
 
 class EnhancedMarketScanner:
-    def __init__(self, bot_instance, config):
-        self.bot = bot_instance
-        self.config = config
-        self.running = True
-        
-        # Кеш даних для активних монет (включаючи статус виходу)
-        self.active_coins_data = {} 
-        self.scan_interval = 10 # Трохи рідше, бо вантажимо HTF
-
-    def start(self):
-        threading.Thread(target=self.loop, daemon=True).start()
-        logger.info(f"🚀 Active Position Monitor & Smart Exit Started")
+    """Сканер ринку з інтегрованим Smart Exit"""
     
-    def loop(self):
-        while self.running:
-            try:
-                self.monitor_positions()
-            except Exception as e:
-                logger.error(f"Monitor loop error: {e}")
-            time.sleep(self.scan_interval)
+    def __init__(self, bot):
+        self.bot = bot
+        self.active_coins_data = {}
+        self.last_check = {}
     
     def get_active_symbols(self):
-        """✅ ВИПРАВЛЕНО: Повертає ПОЗИЦІЇ (об'єкти), а не тільки символи"""
+        """Отримати активні позиції"""
         positions = []
         try:
             resp = self.bot.session.get_positions(category="linear", settleCoin="USDT")
@@ -48,110 +31,109 @@ class EnhancedMarketScanner:
         return positions
     
     def get_active_symbols_list(self):
-        """✅ ВИПРАВЛЕНО: Повертає ТІЛЬКИ СИМВОЛИ як список"""
+        """Отримати тільки символи"""
         return [p['symbol'] for p in self.get_active_symbols()]
-
-    def fetch_htf_candles(self, symbol):
-        """Завантажує свічки Глобального ТФ для аналізу виходу"""
+    
+    def fetch_htf_candles(self, symbol, timeframe='1h', limit=100):
+        """Завантажити HTF свічки"""
         try:
-            htf = settings.get("htfSelection")
-            # Мапінг для Bybit
-            tf_map = {'60': '60', '240': '240', 'D': 'D'}
-            req_tf = tf_map.get(str(htf), '240')
+            interval_map = {
+                '1h': '60', '4h': '240', '1d': 'D'
+            }
+            interval = interval_map.get(timeframe, '60')
             
             resp = self.bot.session.get_kline(
-                category="linear", symbol=symbol, interval=req_tf, limit=50 
+                category="linear",
+                symbol=symbol,
+                interval=interval,
+                limit=limit
             )
             
-            if resp['retCode'] == 0 and resp['result']['list']:
-                data = resp['result']['list']
-                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-                df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='ms')
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    df[col] = df[col].astype(float)
-                return df.sort_values('time').reset_index(drop=True)
-        except: pass
-        return None
-
-    def monitor_positions(self):
-        active_positions = self.get_active_symbols()
-        target_symbols = self.get_active_symbols_list()  # ✅ ВИПРАВЛЕНО: Використовуємо новий метод
-        
-        # Чистка кешу
-        current_keys = list(self.active_coins_data.keys())
-        for k in current_keys:
-            if k not in target_symbols:
-                del self.active_coins_data[k]
-
-        if not active_positions: return
-
-        # Чи увімкнена стратегія виходу?
-        smart_exit_enabled = settings.get("exit_enableStrategy", False)
-
-        for pos in active_positions:
-            symbol = pos['symbol']
-            side = pos['side'] # Buy / Sell
+            if resp['retCode'] != 0:
+                return None
             
-            if symbol not in self.active_coins_data:
-                self.active_coins_data[symbol] = {
-                    'rsi': 0, 'pressure': 0, 'exit_status': 'Safe', 'exit_details': '-'
+            data = resp['result']['list']
+            if not data:
+                return None
+            
+            df = pd.DataFrame([
+                {
+                    'open': float(x[1]),
+                    'high': float(x[2]),
+                    'low': float(x[3]),
+                    'close': float(x[4]),
+                    'volume': float(x[5])
                 }
+                for x in reversed(data)
+            ])
             
-            # 1. Завантаження даних HTF (якщо стратегія активна або для відображення RSI)
-            df_htf = self.fetch_htf_candles(symbol)
+            # Обчислюємо індикатори
+            df['rsi'] = ta.rsi(df['close'], length=14)
+            df['hma_fast'] = ta.hma(df['close'], length=9)
+            df['hma_slow'] = ta.hma(df['close'], length=21)
             
-            # --- РОЗУМНИЙ ВИХІД ---
-            exit_info = {'close': False, 'reason': '', 'details': {}}
-            
-            if df_htf is not None:
-                # Викликаємо стратегію
-                exit_info = ob_trend_strategy.check_exit_signal(df_htf, side)
-                
-                # Оновлюємо дані для UI
-                self.active_coins_data[symbol]['rsi'] = exit_info['details'].get('rsi', 0)
-                
-                # Формуємо статус
-                if exit_info['close']:
-                    self.active_coins_data[symbol]['exit_status'] = 'EXIT NOW'
-                    self.active_coins_data[symbol]['exit_details'] = exit_info['reason']
-                    
-                    # === ВИКОНАННЯ ЗАКРИТТЯ ===
-                    if smart_exit_enabled:
-                        logger.info(f"🚨 SMART EXIT TRIGGERED: {symbol} ({side}) -> {exit_info['reason']}")
-                        self.bot.place_order({
-                            "action": "Close",
-                            "symbol": symbol,
-                            "direction": "Long" if side == "Buy" else "Short"
-                        })
-                else:
-                    # Статуси попередження
-                    rsi_val = exit_info['details'].get('rsi', 50)
-                    limit_long = float(settings.get('exit_rsiOverbought', 70))
-                    limit_short = float(settings.get('exit_rsiOversold', 30))
-                    
-                    status = "Safe"
-                    if side == "Buy" and rsi_val >= (limit_long - 5): status = "Warning"
-                    if side == "Sell" and rsi_val <= (limit_short + 5): status = "Warning"
-                    
-                    self.active_coins_data[symbol]['exit_status'] = status
-                    self.active_coins_data[symbol]['exit_details'] = f"RSI: {rsi_val}"
-
-            time.sleep(0.5)
-
-    # === GETTERS FOR UI ===
-    def get_coin_data(self, symbol):
-        return self.active_coins_data.get(symbol, {})
-
-    def get_current_rsi(self, symbol):
-        return self.active_coins_data.get(symbol, {}).get('rsi', 0)
-
-    def get_market_pressure(self, symbol):
-        # Pressure поки спрощено (можна відновити стару логіку, якщо треба),
-        # але тут фокус на Exit Strategy. Повернемо 0 або старе значення.
-        return self.active_coins_data.get(symbol, {}).get('pressure', 0)
+            return df
+        
+        except Exception as e:
+            logger.error(f"Fetch candles error: {e}")
+            return None
     
-    def get_exit_status(self, symbol):
-        return self.active_coins_data.get(symbol, {}).get('exit_status', 'N/A')
+    def monitor_positions(self):
+        """✅ ІНТЕГРОВАНИЙ SMART EXIT"""
+        
+        try:
+            active_positions = self.get_active_symbols()
+            
+            if not active_positions:
+                return
+            
+            for pos in active_positions:
+                symbol = pos['symbol']
+                side = pos['side']  # 'Buy' або 'Sell'
+                current_price = float(pos['markPrice'])
+                
+                # Завантажуємо HTF свічки
+                df_htf = self.fetch_htf_candles(symbol)
+                
+                if df_htf is None or len(df_htf) < 2:
+                    continue
+                
+                # Отримуємо RSI
+                rsi_value = df_htf['rsi'].iloc[-1]
+                
+                # ✅ SMART EXIT: Оновлюємо позицію
+                exit_signal = smart_exit.update_position(
+                    symbol=symbol,
+                    current_price=current_price,
+                    rsi_value=rsi_value,
+                    side='Long' if side == 'Buy' else 'Short'
+                )
+                
+                # ✅ Перевіряємо сигнал на закриття
+                if exit_signal['should_close']:
+                    logger.warning(
+                        f"🚨 SMART EXIT: {symbol}\n"
+                        f"   Reason: {exit_signal['reason']}\n"
+                        f"   Price: {exit_signal['exit_price']}\n"
+                        f"   Profit: {exit_signal['profit_potential']:.2f}%"
+                    )
+                    
+                    # Закриваємо позицію
+                    result = self.bot.place_order({
+                        "action": "Close",
+                        "symbol": symbol,
+                        "direction": "Long" if side == "Buy" else "Short"
+                    })
+                    
+                    if result.get("status") == "ok":
+                        logger.info(f"✅ Closed: {symbol}")
+                        smart_exit.reset_position(symbol)
+        
+        except Exception as e:
+            logger.error(f"Monitor error: {e}")
     
-    def get_exit_details(self, symbol):
-        return self.active_coins_data.get(symbol, {}).get('exit_details', '-')
+    def loop(self):
+        """Основний цикл сканера"""
+        self.monitor_positions()
+
+scanner = EnhancedMarketScanner(None)
