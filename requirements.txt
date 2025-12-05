@@ -9,3 +9,5 @@ gunicorn==21.2.0
 requests==2.31.0
 pandas-ta==0.3.14b0
 psycopg2-binary==2.9.9
+setuptools
+wheel
