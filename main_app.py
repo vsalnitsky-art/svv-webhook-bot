@@ -200,25 +200,36 @@ def health():
     })
 
 
-if __name__ == '__main__':
-    logger.info("=" * 60)
-    logger.info("🚀 STARTING BOT WITH SMART EXIT")
-    logger.info("=" * 60)
-    
+# ════════════════════════════════════════════════════════════════════════════════
+# ІНІЦІАЛІЗАЦІЯ BOTА (ВИКОНУЄТЬСЯ ЗАВЖДИ, НЕ ТІЛЬКИ В if __name__)
+# ════════════════════════════════════════════════════════════════════════════════
+
+logger.info("=" * 60)
+logger.info("🚀 STARTING BOT WITH SMART EXIT")
+logger.info("=" * 60)
+
+try:
     # Ініціалізуємо бот
     if not initialize_bot():
         logger.error("❌ Failed to initialize bot")
-        exit(1)
-    
-    logger.info("✅ Bot initialized successfully")
-    
-    # Запускаємо фонові потоки
-    threading.Thread(target=sync_trades_periodic, daemon=True).start()
-    logger.info("✅ Sync thread started")
-    
-    threading.Thread(target=scanner_loop, daemon=True).start()
-    logger.info("✅ Scanner thread started")
-    
-    # Запускаємо Flask
+        # Але не експортуємо помилку, щоб gunicorn міг запуститись
+    else:
+        logger.info("✅ Bot initialized successfully")
+        
+        # Запускаємо фонові потоки
+        threading.Thread(target=sync_trades_periodic, daemon=True).start()
+        logger.info("✅ Sync thread started")
+        
+        threading.Thread(target=scanner_loop, daemon=True).start()
+        logger.info("✅ Scanner thread started")
+except Exception as e:
+    logger.error(f"❌ Initialization error: {e}")
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# ЗАПУСК (для локального тестування)
+# ════════════════════════════════════════════════════════════════════════════════
+
+if __name__ == '__main__':
     logger.info("✅ Starting Flask server on port 10000")
     app.run(host='0.0.0.0', port=10000, debug=False)
