@@ -61,7 +61,6 @@
                             <span class="input-group-text bg-white"><i class="ri-time-line"></i></span>
                             <input type="text" class="form-control bg-white" value="{{ conf.get('htfSelection') }}m" disabled readonly>
                         </div>
-                        <div class="form-text small" style="font-size: 10px;">Встановлюється в налаштуваннях</div>
                     </div>
 
                     <div class="col-md-3">
@@ -70,6 +69,27 @@
                         </button>
                     </div>
                 </div>
+
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div class="d-flex align-items-center gap-3 p-2 bg-white border rounded shadow-sm">
+                            <span class="small fw-bold text-muted text-uppercase"><i class="ri-equalizer-line text-accent"></i> Параметри пошуку:</span>
+                            
+                            <span class="badge bg-light text-dark border font-mono">
+                                RSI Len: {{ conf.get('obt_rsiLength', 14) }}
+                            </span>
+                            
+                            <span class="badge badge-buy font-mono">
+                                Buy Signal < {{ conf.get('obt_entryRsiOversold', 30) }}
+                            </span>
+                            
+                            <span class="badge badge-sell font-mono">
+                                Sell Signal > {{ conf.get('obt_entryRsiOverbought', 70) }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
             </form>
         </div>
     </div>
