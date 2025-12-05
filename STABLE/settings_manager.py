@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import logging
 from models import db_manager, BotSetting
 
@@ -8,6 +10,8 @@ DEFAULT_SETTINGS = {
     "scanner_quote_coin": "USDT",
     "scanner_mode": "Manual",
     "scan_limit": 100,
+    "scan_min_volume": 10,
+    "scan_use_min_volume": True, # <--- НОВИЙ ПАРАМЕТР (ON/OFF)
     
     # === TELEGRAM ===
     "telegram_enabled": False,
@@ -21,8 +25,8 @@ DEFAULT_SETTINGS = {
     "obt_useOBRetest": False, 
 
     # === TIMEFRAMES ===
-    "htfSelection": "240", # 4H
-    "ltfSelection": "45",  # 45m
+    "htfSelection": "240",
+    "ltfSelection": "45",
     
     # === INDICATORS ===
     "obt_cloudFastLen": 10,
@@ -49,7 +53,7 @@ DEFAULT_SETTINGS = {
     "obBufferPercent": 0.2,
 
     # === SMART MONEY SIMULATOR ===
-    "sm_entry_mode": "Market", # <--- ЗМІНЕНО НА MARKET (Агресивний вхід за замовчуванням)
+    "sm_entry_mode": "Market",
     "sm_sl_buffer": 0.2,
     "sm_tp_mode": "None",
     "sm_tp_value": 3.0

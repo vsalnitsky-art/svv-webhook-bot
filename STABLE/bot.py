@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import logging
 import decimal
 import time
@@ -66,7 +68,7 @@ class BybitTradingBot:
                 r = self.session.get_closed_pnl(category="linear", startTime=int(curr_start), endTime=int(curr_end), limit=100)
                 if r['retCode'] == 0:
                     for t in r['result']['list']:
-                        side = 'Long' if t['side'] == 'Sell' else 'Short'
+                        side = 'Long' if t['side'] == 'Buy' else 'Short'
                         stats_service.save_trade({
                             'order_id': t['orderId'], 'symbol': t['symbol'], 'side': side,
                             'qty': float(t['qty']), 'entry_price': float(t['avgEntryPrice']),
@@ -146,9 +148,17 @@ class BybitTradingBot:
                     sl_price = price - dist if action == "Buy" else price + dist
                     logger.info(f"🛡️ Using Fixed % SL: {sl_price}")
 
+            # ✅ ВИПРАВЛЕНО: Додана валідація SL після round_val
             if sl_price > 0:
-                sl_price = self.round_val(sl_price, tick_size)
-                self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_price), positionIdx=0)
+                sl_price_rounded = self.round_val(sl_price, tick_size)
+                if sl_price_rounded > 0:
+                    try:
+                        self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_price_rounded), positionIdx=0)
+                        logger.info(f"✅ SL установлено на {sl_price_rounded}")
+                    except Exception as e:
+                        logger.error(f"❌ Помилка установки SL: {e}")
+                else:
+                    logger.warning(f"⚠️ SL ціна після округлення стала 0, пропускаємо")
 
             # === TAKE PROFIT LOGIC ===
             self._place_take_profits(norm, action, price, qty, data, tick_size, qty_step)

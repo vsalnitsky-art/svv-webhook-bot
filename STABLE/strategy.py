@@ -12,10 +12,10 @@ class StrategyEngine:
     def calculate_indicators(self, df):
         if df is None or len(df) < 50: return df
         try:
-            cloud_fast = self.get_param('cloudFastLen')
-            cloud_slow = self.get_param('cloudSlowLen')
-            rsi_len = self.get_param('rsiLength')
-            obv_len = self.get_param('obvEntryLen')
+            cloud_fast = self.get_param('obt_cloudFastLen')
+            cloud_slow = self.get_param('obt_cloudSlowLen')
+            rsi_len = self.get_param('obt_rsiLength')
+            obv_len = self.get_param('obt_obvEntryLen')
             
             # HMA Cloud
             df['hma_fast'] = ta.hma(df['close'], length=cloud_fast)
@@ -36,9 +36,9 @@ class StrategyEngine:
         """Перевірка фільтрів старшого таймфрейму"""
         if htf_row is None or htf_row.empty: return {'bull': False, 'bear': False}
         
-        use_cloud = self.get_param('useCloudFilter')
-        use_rsi = self.get_param('useRsiFilter')
-        use_obv = self.get_param('useObvFilter')
+        use_cloud = self.get_param('obt_useCloudFilter')
+        use_rsi = self.get_param('obt_useRsiFilter')
+        use_obv = self.get_param('obt_useObvFilter')
         
         try:
             # Cloud Logic
@@ -46,8 +46,8 @@ class StrategyEngine:
             cloud_bear = (htf_row['hma_fast'] < htf_row['hma_slow']) if use_cloud else True
             
             # RSI Logic
-            rsi_bull = (htf_row['rsi'] <= self.get_param('entryRsiOversold')) if use_rsi else True
-            rsi_bear = (htf_row['rsi'] >= self.get_param('entryRsiOverbought')) if use_rsi else True
+            rsi_bull = (htf_row['rsi'] <= self.get_param('obt_entryRsiOversold')) if use_rsi else True
+            rsi_bear = (htf_row['rsi'] >= self.get_param('obt_entryRsiOverbought')) if use_rsi else True
             
             # OBV Logic
             obv_bull = (htf_row['obv'] > htf_row['obv_ma']) if use_obv else True
@@ -64,7 +64,7 @@ class StrategyEngine:
         """Знаходження невикористаних Order Blocks"""
         if df is None or len(df) < 50: return [], []
         bull_obs, bear_obs = [], []
-        swing_len = self.get_param('swingLength')
+        swing_len = self.get_param('obt_swingLength')
         
         # Оптимізація: аналізуємо останні 300 свічок
         subset = df.tail(300).reset_index(drop=True)
@@ -129,7 +129,7 @@ class StrategyEngine:
         if 'hma_fast' not in df_htf.columns: return {'action': None}
         
         filters = self.check_htf_filters(df_htf.iloc[-1])
-        use_retest = self.get_param('useOBRetest')
+        use_retest = self.get_param('obt_useOBRetest')
         sl_mode = self.get_param('sl_mode')
         buffer_pct = self.get_param('obBufferPercent')
         
