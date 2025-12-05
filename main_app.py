@@ -24,6 +24,7 @@ from scanner import EnhancedMarketScanner
 from settings_manager import settings
 from models import db_manager, OrderBlock, PaperTrade, SmartMoneyTicker
 from market_analyzer import market_analyzer
+from config import get_api_credentials
 from utils import get_logger, validate_webhook_data, metrics, setup_logging
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
