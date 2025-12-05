@@ -18,23 +18,32 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, R
 from flask_wtf.csrf import CSRFProtect
 from sqlalchemy import desc
 
-from app_config import config, setup_logging
 from bot import bot_instance
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from settings_manager import settings
 from models import db_manager, OrderBlock, PaperTrade, SmartMoneyTicker
 from market_analyzer import market_analyzer
-from utils import get_logger, validate_webhook_data, metrics
+from utils import get_logger, validate_webhook_data, metrics, setup_logging
 
-# === ІНІЦІАЛІЗАЦІЯ ===
-setup_logging(config.LOG_LEVEL, config.LOG_FORMAT)
+# === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
+setup_logging()
 logger = get_logger()
 
 app = Flask(__name__)
 
 # 🔐 SECRET KEY ЗІ ЗМІННИХ (КРИТИЧНЕ!)
-app.config['SECRET_KEY'] = config.FLASK_SECRET_KEY
+secret_key = os.environ.get('FLASK_SECRET_KEY')
+if not secret_key:
+    if os.environ.get('RENDER'):
+        raise ValueError("❌ FLASK_SECRET_KEY not set! This is REQUIRED for security on Render.")
+    else:
+        # Локальна розробка - генеруємо
+        import secrets
+        secret_key = secrets.token_hex(16)
+        print(f"⚠️ FLASK_SECRET_KEY not found, using random for development: {secret_key}")
+
+app.config['SECRET_KEY'] = secret_key
 app.config['WTF_CSRF_TIME_LIMIT'] = None  # Без часових обмежень для CSRF токена
 app.config['WTF_CSRF_CHECK_DEFAULT'] = True
 
@@ -46,11 +55,11 @@ try:
 except:
     pass
 
-logger.info("app_initialized", env=config.ENV, debug=config.DEBUG)
+logger.info("app_initialized", env=os.environ.get('FLASK_ENV', 'development'))
 
 # === ІНІЦІАЛІЗАЦІЯ СКАНЕРА ===
 try:
-    scanner = EnhancedMarketScanner(bot_instance, config.get_scanner_config())
+    scanner = EnhancedMarketScanner(bot_instance, {})
     scanner.start()
     logger.info("scanner_started")
 except Exception as e:
@@ -87,14 +96,15 @@ def keep_alive():
     time.sleep(5)
     base_url = os.environ.get('RENDER_EXTERNAL_URL')
     if not base_url:
-        base_url = f'http://127.0.0.1:{config.PORT}'
+        port = os.environ.get('PORT', 10000)
+        base_url = f'http://127.0.0.1:{port}'
     
     target = f"{base_url}/health"
     logger.info("keep_alive_started", target=target)
     
     while True:
         try:
-            requests.get(target, timeout=config.API_TIMEOUT)
+            requests.get(target, timeout=10)
         except Exception as e:
             logger.warning("keep_alive_failed", error=str(e))
         time.sleep(300)
@@ -102,7 +112,8 @@ def keep_alive():
 def sync_trades_periodic():
     """📊 Синхронізує торги кожні 30 хвилин"""
     time.sleep(5)
-    logger.info("sync_trades_started", interval_sec=config.TRADES_SYNC_INTERVAL)
+    sync_interval = int(os.environ.get('TRADES_SYNC_INTERVAL', 1800))
+    logger.info("sync_trades_started", interval_sec=sync_interval)
     
     while True:
         try:
@@ -111,7 +122,7 @@ def sync_trades_periodic():
         except Exception as e:
             logger.error("periodic_sync_error", error=str(e), exc_info=True)
         
-        time.sleep(config.TRADES_SYNC_INTERVAL)
+        time.sleep(sync_interval)
 
 # Запускаємо потоки
 threading.Thread(target=monitor_active, daemon=True).start()
@@ -445,5 +456,10 @@ def import_settings():
 # ===== ЗАПУСК =====
 
 if __name__ == '__main__':
-    logger.info("starting_flask", host=config.HOST, port=config.PORT, debug=config.DEBUG)
-    app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
+    host = os.environ.get('HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 10000))
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
+    
+    logger.info("starting_flask", host=host, port=port, debug=debug)
+    app.run(host=host, port=port, debug=debug)
+

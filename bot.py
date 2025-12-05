@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from decimal import Decimal
 from pybit.unified_trading import HTTP
-from app_config import config
+from config import get_api_credentials
 from settings_manager import settings
 from statistics_service import stats_service
 from utils import (
@@ -18,13 +18,13 @@ class BybitTradingBot:
     def __init__(self):
         """Ініціалізація бота з API сесією"""
         try:
-            k, s = config.get_api_credentials()
+            api_key, api_secret = get_api_credentials()
             self.session = HTTP(
-                testnet=config.BYBIT_TESTNET,
-                api_key=k,
-                api_secret=s
+                testnet=False,
+                api_key=api_key,
+                api_secret=api_secret
             )
-            logger.info("bot_initialized", testnet=config.BYBIT_TESTNET)
+            logger.info("bot_initialized", testnet=False)
         except Exception as e:
             logger.error("bot_init_failed", error=str(e))
             raise
