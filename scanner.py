@@ -4,7 +4,6 @@ import threading
 import time
 import logging
 import pandas as pd
-import pandas_ta as ta
 from settings_manager import settings
 from bot import bot_instance
 
@@ -58,7 +57,7 @@ class EnhancedMarketScanner:
         active_syms = [p['symbol'] for p in active_pos]
         
         # Чистка кешу
-        for k in list(self.data.keys()):
+        # for k in list(self.data.keys()):
             if k not in active_syms: del self.data[k]
         
         if not active_pos: return
@@ -93,9 +92,9 @@ class EnhancedMarketScanner:
             
             if df is not None and len(df) > atr_len:
                 # 2. Calc Indicators
-                rsi_val = ta.rsi(df['close'], length=14).iloc[-1]
+                # rsi_val = ta.rsi(df['close'], length=14).iloc[-1]
                 # Розрахунок ATR
-                atr_val = ta.atr(df['high'], df['low'], df['close'], length=atr_len).iloc[-1]
+                # atr_val = ta.atr(df['high'], df['low'], df['close'], length=atr_len).iloc[-1]
                 
                 self.data[s]['rsi'] = round(rsi_val, 1)
 
@@ -168,7 +167,7 @@ class EnhancedMarketScanner:
             # Невеликий сліп між монетами
             time.sleep(0.2)
 
-    def get_coin_data(self, s): return self.data.get(s, {})
-    def get_current_rsi(self, s): return self.data.get(s, {}).get('rsi', 0)
+    # def get_coin_data(self, s): return self.data.get(s, {})
+    # def get_current_rsi(self, s): return self.data.get(s, {}).get('rsi', 0)
     def get_market_pressure(self, s): return 0
     def get_active_symbols(self): return self.get_active()

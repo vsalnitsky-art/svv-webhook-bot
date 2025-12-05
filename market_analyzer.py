@@ -3,7 +3,6 @@
 import threading
 import time
 import pandas as pd
-import pandas_ta as ta
 import logging
 from bot import bot_instance
 from settings_manager import settings
@@ -106,7 +105,7 @@ class MarketAnalyzer:
                         continue
 
                     # 3. Розрахунок RSI (локально)
-                    rsi_series = ta.rsi(df['close'], length=rsi_len)
+                    # rsi_series = ta.rsi(df['close'], length=rsi_len)
                     
                     if rsi_series is None or rsi_series.empty: continue
                     

@@ -13,7 +13,6 @@ requests
 pybit
 sqlalchemy
 pandas
-pandas_ta
 cryptography
 gunicorn
 """,
@@ -93,7 +92,7 @@ class DatabaseManager:
                 db_path = os.path.join(current_dir, db_filename)
             db_url = f'sqlite:///{db_path}'
         self.engine = create_engine(db_url, echo=False)
-        try: Base.metadata.create_all(self.engine)
+        # try: Base.metadata.create_all(self.engine)
         except: pass
         self.Session = sessionmaker(bind=self.engine)
     def get_session(self): return self.Session()
@@ -194,12 +193,12 @@ class StrategyEngine:
     def calculate_indicators(self, df):
         if df is None or len(df) < 50: return df
         try:
-            df['hma_fast'] = ta.hma(df['close'], length=self.get_param('cloudFastLen'))
-            df['hma_slow'] = ta.hma(df['close'], length=self.get_param('cloudSlowLen'))
-            df['rsi'] = ta.rsi(df['close'], length=self.get_param('rsiLength'))
-            df['obv'] = ta.obv(df['close'], df['volume'])
-            if 'obv' in df: df['obv_ma'] = ta.sma(df['obv'], length=self.get_param('obvEntryLen'))
-            df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+            # df['hma_fast'] = ta.hma(df['close'], length=self.get_param('cloudFastLen'))
+            # df['hma_slow'] = ta.hma(df['close'], length=self.get_param('cloudSlowLen'))
+            # df['rsi'] = ta.rsi(df['close'], length=self.get_param('rsiLength'))
+            # df['obv'] = ta.obv(df['close'], df['volume'])
+            # if 'obv' in df: df['obv_ma'] = ta.sma(df['obv'], length=self.get_param('obvEntryLen'))
+            # df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
         except: pass
         return df
     def check_htf_filters(self, htf_row):
@@ -289,10 +288,10 @@ class EnhancedMarketScanner:
             tf = settings.get("ltfSelection") or "15"
             r = self.bot.session.get_kline(category="linear", symbol=sym, interval=str(tf), limit=30)
             df = pd.DataFrame(r['result']['list'], columns=['t','o','h','l','c','v','to'])
-            return round(ta.rsi(df.iloc[::-1]['c'].astype(float), length=14).iloc[-1], 1)
+            # return round(ta.rsi(df.iloc[::-1]['c'].astype(float), length=14).iloc[-1], 1)
         except: return 50
-    def get_current_rsi(self, s): return self.data.get(s, {}).get('rsi', 50)
-    def get_market_pressure(self, s): return self.data.get(s, {}).get('pressure', 0)
+    # def get_current_rsi(self, s): return self.data.get(s, {}).get('rsi', 50)
+    # def get_market_pressure(self, s): return self.data.get(s, {}).get('pressure', 0)
 """,
 
     "market_analyzer.py": """import threading, time, pandas as pd, logging
@@ -398,9 +397,9 @@ class BybitTradingBot:
         except: pass
     def place_order(self, data):
         try:
-            act, sym = data.get('action'), data.get('symbol'); norm = self.normalize(sym)
+            # act, sym = data.get('action'), data.get('symbol'); norm = self.normalize(sym)
             if act == "Close":
-                d = data.get('direction')
+                # d = data.get('direction')
                 pos = self.session.get_positions(category="linear", symbol=norm)['result']['list']
                 p = next((x for x in pos if float(x['size'])>0), None)
                 if not p: return {"status": "ignored"}
@@ -414,7 +413,7 @@ class BybitTradingBot:
             pos = self.session.get_positions(category="linear", symbol=norm)['result']['list']
             if any(float(p['size'])>0 for p in pos): return {"status": "ignored"}
             
-            risk = float(data.get('riskPercent', settings.get('riskPercent'))); lev = int(data.get('leverage', settings.get('leverage')))
+            # risk = float(data.get('riskPercent', settings.get('riskPercent'))); lev = int(data.get('leverage', settings.get('leverage')))
             price = self.get_price(norm); lot, tick = self.get_instr(norm)
             qty = self.round_val((self.get_bal() * (risk/100) * 0.98 * lev) / price, float(lot['qtyStep']))
             if qty < float(lot['minOrderQty']): qty = float(lot['minOrderQty'])
@@ -422,7 +421,7 @@ class BybitTradingBot:
             self.set_lev(norm, lev)
             self.session.place_order(category="linear", symbol=norm, side=act, orderType="Market", qty=str(qty))
             
-            sl = float(data.get('stopLossPercent', settings.get('fixedSL')))
+            # sl = float(data.get('stopLossPercent', settings.get('fixedSL')))
             if sl > 0:
                 slp = self.round_val(price * (1 - sl/100) if act == "Buy" else price * (1 + sl/100), float(tick['tickSize']))
                 self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(slp), positionIdx=0)

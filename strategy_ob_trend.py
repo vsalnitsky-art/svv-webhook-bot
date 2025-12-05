@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import pandas_ta as ta
 import pandas as pd
 import numpy as np
 from settings_manager import settings
@@ -18,13 +17,13 @@ class OBTrendStrategy:
         try:
             fast_len = int(self._get_param('obt_cloudFastLen', 10))
             slow_len = int(self._get_param('obt_cloudSlowLen', 40))
-            df['hma_fast'] = ta.hma(df['close'], length=fast_len)
-            df['hma_slow'] = ta.hma(df['close'], length=slow_len)
-            df['rsi'] = ta.rsi(df['close'], length=int(self._get_param('obt_rsiLength', 14)))
-            df['obv'] = ta.obv(df['close'], df['volume'])
+            # df['hma_fast'] = ta.hma(df['close'], length=fast_len)
+            # df['hma_slow'] = ta.hma(df['close'], length=slow_len)
+            # df['rsi'] = ta.rsi(df['close'], length=int(self._get_param('obt_rsiLength', 14)))
+            # df['obv'] = ta.obv(df['close'], df['volume'])
             if 'obv' in df:
-                df['obv_ma'] = ta.sma(df['obv'], length=int(self._get_param('obt_obvEntryLen', 20)))
-                df['obv_exit_ma'] = ta.ema(df['obv'], length=int(self._get_param('exit_obvLength', 10)))
+                # df['obv_ma'] = ta.sma(df['obv'], length=int(self._get_param('obt_obvEntryLen', 20)))
+                # df['obv_exit_ma'] = ta.ema(df['obv'], length=int(self._get_param('exit_obvLength', 10)))
         except: pass
         return df
 
