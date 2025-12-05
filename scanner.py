@@ -6,6 +6,7 @@ import logging
 import pandas as pd
 from settings_manager import settings
 from bot import bot_instance
+from indicators import simple_rsi, simple_atr
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +92,9 @@ class EnhancedMarketScanner:
             df = self.fetch_candles(s, tf, limit=atr_len + 50)
             
             if df is not None and len(df) > atr_len:
-                # 2. Calc Indicators
-                # rsi_val = ta.rsi(df['close'], length=14).iloc[-1]
-                # Розрахунок ATR
-                # atr_val = ta.atr(df['high'], df['low'], df['close'], length=atr_len).iloc[-1]
+                # 2. Calc Indicators (без pandas_ta - fallback)
+                rsi_val = simple_rsi(df['close'], period=14)
+                atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
                 
                 self.data[s]['rsi'] = round(rsi_val, 1)
 

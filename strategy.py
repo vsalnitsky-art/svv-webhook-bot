@@ -17,15 +17,15 @@ class StrategyEngine:
             obv_len = self.get_param('obt_obvEntryLen')
             
             # HMA Cloud
-            # df['hma_fast'] = ta.hma(df['close'], length=cloud_fast)
-            # df['hma_slow'] = ta.hma(df['close'], length=cloud_slow)
+            # df['hma_fast'] = # ta.hma(df['close'], length=cloud_fast)
+            # df['hma_slow'] = # ta.hma(df['close'], length=cloud_slow)
             
             # RSI
-            # df['rsi'] = ta.rsi(df['close'], length=rsi_len)
+            # df['rsi'] = # ta.rsi(df['close'], length=rsi_len)
             
             # OBV
-            # df['obv'] = ta.obv(df['close'], df['volume'])
-            # if 'obv' in df: df['obv_ma'] = ta.sma(df['obv'], length=obv_len)
+            # df['obv'] = # ta.obv(df['close'], df['volume'])
+            # if 'obv' in df: df['obv_ma'] = # ta.sma(df['obv'], length=obv_len)
             
         except Exception as e:
             logger.error(f"Indicator calculation error: {e}")
