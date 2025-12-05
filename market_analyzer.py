@@ -16,16 +16,12 @@ class MarketAnalyzer:
         self.progress = 0
         self.status_message = "Ready" 
         
-        # === ВАЖЛИВО: ФОНОВИЙ МОНІТОР ТИМЧАСОВО ВИМКНЕНО ===
-        # Це зупинить переповнення пулу з'єднань з базою даних.
+        # === 1. ФОНОВИЙ МОНІТОР ВИМКНЕНО (Smart Money не працює у фоні) ===
+        # Щоб увімкнути в майбутньому - розкоментуйте рядок нижче:
         # threading.Thread(target=self._monitor_smart_money, daemon=True).start()
-        logger.info("⚠️ Smart Money Simulator is DISABLED to prevent DB crashes.")
+        logger.info("⚠️ Smart Money Simulator is DISABLED.")
 
     def get_top_tickers(self, limit=100):
-        """
-        Отримує список тікерів з урахуванням фільтру об'єму (Min Vol).
-        Захищено від помилок конвертації даних.
-        """
         try:
             q = settings.get("scanner_quote_coin")
             use_vol_filter = settings.get("scan_use_min_volume")
@@ -91,14 +87,13 @@ class MarketAnalyzer:
     def run_scan_thread(self):
         if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
 
-    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР) ===
+    # === MANUAL SCANNER ===
     def _scan_process(self):
         self.is_scanning = True
         self.progress = 0
         self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
-            # Примусове оновлення таблиці для нової колонки volume
             db_manager.recreate_analysis_table()
             
             limit = settings.get("scan_limit")
@@ -138,7 +133,6 @@ class MarketAnalyzer:
                         print(f"👉 {sym}: Found {len(sigs)} signals.")
 
                     for sg in sigs:
-                        # Примусова конвертація у float() для PostgreSQL
                         res = AnalysisResult(
                             symbol=sym, 
                             signal_type=sg['action'], 
@@ -152,13 +146,13 @@ class MarketAnalyzer:
                         )
                         session.add(res)
                         
-                        # Додаємо в Watchlist (Ліміт 20)
-                        if not session.query(SmartMoneyTicker).filter_by(symbol=sym).first():
-                            count = session.query(SmartMoneyTicker).count()
-                            if count >= 20:
-                                oldest = session.query(SmartMoneyTicker).order_by(SmartMoneyTicker.added_at.asc()).first()
-                                if oldest: session.delete(oldest)
-                            session.add(SmartMoneyTicker(symbol=sym))
+                        # === 2. ЗВ'ЯЗОК ВІДКЛЮЧЕНО: НЕ ДОДАЄМО У WATCHLIST ===
+                        # if not session.query(SmartMoneyTicker).filter_by(symbol=sym).first():
+                        #     count = session.query(SmartMoneyTicker).count()
+                        #     if count >= 20:
+                        #         oldest = session.query(SmartMoneyTicker).order_by(SmartMoneyTicker.added_at.asc()).first()
+                        #         if oldest: session.delete(oldest)
+                        #     session.add(SmartMoneyTicker(symbol=sym))
                         
                         session.commit()
                 except Exception as e:
@@ -177,7 +171,7 @@ class MarketAnalyzer:
             self.is_scanning = False
             session.close()
 
-    # === BACKGROUND SIMULATOR (ЗАЛИШЕНО, АЛЕ НЕ ВИКЛИКАЄТЬСЯ) ===
+    # === BACKGROUND SIMULATOR (ПОВНИЙ КОД, АЛЕ НЕ ЗАПУСКАЄТЬСЯ) ===
     def _monitor_smart_money(self):
         logger.info("🧠 Smart Money Simulator Started")
         while True:
@@ -235,6 +229,7 @@ class MarketAnalyzer:
                 session.commit()
 
                 # --- PHASE 2: SEEKING NEW ENTRIES ---
+                # Цей блок не буде працювати, якщо запущено ручний сканер, щоб не перевантажувати API
                 if not self.is_scanning:
                     watchlist = session.query(SmartMoneyTicker).all()
                     
@@ -294,17 +289,23 @@ class MarketAnalyzer:
                                     tp_mode = settings.get("sm_tp_mode", "None")
                                     tp_val = float(settings.get("sm_tp_value", 3.0))
                                     tp_price = None
-                                    dist_to_sl = abs(entry_price - trade_signal['sl'])
+                                    # Safe float conversion for numpy types
+                                    entry_price = float(entry_price)
+                                    sl_price = float(trade_signal['sl'])
+                                    
+                                    dist_to_sl = abs(entry_price - sl_price)
                                     
                                     if tp_mode == "Fixed":
                                         tp_price = entry_price * (1 + tp_val/100) if trade_signal['dir'] == 'Long' else entry_price * (1 - tp_val/100)
                                     elif tp_mode == "RR":
                                         tp_price = entry_price + (dist_to_sl * tp_val) if trade_signal['dir'] == 'Long' else entry_price - (dist_to_sl * tp_val)
+                                    
+                                    if tp_price is not None: tp_price = float(tp_price)
 
                                     new_trade = PaperTrade(
                                         symbol=sym, direction=trade_signal['dir'], entry_mode=entry_mode, 
                                         status='PENDING' if entry_mode == 'Limit' else 'OPEN', 
-                                        entry_price=entry_price, sl_price=trade_signal['sl'], tp_price=tp_price, details=f"Found on {ltf}m"
+                                        entry_price=entry_price, sl_price=sl_price, tp_price=tp_price, details=f"Found on {ltf}m"
                                     )
                                     session.add(new_trade)
                                     
@@ -345,5 +346,5 @@ class MarketAnalyzer:
             ]
         finally: 
             s.close()
-            
+
 market_analyzer = MarketAnalyzer()
