@@ -7,8 +7,6 @@ import pandas as pd
 import pandas_ta as ta
 from settings_manager import settings
 from bot import bot_instance
-# Імпорт стратегії для перевірки виходу
-from strategy_ob_trend import ob_trend_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -16,142 +14,161 @@ class EnhancedMarketScanner:
     def __init__(self, bot_instance, config):
         self.bot = bot_instance
         self.config = config
-        self.running = True
-        
-        # Кеш даних для активних монет (включаючи статус виходу)
-        self.active_coins_data = {} 
-        self.scan_interval = 10 # Трохи рідше, бо вантажимо HTF
+        self.data = {}
 
     def start(self):
+        """Запускає фоновий потік моніторингу. Цей метод викликається з main_app.py"""
         threading.Thread(target=self.loop, daemon=True).start()
-        logger.info(f"🚀 Active Position Monitor & Smart Exit Started")
-    
-    def loop(self):
-        while self.running:
-            try:
-                self.monitor_positions()
-            except Exception as e:
-                logger.error(f"Monitor loop error: {e}")
-            time.sleep(self.scan_interval)
-    
-    def get_active_symbols(self):
-        """✅ ВИПРАВЛЕНО: Повертає ПОЗИЦІЇ (об'єкти), а не тільки символи"""
-        positions = []
-        try:
-            resp = self.bot.session.get_positions(category="linear", settleCoin="USDT")
-            if resp['retCode'] == 0:
-                for p in resp['result']['list']:
-                    if float(p['size']) > 0:
-                        positions.append(p)
-        except Exception as e:
-            logger.error(f"Active symbols error: {e}")
-        return positions
-    
-    def get_active_symbols_list(self):
-        """✅ ВИПРАВЛЕНО: Повертає ТІЛЬКИ СИМВОЛИ як список"""
-        return [p['symbol'] for p in self.get_active_symbols()]
+        logger.info("✅ Enhanced Market Scanner & Trailing Started")
 
-    def fetch_htf_candles(self, symbol):
-        """Завантажує свічки Глобального ТФ для аналізу виходу"""
+    def loop(self):
+        while True:
+            try:
+                self.monitor()
+            except Exception as e:
+                pass
+            time.sleep(5) # Перевіряємо кожні 5 сек для швидкого трейлінгу
+
+    def get_active(self):
         try:
-            htf = settings.get("htfSelection")
-            # Мапінг для Bybit
-            tf_map = {'60': '60', '240': '240', 'D': 'D'}
-            req_tf = tf_map.get(str(htf), '240')
-            
-            resp = self.bot.session.get_kline(
-                category="linear", symbol=symbol, interval=req_tf, limit=50 
-            )
-            
-            if resp['retCode'] == 0 and resp['result']['list']:
-                data = resp['result']['list']
-                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-                df['time'] = pd.to_datetime(pd.to_numeric(df['time']), unit='ms')
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    df[col] = df[col].astype(float)
-                return df.sort_values('time').reset_index(drop=True)
+            r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
+            if r['retCode'] == 0:
+                return [p for p in r['result']['list'] if float(p['size']) > 0]
+        except: pass
+        return []
+
+    def fetch_candles(self, symbol, timeframe, limit=50):
+        try:
+            # Мапинг TF
+            tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','240':'240','D':'D'}
+            req_tf = tf_map.get(str(timeframe), '240')
+            r = self.bot.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=limit)
+            if r['retCode'] == 0:
+                df = pd.DataFrame(r['result']['list'], columns=['time','open','high','low','close','vol','to'])
+                df['close'] = df['close'].astype(float)
+                df['high'] = df['high'].astype(float)
+                df['low'] = df['low'].astype(float)
+                # Перевертаємо: старі -> нові
+                return df.iloc[::-1].reset_index(drop=True)
         except: pass
         return None
 
-    def monitor_positions(self):
-        active_positions = self.get_active_symbols()
-        target_symbols = self.get_active_symbols_list()  # ✅ ВИПРАВЛЕНО: Використовуємо новий метод
+    def monitor(self):
+        active_pos = self.get_active()
+        active_syms = [p['symbol'] for p in active_pos]
         
         # Чистка кешу
-        current_keys = list(self.active_coins_data.keys())
-        for k in current_keys:
-            if k not in target_symbols:
-                del self.active_coins_data[k]
+        for k in list(self.data.keys()):
+            if k not in active_syms: del self.data[k]
+        
+        if not active_pos: return
 
-        if not active_positions: return
+        # Глобальні параметри
+        tf = settings.get("htfSelection", "240")
+        trailing_on = settings.get("trailing_enabled", False)
+        trailing_trigger_rsi = float(settings.get("trailing_rsi_activation", 65))
+        atr_len = int(settings.get("trailing_atr_length", 14))
+        atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))
 
-        # Чи увімкнена стратегія виходу?
-        smart_exit_enabled = settings.get("exit_enableStrategy", False)
+        for p in active_pos:
+            s = p['symbol']
+            side = p['side'] # Buy / Sell
+            current_price = float(p['avgPrice']) # Або lastPrice, але для SL краще дивитись на current market price
+            
+            # Отримуємо поточну ціну (Last Price)
+            last_price = 0.0
+            try:
+                last_price = float(self.bot.get_price(s))
+            except: 
+                last_price = current_price
 
-        for pos in active_positions:
-            symbol = pos['symbol']
-            side = pos['side'] # Buy / Sell
+            # Отримуємо поточний Stop Loss (якщо є)
+            current_sl = float(p.get('stopLoss', 0.0))
+
+            if s not in self.data: 
+                self.data[s] = {'rsi': 0, 'exit_status': 'Safe', 'exit_details': '-', 'trailing_active': False}
+
+            # 1. Fetch Data
+            df = self.fetch_candles(s, tf, limit=atr_len + 50)
             
-            if symbol not in self.active_coins_data:
-                self.active_coins_data[symbol] = {
-                    'rsi': 0, 'pressure': 0, 'exit_status': 'Safe', 'exit_details': '-'
-                }
-            
-            # 1. Завантаження даних HTF (якщо стратегія активна або для відображення RSI)
-            df_htf = self.fetch_htf_candles(symbol)
-            
-            # --- РОЗУМНИЙ ВИХІД ---
-            exit_info = {'close': False, 'reason': '', 'details': {}}
-            
-            if df_htf is not None:
-                # Викликаємо стратегію
-                exit_info = ob_trend_strategy.check_exit_signal(df_htf, side)
+            if df is not None and len(df) > atr_len:
+                # 2. Calc Indicators
+                rsi_val = ta.rsi(df['close'], length=14).iloc[-1]
+                # Розрахунок ATR
+                atr_val = ta.atr(df['high'], df['low'], df['close'], length=atr_len).iloc[-1]
                 
-                # Оновлюємо дані для UI
-                self.active_coins_data[symbol]['rsi'] = exit_info['details'].get('rsi', 0)
+                self.data[s]['rsi'] = round(rsi_val, 1)
+
+                status = "Safe"
+                details = f"RSI: {round(rsi_val, 1)}"
                 
-                # Формуємо статус
-                if exit_info['close']:
-                    self.active_coins_data[symbol]['exit_status'] = 'EXIT NOW'
-                    self.active_coins_data[symbol]['exit_details'] = exit_info['reason']
+                # --- ЛОГІКА ATR TRAILING ---
+                if trailing_on:
+                    is_active = self.data[s].get('trailing_active', False)
                     
-                    # === ВИКОНАННЯ ЗАКРИТТЯ ===
-                    if smart_exit_enabled:
-                        logger.info(f"🚨 SMART EXIT TRIGGERED: {symbol} ({side}) -> {exit_info['reason']}")
-                        self.bot.place_order({
-                            "action": "Close",
-                            "symbol": symbol,
-                            "direction": "Long" if side == "Buy" else "Short"
-                        })
-                else:
-                    # Статуси попередження
-                    rsi_val = exit_info['details'].get('rsi', 50)
-                    limit_long = float(settings.get('exit_rsiOverbought', 70))
-                    limit_short = float(settings.get('exit_rsiOversold', 30))
-                    
-                    status = "Safe"
-                    if side == "Buy" and rsi_val >= (limit_long - 5): status = "Warning"
-                    if side == "Sell" and rsi_val <= (limit_short + 5): status = "Warning"
-                    
-                    self.active_coins_data[symbol]['exit_status'] = status
-                    self.active_coins_data[symbol]['exit_details'] = f"RSI: {rsi_val}"
+                    # A. Перевірка Активації ("Пастка")
+                    if not is_active:
+                        if side == "Buy" and rsi_val >= trailing_trigger_rsi:
+                            self.data[s]['trailing_active'] = True
+                            is_active = True
+                            logger.info(f"🪤 ATR Trailing ACTIVATED for {s} (Long). RSI: {rsi_val}")
+                        elif side == "Sell" and rsi_val <= (100 - trailing_trigger_rsi):
+                            self.data[s]['trailing_active'] = True
+                            is_active = True
+                            logger.info(f"🪤 ATR Trailing ACTIVATED for {s} (Short). RSI: {rsi_val}")
 
-            time.sleep(0.5)
+                    # B. Розрахунок та Оновлення Стопу
+                    if is_active:
+                        status = "TRAILING 🚀"
+                        details = f"ATR: {round(atr_val, 4)}"
+                        
+                        new_sl = 0.0
+                        should_update = False
 
-    # === GETTERS FOR UI ===
-    def get_coin_data(self, symbol):
-        return self.active_coins_data.get(symbol, {})
+                        if side == "Buy":
+                            # Long: SL = Price - (ATR * Mult)
+                            calc_sl = last_price - (atr_val * atr_mult)
+                            # Рухаємо ТІЛЬКИ вгору
+                            if calc_sl > current_sl:
+                                new_sl = calc_sl
+                                should_update = True
+                                # Захист: SL не може бути вище ціни (але ATR формула це враховує)
 
-    def get_current_rsi(self, symbol):
-        return self.active_coins_data.get(symbol, {}).get('rsi', 0)
+                        elif side == "Sell":
+                            # Short: SL = Price + (ATR * Mult)
+                            calc_sl = last_price + (atr_val * atr_mult)
+                            # Рухаємо ТІЛЬКИ вниз (менше значення SL для шорта = ближче до ціни? Ні, SL шорта вище ціни.
+                            # Якщо current_sl == 0, то будь-який SL краще.
+                            # Якщо current_sl > 0, ми хочемо зменшити його (наблизити до ціни зверху).
+                            if current_sl == 0 or calc_sl < current_sl:
+                                new_sl = calc_sl
+                                should_update = True
 
-    def get_market_pressure(self, symbol):
-        # Pressure поки спрощено (можна відновити стару логіку, якщо треба),
-        # але тут фокус на Exit Strategy. Повернемо 0 або старе значення.
-        return self.active_coins_data.get(symbol, {}).get('pressure', 0)
-    
-    def get_exit_status(self, symbol):
-        return self.active_coins_data.get(symbol, {}).get('exit_status', 'N/A')
-    
-    def get_exit_details(self, symbol):
-        return self.active_coins_data.get(symbol, {}).get('exit_details', '-')
+                        if should_update and new_sl > 0:
+                            success = self.bot.update_sl(s, new_sl)
+                            if success:
+                                logger.info(f"⛓️ Trailing SL updated for {s}: {current_sl} -> {new_sl}")
+                                details += " | SL Upd ✅"
+
+                # --- Візуалізація для UI (Старий код) ---
+                lb = float(settings.get('obt_entryRsiOversold', 30))
+                ub = float(settings.get('obt_entryRsiOverbought', 70))
+                
+                if not self.data[s].get('trailing_active'):
+                    if side == "Buy" and rsi_val >= ub: 
+                        status = "Warning"
+                        details += " (High)"
+                    elif side == "Sell" and rsi_val <= lb: 
+                        status = "Warning"
+                        details += " (Low)"
+                
+                self.data[s]['exit_status'] = status
+                self.data[s]['exit_details'] = details
+            
+            # Невеликий сліп між монетами
+            time.sleep(0.2)
+
+    def get_coin_data(self, s): return self.data.get(s, {})
+    def get_current_rsi(self, s): return self.data.get(s, {}).get('rsi', 0)
+    def get_market_pressure(self, s): return 0
+    def get_active_symbols(self): return self.get_active()

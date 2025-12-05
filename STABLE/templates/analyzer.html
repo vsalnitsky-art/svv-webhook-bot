@@ -5,18 +5,15 @@
 {% block head %}
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <style>
-    .btn-toggle-custom {
-        border: 1px solid var(--border-subtle); background-color: #fff; color: var(--text-muted);
-        font-weight: 600; border-radius: 8px; padding: 10px; transition: all 0.2s ease;
-        cursor: pointer; display: flex; align-items: center; justify-content: space-between; width: 100%;
-    }
-    .btn-check:checked + .btn-toggle-custom {
-        background-color: #e0e7ff; color: var(--accent); border-color: var(--accent);
-        box-shadow: inset 0 0 0 1px var(--accent);
-    }
     .badge-buy { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
     .badge-sell { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-    .param-tag { font-size: 0.75em; opacity: 0.7; font-family: 'JetBrains Mono', monospace; margin-left: 5px; }
+    
+    /* Стрілочки для сортування */
+    th.sortable { cursor: pointer; user-select: none; position: relative; }
+    th.sortable:hover { background-color: #f1f5f9; }
+    th.sortable::after { content: '↕'; position: absolute; right: 8px; opacity: 0.3; font-size: 0.8em; }
+    th.asc::after { content: '↑'; opacity: 1; color: var(--accent); }
+    th.desc::after { content: '↓'; opacity: 1; color: var(--accent); }
 </style>
 {% endblock %}
 
@@ -27,23 +24,20 @@
         <div class="card-header bg-white py-3 border-bottom border-light d-flex justify-content-between align-items-center">
             <div class="d-flex align-items-center">
                 <i class="ri-radar-line fs-4 text-accent me-2"></i>
-                <h5 class="fw-bold mb-0 text-dark">Панель Сканування</h5>
+                <h5 class="fw-bold mb-0 text-dark">Автономний RSI Сканер</h5>
             </div>
             <div>
                 <a href="/settings" class="btn btn-outline-secondary btn-sm me-2">
-                    <i class="ri-settings-line me-1"></i> Налаштування
-                </a>
-                <a href="/smart_money" class="btn btn-outline-warning btn-sm fw-bold">
-                    <i class="ri-eye-2-line me-1"></i> Smart Money
+                    <i class="ri-settings-line me-1"></i> Глобальні Налаштування
                 </a>
             </div>
         </div>
         <div class="card-body bg-light bg-opacity-50">
             <form id="scan-form">
-                
-                <div class="row g-3 align-items-end mb-4">
-                    <div class="col-md-2">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Топ (К-сть)</label>
+                <div class="row g-3 align-items-end">
+                    
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Топ Монет (по об'єму)</label>
                         <div class="input-group">
                             <span class="input-group-text bg-white border-end-0">#</span>
                             <input type="number" class="form-control border-start-0 ps-0" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}" min="10" max="400">
@@ -54,26 +48,18 @@
                         <label class="form-label fw-bold small text-muted text-uppercase">Min Vol ($M)</label>
                         <div class="input-group">
                             <div class="input-group-text bg-white border-end-0">
-                                <input class="form-check-input mt-0" type="checkbox" name="scan_use_min_volume" {{ 'checked' if conf.get('scan_use_min_volume') }} aria-label="Toggle Volume Filter">
+                                <input class="form-check-input mt-0" type="checkbox" name="scan_use_min_volume" {{ 'checked' if conf.get('scan_use_min_volume') }}>
                             </div>
                             <input type="number" class="form-control border-start-0 border-end-0 ps-2" name="scan_min_volume" value="{{ conf.get('scan_min_volume', 10) }}">
                             <span class="input-group-text bg-white border-start-0">M</span>
                         </div>
                     </div>
                     
-                    <div class="col-md-4">
-                        <label class="form-label fw-bold small text-muted text-uppercase">Активні Таймфрейми</label>
-                        <div class="d-flex gap-2">
-                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
-                                <span class="text-muted me-2 small">HTF:</span> 
-                                {% set h = conf.get('htfSelection')|string %}
-                                {% if h == '60' %}1H{% elif h == '240' %}4H{% elif h == 'D' %}1D{% else %}{{ h }}m{% endif %}
-                            </span>
-                            <span class="badge bg-white text-dark border p-2 w-100 text-center font-mono d-flex align-items-center justify-content-center">
-                                <span class="text-muted me-2 small">LTF:</span> 
-                                {% set l = conf.get('ltfSelection')|string %}
-                                {% if l == '60' %}1H{% else %}{{ l }}m{% endif %}
-                            </span>
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Робочий Таймфрейм</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-white"><i class="ri-time-line"></i></span>
+                            <input type="text" class="form-control bg-white" value="{{ conf.get('htfSelection') }}m" disabled readonly>
                         </div>
                     </div>
 
@@ -84,35 +70,23 @@
                     </div>
                 </div>
 
-                <label class="form-label fw-bold small text-muted text-uppercase mb-2">Активні Фільтри</label>
-                <div class="row g-2">
-                    <div class="col-md-3">
-                        <input type="checkbox" class="btn-check" id="fCloud" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
-                        <label class="btn-toggle-custom shadow-sm" for="fCloud">
-                            <span>Cloud <span class="param-tag">({{ conf.get('obt_cloudFastLen') }}/{{ conf.get('obt_cloudSlowLen') }})</span></span> 
-                            <i class="ri-checkbox-circle-line"></i>
-                        </label>
-                    </div>
-                    <div class="col-md-3">
-                        <input type="checkbox" class="btn-check" id="fObv" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
-                        <label class="btn-toggle-custom shadow-sm" for="fObv">
-                            <span>OBV <span class="param-tag">({{ conf.get('obt_obvEntryLen') }})</span></span> 
-                            <i class="ri-bar-chart-line"></i>
-                        </label>
-                    </div>
-                    <div class="col-md-3">
-                        <input type="checkbox" class="btn-check" id="fRsi" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
-                        <label class="btn-toggle-custom shadow-sm" for="fRsi">
-                            <span>RSI <span class="param-tag">({{ conf.get('obt_rsiLength') }}) <{{ conf.get('obt_entryRsiOversold') }} >{{ conf.get('obt_entryRsiOverbought') }}</span></span> 
-                            <i class="ri-pulse-line"></i>
-                        </label>
-                    </div>
-                    <div class="col-md-3">
-                        <input type="checkbox" class="btn-check" id="fRetest" name="obt_useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
-                        <label class="btn-toggle-custom shadow-sm" for="fRetest">
-                            <span>Retest <span class="param-tag">(Sw {{ conf.get('obt_swingLength') }})</span></span> 
-                            <i class="ri-arrow-go-back-line"></i>
-                        </label>
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div class="d-flex align-items-center gap-3 p-2 bg-white border rounded shadow-sm">
+                            <span class="small fw-bold text-muted text-uppercase"><i class="ri-equalizer-line text-accent"></i> Параметри пошуку:</span>
+                            
+                            <span class="badge bg-light text-dark border font-mono">
+                                RSI Len: {{ conf.get('obt_rsiLength', 14) }}
+                            </span>
+                            
+                            <span class="badge badge-buy font-mono">
+                                Buy Signal < {{ conf.get('obt_entryRsiOversold', 30) }}
+                            </span>
+                            
+                            <span class="badge badge-sell font-mono">
+                                Sell Signal > {{ conf.get('obt_entryRsiOverbought', 70) }}
+                            </span>
+                        </div>
                     </div>
                 </div>
 
@@ -138,30 +112,36 @@
             <span class="badge bg-secondary rounded-pill">{{ results|length }} Знахідок</span>
         </div>
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
+            <table class="table table-hover align-middle mb-0" id="resultsTable">
                 <thead class="bg-light text-uppercase small text-muted">
                     <tr>
-                        <th class="py-3 ps-4 border-bottom">Монета</th>
-                        <th class="py-3 border-bottom">Ціна</th>
-                        <th class="py-3 border-bottom">Vol 24h</th>
-                        <th class="py-3 border-bottom">Сигнал</th>
-                        <th class="py-3 border-bottom">Score</th>
-                        <th class="py-3 border-bottom">Час</th>
+                        <th class="py-3 ps-4 border-bottom sortable" onclick="sortTable(0)">Монета</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(1)">Ціна</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(2)">Vol 24h</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(3)">Сигнал</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(4)">RSI ({{ conf.get('htfSelection') }}m)</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(5)">Score</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(6)">Час</th>
                         <th class="py-3 border-bottom">Деталі</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="resultsBody">
                 {% for r in results %}
                     <tr>
                         <td class="fw-bold text-dark ps-4">{{ r.symbol }}</td>
-                        <td class="font-mono">{{ r.price }}</td>
+                        <td class="font-mono" data-value="{{ r.price }}">{{ r.price }}</td>
                         
-                        <td class="font-mono text-muted small">
+                        <td class="font-mono text-muted small" data-value="{{ r.volume }}">
                             {{ (r.volume / 1000000)|round(1) }}M
                         </td>
 
                         <td><span class="badge {{ 'badge-buy' if r.signal=='Buy' else 'badge-sell' }}">{{ r.signal }}</span></td>
-                        <td>
+                        
+                        <td class="font-mono fw-bold {{ 'text-success' if r.rsi_htf < 30 else 'text-danger' if r.rsi_htf > 70 else '' }}" data-value="{{ r.rsi_htf }}">
+                            {{ r.rsi_htf }}
+                        </td>
+
+                        <td data-value="{{ r.score }}">
                             <div class="d-flex align-items-center">
                                 <span class="fw-bold me-2 font-mono">{{ r.score }}</span>
                                 <div class="progress flex-grow-1" style="height: 6px; width: 60px; border-radius: 3px;">
@@ -170,13 +150,14 @@
                             </div>
                         </td>
                         <td class="text-muted small font-mono">{{ r.time }}</td>
-                        <td class="small text-muted" title="{{ r.details }}">{{ r.details }}</td>
+                        <td class="small text-muted">{{ r.details }}</td>
                     </tr>
                 {% else %}
                     <tr>
-                        <td colspan="7" class="text-center py-5">
+                        <td colspan="8" class="text-center py-5">
                             <div class="text-muted mb-2 fs-1 opacity-25"><i class="ri-search-eye-line"></i></div>
-                            <h5 class="text-muted">Сигналів поки не знайдено</h5>
+                            <h5 class="text-muted">Сигналів не знайдено</h5>
+                            <small>Спробуйте змінити налаштування RSI або таймфрейм</small>
                         </td>
                     </tr>
                 {% endfor %}
@@ -187,26 +168,85 @@
 </div>
 
 <script>
+// --- AJAX SCAN ---
 function startScan() {
-    $('#btn-scan').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span> Збереження...');
+    $('#btn-scan').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span> Сканування...');
     $('#status-card').slideDown();
+    
     var formData = {};
     $('#scan-form').serializeArray().forEach(function(item) { formData[item.name] = item.value; });
+    // Checkboxes manual handle
     $('#scan-form input[type=checkbox]').each(function() { formData[this.name] = this.checked ? 'on' : 'off'; });
+
     $.post('/analyzer/scan', formData, function(data) { pollStatus(); })
-     .fail(function() { alert('Помилка.'); $('#btn-scan').prop('disabled', false).text('ЗАПУСТИТИ 🚀'); $('#status-card').hide(); });
+     .fail(function() { 
+         alert('Помилка.'); 
+         $('#btn-scan').prop('disabled', false).text('ЗАПУСТИТИ 🚀'); 
+         $('#status-card').hide(); 
+     });
 }
+
 function pollStatus() {
     let interval = setInterval(function() {
         $.get('/analyzer/status', function(data) {
             $('#progress-bar').css('width', data.progress + '%');
             $('#status-percent').text(data.progress + '%');
             $('#status-text').text(data.message);
-            if (data.is_scanning) { $('#btn-scan').prop('disabled', true).html('Сканування...'); }
-            else { clearInterval(interval); location.reload(); }
+            
+            if (!data.is_scanning) { 
+                clearInterval(interval); 
+                location.reload(); 
+            }
         });
     }, 1000);
 }
 {% if is_scanning %} pollStatus(); {% endif %}
+
+// --- JS SORTING ---
+function sortTable(n) {
+    var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+    table = document.getElementById("resultsTable");
+    switching = true;
+    dir = "asc"; 
+    
+    document.querySelectorAll("th.sortable").forEach(th => th.classList.remove("asc", "desc"));
+
+    while (switching) {
+        switching = false;
+        rows = table.rows;
+        for (i = 1; i < (rows.length - 1); i++) {
+            shouldSwitch = false;
+            x = rows[i].getElementsByTagName("TD")[n];
+            y = rows[i + 1].getElementsByTagName("TD")[n];
+            
+            // data-value має пріоритет для чисел
+            let xVal = x.getAttribute("data-value") || x.innerText.toLowerCase();
+            let yVal = y.getAttribute("data-value") || y.innerText.toLowerCase();
+            
+            let xNum = parseFloat(xVal);
+            let yNum = parseFloat(yVal);
+            let isNum = !isNaN(xNum) && !isNaN(yNum);
+
+            if (dir == "asc") {
+                if (isNum) { if (xNum > yNum) shouldSwitch = true; }
+                else { if (xVal > yVal) shouldSwitch = true; }
+            } else if (dir == "desc") {
+                if (isNum) { if (xNum < yNum) shouldSwitch = true; }
+                else { if (xVal < yVal) shouldSwitch = true; }
+            }
+        }
+        if (shouldSwitch) {
+            rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+            switching = true;
+            switchcount ++; 
+        } else {
+            if (switchcount == 0 && dir == "asc") {
+                dir = "desc";
+                switching = true;
+            }
+        }
+    }
+    table.getElementsByTagName("TH")[n].classList.add(dir);
+}
 </script>
 {% endblock %}

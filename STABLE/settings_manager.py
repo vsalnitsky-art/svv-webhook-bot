@@ -11,14 +11,14 @@ DEFAULT_SETTINGS = {
     "scanner_mode": "Manual",
     "scan_limit": 100,
     "scan_min_volume": 10,
-    "scan_use_min_volume": True, # <--- НОВИЙ ПАРАМЕТР (ON/OFF)
+    "scan_use_min_volume": True,
     
     # === TELEGRAM ===
     "telegram_enabled": False,
     "telegram_bot_token": "",
     "telegram_chat_id": "",
 
-    # === STRATEGY FILTERS ===
+    # === STRATEGY FILTERS (Для сумісності, якщо знадобиться) ===
     "obt_useCloudFilter": True,
     "obt_useObvFilter": True,
     "obt_useRsiFilter": True,
@@ -37,8 +37,13 @@ DEFAULT_SETTINGS = {
     "obt_obvEntryLen": 20,
     "obt_swingLength": 5,
 
-    # === SMART EXIT ===
-    "exit_enableStrategy": True,
+    # === SMART EXIT & TRAILING ===
+    "exit_enableStrategy": False, # Старий світч (можна залишити вимкненим)
+    "trailing_enabled": True,     # <--- НОВЕ: Головний тумблер трейлінгу
+    "trailing_rsi_activation": 65, # <--- НОВЕ: RSI, при якому вмикається трейлінг
+    "trailing_atr_length": 14,    # <--- НОВЕ: Період ATR
+    "trailing_atr_multiplier": 2.5, # <--- НОВЕ: Відступ у розмірах ATR (напр. 2.5 ATR)
+
     "exit_rsiOverbought": 70,
     "exit_rsiOversold": 30,
     "exit_obvLength": 10,
