@@ -129,7 +129,8 @@
                 {% for r in results %}
                     <tr>
                         <td class="fw-bold text-dark ps-4">{{ r.symbol }}</td>
-                        <td class="font-mono">{{ r.price }}</td>
+                        
+                        <td class="font-mono" data-value="{{ r.price }}">{{ r.price }}</td>
                         
                         <td class="font-mono text-muted small" data-value="{{ r.volume }}">
                             {{ (r.volume / 1000000)|round(1) }}M
@@ -137,7 +138,7 @@
 
                         <td><span class="badge {{ 'badge-buy' if r.signal=='Buy' else 'badge-sell' }}">{{ r.signal }}</span></td>
                         
-                        <td class="font-mono fw-bold {{ 'text-success' if r.rsi_htf < 30 else 'text-danger' if r.rsi_htf > 70 else '' }}">
+                        <td class="font-mono fw-bold {{ 'text-success' if r.rsi_htf < 30 else 'text-danger' if r.rsi_htf > 70 else '' }}" data-value="{{ r.rsi_htf }}">
                             {{ r.rsi_htf }}
                         </td>
 
@@ -219,8 +220,10 @@ function sortTable(n) {
             x = rows[i].getElementsByTagName("TD")[n];
             y = rows[i + 1].getElementsByTagName("TD")[n];
             
+            // data-value має пріоритет для чисел (price, rsi, score, volume)
             let xVal = x.getAttribute("data-value") || x.innerText.toLowerCase();
             let yVal = y.getAttribute("data-value") || y.innerText.toLowerCase();
+            
             let xNum = parseFloat(xVal);
             let yNum = parseFloat(yVal);
             let isNum = !isNaN(xNum) && !isNaN(yNum);
