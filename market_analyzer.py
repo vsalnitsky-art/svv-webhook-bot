@@ -151,7 +151,6 @@ class MarketAnalyzer:
                         session.commit()
                         
                 except Exception as e:
-                    # Ігноруємо помилки окремих монет
                     pass
                 
                 time.sleep(0.05) # Захист від Rate Limit

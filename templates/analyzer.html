@@ -129,7 +129,6 @@
                 {% for r in results %}
                     <tr>
                         <td class="fw-bold text-dark ps-4">{{ r.symbol }}</td>
-                        
                         <td class="font-mono" data-value="{{ r.price }}">{{ r.price }}</td>
                         
                         <td class="font-mono text-muted small" data-value="{{ r.volume }}">
@@ -220,7 +219,7 @@ function sortTable(n) {
             x = rows[i].getElementsByTagName("TD")[n];
             y = rows[i + 1].getElementsByTagName("TD")[n];
             
-            // data-value має пріоритет для чисел (price, rsi, score, volume)
+            // data-value має пріоритет для чисел
             let xVal = x.getAttribute("data-value") || x.innerText.toLowerCase();
             let yVal = y.getAttribute("data-value") || y.innerText.toLowerCase();
             

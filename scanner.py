@@ -15,9 +15,10 @@ class EnhancedMarketScanner:
         self.bot = bot_instance
         self.config = config
         self.data = {}
+        # Потік запускається через метод start(), який викликає main_app.py
 
     def start(self):
-        """Запускає фоновий потік моніторингу"""
+        """Запускає фоновий потік моніторингу. Цей метод викликається з main_app.py"""
         threading.Thread(target=self.loop, daemon=True).start()
         logger.info("✅ Enhanced Market Scanner Started")
 
@@ -54,13 +55,13 @@ class EnhancedMarketScanner:
         active_pos = self.get_active()
         active_syms = [p['symbol'] for p in active_pos]
         
-        # Чистка кешу
+        # Чистка кешу (видаляємо закриті угоди)
         for k in list(self.data.keys()):
             if k not in active_syms: del self.data[k]
         
         if not active_pos: return
 
-        # Використовуємо глобальний таймфрейм для моніторингу
+        # Використовуємо глобальний таймфрейм для моніторингу RSI
         tf = settings.get("htfSelection", "240")
 
         for p in active_pos:
@@ -77,7 +78,7 @@ class EnhancedMarketScanner:
                 rsi_val = ta.rsi(df['close'], length=14).iloc[-1]
                 self.data[s]['rsi'] = round(rsi_val, 1)
 
-                # Проста візуальна індикація (Без авто-закриття)
+                # Проста візуальна індикація (Без авто-закриття, тільки моніторинг)
                 status = "Safe"
                 details = f"RSI: {round(rsi_val, 1)}"
                 
