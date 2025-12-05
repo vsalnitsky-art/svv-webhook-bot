@@ -24,25 +24,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Імпорти
-from bot import BotBybit
-from scanner import init_scanner
-from settings_manager import SettingsManager
-from statistics_service import StatisticsService
-from smart_exit_profiles import configure_balanced
-
-# Ініціалізація
+# Ініціалізація Flask
 app = Flask(__name__)
+
+# Глобальні змінні
 bot_instance = None
 scanner_instance = None
 settings = None
 stats_service = None
 
-def initialize_bot():
-    """Ініціалізація бота"""
+
+def safe_initialize_bot():
+    """Безпечна ініціалізація бота (не падає якщо помилка)"""
     global bot_instance, scanner_instance, settings, stats_service
     
     try:
+        # Перевіримо API ключі
+        api_key = os.getenv('BYBIT_API_KEY')
+        api_secret = os.getenv('BYBIT_API_SECRET')
+        
+        if not api_key or not api_secret:
+            logger.warning("⚠️ BYBIT_API_KEY or BYBIT_API_SECRET not set")
+            logger.warning("⚠️ Bot will run in demo mode without real trading")
+            return False
+        
+        from settings_manager import SettingsManager
+        from statistics_service import StatisticsService
+        from bot import BotBybit
+        from scanner import init_scanner
+        from smart_exit_profiles import configure_balanced
+        
         # Інітимо SettingsManager
         settings = SettingsManager()
         logger.info("✅ Settings loaded")
@@ -66,7 +77,9 @@ def initialize_bot():
         return True
     
     except Exception as e:
-        logger.error(f"❌ Initialization error: {e}")
+        logger.error(f"❌ Bot initialization failed: {e}")
+        logger.warning("⚠️ Bot will run without real API connection")
+        logger.warning("⚠️ API endpoints will return demo data")
         return False
 
 
@@ -95,36 +108,30 @@ def scanner_loop():
         time.sleep(10)  # 10 сек
 
 
+# ════════════════════════════════════════════════════════════════════════════════
+# FLASK МАРШРУТИ
+# ════════════════════════════════════════════════════════════════════════════════
+
 @app.route('/')
 def home():
     """Головна сторінка"""
-    try:
-        if not bot_instance:
-            return "Bot not initialized", 500
-        
-        balance = bot_instance.get_bal()
-        positions = scanner_instance.get_active_symbols()
-        
-        return jsonify({
-            'status': 'ok',
-            'balance': balance,
-            'positions_count': len(positions),
-            'timestamp': datetime.now().isoformat()
-        })
-    except Exception as e:
-        logger.error(f"❌ Home error: {e}")
-        return jsonify({'error': str(e)}), 500
+    return jsonify({
+        'status': 'ok',
+        'message': 'Trading Bot API',
+        'version': '1.0.0',
+        'bot_connected': bot_instance is not None,
+        'timestamp': datetime.now().isoformat()
+    })
 
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Webhook для TradingView сигналів"""
     try:
-        data = json.loads(request.get_data(as_text=True))
-        
         if not bot_instance:
-            return jsonify({'error': 'Bot not initialized'}), 500
+            return jsonify({'error': 'Bot not connected'}), 503
         
+        data = json.loads(request.get_data(as_text=True))
         result = bot_instance.place_order(data)
         logger.info(f"Webhook processed: {result}")
         
@@ -139,7 +146,7 @@ def scanner_status():
     """Статус сканера"""
     try:
         if not scanner_instance:
-            return jsonify({'error': 'Scanner not initialized'}), 500
+            return jsonify({'status': 'not_initialized'}), 503
         
         positions = scanner_instance.get_active_symbols()
         return jsonify({
@@ -158,10 +165,13 @@ def get_settings():
     try:
         if request.method == 'GET':
             if not settings:
-                return jsonify({'error': 'Settings not loaded'}), 500
+                return jsonify({'error': 'Settings not loaded'}), 503
             return jsonify(settings.get_all())
         
         elif request.method == 'POST':
+            if not settings:
+                return jsonify({'error': 'Settings not loaded'}), 503
+            
             data = json.loads(request.get_data(as_text=True))
             settings.save_settings(data)
             logger.info(f"Settings updated: {data}")
@@ -177,7 +187,7 @@ def get_trades():
     """Отримати статистику угод"""
     try:
         if not stats_service:
-            return jsonify({'error': 'Stats not initialized'}), 500
+            return jsonify({'error': 'Stats not initialized'}), 503
         
         trades = stats_service.get_trades(limit=100)
         return jsonify({
@@ -194,42 +204,43 @@ def health():
     """Health check"""
     return jsonify({
         'status': 'ok',
-        'bot': 'initialized' if bot_instance else 'not initialized',
-        'scanner': 'initialized' if scanner_instance else 'not initialized',
+        'bot': 'connected' if bot_instance else 'not_connected',
+        'scanner': 'initialized' if scanner_instance else 'not_initialized',
         'timestamp': datetime.now().isoformat()
-    })
+    }), 200
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# ІНІЦІАЛІЗАЦІЯ BOTА (ВИКОНУЄТЬСЯ ЗАВЖДИ, НЕ ТІЛЬКИ В if __name__)
+# ІНІЦІАЛІЗАЦІЯ (ВИКОНУЄТЬСЯ ПРИ ЗАПУСКУ)
 # ════════════════════════════════════════════════════════════════════════════════
 
 logger.info("=" * 60)
 logger.info("🚀 STARTING BOT WITH SMART EXIT")
 logger.info("=" * 60)
 
-try:
-    # Ініціалізуємо бот
-    if not initialize_bot():
-        logger.error("❌ Failed to initialize bot")
-        # Але не експортуємо помилку, щоб gunicorn міг запуститись
-    else:
-        logger.info("✅ Bot initialized successfully")
-        
-        # Запускаємо фонові потоки
-        threading.Thread(target=sync_trades_periodic, daemon=True).start()
-        logger.info("✅ Sync thread started")
-        
-        threading.Thread(target=scanner_loop, daemon=True).start()
-        logger.info("✅ Scanner thread started")
-except Exception as e:
-    logger.error(f"❌ Initialization error: {e}")
+# Безпечна ініціалізація бота
+bot_ok = safe_initialize_bot()
+
+if bot_ok:
+    logger.info("✅ Bot initialized successfully")
+    
+    # Запускаємо фонові потоки
+    threading.Thread(target=sync_trades_periodic, daemon=True).start()
+    logger.info("✅ Sync thread started")
+    
+    threading.Thread(target=scanner_loop, daemon=True).start()
+    logger.info("✅ Scanner thread started")
+else:
+    logger.warning("⚠️ Running in DEMO MODE (no real API connection)")
+
+logger.info("✅ Flask app ready")
 
 
 # ════════════════════════════════════════════════════════════════════════════════
-# ЗАПУСК (для локального тестування)
+# ЛОКАЛЬНИЙ ЗАПУСК
 # ════════════════════════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
     logger.info("✅ Starting Flask server on port 10000")
     app.run(host='0.0.0.0', port=10000, debug=False)
+

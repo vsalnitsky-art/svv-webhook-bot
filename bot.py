@@ -14,19 +14,43 @@ logger = logging.getLogger(__name__)
 
 class BybitTradingBot:
     def __init__(self):
-        k, s = get_api_credentials()
-        self.session = HTTP(testnet=False, api_key=k, api_secret=s)
+        """Ініціалізація бота з перевіркою API ключів"""
+        try:
+            k, s = get_api_credentials()
+            
+            if not k or not s:
+                logger.warning("⚠️ API credentials not found - running in DEMO mode")
+                self.session = None
+                self.is_demo = True
+                return
+            
+            self.session = HTTP(testnet=False, api_key=k, api_secret=s)
+            self.is_demo = False
+            logger.info("✅ Connected to Bybit API")
+        except Exception as e:
+            logger.error(f"❌ Failed to connect to Bybit: {e}")
+            logger.warning("⚠️ Running in DEMO mode")
+            self.session = None
+            self.is_demo = True
 
     def normalize(self, s): return s.replace('.P', '')
 
     def get_bal(self):
+        """Отримати баланс"""
+        if self.is_demo or not self.session:
+            logger.warning("Demo mode: returning 0.0 balance")
+            return 0.0
+        
         try:
             b = self.session.get_wallet_balance(accountType="UNIFIED")
             for acc in b['result']['list']:
                 for c in acc['coin']:
-                    if c['coin'] == "USDT": return float(c['walletBalance'])
+                    if c['coin'] == "USDT": 
+                        return float(c['walletBalance'])
             return 0.0
-        except: return 0.0
+        except Exception as e:
+            logger.error(f"Error getting balance: {e}")
+            return 0.0
             
     def get_available_balance(self): return self.get_bal()
 
