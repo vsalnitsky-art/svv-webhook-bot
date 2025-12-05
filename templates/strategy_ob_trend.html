@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}OB Trend Settings{% endblock %}
+
+{% block content %}
+<div class="container mt-4" style="max-width:800px">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h4 class="fw-bold mb-0">📊 OB Trend Strategy</h4>
+        <a href="/settings" class="btn btn-outline-secondary btn-sm">← Main Settings</a>
+    </div>
+
+    <form method="POST">
+        <div class="card mb-4 shadow-sm border-0">
+            <div class="card-header bg-white text-primary fw-bold">
+                <i class="bi bi-funnel"></i> Фільтри Входу
+            </div>
+            <div class="card-body bg-light">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <div class="form-check form-switch bg-white p-3 rounded border shadow-sm h-100">
+                            <label class="form-check-label fw-bold mb-2 d-block">☁️ Cloud Filter</label>
+                            <input class="form-check-input" type="checkbox" name="obt_useCloudFilter" {{ 'checked' if conf.get('obt_useCloudFilter') }}>
+                            <small class="text-muted d-block mt-2" style="line-height:1.2">Use HMA Cloud for Trend Direction</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check form-switch bg-white p-3 rounded border shadow-sm h-100">
+                            <label class="form-check-label fw-bold mb-2 d-block">📊 OBV Filter</label>
+                            <input class="form-check-input" type="checkbox" name="obt_useObvFilter" {{ 'checked' if conf.get('obt_useObvFilter') }}>
+                            <small class="text-muted d-block mt-2" style="line-height:1.2">Volume Trend Confirmation</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check form-switch bg-white p-3 rounded border shadow-sm h-100">
+                            <label class="form-check-label fw-bold mb-2 d-block">📈 RSI Filter</label>
+                            <input class="form-check-input" type="checkbox" name="obt_useRsiFilter" {{ 'checked' if conf.get('obt_useRsiFilter') }}>
+                            <small class="text-muted d-block mt-2" style="line-height:1.2">Avoid extremes on HTF</small>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="form-check form-switch bg-white p-3 rounded border shadow-sm h-100 border-primary">
+                            <label class="form-check-label fw-bold mb-2 d-block text-primary">🎯 OB Retest</label>
+                            <input class="form-check-input" type="checkbox" name="obt_useOBRetest" {{ 'checked' if conf.get('obt_useOBRetest') }}>
+                            <small class="text-muted d-block mt-2" style="line-height:1.2">Enter only on Order Block retest</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-4 shadow-sm border-0">
+            <div class="card-header bg-white text-dark fw-bold">
+                <i class="bi bi-sliders"></i> Налаштування Індикаторів
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">HMA Fast</label>
+                        <input type="number" class="form-control" name="obt_cloudFastLen" value="{{ conf.get('obt_cloudFastLen', 10) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">HMA Slow</label>
+                        <input type="number" class="form-control" name="obt_cloudSlowLen" value="{{ conf.get('obt_cloudSlowLen', 40) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">RSI Length</label>
+                        <input type="number" class="form-control" name="obt_rsiLength" value="{{ conf.get('obt_rsiLength', 14) }}">
+                    </div>
+                    
+                    <div class="col-12"><hr class="text-muted opacity-25"></div>
+
+                    <div class="col-md-4">
+                        <label class="form-label small text-success fw-bold">Entry RSI Oversold (Long)</label>
+                        <input type="number" class="form-control" name="obt_entryRsiOversold" value="{{ conf.get('obt_entryRsiOversold', 45) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-danger fw-bold">Entry RSI Overbought (Short)</label>
+                        <input type="number" class="form-control" name="obt_entryRsiOverbought" value="{{ conf.get('obt_entryRsiOverbought', 55) }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small text-muted fw-bold">OB Swing Length</label>
+                        <input type="number" class="form-control" name="obt_swingLength" value="{{ conf.get('obt_swingLength', 5) }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mb-5 shadow-sm border-0">
+            <div class="card-header bg-white text-danger fw-bold">
+                <i class="bi bi-door-open"></i> Smart Exit
+            </div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" name="exit_enableStrategy" {{ 'checked' if conf.get('exit_enableStrategy') }}>
+                    <label class="form-check-label fw-bold">Активувати авто-вихід</label>
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label">Exit Long if RSI >=</label>
+                        <input type="number" class="form-control" name="exit_rsiOverbought" value="{{ conf.get('exit_rsiOverbought', 70) }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Exit Short if RSI <=</label>
+                        <input type="number" class="form-control" name="exit_rsiOversold" value="{{ conf.get('exit_rsiOversold', 30) }}">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-grid gap-2 mb-5">
+            <button type="submit" class="btn btn-primary btn-lg shadow fw-bold">💾 Save Strategy Settings</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

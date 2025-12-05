@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Smart Money Simulator{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 h-100">
+                <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+                    <span>👀 Watchlist</span>
+                    <span class="badge bg-secondary">{{ watchlist|length }}</span>
+                </div>
+                <div class="card-body p-0">
+                    <ul class="list-group list-group-flush">
+                        {% for item in watchlist %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span class="fw-bold">{{ item.symbol }}</span>
+                            <button class="btn btn-sm btn-outline-danger border-0" onclick="removeFromWatchlist('{{ item.symbol }}')">×</button>
+                        </li>
+                        {% else %}
+                        <li class="list-group-item text-muted text-center py-4">
+                            Список порожній.<br>Запустіть сканер.
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-8">
+            <div class="card shadow-sm border-0 mb-4">
+                <div class="card-header bg-white fw-bold">🧠 Параметри Симуляції</div>
+                <div class="card-body">
+                    <form method="POST">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-muted">Режим входу</label>
+                                <select class="form-select" name="sm_entry_mode">
+                                    <option value="Market" {{ 'selected' if conf.get('sm_entry_mode')=='Market' }}>Market (Aggressive)</option>
+                                    <option value="Limit" {{ 'selected' if conf.get('sm_entry_mode')=='Limit' }}>Limit (Conservative)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-muted">SL Buffer (%)</label>
+                                <input type="number" step="0.1" class="form-control" name="sm_sl_buffer" value="{{ conf.get('sm_sl_buffer', 0.2) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold text-muted">TP Mode</label>
+                                <select class="form-select" name="sm_tp_mode">
+                                    <option value="None" {{ 'selected' if conf.get('sm_tp_mode')=='None' }}>No TP</option>
+                                    <option value="Fixed" {{ 'selected' if conf.get('sm_tp_mode')=='Fixed' }}>Fixed %</option>
+                                    <option value="RR" {{ 'selected' if conf.get('sm_tp_mode')=='RR' }}>Risk:Reward</option>
+                                </select>
+                            </div>
+                            <div class="col-12 text-end">
+                                <button type="submit" class="btn btn-primary btn-sm">Оновити параметри</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+                    <span>⚡ Активні Паперові Угоди</span>
+                    <span class="badge bg-primary">{{ active_trades|length }}</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Coin</th>
+                                <th>Dir</th>
+                                <th>Status</th>
+                                <th>Entry</th>
+                                <th>TP</th>
+                                <th>SL</th>
+                                <th>PnL %</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for t in active_trades %}
+                            <tr>
+                                <td class="fw-bold">{{ t.symbol }}</td>
+                                <td><span class="badge {{ 'bg-success' if t.direction=='Long' else 'bg-danger' }}">{{ t.direction }}</span></td>
+                                <td>{{ t.status }}</td>
+                                <td>{{ t.entry_price|round(4) }}</td>
+                                <td>{{ t.tp_price|round(4) if t.tp_price else '-' }}</td>
+                                <td>{{ t.sl_price|round(4) }}</td>
+                                <td class="fw-bold {{ 'text-success' if t.pnl > 0 else 'text-danger' }}">
+                                    {{ "%0.2f"|format(t.pnl) }}%
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="7" class="text-center text-muted py-3">Немає активних симуляцій</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function removeFromWatchlist(symbol) {
+    if(confirm('Видалити ' + symbol + ' зі списку?')) {
+        $.post('/smart_money/delete/' + symbol, function(data) {
+            location.reload();
+        });
+    }
+}
+</script>
+{% endblock %}
