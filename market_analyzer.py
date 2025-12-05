@@ -22,6 +22,10 @@ class MarketAnalyzer:
         logger.info("⚠️ Smart Money Simulator is DISABLED.")
 
     def get_top_tickers(self, limit=100):
+        """
+        Отримує список тікерів з урахуванням фільтру об'єму (Min Vol).
+        Захищено від помилок конвертації даних.
+        """
         try:
             q = settings.get("scanner_quote_coin")
             use_vol_filter = settings.get("scan_use_min_volume")
@@ -87,13 +91,14 @@ class MarketAnalyzer:
     def run_scan_thread(self):
         if not self.is_scanning: threading.Thread(target=self._scan_process, daemon=True).start()
 
-    # === MANUAL SCANNER ===
+    # === MANUAL SCANNER (РУЧНИЙ СКАНЕР) ===
     def _scan_process(self):
         self.is_scanning = True
         self.progress = 0
         self.status_message = "🚀 Starting Scan..."
         session = db_manager.get_session()
         try:
+            # Примусове оновлення таблиці для нової колонки volume
             db_manager.recreate_analysis_table()
             
             limit = settings.get("scan_limit")
@@ -133,6 +138,7 @@ class MarketAnalyzer:
                         print(f"👉 {sym}: Found {len(sigs)} signals.")
 
                     for sg in sigs:
+                        # Примусова конвертація у float() для PostgreSQL
                         res = AnalysisResult(
                             symbol=sym, 
                             signal_type=sg['action'], 
@@ -147,6 +153,7 @@ class MarketAnalyzer:
                         session.add(res)
                         
                         # === 2. ЗВ'ЯЗОК ВІДКЛЮЧЕНО: НЕ ДОДАЄМО У WATCHLIST ===
+                        # (Цей блок закоментовано, щоб ізолювати сканер)
                         # if not session.query(SmartMoneyTicker).filter_by(symbol=sym).first():
                         #     count = session.query(SmartMoneyTicker).count()
                         #     if count >= 20:
@@ -171,7 +178,7 @@ class MarketAnalyzer:
             self.is_scanning = False
             session.close()
 
-    # === BACKGROUND SIMULATOR (ПОВНИЙ КОД, АЛЕ НЕ ЗАПУСКАЄТЬСЯ) ===
+    # === BACKGROUND SIMULATOR (КОД ЗАЛИШИВСЯ, АЛЕ НЕ ВИКЛИКАЄТЬСЯ) ===
     def _monitor_smart_money(self):
         logger.info("🧠 Smart Money Simulator Started")
         while True:
@@ -289,7 +296,7 @@ class MarketAnalyzer:
                                     tp_mode = settings.get("sm_tp_mode", "None")
                                     tp_val = float(settings.get("sm_tp_value", 3.0))
                                     tp_price = None
-                                    # Safe float conversion for numpy types
+                                    # Safe float conversion
                                     entry_price = float(entry_price)
                                     sl_price = float(trade_signal['sl'])
                                     
@@ -326,6 +333,7 @@ class MarketAnalyzer:
                 logger.error(f"SM Monitor Error: {e}")
                 time.sleep(30)
             finally:
+                # CRITICAL: Always close session to prevent pool overflow
                 session.close()
 
     def get_results(self):
@@ -338,7 +346,7 @@ class MarketAnalyzer:
                     'score': r.score,
                     'price': r.price,
                     'rsi_ltf': round(r.ltf_rsi, 1),
-                    'volume': r.volume_24h, # Повертаємо об'єм для шаблону
+                    'volume': r.volume_24h,
                     'time': r.found_at.strftime('%H:%M'),
                     'details': r.details
                 } 
