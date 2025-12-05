@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import logging
-from datetime import datetime, timedelta
 import pandas as pd
 import pandas_ta as ta
 from smart_exit_strategy import smart_exit
@@ -12,10 +11,15 @@ logger = logging.getLogger(__name__)
 class EnhancedMarketScanner:
     """Сканер ринку з інтегрованим Smart Exit"""
     
-    def __init__(self, bot):
-        self.bot = bot
+    def __init__(self, bot_instance, config=None):
+        """
+        Args:
+            bot_instance: ekzemplyar BotBybit
+            config: optional settings dict
+        """
+        self.bot = bot_instance
+        self.config = config or {}
         self.active_coins_data = {}
-        self.last_check = {}
     
     def get_active_symbols(self):
         """Отримати активні позиції"""
@@ -27,7 +31,7 @@ class EnhancedMarketScanner:
                     if float(p['size']) > 0:
                         positions.append(p)
         except Exception as e:
-            logger.error(f"Active symbols error: {e}")
+            logger.error(f"❌ Active symbols error: {e}")
         return positions
     
     def get_active_symbols_list(self):
@@ -37,9 +41,7 @@ class EnhancedMarketScanner:
     def fetch_htf_candles(self, symbol, timeframe='1h', limit=100):
         """Завантажити HTF свічки"""
         try:
-            interval_map = {
-                '1h': '60', '4h': '240', '1d': 'D'
-            }
+            interval_map = {'1h': '60', '4h': '240', '1d': 'D'}
             interval = interval_map.get(timeframe, '60')
             
             resp = self.bot.session.get_kline(
@@ -75,7 +77,7 @@ class EnhancedMarketScanner:
             return df
         
         except Exception as e:
-            logger.error(f"Fetch candles error: {e}")
+            logger.error(f"❌ Fetch candles error: {e}")
             return None
     
     def monitor_positions(self):
@@ -119,21 +121,33 @@ class EnhancedMarketScanner:
                     )
                     
                     # Закриваємо позицію
-                    result = self.bot.place_order({
-                        "action": "Close",
-                        "symbol": symbol,
-                        "direction": "Long" if side == "Buy" else "Short"
-                    })
-                    
-                    if result.get("status") == "ok":
-                        logger.info(f"✅ Closed: {symbol}")
-                        smart_exit.reset_position(symbol)
+                    try:
+                        result = self.bot.place_order({
+                            "action": "Close",
+                            "symbol": symbol,
+                            "direction": "Long" if side == "Buy" else "Short"
+                        })
+                        
+                        if result.get("status") == "ok":
+                            logger.info(f"✅ Position closed: {symbol}")
+                            smart_exit.reset_position(symbol)
+                    except Exception as e:
+                        logger.error(f"❌ Error closing position: {e}")
         
         except Exception as e:
-            logger.error(f"Monitor error: {e}")
+            logger.error(f"❌ Monitor error: {e}")
     
     def loop(self):
         """Основний цикл сканера"""
         self.monitor_positions()
 
-scanner = EnhancedMarketScanner(None)
+
+# Глобальний екземпляр
+scanner = None
+
+def init_scanner(bot_instance, config=None):
+    """Ініціалізація сканера"""
+    global scanner
+    scanner = EnhancedMarketScanner(bot_instance, config)
+    logger.info("✅ Scanner initialized with Smart Exit")
+    return scanner
