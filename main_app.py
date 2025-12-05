@@ -245,8 +245,7 @@ def home():
                           longs=longs,
                           shorts=shorts,
                           days=days_param,
-                          trades=trades[:10] if trades else [],
-                          csrf_token=session.get('csrf_token', ''))
+                          trades=trades[:10] if trades else [])
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
