@@ -1,3 +1,7 @@
+{
+type: uploaded file
+fileName: bot.py
+fullContent:
 import logging
 import decimal
 import time
@@ -72,7 +76,7 @@ class BybitTradingBot:
                             'qty': float(t['qty']), 'entry_price': float(t['avgEntryPrice']),
                             'exit_price': float(t['avgExitPrice']), 'pnl': float(t['closedPnl']),
                             'exit_time': datetime.fromtimestamp(int(t['updatedTime'])/1000),
-                            'exit_reason': 'Signal/TP/SL'
+                            'exit_reason': 'SmartExit/Manual'
                         })
                 curr_end = curr_start
                 time.sleep(0.2)
@@ -85,22 +89,48 @@ class BybitTradingBot:
             symbol = data.get('symbol')
             norm = self.normalize(symbol)
             
-            # --- CLOSE LOGIC ---
+            # --- CLOSE LOGIC (Manual or Smart Exit) ---
             if action == "Close":
-                direction = data.get('direction')
+                direction = data.get('direction') # Long/Short we want to close
+                
+                # Отримуємо позицію
                 pos_list = self.session.get_positions(category="linear", symbol=norm)['result']['list']
                 target = next((p for p in pos_list if float(p['size']) > 0), None)
                 
-                if not target: return {"status": "ignored", "reason": "No position"}
+                if not target: 
+                    return {"status": "ignored", "reason": "No position"}
                 
-                curr_side = target['side']
-                if (direction == "Long" and curr_side == "Buy") or (direction == "Short" and curr_side == "Sell"):
+                # Перевірка сторони (Buy позиція це Long, Sell позиція це Short)
+                curr_side = target['side'] # 'Buy' or 'Sell'
+                
+                # Логіка: Якщо ми хочемо закрити Long, а позиція 'Buy' - закриваємо.
+                # Якщо хочемо закрити Short, а позиція 'Sell' - закриваємо.
+                # API 'Close' usually implies Market Close of existing position
+                
+                should_close = False
+                if direction == "Long" and curr_side == "Buy": should_close = True
+                if direction == "Short" and curr_side == "Sell": should_close = True
+                
+                if should_close:
                     close_side = "Sell" if curr_side == "Buy" else "Buy"
-                    self.session.place_order(category="linear", symbol=norm, side=close_side, orderType="Market", qty=target['size'], reduceOnly=True)
+                    logger.info(f"🚨 EXECUTING SMART/MANUAL EXIT: {symbol} {curr_side}")
+                    
+                    self.session.place_order(
+                        category="linear", 
+                        symbol=norm, 
+                        side=close_side, 
+                        orderType="Market", 
+                        qty=target['size'], 
+                        reduceOnly=True
+                    )
+                    
+                    # Скасовуємо всі лімітні ордери (TP), якщо такі були
                     try: self.session.cancel_all_orders(category="linear", symbol=norm)
                     except: pass
+                    
                     return {"status": "ok", "message": f"Closed {direction}"}
-                return {"status": "ignored"}
+                
+                return {"status": "ignored", "reason": "Direction mismatch"}
 
             # --- OPEN LOGIC ---
             pos_list = self.session.get_positions(category="linear", symbol=norm)['result']['list']
@@ -127,30 +157,31 @@ class BybitTradingBot:
             
             self.set_lev(norm, lev)
             
-            logger.info(f"🚀 OPEN {action} {symbol} | Qty: {qty}")
+            logger.info(f"🚀 OPEN {action} {symbol} | Qty: {qty} | Mode: Smart Exit Only Check...")
             self.session.place_order(category="linear", symbol=norm, side=action, orderType="Market", qty=str(qty))
             
-            # === STOP LOSS LOGIC (OB EXTREMITY) ===
+            # === HARD STOP LOSS (OPTIONAL) ===
+            # Якщо Smart Exit Only, користувач повинен вимкнути SL в налаштуваннях (Fixed SL = 0)
             sl_price = 0.0
             
-            # 1. Спроба взяти SL розрахований стратегією (OB Level)
+            # Стратегічний SL (якщо переданий)
             if data.get('sl_price'):
                 sl_price = float(data['sl_price'])
-                logger.info(f"🛡️ Using Strategy SL (OB): {sl_price}")
-            
-            # 2. Фолбек: звичайний відсоток
+            # Або фіксований з налаштувань
             else:
                 sl_pct = float(data.get('stopLossPercent', settings.get('fixedSL')))
                 if sl_pct > 0:
                     dist = price * (sl_pct / 100)
                     sl_price = price - dist if action == "Buy" else price + dist
-                    logger.info(f"🛡️ Using Fixed % SL: {sl_price}")
 
             if sl_price > 0:
                 sl_price = self.round_val(sl_price, tick_size)
                 self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_price), positionIdx=0)
+                logger.info(f"🛡️ Hard SL Set: {sl_price}")
+            else:
+                logger.info(f"⚠️ No Hard SL Set (Smart Exit Only Mode)")
 
-            # === TAKE PROFIT LOGIC ===
+            # === HARD TAKE PROFIT (OPTIONAL) ===
             self._place_take_profits(norm, action, price, qty, data, tick_size, qty_step)
 
             return {"status": "ok", "qty": qty}
@@ -162,6 +193,10 @@ class BybitTradingBot:
     def _place_take_profits(self, symbol, side, entry_price, total_qty, data, tick_size, qty_step):
         try:
             tp_mode = settings.get("tp_mode")
+            if tp_mode == "None":
+                logger.info(f"⚠️ No Hard TP Set (Smart Exit Only Mode)")
+                return
+
             exit_side = "Sell" if side == "Buy" else "Buy"
             
             if tp_mode == "Fixed_1_50":
@@ -190,3 +225,4 @@ class BybitTradingBot:
             logger.error(f"TP Placement Error: {e}")
 
 bot_instance = BybitTradingBot()
+}
