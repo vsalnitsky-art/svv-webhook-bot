@@ -3,10 +3,40 @@
 
 import logging
 import pandas as pd
-import pandas_ta as ta
+import numpy as np
 from smart_exit_strategy import smart_exit
 
 logger = logging.getLogger(__name__)
+
+
+def calculate_rsi(prices, length=14):
+    """Обчислити RSI без pandas-ta"""
+    import numpy as np
+    
+    deltas = np.diff(prices)
+    seed = deltas[:length+1]
+    up = seed[seed >= 0].sum() / length
+    down = -seed[seed < 0].sum() / length
+    rs = up / down if down != 0 else 0
+    rsi = np.zeros_like(prices)
+    rsi[:length] = 100. - 100. / (1. + rs)
+    
+    for i in range(length, len(prices)):
+        delta = deltas[i-1]
+        if delta > 0:
+            upval = delta
+            downval = 0.
+        else:
+            upval = 0.
+            downval = -delta
+        
+        up = (up * (length - 1) + upval) / length
+        down = (down * (length - 1) + downval) / length
+        rs = up / down if down != 0 else 0
+        rsi[i] = 100. - 100. / (1. + rs)
+    
+    return rsi
+
 
 class EnhancedMarketScanner:
     """Сканер ринку з інтегрованим Smart Exit"""
@@ -70,9 +100,9 @@ class EnhancedMarketScanner:
             ])
             
             # Обчислюємо індикатори
-            df['rsi'] = ta.rsi(df['close'], length=14)
-            df['hma_fast'] = ta.hma(df['close'], length=9)
-            df['hma_slow'] = ta.hma(df['close'], length=21)
+            df['rsi'] = calculate_rsi(df['close'], length=14)
+            # df['hma_fast'] = hma(df['close'], length=9)  # Опціонально
+            # df['hma_slow'] = hma(df['close'], length=21)  # Опціонально
             
             return df
         
