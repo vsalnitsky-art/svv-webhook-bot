@@ -15,7 +15,12 @@ class EnhancedMarketScanner:
         self.bot = bot_instance
         self.config = config
         self.data = {}
+        # Потік тепер запускається не тут, а в методі start()
+
+    def start(self):
+        """Запускає фоновий потік моніторингу"""
         threading.Thread(target=self.loop, daemon=True).start()
+        logger.info("✅ Enhanced Market Scanner Started")
 
     def loop(self):
         while True:
