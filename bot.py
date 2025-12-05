@@ -79,6 +79,31 @@ class BybitTradingBot:
                 curr_end = curr_start
                 time.sleep(0.2)
         except Exception as e: logger.error(f"Sync error: {e}")
+    
+    # === TRAILING STOP UPDATE ===
+    def update_sl(self, symbol, new_sl_price):
+        """Оновлює Stop Loss для відкритої позиції"""
+        try:
+            norm = self.normalize(symbol)
+            _, tick = self.get_instr(norm)
+            if not tick: return False
+            
+            # Округлюємо ціну згідно з кроком інструмента
+            sl_rounded = self.round_val(float(new_sl_price), float(tick['tickSize']))
+            
+            if sl_rounded <= 0: return False
+
+            # Відправляємо запит на зміну SL
+            self.session.set_trading_stop(
+                category="linear",
+                symbol=norm,
+                stopLoss=str(sl_rounded),
+                positionIdx=0 # 0 для One-Way Mode
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Update SL Error ({symbol}): {e}")
+            return False
 
     # === ВИКОНАННЯ ОРДЕРІВ ===
     def place_order(self, data):
@@ -135,30 +160,21 @@ class BybitTradingBot:
             # === STOP LOSS LOGIC (OB EXTREMITY) ===
             sl_price = 0.0
             
-            # 1. Спроба взяти SL розрахований стратегією (OB Level)
             if data.get('sl_price'):
                 sl_price = float(data['sl_price'])
-                logger.info(f"🛡️ Using Strategy SL (OB): {sl_price}")
-            
-            # 2. Фолбек: звичайний відсоток
             else:
                 sl_pct = float(data.get('stopLossPercent', settings.get('fixedSL')))
                 if sl_pct > 0:
                     dist = price * (sl_pct / 100)
                     sl_price = price - dist if action == "Buy" else price + dist
-                    logger.info(f"🛡️ Using Fixed % SL: {sl_price}")
 
-            # ✅ ВИПРАВЛЕНО: Додана валідація SL після round_val
             if sl_price > 0:
                 sl_price_rounded = self.round_val(sl_price, tick_size)
                 if sl_price_rounded > 0:
                     try:
                         self.session.set_trading_stop(category="linear", symbol=norm, stopLoss=str(sl_price_rounded), positionIdx=0)
-                        logger.info(f"✅ SL установлено на {sl_price_rounded}")
                     except Exception as e:
                         logger.error(f"❌ Помилка установки SL: {e}")
-                else:
-                    logger.warning(f"⚠️ SL ціна після округлення стала 0, пропускаємо")
 
             # === TAKE PROFIT LOGIC ===
             self._place_take_profits(norm, action, price, qty, data, tick_size, qty_step)
