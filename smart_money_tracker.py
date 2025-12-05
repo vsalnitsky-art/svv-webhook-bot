@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Smart Money Tracker
 Monitoring module that watches accumulated Order Blocks in DB

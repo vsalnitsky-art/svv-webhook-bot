@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 from models import db_manager, Trade, TradeMonitorLog
 from datetime import datetime, timedelta
 from sqlalchemy import desc

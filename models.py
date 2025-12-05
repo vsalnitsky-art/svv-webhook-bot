@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -71,9 +73,22 @@ class DatabaseManager:
             except OSError: db_path = os.path.join(current_dir, db_filename)
             db_url = f'sqlite:///{db_path}'
             
-        self.engine = create_engine(db_url, echo=False)
-        try: Base.metadata.create_all(self.engine)
-        except: pass
+        try:
+            self.engine = create_engine(db_url, echo=False)
+            
+            # ✅ ВИПРАВЛЕНО: Перевіряємо підключення до БД
+            with self.engine.connect() as conn:
+                logger.info(f"✅ Database connected: {db_url[:50]}...")
+            
+            # Створюємо таблиці
+            Base.metadata.create_all(self.engine)
+            logger.info("✅ Database tables created/verified")
+            
+        except Exception as e:
+            logger.error(f"❌ CRITICAL: Database error: {e}")
+            if "postgresql" in str(db_url):
+                logger.error("🔧 Check PostgreSQL credentials in environment variables")
+            raise  # Передаємо помилку далі
         self.Session = sessionmaker(bind=self.engine)
 
     def get_session(self): return self.Session()

@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import logging
 import threading
 import time
@@ -57,8 +59,21 @@ def keep_alive():
         except: pass
         time.sleep(300)
 
+def sync_trades_periodic():
+    """✅ ВИПРАВЛЕНО: Фоновий потік для синхронізації торгів (30 хв інтервал)"""
+    time.sleep(5)  # Чекаємо на старт додатку
+    while True:
+        try:
+            bot_instance.sync_trades(days=7)
+            logger.info("✅ Periodic trades sync completed")
+        except Exception as e:
+            logger.error(f"❌ Periodic sync error: {e}")
+        time.sleep(1800)  # 30 хвилин
+
+
 threading.Thread(target=monitor_active, daemon=True).start()
 threading.Thread(target=keep_alive, daemon=True).start()
+threading.Thread(target=sync_trades_periodic, daemon=True).start()  # ✅ НОВЕ
 
 @app.route('/api/chart_data/<symbol>')
 def get_chart_data(symbol):

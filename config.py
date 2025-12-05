@@ -30,20 +30,34 @@ def get_api_credentials():
             print(f"⚠️ Decryption failed: {e}")
             print("Trying plain text credentials...")
     
-    # Спроба 2: Використати незашифровані ключі (fallback)
+    # Спроба 2: Використати незашифровані ключи (fallback)
     api_key = os.environ.get('BYBIT_API_KEY')
     api_secret = os.environ.get('BYBIT_API_SECRET')
     
     if api_key and api_secret:
         return api_key, api_secret
     
-    # Спроба 3: Локальна розробка (hardcoded) - ТІЛЬКИ ДЛЯ ТЕСТУВАННЯ!
+    # Спроба 3: Локальна розробка через .env файл
     if not os.environ.get('RENDER'):
-        print("⚠️ Running in local mode with hardcoded credentials")
-        # ⚠️ ЗАМІНІТЬ НА ВАШІ РЕАЛЬНІ КЛЮЧІ ДЛЯ ЛОКАЛЬНОГО ТЕСТУВАННЯ
-        api_key = "YOUR_API_KEY_HERE"
-        api_secret = "YOUR_API_SECRET_HERE"
-        return api_key, api_secret
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            
+            api_key = os.environ.get('BYBIT_API_KEY')
+            api_secret = os.environ.get('BYBIT_API_SECRET')
+            
+            if api_key and api_secret:
+                print("✅ Loaded credentials from .env file")
+                return api_key, api_secret
+        except:
+            pass
+        
+        raise ValueError(
+            "❌ LOCAL MODE: API credentials not found!\n"
+            "Please create .env file with:\n"
+            "BYBIT_API_KEY=your_test_key\n"
+            "BYBIT_API_SECRET=your_test_secret"
+        )
     
     # Якщо нічого не спрацювало на продакшні - помилка
     raise ValueError(
@@ -53,8 +67,10 @@ def get_api_credentials():
 
 # Допоміжні функції для генерації ключів (можна викликати локально)
 def generate_encryption_key():
+    """Генерує новий ключ Fernet для шифрування"""
     key = Fernet.generate_key()
-    print(key.decode())
+    print(f"🔑 New encryption key: {key.decode()}")
+    print("⚠️ Save this key securely in ENCRYPTION_KEY environment variable")
     return key
 
 # Для зворотної сумісності

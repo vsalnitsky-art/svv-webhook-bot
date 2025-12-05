@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 import threading
 import time
 import logging
@@ -33,16 +35,21 @@ class EnhancedMarketScanner:
             time.sleep(self.scan_interval)
     
     def get_active_symbols(self):
-        symbols = []
+        """✅ ВИПРАВЛЕНО: Повертає ПОЗИЦІЇ (об'єкти), а не тільки символи"""
+        positions = []
         try:
             resp = self.bot.session.get_positions(category="linear", settleCoin="USDT")
             if resp['retCode'] == 0:
                 for p in resp['result']['list']:
                     if float(p['size']) > 0:
-                        symbols.append(p)
+                        positions.append(p)
         except Exception as e:
             logger.error(f"Active symbols error: {e}")
-        return symbols
+        return positions
+    
+    def get_active_symbols_list(self):
+        """✅ ВИПРАВЛЕНО: Повертає ТІЛЬКИ СИМВОЛИ як список"""
+        return [p['symbol'] for p in self.get_active_symbols()]
 
     def fetch_htf_candles(self, symbol):
         """Завантажує свічки Глобального ТФ для аналізу виходу"""
@@ -68,7 +75,7 @@ class EnhancedMarketScanner:
 
     def monitor_positions(self):
         active_positions = self.get_active_symbols()
-        target_symbols = [p['symbol'] for p in active_positions]
+        target_symbols = self.get_active_symbols_list()  # ✅ ВИПРАВЛЕНО: Використовуємо новий метод
         
         # Чистка кешу
         current_keys = list(self.active_coins_data.keys())
