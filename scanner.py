@@ -58,8 +58,9 @@ class EnhancedMarketScanner:
         active_syms = [p['symbol'] for p in active_pos]
         
         # Чистка кешу
-        # for k in list(self.data.keys()):
-            if k not in active_syms: del self.data[k]
+        for k in list(self.data.keys()):
+            if k not in active_syms: 
+                del self.data[k]
         
         if not active_pos: return
 

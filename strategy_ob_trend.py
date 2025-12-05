@@ -22,9 +22,11 @@ class OBTrendStrategy:
             # df['rsi'] = # ta.rsi(df['close'], length=int(self._get_param('obt_rsiLength', 14)))
             # df['obv'] = # ta.obv(df['close'], df['volume'])
             if 'obv' in df:
+                pass  # ta.sma, ta.ema вимкнено
                 # df['obv_ma'] = # ta.sma(df['obv'], length=int(self._get_param('obt_obvEntryLen', 20)))
                 # df['obv_exit_ma'] = # ta.ema(df['obv'], length=int(self._get_param('exit_obvLength', 10)))
-        except: pass
+        except: 
+            pass
         return df
 
     def find_order_blocks(self, df):
