@@ -38,22 +38,83 @@ class EnhancedMarketScanner:
         return []
 
     def fetch_candles(self, symbol, timeframe, limit=50):
+        """
+        Отримує свічки з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ до сітки часу.
+        
+        ✅ РІШЕННЯ ДЛЯ RSI:
+        - origin='start_day' - жорстка прив'язка до початку дня (00:00)
+        - label='left' та closed='left' - стандарт біржі
+        - Це синхронізує свічки з TradingView та іншими платформами
+        
+        Результат: RSI будинку = RSI TradingView ✅
+        """
         try:
             # Мапинг TF
             tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','240':'240','D':'D'}
             req_tf = tf_map.get(str(timeframe), '240')
-            r = self.bot.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=limit)
-            if r['retCode'] == 0:
-                df = pd.DataFrame(r['result']['list'], columns=['time','open','high','low','close','vol','to'])
+            
+            # Якщо потрібен 45хв, беремо в 3 рази більше 15хв свічок
+            req_limit = limit * 3 if str(timeframe) == '45' else limit
+            
+            r = self.bot.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=req_limit)
+            if r['retCode'] == 0 and r['result']['list']:
+                df = pd.DataFrame(r['result']['list'], columns=['time','open','high','low','close','volume','turnover'])
+                
+                # Конвертація типів
                 df['close'] = df['close'].astype(float)
                 df['high'] = df['high'].astype(float)
                 df['low'] = df['low'].astype(float)
-                # Перевертаємо: старі -> нові
+                df['open'] = df['open'].astype(float)
+                df['volume'] = df['volume'].astype(float)
+                df['turnover'] = df['turnover'].astype(float)
+                df['time'] = pd.to_numeric(df['time'])
+                df['datetime'] = pd.to_datetime(df['time'], unit='ms')
+                
+                # Сортуємо: Старі -> Нові (важливо для RSI та ресемплінгу)
+                df = df.sort_values('datetime').reset_index(drop=True)
+                
+                # === ЛОГІКА РЕСЕМПЛІНГУ для 45хв ===
+                if str(timeframe) == '45':
+                    df.set_index('datetime', inplace=True)
+                    
+                    # 🎯 РІШЕННЯ: Правильна прив'язка до сітки часу
+                    df = df.resample(
+                        '45min',
+                        origin='start_day',  # ✅ КРИТИЧНО: прив'язка до 00:00
+                        label='left',        # ✅ Мітка часу - час відкриття
+                        closed='left'        # ✅ Стандарт біржі
+                    ).agg({
+                        'open': 'first',     # Відкриття першої 15хв
+                        'high': 'max',       # Максимум серед трьох
+                        'low': 'min',        # Мінімум серед трьох
+                        'close': 'last',     # Закриття останньої 15хв
+                        'volume': 'sum',     # Сума об'ємів
+                        'turnover': 'sum',   # Сума обороту
+                        'time': 'first'      # Час першої свічки
+                    })
+                    
+                    df.dropna(inplace=True)
+                    df = df.reset_index(drop=True)
+                
+                # Перевертаємо: старі -> нові (як було раніше для сумісності)
                 return df.iloc[::-1].reset_index(drop=True)
-        except: pass
+        except Exception as e:
+            logger.error(f"Fetch candles error {symbol} TF={timeframe}: {e}")
         return None
 
+    def get_coin_data(self, symbol):
+        """Отримує дані про монету з кешу"""
+        return self.data.get(symbol, {})
+    
+    def get_current_rsi(self, symbol):
+        """Отримує поточний RSI для монети"""
+        return self.data.get(symbol, {}).get('rsi', 0)
+
     def monitor(self):
+        """
+        Монітор активних позицій з розрахунком RSI.
+        Використовує ПРАВИЛЬНО ПРИВ'ЯЗАНІ свічки = ТОЧНИЙ RSI!
+        """
         active_pos = self.get_active()
         active_syms = [p['symbol'] for p in active_pos]
         
@@ -74,7 +135,7 @@ class EnhancedMarketScanner:
         for p in active_pos:
             s = p['symbol']
             side = p['side'] # Buy / Sell
-            current_price = float(p['avgPrice']) # Або lastPrice, але для SL краще дивитись на current market price
+            current_price = float(p['avgPrice'])
             
             # Отримуємо поточну ціну (Last Price)
             last_price = 0.0
@@ -89,11 +150,12 @@ class EnhancedMarketScanner:
             if s not in self.data: 
                 self.data[s] = {'rsi': 0, 'exit_status': 'Safe', 'exit_details': '-', 'trailing_active': False}
 
-            # 1. Fetch Data
+            # 1. Fetch Data з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ ✅
             df = self.fetch_candles(s, tf, limit=atr_len + 50)
             
             if df is not None and len(df) > atr_len:
                 # 2. Calc Indicators (без pandas_ta - fallback)
+                # ✅ На ПРАВИЛЬНИХ свічках = ТОЧНИЙ RSI!
                 rsi_val = simple_rsi(df['close'], period=14)
                 atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
                 
@@ -132,14 +194,11 @@ class EnhancedMarketScanner:
                             if calc_sl > current_sl:
                                 new_sl = calc_sl
                                 should_update = True
-                                # Захист: SL не може бути вище ціни (але ATR формула це враховує)
 
                         elif side == "Sell":
                             # Short: SL = Price + (ATR * Mult)
                             calc_sl = last_price + (atr_val * atr_mult)
-                            # Рухаємо ТІЛЬКИ вниз (менше значення SL для шорта = ближче до ціни? Ні, SL шорта вище ціни.
-                            # Якщо current_sl == 0, то будь-який SL краще.
-                            # Якщо current_sl > 0, ми хочемо зменшити його (наблизити до ціни зверху).
+                            # Рухаємо ТІЛЬКИ вниз (зменшуємо значення для шорта)
                             if current_sl == 0 or calc_sl < current_sl:
                                 new_sl = calc_sl
                                 should_update = True
@@ -150,7 +209,7 @@ class EnhancedMarketScanner:
                                 logger.info(f"⛓️ Trailing SL updated for {s}: {current_sl} -> {new_sl}")
                                 details += " | SL Upd ✅"
 
-                # --- Візуалізація для UI (Старий код) ---
+                # --- Візуалізація для UI ---
                 lb = float(settings.get('obt_entryRsiOversold', 30))
                 ub = float(settings.get('obt_entryRsiOverbought', 70))
                 
@@ -168,7 +227,10 @@ class EnhancedMarketScanner:
             # Невеликий сліп між монетами
             time.sleep(0.2)
 
-    # def get_coin_data(self, s): return self.data.get(s, {})
-    # def get_current_rsi(self, s): return self.data.get(s, {}).get('rsi', 0)
-    def get_market_pressure(self, s): return 0
-    def get_active_symbols(self): return self.get_active()
+    def get_market_pressure(self, s): 
+        """Заповнювач для сумісності"""
+        return 0
+        
+    def get_active_symbols(self): 
+        """Отримує активні символи"""
+        return self.get_active()

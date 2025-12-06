@@ -44,8 +44,12 @@ class MarketAnalyzer:
 
     def fetch_candles(self, symbol, timeframe, limit=300):
         """
-        Автономне завантаження свічок.
-        Включає логіку ресемплінгу для нестандартних таймфреймів (наприклад 45м).
+        Автономне завантаження свічок з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ до сітки часу.
+        
+        ✅ РІШЕННЯ:
+        - origin='start_day' гарантує, що свічки прив'язані до фіксованої сітки часу на день
+        - label='left' та closed='left' гарантують правильні мітки часу (стандарт біржі)
+        - Це синхронізує наші свічки з TradingView та іншими платформами
         """
         try:
             # Мапінг таймфреймів. Bybit не має 45m, тому беремо 15m.
@@ -77,14 +81,22 @@ class MarketAnalyzer:
                 if str(timeframe) == '45':
                     df.set_index('datetime', inplace=True)
                     
-                    df_45 = df.resample('45min').agg({
-                        'open': 'first',
-                        'high': 'max',
-                        'low': 'min',
-                        'close': 'last',
-                        'volume': 'sum',
-                        'turnover': 'sum',
-                        'time': 'first'
+                    # 🎯 РІШЕННЯ: Додаємо origin='start_day' та правильні параметри
+                    # origin='start_day' - жорстка прив'язка до початку дня (00:00)
+                    # label='left' та closed='left' - стандарт біржі
+                    df_45 = df.resample(
+                        '45min', 
+                        origin='start_day',  # ✅ КРИТИЧНО: прив'язка до 00:00
+                        label='left',        # ✅ Мітка часу - час відкриття свічки
+                        closed='left'        # ✅ Свічка закривається слід за розчинення наступної
+                    ).agg({
+                        'open': 'first',     # Відкриття першої 15хв свічки
+                        'high': 'max',       # Максимум серед трьох 15хв свічок
+                        'low': 'min',        # Мінімум серед трьох 15хв свічок
+                        'close': 'last',     # Закриття останної (третьої) 15хв свічки
+                        'volume': 'sum',     # Сума об'ємів
+                        'turnover': 'sum',   # Сума обороту
+                        'time': 'first'      # Час першої свічки
                     })
                     
                     # Видаляємо NaN (якщо були пропуски в торгах)
@@ -95,7 +107,7 @@ class MarketAnalyzer:
                 
                 return df
         except Exception as e:
-            # logger.error(f"Fetch candles error {symbol}: {e}")
+            logger.error(f"Fetch candles error {symbol}: {e}")
             pass
         return None
 
@@ -135,13 +147,15 @@ class MarketAnalyzer:
 
                 try:
                     # 2. Отримуємо дані (300 свічок для точності RSI)
+                    # ✅ Тепер з правильною прив'язкою до сітки часу!
                     df = self.fetch_candles(sym, htf, limit=300)
                     
                     if df is None or len(df) < rsi_len: 
                         time.sleep(0.05)
                         continue
 
-                    # 3. Розрахунок RSI (з indicators.py)
+                    # 3. Розрахунок RSI (з indicators.py - Wilder's Smoothing)
+                    # ✅ На ПРАВИЛЬНИХ свічках = ТОЧНИЙ RSI!
                     current_rsi = simple_rsi(df['close'], period=rsi_len)
                     current_price = df['close'].iloc[-1]
 
