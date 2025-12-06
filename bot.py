@@ -76,7 +76,7 @@ class BybitTradingBot:
 
     def round_val(self, val, step):
         try:
-            d = abs(decimal.Decimal(str(step)).as_tuple().exponent)
+            d = abs(Decimal(str(step)).as_tuple().exponent)
             return round(val // step * step, d)
         except: return val
 
@@ -296,9 +296,11 @@ class BybitTradingBot:
             
             # Перевірка баланса
             bal = self.get_bal()
-            if bal < config.MIN_BALANCE:
-                logger.warning("insufficient_balance", symbol=symbol, balance=bal, required=config.MIN_BALANCE)
-                return {"status": "no_balance", "balance": bal, "reason": f"Minimum {config.MIN_BALANCE} USDT required"}
+            # MIN_BALANCE можна брати з config.MIN_BALANCE якщо він там є, або хардкод
+            min_bal = getattr(config, 'MIN_BALANCE', 5.0) 
+            if bal < min_bal:
+                logger.warning("insufficient_balance", symbol=symbol, balance=bal, required=min_bal)
+                return {"status": "no_balance", "balance": bal, "reason": f"Minimum {min_bal} USDT required"}
             
             # === ПЕРЕВІРКА ПОТОЧНИХ ПОЗИЦІЙ (для REVERSAL) ===
             r = self.session.get_positions(category="linear", symbol=symbol)
@@ -402,34 +404,35 @@ class BybitTradingBot:
                 logger.warning("no_stop_loss", symbol=symbol, message="Trade is unprotected!")
             
             # === ВСТАНОВЛЕННЯ TAKE PROFIT (З ВІДСОТКІВ) ===
-            if data.get('takeProfitPercent') and data.get('entryPrice'):
-                tp_percent = safe_float(data['takeProfitPercent'])
-                entry_price = safe_float(data['entryPrice'])
-                
-                # Розраховуємо абсолютну ціну TP на основі напрямку
-                if action == "Buy":
-                    # Для Long: TP вище за entry (entry * (1 + percent/100))
-                    tp_raw = entry_price * (1 + tp_percent / 100)
-                else:
-                    # Для Short: TP нижче за entry (entry * (1 - percent/100))
-                    tp_raw = entry_price * (1 - tp_percent / 100)
-                
-                tp_rounded = self.round_val(tp_raw, tick_size)
-                try:
-                    # Розміщуємо TP ордер (половину позиції)
-                    tp_qty = qty / 2
-                    self.session.place_order(
-                        category="linear",
-                        symbol=symbol,
-                        side="Sell" if action == "Buy" else "Buy",
-                        orderType="Limit",
-                        qty=str(tp_qty),
-                        price=str(tp_rounded),
-                        reduceOnly=True
-                    )
-                    logger.info("take_profit_set", symbol=symbol, tp_price=tp_rounded, tp_percent=tp_percent, qty=tp_qty)
-                except Exception as e:
-                    logger.error("tp_set_error", symbol=symbol, error=str(e))
+            # ВІДКЛЮЧЕНО: Не виставляємо TP при отриманні сигналу
+            # if data.get('takeProfitPercent') and data.get('entryPrice'):
+            #     tp_percent = safe_float(data['takeProfitPercent'])
+            #     entry_price = safe_float(data['entryPrice'])
+            #     
+            #     # Розраховуємо абсолютну ціну TP на основі напрямку
+            #     if action == "Buy":
+            #         # Для Long: TP вище за entry (entry * (1 + percent/100))
+            #         tp_raw = entry_price * (1 + tp_percent / 100)
+            #     else:
+            #         # Для Short: TP нижче за entry (entry * (1 - percent/100))
+            #         tp_raw = entry_price * (1 - tp_percent / 100)
+            #     
+            #     tp_rounded = self.round_val(tp_raw, tick_size)
+            #     try:
+            #         # Розміщуємо TP ордер (половину позиції)
+            #         tp_qty = qty / 2
+            #         self.session.place_order(
+            #             category="linear",
+            #             symbol=symbol,
+            #             side="Sell" if action == "Buy" else "Buy",
+            #             orderType="Limit",
+            #             qty=str(tp_qty),
+            #             price=str(tp_rounded),
+            #             reduceOnly=True
+            #         )
+            #         logger.info("take_profit_set", symbol=symbol, tp_price=tp_rounded, tp_percent=tp_percent, qty=tp_qty)
+            #     except Exception as e:
+            #         logger.error("tp_set_error", symbol=symbol, error=str(e))
             
             logger.info("order_success", symbol=symbol, action=action, qty=qty)
             return {"status": "ok", "qty": qty, "price": price, "leverage": lev}
@@ -442,60 +445,5 @@ class BybitTradingBot:
     def normalize(self, s):
         """Нормалізує символ (видаляє '.P')"""
         return s.replace('.P', '')
-
-    def get_available_balance(self):
-        """Отримує доступний баланс"""
-        return self.get_bal()
-
-    @with_retry(max_retries=3, exceptions=(Exception,))
-    def get_all_tickers(self):
-        """Отримує список всіх тікерів"""
-        try:
-            r = self.session.get_tickers(category="linear")
-            if r.get('retCode') != 0:
-                logger.warning("get_tickers_failed", retCode=r.get('retCode'))
-                return []
-            return r.get('result', {}).get('list', [])
-        except Exception as e:
-            logger.error("get_tickers_error", error=str(e))
-            return []
-
-    @with_retry(max_retries=3, exceptions=(Exception,))
-    def get_instr(self, s):
-        """Отримує інформацію про інструмент (лот, тік)"""
-        try:
-            r = self.session.get_instruments_info(category="linear", symbol=self.normalize(s))
-            if r.get('retCode') != 0:
-                logger.warning("get_instr_failed", symbol=s, retCode=r.get('retCode'))
-                return None, None
-            
-            instr = r['result']['list'][0]
-            return instr.get('lotSizeFilter'), instr.get('priceFilter')
-        except Exception as e:
-            logger.error("get_instr_error", symbol=s, error=str(e))
-            return None, None
-
-    def round_val(self, val, step):
-        """Округлює значення за крок"""
-        try:
-            d = abs(Decimal(str(step)).as_tuple().exponent)
-            return round(val // step * step, d)
-        except Exception as e:
-            logger.warning("round_val_error", val=val, step=step, error=str(e))
-            return val
-
-    @with_retry(max_retries=2, exceptions=(Exception,))
-    def set_lev(self, s, l):
-        """Встановлює левередж для символу"""
-        try:
-            self.session.set_leverage(
-                category="linear",
-                symbol=self.normalize(s),
-                buyLeverage=str(l),
-                sellLeverage=str(l)
-            )
-            logger.info("leverage_set", symbol=s, leverage=l)
-        except Exception as e:
-            logger.warning("set_leverage_error", symbol=s, leverage=l, error=str(e))
 
 bot_instance = BybitTradingBot()
