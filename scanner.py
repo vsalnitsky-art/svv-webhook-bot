@@ -26,6 +26,7 @@ class EnhancedMarketScanner:
             try:
                 self.monitor()
             except Exception as e:
+                # logger.error(f"Scanner loop error: {e}")
                 pass
             time.sleep(5) # Перевіряємо кожні 5 сек для швидкого трейлінгу
 
@@ -42,15 +43,41 @@ class EnhancedMarketScanner:
             # Мапинг TF
             tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','240':'240','D':'D'}
             req_tf = tf_map.get(str(timeframe), '240')
-            r = self.bot.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=limit)
+            
+            # === ВИПРАВЛЕННЯ 1: Збільшуємо ліміт для склейки 45м ===
+            req_limit = limit * 3 if str(timeframe) == '45' else limit
+            
+            r = self.bot.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=req_limit)
             if r['retCode'] == 0:
                 df = pd.DataFrame(r['result']['list'], columns=['time','open','high','low','close','vol','to'])
                 df['close'] = df['close'].astype(float)
                 df['high'] = df['high'].astype(float)
                 df['low'] = df['low'].astype(float)
+                df['open'] = df['open'].astype(float) 
+                
+                # Конвертуємо час для правильного ресемплінгу
+                df['time'] = pd.to_numeric(df['time'])
+                df['datetime'] = pd.to_datetime(df['time'], unit='ms')
+                
                 # Перевертаємо: старі -> нові
-                return df.iloc[::-1].reset_index(drop=True)
-        except: pass
+                df = df.sort_values('datetime').reset_index(drop=True)
+
+                # === ВИПРАВЛЕННЯ 2: Логіка склейки (Resample) для 45хв ===
+                if str(timeframe) == '45':
+                    df.set_index('datetime', inplace=True)
+                    # origin='start_day' гарантує, що сітка починається з 00:00 (як на TradingView)
+                    df_45 = df.resample('45min', origin='start_day', closed='left', label='left').agg({
+                        'open': 'first',
+                        'high': 'max',
+                        'low': 'min',
+                        'close': 'last'
+                    })
+                    df_45.dropna(inplace=True)
+                    df = df_45.reset_index(drop=True)
+
+                return df
+        except Exception as e: 
+            pass
         return None
 
     def monitor(self):
@@ -90,7 +117,8 @@ class EnhancedMarketScanner:
                 self.data[s] = {'rsi': 0, 'exit_status': 'Safe', 'exit_details': '-', 'trailing_active': False}
 
             # 1. Fetch Data
-            df = self.fetch_candles(s, tf, limit=atr_len + 50)
+            # Беремо більше свічок, щоб після склейки залишилось достатньо для ATR/RSI
+            df = self.fetch_candles(s, tf, limit=(atr_len + 50))
             
             if df is not None and len(df) > atr_len:
                 # 2. Calc Indicators (без pandas_ta - fallback)
@@ -132,14 +160,11 @@ class EnhancedMarketScanner:
                             if calc_sl > current_sl:
                                 new_sl = calc_sl
                                 should_update = True
-                                # Захист: SL не може бути вище ціни (але ATR формула це враховує)
-
+                        
                         elif side == "Sell":
                             # Short: SL = Price + (ATR * Mult)
                             calc_sl = last_price + (atr_val * atr_mult)
-                            # Рухаємо ТІЛЬКИ вниз (менше значення SL для шорта = ближче до ціни? Ні, SL шорта вище ціни.
-                            # Якщо current_sl == 0, то будь-який SL краще.
-                            # Якщо current_sl > 0, ми хочемо зменшити його (наблизити до ціни зверху).
+                            # Рухаємо ТІЛЬКИ вниз 
                             if current_sl == 0 or calc_sl < current_sl:
                                 new_sl = calc_sl
                                 should_update = True
@@ -168,7 +193,10 @@ class EnhancedMarketScanner:
             # Невеликий сліп між монетами
             time.sleep(0.2)
 
-    # def get_coin_data(self, s): return self.data.get(s, {})
-    # def get_current_rsi(self, s): return self.data.get(s, {}).get('rsi', 0)
+    def get_coin_data(self, s):
+        # Повертає словник, навіть якщо монети немає
+        return self.data.get(s, {'rsi': 0, 'exit_status': 'Safe', 'exit_details': '-'})
+        
+    def get_current_rsi(self, s): return self.data.get(s, {}).get('rsi', 0)
     def get_market_pressure(self, s): return 0
     def get_active_symbols(self): return self.get_active()

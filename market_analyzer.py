@@ -73,11 +73,13 @@ class MarketAnalyzer:
                 # Сортуємо: Старі -> Нові (важливо для індикаторів та ресемплінгу)
                 df = df.sort_values('datetime').reset_index(drop=True)
                 
-                # === ЛОГІКА РЕСЕМПЛІНГУ (Склейка свічок) ===
+                # === ВИПРАВЛЕННЯ: СУВОРЕ ВИРІВНЮВАННЯ ЧАСУ ДЛЯ 45m ===
                 if str(timeframe) == '45':
                     df.set_index('datetime', inplace=True)
                     
-                    df_45 = df.resample('45min').agg({
+                    # origin='start_day' - прив'язка до 00:00 UTC (критично для TV)
+                    # closed='left', label='left' - стандарт для свічок
+                    df_45 = df.resample('45min', origin='start_day', closed='left', label='left').agg({
                         'open': 'first',
                         'high': 'max',
                         'low': 'min',

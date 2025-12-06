@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import time
+import logging
+import decimal
 from datetime import datetime
 from decimal import Decimal
 from pybit.unified_trading import HTTP
@@ -19,8 +21,7 @@ class BybitTradingBot:
         """Ініціалізація бота з API сесією"""
         try:
             api_key, api_secret = get_api_credentials()
-            # Використовуємо testnet=False для реальної торгівлі
-            # Якщо потрібно testnet, змініть на True або беріть з конфігу
+            # Використовуємо налаштування з app_config або default False
             is_testnet = getattr(app_config, 'BYBIT_TESTNET', False)
             
             self.session = HTTP(
@@ -34,13 +35,13 @@ class BybitTradingBot:
             raise
 
     def normalize(self, s): 
-        """Нормалізує символ (видаляє '.P') для внутрішнього використання"""
+        """Нормалізує символ (видаляє '.P')"""
         if not s: return ""
         return s.replace('.P', '')
 
     @with_retry(max_retries=3, exceptions=(Exception,))
     def get_bal(self):
-        """Отримує баланс USDT з обробкою помилок"""
+        """Отримує баланс USDT з обробкою ошибок"""
         try:
             b = self.session.get_wallet_balance(accountType="UNIFIED")
             if b.get('retCode') != 0:
@@ -62,6 +63,7 @@ class BybitTradingBot:
     def get_price(self, s):
         """Отримує поточну ціну символу"""
         try:
+            # Нормалізуємо символ
             r = self.session.get_tickers(category="linear", symbol=self.normalize(s))
             if r.get('retCode') != 0:
                 logger.warning("get_price_failed", symbol=s, retCode=r.get('retCode'))
@@ -149,9 +151,7 @@ class BybitTradingBot:
     
     @with_retry(max_retries=2, exceptions=(Exception,))
     def update_sl(self, symbol, new_sl_price):
-        """
-        Оновлює Stop Loss для відкритої позиції з валідацією
-        """
+        """Оновлює Stop Loss для відкритої позиції з валідацією"""
         try:
             norm = self.normalize(symbol)
             _, tick = self.get_instr(norm)
@@ -194,7 +194,7 @@ class BybitTradingBot:
     # === ВИКОНАННЯ ОРДЕРІВ ===
     def place_order(self, data):
         """
-        Розміщує ордер на основі вебхука з валідацією вхідних даних.
+        Розміщує ордер на основі вебхука з валідацією вхідних даних
         """
         try:
             # === ВИПРАВЛЕННЯ: ПОПЕРЕДНЯ НОРМАЛІЗАЦІЯ ===
@@ -205,9 +205,7 @@ class BybitTradingBot:
                     data['symbol'] = data['symbol'].replace('.P', '')
 
             # === ВАЛІДАЦІЯ ВХОДУ ===
-            # Тепер символ чистий (без .P) і пройде перевірку на endswith('USDT')
             validated_data = validate_webhook_data(data)
-            
             action = validated_data['action']
             symbol = validated_data['symbol']
             norm = self.normalize(symbol)
@@ -273,7 +271,7 @@ class BybitTradingBot:
                     logger.warning("cancel_orders_failed", symbol=symbol, error=str(e))
                 
                 logger.info("order_closed", symbol=symbol, direction=direction)
-                metrics.log_trade_closed(symbol, pnl=0.0)  # PnL підтягнеться пізніше через sync
+                metrics.log_trade_closed(symbol, pnl=0.0)  # PnL визначимо потім
                 return {"status": "ok", "message": f"Closed {direction}"}
             else:
                 logger.warning("close_mismatch", symbol=symbol, expected=direction, actual=curr_side)
@@ -300,7 +298,7 @@ class BybitTradingBot:
             
             # Перевірка баланса
             bal = self.get_bal()
-            # MIN_BALANCE беремо з config або хардкод
+            # MIN_BALANCE можна брати з config.MIN_BALANCE якщо він там є, або хардкод
             min_bal = getattr(app_config, 'MIN_BALANCE', 5.0) 
             if bal < min_bal:
                 logger.warning("insufficient_balance", symbol=symbol, balance=bal, required=min_bal)
@@ -318,7 +316,7 @@ class BybitTradingBot:
             if existing_pos:
                 current_side = existing_pos['side']
                 
-                # Якщо той же напрямок - ігноруємо (пірамідинг вимкнено для безпеки)
+                # Якщо той же напрямок - ігноруємо
                 if current_side == action:
                     logger.info("already_in_position", symbol=symbol, side=action)
                     return {"status": "ignored", "reason": f"Already in {action}"}
@@ -344,7 +342,7 @@ class BybitTradingBot:
                 
                 # Чекаємо на оновлення баланса
                 time.sleep(1)
-                # Оновлюємо баланс після закриття
+                # Оновлюємо баланс
                 bal = self.get_bal()
             
             # === РОЗРАХУНОК ОБ'ЄМУ ===
@@ -385,10 +383,10 @@ class BybitTradingBot:
                 
                 # Розраховуємо абсолютну ціну SL на основі напрямку
                 if action == "Buy":
-                    # Для Long: SL нижче за entry
+                    # Для Long: SL нижче за entry (entry * (1 - percent/100))
                     sl_raw = entry_price * (1 - sl_percent / 100)
                 else:
-                    # Для Short: SL вище за entry
+                    # Для Short: SL вище за entry (entry * (1 + percent/100))
                     sl_raw = entry_price * (1 + sl_percent / 100)
                 
                 # Валідуємо SL
@@ -409,9 +407,8 @@ class BybitTradingBot:
             else:
                 logger.warning("no_stop_loss", symbol=symbol, message="Trade is unprotected!")
             
-            # === ВСТАНОВЛЕННЯ TAKE PROFIT ===
-            # ВІДКЛЮЧЕНО, оскільки стратегія зазвичай використовує трейлінг або вихід по зворотньому сигналу.
-            # Якщо потрібно, можна розкомертувати або додати логіку тут.
+            # === ВСТАНОВЛЕННЯ TAKE PROFIT (Внутрішній метод) ===
+            self._tp(symbol, action, price, qty, data, tick_size, qty_step)
             
             logger.info("order_success", symbol=symbol, action=action, qty=qty)
             return {"status": "ok", "qty": qty, "price": price, "leverage": lev}
@@ -419,5 +416,34 @@ class BybitTradingBot:
         except Exception as e:
             logger.error("open_order_error", symbol=symbol, error=str(e), exc_info=True)
             return {"status": "error", "reason": str(e)}
+
+    def _tp(self, s, side, ep, qty, d, tick, step):
+        """Розрахунок та встановлення TP"""
+        try:
+            mode = settings.get("tp_mode")
+            exit_side = "Sell" if side=="Buy" else "Buy"
+            
+            if mode == "Fixed_1_50":
+                q = self.round_val(qty*0.5, step)
+                p = self.round_val(ep*1.01 if side=="Buy" else ep*0.99, tick)
+                if q>0: 
+                    self.session.place_order(
+                        category="linear", symbol=s, side=exit_side, 
+                        orderType="Limit", qty=str(q), price=str(p), reduceOnly=True
+                    )
+            elif mode == "Ladder_3":
+                tp = float(d.get('takeProfitPercent', settings.get('fixedTP')))/100
+                q_step = self.round_val(qty*0.33, step)
+                for i, mult in enumerate([1/3, 2/3, 1]):
+                    pct = tp*mult
+                    p = self.round_val(ep*(1+pct) if side=="Buy" else ep*(1-pct), tick)
+                    q = self.round_val(qty - q_step*2, step) if i==2 else q_step
+                    if q>0: 
+                        self.session.place_order(
+                            category="linear", symbol=s, side=exit_side, 
+                            orderType="Limit", qty=str(q), price=str(p), reduceOnly=True
+                        )
+        except Exception as e:
+            logger.warning("tp_error", error=str(e))
 
 bot_instance = BybitTradingBot()
