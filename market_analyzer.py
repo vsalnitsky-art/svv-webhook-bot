@@ -7,7 +7,7 @@ import logging
 from bot import bot_instance
 from settings_manager import settings
 from models import db_manager, AnalysisResult
-# ✅ Додано імпорт локального індикатора
+# ✅ Імпорт локальних індикаторів
 from indicators import simple_rsi
 
 logger = logging.getLogger(__name__)
@@ -44,19 +44,62 @@ class MarketAnalyzer:
             return []
 
     def fetch_candles(self, symbol, timeframe, limit=50):
-        """Автономне завантаження свічок"""
+        """
+        Автономне завантаження свічок.
+        ✅ ДОДАНО: Ресемплінг для 45-хвилинного таймфрейму (з 15м даних)
+        """
         try:
             # Мапінг таймфреймів для Bybit API
+            # Якщо просять 45, ми беремо 15 (бо 45 немає на біржі)
             tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','120':'120','240':'240','D':'D','W':'W'}
             req_tf = tf_map.get(str(timeframe), '240')
             
-            r = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=limit)
+            # Якщо потрібен 45хв ТФ, нам треба в 3 рази більше свічок 15хв
+            req_limit = limit * 3 if str(timeframe) == '45' else limit
+            
+            r = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=req_limit)
+            
             if r['retCode'] == 0 and r['result']['list']:
                 df = pd.DataFrame(r['result']['list'], columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-                df['close'] = df['close'].astype(float)
-                # Перевертаємо: старі -> нові
-                return df.iloc[::-1].reset_index(drop=True)
-        except: pass
+                
+                # Конвертуємо типи даних
+                cols = ['open', 'high', 'low', 'close', 'volume', 'turnover']
+                df[cols] = df[cols].astype(float)
+                
+                # Обробка часу для ресемплінгу
+                df['time'] = pd.to_numeric(df['time'])
+                df['datetime'] = pd.to_datetime(df['time'], unit='ms')
+                
+                # Сортуємо: Старі -> Нові (важливо для pandas resample)
+                df = df.sort_values('datetime').reset_index(drop=True)
+                
+                # === ЛОГІКА РЕСЕМПЛІНГУ 45 ХВИЛИН ===
+                if str(timeframe) == '45':
+                    # Встановлюємо час як індекс
+                    df.set_index('datetime', inplace=True)
+                    
+                    # Склеюємо по 45 хвилин
+                    df_45 = df.resample('45min').agg({
+                        'open': 'first',   # Ціна відкриття першої свічки
+                        'high': 'max',     # Макс ціна за 3 свічки
+                        'low': 'min',      # Мін ціна за 3 свічки
+                        'close': 'last',   # Ціна закриття останньої свічки
+                        'volume': 'sum',   # Сума об'єму
+                        'turnover': 'sum',
+                        'time': 'first'    # Timestamp початку
+                    })
+                    
+                    # Видаляємо порожні (якщо є дірки в історії)
+                    df_45.dropna(inplace=True)
+                    
+                    # Повертаємо індекс назад
+                    df = df_45.reset_index(drop=True)
+                
+                return df
+                
+        except Exception as e:
+            # logger.error(f"Error fetching candles for {symbol}: {e}")
+            pass
         return None
 
     def run_scan_thread(self):
@@ -98,7 +141,7 @@ class MarketAnalyzer:
                 self.progress = int((i / total) * 100)
 
                 try:
-                    # 2. Отримуємо дані
+                    # 2. Отримуємо дані (вже з підтримкою 45 хв)
                     # Беремо трохи більше свічок для розігріву індикатора
                     df = self.fetch_candles(sym, htf, limit=rsi_len + 50)
                     
@@ -106,7 +149,7 @@ class MarketAnalyzer:
                         time.sleep(0.05)
                         continue
 
-                    # 3. ✅ ВИПРАВЛЕНО: Розрахунок RSI через indicators.py
+                    # 3. Розрахунок RSI (використовуємо виправлений indicators.py)
                     current_rsi = simple_rsi(df['close'], period=rsi_len)
                     current_price = df['close'].iloc[-1]
 
@@ -140,7 +183,7 @@ class MarketAnalyzer:
                             score=score,
                             price=float(current_price),
                             htf_rsi=float(current_rsi), 
-                            ltf_rsi=0.0, # LTF ігноруємо в цьому режимі
+                            ltf_rsi=0.0,
                             volume_24h=vol_24h,
                             details=details
                         )
