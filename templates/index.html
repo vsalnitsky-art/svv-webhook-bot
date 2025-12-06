@@ -402,29 +402,18 @@
 {% block content %}
 <div class="container-fluid">
     
-    <!-- ЗАГОЛОВОК -->
+    <!-- ЗАГОЛОВОК ІЗ ВКЛАДКАМИ -->
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h4 class="fw-bold text-dark mb-1">📊 Огляд Ринку</h4>
-            <div class="d-flex align-items-center text-muted small font-mono">
-                <span class="me-2" style="width: 8px; height: 8px; background: var(--success); border-radius: 50%; display: inline-block;"></span>
-                <span class="fw-bold">ОНЛАЙН</span>
-                <span class="mx-2">|</span>
-                <span>{{ date }}</span>
-            </div>
+        <div class="period-tabs" id="periodTabs" style="margin-bottom: 0;">
+            <span class="period-tab active" data-days="7">Остання неділя</span>
+            <span class="period-tab" data-days="30">Останній місяць</span>
+            <span class="period-tab" data-days="60">60 днів</span>
+            <span class="period-tab" data-days="90">90 днів</span>
+            <span class="period-tab" data-days="180">180 днів</span>
         </div>
-        <a href="/analyzer" class="btn btn-primary d-flex align-items-center px-4 shadow-sm">
+        <a href="/analyzer" class="btn btn-primary d-flex align-items-center px-4 shadow-sm" style="white-space: nowrap;">
             <i class="ri-search-2-line me-2"></i> Новий Скан
         </a>
-    </div>
-    
-    <!-- ВКЛАДКИ ПЕРІОДІВ -->
-    <div class="period-tabs" id="periodTabs">
-        <span class="period-tab active" data-days="7">Остання неділя</span>
-        <span class="period-tab" data-days="30">Останній місяць</span>
-        <span class="period-tab" data-days="60">60 днів</span>
-        <span class="period-tab" data-days="90">90 днів</span>
-        <span class="period-tab" data-days="180">180 днів</span>
     </div>
     
     <!-- КЛЮЧОВІ МЕТРИКИ -->
@@ -478,41 +467,22 @@
             <div class="metric-label">
                 <span>📈 Всього Угод</span>
             </div>
-            <div class="metric-value">{{ stats.total_trades }}</div>
-            <div class="metric-subtitle">
-                <span>Обсяг: {{ stats.total_volume | round(2) }}</span>
-            </div>
-        </div>
-        
-        <!-- НАЙКРАЩА УГОДА -->
-        <div class="metric-card">
-            <div class="metric-label">
-                <span>🏆 Кращ. Угода</span>
-            </div>
-            <div class="metric-value {% if stats.best_trade > 0 %}success{% endif %}">
-                +{{ stats.best_trade | round(2) }}
-            </div>
-            <div class="metric-subtitle">
-                <span>USDT</span>
-            </div>
-        </div>
-        
-        <!-- НАЙГІРША УГОДА -->
-        <div class="metric-card">
-            <div class="metric-label">
-                <span>📉 Гірш. Угода</span>
-            </div>
-            <div class="metric-value {% if stats.worst_trade < 0 %}danger{% endif %}">
-                {{ stats.worst_trade | round(2) }}
-            </div>
-            <div class="metric-subtitle">
-                <span>USDT</span>
+            <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+                <div style="flex: 1;">
+                    <div class="metric-value">{{ stats.total_trades }}</div>
+                    <div class="metric-subtitle">
+                        <span>Обсяг: {{ stats.total_volume | round(2) }}</span>
+                    </div>
+                </div>
+                <div style="width: 80px; height: 80px;">
+                    <canvas id="miniChart"></canvas>
+                </div>
             </div>
         </div>
     </div>
     
-    <!-- ГРАФІКИ -->
-    <div class="charts-grid">
+    <!-- ГРАФІК P&L + РЕЙТИНГ КОНТРАКТІВ -->
+    <div class="charts-grid" style="grid-template-columns: 1fr;">
         <!-- Графік P&L -->
         <div class="chart-container">
             <div class="chart-title">
@@ -520,16 +490,6 @@
             </div>
             <div style="height: 300px; width: 100%;">
                 <canvas id="mainChart"></canvas>
-            </div>
-        </div>
-        
-        <!-- Графік розподілу -->
-        <div class="chart-container">
-            <div class="chart-title">
-                <i class="ri-pie-chart-2-line"></i> Long vs Short
-            </div>
-            <div style="height: 300px; width: 100%;">
-                <canvas id="lsChart"></canvas>
             </div>
         </div>
     </div>
@@ -549,7 +509,6 @@
                     <th>Угод</th>
                     <th>Win Rate</th>
                     <th>P&L</th>
-                    <th>Обсяг</th>
                 </tr>
             </thead>
             <tbody>
@@ -570,7 +529,6 @@
                     <td class="contract-stat {% if contract_stat.pnl > 0 %}stat-positive{% elif contract_stat.pnl < 0 %}stat-negative{% else %}stat-neutral{% endif %}">
                         {{ "+" if contract_stat.pnl > 0 else "" }}{{ contract_stat.pnl | round(2) }}
                     </td>
-                    <td class="contract-stat stat-neutral">{{ contract_stat.volume | round(2) }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -595,6 +553,7 @@
                     <th>Вихід</th>
                     <th>Кіл-сть</th>
                     <th>P&L</th>
+                    <th>Комісія</th>
                     <th>Статус</th>
                     <th>Час</th>
                 </tr>
@@ -614,6 +573,7 @@
                     <td class="trade-pnl {% if t.pnl > 0 %}win{% else %}loss{% endif %}">
                         {{ "+" if t.pnl > 0 else "" }}{{ t.pnl | round(2) }}
                     </td>
+                    <td class="contract-stat stat-neutral">0.00</td>
                     <td>
                         <span class="badge {% if t.pnl > 0 %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">
                             {{ "WIN" if t.pnl > 0 else "LOSS" }}
@@ -730,12 +690,12 @@
             });
         }
         
-        const lsCtx = document.getElementById('lsChart');
-        if (lsCtx) {
+        const miniCtx = document.getElementById('miniChart');
+        if (miniCtx) {
             const longs = {{ longs }};
             const shorts = {{ shorts }};
             
-            new Chart(lsCtx, {
+            new Chart(miniCtx, {
                 type: 'doughnut',
                 data: {
                     labels: ['Long', 'Short'],
@@ -743,13 +703,13 @@
                         data: [longs, shorts],
                         backgroundColor: ['#10b981', '#ef4444'],
                         borderWidth: 0,
-                        hoverOffset: 8
+                        hoverOffset: 4
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    cutout: '70%',
+                    cutout: '65%',
                     plugins: { legend: { display: false } }
                 }
             });
