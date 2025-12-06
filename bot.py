@@ -370,12 +370,21 @@ class BybitTradingBot:
             
             metrics.log_trade_opened(symbol, qty, price)
             
-            # === ВСТАНОВЛЕННЯ STOP LOSS ===
-            if data.get('sl_price'):
-                sl_raw = safe_float(data['sl_price'])
+            # === ВСТАНОВЛЕННЯ STOP LOSS (З ВІДСОТКІВ) ===
+            if data.get('stopLossPercent') and data.get('entryPrice'):
+                sl_percent = safe_float(data['stopLossPercent'])
+                entry_price = safe_float(data['entryPrice'])
+                
+                # Розраховуємо абсолютну ціну SL на основі напрямку
+                if action == "Buy":
+                    # Для Long: SL нижче за entry (entry * (1 - percent/100))
+                    sl_raw = entry_price * (1 - sl_percent / 100)
+                else:
+                    # Для Short: SL вище за entry (entry * (1 + percent/100))
+                    sl_raw = entry_price * (1 + sl_percent / 100)
                 
                 # Валідуємо SL
-                if validate_stop_loss(sl_raw, price, action):
+                if validate_stop_loss(sl_raw, entry_price, action):
                     sl_rounded = self.round_val(sl_raw, tick_size)
                     try:
                         self.session.set_trading_stop(
@@ -384,16 +393,43 @@ class BybitTradingBot:
                             stopLoss=str(sl_rounded),
                             positionIdx=0
                         )
-                        logger.info("stop_loss_set", symbol=symbol, sl_price=sl_rounded)
+                        logger.info("stop_loss_set", symbol=symbol, sl_price=sl_rounded, sl_percent=sl_percent)
                     except Exception as e:
                         logger.error("sl_set_error", symbol=symbol, error=str(e))
                 else:
-                    logger.warning("invalid_sl", symbol=symbol, sl_price=sl_raw, entry_price=price, side=action)
+                    logger.warning("invalid_sl", symbol=symbol, sl_price=sl_raw, entry_price=entry_price, side=action)
             else:
                 logger.warning("no_stop_loss", symbol=symbol, message="Trade is unprotected!")
             
-            # === TAKE PROFIT (поки вимкнено) ===
-            # можна додати логіку тут у майбутньому
+            # === ВСТАНОВЛЕННЯ TAKE PROFIT (З ВІДСОТКІВ) ===
+            if data.get('takeProfitPercent') and data.get('entryPrice'):
+                tp_percent = safe_float(data['takeProfitPercent'])
+                entry_price = safe_float(data['entryPrice'])
+                
+                # Розраховуємо абсолютну ціну TP на основі напрямку
+                if action == "Buy":
+                    # Для Long: TP вище за entry (entry * (1 + percent/100))
+                    tp_raw = entry_price * (1 + tp_percent / 100)
+                else:
+                    # Для Short: TP нижче за entry (entry * (1 - percent/100))
+                    tp_raw = entry_price * (1 - tp_percent / 100)
+                
+                tp_rounded = self.round_val(tp_raw, tick_size)
+                try:
+                    # Розміщуємо TP ордер (половину позиції)
+                    tp_qty = qty / 2
+                    self.session.place_order(
+                        category="linear",
+                        symbol=symbol,
+                        side="Sell" if action == "Buy" else "Buy",
+                        orderType="Limit",
+                        qty=str(tp_qty),
+                        price=str(tp_rounded),
+                        reduceOnly=True
+                    )
+                    logger.info("take_profit_set", symbol=symbol, tp_price=tp_rounded, tp_percent=tp_percent, qty=tp_qty)
+                except Exception as e:
+                    logger.error("tp_set_error", symbol=symbol, error=str(e))
             
             logger.info("order_success", symbol=symbol, action=action, qty=qty)
             return {"status": "ok", "qty": qty, "price": price, "leverage": lev}

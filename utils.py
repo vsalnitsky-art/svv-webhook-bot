@@ -114,17 +114,19 @@ class TradeDirection(str, Enum):
 
 def validate_webhook_data(data: dict) -> dict:
     """
-    Валідує дані з webhook-у (TradingView)
+    Валідує дані з webhook-у від TradingView
     
-    Очікує:
+    НОВИЙ ФОРМАТ (від TradingView):
     {
         "action": "Buy|Sell|Close",
         "symbol": "BTCUSDT",
         "direction": "Long|Short" (для Close),
         "riskPercent": float,
-        "leverage": int,
-        "sl_price": float (опціонально),
-        "tp_price": float (опціонально)
+        "leverage": float,
+        "entryPrice": float,
+        "stopLossPercent": float (у відсотках!),
+        "takeProfitPercent": float (у відсотках!),
+        "filtersApproved": bool (опціонально)
     }
     """
     errors = []
@@ -155,8 +157,8 @@ def validate_webhook_data(data: dict) -> dict:
         else:
             try:
                 risk_val = float(risk)
-                if not (0.1 <= risk_val <= 10):
-                    errors.append(f"riskPercent must be 0.1-10%, got {risk_val}%")
+                if not (0.1 <= risk_val <= 100):
+                    errors.append(f"riskPercent must be 0.1-100%, got {risk_val}%")
             except (ValueError, TypeError):
                 errors.append(f"riskPercent must be a number, got {risk}")
     
@@ -167,22 +169,44 @@ def validate_webhook_data(data: dict) -> dict:
             errors.append("leverage required for Buy/Sell")
         else:
             try:
-                lev_val = int(lev)
-                if not (1 <= lev_val <= 100):
-                    errors.append(f"leverage must be 1-100x, got {lev_val}x")
+                lev_val = float(lev)
+                if not (1 <= lev_val <= 125):
+                    errors.append(f"leverage must be 1-125x, got {lev_val}x")
             except (ValueError, TypeError):
-                errors.append(f"leverage must be an integer, got {lev}")
+                errors.append(f"leverage must be a number, got {lev}")
     
-    # Опціональні SL/TP
-    for field in ['sl_price', 'tp_price']:
-        val = data.get(field)
-        if val is not None:
+    # Перевірка entryPrice (для Buy/Sell)
+    if action in ['Buy', 'Sell']:
+        entry_price = data.get('entryPrice')
+        if entry_price is None:
+            errors.append("entryPrice required for Buy/Sell")
+        else:
             try:
-                float_val = float(val)
-                if float_val <= 0:
-                    errors.append(f"{field} must be > 0, got {float_val}")
+                entry_val = float(entry_price)
+                if entry_val <= 0:
+                    errors.append(f"entryPrice must be > 0, got {entry_val}")
             except (ValueError, TypeError):
-                errors.append(f"{field} must be a number, got {val}")
+                errors.append(f"entryPrice must be a number, got {entry_price}")
+    
+    # Перевірка stopLossPercent (у відсотках!)
+    sl_percent = data.get('stopLossPercent')
+    if sl_percent is not None:
+        try:
+            sl_val = float(sl_percent)
+            if not (0.01 <= sl_val <= 50):
+                errors.append(f"stopLossPercent must be 0.01-50%, got {sl_val}%")
+        except (ValueError, TypeError):
+            errors.append(f"stopLossPercent must be a number, got {sl_percent}")
+    
+    # Перевірка takeProfitPercent (у відсотках!)
+    tp_percent = data.get('takeProfitPercent')
+    if tp_percent is not None:
+        try:
+            tp_val = float(tp_percent)
+            if not (0.01 <= tp_val <= 100):
+                errors.append(f"takeProfitPercent must be 0.01-100%, got {tp_val}%")
+        except (ValueError, TypeError):
+            errors.append(f"takeProfitPercent must be a number, got {tp_percent}")
     
     if errors:
         raise ValueError("Webhook validation failed:\n" + "\n".join(errors))
@@ -192,9 +216,11 @@ def validate_webhook_data(data: dict) -> dict:
         'symbol': symbol,
         'direction': data.get('direction', ''),
         'riskPercent': float(data.get('riskPercent', 0)),
-        'leverage': int(data.get('leverage', 0)),
-        'sl_price': float(data.get('sl_price')) if data.get('sl_price') else None,
-        'tp_price': float(data.get('tp_price')) if data.get('tp_price') else None
+        'leverage': float(data.get('leverage', 0)),
+        'entryPrice': float(data.get('entryPrice', 0)) if data.get('entryPrice') else None,
+        'stopLossPercent': float(data.get('stopLossPercent')) if data.get('stopLossPercent') else None,
+        'takeProfitPercent': float(data.get('takeProfitPercent')) if data.get('takeProfitPercent') else None,
+        'filtersApproved': data.get('filtersApproved', False)
     }
 
 def validate_stop_loss(sl_price: float, entry_price: float, side: str) -> bool:
