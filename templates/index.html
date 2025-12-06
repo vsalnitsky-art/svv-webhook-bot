@@ -259,30 +259,6 @@
         color: var(--muted);
     }
     
-    .stat-bar {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        background: #f1f5f9;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 11px;
-    }
-    
-    .stat-bar-fill {
-        width: 60px;
-        height: 3px;
-        background: var(--border-subtle);
-        border-radius: 2px;
-        overflow: hidden;
-    }
-    
-    .stat-bar-value {
-        height: 100%;
-        background: linear-gradient(90deg, var(--success), #06b6d4);
-        border-radius: 2px;
-    }
-    
     /* ===== ТАБЛИЦЯ УГОД ===== */
     .trades-table {
         background: white;
@@ -464,10 +440,7 @@
             <div class="metric-value value-toggle" id="pnl-value">{{ period_pnl | round(2) }}</div>
             <div class="metric-subtitle">
                 <span>{{ "+" if period_pnl > 0 else "" }}{{ period_pnl | round(1) }} USDT</span>
-                <span>{{ (period_pnl / (balance or 1) * 100) | round(1) }}%</span>
-            </div>
-            <div class="metric-bar">
-                <div class="metric-bar-fill" style="width: {{ min(abs(period_pnl) / (abs(period_pnl) + 100) * 100, 100) }}%"></div>
+                <span>{{ (period_pnl / (balance + 0.01) * 100) | round(1) }}%</span>
             </div>
         </div>
         
@@ -580,7 +553,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for symbol, stats in stats.contract_stats %}
+                {% for symbol, contract_stat in stats.contract_stats %}
                 <tr>
                     <td>
                         <div class="contract-symbol">
@@ -588,21 +561,16 @@
                             <strong>{{ symbol }}</strong>
                         </div>
                     </td>
-                    <td class="contract-stat">{{ stats.trades }}</td>
+                    <td class="contract-stat">{{ contract_stat.trades }}</td>
                     <td class="contract-stat">
-                        <div class="stat-bar">
-                            <span class="{% if stats.win_rate >= 50 %}stat-positive{% elif stats.win_rate >= 30 %}stat-neutral{% else %}stat-negative{% endif %}">
-                                {{ stats.win_rate }}%
-                            </span>
-                            <div class="stat-bar-fill">
-                                <div class="stat-bar-value" style="width: {{ stats.win_rate }}%"></div>
-                            </div>
-                        </div>
+                        <span class="{% if contract_stat.win_rate >= 50 %}stat-positive{% elif contract_stat.win_rate >= 30 %}stat-neutral{% else %}stat-negative{% endif %}">
+                            {{ contract_stat.win_rate }}%
+                        </span>
                     </td>
-                    <td class="contract-stat {% if stats.pnl > 0 %}stat-positive{% elif stats.pnl < 0 %}stat-negative{% else %}stat-neutral{% endif %}">
-                        {{ "+" if stats.pnl > 0 }}{{ stats.pnl | round(2) }}
+                    <td class="contract-stat {% if contract_stat.pnl > 0 %}stat-positive{% elif contract_stat.pnl < 0 %}stat-negative{% else %}stat-neutral{% endif %}">
+                        {{ "+" if contract_stat.pnl > 0 else "" }}{{ contract_stat.pnl | round(2) }}
                     </td>
-                    <td class="contract-stat stat-neutral">{{ stats.volume | round(2) }}</td>
+                    <td class="contract-stat stat-neutral">{{ contract_stat.volume | round(2) }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -632,7 +600,7 @@
                 </tr>
             </thead>
             <tbody>
-                {% for t in trades[:15] %}
+                {% for t in trades %}
                 <tr>
                     <td class="trade-symbol">{{ t.symbol }}</td>
                     <td>
@@ -644,7 +612,7 @@
                     <td class="font-mono small">{{ t.exit_price | round(4) }}</td>
                     <td class="font-mono small">{{ t.qty | round(2) }}</td>
                     <td class="trade-pnl {% if t.pnl > 0 %}win{% else %}loss{% endif %}">
-                        {{ "+" if t.pnl > 0 }}{{ t.pnl | round(2) }}
+                        {{ "+" if t.pnl > 0 else "" }}{{ t.pnl | round(2) }}
                     </td>
                     <td>
                         <span class="badge {% if t.pnl > 0 %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">
@@ -736,7 +704,7 @@
                 data: {
                     labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Today'],
                     datasets: [{
-                        label: '累計 P&L',
+                        label: 'P&L',
                         data: [0, 100, 200, 150, {{ period_pnl }}],
                         borderColor: '#10b981',
                         backgroundColor: gradient,
