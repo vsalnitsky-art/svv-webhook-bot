@@ -15,7 +15,7 @@ from datetime import datetime
 from functools import wraps
 
 from flask import Flask, request, jsonify, render_template, redirect, url_for, Response, session
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, generate_csrf
 from sqlalchemy import desc
 
 from bot import bot_instance
@@ -49,6 +49,12 @@ app.config['WTF_CSRF_TIME_LIMIT'] = None  # Без часових обмежен
 app.config['WTF_CSRF_CHECK_DEFAULT'] = True
 
 csrf = CSRFProtect(app)
+
+# === CSRF CONTEXT PROCESSOR ===
+@app.context_processor
+def inject_csrf_token():
+    """Автоматично передає csrf_token функцію у всі шаблони"""
+    return dict(csrf_token=generate_csrf)
 
 # === СИСТЕМНА УТИЛІТА (Windows) ===
 try:
