@@ -9,7 +9,7 @@ from settings_manager import settings
 from statistics_service import stats_service
 from utils import (
     get_logger, with_retry, validate_webhook_data, validate_stop_loss,
-    safe_float, safe_int, metrics
+    safe_float, safe_int, metrics, config as app_config
 )
 
 logger = get_logger()
@@ -19,21 +19,28 @@ class BybitTradingBot:
         """Ініціалізація бота з API сесією"""
         try:
             api_key, api_secret = get_api_credentials()
+            # Використовуємо testnet=False для реальної торгівлі
+            # Якщо потрібно testnet, змініть на True або беріть з конфігу
+            is_testnet = getattr(app_config, 'BYBIT_TESTNET', False)
+            
             self.session = HTTP(
-                testnet=False,
+                testnet=is_testnet,
                 api_key=api_key,
                 api_secret=api_secret
             )
-            logger.info("bot_initialized", testnet=False)
+            logger.info("bot_initialized", testnet=is_testnet)
         except Exception as e:
             logger.error("bot_init_failed", error=str(e))
             raise
 
-    def normalize(self, s): return s.replace('.P', '')
+    def normalize(self, s): 
+        """Нормалізує символ (видаляє '.P') для внутрішнього використання"""
+        if not s: return ""
+        return s.replace('.P', '')
 
     @with_retry(max_retries=3, exceptions=(Exception,))
     def get_bal(self):
-        """Отримує баланс USDT з обробкою ошибок"""
+        """Отримує баланс USDT з обробкою помилок"""
         try:
             b = self.session.get_wallet_balance(accountType="UNIFIED")
             if b.get('retCode') != 0:
@@ -81,7 +88,13 @@ class BybitTradingBot:
         except: return val
 
     def set_lev(self, s, l):
-        try: self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
+        try: 
+            self.session.set_leverage(
+                category="linear", 
+                symbol=self.normalize(s), 
+                buyLeverage=str(l), 
+                sellLeverage=str(l)
+            )
         except: pass
 
     @with_retry(max_retries=2, exceptions=(Exception,))
@@ -138,13 +151,6 @@ class BybitTradingBot:
     def update_sl(self, symbol, new_sl_price):
         """
         Оновлює Stop Loss для відкритої позиції з валідацією
-        
-        Args:
-            symbol: Символ торгівлі (напр. BTCUSDT)
-            new_sl_price: Нова ціна Stop Loss
-        
-        Returns:
-            True якщо успішно, False інакше
         """
         try:
             norm = self.normalize(symbol)
@@ -188,22 +194,20 @@ class BybitTradingBot:
     # === ВИКОНАННЯ ОРДЕРІВ ===
     def place_order(self, data):
         """
-        Розміщує ордер на основі вебхука з валідацією вхідних даних
-        
-        Очікує JSON:
-        {
-            "action": "Buy|Sell|Close",
-            "symbol": "BTCUSDT",
-            "direction": "Long|Short" (для Close),
-            "riskPercent": 2.0,
-            "leverage": 20,
-            "sl_price": float (опціонально),
-            "tp_price": float (опціонально)
-        }
+        Розміщує ордер на основі вебхука з валідацією вхідних даних.
         """
         try:
+            # === ВИПРАВЛЕННЯ: ПОПЕРЕДНЯ НОРМАЛІЗАЦІЯ ===
+            # Якщо символ приходить як "ENAUSDT.P", ми робимо його "ENAUSDT"
+            # ДО того, як спрацює сувора валідація validate_webhook_data
+            if 'symbol' in data and isinstance(data['symbol'], str):
+                if data['symbol'].endswith('.P'):
+                    data['symbol'] = data['symbol'].replace('.P', '')
+
             # === ВАЛІДАЦІЯ ВХОДУ ===
+            # Тепер символ чистий (без .P) і пройде перевірку на endswith('USDT')
             validated_data = validate_webhook_data(data)
+            
             action = validated_data['action']
             symbol = validated_data['symbol']
             norm = self.normalize(symbol)
@@ -269,7 +273,7 @@ class BybitTradingBot:
                     logger.warning("cancel_orders_failed", symbol=symbol, error=str(e))
                 
                 logger.info("order_closed", symbol=symbol, direction=direction)
-                metrics.log_trade_closed(symbol, pnl=0.0)  # PnL визначимо потім
+                metrics.log_trade_closed(symbol, pnl=0.0)  # PnL підтягнеться пізніше через sync
                 return {"status": "ok", "message": f"Closed {direction}"}
             else:
                 logger.warning("close_mismatch", symbol=symbol, expected=direction, actual=curr_side)
@@ -296,8 +300,8 @@ class BybitTradingBot:
             
             # Перевірка баланса
             bal = self.get_bal()
-            # MIN_BALANCE можна брати з config.MIN_BALANCE якщо він там є, або хардкод
-            min_bal = getattr(config, 'MIN_BALANCE', 5.0) 
+            # MIN_BALANCE беремо з config або хардкод
+            min_bal = getattr(app_config, 'MIN_BALANCE', 5.0) 
             if bal < min_bal:
                 logger.warning("insufficient_balance", symbol=symbol, balance=bal, required=min_bal)
                 return {"status": "no_balance", "balance": bal, "reason": f"Minimum {min_bal} USDT required"}
@@ -314,7 +318,7 @@ class BybitTradingBot:
             if existing_pos:
                 current_side = existing_pos['side']
                 
-                # Якщо той же напрямок - ігноруємо
+                # Якщо той же напрямок - ігноруємо (пірамідинг вимкнено для безпеки)
                 if current_side == action:
                     logger.info("already_in_position", symbol=symbol, side=action)
                     return {"status": "ignored", "reason": f"Already in {action}"}
@@ -340,6 +344,8 @@ class BybitTradingBot:
                 
                 # Чекаємо на оновлення баланса
                 time.sleep(1)
+                # Оновлюємо баланс після закриття
+                bal = self.get_bal()
             
             # === РОЗРАХУНОК ОБ'ЄМУ ===
             qty_step = safe_float(lot.get('qtyStep', 0.01))
@@ -379,10 +385,10 @@ class BybitTradingBot:
                 
                 # Розраховуємо абсолютну ціну SL на основі напрямку
                 if action == "Buy":
-                    # Для Long: SL нижче за entry (entry * (1 - percent/100))
+                    # Для Long: SL нижче за entry
                     sl_raw = entry_price * (1 - sl_percent / 100)
                 else:
-                    # Для Short: SL вище за entry (entry * (1 + percent/100))
+                    # Для Short: SL вище за entry
                     sl_raw = entry_price * (1 + sl_percent / 100)
                 
                 # Валідуємо SL
@@ -403,36 +409,9 @@ class BybitTradingBot:
             else:
                 logger.warning("no_stop_loss", symbol=symbol, message="Trade is unprotected!")
             
-            # === ВСТАНОВЛЕННЯ TAKE PROFIT (З ВІДСОТКІВ) ===
-            # ВІДКЛЮЧЕНО: Не виставляємо TP при отриманні сигналу
-            # if data.get('takeProfitPercent') and data.get('entryPrice'):
-            #     tp_percent = safe_float(data['takeProfitPercent'])
-            #     entry_price = safe_float(data['entryPrice'])
-            #     
-            #     # Розраховуємо абсолютну ціну TP на основі напрямку
-            #     if action == "Buy":
-            #         # Для Long: TP вище за entry (entry * (1 + percent/100))
-            #         tp_raw = entry_price * (1 + tp_percent / 100)
-            #     else:
-            #         # Для Short: TP нижче за entry (entry * (1 - percent/100))
-            #         tp_raw = entry_price * (1 - tp_percent / 100)
-            #     
-            #     tp_rounded = self.round_val(tp_raw, tick_size)
-            #     try:
-            #         # Розміщуємо TP ордер (половину позиції)
-            #         tp_qty = qty / 2
-            #         self.session.place_order(
-            #             category="linear",
-            #             symbol=symbol,
-            #             side="Sell" if action == "Buy" else "Buy",
-            #             orderType="Limit",
-            #             qty=str(tp_qty),
-            #             price=str(tp_rounded),
-            #             reduceOnly=True
-            #         )
-            #         logger.info("take_profit_set", symbol=symbol, tp_price=tp_rounded, tp_percent=tp_percent, qty=tp_qty)
-            #     except Exception as e:
-            #         logger.error("tp_set_error", symbol=symbol, error=str(e))
+            # === ВСТАНОВЛЕННЯ TAKE PROFIT ===
+            # ВІДКЛЮЧЕНО, оскільки стратегія зазвичай використовує трейлінг або вихід по зворотньому сигналу.
+            # Якщо потрібно, можна розкомертувати або додати логіку тут.
             
             logger.info("order_success", symbol=symbol, action=action, qty=qty)
             return {"status": "ok", "qty": qty, "price": price, "leverage": lev}
@@ -440,10 +419,5 @@ class BybitTradingBot:
         except Exception as e:
             logger.error("open_order_error", symbol=symbol, error=str(e), exc_info=True)
             return {"status": "error", "reason": str(e)}
-
-    
-    def normalize(self, s):
-        """Нормалізує символ (видаляє '.P')"""
-        return s.replace('.P', '')
 
 bot_instance = BybitTradingBot()
