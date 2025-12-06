@@ -13,6 +13,7 @@ import requests
 import pandas as pd
 from datetime import datetime
 from functools import wraps
+from collections import defaultdict
 
 from flask import Flask, request, jsonify, render_template, redirect, url_for, Response, session, g
 from flask_wtf.csrf import CSRFProtect, generate_csrf
@@ -174,6 +175,96 @@ def error_handler(error):
                 path=request.path)
     return jsonify({"error": str(error)}), error.code
 
+# ===== ДОПОМІЖНІ ФУНКЦІЇ СТАТИСТИКИ =====
+
+def calculate_stats(trades):
+    """
+    Розраховує детальну статистику торгів
+    
+    Повертає словник зі статистикою та рейтингом контрактів
+    """
+    if not trades:
+        return {
+            'total_trades': 0, 'win_trades': 0, 'loss_trades': 0,
+            'win_rate': 0, 'total_pnl': 0, 'avg_pnl': 0,
+            'total_volume': 0, 'avg_trade_size': 0,
+            'best_trade': 0, 'worst_trade': 0,
+            'consecutive_wins': 0, 'consecutive_losses': 0,
+            'contract_stats': []
+        }
+    
+    total = len(trades)
+    wins = len([t for t in trades if t.get('pnl', 0) > 0])
+    losses = total - wins
+    total_pnl = sum(t.get('pnl', 0) for t in trades)
+    win_rate = round((wins / total * 100) if total > 0 else 0, 1)
+    avg_pnl = round(total_pnl / total if total > 0 else 0, 2)
+    
+    total_volume = sum(t.get('qty', 0) for t in trades)
+    avg_trade_size = round(total_volume / total if total > 0 else 0, 2)
+    
+    best = max((t.get('pnl', 0) for t in trades), default=0)
+    worst = min((t.get('pnl', 0) for t in trades), default=0)
+    
+    # Розрахунок стриків
+    wins_streak = 0
+    curr_wins = 0
+    for t in trades:
+        if t.get('pnl', 0) > 0:
+            curr_wins += 1
+            wins_streak = max(wins_streak, curr_wins)
+        else:
+            curr_wins = 0
+    
+    losses_streak = 0
+    curr_losses = 0
+    for t in trades:
+        if t.get('pnl', 0) <= 0:
+            curr_losses += 1
+            losses_streak = max(losses_streak, curr_losses)
+        else:
+            curr_losses = 0
+    
+    # Статистика по контрактах
+    contract_stats = defaultdict(lambda: {'trades': 0, 'wins': 0, 'pnl': 0, 'volume': 0})
+    
+    for t in trades:
+        symbol = t.get('symbol', 'Unknown')
+        contract_stats[symbol]['trades'] += 1
+        if t.get('pnl', 0) > 0:
+            contract_stats[symbol]['wins'] += 1
+        contract_stats[symbol]['pnl'] += t.get('pnl', 0)
+        contract_stats[symbol]['volume'] += t.get('qty', 0)
+    
+    # Додати win_rate для кожного контракту
+    for symbol in contract_stats:
+        stats = contract_stats[symbol]
+        stats['win_rate'] = round(stats['wins'] / stats['trades'] * 100 if stats['trades'] > 0 else 0, 1)
+        stats['avg_pnl'] = round(stats['pnl'] / stats['trades'] if stats['trades'] > 0 else 0, 2)
+    
+    # Сортувати по P&L (спадаючи) - топ 10
+    sorted_contracts = sorted(
+        contract_stats.items(),
+        key=lambda x: x[1]['pnl'],
+        reverse=True
+    )[:10]
+    
+    return {
+        'total_trades': total,
+        'win_trades': wins,
+        'loss_trades': losses,
+        'win_rate': win_rate,
+        'total_pnl': round(total_pnl, 2),
+        'avg_pnl': avg_pnl,
+        'total_volume': round(total_volume, 2),
+        'avg_trade_size': avg_trade_size,
+        'best_trade': round(best, 2),
+        'worst_trade': round(worst, 2),
+        'consecutive_wins': wins_streak,
+        'consecutive_losses': losses_streak,
+        'contract_stats': sorted_contracts
+    }
+
 # ===== API МАРШУТИ =====
 
 @app.route('/health', methods=['GET'])
@@ -223,26 +314,46 @@ def get_chart_data(symbol):
         logger.error("chart_data_error", symbol=symbol, error=str(e), exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/')
-def home():
-    """Головна сторінка з статистикою"""
+@app.route('/', methods=['GET'])
+def index_page():
+    """ПРОФЕСІЙНИЙ ОГЛЯД РИНКУ з детальною статистикою"""
     try:
         days_param = int(request.args.get('days', 7))
     except:
         days_param = 7
     
-    if days_param not in [7, 30, 90]:
+    # Дозволені періоди
+    if days_param not in [7, 30, 60, 90, 180]:
         days_param = 7
     
     try:
+        # Синхронізуємо торги для обраного періоду
         bot_instance.sync_trades(days=days_param)
     except Exception as e:
-        logger.warning("home_sync_failed", error=str(e))
+        logger.warning("index_sync_failed", error=str(e))
     
-    balance = bot_instance.get_bal()
-    active_count = len(scanner.get_active_symbols())
+    # Отримуємо баланс
+    try:
+        balance = bot_instance.get_available_balance()
+    except:
+        balance = 0
+    
+    # Отримуємо активні позиції
+    try:
+        active_positions = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
+        if active_positions.get('retCode') == 0:
+            active_count = len([p for p in active_positions['result']['list'] if float(p.get('size', 0)) > 0])
+        else:
+            active_count = 0
+    except:
+        active_count = 0
+    
+    # Отримуємо торги за період
     trades = stats_service.get_trades(days=days_param)
-    period_pnl = sum(t['pnl'] for t in trades) if trades else 0
+    
+    # Розраховуємо детальну статистику
+    stats = calculate_stats(trades)
+    period_pnl = stats['total_pnl']
     longs = sum(1 for t in trades if t.get('side') == 'Long')
     shorts = sum(1 for t in trades if t.get('side') == 'Short')
     
@@ -254,7 +365,8 @@ def home():
                           longs=longs,
                           shorts=shorts,
                           days=days_param,
-                          trades=trades[:10] if trades else [])
+                          trades=trades[:15] if trades else [],
+                          stats=stats)
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -352,21 +464,6 @@ def settings_general_page():
         return redirect(url_for('settings_general_page'))
     
     return render_template('settings.html', conf=settings._cache)
-
-@app.route('/ob_trend/settings', methods=['GET', 'POST'])
-@csrf.exempt  # ⚠️ Тимчасово
-def ob_trend_settings_page():
-    """Налаштування стратегії OB Trend"""
-    if request.method == 'POST':
-        form_data = request.form.to_dict()
-        filters = ['obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter', 'obt_useOBRetest']
-        for cb in filters:
-            form_data[cb] = request.form.get(cb) == 'on'
-        settings.save_settings(form_data)
-        logger.info("ob_trend_settings_saved")
-        return redirect(url_for('ob_trend_settings_page'))
-    
-    return render_template('strategy_ob_trend.html', conf=settings._cache)
 
 @app.route('/analyzer/scan', methods=['POST'])
 @csrf.exempt  # ⚠️ Тимчасово
