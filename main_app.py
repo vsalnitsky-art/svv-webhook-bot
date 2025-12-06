@@ -405,19 +405,22 @@ def webhook():
     Очікує JSON:
     {
         "action": "Buy|Sell|Close",
-        "symbol": "BTCUSDT",
+        "symbol": "BTCUSDT" або "BTCUSDT.P",
         "direction": "Long|Short" (для Close),
         "riskPercent": 2.0,
         "leverage": 20,
         "sl_price": float (опціонально),
         "tp_price": float (опціонально)
     }
+    
+    ✅ РІШЕННЯ: Суфікс ".P" автоматично видаляється у validate_webhook_data
     """
     try:
         data = json.loads(request.get_data(as_text=True))
         logger.info("webhook_received", action=data.get('action'), symbol=data.get('symbol'))
         
         # Валідуємо дані (буде викине ValueError якщо неправильно)
+        # Функція validate_webhook_data вже нормалізує символ (видаляє ".P")
         result = bot_instance.place_order(data)
         
         status_code = 200 if result.get("status") in ["ok", "ignored"] else 400
@@ -474,4 +477,3 @@ if __name__ == '__main__':
     
     logger.info("starting_flask", host=host, port=port, debug=debug)
     app.run(host=host, port=port, debug=debug)
-

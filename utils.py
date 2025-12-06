@@ -119,7 +119,7 @@ def validate_webhook_data(data: dict) -> dict:
     НОВИЙ ФОРМАТ (від TradingView):
     {
         "action": "Buy|Sell|Close",
-        "symbol": "BTCUSDT",
+        "symbol": "BTCUSDT" або "BTCUSDT.P",
         "direction": "Long|Short" (для Close),
         "riskPercent": float,
         "leverage": float,
@@ -128,6 +128,8 @@ def validate_webhook_data(data: dict) -> dict:
         "takeProfitPercent": float (у відсотках!),
         "filtersApproved": bool (опціонально)
     }
+    
+    NOTE: Символи з суфіксом ".P" автоматично нормалізуються (видаляється ".P")
     """
     errors = []
     
@@ -136,12 +138,15 @@ def validate_webhook_data(data: dict) -> dict:
     if action not in ['Buy', 'Sell', 'Close']:
         errors.append(f"Invalid action: {action}. Must be 'Buy', 'Sell', or 'Close'")
     
-    # Перевірка symbol
+    # Перевірка symbol та нормалізація (видалення ".P")
     symbol = data.get('symbol', '').strip()
     if not symbol or not isinstance(symbol, str):
         errors.append(f"Invalid symbol: {symbol}")
-    elif not symbol.endswith(('USDT', 'BUSD')):
-        errors.append(f"Symbol must end with USDT or BUSD: {symbol}")
+    else:
+        # РІШЕННЯ: Видаляємо ".P" з символу якщо він присутній
+        symbol = symbol.replace('.P', '')
+        if not symbol.endswith(('USDT', 'BUSD')):
+            errors.append(f"Symbol must end with USDT or BUSD: {symbol}")
     
     # Для Close - потребується direction
     if action == 'Close':

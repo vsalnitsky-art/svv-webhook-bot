@@ -193,19 +193,23 @@ class BybitTradingBot:
         Очікує JSON:
         {
             "action": "Buy|Sell|Close",
-            "symbol": "BTCUSDT",
+            "symbol": "BTCUSDT" або "BTCUSDT.P" (автоматично нормалізується),
             "direction": "Long|Short" (для Close),
             "riskPercent": 2.0,
             "leverage": 20,
             "sl_price": float (опціонально),
             "tp_price": float (опціонально)
         }
+        
+        NOTE: Функція validate_webhook_data вже видаляє ".P" з символу,
+        але ми залишаємо нормалізацію тут для подвійної безпеки.
         """
         try:
             # === ВАЛІДАЦІЯ ВХОДУ ===
             validated_data = validate_webhook_data(data)
             action = validated_data['action']
             symbol = validated_data['symbol']
+            # Додаткова нормалізація (символ вже нормалізований у validate_webhook_data, але для безпеки)
             norm = self.normalize(symbol)
             
             logger.info("order_request", action=action, symbol=symbol)
