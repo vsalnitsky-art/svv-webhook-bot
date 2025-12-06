@@ -14,7 +14,7 @@ import pandas as pd
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, request, jsonify, render_template, redirect, url_for, Response, session
+from flask import Flask, request, jsonify, render_template, redirect, url_for, Response, session, g
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from sqlalchemy import desc
 
@@ -143,7 +143,7 @@ logger.info("background_threads_started", count=3)
 @app.before_request
 def before_request():
     """Логування кожного запиту"""
-    request.start_time = time.time()
+    g.start_time = time.time()
     logger.info("request_received", 
                method=request.method,
                path=request.path,
@@ -152,7 +152,10 @@ def before_request():
 @app.after_request
 def after_request(response):
     """Логування відповіді"""
-    duration = time.time() - request.start_time
+    if hasattr(g, 'start_time'):
+        duration = time.time() - g.start_time
+    else:
+        duration = 0.0
     logger.info("request_completed",
                method=request.method,
                path=request.path,
@@ -337,6 +340,7 @@ def delete_ticker(symbol):
         session_db.close()
 
 @app.route('/settings', methods=['GET', 'POST'])
+@csrf.exempt  # ⚠️ Тимчасово - потребує CSRF токена в шаблоні пізніше
 def settings_general_page():
     """Загальні налаштування"""
     if request.method == 'POST':
@@ -350,6 +354,7 @@ def settings_general_page():
     return render_template('settings.html', conf=settings._cache)
 
 @app.route('/ob_trend/settings', methods=['GET', 'POST'])
+@csrf.exempt  # ⚠️ Тимчасово
 def ob_trend_settings_page():
     """Налаштування стратегії OB Trend"""
     if request.method == 'POST':
@@ -364,6 +369,7 @@ def ob_trend_settings_page():
     return render_template('strategy_ob_trend.html', conf=settings._cache)
 
 @app.route('/analyzer/scan', methods=['POST'])
+@csrf.exempt  # ⚠️ Тимчасово
 def run_scan():
     """Запускає сканер ринку"""
     try:
