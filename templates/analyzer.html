@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+
+{% block title %}Сканер Ринку{% endblock %}
+
+{% block head %}
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<style>
+    .badge-buy { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .badge-sell { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    
+    /* Стрілочки для сортування */
+    th.sortable { cursor: pointer; user-select: none; position: relative; }
+    th.sortable:hover { background-color: #f1f5f9; }
+    th.sortable::after { content: '↕'; position: absolute; right: 8px; opacity: 0.3; font-size: 0.8em; }
+    th.asc::after { content: '↑'; opacity: 1; color: var(--accent); }
+    th.desc::after { content: '↓'; opacity: 1; color: var(--accent); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    
+    <div class="card-custom mb-4 border-0">
+        <div class="card-header bg-white py-3 border-bottom border-light d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center">
+                <i class="ri-radar-line fs-4 text-accent me-2"></i>
+                <h5 class="fw-bold mb-0 text-dark">Автономний RSI Сканер</h5>
+            </div>
+            <div>
+                <a href="/settings" class="btn btn-outline-secondary btn-sm me-2">
+                    <i class="ri-settings-line me-1"></i> Глобальні Налаштування
+                </a>
+            </div>
+        </div>
+        <div class="card-body bg-light bg-opacity-50">
+            <form id="scan-form">
+                <div class="row g-3 align-items-end">
+                    
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Топ Монет (по об'єму)</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-white border-end-0">#</span>
+                            <input type="number" class="form-control border-start-0 ps-0" name="scan_limit" value="{{ conf.get('scan_limit', 100) }}" min="10" max="400">
+                        </div>
+                    </div>
+
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Min Vol ($M)</label>
+                        <div class="input-group">
+                            <div class="input-group-text bg-white border-end-0">
+                                <input class="form-check-input mt-0" type="checkbox" name="scan_use_min_volume" {{ 'checked' if conf.get('scan_use_min_volume') }}>
+                            </div>
+                            <input type="number" class="form-control border-start-0 border-end-0 ps-2" name="scan_min_volume" value="{{ conf.get('scan_min_volume', 10) }}">
+                            <span class="input-group-text bg-white border-start-0">M</span>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold small text-muted text-uppercase">Робочий Таймфрейм</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-white"><i class="ri-time-line"></i></span>
+                            <input type="text" class="form-control bg-white" value="{{ conf.get('htfSelection') }}m" disabled readonly>
+                        </div>
+                    </div>
+
+                    <div class="col-md-3">
+                        <button type="button" id="btn-scan" class="btn btn-primary btn-lg w-100 shadow fw-bold" onclick="startScan()" {{ 'disabled' if is_scanning }}>
+                            {{ '⏳ СКАНУВАННЯ...' if is_scanning else 'ЗАПУСТИТИ 🚀' }}
+                        </button>
+                    </div>
+                </div>
+
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <div class="d-flex align-items-center gap-3 p-2 bg-white border rounded shadow-sm">
+                            <span class="small fw-bold text-muted text-uppercase"><i class="ri-equalizer-line text-accent"></i> Параметри пошуку:</span>
+                            
+                            <span class="badge bg-light text-dark border font-mono">
+                                RSI Len: {{ conf.get('obt_rsiLength', 14) }}
+                            </span>
+                            
+                            <span class="badge badge-buy font-mono">
+                                Buy Signal < {{ conf.get('obt_entryRsiOversold', 30) }}
+                            </span>
+                            
+                            <span class="badge badge-sell font-mono">
+                                Sell Signal > {{ conf.get('obt_entryRsiOverbought', 70) }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+            </form>
+        </div>
+    </div>
+
+    <div class="card-custom mb-4 border-0 shadow-sm" style="display: {{ 'block' if is_scanning else 'none' }}" id="status-card">
+        <div class="card-body py-3" style="background: #eff6ff;">
+            <div class="d-flex justify-content-between mb-2">
+                <span id="status-text" class="fw-bold text-primary">{{ status }}</span>
+                <span id="status-percent" class="fw-bold text-dark">{{ progress }}%</span>
+            </div>
+            <div class="progress" style="height: 8px; border-radius: 4px; background: white;">
+                <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: {{ progress }}%"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card-custom border-0">
+        <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between align-items-center border-bottom border-light">
+            <span class="text-dark">📋 РЕЗУЛЬТАТИ</span>
+            <span class="badge bg-secondary rounded-pill">{{ results|length }} Знахідок</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="resultsTable">
+                <thead class="bg-light text-uppercase small text-muted">
+                    <tr>
+                        <th class="py-3 ps-4 border-bottom sortable" onclick="sortTable(0)">Монета</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(1)">Ціна</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(2)">Vol 24h</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(3)">Сигнал</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(4)">RSI ({{ conf.get('htfSelection') }}m)</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(5)">Score</th>
+                        <th class="py-3 border-bottom sortable" onclick="sortTable(6)">Час</th>
+                        <th class="py-3 border-bottom">Деталі</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody">
+                {% for r in results %}
+                    <tr>
+                        <td class="fw-bold text-dark ps-4">{{ r.symbol }}</td>
+                        <td class="font-mono" data-value="{{ r.price }}">{{ r.price }}</td>
+                        
+                        <td class="font-mono text-muted small" data-value="{{ r.volume }}">
+                            {{ (r.volume / 1000000)|round(1) }}M
+                        </td>
+
+                        <td><span class="badge {{ 'badge-buy' if r.signal=='Buy' else 'badge-sell' }}">{{ r.signal }}</span></td>
+                        
+                        <td class="font-mono fw-bold {{ 'text-success' if r.rsi_htf < 30 else 'text-danger' if r.rsi_htf > 70 else '' }}" data-value="{{ r.rsi_htf }}">
+                            {{ r.rsi_htf }}
+                        </td>
+
+                        <td data-value="{{ r.score }}">
+                            <div class="d-flex align-items-center">
+                                <span class="fw-bold me-2 font-mono">{{ r.score }}</span>
+                                <div class="progress flex-grow-1" style="height: 6px; width: 60px; border-radius: 3px;">
+                                    <div class="progress-bar {{ 'bg-success' if r.score >= 70 else 'bg-warning' }}" style="width: {{ r.score }}%"></div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="text-muted small font-mono">{{ r.time }}</td>
+                        <td class="small text-muted">{{ r.details }}</td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="8" class="text-center py-5">
+                            <div class="text-muted mb-2 fs-1 opacity-25"><i class="ri-search-eye-line"></i></div>
+                            <h5 class="text-muted">Сигналів не знайдено</h5>
+                            <small>Спробуйте змінити налаштування RSI або таймфрейм</small>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- AJAX SCAN ---
+function startScan() {
+    $('#btn-scan').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span> Сканування...');
+    $('#status-card').slideDown();
+    
+    var formData = {};
+    $('#scan-form').serializeArray().forEach(function(item) { formData[item.name] = item.value; });
+    // Checkboxes manual handle
+    $('#scan-form input[type=checkbox]').each(function() { formData[this.name] = this.checked ? 'on' : 'off'; });
+
+    $.post('/analyzer/scan', formData, function(data) { pollStatus(); })
+     .fail(function() { 
+         alert('Помилка.'); 
+         $('#btn-scan').prop('disabled', false).text('ЗАПУСТИТИ 🚀'); 
+         $('#status-card').hide(); 
+     });
+}
+
+function pollStatus() {
+    let interval = setInterval(function() {
+        $.get('/analyzer/status', function(data) {
+            $('#progress-bar').css('width', data.progress + '%');
+            $('#status-percent').text(data.progress + '%');
+            $('#status-text').text(data.message);
+            
+            if (!data.is_scanning) { 
+                clearInterval(interval); 
+                location.reload(); 
+            }
+        });
+    }, 1000);
+}
+{% if is_scanning %} pollStatus(); {% endif %}
+
+// --- JS SORTING ---
+function sortTable(n) {
+    var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
+    table = document.getElementById("resultsTable");
+    switching = true;
+    dir = "asc"; 
+    
+    document.querySelectorAll("th.sortable").forEach(th => th.classList.remove("asc", "desc"));
+
+    while (switching) {
+        switching = false;
+        rows = table.rows;
+        for (i = 1; i < (rows.length - 1); i++) {
+            shouldSwitch = false;
+            x = rows[i].getElementsByTagName("TD")[n];
+            y = rows[i + 1].getElementsByTagName("TD")[n];
+            
+            // data-value має пріоритет для чисел
+            let xVal = x.getAttribute("data-value") || x.innerText.toLowerCase();
+            let yVal = y.getAttribute("data-value") || y.innerText.toLowerCase();
+            
+            let xNum = parseFloat(xVal);
+            let yNum = parseFloat(yVal);
+            let isNum = !isNaN(xNum) && !isNaN(yNum);
+
+            if (dir == "asc") {
+                if (isNum) { if (xNum > yNum) shouldSwitch = true; }
+                else { if (xVal > yVal) shouldSwitch = true; }
+            } else if (dir == "desc") {
+                if (isNum) { if (xNum < yNum) shouldSwitch = true; }
+                else { if (xVal < yVal) shouldSwitch = true; }
+            }
+        }
+        if (shouldSwitch) {
+            rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
+            switching = true;
+            switchcount ++; 
+        } else {
+            if (switchcount == 0 && dir == "asc") {
+                dir = "desc";
+                switching = true;
+            }
+        }
+    }
+    table.getElementsByTagName("TH")[n].classList.add(dir);
+}
+</script>
+{% endblock %}
