@@ -8,12 +8,60 @@
     .badge-buy { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
     .badge-sell { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
     
-    /* Стрілочки для сортування */
-    th.sortable { cursor: pointer; user-select: none; position: relative; }
-    th.sortable:hover { background-color: #f1f5f9; }
-    th.sortable::after { content: '↕'; position: absolute; right: 8px; opacity: 0.3; font-size: 0.8em; }
-    th.asc::after { content: '↑'; opacity: 1; color: var(--accent); }
-    th.desc::after { content: '↓'; opacity: 1; color: var(--accent); }
+    /* ===== ПОКРАЩЕНІ СТИЛІ ДЛЯ СОРТУВАННЯ ===== */
+    th.sortable { 
+        cursor: pointer; 
+        user-select: none; 
+        position: relative;
+        font-weight: 600;
+        transition: background-color 0.2s ease;
+    }
+    th.sortable:hover { 
+        background-color: #e8f0f7;
+        color: var(--accent, #3b82f6);
+    }
+    
+    /* Стрілочки сортування */
+    th.sortable::after { 
+        content: ' ↕'; 
+        font-size: 0.75em; 
+        opacity: 0.3;
+        margin-left: 4px;
+        transition: opacity 0.2s ease;
+    }
+    
+    th.sortable:hover::after {
+        opacity: 0.6;
+    }
+    
+    th.asc::after { 
+        content: ' ↑'; 
+        opacity: 1; 
+        color: var(--accent, #3b82f6);
+        font-weight: bold;
+    }
+    
+    th.desc::after { 
+        content: ' ↓'; 
+        opacity: 1; 
+        color: var(--accent, #3b82f6);
+        font-weight: bold;
+    }
+    
+    /* Активна колонка */
+    th.sortable.asc,
+    th.sortable.desc {
+        background-color: #eff6ff;
+        color: var(--accent, #3b82f6);
+    }
+
+    /* Таблиця */
+    #resultsTable tbody tr {
+        transition: background-color 0.15s ease;
+    }
+    #resultsTable tbody tr:hover {
+        background-color: #f8fafc;
+    }
 </style>
 {% endblock %}
 
@@ -115,14 +163,14 @@
             <table class="table table-hover align-middle mb-0" id="resultsTable">
                 <thead class="bg-light text-uppercase small text-muted">
                     <tr>
-                        <th class="py-3 ps-4 border-bottom sortable" onclick="sortTable(0)">Монета</th>
-                        <th class="py-3 border-bottom sortable" onclick="sortTable(1)">Ціна</th>
-                        <th class="py-3 border-bottom sortable" onclick="sortTable(2)">Vol 24h</th>
-                        <th class="py-3 border-bottom sortable" onclick="sortTable(3)">Сигнал</th>
-                        <th class="py-3 border-bottom sortable" onclick="sortTable(4)">RSI ({{ conf.get('htfSelection') }}m)</th>
-                        <th class="py-3 border-bottom sortable" onclick="sortTable(5)">Score</th>
-                        <th class="py-3 border-bottom sortable" onclick="sortTable(6)">Час</th>
-                        <th class="py-3 border-bottom">Деталі</th>
+                        <th class="py-3 ps-4 border-bottom sortable" data-column="0">Монета</th>
+                        <th class="py-3 border-bottom sortable" data-column="1">Ціна</th>
+                        <th class="py-3 border-bottom sortable" data-column="2">Vol 24h</th>
+                        <th class="py-3 border-bottom sortable" data-column="3">Сигнал</th>
+                        <th class="py-3 border-bottom sortable" data-column="4">RSI ({{ conf.get('htfSelection') }}m)</th>
+                        <th class="py-3 border-bottom sortable" data-column="5">Score</th>
+                        <th class="py-3 border-bottom sortable" data-column="6">Час</th>
+                        <th class="py-3 border-bottom sortable" data-column="7">Деталі</th>
                     </tr>
                 </thead>
                 <tbody id="resultsBody">
@@ -168,7 +216,125 @@
 </div>
 
 <script>
-// --- AJAX SCAN ---
+// ===== ПОКРАЩЕНЕ СОРТУВАННЯ З localStorage =====
+class TableSorter {
+    constructor(tableId) {
+        this.table = document.getElementById(tableId);
+        this.sortColumn = null;
+        this.sortDirection = 'asc';
+        this.storageKey = `table_sort_${tableId}`;
+        
+        // Загружаємо попереднє сортування
+        this.loadSortState();
+        this.attachSortHandlers();
+    }
+    
+    attachSortHandlers() {
+        document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
+            th.addEventListener('click', (e) => {
+                const colIndex = parseInt(th.getAttribute('data-column'));
+                this.sort(colIndex, th);
+            });
+        });
+    }
+    
+    sort(columnIndex, headerElement) {
+        const rows = Array.from(this.table.querySelectorAll('tbody tr'));
+        
+        // Визначаємо напрямок (toggle)
+        if (this.sortColumn === columnIndex) {
+            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.sortDirection = 'asc';
+            // Видаляємо клас з попередньої колонки
+            document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
+                th.classList.remove('asc', 'desc');
+            });
+        }
+        
+        this.sortColumn = columnIndex;
+        
+        // Сортуємо рядки
+        rows.sort((rowA, rowB) => {
+            let cellA = rowA.children[columnIndex];
+            let cellB = rowB.children[columnIndex];
+            
+            // Отримуємо значення (пріоритет для data-value)
+            let valA = cellA.getAttribute('data-value') || cellA.innerText.trim();
+            let valB = cellB.getAttribute('data-value') || cellB.innerText.trim();
+            
+            // Спробуємо порівняти як числа
+            let numA = parseFloat(valA);
+            let numB = parseFloat(valB);
+            
+            if (!isNaN(numA) && !isNaN(numB)) {
+                // Числове сортування
+                return this.sortDirection === 'asc' ? numA - numB : numB - numA;
+            } else {
+                // Текстове сортування (case-insensitive)
+                valA = valA.toLowerCase();
+                valB = valB.toLowerCase();
+                if (this.sortDirection === 'asc') {
+                    return valA > valB ? 1 : -1;
+                } else {
+                    return valA < valB ? 1 : -1;
+                }
+            }
+        });
+        
+        // Вставляємо відсортовані рядки
+        const tbody = this.table.querySelector('tbody');
+        rows.forEach(row => tbody.appendChild(row));
+        
+        // Оновлюємо індикатор напрямку
+        headerElement.classList.add(this.sortDirection);
+        
+        // Зберігаємо стан
+        this.saveSortState();
+    }
+    
+    saveSortState() {
+        const state = {
+            column: this.sortColumn,
+            direction: this.sortDirection,
+            timestamp: new Date().getTime()
+        };
+        localStorage.setItem(this.storageKey, JSON.stringify(state));
+    }
+    
+    loadSortState() {
+        const saved = localStorage.getItem(this.storageKey);
+        if (saved) {
+            try {
+                const state = JSON.parse(saved);
+                this.sortColumn = state.column;
+                this.sortDirection = state.direction;
+            } catch (e) {
+                console.log('Failed to load sort state');
+            }
+        }
+    }
+    
+    applySortState() {
+        if (this.sortColumn !== null) {
+            const headers = this.table.querySelectorAll('th.sortable');
+            const headerToSort = Array.from(headers).find(th => 
+                parseInt(th.getAttribute('data-column')) === this.sortColumn
+            );
+            if (headerToSort) {
+                this.sort(this.sortColumn, headerToSort);
+            }
+        }
+    }
+}
+
+// Ініціалізуємо сортування при завантаженні
+document.addEventListener('DOMContentLoaded', () => {
+    const sorter = new TableSorter('resultsTable');
+    sorter.applySortState();
+});
+
+// ===== AJAX SCAN =====
 function startScan() {
     $('#btn-scan').prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-2"></span> Сканування...');
     $('#status-card').slideDown();
@@ -200,53 +366,9 @@ function pollStatus() {
         });
     }, 1000);
 }
-{% if is_scanning %} pollStatus(); {% endif %}
 
-// --- JS SORTING ---
-function sortTable(n) {
-    var table, rows, switching, i, x, y, shouldSwitch, dir, switchcount = 0;
-    table = document.getElementById("resultsTable");
-    switching = true;
-    dir = "asc"; 
-    
-    document.querySelectorAll("th.sortable").forEach(th => th.classList.remove("asc", "desc"));
-
-    while (switching) {
-        switching = false;
-        rows = table.rows;
-        for (i = 1; i < (rows.length - 1); i++) {
-            shouldSwitch = false;
-            x = rows[i].getElementsByTagName("TD")[n];
-            y = rows[i + 1].getElementsByTagName("TD")[n];
-            
-            // data-value має пріоритет для чисел
-            let xVal = x.getAttribute("data-value") || x.innerText.toLowerCase();
-            let yVal = y.getAttribute("data-value") || y.innerText.toLowerCase();
-            
-            let xNum = parseFloat(xVal);
-            let yNum = parseFloat(yVal);
-            let isNum = !isNaN(xNum) && !isNaN(yNum);
-
-            if (dir == "asc") {
-                if (isNum) { if (xNum > yNum) shouldSwitch = true; }
-                else { if (xVal > yVal) shouldSwitch = true; }
-            } else if (dir == "desc") {
-                if (isNum) { if (xNum < yNum) shouldSwitch = true; }
-                else { if (xVal < yVal) shouldSwitch = true; }
-            }
-        }
-        if (shouldSwitch) {
-            rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
-            switching = true;
-            switchcount ++; 
-        } else {
-            if (switchcount == 0 && dir == "asc") {
-                dir = "desc";
-                switching = true;
-            }
-        }
-    }
-    table.getElementsByTagName("TH")[n].classList.add(dir);
-}
+{% if is_scanning %} 
+document.addEventListener('DOMContentLoaded', pollStatus);
+{% endif %}
 </script>
 {% endblock %}
