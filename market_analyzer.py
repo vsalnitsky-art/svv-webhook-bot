@@ -7,7 +7,6 @@ import logging
 from bot import bot_instance
 from settings_manager import settings
 from models import db_manager, AnalysisResult
-# ✅ Імпорт локальних індикаторів
 from indicators import simple_rsi
 
 logger = logging.getLogger(__name__)
@@ -43,62 +42,60 @@ class MarketAnalyzer:
             logger.error(f"Error getting tickers: {e}")
             return []
 
-    def fetch_candles(self, symbol, timeframe, limit=50):
+    def fetch_candles(self, symbol, timeframe, limit=300):
         """
         Автономне завантаження свічок.
-        ✅ ДОДАНО: Ресемплінг для 45-хвилинного таймфрейму (з 15м даних)
+        Включає логіку ресемплінгу для нестандартних таймфреймів (наприклад 45м).
         """
         try:
-            # Мапінг таймфреймів для Bybit API
-            # Якщо просять 45, ми беремо 15 (бо 45 немає на біржі)
+            # Мапінг таймфреймів. Bybit не має 45m, тому беремо 15m.
             tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','120':'120','240':'240','D':'D','W':'W'}
             req_tf = tf_map.get(str(timeframe), '240')
             
             # Якщо потрібен 45хв ТФ, нам треба в 3 рази більше свічок 15хв
             req_limit = limit * 3 if str(timeframe) == '45' else limit
             
+            # Обмежуємо максимум (API Bybit ліміт ~1000)
+            if req_limit > 1000: req_limit = 1000
+            
             r = bot_instance.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=req_limit)
             
             if r['retCode'] == 0 and r['result']['list']:
                 df = pd.DataFrame(r['result']['list'], columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
                 
-                # Конвертуємо типи даних
+                # Конвертація типів
                 cols = ['open', 'high', 'low', 'close', 'volume', 'turnover']
                 df[cols] = df[cols].astype(float)
                 
-                # Обробка часу для ресемплінгу
                 df['time'] = pd.to_numeric(df['time'])
                 df['datetime'] = pd.to_datetime(df['time'], unit='ms')
                 
-                # Сортуємо: Старі -> Нові (важливо для pandas resample)
+                # Сортуємо: Старі -> Нові (важливо для індикаторів та ресемплінгу)
                 df = df.sort_values('datetime').reset_index(drop=True)
                 
-                # === ЛОГІКА РЕСЕМПЛІНГУ 45 ХВИЛИН ===
+                # === ЛОГІКА РЕСЕМПЛІНГУ (Склейка свічок) ===
                 if str(timeframe) == '45':
-                    # Встановлюємо час як індекс
                     df.set_index('datetime', inplace=True)
                     
-                    # Склеюємо по 45 хвилин
                     df_45 = df.resample('45min').agg({
-                        'open': 'first',   # Ціна відкриття першої свічки
-                        'high': 'max',     # Макс ціна за 3 свічки
-                        'low': 'min',      # Мін ціна за 3 свічки
-                        'close': 'last',   # Ціна закриття останньої свічки
-                        'volume': 'sum',   # Сума об'єму
+                        'open': 'first',
+                        'high': 'max',
+                        'low': 'min',
+                        'close': 'last',
+                        'volume': 'sum',
                         'turnover': 'sum',
-                        'time': 'first'    # Timestamp початку
+                        'time': 'first'
                     })
                     
-                    # Видаляємо порожні (якщо є дірки в історії)
+                    # Видаляємо NaN (якщо були пропуски в торгах)
                     df_45.dropna(inplace=True)
                     
-                    # Повертаємо індекс назад
+                    # Повертаємо індекс
                     df = df_45.reset_index(drop=True)
                 
                 return df
-                
         except Exception as e:
-            # logger.error(f"Error fetching candles for {symbol}: {e}")
+            # logger.error(f"Fetch candles error {symbol}: {e}")
             pass
         return None
 
@@ -113,17 +110,13 @@ class MarketAnalyzer:
         session = db_manager.get_session()
         
         try:
-            # Очищаємо таблицю результатів перед новим сканом
+            # Очищаємо таблицю результатів
             db_manager.recreate_analysis_table()
             
-            # 1. Зчитуємо налаштування
             limit = settings.get("scan_limit", 100)
             tickers = self.get_top_tickers(limit)
             
-            # Глобальний таймфрейм
             htf = settings.get("htfSelection", "240") 
-            
-            # Параметри RSI
             rsi_len = int(settings.get("obt_rsiLength", 14))
             rsi_buy_level = float(settings.get("obt_entryRsiOversold", 30))
             rsi_sell_level = float(settings.get("obt_entryRsiOverbought", 70))
@@ -141,40 +134,33 @@ class MarketAnalyzer:
                 self.progress = int((i / total) * 100)
 
                 try:
-                    # 2. Отримуємо дані (вже з підтримкою 45 хв)
-                    # Беремо трохи більше свічок для розігріву індикатора
-                    df = self.fetch_candles(sym, htf, limit=rsi_len + 50)
+                    # 2. Отримуємо дані (300 свічок для точності RSI)
+                    df = self.fetch_candles(sym, htf, limit=300)
                     
                     if df is None or len(df) < rsi_len: 
                         time.sleep(0.05)
                         continue
 
-                    # 3. Розрахунок RSI (використовуємо виправлений indicators.py)
+                    # 3. Розрахунок RSI (з indicators.py)
                     current_rsi = simple_rsi(df['close'], period=rsi_len)
                     current_price = df['close'].iloc[-1]
 
-                    # 4. Логіка Сигналів (RSI Extremes)
+                    # 4. Логіка Сигналів
                     signal = None
                     details = ""
                     score = 0 
 
-                    # BUY SIGNAL (Перепроданість)
                     if current_rsi <= rsi_buy_level:
                         signal = "Buy"
                         details = f"RSI Oversold ({round(current_rsi, 1)})"
-                        # Score: база 50 + наскільки сильно впав
-                        dist = rsi_buy_level - current_rsi
-                        score = min(50 + int(dist * 2), 100)
+                        score = min(50 + int((rsi_buy_level - current_rsi) * 2), 100)
 
-                    # SELL SIGNAL (Перекупленість)
                     elif current_rsi >= rsi_sell_level:
                         signal = "Sell"
                         details = f"RSI Overbought ({round(current_rsi, 1)})"
-                        # Score: база 50 + наскільки сильно виріс
-                        dist = current_rsi - rsi_sell_level
-                        score = min(50 + int(dist * 2), 100)
+                        score = min(50 + int((current_rsi - rsi_sell_level) * 2), 100)
 
-                    # 5. Збереження результату
+                    # 5. Збереження
                     if signal:
                         res = AnalysisResult(
                             symbol=sym,
@@ -189,13 +175,12 @@ class MarketAnalyzer:
                         )
                         session.add(res)
                         session.commit()
-                        logger.info(f"✅ FOUND: {sym} {signal} RSI={current_rsi}")
+                        logger.info(f"✅ FOUND: {sym} {signal} RSI={round(current_rsi,1)}")
                         
                 except Exception as e:
-                    # logger.error(f"Scan error on {sym}: {e}")
                     pass
                 
-                time.sleep(0.05) # Захист від Rate Limit
+                time.sleep(0.05) # Rate limit protect
 
             self.progress = 100
             self.status_message = "✅ Scan Completed"
