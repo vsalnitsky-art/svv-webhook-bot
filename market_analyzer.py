@@ -7,6 +7,8 @@ import logging
 from bot import bot_instance
 from settings_manager import settings
 from models import db_manager, AnalysisResult
+# ✅ Додано імпорт локального індикатора
+from indicators import simple_rsi
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,7 @@ class MarketAnalyzer:
             if r['retCode'] == 0 and r['result']['list']:
                 df = pd.DataFrame(r['result']['list'], columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
                 df['close'] = df['close'].astype(float)
-                # Перевертаємо: старі -> нові (для pandas_ta)
+                # Перевертаємо: старі -> нові
                 return df.iloc[::-1].reset_index(drop=True)
         except: pass
         return None
@@ -104,12 +106,8 @@ class MarketAnalyzer:
                         time.sleep(0.05)
                         continue
 
-                    # 3. Розрахунок RSI (локально)
-                    # rsi_series = # ta.rsi(df['close'], length=rsi_len)
-                    
-                    if rsi_series is None or rsi_series.empty: continue
-                    
-                    current_rsi = rsi_series.iloc[-1]
+                    # 3. ✅ ВИПРАВЛЕНО: Розрахунок RSI через indicators.py
+                    current_rsi = simple_rsi(df['close'], period=rsi_len)
                     current_price = df['close'].iloc[-1]
 
                     # 4. Логіка Сигналів (RSI Extremes)
@@ -148,8 +146,10 @@ class MarketAnalyzer:
                         )
                         session.add(res)
                         session.commit()
+                        logger.info(f"✅ FOUND: {sym} {signal} RSI={current_rsi}")
                         
                 except Exception as e:
+                    # logger.error(f"Scan error on {sym}: {e}")
                     pass
                 
                 time.sleep(0.05) # Захист від Rate Limit
