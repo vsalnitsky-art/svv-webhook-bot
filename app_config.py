@@ -42,7 +42,6 @@ class AppConfig(BaseSettings):
     DEFAULT_RISK_PERCENT: float = Field(default=2.0)
     DEFAULT_LEVERAGE: int = Field(default=20)
     MIN_BALANCE: float = Field(default=5.0)
-    USE_TP: bool = Field(default=False, env='USE_TP')  # 🎯 Вимикач для Take Profit (за замовчуванням: вимкнено)
     
     # === API RATE LIMITS ===
     API_TIMEOUT: int = Field(default=10)

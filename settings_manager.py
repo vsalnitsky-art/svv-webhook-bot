@@ -51,6 +51,7 @@ DEFAULT_SETTINGS = {
     # === RISK ===
     "riskPercent": 2.0,
     "leverage": 20,
+    "use_tp": False,  # 🎯 Вимикач для Take Profit (за замовчуванням: вимкнено)
     "tp_mode": "Fixed_1_50", 
     "fixedTP": 3.0,
     "sl_mode": "OB_Extremity",

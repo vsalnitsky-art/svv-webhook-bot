@@ -14,7 +14,6 @@ class Config:
     DEFAULT_LEVERAGE = 20
     DEFAULT_TP_PERCENT = 0.0
     DEFAULT_SL_PERCENT = 0.0
-    USE_TP = False  # 🎯 Вимикач для Take Profit (за замовчуванням: вимкнено)
     
     # Сканер (тільки для моніторингу активних)
     SCANNER_INTERVAL = 5
