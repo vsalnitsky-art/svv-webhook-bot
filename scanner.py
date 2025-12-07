@@ -39,22 +39,25 @@ class EnhancedMarketScanner:
 
     def fetch_candles(self, symbol, timeframe, limit=50):
         """
-        Отримує свічки з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ до сітки часу.
+        Отримує свічки для розрахунку RSI - 100% сумісність з TradingView.
         
-        ✅ РІШЕННЯ ДЛЯ RSI:
-        - origin='start_day' - жорстка прив'язка до початку дня (00:00)
-        - label='left' та closed='left' - стандарт біржі
-        - Це синхронізує свічки з TradingView та іншими платформами
-        
-        Результат: RSI будинку = RSI TradingView ✅
+        ✅ КЛЮЧОВІ МОМЕНТИ:
+        1. Порядок: Старі → Нові (хронологічний) - обов'язково для RSI
+        2. Виключаємо останню незакриту свічку
+        3. Беремо 200+ свічок для "прогріву" RSI (як TradingView)
+        4. Правильна прив'язка до сітки часу для 45хв
         """
         try:
             # Мапинг TF
             tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','240':'240','D':'D'}
             req_tf = tf_map.get(str(timeframe), '240')
             
+            # ✅ Беремо 200 свічок для правильного "прогріву" RSI (як TradingView)
+            req_limit = max(limit, 200)
+            
             # Якщо потрібен 45хв, беремо в 3 рази більше 15хв свічок
-            req_limit = limit * 3 if str(timeframe) == '45' else limit
+            if str(timeframe) == '45':
+                req_limit = req_limit * 3
             
             r = self.bot.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=req_limit)
             if r['retCode'] == 0 and r['result']['list']:
@@ -70,34 +73,37 @@ class EnhancedMarketScanner:
                 df['time'] = pd.to_numeric(df['time'])
                 df['datetime'] = pd.to_datetime(df['time'], unit='ms')
                 
-                # Сортуємо: Старі -> Нові (важливо для RSI та ресемплінгу)
+                # ✅ Сортуємо: Старі → Нові (ОБОВ'ЯЗКОВО для RSI!)
                 df = df.sort_values('datetime').reset_index(drop=True)
                 
                 # === ЛОГІКА РЕСЕМПЛІНГУ для 45хв ===
                 if str(timeframe) == '45':
                     df.set_index('datetime', inplace=True)
                     
-                    # 🎯 РІШЕННЯ: Правильна прив'язка до сітки часу
                     df = df.resample(
                         '45min',
-                        origin='start_day',  # ✅ КРИТИЧНО: прив'язка до 00:00
-                        label='left',        # ✅ Мітка часу - час відкриття
-                        closed='left'        # ✅ Стандарт біржі
+                        origin='start_day',
+                        label='left',
+                        closed='left'
                     ).agg({
-                        'open': 'first',     # Відкриття першої 15хв
-                        'high': 'max',       # Максимум серед трьох
-                        'low': 'min',        # Мінімум серед трьох
-                        'close': 'last',     # Закриття останньої 15хв
-                        'volume': 'sum',     # Сума об'ємів
-                        'turnover': 'sum',   # Сума обороту
-                        'time': 'first'      # Час першої свічки
+                        'open': 'first',
+                        'high': 'max',
+                        'low': 'min',
+                        'close': 'last',
+                        'volume': 'sum',
+                        'turnover': 'sum',
+                        'time': 'first'
                     })
                     
                     df.dropna(inplace=True)
                     df = df.reset_index(drop=True)
                 
-                # Перевертаємо: старі -> нові (як було раніше для сумісності)
-                return df.iloc[::-1].reset_index(drop=True)
+                # ✅ Виключаємо останню свічку (незакрита) - TradingView так робить!
+                if len(df) > 1:
+                    df = df.iloc[:-1].reset_index(drop=True)
+                
+                # ✅ Повертаємо в хронологічному порядку (Старі → Нові)
+                return df
         except Exception as e:
             logger.error(f"Fetch candles error {symbol} TF={timeframe}: {e}")
         return None
