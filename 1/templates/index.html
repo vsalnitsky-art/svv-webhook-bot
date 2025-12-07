@@ -428,7 +428,7 @@
             </div>
             <div class="metric-value value-toggle" id="pnl-value">*****</div>
             <div class="metric-subtitle" style="font-size: 10px; opacity: 0.6;">
-                <span>{{ "+" if period_pnl > 0 else "" }}{{ period_pnl | round(2) }} USDT</span>
+                <span id="pnl-subtitle">{{ "+" if period_pnl > 0 else "" }}{{ period_pnl | round(2) }} USDT</span>
             </div>
         </div>
         
@@ -442,7 +442,7 @@
             </div>
             <div class="metric-value value-toggle" id="balance-value">*****</div>
             <div class="metric-subtitle" style="font-size: 10px; opacity: 0.6;">
-                <span class="stat-positive">{{ balance | round(1) }} USDT</span>
+                <span class="stat-positive" id="balance-subtitle">{{ balance | round(1) }} USDT</span>
             </div>
         </div>
         
@@ -525,48 +525,6 @@
         </div>
         {% endif %}
     </div>
-    
-    <!-- РЕЙТИНГ КОНТРАКТІВ -->
-    {% if stats.contract_stats %}
-    <div class="contracts-table">
-        <div style="padding: 20px;">
-            <div class="section-title">
-                <i class="ri-trophy-line"></i> Рейтинг Контрактів
-            </div>
-        </div>
-        <table>
-            <thead>
-                <tr>
-                    <th>Контракт</th>
-                    <th>Угод</th>
-                    <th>Win Rate</th>
-                    <th>P&L</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for symbol, contract_stat in stats.contract_stats %}
-                <tr>
-                    <td>
-                        <div class="contract-symbol">
-                            <div class="contract-icon">{{ symbol[0] }}</div>
-                            <strong>{{ symbol }}</strong>
-                        </div>
-                    </td>
-                    <td class="contract-stat">{{ contract_stat.trades }}</td>
-                    <td class="contract-stat">
-                        <span class="{% if contract_stat.win_rate >= 50 %}stat-positive{% elif contract_stat.win_rate >= 30 %}stat-neutral{% else %}stat-negative{% endif %}">
-                            {{ contract_stat.win_rate }}%
-                        </span>
-                    </td>
-                    <td class="contract-stat {% if contract_stat.pnl > 0 %}stat-positive{% elif contract_stat.pnl < 0 %}stat-negative{% else %}stat-neutral{% endif %}">
-                        {{ "+" if contract_stat.pnl > 0 else "" }}{{ contract_stat.pnl | round(2) }}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
     
     <!-- КОМІСІЇ -->
     <div class="metrics-grid" style="margin-top: 24px; margin-bottom: 24px;">
@@ -689,15 +647,18 @@
     function applyPnlVisibility() {
         const isHidden = localStorage.getItem('hide_pnl') === 'true';
         const valueEl = document.getElementById('pnl-value');
+        const subtitleEl = document.getElementById('pnl-subtitle');
         const iconEl = document.getElementById('pnl-toggle-icon');
         
         if (isHidden) {
             valueEl.innerHTML = '<span class="value-masked">*****</span>';
+            if (subtitleEl) subtitleEl.style.display = 'none';
             iconEl.classList.add('ri-eye-off-line');
             iconEl.classList.remove('ri-eye-line');
             iconEl.style.color = '#ef4444';
         } else {
             valueEl.innerHTML = PNL_REAL;
+            if (subtitleEl) subtitleEl.style.display = 'inline';
             iconEl.classList.remove('ri-eye-off-line');
             iconEl.classList.add('ri-eye-line');
             iconEl.style.color = 'inherit';
@@ -707,15 +668,18 @@
     function applyBalanceVisibility() {
         const isHidden = localStorage.getItem('hide_balance') === 'true';
         const valueEl = document.getElementById('balance-value');
+        const subtitleEl = document.getElementById('balance-subtitle');
         const iconEl = document.getElementById('balance-toggle-icon');
         
         if (isHidden) {
             valueEl.innerHTML = '<span class="value-masked">*****</span>';
+            if (subtitleEl) subtitleEl.style.display = 'none';
             iconEl.classList.add('ri-eye-off-line');
             iconEl.classList.remove('ri-eye-line');
             iconEl.style.color = '#ef4444';
         } else {
             valueEl.innerHTML = BALANCE_REAL;
+            if (subtitleEl) subtitleEl.style.display = 'inline';
             iconEl.classList.remove('ri-eye-off-line');
             iconEl.classList.add('ri-eye-line');
             iconEl.style.color = 'inherit';

@@ -28,6 +28,9 @@ from market_analyzer import market_analyzer
 from config import get_api_credentials
 from utils import get_logger, validate_webhook_data, metrics, setup_logging
 
+# === WHALE MODULE IMPORT (INTEGRATION) ===
+from whale_core import whale_core
+
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
 logger = get_logger()
@@ -175,12 +178,11 @@ def error_handler(error):
                 path=request.path)
     return jsonify({"error": str(error)}), error.code
 
-# ===== ДОПОМІЖНІ ФУНКЦІЇ СТАТИСТИКИ =====
+# ===== ДОПОМІЖНІ ФУНКЦІЇ СТАТИСТИКИ (ПОВНА ВЕРСІЯ) =====
 
 def calculate_stats(trades):
     """
     Розраховує детальну статистику торгів
-    
     Повертає словник зі статистикою та рейтингом контрактів
     """
     if not trades:
@@ -314,6 +316,31 @@ def get_chart_data(symbol):
         logger.error("chart_data_error", symbol=symbol, error=str(e), exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+# ==========================================
+# 🐋 WHALE STRATEGY MODULE ROUTES
+# ==========================================
+@app.route('/whale')
+def whale_page():
+    # Отримуємо історію з БД через метод ядра
+    history = whale_core.get_history(limit=50)
+    
+    return render_template(
+        'whale.html',
+        history=history,
+        is_scanning=whale_core.is_scanning,
+        progress=whale_core.progress,
+        status=whale_core.status,
+        last_time=whale_core.last_scan_time,
+        conf=settings._cache # Для сумісності з base.html
+    )
+
+@app.route('/whale/scan', methods=['POST'])
+def whale_scan_start():
+    data = request.json or {}
+    started = whale_core.start_scan(override_cfg=data)
+    return jsonify({"status": "started" if started else "busy"})
+# ==========================================
+
 @app.route('/', methods=['GET'])
 def index_page():
     """ПРОФЕСІЙНИЙ ОГЛЯД РИНКУ з детальною статистикою"""
@@ -366,7 +393,8 @@ def index_page():
                           shorts=shorts,
                           days=days_param,
                           trades=trades[:15] if trades else [],
-                          stats=stats)
+                          stats=stats,
+                          conf=settings._cache)
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -465,20 +493,31 @@ def settings_general_page():
     
     return render_template('settings.html', conf=settings._cache)
 
+# =====================================================
+# ОНОВЛЕНИЙ МАРШРУТ СТОРІНКИ "СТРАТЕГІЯ" (INTEGRATION)
+# =====================================================
 @app.route('/ob_trend/settings', methods=['GET', 'POST'])
 @csrf.exempt  # ⚠️ Тимчасово
 def ob_trend_settings_page():
-    """Налаштування стратегії OB Trend"""
+    """
+    Тепер ця сторінка відображає Whale Strategy (Автономний модуль).
+    """
     if request.method == 'POST':
-        form_data = request.form.to_dict()
-        filters = ['obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter', 'obt_useOBRetest']
-        for cb in filters:
-            form_data[cb] = request.form.get(cb) == 'on'
-        settings.save_settings(form_data)
-        logger.info("ob_trend_settings_saved")
-        return redirect(url_for('ob_trend_settings_page'))
+        # Якщо ви захочете додати збереження налаштувань у майбутньому
+        pass
+        
+    # Отримуємо дані з ядра WhaleCore
+    history = whale_core.get_history(limit=50)
     
-    return render_template('strategy_ob_trend.html', conf=settings._cache)
+    return render_template(
+        'strategy_ob_trend.html',  # Використовуємо існуючий файл шаблону
+        history=history,
+        is_scanning=whale_core.is_scanning,
+        progress=whale_core.progress,
+        status=whale_core.status,
+        last_time=whale_core.last_scan_time,
+        conf=settings._cache
+    )
 
 @app.route('/analyzer/scan', methods=['POST'])
 @csrf.exempt  # ⚠️ Тимчасово
@@ -513,26 +552,12 @@ def get_scan_status():
 def webhook():
     """
     Webhook для приймання сигналів з TradingView
-    
-    Очікує JSON:
-    {
-        "action": "Buy|Sell|Close",
-        "symbol": "BTCUSDT" або "BTCUSDT.P",
-        "direction": "Long|Short" (для Close),
-        "riskPercent": 2.0,
-        "leverage": 20,
-        "sl_price": float (опціонально),
-        "tp_price": float (опціонально)
-    }
-    
-    ✅ РІШЕННЯ: Суфікс ".P" автоматично видаляється у validate_webhook_data
     """
     try:
         data = json.loads(request.get_data(as_text=True))
         logger.info("webhook_received", action=data.get('action'), symbol=data.get('symbol'))
         
         # Валідуємо дані (буде викине ValueError якщо неправильно)
-        # Функція validate_webhook_data вже нормалізує символ (видаляє ".P")
         result = bot_instance.place_order(data)
         
         status_code = 200 if result.get("status") in ["ok", "ignored"] else 400
@@ -548,6 +573,19 @@ def webhook():
         # Неочікувана помилка
         logger.error("webhook_error", error=str(e), exc_info=True)
         return jsonify({"error": str(e), "code": "INTERNAL_ERROR"}), 500
+
+@app.route('/report')
+def report_route(): 
+    """
+    Маршрут для звіту (Відновлений)
+    """
+    # Якщо у вас є файл report.py, імпортуємо його
+    try:
+        from report import render_report_page
+        return render_report_page(bot_instance, request)
+    except ImportError:
+        # Fallback якщо report.py немає
+        return "Module report.py not found", 404
 
 @app.route('/settings/export')
 def export_settings():

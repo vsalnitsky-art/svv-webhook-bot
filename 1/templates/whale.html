@@ -1,20 +1,18 @@
 {% extends "base.html" %}
 
-{% block title %}Whale Strategy{% endblock %}
+{% block title %}Whale Hunter{% endblock %}
 
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h3 class="fw-bold m-0 text-primary">
-                <i class="ri-water-flash-fill me-2"></i>Whale Strategy
-            </h3>
-            <p class="text-muted small m-0">Автономний модуль пошуку акумуляції (Whale)</p>
+            <h3 class="fw-bold m-0 text-primary"><i class="ri-water-flash-fill"></i> Whale Strategy</h3>
+            <p class="text-muted small m-0">Професійний пошук акумуляції капіталу</p>
         </div>
         <div>
             <button onclick="startWhaleScan()" id="scanBtn" class="btn btn-primary fw-bold shadow-sm" {{ 'disabled' if is_scanning }}>
                 {% if is_scanning %}
-                <span class="spinner-border spinner-border-sm me-2"></span> Сканування {{ progress }}%
+                <span class="spinner-border spinner-border-sm me-2"></span> Scanning {{ progress }}%
                 {% else %}
                 <i class="ri-radar-line me-2"></i> ЗАПУСТИТИ СКАНЕР
                 {% endif %}
@@ -29,12 +27,12 @@
                     <label class="small fw-bold text-muted text-uppercase">Таймфрейм</label>
                     <select class="form-select form-select-sm" id="whale_tf">
                         <option value="15">15 Хвилин</option>
-                        <option value="60" selected>1 Година (Recommended)</option>
+                        <option value="60" selected>1 Година</option>
                         <option value="240">4 Години</option>
                     </select>
                 </div>
                 <div class="col-md-3">
-                    <label class="small fw-bold text-muted text-uppercase">Глибина пошуку</label>
+                    <label class="small fw-bold text-muted text-uppercase">Глибина (Топ монет)</label>
                     <select class="form-select form-select-sm" id="whale_limit">
                         <option value="20">Топ 20</option>
                         <option value="50" selected>Топ 50</option>
@@ -54,9 +52,8 @@
     </div>
 
     <div class="card border-0 shadow-sm">
-        <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
-            <h6 class="fw-bold m-0"><i class="ri-database-2-line me-2"></i>Результати (Історія з БД)</h6>
-            <span class="badge bg-light text-dark border">{{ history|length }} записів</span>
+        <div class="card-header bg-white py-3 border-bottom">
+            <h6 class="fw-bold m-0"><i class="ri-database-2-line me-2"></i>Історія Сигналів (DB)</h6>
         </div>
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
@@ -67,7 +64,7 @@
                         <th>Ціна</th>
                         <th>Score</th>
                         <th>Стиснення</th>
-                        <th>Причина Сигналу</th>
+                        <th>Логіка</th>
                         <th class="text-end pe-4">Дія</th>
                     </tr>
                 </thead>
@@ -80,17 +77,15 @@
                         <td>
                             {% if row.score >= 80 %}
                                 <span class="badge bg-success">STRONG ({{ row.score }})</span>
-                            {% elif row.score >= 70 %}
-                                <span class="badge bg-info text-dark">GOOD ({{ row.score }})</span>
                             {% else %}
-                                <span class="badge bg-warning text-dark">WEAK ({{ row.score }})</span>
+                                <span class="badge bg-warning text-dark">MODERATE ({{ row.score }})</span>
                             {% endif %}
                         </td>
                         <td class="font-mono">{{ row.squeeze }}</td>
                         <td class="small text-muted">{{ row.details }}</td>
                         <td class="text-end pe-4">
                             <a href="https://www.bybit.com/trade/usdt/{{ row.symbol }}" target="_blank" class="btn btn-sm btn-outline-light text-dark border">
-                                <i class="ri-line-chart-line"></i>
+                                <i class="ri-line-chart-line"></i> Chart
                             </a>
                         </td>
                     </tr>
@@ -98,7 +93,7 @@
                     <tr>
                         <td colspan="7" class="text-center py-5 text-muted">
                             <i class="ri-search-eye-line fs-1 opacity-25"></i>
-                            <p class="mt-2">Даних немає. Налаштуйте параметри та натисніть "Запустити Сканер".</p>
+                            <p class="mt-2">База даних порожня. Запустіть сканування.</p>
                         </td>
                     </tr>
                     {% endfor %}
@@ -114,11 +109,9 @@ function startWhaleScan() {
     const tf = document.getElementById('whale_tf').value;
     const limit = document.getElementById('whale_limit').value;
     
-    // Блокуємо кнопку
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Запуск...';
     
-    // Відправляємо запит на API
     fetch('/whale/scan', {
         method: 'POST',
         headers: {
@@ -130,25 +123,16 @@ function startWhaleScan() {
     .then(r => r.json())
     .then(d => {
         if(d.status === 'started') {
-            // Перезавантажуємо сторінку, щоб побачити статус "Scanning"
-            setTimeout(() => location.reload(), 500);
+            location.reload();
         } else {
-            alert('Сканер вже працює!');
+            alert('Помилка: ' + d.status);
             location.reload();
         }
-    })
-    .catch(err => {
-        alert('Помилка з\'єднання');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="ri-radar-line me-2"></i> ЗАПУСТИТИ СКАНЕР';
     });
 }
 
-// Автооновлення сторінки кожні 2 сек, якщо йде сканування
 {% if is_scanning %}
-setTimeout(() => {
-    location.reload();
-}, 2000);
+setTimeout(() => location.reload(), 2000);
 {% endif %}
 </script>
 {% endblock %}

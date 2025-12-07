@@ -112,8 +112,9 @@ class EnhancedMarketScanner:
 
     def monitor(self):
         """
-        Монітор активних позицій з розрахунком RSI.
+        Монітор активних позицій з розрахунком RSI та ATR Trailing.
         Використовує ПРАВИЛЬНО ПРИВ'ЯЗАНІ свічки = ТОЧНИЙ RSI!
+        Розрахунки на НАЛАШТОВУВАНОМУ робочому таймфреймі (LTF)
         """
         active_pos = self.get_active()
         active_syms = [p['symbol'] for p in active_pos]
@@ -125,12 +126,12 @@ class EnhancedMarketScanner:
         
         if not active_pos: return
 
-        # Глобальні параметри
-        tf = settings.get("htfSelection", "240")
+        # === НАЛАШТОВАНІ ПАРАМЕТРИ ===
+        exit_tf = settings.get("exit_ltf", "45")         # ✨ НОВЕ: LTF для розрахунків
         trailing_on = settings.get("trailing_enabled", False)
         trailing_trigger_rsi = float(settings.get("trailing_rsi_activation", 65))
         atr_len = int(settings.get("trailing_atr_length", 14))
-        atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))
+        atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))  # ✨ НАЛАШТОВУЄТЬСЯ
 
         for p in active_pos:
             s = p['symbol']
@@ -151,11 +152,12 @@ class EnhancedMarketScanner:
                 self.data[s] = {'rsi': 0, 'exit_status': 'Safe', 'exit_details': '-', 'trailing_active': False}
 
             # 1. Fetch Data з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ ✅
-            df = self.fetch_candles(s, tf, limit=atr_len + 50)
+            df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
             
             if df is not None and len(df) > atr_len:
-                # 2. Calc Indicators (без pandas_ta - fallback)
-                # ✅ На ПРАВИЛЬНИХ свічках = ТОЧНИЙ RSI!
+                # 2. Calc Indicators (ПРОФЕСІЙНІ МЕТОД Wilder's!)
+                # ✅ ВАЖЛИВО: На ПРАВИЛЬНИХ свічках з КЛАСИЧНИМ Wilder's методом
+                # ✅ Результат = ТОЧНО як у TradingView та Bybit!
                 rsi_val = simple_rsi(df['close'], period=14)
                 atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
                 
