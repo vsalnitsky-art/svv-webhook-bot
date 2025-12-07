@@ -128,48 +128,27 @@ class BybitTradingBot:
                 for t in r['result']['list']:
                     try:
                         side = 'Long' if t['side'] == 'Buy' else 'Short'
-                        
-                        # ✨ ЗБИРАЄМО КОМІСІЇ З API - ШУКАЄМО В РІЗНИХ ПОЛЯХ
-                        opening_fee = safe_float(t.get('openingFee', 0))
-                        closing_fee = safe_float(t.get('closingFee', 0))
-                        funding_fee = safe_float(t.get('fundingFee', 0))
-                        
-                        # Варіант 2: Якщо немає openingFee - використовуємо takerFee/makerFee
-                        if opening_fee == 0 and closing_fee == 0:
-                            taker_fee = safe_float(t.get('takerFee', 0))
-                            maker_fee = safe_float(t.get('makerFee', 0))
-                            exec_fee = safe_float(t.get('execFee', 0))
-                            
-                            # Якщо є takerFee - то це комісія за виконання
-                            if taker_fee != 0:
-                                opening_fee = taker_fee / 2
-                                closing_fee = taker_fee / 2
-                            elif exec_fee != 0:
-                                opening_fee = exec_fee / 2
-                                closing_fee = exec_fee / 2
-                        
-                        # 🔍 ЛОГУВАННЯ для ВСІХ угод (навіть якщо 0)
                         symbol = t['symbol']
-                        total_fee = opening_fee + closing_fee + funding_fee
-                        pnl = safe_float(t['closedPnl'])
+                        qty = safe_float(t['qty'])
+                        entry_price = safe_float(t['avgEntryPrice'])
+                        exit_price = safe_float(t['avgExitPrice'])
                         
-                        # Показуємо ключові поля з API
-                        api_fields = []
-                        for key in ['openingFee', 'closingFee', 'fundingFee', 'takerFee', 'makerFee', 'execFee']:
-                            if key in t:
-                                api_fields.append(f"{key}={t[key]}")
+                        # ✨ РОЗРАХОВУЄМО КОМІСІЇ на основі стандартної ставки Bybit
+                        # Bybit USDT-M: 0.0275% maker, 0.075% taker (стандартно)
+                        TAKER_RATE = 0.000275  # 0.0275% за відкриття (в більшості випадків taker)
                         
-                        fee_str = "FEES: " + ", ".join(api_fields) if api_fields else "FEES: <не знайдено>"
-                        logger.info(f"💰 {symbol} | P&L={pnl:.2f} | {fee_str} | calc_fee={total_fee:.6f}")
+                        opening_fee = qty * entry_price * TAKER_RATE      # комісія за відкриття
+                        closing_fee = qty * exit_price * TAKER_RATE       # комісія за закриття
+                        funding_fee = 0.0  # Bybit не повертає у get_closed_pnl
                         
                         stats_service.save_trade({
                             'order_id': t['orderId'],
                             'symbol': symbol,
                             'side': side,
-                            'qty': safe_float(t['qty']),
-                            'entry_price': safe_float(t['avgEntryPrice']),
-                            'exit_price': safe_float(t['avgExitPrice']),
-                            'pnl': pnl,
+                            'qty': qty,
+                            'entry_price': entry_price,
+                            'exit_price': exit_price,
+                            'pnl': safe_float(t['closedPnl']),
                             'exit_time': datetime.fromtimestamp(int(t['updatedTime']) / 1000),
                             'exit_reason': 'Synced',
                             'opening_fee': opening_fee,
