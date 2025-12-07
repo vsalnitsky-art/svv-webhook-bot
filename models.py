@@ -10,6 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 Base = declarative_base()
 
+# === ІСНУЮЧІ КЛАСИ ===
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True)
@@ -35,7 +36,6 @@ class AnalysisResult(Base):
     signal_type = Column(String(10)); status = Column(String(50)); score = Column(Integer)
     price = Column(Float); htf_rsi = Column(Float); ltf_rsi = Column(Float)
     found_at = Column(DateTime, default=datetime.utcnow); details = Column(Text)
-    # === НОВА КОЛОНКА ОБ'ЄМУ ===
     volume_24h = Column(Float, default=0.0)
 
 class OrderBlock(Base):
@@ -57,16 +57,29 @@ class PaperTrade(Base):
     pnl = Column(Float, default=0.0); pnl_percent = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow); closed_at = Column(DateTime, nullable=True); details = Column(String(255))
 
+# === НОВИЙ КЛАС ДЛЯ WHALE STRATEGY ===
+class WhaleSignal(Base):
+    __tablename__ = 'whale_signals'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), index=True)
+    price = Column(Float)
+    score = Column(Integer)
+    squeeze_val = Column(Float)
+    obv_slope = Column(Float)
+    details = Column(String(255))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String(20), default='NEW')
+
+# === DATABASE MANAGER ===
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         db_url = os.environ.get('DATABASE_URL')
         
-        # === ДІАГНОСТИКА ПІДКЛЮЧЕННЯ ===
         if db_url:
-            print(f"\n🔌 DATABASE: FOUND DATABASE_URL. CONNECTING TO POSTGRESQL...")
+            print(f"\n🔌 DATABASE: FOUND DATABASE_URL.")
             if db_url.startswith("postgres://"): db_url = db_url.replace("postgres://", "postgresql://", 1)
         else:
-            print(f"\n⚠️ WARNING: DATABASE_URL NOT FOUND. USING LOCAL SQLITE (DATA WILL BE LOST ON RESTART).")
+            print(f"\n⚠️ WARNING: DATABASE_URL NOT FOUND. USING LOCAL SQLITE.")
             current_dir = os.path.dirname(os.path.abspath(__file__))
             base_folder = os.path.join(current_dir, 'BASE')
             try: os.makedirs(base_folder, exist_ok=True); db_path = os.path.join(base_folder, db_filename)
@@ -75,30 +88,24 @@ class DatabaseManager:
             
         try:
             self.engine = create_engine(db_url, echo=False)
-            
-            # ✅ ВИПРАВЛЕНО: Перевіряємо підключення до БД
             with self.engine.connect() as conn:
                 logger.info(f"✅ Database connected: {db_url[:50]}...")
             
-            # Створюємо таблиці
+            # Створюємо таблиці (включно з новою)
             Base.metadata.create_all(self.engine)
             logger.info("✅ Database tables created/verified")
             
         except Exception as e:
             logger.error(f"❌ CRITICAL: Database error: {e}")
-            if "postgresql" in str(db_url):
-                logger.error("🔧 Check PostgreSQL credentials in environment variables")
-            raise  # Передаємо помилку далі
+            raise
         self.Session = sessionmaker(bind=self.engine)
 
     def get_session(self): return self.Session()
     
-    # === ФУНКЦІЯ ПРИМУСОВОГО ПЕРЕСТВОРЕННЯ ТАБЛИЦІ ===
     def recreate_analysis_table(self):
         try:
             AnalysisResult.__table__.drop(self.engine, checkfirst=True)
             AnalysisResult.__table__.create(self.engine, checkfirst=True)
-            # print("✅ Table 'analysis_results' recreated successfully.")
         except Exception as e:
             print(f"❌ Error recreating table: {e}")
 

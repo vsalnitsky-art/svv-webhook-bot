@@ -28,6 +28,9 @@ from market_analyzer import market_analyzer
 from config import get_api_credentials
 from utils import get_logger, validate_webhook_data, metrics, setup_logging
 
+# === WHALE MODULE IMPORT (INTEGRATION) ===
+from whale_core import whale_core
+
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
 logger = get_logger()
@@ -180,8 +183,6 @@ def error_handler(error):
 def calculate_stats(trades):
     """
     Розраховує детальну статистику торгів
-    
-    Повертає словник зі статистикою та рейтингом контрактів
     """
     if not trades:
         return {
@@ -314,6 +315,31 @@ def get_chart_data(symbol):
         logger.error("chart_data_error", symbol=symbol, error=str(e), exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+# ==========================================
+# 🐋 WHALE STRATEGY MODULE ROUTES
+# ==========================================
+@app.route('/whale')
+def whale_page():
+    # Отримуємо історію з БД через метод ядра
+    history = whale_core.get_history(limit=50)
+    
+    return render_template(
+        'whale.html',
+        history=history,
+        is_scanning=whale_core.is_scanning,
+        progress=whale_core.progress,
+        status=whale_core.status,
+        last_time=whale_core.last_scan_time,
+        conf=settings._cache
+    )
+
+@app.route('/whale/scan', methods=['POST'])
+def whale_scan_start():
+    data = request.json or {}
+    started = whale_core.start_scan(override_cfg=data)
+    return jsonify({"status": "started" if started else "busy"})
+# ==========================================
+
 @app.route('/', methods=['GET'])
 def index_page():
     """ПРОФЕСІЙНИЙ ОГЛЯД РИНКУ з детальною статистикою"""
@@ -322,23 +348,19 @@ def index_page():
     except:
         days_param = 7
     
-    # Дозволені періоди
     if days_param not in [7, 30, 60, 90, 180]:
         days_param = 7
     
     try:
-        # Синхронізуємо торги для обраного періоду
         bot_instance.sync_trades(days=days_param)
     except Exception as e:
         logger.warning("index_sync_failed", error=str(e))
     
-    # Отримуємо баланс
     try:
         balance = bot_instance.get_available_balance()
     except:
         balance = 0
     
-    # Отримуємо активні позиції
     try:
         active_positions = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
         if active_positions.get('retCode') == 0:
@@ -348,10 +370,7 @@ def index_page():
     except:
         active_count = 0
     
-    # Отримуємо торги за період
     trades = stats_service.get_trades(days=days_param)
-    
-    # Розраховуємо детальну статистику
     stats = calculate_stats(trades)
     period_pnl = stats['total_pnl']
     longs = sum(1 for t in trades if t.get('side') == 'Long')
@@ -366,7 +385,8 @@ def index_page():
                           shorts=shorts,
                           days=days_param,
                           trades=trades[:15] if trades else [],
-                          stats=stats)
+                          stats=stats,
+                          conf=settings._cache)
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
@@ -452,7 +472,7 @@ def delete_ticker(symbol):
         session_db.close()
 
 @app.route('/settings', methods=['GET', 'POST'])
-@csrf.exempt  # ⚠️ Тимчасово - потребує CSRF токена в шаблоні пізніше
+@csrf.exempt
 def settings_general_page():
     """Загальні налаштування"""
     if request.method == 'POST':
@@ -466,7 +486,7 @@ def settings_general_page():
     return render_template('settings.html', conf=settings._cache)
 
 @app.route('/ob_trend/settings', methods=['GET', 'POST'])
-@csrf.exempt  # ⚠️ Тимчасово
+@csrf.exempt
 def ob_trend_settings_page():
     """Налаштування стратегії OB Trend"""
     if request.method == 'POST':
@@ -481,7 +501,7 @@ def ob_trend_settings_page():
     return render_template('strategy_ob_trend.html', conf=settings._cache)
 
 @app.route('/analyzer/scan', methods=['POST'])
-@csrf.exempt  # ⚠️ Тимчасово
+@csrf.exempt
 def run_scan():
     """Запускає сканер ринку"""
     try:
@@ -509,30 +529,13 @@ def get_scan_status():
     })
 
 @app.route('/webhook', methods=['POST'])
-@csrf.exempt  # Webhook від TradingView не має CSRF токена
+@csrf.exempt
 def webhook():
-    """
-    Webhook для приймання сигналів з TradingView
-    
-    Очікує JSON:
-    {
-        "action": "Buy|Sell|Close",
-        "symbol": "BTCUSDT" або "BTCUSDT.P",
-        "direction": "Long|Short" (для Close),
-        "riskPercent": 2.0,
-        "leverage": 20,
-        "sl_price": float (опціонально),
-        "tp_price": float (опціонально)
-    }
-    
-    ✅ РІШЕННЯ: Суфікс ".P" автоматично видаляється у validate_webhook_data
-    """
+    """Webhook для приймання сигналів"""
     try:
         data = json.loads(request.get_data(as_text=True))
         logger.info("webhook_received", action=data.get('action'), symbol=data.get('symbol'))
         
-        # Валідуємо дані (буде викине ValueError якщо неправильно)
-        # Функція validate_webhook_data вже нормалізує символ (видаляє ".P")
         result = bot_instance.place_order(data)
         
         status_code = 200 if result.get("status") in ["ok", "ignored"] else 400
@@ -541,17 +544,15 @@ def webhook():
         return jsonify(result), status_code
     
     except ValueError as e:
-        # Помилка валідації
         logger.warning("webhook_validation_error", error=str(e))
         return jsonify({"error": f"Invalid webhook data: {str(e)}", "code": "VALIDATION_ERROR"}), 400
     except Exception as e:
-        # Неочікувана помилка
         logger.error("webhook_error", error=str(e), exc_info=True)
         return jsonify({"error": str(e), "code": "INTERNAL_ERROR"}), 500
 
 @app.route('/settings/export')
 def export_settings():
-    """Експортує налаштування у JSON"""
+    """Експортує налаштування"""
     try:
         json_str = json.dumps(settings.get_all(), indent=4)
         logger.info("settings_exported")
@@ -564,7 +565,7 @@ def export_settings():
 
 @app.route('/settings/import', methods=['POST'])
 def import_settings():
-    """Імпортує налаштування з JSON файлу"""
+    """Імпортує налаштування"""
     try:
         if 'file' not in request.files:
             return jsonify({"error": "No file provided"}), 400

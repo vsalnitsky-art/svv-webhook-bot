@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Whale Hunter{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h3 class="fw-bold m-0 text-primary"><i class="ri-water-flash-fill"></i> Whale Strategy</h3>
+            <p class="text-muted small m-0">Професійний пошук акумуляції капіталу</p>
+        </div>
+        <div>
+            <button onclick="startWhaleScan()" id="scanBtn" class="btn btn-primary fw-bold shadow-sm" {{ 'disabled' if is_scanning }}>
+                {% if is_scanning %}
+                <span class="spinner-border spinner-border-sm me-2"></span> Scanning {{ progress }}%
+                {% else %}
+                <i class="ri-radar-line me-2"></i> ЗАПУСТИТИ СКАНЕР
+                {% endif %}
+            </button>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body bg-light rounded-3">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="small fw-bold text-muted text-uppercase">Таймфрейм</label>
+                    <select class="form-select form-select-sm" id="whale_tf">
+                        <option value="15">15 Хвилин</option>
+                        <option value="60" selected>1 Година</option>
+                        <option value="240">4 Години</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="small fw-bold text-muted text-uppercase">Глибина (Топ монет)</label>
+                    <select class="form-select form-select-sm" id="whale_limit">
+                        <option value="20">Топ 20</option>
+                        <option value="50" selected>Топ 50</option>
+                        <option value="100">Топ 100</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <div class="small text-muted text-uppercase fw-bold">Статус</div>
+                    <div class="fw-bold text-dark" id="status-text">{{ status }}</div>
+                </div>
+                <div class="col-md-3">
+                    <div class="small text-muted text-uppercase fw-bold">Останній скан</div>
+                    <div class="fw-bold text-primary">{{ last_time or "-" }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom">
+            <h6 class="fw-bold m-0"><i class="ri-database-2-line me-2"></i>Історія Сигналів (DB)</h6>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light text-uppercase small text-muted">
+                    <tr>
+                        <th class="ps-4">Час</th>
+                        <th>Актив</th>
+                        <th>Ціна</th>
+                        <th>Score</th>
+                        <th>Стиснення</th>
+                        <th>Логіка</th>
+                        <th class="text-end pe-4">Дія</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in history %}
+                    <tr>
+                        <td class="ps-4 text-muted small font-mono">{{ row.time }}</td>
+                        <td class="fw-bold text-primary">{{ row.symbol }}</td>
+                        <td class="font-mono">{{ row.price }}</td>
+                        <td>
+                            {% if row.score >= 80 %}
+                                <span class="badge bg-success">STRONG ({{ row.score }})</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark">MODERATE ({{ row.score }})</span>
+                            {% endif %}
+                        </td>
+                        <td class="font-mono">{{ row.squeeze }}</td>
+                        <td class="small text-muted">{{ row.details }}</td>
+                        <td class="text-end pe-4">
+                            <a href="https://www.bybit.com/trade/usdt/{{ row.symbol }}" target="_blank" class="btn btn-sm btn-outline-light text-dark border">
+                                <i class="ri-line-chart-line"></i> Chart
+                            </a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center py-5 text-muted">
+                            <i class="ri-search-eye-line fs-1 opacity-25"></i>
+                            <p class="mt-2">База даних порожня. Запустіть сканування.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function startWhaleScan() {
+    const btn = document.getElementById('scanBtn');
+    const tf = document.getElementById('whale_tf').value;
+    const limit = document.getElementById('whale_limit').value;
+    
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Запуск...';
+    
+    fetch('/whale/scan', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({ timeframe: tf, limit: limit })
+    })
+    .then(r => r.json())
+    .then(d => {
+        if(d.status === 'started') {
+            location.reload();
+        } else {
+            alert('Помилка: ' + d.status);
+            location.reload();
+        }
+    });
+}
+
+{% if is_scanning %}
+setTimeout(() => location.reload(), 2000);
+{% endif %}
+</script>
+{% endblock %}

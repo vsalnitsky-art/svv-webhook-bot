@@ -3,9 +3,12 @@
 """
 Простіші альтернативи для технічних індикаторів без pandas_ta.
 Включає правильну формулу RSI (Wilder's Smoothing) для точності з TradingView/Bybit.
+Об'єднана версія: Стандартні індикатори + Whale Strategy.
 """
 import pandas as pd
 import numpy as np
+
+# === БАЗОВІ ФУНКЦІЇ (З вашого оригінального файлу) ===
 
 def simple_rsi(close_prices, period=14):
     """
@@ -28,7 +31,6 @@ def simple_rsi(close_prices, period=14):
         losses = -deltas.where(deltas < 0, 0.0)
         
         # === ВАЖЛИВО: Wilder's Smoothing ===
-        # Використовуємо ewm з alpha=1/period, що математично еквівалентно методу Уайлдера
         avg_gains = gains.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
         avg_losses = losses.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
         
@@ -38,8 +40,7 @@ def simple_rsi(close_prices, period=14):
         # Розрахунок RSI
         rsi = 100 - (100 / (1 + rs))
         
-        # Заповнення пропусків (на випадок ділення на нуль)
-        # Якщо losses = 0, RSI = 100
+        # Заповнення пропусків
         rsi = rsi.fillna(100.0 if (not avg_losses.empty and avg_losses.iloc[-1] == 0) else 50.0)
         
         return float(rsi.iloc[-1])
@@ -69,30 +70,76 @@ def simple_atr(high, low, close, period=14):
         return float(close.iloc[-1]) * 0.02
 
 def calculate_sma(prices, period=20):
-    """
-    Simple Moving Average
-    """
+    """Simple Moving Average"""
     try:
         return float(prices.rolling(window=period).mean().iloc[-1])
     except:
         return float(prices.iloc[-1])
 
 def calculate_ema(prices, period=12):
-    """
-    Exponential Moving Average
-    """
+    """Exponential Moving Average"""
     try:
-        return float(prices.ewm(span=period, adjust=False).mean().iloc[-1])
+        return prices.ewm(span=period, adjust=False).mean()
     except:
-        return float(prices.iloc[-1])
+        return prices
 
 def calculate_momentum(prices, period=10):
-    """
-    Momentum
-    """
+    """Momentum"""
     try:
         if len(prices) < period:
             return 0.0
         return float(prices.iloc[-1] - prices.iloc[-period])
+    except:
+        return 0.0
+
+# === НОВІ ФУНКЦІЇ (ДЛЯ WHALE STRATEGY) ===
+
+def calculate_bollinger_bands(series, length=20, std_dev=2.0):
+    """
+    Розрахунок смуг Боллінджера та ширини каналу.
+    Повертає: upper, middle, lower, bandwidth
+    """
+    try:
+        middle = series.rolling(window=length).mean()
+        std = series.rolling(window=length).std()
+        
+        upper = middle + (std * std_dev)
+        lower = middle - (std * std_dev)
+        
+        # Bandwidth: (Upper - Lower) / Middle
+        bandwidth = (upper - lower) / middle
+        
+        return upper, middle, lower, bandwidth
+    except:
+        return None, None, None, None
+
+def calculate_obv(close, volume):
+    """On-Balance Volume (OBV)"""
+    try:
+        change = np.sign(close.diff()).fillna(0)
+        obv = (change * volume).cumsum()
+        return obv
+    except:
+        return pd.Series(dtype=float)
+
+def calculate_ichimoku(high, low, close, t=9, k=26, s=52):
+    """Ichimoku Cloud (Tenkan, Kijun, Span A, Span B)"""
+    try:
+        tenkan = (high.rolling(window=t).max() + low.rolling(window=t).min()) / 2
+        kijun = (high.rolling(window=k).max() + low.rolling(window=k).min()) / 2
+        span_a = ((tenkan + kijun) / 2)
+        span_b = ((high.rolling(window=s).max() + low.rolling(window=s).min()) / 2)
+        return tenkan, kijun, span_a, span_b
+    except:
+        return None, None, None, None
+
+def calculate_slope(series, window=10):
+    """Лінійний нахил (Slope)"""
+    try:
+        if len(series) < window: return 0.0
+        y = series.tail(window).values
+        x = np.arange(len(y))
+        slope, _ = np.polyfit(x, y, 1)
+        return slope
     except:
         return 0.0
