@@ -525,25 +525,6 @@
         </div>
         {% endif %}
     </div>
-                            <div class="contract-icon">{{ symbol[0] }}</div>
-                            <strong>{{ symbol }}</strong>
-                        </div>
-                    </td>
-                    <td class="contract-stat">{{ contract_stat.trades }}</td>
-                    <td class="contract-stat">
-                        <span class="{% if contract_stat.win_rate >= 50 %}stat-positive{% elif contract_stat.win_rate >= 30 %}stat-neutral{% else %}stat-negative{% endif %}">
-                            {{ contract_stat.win_rate }}%
-                        </span>
-                    </td>
-                    <td class="contract-stat {% if contract_stat.pnl > 0 %}stat-positive{% elif contract_stat.pnl < 0 %}stat-negative{% else %}stat-neutral{% endif %}">
-                        {{ "+" if contract_stat.pnl > 0 else "" }}{{ contract_stat.pnl | round(2) }}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
     
     <!-- КОМІСІЇ -->
     <div class="metrics-grid" style="margin-top: 24px; margin-bottom: 24px;">
