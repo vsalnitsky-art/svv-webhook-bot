@@ -38,18 +38,26 @@ class WhaleCore:
         }
 
     def fetch_data(self, symbol):
-        """Завантажує свічки - 100% сумісність з TradingView"""
+        """
+        Завантажує свічки - 100% сумісність з TradingView.
+        
+        КЛЮЧОВІ МОМЕНТИ для точного RSI:
+        1. Мінімум 200+ свічок для "прогріву" Wilder's Smoothing
+        2. Порядок: Старі → Нові (хронологічний)
+        3. Виключаємо останню незакриту свічку
+        """
         try:
             # Мапінг для Bybit
             tf_map = {'15': '15', '60': '60', '240': '240', 'D': 'D'}
             interval = tf_map.get(str(self.CONFIG['timeframe']), '60')
             
+            # ✅ Беремо максимум свічок для точного RSI (1000 = ліміт Bybit API)
             res = bot_instance.session.get_kline(
-                category="linear", symbol=symbol, interval=interval, limit=300
+                category="linear", symbol=symbol, interval=interval, limit=1000
             )
             
             if res['retCode'] == 0 and res['result']['list']:
-                # Bybit повертає Newest -> Oldest. Перевертаємо
+                # Bybit повертає Newest -> Oldest. Перевертаємо на Oldest -> Newest
                 data = res['result']['list'][::-1]
                 df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
                 df = df.astype(float)
@@ -60,7 +68,7 @@ class WhaleCore:
                 
                 return df
         except Exception as e:
-            pass
+            logger.error(f"Fetch error {symbol}: {e}")
         return None
 
     def analyze_coin(self, df):
