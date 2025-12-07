@@ -130,7 +130,6 @@ class BybitTradingBot:
                         side = 'Long' if t['side'] == 'Buy' else 'Short'
                         
                         # ✨ ЗБИРАЄМО КОМІСІЇ З API - ШУКАЄМО В РІЗНИХ ПОЛЯХ
-                        # Варіант 1: openingFee/closingFee/fundingFee (якщо є)
                         opening_fee = safe_float(t.get('openingFee', 0))
                         closing_fee = safe_float(t.get('closingFee', 0))
                         funding_fee = safe_float(t.get('fundingFee', 0))
@@ -143,25 +142,34 @@ class BybitTradingBot:
                             
                             # Якщо є takerFee - то це комісія за виконання
                             if taker_fee != 0:
-                                opening_fee = taker_fee / 2  # розділяємо на 2
+                                opening_fee = taker_fee / 2
                                 closing_fee = taker_fee / 2
                             elif exec_fee != 0:
                                 opening_fee = exec_fee / 2
                                 closing_fee = exec_fee / 2
                         
-                        # 🔍 ЛОГУВАННЯ для перевірки
+                        # 🔍 ЛОГУВАННЯ для ВСІХ угод (навіть якщо 0)
+                        symbol = t['symbol']
                         total_fee = opening_fee + closing_fee + funding_fee
-                        if total_fee != 0:
-                            logger.info(f"📊 {t['symbol']}: open={opening_fee:.6f}, close={closing_fee:.6f}, fund={funding_fee:.6f}")
+                        pnl = safe_float(t['closedPnl'])
+                        
+                        # Показуємо ключові поля з API
+                        api_fields = []
+                        for key in ['openingFee', 'closingFee', 'fundingFee', 'takerFee', 'makerFee', 'execFee']:
+                            if key in t:
+                                api_fields.append(f"{key}={t[key]}")
+                        
+                        fee_str = "FEES: " + ", ".join(api_fields) if api_fields else "FEES: <не знайдено>"
+                        logger.info(f"💰 {symbol} | P&L={pnl:.2f} | {fee_str} | calc_fee={total_fee:.6f}")
                         
                         stats_service.save_trade({
                             'order_id': t['orderId'],
-                            'symbol': t['symbol'],
+                            'symbol': symbol,
                             'side': side,
                             'qty': safe_float(t['qty']),
                             'entry_price': safe_float(t['avgEntryPrice']),
                             'exit_price': safe_float(t['avgExitPrice']),
-                            'pnl': safe_float(t['closedPnl']),
+                            'pnl': pnl,
                             'exit_time': datetime.fromtimestamp(int(t['updatedTime']) / 1000),
                             'exit_reason': 'Synced',
                             'opening_fee': opening_fee,
