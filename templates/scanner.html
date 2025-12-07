@@ -209,39 +209,48 @@
 <script>
 // ===== ПОКРАЩЕНЕ СОРТУВАННЯ З localStorage =====
 class TableSorter {
-    constructor(tableId) {
+    constructor(tableId, defaultColumn = null, defaultDirection = 'desc') {
         this.table = document.getElementById(tableId);
+        if (!this.table) return;
+        
         this.sortColumn = null;
         this.sortDirection = 'asc';
         this.storageKey = `table_sort_${tableId}`;
+        this.defaultColumn = defaultColumn;
+        this.defaultDirection = defaultDirection;
         
-        // Загружаємо попереднє сортування
-        this.loadSortState();
         this.attachSortHandlers();
     }
     
     attachSortHandlers() {
         document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
-            th.addEventListener('click', (e) => {
+            th.addEventListener('click', () => {
                 const colIndex = parseInt(th.getAttribute('data-column'));
-                this.sort(colIndex, th);
+                this.sort(colIndex, th, true); // true = toggle direction
             });
         });
     }
     
-    sort(columnIndex, headerElement) {
+    sort(columnIndex, headerElement, toggle = false) {
         const rows = Array.from(this.table.querySelectorAll('tbody tr'));
         
-        // Визначаємо напрямок (toggle)
-        if (this.sortColumn === columnIndex) {
-            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
-        } else {
-            this.sortDirection = 'asc';
-            // Видаляємо клас з попередньої колонки
-            document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
-                th.classList.remove('asc', 'desc');
-            });
+        // Пропускаємо якщо немає даних
+        if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td[colspan]'))) {
+            return;
         }
+        
+        // Визначаємо напрямок
+        if (toggle && this.sortColumn === columnIndex) {
+            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else if (toggle) {
+            this.sortDirection = 'desc'; // Перший клік - DESC (найбільше зверху)
+        }
+        // Якщо toggle=false, використовуємо поточний sortDirection
+        
+        // Видаляємо класи з усіх заголовків
+        document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
+            th.classList.remove('asc', 'desc');
+        });
         
         this.sortColumn = columnIndex;
         
@@ -249,6 +258,8 @@ class TableSorter {
         rows.sort((rowA, rowB) => {
             let cellA = rowA.children[columnIndex];
             let cellB = rowB.children[columnIndex];
+            
+            if (!cellA || !cellB) return 0;
             
             // Отримуємо значення (пріоритет для data-value)
             let valA = cellA.getAttribute('data-value') || cellA.innerText.trim();
@@ -259,12 +270,11 @@ class TableSorter {
             let numB = parseFloat(valB);
             
             if (!isNaN(numA) && !isNaN(numB)) {
-                // Числове сортування
                 return this.sortDirection === 'asc' ? numA - numB : numB - numA;
             } else {
-                // Текстове сортування (case-insensitive)
                 valA = valA.toLowerCase();
                 valB = valB.toLowerCase();
+                if (valA === valB) return 0;
                 if (this.sortDirection === 'asc') {
                     return valA > valB ? 1 : -1;
                 } else {
@@ -287,8 +297,7 @@ class TableSorter {
     saveSortState() {
         const state = {
             column: this.sortColumn,
-            direction: this.sortDirection,
-            timestamp: new Date().getTime()
+            direction: this.sortDirection
         };
         localStorage.setItem(this.storageKey, JSON.stringify(state));
     }
@@ -298,31 +307,49 @@ class TableSorter {
         if (saved) {
             try {
                 const state = JSON.parse(saved);
-                this.sortColumn = state.column;
-                this.sortDirection = state.direction;
+                return state;
             } catch (e) {
-                console.log('Failed to load sort state');
+                return null;
             }
         }
+        return null;
     }
     
-    applySortState() {
-        if (this.sortColumn !== null) {
-            const headers = this.table.querySelectorAll('th.sortable');
-            const headerToSort = Array.from(headers).find(th => 
-                parseInt(th.getAttribute('data-column')) === this.sortColumn
-            );
-            if (headerToSort) {
-                this.sort(this.sortColumn, headerToSort);
-            }
+    applyInitialSort() {
+        // Спочатку намагаємось завантажити збережений стан
+        const savedState = this.loadSortState();
+        
+        let columnToSort, directionToUse;
+        
+        if (savedState && savedState.column !== null) {
+            columnToSort = savedState.column;
+            directionToUse = savedState.direction;
+        } else if (this.defaultColumn !== null) {
+            // Використовуємо дефолтне сортування
+            columnToSort = this.defaultColumn;
+            directionToUse = this.defaultDirection;
+        } else {
+            return; // Немає сортування
+        }
+        
+        const headers = this.table.querySelectorAll('th.sortable');
+        const headerToSort = Array.from(headers).find(th => 
+            parseInt(th.getAttribute('data-column')) === columnToSort
+        );
+        
+        if (headerToSort) {
+            this.sortDirection = directionToUse;
+            this.sort(columnToSort, headerToSort, false);
         }
     }
 }
 
-// Ініціалізуємо сортування при завантаженні
+// ═══════════════════════════════════════════════════════════════
+// ІНІЦІАЛІЗАЦІЯ: Сортування по RSI (колонка 4) DESC за замовчуванням
+// ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-    const sorter = new TableSorter('monitorTable');
-    sorter.applySortState();
+    const sorter = new TableSorter('monitorTable', 4, 'desc'); // 4 = HTF RSI
+    sorter.applyInitialSort();
 });
 </script>
 {% endblock %}
