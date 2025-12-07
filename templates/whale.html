@@ -2,6 +2,63 @@
 
 {% block title %}Whale Hunter{% endblock %}
 
+{% block head %}
+<style>
+    /* ===== СТИЛІ ДЛЯ СОРТУВАННЯ (як в scanner.html) ===== */
+    th.sortable { 
+        cursor: pointer; 
+        user-select: none; 
+        position: relative;
+        font-weight: 600;
+        transition: background-color 0.2s ease;
+    }
+    
+    th.sortable:hover { 
+        background-color: #e8f0f7;
+        color: var(--accent, #3b82f6);
+    }
+
+    th.sortable::after { 
+        content: ' ↕'; 
+        font-size: 0.75em; 
+        opacity: 0.3;
+        margin-left: 4px;
+        transition: opacity 0.2s ease;
+    }
+    
+    th.sortable:hover::after {
+        opacity: 0.6;
+    }
+    
+    th.asc::after { 
+        content: ' ↑'; 
+        opacity: 1; 
+        color: var(--accent, #3b82f6);
+        font-weight: bold;
+    }
+    
+    th.desc::after { 
+        content: ' ↓'; 
+        opacity: 1; 
+        color: var(--accent, #3b82f6);
+        font-weight: bold;
+    }
+    
+    th.sortable.asc,
+    th.sortable.desc {
+        background-color: #eff6ff;
+        color: var(--accent, #3b82f6);
+    }
+
+    #whaleTable tbody tr {
+        transition: background-color 0.15s ease;
+    }
+    #whaleTable tbody tr:hover {
+        background-color: #f8fafc;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
@@ -56,19 +113,19 @@
             <h6 class="fw-bold m-0"><i class="ri-database-2-line me-2"></i>Історія Сигналів (DB)</h6>
         </div>
         <div class="table-responsive">
-            <table class="table table-hover align-middle mb-0">
-                <thead class="bg-light text-uppercase small text-muted">
+            <table class="table table-hover align-middle mb-0" id="whaleTable">
+                <thead class="bg-light text-uppercase small text-muted" style="font-size: 11px; letter-spacing: 1px;">
                     <tr>
-                        <th class="ps-4 sortable" data-column="0">Час</th>
-                        <th class="sortable" data-column="1">Актив</th>
-                        <th class="sortable" data-column="2">Ціна</th>
-                        <th class="sortable" data-column="3">Score</th>
-                        <th class="sortable" data-column="4">Стиснення</th>
-                        <th>Причина сигналу</th>
-                        <th class="text-end pe-4">Дія</th>
+                        <th class="py-3 ps-4 border-bottom sortable" data-column="0">Час</th>
+                        <th class="py-3 border-bottom sortable" data-column="1">Актив</th>
+                        <th class="py-3 border-bottom sortable" data-column="2">Ціна</th>
+                        <th class="py-3 border-bottom sortable" data-column="3">Score</th>
+                        <th class="py-3 border-bottom sortable" data-column="4">Стиснення</th>
+                        <th class="py-3 border-bottom">Причина сигналу</th>
+                        <th class="py-3 pe-4 text-end border-bottom">Дія</th>
                     </tr>
                 </thead>
-                <tbody id="whaleTableBody">
+                <tbody>
                     {% for row in history %}
                     <tr>
                         <td class="ps-4 text-muted small font-mono" data-value="{{ row.time }}">{{ row.time }}</td>
@@ -92,7 +149,7 @@
                         </td>
                     </tr>
                     {% else %}
-                    <tr id="emptyRow">
+                    <tr>
                         <td colspan="7" class="text-center py-5 text-muted">
                             <i class="ri-search-eye-line fs-1 opacity-25"></i>
                             <p class="mt-2">База даних порожня. Запустіть сканування.</p>
@@ -133,131 +190,126 @@ function startWhaleScan() {
     });
 }
 
-// ═══════════════════════════════════════════════════════════════
-// ✨ СОРТУВАННЯ ТАБЛИЦІ (Whale Strategy)
-// ═══════════════════════════════════════════════════════════════
-(function() {
-    // CSS стилі для сортування
-    const style = document.createElement('style');
-    style.textContent = `
-        th.sortable {
-            cursor: pointer;
-            user-select: none;
-            position: relative;
-            transition: all 0.2s ease;
-        }
-        th.sortable:hover {
-            background-color: #e8f4fd !important;
-            color: #0d6efd;
-        }
-        th.sortable::after {
-            content: ' ⇅';
-            font-size: 0.8em;
-            opacity: 0.3;
-            margin-left: 4px;
-        }
-        th.sortable.asc::after {
-            content: ' ▲';
-            opacity: 1;
-            color: #0d6efd;
-        }
-        th.sortable.desc::after {
-            content: ' ▼';
-            opacity: 1;
-            color: #0d6efd;
-        }
-        th.sortable.asc,
-        th.sortable.desc {
-            background-color: #eff6ff !important;
-            color: #0d6efd;
-        }
-    `;
-    document.head.appendChild(style);
-
-    let sortState = { column: 3, direction: 'desc' }; // Default: Score DESC
-
-    function sortTable(columnIndex, direction) {
-        const tbody = document.getElementById('whaleTableBody');
-        if (!tbody) return;
+// ===== СОРТУВАННЯ (той самий клас що в scanner.html) =====
+class TableSorter {
+    constructor(tableId, defaultColumn = null, defaultDirection = 'desc') {
+        this.table = document.getElementById(tableId);
+        if (!this.table) return;
         
-        const rows = Array.from(tbody.querySelectorAll('tr'));
+        this.sortColumn = null;
+        this.sortDirection = 'asc';
+        this.storageKey = `table_sort_${tableId}`;
+        this.defaultColumn = defaultColumn;
+        this.defaultDirection = defaultDirection;
         
-        // Перевіряємо чи є дані (не порожній рядок)
-        if (rows.length === 0) return;
-        if (rows.length === 1 && rows[0].id === 'emptyRow') return;
+        this.attachSortHandlers();
+    }
+    
+    attachSortHandlers() {
+        document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
+            th.addEventListener('click', () => {
+                const colIndex = parseInt(th.getAttribute('data-column'));
+                this.sort(colIndex, th, true);
+            });
+        });
+    }
+    
+    sort(columnIndex, headerElement, toggle = false) {
+        const rows = Array.from(this.table.querySelectorAll('tbody tr'));
+        
+        if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td[colspan]'))) {
+            return;
+        }
+        
+        if (toggle && this.sortColumn === columnIndex) {
+            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else if (toggle) {
+            this.sortDirection = 'desc';
+        }
+        
+        document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
+            th.classList.remove('asc', 'desc');
+        });
+        
+        this.sortColumn = columnIndex;
         
         rows.sort((rowA, rowB) => {
-            const cellA = rowA.children[columnIndex];
-            const cellB = rowB.children[columnIndex];
+            let cellA = rowA.children[columnIndex];
+            let cellB = rowB.children[columnIndex];
             
             if (!cellA || !cellB) return 0;
             
-            // Беремо data-value або текст
-            let valA = cellA.getAttribute('data-value') || cellA.textContent.trim();
-            let valB = cellB.getAttribute('data-value') || cellB.textContent.trim();
+            let valA = cellA.getAttribute('data-value') || cellA.innerText.trim();
+            let valB = cellB.getAttribute('data-value') || cellB.innerText.trim();
             
-            // Намагаємось порівняти як числа
-            const numA = parseFloat(valA);
-            const numB = parseFloat(valB);
+            let numA = parseFloat(valA);
+            let numB = parseFloat(valB);
             
-            let result = 0;
             if (!isNaN(numA) && !isNaN(numB)) {
-                result = numA - numB;
+                return this.sortDirection === 'asc' ? numA - numB : numB - numA;
             } else {
-                result = valA.localeCompare(valB, 'uk');
+                valA = valA.toLowerCase();
+                valB = valB.toLowerCase();
+                if (valA === valB) return 0;
+                if (this.sortDirection === 'asc') {
+                    return valA > valB ? 1 : -1;
+                } else {
+                    return valA < valB ? 1 : -1;
+                }
             }
-            
-            return direction === 'asc' ? result : -result;
         });
         
-        // Перемальовуємо таблицю
+        const tbody = this.table.querySelector('tbody');
         rows.forEach(row => tbody.appendChild(row));
+        
+        headerElement.classList.add(this.sortDirection);
+        this.saveSortState();
     }
-
-    function updateHeaders(activeColumn, direction) {
-        document.querySelectorAll('th.sortable').forEach(th => {
-            th.classList.remove('asc', 'desc');
-            const col = parseInt(th.getAttribute('data-column'));
-            if (col === activeColumn) {
-                th.classList.add(direction);
-            }
-        });
+    
+    saveSortState() {
+        const state = { column: this.sortColumn, direction: this.sortDirection };
+        localStorage.setItem(this.storageKey, JSON.stringify(state));
     }
-
-    function handleSort(columnIndex) {
-        // Toggle напрямку якщо та сама колонка
-        if (sortState.column === columnIndex) {
-            sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+    
+    loadSortState() {
+        const saved = localStorage.getItem(this.storageKey);
+        if (saved) {
+            try { return JSON.parse(saved); } catch (e) { return null; }
+        }
+        return null;
+    }
+    
+    applyInitialSort() {
+        const savedState = this.loadSortState();
+        let columnToSort, directionToUse;
+        
+        if (savedState && savedState.column !== null) {
+            columnToSort = savedState.column;
+            directionToUse = savedState.direction;
+        } else if (this.defaultColumn !== null) {
+            columnToSort = this.defaultColumn;
+            directionToUse = this.defaultDirection;
         } else {
-            sortState.column = columnIndex;
-            sortState.direction = 'desc'; // Новий стовпець - починаємо з DESC
+            return;
         }
         
-        sortTable(sortState.column, sortState.direction);
-        updateHeaders(sortState.column, sortState.direction);
+        const headers = this.table.querySelectorAll('th.sortable');
+        const headerToSort = Array.from(headers).find(th => 
+            parseInt(th.getAttribute('data-column')) === columnToSort
+        );
+        
+        if (headerToSort) {
+            this.sortDirection = directionToUse;
+            this.sort(columnToSort, headerToSort, false);
+        }
     }
+}
 
-    // Ініціалізація при завантаженні
-    document.addEventListener('DOMContentLoaded', function() {
-        // Додаємо обробники кліків
-        document.querySelectorAll('th.sortable').forEach(th => {
-            th.addEventListener('click', function() {
-                const col = parseInt(this.getAttribute('data-column'));
-                handleSort(col);
-            });
-        });
-        
-        // Застосовуємо дефолтне сортування по Score (колонка 3)
-        const tbody = document.getElementById('whaleTableBody');
-        if (tbody) {
-            const rows = tbody.querySelectorAll('tr');
-            if (rows.length > 0 && rows[0].id !== 'emptyRow') {
-                sortTable(3, 'desc');
-                updateHeaders(3, 'desc');
-            }
-        }
-    });
-})();
+// Ініціалізація: сортування по Score (колонка 3) DESC за замовчуванням
+document.addEventListener('DOMContentLoaded', () => {
+    const sorter = new TableSorter('whaleTable', 3, 'desc');
+    sorter.applyInitialSort();
+});
 
 {% if is_scanning %}
 setTimeout(() => location.reload(), 2000);
