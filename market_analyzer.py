@@ -128,13 +128,15 @@ class MarketAnalyzer:
             limit = settings.get("scan_limit", 100)
             tickers = self.get_top_tickers(limit)
             
-            htf = settings.get("htfSelection", "240") 
+            # ✨ ВИПРАВЛЕНО: Використовуємо exit_ltf (45хв) замість htf (240хв)
+            # Це гарантує консистентність з Monitor та TradingView!
+            exit_tf = settings.get("exit_ltf", "45")  
             rsi_len = int(settings.get("obt_rsiLength", 14))
             rsi_buy_level = float(settings.get("obt_entryRsiOversold", 30))
             rsi_sell_level = float(settings.get("obt_entryRsiOverbought", 70))
 
             total = len(tickers)
-            print(f"🔎 Scanning {total} tickers on TF {htf}...")
+            print(f"🔎 Scanning {total} tickers on TF {exit_tf}хв...")
 
             for i, t in enumerate(tickers):
                 if not self.is_scanning: break
@@ -147,8 +149,8 @@ class MarketAnalyzer:
 
                 try:
                     # 2. Отримуємо дані (300 свічок для точності RSI)
-                    # ✅ Тепер з правильною прив'язкою до сітки часу!
-                    df = self.fetch_candles(sym, htf, limit=300)
+                    # ✅ Тепер з правильною прив'язкою до сітки часу і ПРАВИЛЬНИМ ТФ!
+                    df = self.fetch_candles(sym, exit_tf, limit=300)
                     
                     if df is None or len(df) < rsi_len: 
                         time.sleep(0.05)
