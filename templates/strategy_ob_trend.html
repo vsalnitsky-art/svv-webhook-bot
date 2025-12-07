@@ -25,29 +25,57 @@
     <div class="card border-0 shadow-sm mb-4">
         <div class="card-body bg-light rounded-3">
             <div class="row g-3 align-items-end">
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <label class="small fw-bold text-muted text-uppercase">Таймфрейм</label>
                     <select class="form-select form-select-sm" id="whale_tf">
                         <option value="15">15 Хвилин</option>
-                        <option value="60" selected>1 Година (Recommended)</option>
+                        <option value="60" selected>1 Година</option>
                         <option value="240">4 Години</option>
                     </select>
                 </div>
-                <div class="col-md-3">
-                    <label class="small fw-bold text-muted text-uppercase">Глибина пошуку</label>
+                <div class="col-md-2">
+                    <label class="small fw-bold text-muted text-uppercase">Глибина</label>
                     <select class="form-select form-select-sm" id="whale_limit">
                         <option value="20">Топ 20</option>
                         <option value="50" selected>Топ 50</option>
                         <option value="100">Топ 100</option>
                     </select>
                 </div>
-                <div class="col-md-3">
+                
+                <!-- ✅ RSI ФІЛЬТР -->
+                <div class="col-md-2">
+                    <label class="small fw-bold text-muted text-uppercase">RSI Фільтр</label>
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" id="rsi_filter_switch" {{ 'checked' if conf.get('whale_rsi_filter_enabled') }}>
+                        <label class="form-check-label small" for="rsi_filter_switch">Увімкнено</label>
+                    </div>
+                </div>
+                <div class="col-md-1">
+                    <label class="small fw-bold text-muted text-uppercase">RSI ≤</label>
+                    <input type="number" class="form-control form-control-sm" id="rsi_min" value="{{ conf.get('whale_rsi_min', 30) }}" min="10" max="50">
+                </div>
+                <div class="col-md-1">
+                    <label class="small fw-bold text-muted text-uppercase">RSI ≥</label>
+                    <input type="number" class="form-control form-control-sm" id="rsi_max" value="{{ conf.get('whale_rsi_max', 70) }}" min="50" max="90">
+                </div>
+                
+                <div class="col-md-2">
                     <div class="small text-muted text-uppercase fw-bold">Статус</div>
                     <div class="fw-bold text-dark" id="status-text">{{ status }}</div>
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <div class="small text-muted text-uppercase fw-bold">Останній скан</div>
                     <div class="fw-bold text-primary">{{ last_time or "-" }}</div>
+                </div>
+            </div>
+            
+            <!-- Підказка RSI фільтру -->
+            <div class="row mt-2" id="rsi_hint" style="display: none;">
+                <div class="col-12">
+                    <div class="alert alert-info py-2 px-3 small mb-0">
+                        <i class="ri-information-line me-1"></i>
+                        <strong>RSI Фільтр:</strong> Шукає монети з RSI ≤ {{ conf.get('whale_rsi_min', 30) }} (перепроданість) або RSI ≥ {{ conf.get('whale_rsi_max', 70) }} (перекупленість). Монети в "нормальній" зоні пропускаються.
+                    </div>
                 </div>
             </div>
         </div>
@@ -65,6 +93,7 @@
                         <th class="ps-4">Час</th>
                         <th>Актив</th>
                         <th>Ціна</th>
+                        <th>RSI</th>
                         <th>Score</th>
                         <th>Стиснення</th>
                         <th>Причина Сигналу</th>
@@ -77,6 +106,15 @@
                         <td class="ps-4 text-muted small font-mono">{{ row.time }}</td>
                         <td class="fw-bold text-primary">{{ row.symbol }}</td>
                         <td class="font-mono">{{ row.price }}</td>
+                        <td>
+                            {% if row.rsi %}
+                                <span class="badge {{ 'bg-danger' if row.rsi >= 70 else 'bg-success' if row.rsi <= 30 else 'bg-secondary' }}">
+                                    {{ row.rsi }}
+                                </span>
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
                         <td>
                             {% if row.score >= 80 %}
                                 <span class="badge bg-success">STRONG ({{ row.score }})</span>
@@ -96,7 +134,7 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="7" class="text-center py-5 text-muted">
+                        <td colspan="8" class="text-center py-5 text-muted">
                             <i class="ri-search-eye-line fs-1 opacity-25"></i>
                             <p class="mt-2">Даних немає. Налаштуйте параметри та натисніть "Запустити Сканер".</p>
                         </td>
@@ -109,10 +147,24 @@
 </div>
 
 <script>
+// Показ/приховування підказки RSI
+document.getElementById('rsi_filter_switch').addEventListener('change', function() {
+    document.getElementById('rsi_hint').style.display = this.checked ? 'block' : 'none';
+});
+// Ініціалізація при завантаженні
+if (document.getElementById('rsi_filter_switch').checked) {
+    document.getElementById('rsi_hint').style.display = 'block';
+}
+
 function startWhaleScan() {
     const btn = document.getElementById('scanBtn');
     const tf = document.getElementById('whale_tf').value;
     const limit = document.getElementById('whale_limit').value;
+    
+    // ✅ RSI параметри
+    const rsiEnabled = document.getElementById('rsi_filter_switch').checked;
+    const rsiMin = document.getElementById('rsi_min').value;
+    const rsiMax = document.getElementById('rsi_max').value;
     
     // Блокуємо кнопку
     btn.disabled = true;
@@ -125,7 +177,13 @@ function startWhaleScan() {
             'Content-Type': 'application/json',
             'X-CSRFToken': '{{ csrf_token() }}'
         },
-        body: JSON.stringify({ timeframe: tf, limit: limit })
+        body: JSON.stringify({ 
+            timeframe: tf, 
+            limit: limit,
+            rsi_filter_enabled: rsiEnabled,
+            rsi_min: rsiMin,
+            rsi_max: rsiMax
+        })
     })
     .then(r => r.json())
     .then(d => {
