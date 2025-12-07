@@ -65,71 +65,96 @@ class WhaleCore:
 
     def analyze_coin(self, df):
         """
-        Аналіз монети: Squeeze + OBV Divergence + Ichimoku Spring + RSI Filter
+        Аналіз монети: RSI Filter + Squeeze + OBV Divergence + Ichimoku
         """
         try:
             close = df['close']
+            current_rsi = simple_rsi(close, period=14)
             
             # ✅ RSI ФІЛЬТР (якщо увімкнено)
             rsi_filter_on = settings.get("whale_rsi_filter_enabled", False)
             if rsi_filter_on:
-                rsi_val = simple_rsi(close, period=14)
                 rsi_min = float(settings.get("whale_rsi_min", 30))
                 rsi_max = float(settings.get("whale_rsi_max", 70))
                 
                 # Пропускаємо монети де RSI в "нормальній" зоні
-                # Шукаємо тільки екстремальні значення (перекупленість/перепроданість)
-                if rsi_min < rsi_val < rsi_max:
+                if rsi_min < current_rsi < rsi_max:
                     return None
             
-            # 1. Фільтр Тренду (EMA 200)
+            # 1. Фільтр Тренду (EMA 200) - ОПЦІОНАЛЬНО, м'якший
             ema = calculate_ema(close, self.CONFIG['ema_period'])
             dist_to_ema = (close.iloc[-1] - ema.iloc[-1]) / ema.iloc[-1]
             
-            # Якщо ціна > 15% під EMA - це сильний даунтренд
-            if dist_to_ema < -0.15: return None
+            # Якщо ціна > 20% під EMA - це дуже сильний даунтренд (було 15%)
+            if dist_to_ema < -0.20: 
+                return None
 
-            # 2. Фільтр Волатильності (Squeeze)
+            # 2. Фільтр Волатильності (Squeeze) - ОПЦІОНАЛЬНО
             _, _, _, bandwidth = calculate_bollinger_bands(close)
-            curr_sqz = bandwidth.iloc[-1]
+            curr_sqz = bandwidth.iloc[-1] if bandwidth is not None and len(bandwidth) > 0 else 0.1
             
-            if curr_sqz > self.CONFIG['bb_squeeze_max']:
-                return None 
-
             # 3. Акумуляція (OBV)
             obv = calculate_obv(close, df['volume'])
             p_slope = calculate_slope(close, 15)
             obv_slope = calculate_slope(obv, 15)
             
             # Нормалізація нахилу ціни (%)
-            norm_p_slope = (p_slope / close.iloc[-1]) * 100
+            norm_p_slope = (p_slope / close.iloc[-1]) * 100 if close.iloc[-1] > 0 else 0
             
-            is_whale = False
+            # === ЛОГІКА СИГНАЛІВ ===
+            is_signal = False
             reason = ""
             score = 50
             
-            # Сигнал 1: Дивергенція
-            if abs(norm_p_slope) < 0.05 and obv_slope > 0:
-                is_whale = True
-                reason = "Accumulation (Flat Price, OBV Up)"
-                score += 30
+            # Сигнал 1: RSI екстремум (якщо фільтр увімкнено)
+            if rsi_filter_on:
+                rsi_min = float(settings.get("whale_rsi_min", 30))
+                rsi_max = float(settings.get("whale_rsi_max", 70))
+                
+                if current_rsi <= rsi_min:
+                    is_signal = True
+                    reason = f"RSI Oversold ({round(current_rsi, 1)})"
+                    score += 25
+                elif current_rsi >= rsi_max:
+                    is_signal = True
+                    reason = f"RSI Overbought ({round(current_rsi, 1)})"
+                    score += 25
+            
+            # Сигнал 2: OBV Дивергенція (класична whale логіка)
+            if abs(norm_p_slope) < 0.1 and obv_slope > 0:  # Розширив з 0.05 до 0.1
+                is_signal = True
+                if reason:
+                    reason += " + Accumulation"
+                else:
+                    reason = "Accumulation (Flat Price, OBV Up)"
+                score += 20
             elif norm_p_slope < -0.05 and obv_slope > 0:
-                is_whale = True
-                reason = "Divergence (Price Drop, OBV Up)"
-                score += 20
+                is_signal = True
+                if reason:
+                    reason += " + Divergence"
+                else:
+                    reason = "Divergence (Price Drop, OBV Up)"
+                score += 15
 
-            if not is_whale: return None
+            # Сигнал 3: Squeeze (низька волатильність)
+            if curr_sqz < self.CONFIG['bb_squeeze_max']:
+                score += 10
+                if is_signal:
+                    reason += " + Squeeze"
 
-            # 4. Ichimoku Check
-            tenkan, kijun, sa, sb = calculate_ichimoku(df['high'], df['low'], close)
-            cloud_top = max(sa.iloc[-1], sb.iloc[-1])
-            
-            if close.iloc[-1] > cloud_top:
-                score += 20
-                reason += " + Above Cloud"
-            
-            # ✅ Додаємо RSI до результату
-            current_rsi = simple_rsi(close, period=14) if rsi_filter_on else 0
+            if not is_signal: 
+                return None
+
+            # 4. Ichimoku Check (бонус)
+            try:
+                tenkan, kijun, sa, sb = calculate_ichimoku(df['high'], df['low'], close)
+                if sa is not None and sb is not None:
+                    cloud_top = max(sa.iloc[-1], sb.iloc[-1])
+                    if close.iloc[-1] > cloud_top:
+                        score += 15
+                        reason += " + Above Cloud"
+            except:
+                pass
             
             return {
                 "score": min(score, 100),
@@ -141,6 +166,7 @@ class WhaleCore:
             }
 
         except Exception as e:
+            logger.error(f"Analyze error: {e}")
             return None
 
     def save_signal(self, symbol, data):
