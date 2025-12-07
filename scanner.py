@@ -132,6 +132,7 @@ class EnhancedMarketScanner:
         trailing_trigger_rsi = float(settings.get("trailing_rsi_activation", 65))
         atr_len = int(settings.get("trailing_atr_length", 14))
         atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))  # ✨ НАЛАШТОВУЄТЬСЯ
+        trailing_delay = float(settings.get("trailing_activation_delay", 5))  # ✨ Затримка (хв)
 
         for p in active_pos:
             s = p['symbol']
@@ -149,7 +150,14 @@ class EnhancedMarketScanner:
             current_sl = float(p.get('stopLoss', 0.0))
 
             if s not in self.data: 
-                self.data[s] = {'rsi': 0, 'exit_status': 'Safe', 'exit_details': '-', 'trailing_active': False}
+                self.data[s] = {
+                    'rsi': 0, 
+                    'exit_status': 'Safe', 
+                    'exit_details': '-', 
+                    'trailing_active': False,
+                    'entry_sl': float(p.get('stopLoss', 0)),       # ✨ Початковий SL
+                    'position_time': int(p.get('createdTime', 0))  # ✨ Час відкриття
+                }
 
             # 1. Fetch Data з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ ✅
             df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
@@ -172,6 +180,19 @@ class EnhancedMarketScanner:
                     
                     # A. Перевірка Активації ("Пастка")
                     if not is_active:
+                        # ✨ ПЕРЕВІРКА 1: Затримка після входу
+                        pos_time = self.data[s].get('position_time', 0)
+                        if pos_time > 0:
+                            age_minutes = (time.time() * 1000 - pos_time) / 60000
+                            if age_minutes < trailing_delay:
+                                # Позиція ще молода - не активуємо trailing
+                                status = "Safe"
+                                details = f"RSI: {round(rsi_val, 1)} | Wait {int(trailing_delay - age_minutes)}m"
+                                self.data[s]['exit_status'] = status
+                                self.data[s]['exit_details'] = details
+                                continue  # Пропускаємо цю позицію
+                        
+                        # RSI перевірка (після затримки)
                         if side == "Buy" and rsi_val >= trailing_trigger_rsi:
                             self.data[s]['trailing_active'] = True
                             is_active = True
@@ -188,10 +209,14 @@ class EnhancedMarketScanner:
                         
                         new_sl = 0.0
                         should_update = False
+                        entry_sl = self.data[s].get('entry_sl', 0)  # ✨ Початковий SL
 
                         if side == "Buy":
                             # Long: SL = Price - (ATR * Mult)
                             calc_sl = last_price - (atr_val * atr_mult)
+                            # ✨ ПЕРЕВІРКА 2: Не гірше entry SL
+                            if entry_sl > 0:
+                                calc_sl = max(calc_sl, entry_sl)
                             # Рухаємо ТІЛЬКИ вгору
                             if calc_sl > current_sl:
                                 new_sl = calc_sl
@@ -200,6 +225,9 @@ class EnhancedMarketScanner:
                         elif side == "Sell":
                             # Short: SL = Price + (ATR * Mult)
                             calc_sl = last_price + (atr_val * atr_mult)
+                            # ✨ ПЕРЕВІРКА 2: Не гірше entry SL
+                            if entry_sl > 0:
+                                calc_sl = min(calc_sl, entry_sl)
                             # Рухаємо ТІЛЬКИ вниз (зменшуємо значення для шорта)
                             if current_sl == 0 or calc_sl < current_sl:
                                 new_sl = calc_sl
