@@ -154,7 +154,7 @@ class EnhancedMarketScanner:
             # 1. Fetch Data з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ ✅
             df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
             
-            if df is not None and len(df) > atr_len:
+            if df is not None and len(df) >= 20:  # ✨ Знизили вимогу з 64 на 20 свічок
                 # 2. Calc Indicators (ПРОФЕСІЙНІ МЕТОД Wilder's!)
                 # ✅ ВАЖЛИВО: На ПРАВИЛЬНИХ свічках з КЛАСИЧНИМ Wilder's методом
                 # ✅ Результат = ТОЧНО як у TradingView та Bybit!
