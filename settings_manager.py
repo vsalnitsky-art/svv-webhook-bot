@@ -2,6 +2,8 @@
 # -*- coding: utf-8 -*-
 import logging
 from models import db_manager, BotSetting
+from datetime import datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,7 @@ DEFAULT_SETTINGS = {
     "obt_useOBRetest": False, 
 
     # === TIMEFRAMES ===
-    "htfSelection": "240",
+    "htfSelection": "60", # ЗМІНЕНО: 1 Година (1H)
     "ltfSelection": "45",
     
     # === INDICATORS ===
@@ -38,112 +40,123 @@ DEFAULT_SETTINGS = {
     "obt_swingLength": 5,
 
     # === SMART EXIT & TRAILING ===
-    "exit_enableStrategy": False,  # Світч для RSI-based exit стратегії
-    "exit_ltf": "45",              # ✨ НОВЕ: LTF для розрахунків виходу (за замовчуванням 45хв)
+    "exit_enableStrategy": False,  # Світч для RSI-виходу
+    "exit_rsiLength": 10,
+    "exit_rsiOverbought": 80,
+    "exit_rsiOversold": 20,
+    "exit_enableTrailing": True,
+    "exit_trailingMode": "ATR",  # ATR | Percent
+    "exit_trailingAtrPeriod": 10,
+    "exit_trailingAtrMultiplier": 1.5,
+    "exit_trailingPercent": 0.5,
     
-    "trailing_enabled": True,       # Головний тумблер трейлінгу
-    "trailing_rsi_activation": 65,  # RSI, при якому вмикається трейлінг
-    "trailing_atr_length": 14,      # Період ATR
-    "trailing_atr_multiplier": 2.5, # ✨ НАЛАШТОВУЄТЬСЯ: Множник ATR (2.5 = 2.5 × ATR)
-
-    "exit_rsiOverbought": 70,
-    "exit_rsiOversold": 30,
-    "exit_obvLength": 10,
-
-    # === RISK ===
-    "riskPercent": 2.0,
-    "leverage": 20,
-    "use_tp": False,  # 🎯 Вимикач для Take Profit (за замовчуванням: вимкнено)
-    "tp_mode": "Fixed_1_50", 
-    "fixedTP": 3.0,
-    "sl_mode": "OB_Extremity",
-    "fixedSL": 1.5,
-    "obBufferPercent": 0.2,
-
-    # === SMART MONEY SIMULATOR ===
-    "sm_entry_mode": "Market",
-    "sm_sl_buffer": 0.2,
-    "sm_tp_mode": "None",
-    "sm_tp_value": 3.0
+    # === WHALE CORE ===
+    "whale_tf": "60",
+    "whale_limit": 50,
+    "whale_min_vol": 5, # в мільйонах
+    "whale_bb_max": 0.15,
+    "whale_ema_period": 200,
+    
+    # === PAPER TRADING ===
+    "paper_mode_enabled": False,
+    "paper_balance": 10000.0
 }
+
+# Мапінг для коректного приведення типів
+TYPE_MAP = {
+    "scan_limit": int, "scan_min_volume": float, "whale_limit": int,
+    "obt_cloudFastLen": int, "obt_cloudSlowLen": int, "obt_rsiLength": int,
+    "obt_entryRsiOversold": float, "obt_entryRsiOverbought": float,
+    "obt_obvEntryLen": int, "obt_swingLength": int, "exit_rsiLength": int,
+    "exit_rsiOverbought": float, "exit_rsiOversold": float,
+    "exit_trailingAtrPeriod": int, "exit_trailingAtrMultiplier": float,
+    "exit_trailingPercent": float, "whale_min_vol": float,
+    "whale_bb_max": float, "whale_ema_period": int, "paper_balance": float
+}
+
+
+# SQLAlchemy Модель
+# (Має бути імпортована з models, тут лише використання)
+# class BotSetting(Base): ...
 
 class SettingsManager:
     def __init__(self):
         self.db = db_manager
+        self.db.setup() # Переконатися, що база даних готова
         self._cache = {}
-        self.reload_settings()
+        self.load_settings()
+        self.load_missing_defaults()
+        
+    def _cast_value(self, key: str, value: Any):
+        """Приводить значення до коректного типу згідно TYPE_MAP або булевого"""
+        if isinstance(value, bool):
+            return value
+            
+        type_func = TYPE_MAP.get(key)
+        
+        # Перевірка на булеві значення, які можуть бути рядками "true" / "false"
+        if key.startswith(('telegram_enabled', 'scan_use_min_volume', 'obt_use', 'exit_enable', 'paper_mode_enabled')):
+            v = str(value).lower()
+            return v == 'true' or v == 'on' or v == '1'
+            
+        if type_func:
+            try:
+                return type_func(value)
+            except (ValueError, TypeError):
+                # Повертаємо дефолтне значення, якщо конвертація не вдалася
+                default_val = DEFAULT_SETTINGS.get(key)
+                if default_val is not None:
+                    try: return type_func(default_val)
+                    except: return default_val
+                return value
+        return value
 
-    def _cast_value(self, key, value_str):
-        if key not in DEFAULT_SETTINGS: return value_str
-        default_val = DEFAULT_SETTINGS[key]
-        try:
-            if isinstance(default_val, bool): 
-                return str(value_str).lower() in ['true', 'on', '1']
-            elif isinstance(default_val, int): 
-                return int(float(value_str))
-            elif isinstance(default_val, float): 
-                return float(value_str)
-            else: 
-                return str(value_str)
-        except: 
-            return default_val
-
-    def reload_settings(self):
+    def load_settings(self):
+        """Завантажує налаштування з БД в кеш."""
         session = self.db.get_session()
         try:
             db_settings = session.query(BotSetting).all()
-            if not db_settings:
-                self._cache = DEFAULT_SETTINGS.copy()
-                for k, v in DEFAULT_SETTINGS.items():
-                    val_str = "true" if v is True else "false" if v is False else str(v)
-                    session.add(BotSetting(key=k, value=val_str))
-                session.commit()
-            else:
-                loaded = {}
-                db_keys = set()
-                for s in db_settings: 
-                    loaded[s.key] = self._cast_value(s.key, s.value)
-                    db_keys.add(s.key)
-                
-                missing_keys = set(DEFAULT_SETTINGS.keys()) - db_keys
-                if missing_keys:
-                    for k in missing_keys:
-                        v = DEFAULT_SETTINGS[k]
-                        val_str = "true" if v is True else "false" if v is False else str(v)
-                        session.add(BotSetting(key=k, value=val_str))
-                        loaded[k] = v
-                    session.commit()
-
-                merged = DEFAULT_SETTINGS.copy()
-                merged.update(loaded)
-                self._cache = merged
+            for setting in db_settings:
+                self._cache[setting.key] = self._cast_value(setting.key, setting.value)
+            logger.info("✅ Settings loaded from DB")
         except Exception as e:
             logger.error(f"Settings load error: {e}")
-            self._cache = DEFAULT_SETTINGS.copy()
-        finally: 
-            session.close()
+        finally: session.close()
 
-    def save_settings(self, new_settings_dict):
+    def load_missing_defaults(self):
+        """Додає дефолтні значення для відсутніх ключів у кеш."""
+        changes = False
+        for key, default_value in DEFAULT_SETTINGS.items():
+            if key not in self._cache:
+                self._cache[key] = default_value
+                changes = True
+        if changes:
+             logger.info("⚙️ Default settings loaded for missing keys")
+             # Не зберігаємо в БД, оскільки вони будуть збережені при першій зміні
+             
+    def save_settings(self, new_settings: dict):
+        """Зберігає оновлені налаштування в БД і кеш."""
         session = self.db.get_session()
         try:
-            for k, v in new_settings_dict.items():
+            for k, v in new_settings.items():
+                if k not in DEFAULT_SETTINGS: continue # Ігноруємо невідомі ключі
+                
                 val_to_store = str(v)
-                if k in DEFAULT_SETTINGS:
-                    default_type = type(DEFAULT_SETTINGS[k])
-                    if default_type == bool:
-                        is_true = (v == 'on' or v == 'true' or v is True)
-                        val_to_store = "true" if is_true else "false"
-                        self._cache[k] = is_true
-                    else:
-                        self._cache[k] = self._cast_value(k, v)
-                        val_to_store = str(v)
+                
+                # Обробка булевих значень
+                if k.startswith(('telegram_enabled', 'scan_use_min_volume', 'obt_use', 'exit_enable', 'paper_mode_enabled')):
+                    is_true = (str(v).lower() == 'on' or str(v).lower() == 'true' or v is True)
+                    val_to_store = "true" if is_true else "false"
+                    self._cache[k] = is_true
                 else:
-                    self._cache[k] = v
+                    self._cache[k] = self._cast_value(k, v)
+                    val_to_store = str(v)
                 
                 existing = session.query(BotSetting).filter_by(key=k).first()
                 if existing: existing.value = val_to_store
                 else: session.add(BotSetting(key=k, value=val_to_store))
             session.commit()
+            logger.info("✅ Settings saved to DB", keys=list(new_settings.keys()))
         except Exception as e:
             session.rollback()
             logger.error(f"Settings save error: {e}")
@@ -157,13 +170,29 @@ class SettingsManager:
         session = self.db.get_session()
         try:
             for k, v in json_data.items():
-                val = str(v).lower() if isinstance(v, bool) else str(v)
-                self._cache[k] = v
+                # Перевірка на існування ключа в DEFAULT_SETTINGS
+                if k not in DEFAULT_SETTINGS:
+                    logger.warning(f"Skipping unknown setting key: {k}")
+                    continue
+                    
+                # Приведення булевих значень
+                if k.startswith(('telegram_enabled', 'scan_use_min_volume', 'obt_use', 'exit_enable', 'paper_mode_enabled')):
+                    val = "true" if v else "false"
+                else:
+                    val = str(v)
+
+                self._cache[k] = self._cast_value(k, v) # Оновлення кешу
+                
                 ex = session.query(BotSetting).filter_by(key=k).first()
                 if ex: ex.value = val
                 else: session.add(BotSetting(key=k, value=val))
-            session.commit(); return True
-        except: return False
-        finally: session.close()
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Import settings error: {e}")
+            return False
+        finally:
+            session.close()
 
 settings = SettingsManager()
