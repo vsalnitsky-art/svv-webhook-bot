@@ -13,10 +13,23 @@ from flask import Flask, render_template, request, jsonify, redirect, url_for
 import pandas as pd
 from collections import defaultdict
 import numpy as np
+import os
+
+# ============================================================================
+# ИНИЦИАЛИЗАЦИЯ FLASK
+# ============================================================================
+
+app = Flask(__name__)
+app.config['JSON_SORT_KEYS'] = False
+
+# SECURITY: Генерируем SECRET_KEY для CSRF защиты
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
+app.config['WTF_CSRF_ENABLED'] = False  # Отключаем CSRF для API (включите для продакшена)
 
 # ============================================================================
 # WHALE HUNTER SCANNER
 # ============================================================================
+
 try:
     from whale_hunter_improved import init_scanner, scan_in_background, whale_hunter as wh
     WHALE_HUNTER_AVAILABLE = True
@@ -25,11 +38,8 @@ except Exception as e:
     print(f"⚠️  Whale Hunter Scanner не инициализирован: {e}")
 
 # ============================================================================
-# КОНФИГУРАЦИЯ
+# ЛОГИРОВАНИЕ
 # ============================================================================
-
-app = Flask(__name__)
-app.config['JSON_SORT_KEYS'] = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -313,7 +323,7 @@ def whale_hunter_settings():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # ============================================================================
-# СТРАНИЦА СТРАТЕГИИ (ОЧЕНЬ ВАЖНО!)
+# СТРАНИЦА СТРАТЕГИИ
 # ============================================================================
 
 @app.route('/ob_trend/settings', methods=['GET', 'POST'])
@@ -352,6 +362,7 @@ def strategy_page():
 
 @app.errorhandler(404)
 def not_found(error):
+    logger.warning(f"404 Error: {request.url}")
     return jsonify({'error': '404 Not Found', 'message': 'The requested URL was not found'}), 404
 
 @app.errorhandler(500)
@@ -366,4 +377,5 @@ def internal_error(error):
 if __name__ == '__main__':
     logger.info("🚀 AlgoBot запускается...")
     logger.info(f"✅ Whale Hunter Scanner: {'Доступен' if WHALE_HUNTER_AVAILABLE else 'Недоступен'}")
-    app.run(host='0.0.0.0', port=10000, debug=False)
+    logger.info(f"✅ CSRF Protection: Отключена (для API)")
+    app.run(host='0.0.0.0', port=10000, debug=False, threaded=True)
