@@ -128,14 +128,31 @@ class BybitTradingBot:
                 for t in r['result']['list']:
                     try:
                         side = 'Long' if t['side'] == 'Buy' else 'Short'
-                        # ✨ ЗБИРАЄМО КОМІСІЇ З API
+                        
+                        # ✨ ЗБИРАЄМО КОМІСІЇ З API - ШУКАЄМО В РІЗНИХ ПОЛЯХ
+                        # Варіант 1: openingFee/closingFee/fundingFee (якщо є)
                         opening_fee = safe_float(t.get('openingFee', 0))
                         closing_fee = safe_float(t.get('closingFee', 0))
                         funding_fee = safe_float(t.get('fundingFee', 0))
                         
+                        # Варіант 2: Якщо немає openingFee - використовуємо takerFee/makerFee
+                        if opening_fee == 0 and closing_fee == 0:
+                            taker_fee = safe_float(t.get('takerFee', 0))
+                            maker_fee = safe_float(t.get('makerFee', 0))
+                            exec_fee = safe_float(t.get('execFee', 0))
+                            
+                            # Якщо є takerFee - то це комісія за виконання
+                            if taker_fee != 0:
+                                opening_fee = taker_fee / 2  # розділяємо на 2
+                                closing_fee = taker_fee / 2
+                            elif exec_fee != 0:
+                                opening_fee = exec_fee / 2
+                                closing_fee = exec_fee / 2
+                        
                         # 🔍 ЛОГУВАННЯ для перевірки
-                        if opening_fee != 0 or closing_fee != 0 or funding_fee != 0:
-                            logger.info(f"📊 Fees for {t['symbol']}: open={opening_fee}, close={closing_fee}, fund={funding_fee}")
+                        total_fee = opening_fee + closing_fee + funding_fee
+                        if total_fee != 0:
+                            logger.info(f"📊 {t['symbol']}: open={opening_fee:.6f}, close={closing_fee:.6f}, fund={funding_fee:.6f}")
                         
                         stats_service.save_trade({
                             'order_id': t['orderId'],
