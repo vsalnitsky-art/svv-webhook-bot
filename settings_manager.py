@@ -65,7 +65,12 @@ DEFAULT_SETTINGS = {
     "sm_entry_mode": "Market",
     "sm_sl_buffer": 0.2,
     "sm_tp_mode": "None",
-    "sm_tp_value": 3.0
+    "sm_tp_value": 3.0,
+
+    # === WHALE STRATEGY RSI FILTER ===
+    "whale_rsi_filter_enabled": False,  # Вкл/Викл RSI фільтр
+    "whale_rsi_min": 30,                # Шукати RSI <= цього (перепроданість)
+    "whale_rsi_max": 70                 # Шукати RSI >= цього (перекупленість)
 }
 
 class SettingsManager:
