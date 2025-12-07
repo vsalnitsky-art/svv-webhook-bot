@@ -2,10 +2,10 @@
 
 {% block title %}Whale Hunter{% endblock %}
 
-{% block head %}
+{% block content %}
 <style>
-    /* ===== СТИЛІ ДЛЯ СОРТУВАННЯ (як в scanner.html) ===== */
-    th.sortable { 
+    /* ===== СТИЛІ ДЛЯ СОРТУВАННЯ ===== */
+    #whaleTable th.sortable { 
         cursor: pointer; 
         user-select: none; 
         position: relative;
@@ -13,12 +13,12 @@
         transition: background-color 0.2s ease;
     }
     
-    th.sortable:hover { 
+    #whaleTable th.sortable:hover { 
         background-color: #e8f0f7;
         color: var(--accent, #3b82f6);
     }
 
-    th.sortable::after { 
+    #whaleTable th.sortable::after { 
         content: ' ↕'; 
         font-size: 0.75em; 
         opacity: 0.3;
@@ -26,26 +26,26 @@
         transition: opacity 0.2s ease;
     }
     
-    th.sortable:hover::after {
+    #whaleTable th.sortable:hover::after {
         opacity: 0.6;
     }
     
-    th.asc::after { 
+    #whaleTable th.sortable.asc::after { 
         content: ' ↑'; 
         opacity: 1; 
         color: var(--accent, #3b82f6);
         font-weight: bold;
     }
     
-    th.desc::after { 
+    #whaleTable th.sortable.desc::after { 
         content: ' ↓'; 
         opacity: 1; 
         color: var(--accent, #3b82f6);
         font-weight: bold;
     }
     
-    th.sortable.asc,
-    th.sortable.desc {
+    #whaleTable th.sortable.asc,
+    #whaleTable th.sortable.desc {
         background-color: #eff6ff;
         color: var(--accent, #3b82f6);
     }
@@ -57,9 +57,6 @@
         background-color: #f8fafc;
     }
 </style>
-{% endblock %}
-
-{% block content %}
 <div class="container-fluid mt-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
