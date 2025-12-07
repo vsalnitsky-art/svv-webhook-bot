@@ -179,14 +179,21 @@ class WhaleCore:
                 score=data['score'],
                 squeeze_val=data['squeeze'],
                 obv_slope=data['obv_slope'],
-                rsi=data.get('rsi', 0),  # ✅ RSI
                 details=data['reason'],
                 created_at=datetime.utcnow()
             )
+            # Додаємо RSI якщо колонка існує
+            try:
+                sig.rsi = data.get('rsi', 0)
+            except:
+                pass
+            
             session.add(sig)
             session.commit()
+            logger.info(f"✅ Saved: {symbol} Score={data['score']} RSI={data.get('rsi', '-')}")
         except Exception as e:
             logger.error(f"DB Save error: {e}")
+            session.rollback()
         finally:
             session.close()
 
@@ -198,16 +205,25 @@ class WhaleCore:
             WhaleSignal.__table__.create(db_manager.engine, checkfirst=True)
             
             res = session.query(WhaleSignal).order_by(desc(WhaleSignal.created_at)).limit(limit).all()
-            return [{
-                'id': r.id,
-                'symbol': r.symbol,
-                'price': r.price,
-                'score': r.score,
-                'squeeze': r.squeeze_val,
-                'rsi': getattr(r, 'rsi', 0) or 0,  # ✅ RSI (з fallback для старих записів)
-                'details': r.details,
-                'time': r.created_at.strftime('%d.%m %H:%M')
-            } for r in res]
+            results = []
+            for r in res:
+                # Безпечне отримання rsi
+                try:
+                    rsi_val = r.rsi if hasattr(r, 'rsi') and r.rsi else 0
+                except:
+                    rsi_val = 0
+                    
+                results.append({
+                    'id': r.id,
+                    'symbol': r.symbol,
+                    'price': r.price,
+                    'score': r.score,
+                    'squeeze': r.squeeze_val,
+                    'rsi': rsi_val,
+                    'details': r.details,
+                    'time': r.created_at.strftime('%d.%m %H:%M')
+                })
+            return results
         except Exception as e:
             logger.error(f"Get history error: {e}")
             return []
@@ -234,15 +250,26 @@ class WhaleCore:
         return True
 
     def clear_old_results(self):
-        """✨ Видалення старих результатів перед новим скануванням"""
+        """Видалення старих результатів + міграція БД"""
         session = db_manager.get_session()
         try:
-            # Видаляємо ВСІ результати (або за часом якщо потрібно)
+            # ✅ Міграція: додаємо колонку rsi якщо не існує
+            try:
+                from sqlalchemy import text
+                session.execute(text("ALTER TABLE whale_signals ADD COLUMN IF NOT EXISTS rsi FLOAT DEFAULT 0"))
+                session.commit()
+                logger.info("✅ Migration: rsi column ensured")
+            except Exception as migration_err:
+                session.rollback()
+                logger.warning(f"Migration note: {migration_err}")
+            
+            # Видаляємо ВСІ результати
             session.query(WhaleSignal).delete()
             session.commit()
             logger.info("✅ Cleared old whale results")
         except Exception as e:
             logger.error(f"Clear results error: {e}")
+            session.rollback()
         finally:
             session.close()
 
