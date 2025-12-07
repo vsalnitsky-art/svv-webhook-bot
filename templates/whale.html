@@ -59,12 +59,12 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="bg-light text-uppercase small text-muted">
                     <tr>
-                        <th class="ps-4 cursor-pointer" onclick="sortTable('time')">Час ↕</th>
-                        <th class="cursor-pointer" onclick="sortTable('symbol')">Актив ↕</th>
-                        <th class="cursor-pointer" onclick="sortTable('price')">Ціна ↕</th>
-                        <th class="cursor-pointer fw-bold" onclick="sortTable('score')" style="text-decoration: underline;">Score ↕</th>
-                        <th class="cursor-pointer" onclick="sortTable('squeeze')">Стиснення ↕</th>
-                        <th>Логіка</th>
+                        <th class="ps-4 sortable" data-field="time" onclick="sortTable('time')">Час <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" data-field="symbol" onclick="sortTable('symbol')">Актив <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" data-field="price" onclick="sortTable('price')">Ціна <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" data-field="score" onclick="sortTable('score')">Score <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" data-field="squeeze" onclick="sortTable('squeeze')">Стиснення <span class="sort-icon">⇅</span></th>
+                        <th>Причина сигналу</th>
                         <th class="text-end pe-4">Дія</th>
                     </tr>
                 </thead>
@@ -131,77 +131,118 @@ function startWhaleScan() {
     });
 }
 
-// ✨ ФУНКЦІЯ СОРТУВАННЯ
-let sortDirection = {}; // Зберігає напрямок сортування для кожної колонки
+// ═══════════════════════════════════════════════════════════════
+// ✨ СОРТУВАННЯ ТАБЛИЦІ
+// ═══════════════════════════════════════════════════════════════
+let currentSort = { field: 'score', asc: false }; // За замовчуванням Score DESC
 
-// Додаємо CSS для курсора на headers
+// CSS для заголовків
 const style = document.createElement('style');
 style.textContent = `
-    .cursor-pointer {
+    .sortable {
         cursor: pointer;
         user-select: none;
-        transition: color 0.2s;
+        transition: all 0.2s;
+        position: relative;
     }
-    .cursor-pointer:hover {
-        color: #0066cc !important;
+    .sortable:hover {
+        color: #0d6efd !important;
+        background: rgba(13, 110, 253, 0.05);
+    }
+    .sortable .sort-icon {
+        opacity: 0.3;
+        margin-left: 4px;
+    }
+    .sortable.active {
+        color: #0d6efd !important;
+    }
+    .sortable.active .sort-icon {
+        opacity: 1;
     }
 `;
 document.head.appendChild(style);
 
+const FIELD_MAP = {
+    'time': 0,
+    'symbol': 1,
+    'price': 2,
+    'score': 3,
+    'squeeze': 4
+};
+
 function sortTable(field) {
-    const table = document.querySelector('table tbody');
-    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    const tbody = document.querySelector('table tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
     
-    // Пропускаємо рядок "База порожня"
-    if (rows.length === 1 && rows[0].querySelector('td[colspan]')) {
+    // Пропускаємо якщо порожня таблиця
+    if (rows.length <= 1 && rows[0]?.querySelector('td[colspan]')) {
         return;
     }
     
-    // Визначаємо напрямок сортування
-    const isAsc = sortDirection[field] !== true;
-    sortDirection[field] = isAsc ? false : true;
+    // Визначаємо напрямок
+    const asc = (currentSort.field === field) ? !currentSort.asc : false;
+    currentSort = { field, asc };
     
-    const fieldMap = {
-        'time': 0,
-        'symbol': 1,
-        'price': 2,
-        'score': 3,
-        'squeeze': 4
-    };
-    
-    const colIndex = fieldMap[field];
+    const colIndex = FIELD_MAP[field];
     
     rows.sort((a, b) => {
-        let aVal = a.cells[colIndex].textContent.trim();
-        let bVal = b.cells[colIndex].textContent.trim();
+        let aVal = a.cells[colIndex]?.textContent.trim() || '';
+        let bVal = b.cells[colIndex]?.textContent.trim() || '';
         
-        // Спеціальна обробка для Score (витягуємо число)
+        // Score - витягуємо число з badge
         if (field === 'score') {
-            aVal = parseInt(aVal.match(/\d+/)[0]);
-            bVal = parseInt(bVal.match(/\d+/)[0]);
+            const aMatch = aVal.match(/\d+/);
+            const bMatch = bVal.match(/\d+/);
+            aVal = aMatch ? parseInt(aMatch[0]) : 0;
+            bVal = bMatch ? parseInt(bMatch[0]) : 0;
         } 
-        // Для ціни і стиснення - конвертуємо у числа
+        // Числові поля
         else if (field === 'price' || field === 'squeeze') {
             aVal = parseFloat(aVal) || 0;
             bVal = parseFloat(bVal) || 0;
         }
+        // Time - сортуємо як строки (формат DD.MM HH:MM)
+        else if (field === 'time') {
+            // Конвертуємо "07.12 07:38" в comparable format
+            aVal = aVal.replace(/(\d{2})\.(\d{2})\s+(\d{2}):(\d{2})/, '$2$1$3$4');
+            bVal = bVal.replace(/(\d{2})\.(\d{2})\s+(\d{2}):(\d{2})/, '$2$1$3$4');
+        }
         
-        if (aVal < bVal) return isAsc ? -1 : 1;
-        if (aVal > bVal) return isAsc ? 1 : -1;
+        if (aVal < bVal) return asc ? -1 : 1;
+        if (aVal > bVal) return asc ? 1 : -1;
         return 0;
     });
     
-    // Переупорядковуємо рядки в таблиці
-    rows.forEach(row => table.appendChild(row));
+    // Перемальовуємо
+    rows.forEach(row => tbody.appendChild(row));
+    
+    // Оновлюємо іконки в заголовках
+    updateSortIcons();
 }
 
-// ✨ СОРТУВАННЯ ПО SCORE за замовчуванням при завантаженні
+function updateSortIcons() {
+    document.querySelectorAll('th.sortable').forEach(th => {
+        const field = th.dataset.field;
+        const icon = th.querySelector('.sort-icon');
+        
+        if (field === currentSort.field) {
+            th.classList.add('active');
+            icon.textContent = currentSort.asc ? '▲' : '▼';
+        } else {
+            th.classList.remove('active');
+            icon.textContent = '⇅';
+        }
+    });
+}
+
+// Сортуємо по Score при завантаженні
 document.addEventListener('DOMContentLoaded', () => {
-    const table = document.querySelector('table tbody');
-    if (table && table.querySelectorAll('tr').length > 1) {
-        sortDirection['score'] = false;
+    const tbody = document.querySelector('table tbody');
+    const rows = tbody?.querySelectorAll('tr');
+    if (rows && rows.length > 0 && !rows[0].querySelector('td[colspan]')) {
         sortTable('score');
     }
+    updateSortIcons();
 });
 
 {% if is_scanning %}
