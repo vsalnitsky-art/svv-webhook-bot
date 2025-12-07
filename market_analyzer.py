@@ -44,20 +44,25 @@ class MarketAnalyzer:
 
     def fetch_candles(self, symbol, timeframe, limit=300):
         """
-        Автономне завантаження свічок з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ до сітки часу.
+        Завантаження свічок для RSI - 100% сумісність з TradingView.
         
-        ✅ РІШЕННЯ:
-        - origin='start_day' гарантує, що свічки прив'язані до фіксованої сітки часу на день
-        - label='left' та closed='left' гарантують правильні мітки часу (стандарт біржі)
-        - Це синхронізує наші свічки з TradingView та іншими платформами
+        ✅ КЛЮЧОВІ МОМЕНТИ:
+        1. Порядок: Старі → Нові (хронологічний)
+        2. Виключаємо останню незакриту свічку
+        3. Беремо 200+ свічок для "прогріву" RSI
+        4. Правильна прив'язка до сітки часу для 45хв
         """
         try:
-            # Мапінг таймфреймів. Bybit не має 45m, тому беремо 15m.
+            # Мапінг таймфреймів
             tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','120':'120','240':'240','D':'D','W':'W'}
-            req_tf = tf_map.get(str(timeframe), '240')
+            req_tf = tf_map.get(str(timeframe), '60')
+            
+            # ✅ Беремо мінімум 200 свічок для прогріву RSI
+            req_limit = max(limit, 200)
             
             # Якщо потрібен 45хв ТФ, нам треба в 3 рази більше свічок 15хв
-            req_limit = limit * 3 if str(timeframe) == '45' else limit
+            if str(timeframe) == '45':
+                req_limit = req_limit * 3
             
             # Обмежуємо максимум (API Bybit ліміт ~1000)
             if req_limit > 1000: req_limit = 1000
@@ -74,36 +79,34 @@ class MarketAnalyzer:
                 df['time'] = pd.to_numeric(df['time'])
                 df['datetime'] = pd.to_datetime(df['time'], unit='ms')
                 
-                # Сортуємо: Старі -> Нові (важливо для індикаторів та ресемплінгу)
+                # ✅ Сортуємо: Старі → Нові (ОБОВ'ЯЗКОВО для RSI!)
                 df = df.sort_values('datetime').reset_index(drop=True)
                 
-                # === ЛОГІКА РЕСЕМПЛІНГУ (Склейка свічок) ===
+                # === ЛОГІКА РЕСЕМПЛІНГУ для 45хв ===
                 if str(timeframe) == '45':
                     df.set_index('datetime', inplace=True)
                     
-                    # 🎯 РІШЕННЯ: Додаємо origin='start_day' та правильні параметри
-                    # origin='start_day' - жорстка прив'язка до початку дня (00:00)
-                    # label='left' та closed='left' - стандарт біржі
-                    df_45 = df.resample(
+                    df = df.resample(
                         '45min', 
-                        origin='start_day',  # ✅ КРИТИЧНО: прив'язка до 00:00
-                        label='left',        # ✅ Мітка часу - час відкриття свічки
-                        closed='left'        # ✅ Свічка закривається слід за розчинення наступної
+                        origin='start_day',
+                        label='left',
+                        closed='left'
                     ).agg({
-                        'open': 'first',     # Відкриття першої 15хв свічки
-                        'high': 'max',       # Максимум серед трьох 15хв свічок
-                        'low': 'min',        # Мінімум серед трьох 15хв свічок
-                        'close': 'last',     # Закриття останної (третьої) 15хв свічки
-                        'volume': 'sum',     # Сума об'ємів
-                        'turnover': 'sum',   # Сума обороту
-                        'time': 'first'      # Час першої свічки
+                        'open': 'first',
+                        'high': 'max',
+                        'low': 'min',
+                        'close': 'last',
+                        'volume': 'sum',
+                        'turnover': 'sum',
+                        'time': 'first'
                     })
                     
-                    # Видаляємо NaN (якщо були пропуски в торгах)
-                    df_45.dropna(inplace=True)
-                    
-                    # Повертаємо індекс
-                    df = df_45.reset_index(drop=True)
+                    df.dropna(inplace=True)
+                    df = df.reset_index(drop=True)
+                
+                # ✅ Виключаємо останню свічку (незакрита) - TradingView так робить!
+                if len(df) > 1:
+                    df = df.iloc[:-1].reset_index(drop=True)
                 
                 return df
         except Exception as e:
@@ -128,9 +131,8 @@ class MarketAnalyzer:
             limit = settings.get("scan_limit", 100)
             tickers = self.get_top_tickers(limit)
             
-            # ✨ ВИПРАВЛЕНО: Використовуємо exit_ltf (45хв) замість htf (240хв)
-            # Це гарантує консистентність з Monitor та TradingView!
-            exit_tf = settings.get("exit_ltf", "45")  
+            # ✅ Використовуємо exit_ltf (60хв за замовчуванням)
+            exit_tf = settings.get("exit_ltf", "60")  
             rsi_len = int(settings.get("obt_rsiLength", 14))
             rsi_buy_level = float(settings.get("obt_entryRsiOversold", 30))
             rsi_sell_level = float(settings.get("obt_entryRsiOverbought", 70))
