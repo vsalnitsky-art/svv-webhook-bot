@@ -223,9 +223,14 @@
                         </select>
                         <div class="form-text small text-muted">ТФ для розрахунків RSI/ATR</div>
                     </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-success fw-bold">⏱️ Затримка (хв)</label>
+                        <input type="number" step="1" class="form-control" name="trailing_activation_delay" value="{{ conf.get('trailing_activation_delay', 5) }}">
+                        <div class="form-text small text-muted">Хвилин після входу до активації</div>
+                    </div>
                     <div class="col-12">
                         <div class="alert alert-info alert-sm border-0 py-2 px-3 text-sm" role="alert">
-                            <i class="ri-lightbulb-flash-line"></i> <strong>Як це працює:</strong> Коли RSI досягне активаційного рівня, SL динамічно переміщується вверх/вниз на (ATR × множник). Захищає прибуток на активних трендах!
+                            <i class="ri-lightbulb-flash-line"></i> <strong>Як це працює:</strong> Коли RSI досягне активаційного рівня (після затримки), SL динамічно переміщується. <strong>Захист:</strong> новий SL ніколи не буде гіршим за початковий!
                         </div>
                     </div>
                 </div>
