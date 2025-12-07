@@ -45,6 +45,7 @@ DEFAULT_SETTINGS = {
     "trailing_rsi_activation": 65,  # RSI, при якому вмикається трейлінг
     "trailing_atr_length": 14,      # Період ATR
     "trailing_atr_multiplier": 2.5, # ✨ НАЛАШТОВУЄТЬСЯ: Множник ATR (2.5 = 2.5 × ATR)
+    "trailing_activation_delay": 5, # ✨ НОВЕ: Затримка активації (хвилин після входу)
 
     "exit_rsiOverbought": 70,
     "exit_rsiOversold": 30,
