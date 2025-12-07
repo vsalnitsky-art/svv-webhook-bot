@@ -38,11 +38,13 @@ DEFAULT_SETTINGS = {
     "obt_swingLength": 5,
 
     # === SMART EXIT & TRAILING ===
-    "exit_enableStrategy": False, # Старий світч (можна залишити вимкненим)
-    "trailing_enabled": True,     # <--- НОВЕ: Головний тумблер трейлінгу
-    "trailing_rsi_activation": 65, # <--- НОВЕ: RSI, при якому вмикається трейлінг
-    "trailing_atr_length": 14,    # <--- НОВЕ: Період ATR
-    "trailing_atr_multiplier": 2.5, # <--- НОВЕ: Відступ у розмірах ATR (напр. 2.5 ATR)
+    "exit_enableStrategy": False,  # Світч для RSI-based exit стратегії
+    "exit_ltf": "45",              # ✨ НОВЕ: LTF для розрахунків виходу (за замовчуванням 45хв)
+    
+    "trailing_enabled": True,       # Головний тумблер трейлінгу
+    "trailing_rsi_activation": 65,  # RSI, при якому вмикається трейлінг
+    "trailing_atr_length": 14,      # Період ATR
+    "trailing_atr_multiplier": 2.5, # ✨ НАЛАШТОВУЄТЬСЯ: Множник ATR (2.5 = 2.5 × ATR)
 
     "exit_rsiOverbought": 70,
     "exit_rsiOversold": 30,

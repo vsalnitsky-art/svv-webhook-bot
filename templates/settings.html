@@ -188,6 +188,51 @@
         </div>
 
         <div class="card-custom mb-4 border-0">
+            <div class="card-header bg-white border-bottom border-light py-3 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold text-success m-0">⛓️ ATR Trailing Stop (Динамічний SL)</h6>
+                <div class="form-check form-switch m-0">
+                    <input class="form-check-input" type="checkbox" name="trailing_enabled" id="trailingSwitch" {{ 'checked' if conf.get('trailing_enabled') }}>
+                    <label class="form-check-label fw-bold small text-dark" for="trailingSwitch">АКТИВУВАТИ</label>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label class="form-label small text-warning fw-bold">🪤 RSI Активація</label>
+                        <input type="number" class="form-control" name="trailing_rsi_activation" value="{{ conf.get('trailing_rsi_activation', 65) }}">
+                        <div class="form-text small text-muted">RSI рівень для включення трейлінгу (напр. 65 для Long)</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-primary fw-bold">📊 ATR Period</label>
+                        <input type="number" class="form-control" name="trailing_atr_length" value="{{ conf.get('trailing_atr_length', 14) }}">
+                        <div class="form-text small text-muted">Період для розрахунку ATR (14 = стандарт)</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-danger fw-bold">⚙️ ATR Множник</label>
+                        <input type="number" step="0.1" class="form-control" name="trailing_atr_multiplier" value="{{ conf.get('trailing_atr_multiplier', 2.5) }}">
+                        <div class="form-text small text-muted">SL = Price ± (ATR × множник)</div>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small text-secondary fw-bold">📈 LTF (Робочий)</label>
+                        <select class="form-select form-select-sm" name="exit_ltf">
+                            <option value="5" {{ 'selected' if conf.get('exit_ltf')=='5' }}>5хв</option>
+                            <option value="15" {{ 'selected' if conf.get('exit_ltf')=='15' }}>15хв</option>
+                            <option value="30" {{ 'selected' if conf.get('exit_ltf')=='30' }}>30хв</option>
+                            <option value="45" {{ 'selected' if conf.get('exit_ltf')=='45' }}>45хв (Default)</option>
+                            <option value="60" {{ 'selected' if conf.get('exit_ltf')=='60' }}>60хв</option>
+                        </select>
+                        <div class="form-text small text-muted">ТФ для розрахунків RSI/ATR</div>
+                    </div>
+                    <div class="col-12">
+                        <div class="alert alert-info alert-sm border-0 py-2 px-3 text-sm" role="alert">
+                            <i class="ri-lightbulb-flash-line"></i> <strong>Як це працює:</strong> Коли RSI досягне активаційного рівня, SL динамічно переміщується вверх/вниз на (ATR × множник). Захищає прибуток на активних трендах!
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-custom mb-4 border-0">
             <div class="card-header bg-white border-bottom border-light py-3">
                 <h6 class="fw-bold text-dark m-0">🌍 Параметри Біржі</h6>
             </div>
