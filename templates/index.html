@@ -543,7 +543,6 @@
                     <th>Вихід</th>
                     <th>Кіл-сть</th>
                     <th>P&L</th>
-                    <th>Комісія</th>
                     <th>Статус</th>
                     <th>Час</th>
                 </tr>
@@ -562,9 +561,6 @@
                     <td class="font-mono small">{{ t.qty | round(2) }}</td>
                     <td class="trade-pnl {% if t.pnl > 0 %}win{% else %}loss{% endif %}">
                         {{ "+" if t.pnl > 0 else "" }}{{ t.pnl | round(2) }}
-                    </td>
-                    <td class="font-mono small text-danger">
-                        -{{ (t['opening_fee'] + t['closing_fee'] + t['funding_fee']) | round(4) }}
                     </td>
                     <td>
                         <span class="badge {% if t.pnl > 0 %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">

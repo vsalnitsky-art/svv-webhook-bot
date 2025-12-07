@@ -137,9 +137,9 @@ class BybitTradingBot:
                         # Bybit USDT-M: 0.0275% maker, 0.075% taker (стандартно)
                         TAKER_RATE = 0.000275  # 0.0275% за відкриття (в більшості випадків taker)
                         
-                        opening_fee = qty * entry_price * TAKER_RATE      # комісія за відкриття
-                        closing_fee = qty * exit_price * TAKER_RATE       # комісія за закриття
-                        funding_fee = 0.0  # Bybit не повертає у get_closed_pnl
+                        opening_fee = qty * entry_price * TAKER_RATE
+                        closing_fee = qty * exit_price * TAKER_RATE
+                        funding_fee = 0.0
                         
                         stats_service.save_trade({
                             'order_id': t['orderId'],
