@@ -95,12 +95,43 @@ class DatabaseManager:
             Base.metadata.create_all(self.engine)
             logger.info("✅ Database tables created/verified")
             
+            # ✨ МІГРАЦІЯ: Додавання нових колонок для комісій
+            self._migrate_add_fee_columns()
+            
         except Exception as e:
             logger.error(f"❌ CRITICAL: Database error: {e}")
             raise  # Передаємо помилку далі
         self.Session = sessionmaker(bind=self.engine)
 
     def get_session(self): return self.Session()
+    
+    # ✨ МІГРАЦІЯ: Додавання колонок для комісій
+    def _migrate_add_fee_columns(self):
+        """Додає колонки opening_fee, closing_fee, funding_fee до trades якщо вони ще не існують"""
+        try:
+            from sqlalchemy import inspect, text
+            
+            inspector = inspect(self.engine)
+            columns = {col['name'] for col in inspector.get_columns('trades')}
+            
+            # Колонки які потрібно додати
+            needed_columns = {
+                'opening_fee': 'REAL DEFAULT 0.0',
+                'closing_fee': 'REAL DEFAULT 0.0',
+                'funding_fee': 'REAL DEFAULT 0.0'
+            }
+            
+            with self.engine.connect() as conn:
+                for col_name, col_def in needed_columns.items():
+                    if col_name not in columns:
+                        try:
+                            conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col_name} {col_def}"))
+                            conn.commit()
+                            logger.info(f"✅ Migration: Added column '{col_name}' to trades")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Migration: Column '{col_name}' already exists or error: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ Migration failed: {e}")
     
     # === ФУНКЦІЯ ПРИМУСОВОГО ПЕРЕСТВОРЕННЯ ТАБЛИЦІ ===
     def recreate_analysis_table(self):
