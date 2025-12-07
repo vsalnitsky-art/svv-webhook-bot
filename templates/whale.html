@@ -59,11 +59,11 @@
             <table class="table table-hover align-middle mb-0">
                 <thead class="bg-light text-uppercase small text-muted">
                     <tr>
-                        <th class="ps-4">Час</th>
-                        <th>Актив</th>
-                        <th>Ціна</th>
-                        <th>Score</th>
-                        <th>Стиснення</th>
+                        <th class="ps-4 cursor-pointer" onclick="sortTable('time')">Час ↕</th>
+                        <th class="cursor-pointer" onclick="sortTable('symbol')">Актив ↕</th>
+                        <th class="cursor-pointer" onclick="sortTable('price')">Ціна ↕</th>
+                        <th class="cursor-pointer fw-bold" onclick="sortTable('score')" style="text-decoration: underline;">Score ↕</th>
+                        <th class="cursor-pointer" onclick="sortTable('squeeze')">Стиснення ↕</th>
                         <th>Логіка</th>
                         <th class="text-end pe-4">Дія</th>
                     </tr>
@@ -130,6 +130,79 @@ function startWhaleScan() {
         }
     });
 }
+
+// ✨ ФУНКЦІЯ СОРТУВАННЯ
+let sortDirection = {}; // Зберігає напрямок сортування для кожної колонки
+
+// Додаємо CSS для курсора на headers
+const style = document.createElement('style');
+style.textContent = `
+    .cursor-pointer {
+        cursor: pointer;
+        user-select: none;
+        transition: color 0.2s;
+    }
+    .cursor-pointer:hover {
+        color: #0066cc !important;
+    }
+`;
+document.head.appendChild(style);
+
+function sortTable(field) {
+    const table = document.querySelector('table tbody');
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    
+    // Пропускаємо рядок "База порожня"
+    if (rows.length === 1 && rows[0].querySelector('td[colspan]')) {
+        return;
+    }
+    
+    // Визначаємо напрямок сортування
+    const isAsc = sortDirection[field] !== true;
+    sortDirection[field] = isAsc ? false : true;
+    
+    const fieldMap = {
+        'time': 0,
+        'symbol': 1,
+        'price': 2,
+        'score': 3,
+        'squeeze': 4
+    };
+    
+    const colIndex = fieldMap[field];
+    
+    rows.sort((a, b) => {
+        let aVal = a.cells[colIndex].textContent.trim();
+        let bVal = b.cells[colIndex].textContent.trim();
+        
+        // Спеціальна обробка для Score (витягуємо число)
+        if (field === 'score') {
+            aVal = parseInt(aVal.match(/\d+/)[0]);
+            bVal = parseInt(bVal.match(/\d+/)[0]);
+        } 
+        // Для ціни і стиснення - конвертуємо у числа
+        else if (field === 'price' || field === 'squeeze') {
+            aVal = parseFloat(aVal) || 0;
+            bVal = parseFloat(bVal) || 0;
+        }
+        
+        if (aVal < bVal) return isAsc ? -1 : 1;
+        if (aVal > bVal) return isAsc ? 1 : -1;
+        return 0;
+    });
+    
+    // Переупорядковуємо рядки в таблиці
+    rows.forEach(row => table.appendChild(row));
+}
+
+// ✨ СОРТУВАННЯ ПО SCORE за замовчуванням при завантаженні
+document.addEventListener('DOMContentLoaded', () => {
+    const table = document.querySelector('table tbody');
+    if (table && table.querySelectorAll('tr').length > 1) {
+        sortDirection['score'] = false;
+        sortTable('score');
+    }
+});
 
 {% if is_scanning %}
 setTimeout(() => location.reload(), 2000);

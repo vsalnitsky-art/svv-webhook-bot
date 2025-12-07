@@ -174,12 +174,29 @@ class WhaleCore:
         threading.Thread(target=self._run).start()
         return True
 
+    def clear_old_results(self):
+        """✨ Видалення старих результатів перед новим скануванням"""
+        session = db_manager.get_session()
+        try:
+            # Видаляємо ВСІ результати (або за часом якщо потрібно)
+            session.query(WhaleSignal).delete()
+            session.commit()
+            logger.info("✅ Cleared old whale results")
+        except Exception as e:
+            logger.error(f"Clear results error: {e}")
+        finally:
+            session.close()
+
     def _run(self):
         self.is_scanning = True
-        self.status = "Fetching Markets..."
+        self.status = "Clearing old results..."
         self.progress = 0
         
+        # ✨ ВИДАЛЯЄМО СТАРІ РЕЗУЛЬТАТИ перед новим скануванням
+        self.clear_old_results()
+        
         try:
+            self.status = "Fetching Markets..."
             tickers = bot_instance.get_all_tickers()
             targets = [t for t in tickers if t['symbol'].endswith('USDT')]
             targets = [t for t in targets if float(t.get('turnover24h', 0)) > self.CONFIG['min_vol_usdt']]
