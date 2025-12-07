@@ -564,7 +564,7 @@
                         {{ "+" if t.pnl > 0 else "" }}{{ t.pnl | round(2) }}
                     </td>
                     <td class="font-mono small text-danger">
-                        -{{ (t.opening_fee + t.closing_fee + t.funding_fee) | round(4) }}
+                        -{{ (t['opening_fee'] + t['closing_fee'] + t['funding_fee']) | round(4) }}
                     </td>
                     <td>
                         <span class="badge {% if t.pnl > 0 %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">

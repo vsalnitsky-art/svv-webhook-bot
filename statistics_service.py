@@ -33,7 +33,11 @@ class StatisticsService:
             return [{'symbol':t.symbol, 'side':t.side, 'qty':t.qty, 'entry_price':t.entry_price, 
                      'exit_price':t.exit_price, 'pnl':round(t.pnl,2), 'is_win':t.is_win, 
                      'exit_reason':t.exit_reason, 
-                     'exit_time':t.exit_time.strftime('%d.%m %H:%M') if t.exit_time else None} for t in res]
+                     'exit_time':t.exit_time.strftime('%d.%m %H:%M') if t.exit_time else None,
+                     # ✨ КОМІСІЇ
+                     'opening_fee': t.opening_fee if hasattr(t, 'opening_fee') else 0.0,
+                     'closing_fee': t.closing_fee if hasattr(t, 'closing_fee') else 0.0,
+                     'funding_fee': t.funding_fee if hasattr(t, 'funding_fee') else 0.0} for t in res]
         finally: s.close()
 
     def save_monitor_log(self, data):
