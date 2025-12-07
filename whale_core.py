@@ -11,9 +11,11 @@ from sqlalchemy import desc
 # Імпорти з нашого проекту
 from bot import bot_instance
 from models import db_manager, WhaleSignal
+from settings_manager import settings
 from indicators import (
     calculate_ema, calculate_bollinger_bands, 
-    calculate_obv, calculate_ichimoku, calculate_slope
+    calculate_obv, calculate_ichimoku, calculate_slope,
+    simple_rsi
 )
 
 logger = logging.getLogger("WhaleCore")
@@ -36,7 +38,7 @@ class WhaleCore:
         }
 
     def fetch_data(self, symbol):
-        """Завантажує свічки"""
+        """Завантажує свічки - 100% сумісність з TradingView"""
         try:
             # Мапінг для Bybit
             tf_map = {'15': '15', '60': '60', '240': '240', 'D': 'D'}
@@ -50,18 +52,35 @@ class WhaleCore:
                 # Bybit повертає Newest -> Oldest. Перевертаємо
                 data = res['result']['list'][::-1]
                 df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-                return df.astype(float)
+                df = df.astype(float)
+                
+                # ✅ Виключаємо останню незакриту свічку (як TradingView)
+                if len(df) > 1:
+                    df = df.iloc[:-1].reset_index(drop=True)
+                
+                return df
         except Exception as e:
-            # logger.error(f"Fetch error for {symbol}: {e}")
             pass
         return None
 
     def analyze_coin(self, df):
         """
-        Аналіз монети: Squeeze + OBV Divergence + Ichimoku Spring
+        Аналіз монети: Squeeze + OBV Divergence + Ichimoku Spring + RSI Filter
         """
         try:
             close = df['close']
+            
+            # ✅ RSI ФІЛЬТР (якщо увімкнено)
+            rsi_filter_on = settings.get("whale_rsi_filter_enabled", False)
+            if rsi_filter_on:
+                rsi_val = simple_rsi(close, period=14)
+                rsi_min = float(settings.get("whale_rsi_min", 30))
+                rsi_max = float(settings.get("whale_rsi_max", 70))
+                
+                # Пропускаємо монети де RSI в "нормальній" зоні
+                # Шукаємо тільки екстремальні значення (перекупленість/перепроданість)
+                if rsi_min < rsi_val < rsi_max:
+                    return None
             
             # 1. Фільтр Тренду (EMA 200)
             ema = calculate_ema(close, self.CONFIG['ema_period'])
@@ -109,12 +128,16 @@ class WhaleCore:
                 score += 20
                 reason += " + Above Cloud"
             
+            # ✅ Додаємо RSI до результату
+            current_rsi = simple_rsi(close, period=14) if rsi_filter_on else 0
+            
             return {
                 "score": min(score, 100),
                 "squeeze": round(curr_sqz, 4),
                 "obv_slope": round(obv_slope, 2),
                 "reason": reason,
-                "price": close.iloc[-1]
+                "price": close.iloc[-1],
+                "rsi": round(current_rsi, 1)
             }
 
         except Exception as e:
@@ -130,6 +153,7 @@ class WhaleCore:
                 score=data['score'],
                 squeeze_val=data['squeeze'],
                 obv_slope=data['obv_slope'],
+                rsi=data.get('rsi', 0),  # ✅ RSI
                 details=data['reason'],
                 created_at=datetime.utcnow()
             )
@@ -154,6 +178,7 @@ class WhaleCore:
                 'price': r.price,
                 'score': r.score,
                 'squeeze': r.squeeze_val,
+                'rsi': getattr(r, 'rsi', 0) or 0,  # ✅ RSI (з fallback для старих записів)
                 'details': r.details,
                 'time': r.created_at.strftime('%d.%m %H:%M')
             } for r in res]
@@ -170,6 +195,14 @@ class WhaleCore:
         if override_cfg: 
             if 'limit' in override_cfg: self.CONFIG['limit_coins'] = int(override_cfg['limit'])
             if 'timeframe' in override_cfg: self.CONFIG['timeframe'] = str(override_cfg['timeframe'])
+            
+            # ✅ RSI параметри - зберігаємо в settings
+            if 'rsi_filter_enabled' in override_cfg:
+                settings.save_settings({'whale_rsi_filter_enabled': override_cfg['rsi_filter_enabled']})
+            if 'rsi_min' in override_cfg:
+                settings.save_settings({'whale_rsi_min': int(override_cfg['rsi_min'])})
+            if 'rsi_max' in override_cfg:
+                settings.save_settings({'whale_rsi_max': int(override_cfg['rsi_max'])})
             
         threading.Thread(target=self._run).start()
         return True
