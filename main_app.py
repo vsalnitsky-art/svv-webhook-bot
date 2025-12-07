@@ -1,74 +1,187 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-🤖 AlgoBot - Профессиональная торговая платформа
-Обновлено: 07.12.2025
+AlgoBot Trading Application
+Flask app з webhook поддержкой, CSRF захистом і структурованим логуванням
 """
-
-import sys
-import logging
-from datetime import datetime, timedelta
-from functools import wraps
-from flask import Flask, render_template, request, jsonify, redirect, url_for
-import pandas as pd
-from collections import defaultdict
-import numpy as np
+import threading
+import time
+import json
+import ctypes
 import os
+import requests
+import pandas as pd
+from datetime import datetime
+from functools import wraps
+from collections import defaultdict
 
-# ============================================================================
-# ИНИЦИАЛИЗАЦИЯ FLASK
-# ============================================================================
+from flask import Flask, request, jsonify, render_template, redirect, url_for, Response, session, g
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+from sqlalchemy import desc
+
+from bot import bot_instance
+from statistics_service import stats_service
+from scanner import EnhancedMarketScanner
+from settings_manager import settings
+from models import db_manager, OrderBlock, PaperTrade, SmartMoneyTicker
+from market_analyzer import market_analyzer
+from config import get_api_credentials
+from utils import get_logger, validate_webhook_data, metrics, setup_logging
+
+# === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
+setup_logging()
+logger = get_logger()
 
 app = Flask(__name__)
-app.config['JSON_SORT_KEYS'] = False
 
-# SECURITY: Генерируем SECRET_KEY для CSRF защиты
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
-app.config['WTF_CSRF_ENABLED'] = False  # Отключаем CSRF для API (включите для продакшена)
+# 🔐 SECRET KEY ЗІ ЗМІННИХ (КРИТИЧНЕ!)
+secret_key = os.environ.get('FLASK_SECRET_KEY')
+if not secret_key:
+    if os.environ.get('RENDER'):
+        raise ValueError("❌ FLASK_SECRET_KEY not set! This is REQUIRED for security on Render.")
+    else:
+        # Локальна розробка - генеруємо
+        import secrets
+        secret_key = secrets.token_hex(16)
+        print(f"⚠️ FLASK_SECRET_KEY not found, using random for development: {secret_key}")
 
-# ============================================================================
-# WHALE HUNTER SCANNER
-# ============================================================================
+app.config['SECRET_KEY'] = secret_key
+app.config['WTF_CSRF_TIME_LIMIT'] = None  # Без часових обмежень для CSRF токена
+app.config['WTF_CSRF_CHECK_DEFAULT'] = True
 
+csrf = CSRFProtect(app)
+
+# === CSRF CONTEXT PROCESSOR ===
+@app.context_processor
+def inject_csrf_token():
+    """Автоматично передає csrf_token функцію у всі шаблони"""
+    return dict(csrf_token=generate_csrf)
+
+# === СИСТЕМНА УТИЛІТА (Windows) ===
 try:
-    from whale_hunter_improved import init_scanner, scan_in_background, whale_hunter as wh
-    WHALE_HUNTER_AVAILABLE = True
+    ctypes.windll.kernel32.SetThreadExecutionState(0x80000002 | 0x00000001)
+except:
+    pass
+
+logger.info("app_initialized", env=os.environ.get('FLASK_ENV', 'development'))
+
+# === ІНІЦІАЛІЗАЦІЯ СКАНЕРА ===
+try:
+    scanner = EnhancedMarketScanner(bot_instance, {})
+    scanner.start()
+    logger.info("scanner_started")
 except Exception as e:
-    WHALE_HUNTER_AVAILABLE = False
-    print(f"⚠️  Whale Hunter Scanner не инициализирован: {e}")
+    logger.error("scanner_init_failed", error=str(e), exc_info=True)
 
-# ============================================================================
-# ЛОГИРОВАНИЕ
-# ============================================================================
+# ===== ФОНОВІ ПОТОКИ =====
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+def monitor_active():
+    """🔄 Мониторит активные позиции з логуванням"""
+    logger.info("monitor_active_started")
+    while True:
+        try:
+            r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
+            if r.get('retCode') == 0:
+                for p in r['result']['list']:
+                    if float(p.get('size', 0)) > 0:
+                        try:
+                            stats_service.save_monitor_log({
+                                'symbol': p['symbol'],
+                                'price': float(p.get('avgPrice', 0)),
+                                'pnl': float(p.get('unrealisedPnl', 0)),
+                                'rsi': scanner.get_current_rsi(p['symbol']),
+                                'pressure': scanner.get_market_pressure(p['symbol'])
+                            })
+                        except Exception as e:
+                            logger.warning("monitor_save_failed", symbol=p.get('symbol'), error=str(e))
+        except Exception as e:
+            logger.error("monitor_active_error", error=str(e))
+        
+        time.sleep(10)
 
-# ============================================================================
-# ИНИЦИАЛИЗАЦИЯ WHALE HUNTER
-# ============================================================================
+def keep_alive():
+    """🫀 Keep-alive для хостів (Render, Heroku)"""
+    time.sleep(5)
+    base_url = os.environ.get('RENDER_EXTERNAL_URL')
+    if not base_url:
+        port = os.environ.get('PORT', 10000)
+        base_url = f'http://127.0.0.1:{port}'
+    
+    target = f"{base_url}/health"
+    logger.info("keep_alive_started", target=target)
+    
+    while True:
+        try:
+            requests.get(target, timeout=10)
+        except Exception as e:
+            logger.warning("keep_alive_failed", error=str(e))
+        time.sleep(300)
 
-if WHALE_HUNTER_AVAILABLE:
-    try:
-        wh_instance = init_scanner('1h')
-        scan_in_background(interval=300)
-        logger.info("✅ Whale Hunter Scanner инициализирован")
-    except Exception as e:
-        logger.error(f"❌ Ошибка инициализации сканера: {e}")
-        wh_instance = None
-else:
-    wh_instance = None
+def sync_trades_periodic():
+    """📊 Синхронізує торги кожні 30 хвилин"""
+    time.sleep(5)
+    sync_interval = int(os.environ.get('TRADES_SYNC_INTERVAL', 1800))
+    logger.info("sync_trades_started", interval_sec=sync_interval)
+    
+    while True:
+        try:
+            bot_instance.sync_trades(days=7)
+            logger.info("periodic_sync_completed")
+        except Exception as e:
+            logger.error("periodic_sync_error", error=str(e), exc_info=True)
+        
+        time.sleep(sync_interval)
 
-# ============================================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ============================================================================
+# Запускаємо потоки
+threading.Thread(target=monitor_active, daemon=True).start()
+threading.Thread(target=keep_alive, daemon=True).start()
+threading.Thread(target=sync_trades_periodic, daemon=True).start()
+
+logger.info("background_threads_started", count=3)
+
+# ===== MIDDLEWARE =====
+
+@app.before_request
+def before_request():
+    """Логування кожного запиту"""
+    g.start_time = time.time()
+    logger.info("request_received", 
+               method=request.method,
+               path=request.path,
+               remote_addr=request.remote_addr)
+
+@app.after_request
+def after_request(response):
+    """Логування відповіді"""
+    if hasattr(g, 'start_time'):
+        duration = time.time() - g.start_time
+    else:
+        duration = 0.0
+    logger.info("request_completed",
+               method=request.method,
+               path=request.path,
+               status=response.status_code,
+               duration_ms=round(duration * 1000, 2))
+    return response
+
+@app.errorhandler(400)
+@app.errorhandler(404)
+@app.errorhandler(500)
+def error_handler(error):
+    """Обробка помилок"""
+    logger.error("request_error", 
+                status=error.code,
+                message=str(error),
+                path=request.path)
+    return jsonify({"error": str(error)}), error.code
+
+# ===== ДОПОМІЖНІ ФУНКЦІЇ СТАТИСТИКИ =====
 
 def calculate_stats(trades):
     """
-    Расчет подробной статистики торгов
+    Розраховує детальну статистику торгів
+    
+    Повертає словник зі статистикою та рейтингом контрактів
     """
     if not trades:
         return {
@@ -93,7 +206,7 @@ def calculate_stats(trades):
     best = max((t.get('pnl', 0) for t in trades), default=0)
     worst = min((t.get('pnl', 0) for t in trades), default=0)
     
-    # Расчет стриков
+    # Розрахунок стриків
     wins_streak = 0
     curr_wins = 0
     for t in trades:
@@ -112,7 +225,7 @@ def calculate_stats(trades):
         else:
             curr_losses = 0
     
-    # Статистика по контрактам
+    # Статистика по контрактах
     contract_stats = defaultdict(lambda: {'trades': 0, 'wins': 0, 'pnl': 0, 'volume': 0})
     
     for t in trades:
@@ -123,20 +236,18 @@ def calculate_stats(trades):
         contract_stats[symbol]['pnl'] += t.get('pnl', 0)
         contract_stats[symbol]['volume'] += t.get('qty', 0)
     
-    # Добавить win_rate для каждого контракта
+    # Додати win_rate для кожного контракту
     for symbol in contract_stats:
-        trades_count = contract_stats[symbol]['trades']
-        wins_count = contract_stats[symbol]['wins']
-        contract_stats[symbol]['win_rate'] = round(
-            (wins_count / trades_count * 100) if trades_count > 0 else 0, 1
-        )
+        stats = contract_stats[symbol]
+        stats['win_rate'] = round(stats['wins'] / stats['trades'] * 100 if stats['trades'] > 0 else 0, 1)
+        stats['avg_pnl'] = round(stats['pnl'] / stats['trades'] if stats['trades'] > 0 else 0, 2)
     
-    # Сортировка по PnL
+    # Сортувати по P&L (спадаючи) - топ 10
     sorted_contracts = sorted(
         contract_stats.items(),
         key=lambda x: x[1]['pnl'],
         reverse=True
-    )
+    )[:10]
     
     return {
         'total_trades': total,
@@ -154,40 +265,93 @@ def calculate_stats(trades):
         'contract_stats': sorted_contracts
     }
 
-# ============================================================================
-# МАРШРУТЫ
-# ============================================================================
+# ===== API МАРШУТИ =====
+
+@app.route('/health', methods=['GET'])
+@csrf.exempt  # Health check не потребує CSRF
+def health():
+    """Перевірка здоров'я додатку"""
+    return jsonify({
+        "status": "ok",
+        "timestamp": datetime.utcnow().isoformat(),
+        "metrics": metrics.get_stats()
+    }), 200
+
+@app.route('/api/chart_data/<symbol>', methods=['GET'])
+def get_chart_data(symbol):
+    """Отримує дані для графіку"""
+    try:
+        clean_symbol = symbol.replace('.P', '')
+        htf = settings.get("htfSelection", "240")
+        df = market_analyzer.fetch_candles(clean_symbol, htf, limit=200)
+        
+        candles = []
+        if df is not None:
+            for _, row in df.iterrows():
+                candles.append({
+                    'time': int(row['time'].timestamp()),
+                    'open': float(row['open']),
+                    'high': float(row['high']),
+                    'low': float(row['low']),
+                    'close': float(row['close'])
+                })
+        
+        # Отримуємо блоки ордерів
+        session = db_manager.get_session()
+        try:
+            db_blocks = session.query(OrderBlock).filter(
+                OrderBlock.symbol.in_([symbol, clean_symbol])
+            ).all()
+            blocks = [
+                {'type': b.ob_type, 'top': b.top, 'bottom': b.bottom, 'timeframe': b.timeframe}
+                for b in db_blocks
+            ]
+        finally:
+            session.close()
+        
+        return jsonify({'candles': candles, 'blocks': blocks})
+    except Exception as e:
+        logger.error("chart_data_error", symbol=symbol, error=str(e), exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/', methods=['GET'])
 def index_page():
-    """Профессиональный обзор рынка"""
+    """ПРОФЕСІЙНИЙ ОГЛЯД РИНКУ з детальною статистикою"""
     try:
         days_param = int(request.args.get('days', 7))
     except:
         days_param = 7
     
+    # Дозволені періоди
     if days_param not in [7, 30, 60, 90, 180]:
         days_param = 7
     
-    # Симуляция данных торгов
-    trades = [
-        {
-            'symbol': 'BTCUSDT', 'side': 'Long', 'entry': 45000, 'exit': 45500,
-            'qty': 1, 'pnl': 500, 'status': 'Closed', 'time': datetime.now().isoformat(),
-            'commission': 0.001
-        },
-        {
-            'symbol': 'ETHUSDT', 'side': 'Short', 'entry': 2500, 'exit': 2480,
-            'qty': 10, 'pnl': 200, 'status': 'Closed', 'time': datetime.now().isoformat(),
-            'commission': 0.001
-        },
-    ]
+    try:
+        # Синхронізуємо торги для обраного періоду
+        bot_instance.sync_trades(days=days_param)
+    except Exception as e:
+        logger.warning("index_sync_failed", error=str(e))
     
-    # Получить баланс (симуляция)
-    balance = 10000
-    active_count = 2
+    # Отримуємо баланс
+    try:
+        balance = bot_instance.get_available_balance()
+    except:
+        balance = 0
     
-    # Расчет статистики
+    # Отримуємо активні позиції
+    try:
+        active_positions = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
+        if active_positions.get('retCode') == 0:
+            active_count = len([p for p in active_positions['result']['list'] if float(p.get('size', 0)) > 0])
+        else:
+            active_count = 0
+    except:
+        active_count = 0
+    
+    # Отримуємо торги за період
+    trades = stats_service.get_trades(days=days_param)
+    
+    # Розраховуємо детальну статистику
     stats = calculate_stats(trades)
     period_pnl = stats['total_pnl']
     longs = sum(1 for t in trades if t.get('side') == 'Long')
@@ -206,176 +370,222 @@ def index_page():
 
 @app.route('/scanner', methods=['GET'])
 def scanner_page():
-    """Монитор активных торгов"""
-    return render_template('scanner.html')
+    """Монітор активних торгів"""
+    active = []
+    try:
+        r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
+        if r.get('retCode') == 0:
+            for p in r['result']['list']:
+                if float(p.get('size', 0)) > 0:
+                    symbol = p['symbol']
+                    coin_data = scanner.get_coin_data(symbol)
+                    active.append({
+                        'symbol': symbol,
+                        'side': p['side'],
+                        'pnl': round(float(p.get('unrealisedPnl', 0)), 2),
+                        'rsi': coin_data.get('rsi', 0),
+                        'exit_status': coin_data.get('exit_status', 'Safe'),
+                        'exit_details': coin_data.get('exit_details', '-'),
+                        'pressure': round(scanner.get_market_pressure(symbol), 1),
+                        'size': p.get('size', 0),
+                        'entry': p.get('avgPrice', 0),
+                        'time': datetime.now().strftime('%H:%M')
+                    })
+    except Exception as e:
+        logger.error("scanner_page_error", error=str(e), exc_info=True)
+    
+    return render_template('scanner.html', active=active, conf=settings._cache)
 
-@app.route('/analyzer', methods=['GET'])
+@app.route('/analyzer')
 def analyzer_page():
-    """Анализатор рынка"""
-    return render_template('analyzer.html')
+    """Сканер ринку"""
+    results = market_analyzer.get_results()
+    conf = settings._cache
+    return render_template('analyzer.html',
+                          results=results,
+                          conf=conf,
+                          progress=market_analyzer.progress,
+                          status=market_analyzer.status_message,
+                          is_scanning=market_analyzer.is_scanning)
 
-# ============================================================================
-# WHALE HUNTER SCANNER МАРШРУТЫ
-# ============================================================================
-
-@app.route('/api/whale_hunter/scan', methods=['POST'])
-def whale_hunter_scan():
-    """Запустить сканирование"""
+@app.route('/smart_money', methods=['GET', 'POST'])
+def smart_money_page():
+    """Smart Money вотчліст"""
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        settings.save_settings(form_data)
+        return redirect(url_for('smart_money_page'))
+    
+    session_db = db_manager.get_session()
     try:
-        if not WHALE_HUNTER_AVAILABLE or wh_instance is None:
-            return jsonify({'status': 'error', 'message': 'Scanner not available'}), 500
+        watchlist = session_db.query(SmartMoneyTicker).all()
+        active_trades = session_db.query(PaperTrade).filter(
+            PaperTrade.status.in_(['OPEN', 'PENDING'])
+        ).order_by(desc(PaperTrade.created_at)).all()
+        history_trades = session_db.query(PaperTrade).filter(
+            PaperTrade.status.in_(['CLOSED_WIN', 'CLOSED_LOSS', 'CANCELED'])
+        ).order_by(desc(PaperTrade.closed_at)).limit(50).all()
         
-        signals = wh_instance.scan_market()
-        return jsonify({
-            'status': 'success',
-            'signals_found': len(signals),
-            'signals': signals,
-            'timestamp': datetime.now().isoformat()
-        })
-    except Exception as e:
-        logger.error(f"❌ Scan error: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return render_template('smart_money.html',
+                              watchlist=watchlist,
+                              active_trades=active_trades,
+                              history_trades=history_trades,
+                              conf=settings._cache)
+    finally:
+        session_db.close()
 
-@app.route('/api/whale_hunter/signals', methods=['GET'])
-def whale_hunter_signals():
-    """Получить активные сигналы"""
+@app.route('/smart_money/delete/<symbol>', methods=['POST'])
+def delete_ticker(symbol):
+    """Видалення из вотчліста"""
+    session_db = db_manager.get_session()
     try:
-        if not WHALE_HUNTER_AVAILABLE or wh_instance is None:
-            return jsonify({'signals': []})
-        
-        signals = wh_instance.get_signals()
-        return jsonify({
-            'status': 'success',
-            'count': len(signals),
-            'signals': signals,
-            'timestamp': datetime.now().isoformat()
-        })
+        item = session_db.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
+        if item:
+            session_db.delete(item)
+            session_db.commit()
+            logger.info("ticker_deleted", symbol=symbol)
+        return jsonify({'status': 'ok'})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        logger.error("delete_ticker_error", symbol=symbol, error=str(e))
+        return jsonify({'error': str(e)}), 400
+    finally:
+        session_db.close()
 
-@app.route('/api/whale_hunter/history', methods=['GET'])
-def whale_hunter_history():
-    """История сигналов"""
-    try:
-        if not WHALE_HUNTER_AVAILABLE or wh_instance is None:
-            return jsonify({'history': []})
-        
-        limit = request.args.get('limit', 100, type=int)
-        history = wh_instance.get_history(limit=limit)
-        return jsonify({
-            'status': 'success',
-            'count': len(history),
-            'history': history,
-            'timestamp': datetime.now().isoformat()
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/api/whale_hunter/status', methods=['GET'])
-def whale_hunter_status():
-    """Статус сканера"""
-    try:
-        if not WHALE_HUNTER_AVAILABLE or wh_instance is None:
-            return jsonify({
-                'status': 'not_available',
-                'active_signals': 0,
-                'last_scan': None
-            })
-        
-        return jsonify({
-            'status': 'running',
-            'timeframe': wh_instance.TIMEFRAME,
-            'active_signals': len(wh_instance.get_signals()),
-            'total_history': len(wh_instance.get_history()),
-            'min_volume': wh_instance.MIN_VOLUME,
-            'last_scan': wh_instance.signal_history[-1].get('timestamp') if wh_instance.signal_history else None
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-@app.route('/api/whale_hunter/settings', methods=['GET', 'POST'])
-def whale_hunter_settings():
-    """Получить/изменить настройки сканера"""
-    try:
-        if request.method == 'POST':
-            data = request.get_json()
-            timeframe = data.get('timeframe', '1h')
-            min_volume = data.get('min_volume', 5000000)
-            
-            global wh_instance
-            if WHALE_HUNTER_AVAILABLE:
-                wh_instance = init_scanner(timeframe)
-                wh_instance.MIN_VOLUME = min_volume
-            
-            return jsonify({'status': 'success', 'message': 'Settings updated'})
-        
-        if not WHALE_HUNTER_AVAILABLE or wh_instance is None:
-            return jsonify({
-                'timeframe': '1h',
-                'min_volume': 5000000
-            })
-        
-        return jsonify({
-            'timeframe': wh_instance.TIMEFRAME,
-            'min_volume': wh_instance.MIN_VOLUME
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-# ============================================================================
-# СТРАНИЦА СТРАТЕГИИ
-# ============================================================================
+@app.route('/settings', methods=['GET', 'POST'])
+@csrf.exempt  # ⚠️ Тимчасово - потребує CSRF токена в шаблоні пізніше
+def settings_general_page():
+    """Загальні налаштування"""
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        form_data['telegram_enabled'] = request.form.get('telegram_enabled') == 'on'
+        form_data['exit_enableStrategy'] = request.form.get('exit_enableStrategy') == 'on'
+        settings.save_settings(form_data)
+        logger.info("settings_saved", user_agent=request.user_agent)
+        return redirect(url_for('settings_general_page'))
+    
+    return render_template('settings.html', conf=settings._cache)
 
 @app.route('/ob_trend/settings', methods=['GET', 'POST'])
-def strategy_page():
-    """Страница Whale Hunter Scanner"""
+@csrf.exempt  # ⚠️ Тимчасово
+def ob_trend_settings_page():
+    """Налаштування стратегії OB Trend"""
+    if request.method == 'POST':
+        form_data = request.form.to_dict()
+        filters = ['obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter', 'obt_useOBRetest']
+        for cb in filters:
+            form_data[cb] = request.form.get(cb) == 'on'
+        settings.save_settings(form_data)
+        logger.info("ob_trend_settings_saved")
+        return redirect(url_for('ob_trend_settings_page'))
+    
+    return render_template('strategy_ob_trend.html', conf=settings._cache)
+
+@app.route('/analyzer/scan', methods=['POST'])
+@csrf.exempt  # ⚠️ Тимчасово
+def run_scan():
+    """Запускає сканер ринку"""
     try:
-        if request.method == 'POST':
-            data = request.get_json() or request.form
-            timeframe = data.get('timeframe', '1h')
-            
-            global wh_instance
-            if WHALE_HUNTER_AVAILABLE:
-                wh_instance = init_scanner(timeframe)
-            
-            logger.info(f"⚙️ Стратегия обновлена: TF={timeframe}")
-            
-            if request.is_json:
-                return jsonify({'status': 'success'})
-            return redirect(url_for('strategy_page'))
+        if request.form:
+            form_data = request.form.to_dict()
+            checkboxes = ['obt_useOBRetest', 'obt_useCloudFilter', 'obt_useObvFilter', 'obt_useRsiFilter']
+            for cb in checkboxes:
+                form_data[cb] = request.form.get(cb) == 'on'
+            settings.save_settings(form_data)
         
-        # GET - показать страницу
-        status = {
-            'timeframe': wh_instance.TIMEFRAME if (WHALE_HUNTER_AVAILABLE and wh_instance) else '1h',
-            'active_signals': len(wh_instance.get_signals()) if (WHALE_HUNTER_AVAILABLE and wh_instance) else 0,
-            'last_scan': wh_instance.signal_history[-1].get('timestamp') if (WHALE_HUNTER_AVAILABLE and wh_instance and wh_instance.signal_history) else None
-        }
-        
-        return render_template('strategy_ob_trend.html', status=status)
+        market_analyzer.run_scan_thread()
+        logger.info("scan_started")
+        return jsonify({"status": "started"})
     except Exception as e:
-        logger.error(f"❌ Strategy page error: {e}")
-        return render_template('strategy_ob_trend.html', error=str(e))
+        logger.error("run_scan_error", error=str(e))
+        return jsonify({"error": str(e)}), 400
 
-# ============================================================================
-# ОБРАБОТКА ОШИБОК
-# ============================================================================
+@app.route('/analyzer/status')
+def get_scan_status():
+    """Отримує статус сканування"""
+    return jsonify({
+        "progress": market_analyzer.progress,
+        "message": market_analyzer.status_message,
+        "is_scanning": market_analyzer.is_scanning
+    })
 
-@app.errorhandler(404)
-def not_found(error):
-    logger.warning(f"404 Error: {request.url}")
-    return jsonify({'error': '404 Not Found', 'message': 'The requested URL was not found'}), 404
+@app.route('/webhook', methods=['POST'])
+@csrf.exempt  # Webhook від TradingView не має CSRF токена
+def webhook():
+    """
+    Webhook для приймання сигналів з TradingView
+    
+    Очікує JSON:
+    {
+        "action": "Buy|Sell|Close",
+        "symbol": "BTCUSDT" або "BTCUSDT.P",
+        "direction": "Long|Short" (для Close),
+        "riskPercent": 2.0,
+        "leverage": 20,
+        "sl_price": float (опціонально),
+        "tp_price": float (опціонально)
+    }
+    
+    ✅ РІШЕННЯ: Суфікс ".P" автоматично видаляється у validate_webhook_data
+    """
+    try:
+        data = json.loads(request.get_data(as_text=True))
+        logger.info("webhook_received", action=data.get('action'), symbol=data.get('symbol'))
+        
+        # Валідуємо дані (буде викине ValueError якщо неправильно)
+        # Функція validate_webhook_data вже нормалізує символ (видаляє ".P")
+        result = bot_instance.place_order(data)
+        
+        status_code = 200 if result.get("status") in ["ok", "ignored"] else 400
+        logger.info("webhook_processed", status=result.get("status"), code=status_code)
+        
+        return jsonify(result), status_code
+    
+    except ValueError as e:
+        # Помилка валідації
+        logger.warning("webhook_validation_error", error=str(e))
+        return jsonify({"error": f"Invalid webhook data: {str(e)}", "code": "VALIDATION_ERROR"}), 400
+    except Exception as e:
+        # Неочікувана помилка
+        logger.error("webhook_error", error=str(e), exc_info=True)
+        return jsonify({"error": str(e), "code": "INTERNAL_ERROR"}), 500
 
-@app.errorhandler(500)
-def internal_error(error):
-    logger.error(f"500 Error: {error}")
-    return jsonify({'error': '500 Internal Server Error', 'message': str(error)}), 500
+@app.route('/settings/export')
+def export_settings():
+    """Експортує налаштування у JSON"""
+    try:
+        json_str = json.dumps(settings.get_all(), indent=4)
+        logger.info("settings_exported")
+        return Response(json_str,
+                       mimetype='application/json',
+                       headers={'Content-Disposition': 'attachment;filename=bot_settings.json'})
+    except Exception as e:
+        logger.error("export_settings_error", error=str(e))
+        return jsonify({"error": str(e)}), 500
 
-# ============================================================================
-# ЗАПУСК ПРИЛОЖЕНИЯ
-# ============================================================================
+@app.route('/settings/import', methods=['POST'])
+def import_settings():
+    """Імпортує налаштування з JSON файлу"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files['file']
+        if settings.import_settings(json.load(file)):
+            logger.info("settings_imported")
+            return redirect(url_for('settings_general_page'))
+        else:
+            logger.warning("settings_import_failed")
+            return jsonify({"error": "Failed to import settings"}), 400
+    except Exception as e:
+        logger.error("import_settings_error", error=str(e), exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+# ===== ЗАПУСК =====
 
 if __name__ == '__main__':
-    logger.info("🚀 AlgoBot запускается...")
-    logger.info(f"✅ Whale Hunter Scanner: {'Доступен' if WHALE_HUNTER_AVAILABLE else 'Недоступен'}")
-    logger.info(f"✅ CSRF Protection: Отключена (для API)")
-    app.run(host='0.0.0.0', port=10000, debug=False, threaded=True)
+    host = os.environ.get('HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 10000))
+    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
+    
+    logger.info("starting_flask", host=host, port=port, debug=debug)
+    app.run(host=host, port=port, debug=debug)
