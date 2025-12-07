@@ -10,7 +10,6 @@ import logging
 logger = logging.getLogger(__name__)
 Base = declarative_base()
 
-# === ІСНУЮЧІ КЛАСИ ===
 class Trade(Base):
     __tablename__ = 'trades'
     id = Column(Integer, primary_key=True)
@@ -57,7 +56,7 @@ class PaperTrade(Base):
     pnl = Column(Float, default=0.0); pnl_percent = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow); closed_at = Column(DateTime, nullable=True); details = Column(String(255))
 
-# === НОВИЙ КЛАС ДЛЯ WHALE STRATEGY ===
+# === НОВА МОДЕЛЬ: WHALE STRATEGY ===
 class WhaleSignal(Base):
     __tablename__ = 'whale_signals'
     id = Column(Integer, primary_key=True)
@@ -70,7 +69,6 @@ class WhaleSignal(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default='NEW')
 
-# === DATABASE MANAGER ===
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         db_url = os.environ.get('DATABASE_URL')
@@ -91,17 +89,18 @@ class DatabaseManager:
             with self.engine.connect() as conn:
                 logger.info(f"✅ Database connected: {db_url[:50]}...")
             
-            # Створюємо таблиці (включно з новою)
+            # Створюємо таблиці
             Base.metadata.create_all(self.engine)
             logger.info("✅ Database tables created/verified")
             
         except Exception as e:
             logger.error(f"❌ CRITICAL: Database error: {e}")
-            raise
+            raise  # Передаємо помилку далі
         self.Session = sessionmaker(bind=self.engine)
 
     def get_session(self): return self.Session()
     
+    # === ФУНКЦІЯ ПРИМУСОВОГО ПЕРЕСТВОРЕННЯ ТАБЛИЦІ ===
     def recreate_analysis_table(self):
         try:
             AnalysisResult.__table__.drop(self.engine, checkfirst=True)

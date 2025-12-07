@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Простіші альтернативи для технічних індикаторів без pandas_ta.
-Включає правильну формулу RSI (Wilder's Smoothing) для точності з TradingView/Bybit.
-Об'єднана версія: Стандартні індикатори + Whale Strategy.
+Універсальний файл індикаторів.
+Включає базові (RSI, ATR) та професійні (Bollinger, Ichimoku, OBV) розрахунки.
 """
 import pandas as pd
 import numpy as np
 
-# === БАЗОВІ ФУНКЦІЇ (З вашого оригінального файлу) ===
+# === БАЗОВІ ФУНКЦІЇ (Необхідні для Scanner / Monitor) ===
 
 def simple_rsi(close_prices, period=14):
     """
@@ -77,7 +76,7 @@ def calculate_sma(prices, period=20):
         return float(prices.iloc[-1])
 
 def calculate_ema(prices, period=12):
-    """Exponential Moving Average"""
+    """Exponential Moving Average (Wrapper for compatibility)"""
     try:
         return prices.ewm(span=period, adjust=False).mean()
     except:
@@ -92,7 +91,7 @@ def calculate_momentum(prices, period=10):
     except:
         return 0.0
 
-# === НОВІ ФУНКЦІЇ (ДЛЯ WHALE STRATEGY) ===
+# === ПРОФЕСІЙНІ ІНДИКАТОРИ (ДЛЯ WHALE STRATEGY) ===
 
 def calculate_bollinger_bands(series, length=20, std_dev=2.0):
     """
@@ -107,7 +106,7 @@ def calculate_bollinger_bands(series, length=20, std_dev=2.0):
         lower = middle - (std * std_dev)
         
         # Bandwidth: (Upper - Lower) / Middle
-        bandwidth = (upper - lower) / middle
+        bandwidth = ((upper - lower) / middle).fillna(0)
         
         return upper, middle, lower, bandwidth
     except:
@@ -127,8 +126,13 @@ def calculate_ichimoku(high, low, close, t=9, k=26, s=52):
     try:
         tenkan = (high.rolling(window=t).max() + low.rolling(window=t).min()) / 2
         kijun = (high.rolling(window=k).max() + low.rolling(window=k).min()) / 2
+        
+        # Span A (Leading Span A)
         span_a = ((tenkan + kijun) / 2)
+        
+        # Span B (Leading Span B)
         span_b = ((high.rolling(window=s).max() + low.rolling(window=s).min()) / 2)
+        
         return tenkan, kijun, span_a, span_b
     except:
         return None, None, None, None

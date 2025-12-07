@@ -36,7 +36,7 @@ class WhaleCore:
         }
 
     def fetch_data(self, symbol):
-        """Отримує свічки"""
+        """Завантажує свічки"""
         try:
             # Мапінг для Bybit
             tf_map = {'15': '15', '60': '60', '240': '240', 'D': 'D'}
@@ -63,83 +63,67 @@ class WhaleCore:
         try:
             close = df['close']
             
-            # --- 1. Фільтр Тренду (EMA 200) ---
-            # Рахуємо EMA 200 (використовуючи функцію з indicators.py, яка повертає series)
-            ema_series = calculate_ema(close, self.CONFIG['ema_period'])
-            ema_val = ema_series.iloc[-1]
-            price = close.iloc[-1]
+            # 1. Фільтр Тренду (EMA 200)
+            ema = calculate_ema(close, self.CONFIG['ema_period'])
+            dist_to_ema = (close.iloc[-1] - ema.iloc[-1]) / ema.iloc[-1]
             
-            # Відстань до EMA. Якщо ціна глибоко під EMA (>15%), це небезпечний даунтренд.
-            dist_to_ema = (price - ema_val) / ema_val
+            # Якщо ціна > 15% під EMA - це сильний даунтренд
             if dist_to_ema < -0.15: return None
 
-            # --- 2. Фільтр Волатильності (Squeeze) ---
+            # 2. Фільтр Волатильності (Squeeze)
             _, _, _, bandwidth = calculate_bollinger_bands(close)
             curr_sqz = bandwidth.iloc[-1]
             
-            # Якщо канал ширший за поріг (0.15), пружина розслаблена
             if curr_sqz > self.CONFIG['bb_squeeze_max']:
                 return None 
 
-            # --- 3. Акумуляція (OBV) ---
+            # 3. Акумуляція (OBV)
             obv = calculate_obv(close, df['volume'])
-            
-            # Рахуємо нахил за останні 15 свічок
             p_slope = calculate_slope(close, 15)
             obv_slope = calculate_slope(obv, 15)
             
-            # Нормалізація нахилу ціни у відсотках
-            norm_p_slope = (p_slope / price) * 100
+            # Нормалізація нахилу ціни (%)
+            norm_p_slope = (p_slope / close.iloc[-1]) * 100
             
             is_whale = False
             reason = ""
             score = 50
             
-            # Сигнал 1: Дивергенція (Ціна стоїть/падає, а OBV росте)
-            if norm_p_slope <= 0.05 and obv_slope > self.CONFIG['obv_slope_min']:
+            # Сигнал 1: Дивергенція
+            if abs(norm_p_slope) < 0.05 and obv_slope > 0:
                 is_whale = True
-                reason = "Volume Divergence (Accumulation)"
+                reason = "Accumulation (Flat Price, OBV Up)"
                 score += 30
-            
+            elif norm_p_slope < -0.05 and obv_slope > 0:
+                is_whale = True
+                reason = "Divergence (Price Drop, OBV Up)"
+                score += 20
+
             if not is_whale: return None
 
-            # --- 4. Ichimoku Check (Підтвердження) ---
+            # 4. Ichimoku Check
             tenkan, kijun, sa, sb = calculate_ichimoku(df['high'], df['low'], close)
             cloud_top = max(sa.iloc[-1], sb.iloc[-1])
-            cloud_bottom = min(sa.iloc[-1], sb.iloc[-1])
             
-            # Ідеально: Ціна над хмарою або всередині
-            if price > cloud_top:
+            if close.iloc[-1] > cloud_top:
                 score += 20
-                reason += " + Above Cloud (Ready)"
-            elif price >= cloud_bottom:
-                score += 10
-                reason += " + In Cloud (Coiling)"
-            else:
-                # Під хмарою допускаємо тільки якщо є Golden Cross (Tenkan > Kijun)
-                if tenkan.iloc[-1] > kijun.iloc[-1]:
-                    score += 5
-                    reason += " + TK Cross"
-                else:
-                    return None # Слабкий сигнал
-
+                reason += " + Above Cloud"
+            
             return {
                 "score": min(score, 100),
                 "squeeze": round(curr_sqz, 4),
                 "obv_slope": round(obv_slope, 2),
                 "reason": reason,
-                "price": price
+                "price": close.iloc[-1]
             }
 
         except Exception as e:
-            logger.error(f"Analysis calc error: {e}")
             return None
 
     def save_signal(self, symbol, data):
-        """Збереження результату в БД"""
+        """Збереження в БД"""
         session = db_manager.get_session()
         try:
-            # Можна додати перевірку, чи не сканували ми цей актив нещодавно
             sig = WhaleSignal(
                 symbol=symbol,
                 price=data['price'],
@@ -157,10 +141,10 @@ class WhaleCore:
             session.close()
 
     def get_history(self, limit=50):
-        """Отримання історії з БД для UI"""
+        """Отримання історії з БД"""
         session = db_manager.get_session()
         try:
-            # Перевірка наявності таблиці (створення, якщо немає - safety check)
+            # Гарантуємо створення таблиці
             WhaleSignal.__table__.create(db_manager.engine, checkfirst=True)
             
             res = session.query(WhaleSignal).order_by(desc(WhaleSignal.created_at)).limit(limit).all()
@@ -184,7 +168,6 @@ class WhaleCore:
         if self.is_scanning: return False
         
         if override_cfg: 
-            # Оновлюємо налаштування (конвертуємо типи)
             if 'limit' in override_cfg: self.CONFIG['limit_coins'] = int(override_cfg['limit'])
             if 'timeframe' in override_cfg: self.CONFIG['timeframe'] = str(override_cfg['timeframe'])
             
@@ -197,20 +180,14 @@ class WhaleCore:
         self.progress = 0
         
         try:
-            # 1. Отримуємо список
             tickers = bot_instance.get_all_tickers()
             targets = [t for t in tickers if t['symbol'].endswith('USDT')]
-            
-            # Фільтр по ліквідності
             targets = [t for t in targets if float(t.get('turnover24h', 0)) > self.CONFIG['min_vol_usdt']]
-            
-            # Сортуємо
             targets.sort(key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
             targets = targets[:int(self.CONFIG['limit_coins'])]
             
             total = len(targets)
             
-            # 2. Скануємо
             for i, t in enumerate(targets):
                 self.status = f"Analyzing {t['symbol']}..."
                 self.progress = int((i / total) * 100)
@@ -221,7 +198,7 @@ class WhaleCore:
                     if res:
                         self.save_signal(t['symbol'], res)
                 
-                time.sleep(0.1) # API protection
+                time.sleep(0.1) 
                 
             self.progress = 100
             self.status = "Completed"
