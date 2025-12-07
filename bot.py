@@ -4,6 +4,9 @@ import time
 from datetime import datetime
 from decimal import Decimal
 from pybit.unified_trading import HTTP
+
+# === ВИПРАВЛЕННЯ: Додано імпорт config ===
+from bot_config import config
 from config import get_api_credentials
 from settings_manager import settings
 from statistics_service import stats_service
@@ -29,7 +32,9 @@ class BybitTradingBot:
             logger.error("bot_init_failed", error=str(e))
             raise
 
-    def normalize(self, s): return s.replace('.P', '')
+    def normalize(self, s): 
+        """Нормалізує символ (видаляє '.P')"""
+        return s.replace('.P', '')
 
     @with_retry(max_retries=3, exceptions=(Exception,))
     def get_bal(self):
@@ -49,7 +54,8 @@ class BybitTradingBot:
             logger.error("get_balance_error", error=str(e), exc_info=True)
             return 0.0
             
-    def get_available_balance(self): return self.get_bal()
+    def get_available_balance(self): 
+        return self.get_bal()
 
     @with_retry(max_retries=3, exceptions=(Exception,))
     def get_price(self, s):
@@ -65,24 +71,34 @@ class BybitTradingBot:
             return 0.0
 
     def get_all_tickers(self):
-        try: return self.session.get_tickers(category="linear")['result']['list']
-        except: return []
+        """Отримує список всіх тікерів"""
+        try: 
+            return self.session.get_tickers(category="linear")['result']['list']
+        except: 
+            return []
 
     def get_instr(self, s):
+        """Отримує інформацію про інструмент (розмір лота, крок ціни)"""
         try:
             r = self.session.get_instruments_info(category="linear", symbol=self.normalize(s))
             return r['result']['list'][0]['lotSizeFilter'], r['result']['list'][0]['priceFilter']
-        except: return None, None
+        except: 
+            return None, None
 
     def round_val(self, val, step):
+        """Округлює значення до кроку"""
         try:
             d = abs(Decimal(str(step)).as_tuple().exponent)
             return round(val // step * step, d)
-        except: return val
+        except: 
+            return val
 
     def set_lev(self, s, l):
-        try: self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
-        except: pass
+        """Встановлює кредитне плече"""
+        try: 
+            self.session.set_leverage(category="linear", symbol=self.normalize(s), buyLeverage=str(l), sellLeverage=str(l))
+        except: 
+            pass
 
     @with_retry(max_retries=2, exceptions=(Exception,))
     def sync_trades(self, days=7):
@@ -136,16 +152,7 @@ class BybitTradingBot:
     
     @with_retry(max_retries=2, exceptions=(Exception,))
     def update_sl(self, symbol, new_sl_price):
-        """
-        Оновлює Stop Loss для відкритої позиції з валідацією
-        
-        Args:
-            symbol: Символ торгівлі (напр. BTCUSDT)
-            new_sl_price: Нова ціна Stop Loss
-        
-        Returns:
-            True якщо успішно, False інакше
-        """
+        """Оновлює Stop Loss для відкритої позиції"""
         try:
             norm = self.normalize(symbol)
             _, tick = self.get_instr(norm)
@@ -154,7 +161,6 @@ class BybitTradingBot:
                 logger.warning("update_sl_no_instrument", symbol=symbol)
                 return False
             
-            # Валідуємо SL
             sl_float = safe_float(new_sl_price, 0)
             if sl_float <= 0:
                 logger.warning("update_sl_invalid", symbol=symbol, sl_price=sl_float)
@@ -166,7 +172,6 @@ class BybitTradingBot:
                 logger.warning("update_sl_rounded_invalid", symbol=symbol, sl_rounded=sl_rounded)
                 return False
             
-            # Встановлюємо SL
             r = self.session.set_trading_stop(
                 category="linear",
                 symbol=norm,
@@ -185,53 +190,30 @@ class BybitTradingBot:
             logger.error("update_sl_error", symbol=symbol, error=str(e), exc_info=True)
             return False
 
-    # === ВИКОНАННЯ ОРДЕРІВ ===
     def place_order(self, data):
-        """
-        Розміщує ордер на основі вебхука з валідацією вхідних даних
-        
-        Очікує JSON:
-        {
-            "action": "Buy|Sell|Close",
-            "symbol": "BTCUSDT" або "BTCUSDT.P" (автоматично нормалізується),
-            "direction": "Long|Short" (для Close),
-            "riskPercent": 2.0,
-            "leverage": 20,
-            "sl_price": float (опціонально),
-            "tp_price": float (опціонально)
-        }
-        
-        NOTE: Функція validate_webhook_data вже видаляє ".P" з символу,
-        але ми залишаємо нормалізацію тут для подвійної безпеки.
-        """
+        """Розміщує ордер на основі вебхука"""
         try:
-            # === ВАЛІДАЦІЯ ВХОДУ ===
             validated_data = validate_webhook_data(data)
             action = validated_data['action']
             symbol = validated_data['symbol']
-            # Додаткова нормалізація (символ вже нормалізований у validate_webhook_data, але для безпеки)
             norm = self.normalize(symbol)
             
             logger.info("order_request", action=action, symbol=symbol)
             
-            # === ЛОГІКА ЗАКРИТТЯ (Close Signal) ===
             if action == "Close":
                 return self._handle_close_order(norm, validated_data['direction'])
             
-            # === ЛОГІКА ВІДКРИТТЯ (Open Signal) ===
             return self._handle_open_order(norm, validated_data)
             
         except ValueError as e:
-            # Помилка валідації - клієнт помилився
             logger.warning("validation_error", error=str(e), data=data)
             return {"status": "error", "reason": f"Invalid data: {str(e)}", "code": "VALIDATION_ERROR"}
         except Exception as e:
-            # Неочікувана помилка
             logger.error("place_order_error", error=str(e), exc_info=True, data=data)
             return {"status": "error", "reason": str(e), "code": "UNEXPECTED_ERROR"}
     
     def _handle_close_order(self, symbol: str, direction: str) -> dict:
-        """Закриває позицію якщо напрямок збігається"""
+        """Закриває позицію"""
         try:
             r = self.session.get_positions(category="linear", symbol=symbol)
             if r.get('retCode') != 0:
@@ -244,15 +226,12 @@ class BybitTradingBot:
                 logger.info("close_ignored", symbol=symbol, reason="no_position")
                 return {"status": "ignored", "reason": "No open position"}
             
-            curr_side = target['side']  # "Buy" або "Sell"
+            curr_side = target['side']
             
-            # Перевіряємо напрямок
             if (direction == "Long" and curr_side == "Buy") or (direction == "Short" and curr_side == "Sell"):
-                # Напрямок збігається - закриваємо
                 close_side = "Sell" if curr_side == "Buy" else "Buy"
                 qty = str(target['size'])
                 
-                # Розміщуємо ордер на закриття
                 close_result = self.session.place_order(
                     category="linear",
                     symbol=symbol,
@@ -266,14 +245,13 @@ class BybitTradingBot:
                     logger.error("close_order_failed", symbol=symbol, retCode=close_result.get('retCode'))
                     return {"status": "error", "reason": "Failed to close position"}
                 
-                # Скасовуємо старі ордери (TP/SL)
                 try:
                     self.session.cancel_all_orders(category="linear", symbol=symbol)
                 except Exception as e:
                     logger.warning("cancel_orders_failed", symbol=symbol, error=str(e))
                 
                 logger.info("order_closed", symbol=symbol, direction=direction)
-                metrics.log_trade_closed(symbol, pnl=0.0)  # PnL визначимо потім
+                metrics.log_trade_closed(symbol, pnl=0.0)
                 return {"status": "ok", "message": f"Closed {direction}"}
             else:
                 logger.warning("close_mismatch", symbol=symbol, expected=direction, actual=curr_side)
@@ -286,11 +264,10 @@ class BybitTradingBot:
     def _handle_open_order(self, symbol: str, data: dict) -> dict:
         """Відкриває нову позицію або змінює поточну"""
         try:
-            action = data['action']  # "Buy" або "Sell"
+            action = data['action']
             risk = data['riskPercent']
             lev = data['leverage']
             
-            # Отримання даних інструменту
             price = self.get_price(symbol)
             lot, tick = self.get_instr(symbol)
             
@@ -298,15 +275,15 @@ class BybitTradingBot:
                 logger.error("instrument_error", symbol=symbol, price=price, lot=lot, tick=tick)
                 return {"status": "error", "reason": "Cannot get instrument data"}
             
-            # Перевірка баланса
             bal = self.get_bal()
-            # MIN_BALANCE можна брати з config.MIN_BALANCE якщо він там є, або хардкод
+            
+            # === ВИПРАВЛЕННЯ: Тепер config імпортовано, помилки не буде ===
             min_bal = getattr(config, 'MIN_BALANCE', 5.0) 
+            
             if bal < min_bal:
                 logger.warning("insufficient_balance", symbol=symbol, balance=bal, required=min_bal)
                 return {"status": "no_balance", "balance": bal, "reason": f"Minimum {min_bal} USDT required"}
             
-            # === ПЕРЕВІРКА ПОТОЧНИХ ПОЗИЦІЙ (для REVERSAL) ===
             r = self.session.get_positions(category="linear", symbol=symbol)
             if r.get('retCode') != 0:
                 logger.error("get_positions_failed", symbol=symbol, retCode=r.get('retCode'))
@@ -317,13 +294,10 @@ class BybitTradingBot:
             
             if existing_pos:
                 current_side = existing_pos['side']
-                
-                # Якщо той же напрямок - ігноруємо
                 if current_side == action:
                     logger.info("already_in_position", symbol=symbol, side=action)
                     return {"status": "ignored", "reason": f"Already in {action}"}
                 
-                # REVERSAL: закриваємо позицію перед новим входом
                 logger.info("reversal_detected", symbol=symbol, old_side=current_side, new_side=action)
                 close_side = "Sell" if current_side == "Buy" else "Buy"
                 
@@ -336,30 +310,22 @@ class BybitTradingBot:
                     reduceOnly=True
                 )
                 
-                # Скасовуємо старі ордери
                 try:
                     self.session.cancel_all_orders(category="linear", symbol=symbol)
-                except:
-                    pass
-                
-                # Чекаємо на оновлення баланса
+                except: pass
                 time.sleep(1)
             
-            # === РОЗРАХУНОК ОБ'ЄМУ ===
             qty_step = safe_float(lot.get('qtyStep', 0.01))
             min_qty = safe_float(lot.get('minOrderQty', 1))
             tick_size = safe_float(tick.get('tickSize', 0.01))
             
-            # Розраховуємо кількість: (баланс × risk × leverage) / ціна
             raw_qty = (bal * (risk / 100) * 0.98 * lev) / price
             qty = self.round_val(raw_qty, qty_step)
             if qty < min_qty:
                 qty = min_qty
             
-            # Встановлюємо левередж
             self.set_lev(symbol, lev)
             
-            # === РОЗМІЩЕННЯ ОРДЕРА ===
             logger.info("placing_order", symbol=symbol, action=action, qty=qty, price=price, leverage=lev)
             
             order_result = self.session.place_order(
@@ -376,20 +342,15 @@ class BybitTradingBot:
             
             metrics.log_trade_opened(symbol, qty, price)
             
-            # === ВСТАНОВЛЕННЯ STOP LOSS (З ВІДСОТКІВ) ===
             if data.get('stopLossPercent') and data.get('entryPrice'):
                 sl_percent = safe_float(data['stopLossPercent'])
                 entry_price = safe_float(data['entryPrice'])
                 
-                # Розраховуємо абсолютну ціну SL на основі напрямку
                 if action == "Buy":
-                    # Для Long: SL нижче за entry (entry * (1 - percent/100))
                     sl_raw = entry_price * (1 - sl_percent / 100)
                 else:
-                    # Для Short: SL вище за entry (entry * (1 + percent/100))
                     sl_raw = entry_price * (1 + sl_percent / 100)
                 
-                # Валідуємо SL
                 if validate_stop_loss(sl_raw, entry_price, action):
                     sl_rounded = self.round_val(sl_raw, tick_size)
                     try:
@@ -407,36 +368,8 @@ class BybitTradingBot:
             else:
                 logger.warning("no_stop_loss", symbol=symbol, message="Trade is unprotected!")
             
-            # === ВСТАНОВЛЕННЯ TAKE PROFIT (З ВІДСОТКІВ) ===
-            # ВІДКЛЮЧЕНО: Не виставляємо TP при отриманні сигналу
-            # if data.get('takeProfitPercent') and data.get('entryPrice'):
-            #     tp_percent = safe_float(data['takeProfitPercent'])
-            #     entry_price = safe_float(data['entryPrice'])
-            #     
-            #     # Розраховуємо абсолютну ціну TP на основі напрямку
-            #     if action == "Buy":
-            #         # Для Long: TP вище за entry (entry * (1 + percent/100))
-            #         tp_raw = entry_price * (1 + tp_percent / 100)
-            #     else:
-            #         # Для Short: TP нижче за entry (entry * (1 - percent/100))
-            #         tp_raw = entry_price * (1 - tp_percent / 100)
-            #     
-            #     tp_rounded = self.round_val(tp_raw, tick_size)
-            #     try:
-            #         # Розміщуємо TP ордер (половину позиції)
-            #         tp_qty = qty / 2
-            #         self.session.place_order(
-            #             category="linear",
-            #             symbol=symbol,
-            #             side="Sell" if action == "Buy" else "Buy",
-            #             orderType="Limit",
-            #             qty=str(tp_qty),
-            #             price=str(tp_rounded),
-            #             reduceOnly=True
-            #         )
-            #         logger.info("take_profit_set", symbol=symbol, tp_price=tp_rounded, tp_percent=tp_percent, qty=tp_qty)
-            #     except Exception as e:
-            #         logger.error("tp_set_error", symbol=symbol, error=str(e))
+            # === Take Profit (виклик методу _tp) ===
+            self._tp(symbol, action, price, qty, data, tick_size, qty_step)
             
             logger.info("order_success", symbol=symbol, action=action, qty=qty)
             return {"status": "ok", "qty": qty, "price": price, "leverage": lev}
@@ -445,7 +378,98 @@ class BybitTradingBot:
             logger.error("open_order_error", symbol=symbol, error=str(e), exc_info=True)
             return {"status": "error", "reason": str(e)}
 
-    
+    # === TAKE PROFIT LOGIC (Відновлено) ===
+    def _tp(self, s, side, ep, qty, d, tick, step):
+        """
+        Логіка розрахунку Take Profit на основі налаштувань.
+        Підтримує режими: Fixed_1_50 (фікс. %), Ladder_3 (драбинка), або параметри з сигналу.
+        """
+        try:
+            # Отримуємо режим з налаштувань
+            mode = settings.get("tp_mode")
+            exit_side = "Sell" if side == "Buy" else "Buy"
+            
+            # 1. Якщо TP прийшов у сигналі (Пріоритет)
+            if d.get('takeProfitPercent') and d.get('entryPrice'):
+                tp_percent = safe_float(d['takeProfitPercent'])
+                if tp_percent > 0:
+                    if side == "Buy":
+                        tp_price = ep * (1 + tp_percent / 100)
+                    else:
+                        tp_price = ep * (1 - tp_percent / 100)
+                        
+                    tp_rounded = self.round_val(tp_price, tick)
+                    
+                    # Ставимо лімітку на весь об'єм
+                    self.session.place_order(
+                        category="linear",
+                        symbol=s,
+                        side=exit_side,
+                        orderType="Limit",
+                        qty=str(qty),
+                        price=str(tp_rounded),
+                        reduceOnly=True
+                    )
+                    logger.info("tp_signal_set", symbol=s, price=tp_rounded)
+                    return
+
+            # 2. Режим Fixed_1_50: 50% позиції закриваємо на 1% профіту
+            if mode == "Fixed_1_50":
+                q = self.round_val(qty * 0.5, step)
+                if side == "Buy":
+                    p = self.round_val(ep * 1.01, tick)
+                else:
+                    p = self.round_val(ep * 0.99, tick)
+                
+                if q > 0:
+                    self.session.place_order(
+                        category="linear",
+                        symbol=s,
+                        side=exit_side,
+                        orderType="Limit",
+                        qty=str(q),
+                        price=str(p),
+                        reduceOnly=True
+                    )
+                    logger.info("tp_fixed_set", symbol=s, price=p, qty=q)
+
+            # 3. Режим Ladder_3: Драбинка на 3 рівні
+            elif mode == "Ladder_3":
+                # Базовий TP з налаштувань (наприклад, 3%)
+                base_tp = float(d.get('takeProfitPercent', settings.get('fixedTP', 3.0))) / 100
+                q_step = self.round_val(qty * 0.33, step)
+                
+                # Рівні: 1/3 від цілі, 2/3 від цілі, повна ціль
+                multipliers = [1/3, 2/3, 1.0]
+                
+                for i, mult in enumerate(multipliers):
+                    pct = base_tp * mult
+                    if side == "Buy":
+                        p = self.round_val(ep * (1 + pct), tick)
+                    else:
+                        p = self.round_val(ep * (1 - pct), tick)
+                    
+                    # Для останнього ордера беремо залишок
+                    if i == 2:
+                        current_q = self.round_val(qty - q_step * 2, step)
+                    else:
+                        current_q = q_step
+                    
+                    if current_q > 0:
+                        self.session.place_order(
+                            category="linear",
+                            symbol=s,
+                            side=exit_side,
+                            orderType="Limit",
+                            qty=str(current_q),
+                            price=str(p),
+                            reduceOnly=True
+                        )
+                        logger.info(f"tp_ladder_{i+1}_set", symbol=s, price=p, qty=current_q)
+
+        except Exception as e:
+            logger.error("tp_set_error", symbol=s, error=str(e))
+
     def normalize(self, s):
         """Нормалізує символ (видаляє '.P')"""
         return s.replace('.P', '')
