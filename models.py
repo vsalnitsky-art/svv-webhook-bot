@@ -67,6 +67,7 @@ class WhaleSignal(Base):
     score = Column(Integer)
     squeeze_val = Column(Float)
     obv_slope = Column(Float)
+    rsi = Column(Float, default=0)  # ✅ RSI значення
     details = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default='NEW')
