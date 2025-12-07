@@ -39,7 +39,7 @@ DEFAULT_SETTINGS = {
 
     # === SMART EXIT & TRAILING ===
     "exit_enableStrategy": False,  # Світч для RSI-based exit стратегії
-    "exit_ltf": "45",              # ✨ НОВЕ: LTF для розрахунків виходу (за замовчуванням 45хв)
+    "exit_ltf": "60",              # LTF для розрахунків виходу (60хв = стандарт Bybit)
     
     "trailing_enabled": True,       # Головний тумблер трейлінгу
     "trailing_rsi_activation": 65,  # RSI, при якому вмикається трейлінг
