@@ -128,6 +128,11 @@ class BybitTradingBot:
                 for t in r['result']['list']:
                     try:
                         side = 'Long' if t['side'] == 'Buy' else 'Short'
+                        # ✨ ЗБИРАЄМО КОМІСІЇ З API
+                        opening_fee = safe_float(t.get('openingFee', 0))
+                        closing_fee = safe_float(t.get('closingFee', 0))
+                        funding_fee = safe_float(t.get('fundingFee', 0))
+                        
                         stats_service.save_trade({
                             'order_id': t['orderId'],
                             'symbol': t['symbol'],
@@ -137,7 +142,10 @@ class BybitTradingBot:
                             'exit_price': safe_float(t['avgExitPrice']),
                             'pnl': safe_float(t['closedPnl']),
                             'exit_time': datetime.fromtimestamp(int(t['updatedTime']) / 1000),
-                            'exit_reason': 'Synced'
+                            'exit_reason': 'Synced',
+                            'opening_fee': opening_fee,
+                            'closing_fee': closing_fee,
+                            'funding_fee': funding_fee
                         })
                         synced_count += 1
                     except Exception as e:

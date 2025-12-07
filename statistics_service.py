@@ -16,7 +16,11 @@ class StatisticsService:
                       qty=d.get('qty',0), entry_price=d.get('entry_price',0), 
                       exit_price=d.get('exit_price',0), pnl=d.get('pnl',0), 
                       is_win=d.get('pnl',0)>0, exit_time=d.get('exit_time'), 
-                      exit_reason=d.get('exit_reason'))
+                      exit_reason=d.get('exit_reason'),
+                      # ✨ НОВІ ПОЛЯ для комісій
+                      opening_fee=d.get('opening_fee', 0.0),
+                      closing_fee=d.get('closing_fee', 0.0),
+                      funding_fee=d.get('funding_fee', 0.0))
             s.add(t); s.commit()
         except: pass
         finally: s.close()

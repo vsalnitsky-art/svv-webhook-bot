@@ -18,6 +18,8 @@ class Trade(Base):
     side = Column(String(10)) 
     qty = Column(Float); entry_price = Column(Float); exit_price = Column(Float); pnl = Column(Float)
     is_win = Column(Boolean); exit_time = Column(DateTime, default=datetime.utcnow); exit_reason = Column(String(100))
+    # ✨ НОВІ ПОЛЯ для комісій
+    opening_fee = Column(Float, default=0.0); closing_fee = Column(Float, default=0.0); funding_fee = Column(Float, default=0.0)
 
 class TradeMonitorLog(Base):
     __tablename__ = 'trade_monitor_logs'
