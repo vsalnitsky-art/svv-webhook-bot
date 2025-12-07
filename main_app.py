@@ -11,7 +11,7 @@ import ctypes
 import os
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import wraps
 from collections import defaultdict
 
@@ -183,7 +183,7 @@ def error_handler(error):
 def calculate_stats(trades):
     """
     Розраховує детальну статистику торгів
-    Повертає словник зі статистикою та рейтингом контрактів (Long/Short окремо)
+    Повертає словник зі статистикою та рейтингом контрактів
     """
     if not trades:
         return {
@@ -192,7 +192,7 @@ def calculate_stats(trades):
             'total_volume': 0, 'avg_trade_size': 0,
             'best_trade': 0, 'worst_trade': 0,
             'consecutive_wins': 0, 'consecutive_losses': 0,
-            'long_stats': [], 'short_stats': []
+            'contract_stats': []
         }
     
     total = len(trades)
@@ -227,37 +227,30 @@ def calculate_stats(trades):
         else:
             curr_losses = 0
     
-    # Статистика по контрактах (Розділяємо Long та Short)
-    long_contract_stats = defaultdict(lambda: {'trades': 0, 'wins': 0, 'pnl': 0, 'volume': 0})
-    short_contract_stats = defaultdict(lambda: {'trades': 0, 'wins': 0, 'pnl': 0, 'volume': 0})
+    # Статистика по контрактах
+    contract_stats = defaultdict(lambda: {'trades': 0, 'wins': 0, 'pnl': 0, 'volume': 0})
     
     for t in trades:
         symbol = t.get('symbol', 'Unknown')
-        side = t.get('side', 'Unknown')
-        pnl = t.get('pnl', 0)
-        
-        target_dict = long_contract_stats if side == 'Long' else short_contract_stats
-        
-        target_dict[symbol]['trades'] += 1
-        if pnl > 0:
-            target_dict[symbol]['wins'] += 1
-        target_dict[symbol]['pnl'] += pnl
-        target_dict[symbol]['volume'] += t.get('qty', 0)
+        contract_stats[symbol]['trades'] += 1
+        if t.get('pnl', 0) > 0:
+            contract_stats[symbol]['wins'] += 1
+        contract_stats[symbol]['pnl'] += t.get('pnl', 0)
+        contract_stats[symbol]['volume'] += t.get('qty', 0)
     
-    def process_stats_dict(stats_dict):
-        """Helper для обробки та сортування статистики"""
-        for symbol in stats_dict:
-            stats = stats_dict[symbol]
-            stats['win_rate'] = round(stats['wins'] / stats['trades'] * 100 if stats['trades'] > 0 else 0, 1)
-            stats['avg_pnl'] = round(stats['pnl'] / stats['trades'] if stats['trades'] > 0 else 0, 2)
-        
-        # Сортуємо по P&L (спадаючи) - топ 5
-        return sorted(
-            stats_dict.items(),
-            key=lambda x: x[1]['pnl'],
-            reverse=True
-        )[:5]
-
+    # Додати win_rate для кожного контракту
+    for symbol in contract_stats:
+        stats = contract_stats[symbol]
+        stats['win_rate'] = round(stats['wins'] / stats['trades'] * 100 if stats['trades'] > 0 else 0, 1)
+        stats['avg_pnl'] = round(stats['pnl'] / stats['trades'] if stats['trades'] > 0 else 0, 2)
+    
+    # Сортувати по P&L (спадаючи) - топ 10
+    sorted_contracts = sorted(
+        contract_stats.items(),
+        key=lambda x: x[1]['pnl'],
+        reverse=True
+    )[:10]
+    
     return {
         'total_trades': total,
         'win_trades': wins,
@@ -271,8 +264,7 @@ def calculate_stats(trades):
         'worst_trade': round(worst, 2),
         'consecutive_wins': wins_streak,
         'consecutive_losses': losses_streak,
-        'long_stats': process_stats_dict(long_contract_stats),
-        'short_stats': process_stats_dict(short_contract_stats)
+        'contract_stats': sorted_contracts
     }
 
 # ===== API МАРШУТИ =====
@@ -392,32 +384,6 @@ def index_page():
     longs = sum(1 for t in trades if t.get('side') == 'Long')
     shorts = sum(1 for t in trades if t.get('side') == 'Short')
     
-    # === ПІДГОТОВКА ДАНИХ ДЛЯ ГРАФІКА ===
-    daily_pnl = defaultdict(float)
-    # Заповнюємо дати для "порожніх" днів, щоб графік був неперервним
-    start_date = datetime.utcnow() - timedelta(days=days_param)
-    for i in range(days_param + 1):
-        d = (start_date + timedelta(days=i)).strftime('%Y-%m-%d')
-        daily_pnl[d] = 0.0
-
-    for t in trades:
-        # Припускаємо, що exit_time - це рядок або datetime
-        et = t.get('exit_time')
-        if isinstance(et, str):
-            # Спроба розпарсити якщо рядок
-            try: et = datetime.strptime(et, '%d.%m %H:%M').replace(year=datetime.now().year)
-            except: continue
-        
-        if et:
-            d_str = et.strftime('%Y-%m-%d')
-            if d_str in daily_pnl:
-                daily_pnl[d_str] += float(t.get('pnl', 0))
-    
-    # Сортуємо дати
-    sorted_dates = sorted(daily_pnl.keys())
-    daily_labels = [d[5:] for d in sorted_dates] # Беремо лише MM-DD для підпису
-    daily_values = [round(daily_pnl[d], 2) for d in sorted_dates]
-    
     return render_template('index.html',
                           date=datetime.utcnow().strftime('%d %b %Y'),
                           balance=balance,
@@ -428,8 +394,6 @@ def index_page():
                           days=days_param,
                           trades=trades[:15] if trades else [],
                           stats=stats,
-                          daily_labels=daily_labels,
-                          daily_values=daily_values,
                           conf=settings._cache)
 
 @app.route('/scanner', methods=['GET'])
