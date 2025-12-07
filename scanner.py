@@ -133,12 +133,12 @@ class EnhancedMarketScanner:
         if not active_pos: return
 
         # === НАЛАШТОВАНІ ПАРАМЕТРИ ===
-        exit_tf = settings.get("exit_ltf", "45")         # ✨ НОВЕ: LTF для розрахунків
+        exit_tf = settings.get("exit_ltf", "60")         # LTF для розрахунків (60хв = стандарт)
         trailing_on = settings.get("trailing_enabled", False)
         trailing_trigger_rsi = float(settings.get("trailing_rsi_activation", 65))
         atr_len = int(settings.get("trailing_atr_length", 14))
-        atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))  # ✨ НАЛАШТОВУЄТЬСЯ
-        trailing_delay = float(settings.get("trailing_activation_delay", 5))  # ✨ Затримка (хв)
+        atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))
+        trailing_delay = float(settings.get("trailing_activation_delay", 5))
 
         for p in active_pos:
             s = p['symbol']
@@ -161,21 +161,21 @@ class EnhancedMarketScanner:
                     'exit_status': 'Safe', 
                     'exit_details': '-', 
                     'trailing_active': False,
-                    'entry_sl': float(p.get('stopLoss', 0)),       # ✨ Початковий SL
-                    'position_time': int(p.get('createdTime', 0))  # ✨ Час відкриття
+                    'entry_sl': float(p.get('stopLoss', 0)),
+                    'position_time': int(p.get('createdTime', 0))
                 }
 
-            # 1. Fetch Data з ПРАВИЛЬНОЮ ПРИВ'ЯЗКОЮ ✅
+            # 1. Fetch Data
             df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
             
-            if df is not None and len(df) >= 20:  # ✨ Знизили вимогу з 64 на 20 свічок
-                # 2. Calc Indicators (ПРОФЕСІЙНІ МЕТОД Wilder's!)
-                # ✅ ВАЖЛИВО: На ПРАВИЛЬНИХ свічках з КЛАСИЧНИМ Wilder's методом
-                # ✅ Результат = ТОЧНО як у TradingView та Bybit!
+            # ✅ ВИПРАВЛЕННЯ: Знижена вимога до 15 свічок (мінімум для RSI 14)
+            if df is not None and len(df) >= 15:
+                # 2. Calc Indicators (Wilder's Method)
                 rsi_val = simple_rsi(df['close'], period=14)
                 atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
                 
-                self.data[s]['rsi'] = int(round(rsi_val))  # ✨ Округляємо до цілого числа
+                # ✅ RSI записується ЗАВЖДИ коли є дані
+                self.data[s]['rsi'] = int(round(rsi_val))
 
                 status = "Safe"
                 details = f"RSI: {round(rsi_val, 1)}"
@@ -188,25 +188,24 @@ class EnhancedMarketScanner:
                     if not is_active:
                         # ✨ ПЕРЕВІРКА 1: Затримка після входу
                         pos_time = self.data[s].get('position_time', 0)
+                        skip_trailing = False
                         if pos_time > 0:
                             age_minutes = (time.time() * 1000 - pos_time) / 60000
                             if age_minutes < trailing_delay:
                                 # Позиція ще молода - не активуємо trailing
-                                status = "Safe"
                                 details = f"RSI: {round(rsi_val, 1)} | Wait {int(trailing_delay - age_minutes)}m"
-                                self.data[s]['exit_status'] = status
-                                self.data[s]['exit_details'] = details
-                                continue  # Пропускаємо цю позицію
+                                skip_trailing = True
                         
                         # RSI перевірка (після затримки)
-                        if side == "Buy" and rsi_val >= trailing_trigger_rsi:
-                            self.data[s]['trailing_active'] = True
-                            is_active = True
-                            logger.info(f"🪤 ATR Trailing ACTIVATED for {s} (Long). RSI: {rsi_val}")
-                        elif side == "Sell" and rsi_val <= (100 - trailing_trigger_rsi):
-                            self.data[s]['trailing_active'] = True
-                            is_active = True
-                            logger.info(f"🪤 ATR Trailing ACTIVATED for {s} (Short). RSI: {rsi_val}")
+                        if not skip_trailing:
+                            if side == "Buy" and rsi_val >= trailing_trigger_rsi:
+                                self.data[s]['trailing_active'] = True
+                                is_active = True
+                                logger.info(f"🪤 ATR Trailing ACTIVATED for {s} (Long). RSI: {rsi_val}")
+                            elif side == "Sell" and rsi_val <= (100 - trailing_trigger_rsi):
+                                self.data[s]['trailing_active'] = True
+                                is_active = True
+                                logger.info(f"🪤 ATR Trailing ACTIVATED for {s} (Short). RSI: {rsi_val}")
 
                     # B. Розрахунок та Оновлення Стопу
                     if is_active:
@@ -215,26 +214,20 @@ class EnhancedMarketScanner:
                         
                         new_sl = 0.0
                         should_update = False
-                        entry_sl = self.data[s].get('entry_sl', 0)  # ✨ Початковий SL
+                        entry_sl = self.data[s].get('entry_sl', 0)
 
                         if side == "Buy":
-                            # Long: SL = Price - (ATR * Mult)
                             calc_sl = last_price - (atr_val * atr_mult)
-                            # ✨ ПЕРЕВІРКА 2: Не гірше entry SL
                             if entry_sl > 0:
                                 calc_sl = max(calc_sl, entry_sl)
-                            # Рухаємо ТІЛЬКИ вгору
                             if calc_sl > current_sl:
                                 new_sl = calc_sl
                                 should_update = True
 
                         elif side == "Sell":
-                            # Short: SL = Price + (ATR * Mult)
                             calc_sl = last_price + (atr_val * atr_mult)
-                            # ✨ ПЕРЕВІРКА 2: Не гірше entry SL
                             if entry_sl > 0:
                                 calc_sl = min(calc_sl, entry_sl)
-                            # Рухаємо ТІЛЬКИ вниз (зменшуємо значення для шорта)
                             if current_sl == 0 or calc_sl < current_sl:
                                 new_sl = calc_sl
                                 should_update = True
@@ -257,8 +250,14 @@ class EnhancedMarketScanner:
                         status = "Warning"
                         details += " (Low)"
                 
+                # ✅ Статус оновлюється ЗАВЖДИ
                 self.data[s]['exit_status'] = status
                 self.data[s]['exit_details'] = details
+            
+            else:
+                # ✅ ВИПРАВЛЕННЯ: Якщо немає даних - логуємо і ставимо статус
+                self.data[s]['exit_status'] = 'No Data'
+                self.data[s]['exit_details'] = 'Waiting...'
             
             # Невеликий сліп між монетами
             time.sleep(0.2)
