@@ -369,7 +369,13 @@ class BybitTradingBot:
                 logger.warning("no_stop_loss", symbol=symbol, message="Trade is unprotected!")
             
             # === Take Profit (виклик методу _tp) ===
-            self._tp(symbol, action, price, qty, data, tick_size, qty_step)
+            use_tp = settings.get("use_tp", False)
+            tp_mode = settings.get("tp_mode", "Fixed_1_50")
+            
+            if use_tp and tp_mode != "None":
+                self._tp(symbol, action, price, qty, data, tick_size, qty_step)
+            else:
+                logger.info("tp_disabled_by_settings", symbol=symbol, use_tp=use_tp, tp_mode=tp_mode)
             
             logger.info("order_success", symbol=symbol, action=action, qty=qty)
             return {"status": "ok", "qty": qty, "price": price, "leverage": lev}
