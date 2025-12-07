@@ -11,63 +11,48 @@ import numpy as np
 
 def simple_rsi(close_prices, period=14):
     """
-    🎯 ПРОФЕСІЙНИЙ РОЗРАХУНОК RSI - 100% СУМІСНИЙ З TRADINGVIEW
+    🎯 RSI 100% ІДЕНТИЧНИЙ TRADINGVIEW / pandas_ta
     
-    Використовує КЛАСИЧНИЙ метод Wilder's Smoothing:
-    1. Перший період: просте середнє
-    2. Інші періоди: експоненціальне згладжування
+    Використовує ewm (Exponential Weighted Mean) з:
+    - com = period - 1 (center of mass)
+    - adjust = False (Wilder's smoothing)
+    - min_periods = period
     
-    Це дає ТОЧНО такі ж результати, як TradingView та біржи.
+    Це дає ТОЧНО такі ж результати як TradingView та pandas_ta.
     """
     try:
-        # Переконаємося, що це Series
+        # Конвертуємо в Series
         if not isinstance(close_prices, pd.Series):
-            close_prices = pd.Series(close_prices).reset_index(drop=True)
-        else:
-            close_prices = close_prices.reset_index(drop=True)
-            
+            close_prices = pd.Series(close_prices)
+        
+        close_prices = close_prices.reset_index(drop=True)
+        
         if len(close_prices) < period + 1:
             return 50.0
         
-        # Розрахунок різниці цін (changeover)
-        deltas = close_prices.diff()
+        # Зміни ціни
+        diff = close_prices.diff()
         
-        # Розділяємо на приріст (gains) та падіння (losses)
-        gains = deltas.where(deltas > 0, 0.0)
-        losses = -deltas.where(deltas < 0, 0.0)
+        # Gains та Losses
+        gain = diff.clip(lower=0)
+        loss = (-diff).clip(lower=0)
         
-        # === WILDER'S METHOD (як у TradingView) ===
-        # Перший період (індекс = period): просте середнє
-        first_avg_gain = gains.iloc[1:period+1].mean()
-        first_avg_loss = losses.iloc[1:period+1].mean()
+        # Wilder's Smoothing через ewm
+        # com = period - 1 дає alpha = 1/period (Wilder's formula)
+        avg_gain = gain.ewm(com=period-1, min_periods=period, adjust=False).mean()
+        avg_loss = loss.ewm(com=period-1, min_periods=period, adjust=False).mean()
         
-        # Якщо нема покупельців або продавців на старті
-        if first_avg_loss == 0 and first_avg_gain == 0:
+        # RSI
+        rs = avg_gain / avg_loss
+        rsi = 100.0 - (100.0 / (1.0 + rs))
+        
+        # Повертаємо останнє значення
+        last_rsi = rsi.iloc[-1]
+        
+        if pd.isna(last_rsi):
             return 50.0
-        if first_avg_loss == 0:
-            return 100.0
-        
-        # Розрахунок RSI послідовно для кожного періоду
-        rsi_values = []
-        avg_gain = first_avg_gain
-        avg_loss = first_avg_loss
-        
-        for i in range(period, len(close_prices)):
-            # Wilder's Smoothing Formula:
-            # New Avg Gain = (Previous Avg Gain * (period - 1) + Current Gain) / period
-            avg_gain = (avg_gain * (period - 1) + gains.iloc[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses.iloc[i]) / period
             
-            # Розрахунок RS та RSI
-            if avg_loss == 0:
-                rsi_value = 100.0 if avg_gain > 0 else 50.0
-            else:
-                rs = avg_gain / avg_loss
-                rsi_value = 100.0 - (100.0 / (1.0 + rs))
-            
-            rsi_values.append(rsi_value)
-        
-        return float(rsi_values[-1]) if rsi_values else 50.0
+        return round(float(last_rsi), 2)
         
     except Exception as e:
         return 50.0
