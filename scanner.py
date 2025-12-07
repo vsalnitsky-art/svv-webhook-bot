@@ -161,7 +161,7 @@ class EnhancedMarketScanner:
                 rsi_val = simple_rsi(df['close'], period=14)
                 atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
                 
-                self.data[s]['rsi'] = round(rsi_val, 1)
+                self.data[s]['rsi'] = int(round(rsi_val))  # ✨ Округляємо до цілого числа
 
                 status = "Safe"
                 details = f"RSI: {round(rsi_val, 1)}"

@@ -407,6 +407,22 @@ def scanner_page():
                 if float(p.get('size', 0)) > 0:
                     symbol = p['symbol']
                     coin_data = scanner.get_coin_data(symbol)
+                    
+                    # ✨ ФОРМАТУВАННЯ ЧИСЕЛ
+                    size = float(p.get('size', 0))
+                    entry = float(p.get('avgPrice', 0))
+                    
+                    # Визначаємо скільки знаків для ціни (залежить від вартості)
+                    if entry >= 1000:
+                        entry_rounded = round(entry, 1)
+                    elif entry >= 1:
+                        entry_rounded = round(entry, 2)
+                    else:
+                        entry_rounded = round(entry, 6)
+                    
+                    # Обсяг - максимум 3 знаки після коми
+                    size_rounded = round(size, 3) if size < 100 else round(size, 2)
+                    
                     active.append({
                         'symbol': symbol,
                         'side': p['side'],
@@ -415,8 +431,8 @@ def scanner_page():
                         'exit_status': coin_data.get('exit_status', 'Safe'),
                         'exit_details': coin_data.get('exit_details', '-'),
                         'pressure': round(scanner.get_market_pressure(symbol), 1),
-                        'size': p.get('size', 0),
-                        'entry': p.get('avgPrice', 0),
+                        'size': size_rounded,
+                        'entry': entry_rounded,
                         'time': datetime.now().strftime('%H:%M')
                     })
     except Exception as e:
