@@ -1,462 +1,265 @@
 {% extends "base.html" %}
 
-{% block title %}🐋 Whale Hunter Strategy | AlgoBot{% endblock %}
+{% block title %}Whale Hunter Strategy{% endblock %}
 
 {% block content %}
-<div class="container-fluid" style="padding: 20px;">
-
-    <!-- ЗАГОЛОВОК -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h4 class="fw-bold text-dark mb-1">🐋 Whale Hunter Scanner</h4>
-            <p class="text-muted small m-0">Стратегія пошуку аномалій: Squeeze + Divergence + Ichimoku</p>
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0e27;
+            color: #e0e0e0;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .panel {
+            background: #1a1f3a;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #2a3550;
+            margin-bottom: 20px;
+        }
+        .panel h2 { margin-bottom: 15px; color: #4a9eff; }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        input, select {
+            padding: 10px;
+            background: #0f1428;
+            color: #e0e0e0;
+            border: 1px solid #2a3550;
+            border-radius: 4px;
+        }
+        button {
+            padding: 12px 24px;
+            background: #4a9eff;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        button:hover { background: #3a8eef; }
+        button:active { transform: scale(0.98); }
+        .status-box {
+            background: #0f1428;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            border-left: 4px solid #4a9eff;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            background: #0f1428;
+            padding: 12px;
+            text-align: left;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #888;
+            border: 1px solid #2a3550;
+        }
+        td {
+            padding: 10px 12px;
+            border: 1px solid #2a3550;
+        }
+        tr:hover { background: #242c48; }
+        .profit { color: #26d07c; }
+        .loss { color: #f23645; }
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #2a3550;
+            border-top: 2px solid #4a9eff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .loading { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="panel">
+            <h2>⚙️ Scanner Settings</h2>
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label>Timeframe</label>
+                    <select id="timeframe">
+                        <option value="15m">15 minutes</option>
+                        <option value="1h" selected>1 hour</option>
+                        <option value="4h">4 hours</option>
+                        <option value="1d">1 day</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Min Volume (USDT)</label>
+                    <input type="number" id="minVolume" value="5000000">
+                </div>
+                <div class="form-group">
+                    <label>Scan Interval (sec)</label>
+                    <input type="number" id="interval" value="300" readonly>
+                </div>
+            </div>
+            <button onclick="scanNow()">
+                <span id="btnText">🔍 Scan Now</span>
+                <span id="spinner" class="spinner loading"></span>
+            </button>
         </div>
-        <div>
-            <span class="badge bg-success" id="status-badge">● Готово</span>
+
+        <div class="panel">
+            <h2>📊 Scanner Status</h2>
+            <div class="status-box">
+                <p>Status: <strong id="status">Running</strong></p>
+                <p>Active Signals: <strong id="signals">0</strong></p>
+                <p>Last Scan: <strong id="lastScan">Never</strong></p>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>🐋 Active Signals</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>Entry</th>
+                        <th>S/L</th>
+                        <th>T/P</th>
+                        <th>R:R</th>
+                        <th>Trend</th>
+                        <th>Conf</th>
+                    </tr>
+                </thead>
+                <tbody id="signalsTable">
+                    <tr>
+                        <td colspan="8" style="text-align: center; color: #888;">No signals yet</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="panel">
+            <h2>📈 Recent Signals</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Symbol</th>
+                        <th>Entry</th>
+                        <th>T/P</th>
+                        <th>S/L</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTable">
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: #888;">No history</td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
-    <!-- GRID LAYOUT -->
-    <div class="row g-3">
-
-        <!-- ========== ЛІВА КОЛОНА: НАЛАШТУВАННЯ ========== -->
-        <div class="col-lg-3">
+    <script>
+        async function scanNow() {
+            const btn = document.querySelector('button');
+            const spinner = document.getElementById('spinner');
+            const btnText = document.getElementById('btnText');
             
-            <!-- НАЛАШТУВАННЯ СКАНЕРА -->
-            <div class="card border-0 shadow-sm mb-3">
-                <div class="card-header bg-light border-bottom-0">
-                    <h6 class="mb-0 fw-bold">⚙️ Налаштування</h6>
-                </div>
-                <div class="card-body">
-                    
-                    <!-- Timeframe -->
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Таймфрейм</label>
-                        <select id="timeframe-select" class="form-select form-select-sm">
-                            <option value="15m">15 хвилин (скальпінг)</option>
-                            <option value="1h" selected>1 година (оптимальний)</option>
-                            <option value="4h">4 години (надійний)</option>
-                            <option value="1d">1 день (довгостроковий)</option>
-                        </select>
-                    </div>
+            btn.disabled = true;
+            spinner.style.display = 'inline-block';
+            btnText.textContent = 'Scanning...';
 
-                    <!-- Min Volume -->
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Мін. обсяг (USDT)</label>
-                        <input type="number" id="min-volume-input" value="5000000" class="form-control form-control-sm">
-                        <small class="text-muted">Мінімальний добовий об'єм</small>
-                    </div>
+            try {
+                const response = await fetch('/api/whale_hunter/scan', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    await loadSignals();
+                    alert(`✅ Found ${data.signals_found} signals!`);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('❌ Scan failed: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                spinner.style.display = 'none';
+                btnText.textContent = '🔍 Scan Now';
+            }
+        }
 
-                    <!-- Scan Interval -->
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Інтервал сканування</label>
-                        <select id="scan-interval-select" class="form-select form-select-sm">
-                            <option value="60">Кожну хвилину</option>
-                            <option value="300" selected>Кожні 5 хвилин</option>
-                            <option value="900">Кожні 15 хвилин</option>
-                            <option value="3600">Кожну годину</option>
-                        </select>
-                    </div>
-
-                    <!-- Кнопки -->
-                    <div class="d-grid gap-2">
-                        <button class="btn btn-primary btn-sm fw-bold" id="scan-now-btn">
-                            <i class="ri-search-line"></i> Сканувати Зараз
-                        </button>
-                        <button class="btn btn-outline-secondary btn-sm" id="save-settings-btn">
-                            Зберегти
-                        </button>
-                    </div>
-
-                </div>
-            </div>
-
-            <!-- СТАТИСТИКА -->
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-light border-bottom-0">
-                    <h6 class="mb-0 fw-bold">📊 Статистика</h6>
-                </div>
-                <div class="card-body">
-                    
-                    <div class="mb-3">
-                        <small class="text-muted d-block">Активних сигналів</small>
-                        <h4 class="mb-0" id="active-signals-count">0</h4>
-                    </div>
-
-                    <div class="mb-3">
-                        <small class="text-muted d-block">Всього в історії</small>
-                        <h4 class="mb-0" id="total-signals-count">0</h4>
-                    </div>
-
-                    <div>
-                        <small class="text-muted d-block">Останнє сканування</small>
-                        <small class="text-success fw-bold" id="last-scan-time">Ніколи</small>
-                    </div>
-
-                </div>
-            </div>
-
-        </div>
-
-        <!-- ========== ПРАВА КОЛОНА: СИГНАЛИ ========== -->
-        <div class="col-lg-9">
-
-            <!-- ТАБЛИЦЯ СИГНАЛІВ -->
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                    <h6 class="mb-0 fw-bold">🎯 Активні сигнали</h6>
-                    <small class="text-muted">
-                        <span id="scan-progress">Готово</span>
-                    </small>
-                </div>
-                <div class="card-body p-0">
-                    
-                    <!-- СКРОЛЮЧА ТАБЛИЦЯ -->
-                    <div style="overflow-x: auto;">
-                        <table class="table table-hover mb-0" id="signals-table">
-                            <thead style="background: #f8fafc; position: sticky; top: 0;">
-                                <tr>
-                                    <th style="width: 80px;">Пара</th>
-                                    <th style="width: 90px;">Ціна</th>
-                                    <th style="width: 90px;">Entry</th>
-                                    <th style="width: 90px;">S/L</th>
-                                    <th style="width: 90px;">T/P</th>
-                                    <th style="width: 70px;">R:R</th>
-                                    <th style="width: 80px;">Trend</th>
-                                    <th style="width: 70px;">Conf.</th>
-                                    <th style="width: 100px;">Дія</th>
-                                </tr>
-                            </thead>
-                            <tbody id="signals-tbody">
-                                <tr>
-                                    <td colspan="9" class="text-center text-muted py-4">
-                                        <i class="ri-search-line"></i> Сигналів не знайдено. Натисніть "Сканувати Зараз"
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                </div>
-            </div>
-
-            <!-- ДЕТАЛЬНА ІНФОРМАЦІЯ ПРО СИГНАЛ -->
-            <div class="card border-0 shadow-sm mt-3" id="signal-details-card" style="display: none;">
-                <div class="card-header bg-light">
-                    <h6 class="mb-0 fw-bold" id="details-title">Деталі сигналу</h6>
-                </div>
-                <div class="card-body">
-                    <div class="row">
-                        <div class="col-md-6">
-                            <p><strong>Таймфрейм:</strong> <span id="details-tf">-</span></p>
-                            <p><strong>Статус тренду:</strong> <span id="details-trend">-</span></p>
-                            <p><strong>ADX:</strong> <span id="details-adx">-</span></p>
-                        </div>
-                        <div class="col-md-6">
-                            <p><strong>BB Width:</strong> <span id="details-bb-width">-</span></p>
-                            <p><strong>Сигнали:</strong></p>
-                            <div id="details-signals" style="font-size: 12px;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-        </div>
-
-    </div>
-
-    <!-- ІСТОРІЯ СИГНАЛІВ -->
-    <div class="card border-0 shadow-sm mt-4">
-        <div class="card-header bg-light">
-            <h6 class="mb-0 fw-bold">📜 Історія сигналів (останні 20)</h6>
-        </div>
-        <div class="card-body p-0">
-            <div style="max-height: 300px; overflow-y: auto;">
-                <table class="table table-sm mb-0">
-                    <thead style="background: #f8fafc;">
+        async function loadSignals() {
+            try {
+                const response = await fetch('/api/whale_hunter/signals');
+                const data = await response.json();
+                
+                const table = document.getElementById('signalsTable');
+                if (data.signals && data.signals.length > 0) {
+                    table.innerHTML = data.signals.map(s => `
                         <tr>
-                            <th>Час</th>
-                            <th>Пара</th>
-                            <th>Entry</th>
-                            <th>R:R</th>
-                            <th>Trend</th>
+                            <td>${s.symbol}</td>
+                            <td>$${s.price.toFixed(2)}</td>
+                            <td>$${s.entry.toFixed(2)}</td>
+                            <td>$${s.stop_loss.toFixed(2)}</td>
+                            <td>$${s.take_profit.toFixed(2)}</td>
+                            <td>${s.rr_ratio.toFixed(2)}</td>
+                            <td>${s.trend}</td>
+                            <td>${s.confidence}%</td>
                         </tr>
-                    </thead>
-                    <tbody id="history-tbody">
-                        <tr>
-                            <td colspan="5" class="text-center text-muted">Історія пуста</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+                    `).join('');
+                    document.getElementById('signals').textContent = data.signals.length;
+                }
+            } catch (error) {
+                console.error('Error loading signals:', error);
+            }
+        }
 
-</div>
+        async function loadStatus() {
+            try {
+                const response = await fetch('/api/whale_hunter/status');
+                const data = await response.json();
+                document.getElementById('status').textContent = data.status;
+                document.getElementById('signals').textContent = data.active_signals || 0;
+            } catch (error) {
+                console.error('Error loading status:', error);
+            }
+        }
 
-<!-- ========== JAVASCRIPT ========== -->
-<script>
-const API_BASE = '/api/whale_hunter';
-let autoScanInterval = null;
-
-// ============================================================================
-// ІНІЦІАЛІЗАЦІЯ
-// ============================================================================
-
-document.addEventListener('DOMContentLoaded', function() {
-    loadStatus();
-    loadSignals();
-    loadHistory();
-    setupAutoScan();
-});
-
-// ============================================================================
-// ФУНКЦІЇ API
-// ============================================================================
-
-async function scanNow() {
-    try {
-        updateProgress('Сканування...');
-        document.getElementById('scan-now-btn').disabled = true;
+        // Load on page open
+        loadStatus();
+        loadSignals();
         
-        const response = await fetch(`${API_BASE}/scan`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'}
-        });
-        
-        const data = await response.json();
-        
-        if (data.status === 'success') {
-            displaySignals(data.signals);
+        // Refresh every 10 seconds
+        setInterval(() => {
             loadStatus();
-            showNotification(`Знайдено ${data.signals_found} сигналів`, 'success');
-        } else {
-            showNotification('Помилка сканування', 'error');
-        }
-    } catch (error) {
-        console.error('Scan error:', error);
-        showNotification('Помилка сканування: ' + error.message, 'error');
-    } finally {
-        updateProgress('Готово');
-        document.getElementById('scan-now-btn').disabled = false;
-    }
-}
-
-async function loadSignals() {
-    try {
-        const response = await fetch(`${API_BASE}/signals`);
-        const data = await response.json();
-        
-        if (data.status === 'success') {
-            displaySignals(data.signals);
-            document.getElementById('active-signals-count').textContent = data.count;
-        }
-    } catch (error) {
-        console.error('Load signals error:', error);
-    }
-}
-
-async function loadHistory() {
-    try {
-        const response = await fetch(`${API_BASE}/history?limit=20`);
-        const data = await response.json();
-        
-        if (data.status === 'success') {
-            displayHistory(data.history);
-            document.getElementById('total-signals-count').textContent = data.count;
-        }
-    } catch (error) {
-        console.error('Load history error:', error);
-    }
-}
-
-async function loadStatus() {
-    try {
-        const response = await fetch(`${API_BASE}/status`);
-        const data = await response.json();
-        
-        document.getElementById('status-badge').innerHTML = 
-            data.status === 'running' ? '● Активний' : '● Чекає';
-        
-        if (data.last_scan) {
-            document.getElementById('last-scan-time').textContent = 
-                new Date(data.last_scan).toLocaleTimeString('uk-UA');
-        }
-    } catch (error) {
-        console.error('Status error:', error);
-    }
-}
-
-// ============================================================================
-// ВІДОБРАЖЕННЯ СИГНАЛІВ
-// ============================================================================
-
-function displaySignals(signals) {
-    const tbody = document.getElementById('signals-tbody');
-    
-    if (!signals || signals.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="9" class="text-center text-muted py-4">
-                    <i class="ri-inbox-line"></i> Сигналів не знайдено
-                </td>
-            </tr>
-        `;
-        return;
-    }
-    
-    tbody.innerHTML = signals.map((signal, idx) => `
-        <tr style="cursor: pointer;" onclick="showDetails(${idx})">
-            <td>
-                <strong>${signal.symbol}</strong>
-            </td>
-            <td>
-                <code>${signal.price}</code>
-            </td>
-            <td>
-                <strong>${signal.entry}</strong>
-            </td>
-            <td>
-                <code>${signal.stop_loss}</code>
-            </td>
-            <td>
-                <code>${signal.take_profit}</code>
-            </td>
-            <td>
-                <span class="badge bg-success">${signal.rr_ratio}:1</span>
-            </td>
-            <td>
-                <span class="badge ${signal.trend === 'UPTREND' ? 'bg-success' : signal.trend === 'DOWNTREND' ? 'bg-danger' : 'bg-warning'}">
-                    ${signal.trend}
-                </span>
-            </td>
-            <td>
-                <span class="badge bg-info">${signal.confidence}%</span>
-            </td>
-            <td>
-                <button class="btn btn-sm btn-primary" onclick="tradePair('${signal.symbol}', event)">
-                    Торгувати
-                </button>
-            </td>
-        </tr>
-    `).join('');
-}
-
-function displayHistory(signals) {
-    const tbody = document.getElementById('history-tbody');
-    
-    if (!signals || signals.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="5" class="text-center text-muted">Історія пуста</td>
-            </tr>
-        `;
-        return;
-    }
-    
-    tbody.innerHTML = signals.reverse().map(signal => `
-        <tr>
-            <td><small>${signal.timestamp}</small></td>
-            <td><strong>${signal.symbol}</strong></td>
-            <td>${signal.entry}</td>
-            <td><span class="badge bg-success">${signal.rr_ratio}:1</span></td>
-            <td>
-                <span class="badge ${signal.trend === 'UPTREND' ? 'bg-success' : 'bg-danger'}">
-                    ${signal.trend}
-                </span>
-            </td>
-        </tr>
-    `).join('');
-}
-
-function showDetails(signalIndex) {
-    const tbody = document.getElementById('signals-tbody');
-    const rows = tbody.getElementsByTagName('tr');
-    if (signalIndex < rows.length) {
-        // TODO: Показати детальну інформацію про сигнал
-        console.log('Show details for signal', signalIndex);
-    }
-}
-
-// ============================================================================
-// ОБРОБКА ПОДІЙ
-// ============================================================================
-
-document.getElementById('scan-now-btn').addEventListener('click', scanNow);
-
-document.getElementById('save-settings-btn').addEventListener('click', async function() {
-    try {
-        const timeframe = document.getElementById('timeframe-select').value;
-        const minVolume = parseInt(document.getElementById('min-volume-input').value);
-        
-        const response = await fetch(`${API_BASE}/settings`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                timeframe: timeframe,
-                min_volume: minVolume
-            })
-        });
-        
-        if (response.ok) {
-            showNotification('Налаштування збережені', 'success');
-            loadStatus();
-        }
-    } catch (error) {
-        showNotification('Помилка: ' + error.message, 'error');
-    }
-});
-
-function tradePair(symbol, event) {
-    event.stopPropagation();
-    alert('Торгівля ' + symbol + ' (в розробці)');
-}
-
-function updateProgress(text) {
-    document.getElementById('scan-progress').textContent = text;
-}
-
-function setupAutoScan() {
-    // Автоматичне сканування кожні 5 хвилин
-    setInterval(loadSignals, 300000);
-    setInterval(loadStatus, 60000);
-}
-
-function showNotification(message, type = 'info') {
-    console.log(`[${type.toUpperCase()}] ${message}`);
-    // TODO: Добавити красивие уведомления
-}
-
-// Оновлювати статус кожні 10 сек
-setInterval(() => {
-    loadSignals();
-    loadStatus();
-}, 10000);
-
-</script>
-
-<style>
-    .card {
-        border-radius: 0.5rem;
-        transition: box-shadow 0.3s;
-    }
-    .card:hover {
-        box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15) !important;
-    }
-    
-    #signals-table tr:hover {
-        background-color: #f8f9fa;
-    }
-    
-    .badge {
-        font-size: 10px;
-        padding: 4px 8px;
-    }
-    
-    .btn-sm {
-        padding: 4px 12px;
-        font-size: 12px;
-    }
-</style>
-
+            loadSignals();
+        }, 10000);
+    </script>
+</body>
+</html>
 {% endblock %}
