@@ -133,6 +133,10 @@ class BybitTradingBot:
                         closing_fee = safe_float(t.get('closingFee', 0))
                         funding_fee = safe_float(t.get('fundingFee', 0))
                         
+                        # 🔍 ЛОГУВАННЯ для перевірки
+                        if opening_fee != 0 or closing_fee != 0 or funding_fee != 0:
+                            logger.info(f"📊 Fees for {t['symbol']}: open={opening_fee}, close={closing_fee}, fund={funding_fee}")
+                        
                         stats_service.save_trade({
                             'order_id': t['orderId'],
                             'symbol': t['symbol'],
