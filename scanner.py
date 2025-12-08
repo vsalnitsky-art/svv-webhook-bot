@@ -124,7 +124,6 @@ class EnhancedMarketScanner:
         active_pos = self.get_active()
         active_syms = [p['symbol'] for p in active_pos]
         
-        # Чистка кешу
         for k in list(self.data.keys()):
             if k not in active_syms: 
                 del self.data[k]
@@ -144,8 +143,11 @@ class EnhancedMarketScanner:
 
         for p in active_pos:
             s = p['symbol']
-            side = p['side'] # Buy / Sell
+            side = p['side']
             current_price = float(p['avgPrice']) # Середня ціна входу
+            
+            # ✨ ОТРИМУЄМО positionIdx
+            position_idx = int(p.get('positionIdx', 0))
             
             # Отримуємо поточну ціну (Last Price)
             last_price = 0.0
@@ -178,7 +180,7 @@ class EnhancedMarketScanner:
                     
                     # Якщо ціна вище TP1, а SL все ще гірше за BE (або відсутній)
                     if last_price >= tp1_level and (current_sl == 0 or current_sl < be_level):
-                        if self.bot.update_sl(s, be_level):
+                        if self.bot.update_sl(s, be_level, position_idx=position_idx):
                             logger.info(f"🛡️ Smart Defense: Moving SL to Break-Even (+0.1%) for {s}")
                             be_updated = True
                             
@@ -188,7 +190,7 @@ class EnhancedMarketScanner:
                     
                     # Якщо ціна нижче TP1, а SL все ще гірше за BE
                     if last_price <= tp1_level and (current_sl == 0 or current_sl > be_level):
-                        if self.bot.update_sl(s, be_level):
+                        if self.bot.update_sl(s, be_level, position_idx=position_idx):
                             logger.info(f"🛡️ Smart Defense: Moving SL to Break-Even (+0.1%) for {s}")
                             be_updated = True
                 
@@ -261,7 +263,7 @@ class EnhancedMarketScanner:
                                 should_update = True
 
                         if should_update and new_sl > 0:
-                            success = self.bot.update_sl(s, new_sl)
+                            success = self.bot.update_sl(s, new_sl, position_idx=position_idx)
                             if success:
                                 logger.info(f"⛓️ Trailing SL updated for {s}: {current_sl} -> {new_sl}")
                                 details += " | SL Upd ✅"
