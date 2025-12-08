@@ -39,37 +39,38 @@ class EnhancedMarketScanner:
 
     def fetch_candles(self, symbol, timeframe, limit=50):
         """
-        Отримує свічки для розрахунку RSI - 100% сумісність з TradingView.
+        Завантаження свічок для RSI - 100% сумісність з TradingView.
         
         ✅ КЛЮЧОВІ МОМЕНТИ:
-        1. Порядок: Старі → Нові (хронологічний) - обов'язково для RSI
+        1. Порядок: Старі → Нові (хронологічний)
         2. Виключаємо останню незакриту свічку
-        3. Беремо 200+ свічок для "прогріву" RSI (як TradingView)
+        3. Беремо 200+ свічок для "прогріву" RSI
         4. Правильна прив'язка до сітки часу для 45хв
         """
         try:
-            # Мапинг TF
-            tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','240':'240','D':'D'}
-            req_tf = tf_map.get(str(timeframe), '240')
+            # Мапінг таймфреймів
+            tf_map = {'5':'5','15':'15','30':'30','45':'15','60':'60','120':'120','240':'240','D':'D','W':'W'}
+            req_tf = tf_map.get(str(timeframe), '60')
             
-            # ✅ Беремо 200 свічок для правильного "прогріву" RSI (як TradingView)
+            # ✅ Беремо мінімум 200 свічок для прогріву RSI
             req_limit = max(limit, 200)
             
-            # Якщо потрібен 45хв, беремо в 3 рази більше 15хв свічок
+            # Якщо потрібен 45хв ТФ, нам треба в 3 рази більше свічок 15хв
             if str(timeframe) == '45':
                 req_limit = req_limit * 3
             
+            # Обмежуємо максимум (API Bybit ліміт ~1000)
+            if req_limit > 1000: req_limit = 1000
+            
             r = self.bot.session.get_kline(category="linear", symbol=symbol, interval=req_tf, limit=req_limit)
+            
             if r['retCode'] == 0 and r['result']['list']:
-                df = pd.DataFrame(r['result']['list'], columns=['time','open','high','low','close','volume','turnover'])
+                df = pd.DataFrame(r['result']['list'], columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
                 
                 # Конвертація типів
-                df['close'] = df['close'].astype(float)
-                df['high'] = df['high'].astype(float)
-                df['low'] = df['low'].astype(float)
-                df['open'] = df['open'].astype(float)
-                df['volume'] = df['volume'].astype(float)
-                df['turnover'] = df['turnover'].astype(float)
+                cols = ['open', 'high', 'low', 'close', 'volume', 'turnover']
+                df[cols] = df[cols].astype(float)
+                
                 df['time'] = pd.to_numeric(df['time'])
                 df['datetime'] = pd.to_datetime(df['time'], unit='ms')
                 
@@ -81,7 +82,7 @@ class EnhancedMarketScanner:
                     df.set_index('datetime', inplace=True)
                     
                     df = df.resample(
-                        '45min',
+                        '45min', 
                         origin='start_day',
                         label='left',
                         closed='left'
@@ -102,10 +103,10 @@ class EnhancedMarketScanner:
                 if len(df) > 1:
                     df = df.iloc[:-1].reset_index(drop=True)
                 
-                # ✅ Повертаємо в хронологічному порядку (Старі → Нові)
                 return df
         except Exception as e:
-            logger.error(f"Fetch candles error {symbol} TF={timeframe}: {e}")
+            logger.error(f"Fetch candles error {symbol}: {e}")
+            pass
         return None
 
     def get_coin_data(self, symbol):
@@ -118,9 +119,7 @@ class EnhancedMarketScanner:
 
     def monitor(self):
         """
-        Монітор активних позицій з розрахунком RSI та ATR Trailing.
-        Використовує ПРАВИЛЬНО ПРИВ'ЯЗАНІ свічки = ТОЧНИЙ RSI!
-        Розрахунки на НАЛАШТОВУВАНОМУ робочому таймфреймі (LTF)
+        Монітор активних позицій з розрахунком RSI, ATR Trailing та Break Even Logic.
         """
         active_pos = self.get_active()
         active_syms = [p['symbol'] for p in active_pos]
@@ -139,11 +138,14 @@ class EnhancedMarketScanner:
         atr_len = int(settings.get("trailing_atr_length", 14))
         atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))
         trailing_delay = float(settings.get("trailing_activation_delay", 5))
+        
+        # Перевіряємо режим TP для Break Even логіки
+        tp_mode = settings.get("tp_mode")
 
         for p in active_pos:
             s = p['symbol']
             side = p['side'] # Buy / Sell
-            current_price = float(p['avgPrice'])
+            current_price = float(p['avgPrice']) # Середня ціна входу
             
             # Отримуємо поточну ціну (Last Price)
             last_price = 0.0
@@ -165,22 +167,48 @@ class EnhancedMarketScanner:
                     'position_time': int(p.get('createdTime', 0))
                 }
 
+            # === AUTO BREAK-EVEN LOGIC (Fixed 1/50 Protection) ===
+            # Якщо режим Fixed_1_50: коли ціна досягає TP1 (+1%), тягнемо SL в БУ (+0.1%)
+            if tp_mode == "Fixed_1_50":
+                be_updated = False
+                
+                if side == "Buy":
+                    tp1_level = current_price * 1.01        # +1%
+                    be_level = current_price * 1.001        # +0.1% (Entry + buffer)
+                    
+                    # Якщо ціна вище TP1, а SL все ще гірше за BE (або відсутній)
+                    if last_price >= tp1_level and (current_sl == 0 or current_sl < be_level):
+                        if self.bot.update_sl(s, be_level):
+                            logger.info(f"🛡️ Smart Defense: Moving SL to Break-Even (+0.1%) for {s}")
+                            be_updated = True
+                            
+                elif side == "Sell":
+                    tp1_level = current_price * 0.99        # -1%
+                    be_level = current_price * 0.999        # -0.1% (Entry - buffer)
+                    
+                    # Якщо ціна нижче TP1, а SL все ще гірше за BE
+                    if last_price <= tp1_level and (current_sl == 0 or current_sl > be_level):
+                        if self.bot.update_sl(s, be_level):
+                            logger.info(f"🛡️ Smart Defense: Moving SL to Break-Even (+0.1%) for {s}")
+                            be_updated = True
+                
+                if be_updated:
+                    # Якщо ми щойно оновили БУ, перечитаємо поточний SL для трейлінгу
+                    current_sl = be_level
+
             # 1. Fetch Data
             df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
             
-            # ✅ ВИПРАВЛЕННЯ: Знижена вимога до 15 свічок (мінімум для RSI 14)
             if df is not None and len(df) >= 15:
                 # 2. Calc Indicators (Wilder's Method)
                 rsi_val = simple_rsi(df['close'], period=14)
                 atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
                 
-                # ✅ RSI записується ЗАВЖДИ коли є дані
                 self.data[s]['rsi'] = int(round(rsi_val))
-
                 status = "Safe"
                 details = f"RSI: {round(rsi_val, 1)}"
                 
-                # --- ЛОГІКА ATR TRAILING ---
+                # --- ATR TRAILING LOGIC ---
                 if trailing_on:
                     is_active = self.data[s].get('trailing_active', False)
                     
@@ -250,12 +278,10 @@ class EnhancedMarketScanner:
                         status = "Warning"
                         details += " (Low)"
                 
-                # ✅ Статус оновлюється ЗАВЖДИ
                 self.data[s]['exit_status'] = status
                 self.data[s]['exit_details'] = details
             
             else:
-                # ✅ ВИПРАВЛЕННЯ: Якщо немає даних - логуємо і ставимо статус
                 self.data[s]['exit_status'] = 'No Data'
                 self.data[s]['exit_details'] = 'Waiting...'
             
