@@ -133,8 +133,10 @@ class BybitTradingBot:
                         entry_price = safe_float(t['avgEntryPrice'])
                         exit_price = safe_float(t['avgExitPrice'])
                         
-                        # ✨ РОЗРАХОВУЄМО КОМІСІЇ
-                        TAKER_RATE = 0.000275
+                        # ✨ РОЗРАХОВУЄМО КОМІСІЇ на основі стандартної ставки Bybit
+                        # Bybit USDT-M: 0.0275% maker, 0.075% taker (стандартно)
+                        TAKER_RATE = 0.000275  # 0.0275% за відкриття (в більшості випадків taker)
+                        
                         opening_fee = qty * entry_price * TAKER_RATE
                         closing_fee = qty * exit_price * TAKER_RATE
                         funding_fee = 0.0
@@ -276,7 +278,7 @@ class BybitTradingBot:
             return {"status": "error", "reason": str(e)}
     
     def _handle_open_order(self, symbol: str, data: dict) -> dict:
-        """Відкриває нову позицію"""
+        """Відкриває нову позицію або змінює поточну"""
         try:
             action = data['action']
             risk = data['riskPercent']
@@ -291,6 +293,7 @@ class BybitTradingBot:
             
             bal = self.get_bal()
             
+            # Отримуємо мінімальний баланс з конфігу (щоб уникнути помилки)
             min_bal = getattr(config, 'MIN_BALANCE', 5.0) 
             
             if bal < min_bal:
@@ -381,7 +384,7 @@ class BybitTradingBot:
             else:
                 logger.warning("no_stop_loss", symbol=symbol, message="Trade is unprotected!")
             
-            # === Take Profit Strategy ===
+            # === Take Profit (виклик методу _tp) ===
             use_tp = settings.get("use_tp", False)
             tp_mode = settings.get("tp_mode", "Fixed_1_50")
             
@@ -397,17 +400,18 @@ class BybitTradingBot:
             logger.error("open_order_error", symbol=symbol, error=str(e), exc_info=True)
             return {"status": "error", "reason": str(e)}
 
-    # === TAKE PROFIT LOGIC (Fixed_1_50: 2 ордера) ===
+    # === TAKE PROFIT LOGIC (ОНОВЛЕНО: Подвійний TP для Fixed_1_50) ===
     def _tp(self, s, side, ep, qty, d, tick, step):
         """
-        Логіка розрахунку Take Profit.
-        Fixed_1_50 тепер: 50% позиції на +1%, інші 50% на +2%.
+        Логіка розрахунку Take Profit на основі налаштувань.
+        Fixed_1_50: 50% на +1%, інші 50% на +2%.
         """
         try:
+            # Отримуємо режим з налаштувань
             mode = settings.get("tp_mode")
             exit_side = "Sell" if side == "Buy" else "Buy"
             
-            # 1. Пріоритет: Якщо TP прийшов у сигналі
+            # 1. Якщо TP прийшов у сигналі (Пріоритет)
             if d.get('takeProfitPercent') and d.get('entryPrice'):
                 tp_percent = safe_float(d['takeProfitPercent'])
                 if tp_percent > 0:
@@ -418,6 +422,7 @@ class BybitTradingBot:
                         
                     tp_rounded = self.round_val(tp_price, tick)
                     
+                    # Ставимо лімітку на весь об'єм
                     self.session.place_order(
                         category="linear",
                         symbol=s,
@@ -430,7 +435,7 @@ class BybitTradingBot:
                     logger.info("tp_signal_set", symbol=s, price=tp_rounded)
                     return
 
-            # 2. Режим Fixed_1_50: Тепер 50% на +1% і 50% на +2%
+            # 2. Режим Fixed_1_50: Два ордери (50% на +1%, 50% на +2%)
             if mode == "Fixed_1_50":
                 # Рахуємо об'єми
                 q1 = self.round_val(qty * 0.5, step) # Перша половина
@@ -472,9 +477,11 @@ class BybitTradingBot:
 
             # 3. Режим Ladder_3: Драбинка на 3 рівні
             elif mode == "Ladder_3":
+                # Базовий TP з налаштувань (наприклад, 3%)
                 base_tp = float(d.get('takeProfitPercent', settings.get('fixedTP', 3.0))) / 100
                 q_step = self.round_val(qty * 0.33, step)
                 
+                # Рівні: 1/3 від цілі, 2/3 від цілі, повна ціль
                 multipliers = [1/3, 2/3, 1.0]
                 
                 for i, mult in enumerate(multipliers):
@@ -484,6 +491,7 @@ class BybitTradingBot:
                     else:
                         p = self.round_val(ep * (1 - pct), tick)
                     
+                    # Для останнього ордера беремо залишок
                     if i == 2:
                         current_q = self.round_val(qty - q_step * 2, step)
                     else:
