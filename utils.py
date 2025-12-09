@@ -204,12 +204,13 @@ def validate_webhook_data(data: dict) -> dict:
             errors.append(f"stopLossPercent must be a number, got {sl_percent}")
     
     # Перевірка takeProfitPercent (у відсотках!)
+    # NOTE: TP=0 допускається і означає "використати налаштування бота"
     tp_percent = data.get('takeProfitPercent')
     if tp_percent is not None:
         try:
             tp_val = float(tp_percent)
-            if not (0.01 <= tp_val <= 100):
-                errors.append(f"takeProfitPercent must be 0.01-100%, got {tp_val}%")
+            if tp_val != 0 and not (0.01 <= tp_val <= 100):
+                errors.append(f"takeProfitPercent must be 0 (use bot settings) or 0.01-100%, got {tp_val}%")
         except (ValueError, TypeError):
             errors.append(f"takeProfitPercent must be a number, got {tp_percent}")
     
@@ -224,7 +225,7 @@ def validate_webhook_data(data: dict) -> dict:
         'leverage': float(data.get('leverage', 0)),
         'entryPrice': float(data.get('entryPrice', 0)) if data.get('entryPrice') else None,
         'stopLossPercent': float(data.get('stopLossPercent')) if data.get('stopLossPercent') else None,
-        'takeProfitPercent': float(data.get('takeProfitPercent')) if data.get('takeProfitPercent') else None,
+        'takeProfitPercent': float(data.get('takeProfitPercent')) if data.get('takeProfitPercent') is not None else None,
         'filtersApproved': data.get('filtersApproved', False)
     }
 
