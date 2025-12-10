@@ -41,11 +41,12 @@ DEFAULT_SETTINGS = {
     "exit_enableStrategy": False,  # Світч для RSI-based exit стратегії
     "exit_ltf": "60",              # LTF для розрахунків виходу (60хв = стандарт Bybit)
     
-    "trailing_enabled": True,       # Головний тумблер трейлінгу
-    "trailing_rsi_activation": 65,  # RSI, при якому вмикається трейлінг
-    "trailing_atr_length": 14,      # Період ATR
-    "trailing_atr_multiplier": 2.5, # ✨ НАЛАШТОВУЄТЬСЯ: Множник ATR (2.5 = 2.5 × ATR)
-    "trailing_activation_delay": 5, # ✨ НОВЕ: Затримка активації (хвилин після входу)
+    # ✨ TRAILING тепер активується АВТОМАТИЧНО після TP2!
+    "trailing_enabled": False,      # Manual trailing (вимкнено для Smart TP)
+    "trailing_rsi_activation": 65,  # Не використовується в Smart TP
+    "trailing_atr_length": 14,      # Період ATR для trailing
+    "trailing_atr_multiplier": 2.5, # Множник ATR (SL = Price ± ATR × mult)
+    "trailing_activation_delay": 5, # Не використовується в Smart TP
 
     "exit_rsiOverbought": 70,
     "exit_rsiOversold": 30,
@@ -54,8 +55,8 @@ DEFAULT_SETTINGS = {
     # === RISK ===
     "riskPercent": 2.0,
     "leverage": 20,
-    "use_tp": False,  # 🎯 Вимикач для Take Profit (за замовчуванням: вимкнено)
-    "tp_mode": "Fixed_1_50", 
+    "use_tp": True,  # 🎯 Take Profit увімкнено за замовчуванням
+    "tp_mode": "Smart_TP",  # ✨ НОВИЙ РЕЖИМ: 50/25/25 з auto-BE та Trailing
     "fixedTP": 3.0,
     "sl_mode": "OB_Extremity",
     "fixedSL": 1.5,
