@@ -194,15 +194,27 @@ class BybitTradingBot:
                 positionIdx=position_idx 
             )
             
-            if r.get('retCode') == 0:
+            ret_code = r.get('retCode')
+            
+            if ret_code == 0:
                 logger.info("stop_loss_updated", symbol=symbol, new_sl=sl_rounded, idx=position_idx)
                 return True
+            elif ret_code == 34040:
+                # Position not modified - позиція закрита або SL вже на цьому рівні
+                # Це нормальна ситуація, не помилка
+                logger.debug("sl_not_modified", symbol=symbol, sl=sl_rounded, reason="position closed or SL unchanged")
+                return False
             else:
-                logger.warning("update_sl_api_error", symbol=symbol, retCode=r.get('retCode'), msg=r.get('retMsg'))
+                logger.warning("update_sl_api_error", symbol=symbol, retCode=ret_code, msg=r.get('retMsg'))
                 return False
         
         except Exception as e:
-            logger.error("update_sl_error", symbol=symbol, error=str(e), exc_info=True)
+            error_str = str(e)
+            # Ігноруємо 34040 якщо прийшло як exception
+            if "34040" in error_str or "not modified" in error_str.lower():
+                logger.debug("sl_not_modified_exc", symbol=symbol, reason="position closed or SL unchanged")
+                return False
+            logger.error("update_sl_error", symbol=symbol, error=error_str, exc_info=True)
             return False
 
     def place_order(self, data):
