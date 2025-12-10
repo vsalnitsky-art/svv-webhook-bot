@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from decimal import Decimal
 from pybit.unified_trading import HTTP
+from pybit.exceptions import InvalidRequestError  # ✅ Імпорт для обробки 34040
 
 # === ІМПОРТИ ===
 from bot_config import config
@@ -164,9 +165,12 @@ class BybitTradingBot:
         except Exception as e:
             logger.error("sync_trades_error", error=str(e), exc_info=True)
     
-    @with_retry(max_retries=2, exceptions=(Exception,))
     def update_sl(self, symbol, new_sl_price, position_idx=0):
-        """Оновлює Stop Loss для відкритої позиції"""
+        """
+        Оновлює Stop Loss для відкритої позиції.
+        
+        ✅ Без retry - 34040 не є помилкою що потребує повтору!
+        """
         try:
             norm = self.normalize(symbol)
             _, tick = self.get_instr(norm)
@@ -201,18 +205,30 @@ class BybitTradingBot:
                 return True
             elif ret_code == 34040:
                 # Position not modified - позиція закрита або SL вже на цьому рівні
-                # Це нормальна ситуація, не помилка
-                logger.debug("sl_not_modified", symbol=symbol, sl=sl_rounded, reason="position closed or SL unchanged")
+                # Це нормальна ситуація, не помилка - логуємо як INFO
+                logger.info("sl_not_modified", symbol=symbol, sl=sl_rounded, reason="position closed or SL unchanged")
                 return False
             else:
                 logger.warning("update_sl_api_error", symbol=symbol, retCode=ret_code, msg=r.get('retMsg'))
                 return False
         
+        except InvalidRequestError as e:
+            # ✅ Спеціальна обробка для pybit InvalidRequestError
+            error_str = str(e)
+            if "34040" in error_str or "not modified" in error_str.lower():
+                # Це НЕ помилка - просто позиція закрита або SL не змінився
+                # Логуємо тихо без traceback
+                logger.info("sl_position_unchanged", symbol=symbol, sl=sl_rounded)
+                return False
+            # Інші InvalidRequestError - логуємо як warning
+            logger.warning("update_sl_invalid_request", symbol=symbol, error=error_str)
+            return False
+            
         except Exception as e:
             error_str = str(e)
-            # Ігноруємо 34040 якщо прийшло як exception
+            # Ігноруємо 34040 якщо прийшло як інший exception
             if "34040" in error_str or "not modified" in error_str.lower():
-                logger.debug("sl_not_modified_exc", symbol=symbol, reason="position closed or SL unchanged")
+                logger.info("sl_not_modified_exc", symbol=symbol, reason="position closed or SL unchanged")
                 return False
             logger.error("update_sl_error", symbol=symbol, error=error_str, exc_info=True)
             return False
@@ -410,15 +426,32 @@ class BybitTradingBot:
             logger.error("open_order_error", symbol=symbol, error=str(e), exc_info=True)
             return {"status": "error", "reason": str(e)}
 
-    # === TAKE PROFIT LOGIC (Оновлено: Два рівні TP для Fixed_1_50) ===
+    # === TAKE PROFIT LOGIC (Smart TP: 50/25/25 з Trailing) ===
     def _tp(self, s, side, ep, qty, d, tick, step):
         """
-        Логіка розрахунку Take Profit.
-        Fixed_1_50 тепер: 50% позиції на +1%, інші 50% на +2%.
+        🎯 Smart Take Profit Strategy (50/25/25)
+        
+        Алгоритм:
+        1. TP1 (+1%): Закриває 50% позиції
+        2. TP2 (+2%): Закриває 25% позиції
+        3. Залишок 25%: Для Trailing Stop (без TP ордера)
+        
+        Моніторинг (scanner.py) відстежує:
+        - Коли TP1 виконався → SL в Break-Even
+        - Коли TP2 виконався → Активує Trailing
+        
+        Bybit нюанси:
+        - reduceOnly=True для закриття частини позиції
+        - Округлення qty до qtyStep, price до tickSize
+        - Перевірка minOrderQty
         """
         try:
             mode = settings.get("tp_mode")
             exit_side = "Sell" if side == "Buy" else "Buy"
+            
+            # Отримуємо мінімальний розмір ордера
+            lot, _ = self.get_instr(s)
+            min_qty = safe_float(lot.get('minOrderQty', 0.001)) if lot else 0.001
             
             # 1. Пріоритет: Якщо TP прийшов у сигналі
             if d.get('takeProfitPercent') and d.get('entryPrice'):
@@ -443,47 +476,82 @@ class BybitTradingBot:
                     logger.info("tp_signal_set", symbol=s, price=tp_rounded)
                     return
 
-            # 2. Режим Fixed_1_50: Два ордери (50% на +1%, 50% на +2%)
-            if mode == "Fixed_1_50":
-                # Рахуємо об'єми
-                q1 = self.round_val(qty * 0.5, step) # Перша половина
-                q2 = self.round_val(qty - q1, step)  # Друга половина (залишок)
+            # 2. Режим Smart_TP (50/25/25): Головний режим з Trailing
+            if mode == "Smart_TP" or mode == "Fixed_1_50":
+                # === РОЗРАХУНОК ОБ'ЄМІВ ===
+                # TP1: 50% позиції
+                q1 = self.round_val(qty * 0.50, step)
+                # TP2: 25% позиції  
+                q2 = self.round_val(qty * 0.25, step)
+                # Залишок 25%: для Trailing (не ставимо TP ордер!)
+                q_trailing = self.round_val(qty - q1 - q2, step)
                 
-                # Рахуємо ціни
+                # Перевірка мінімальних розмірів
+                if q1 < min_qty:
+                    logger.warning("tp1_qty_too_small", symbol=s, qty=q1, min=min_qty)
+                    q1 = 0
+                if q2 < min_qty:
+                    logger.warning("tp2_qty_too_small", symbol=s, qty=q2, min=min_qty)
+                    # Додаємо до trailing частини
+                    q_trailing = self.round_val(q_trailing + q2, step)
+                    q2 = 0
+                
+                # === РОЗРАХУНОК ЦІН ===
                 if side == "Buy":
-                    p1 = self.round_val(ep * 1.01, tick) # +1%
-                    p2 = self.round_val(ep * 1.02, tick) # +2%
+                    p1 = self.round_val(ep * 1.01, tick)  # TP1: +1%
+                    p2 = self.round_val(ep * 1.02, tick)  # TP2: +2% 
                 else:
-                    p1 = self.round_val(ep * 0.99, tick) # -1%
-                    p2 = self.round_val(ep * 0.98, tick) # -2%
+                    p1 = self.round_val(ep * 0.99, tick)  # TP1: -1%
+                    p2 = self.round_val(ep * 0.98, tick)  # TP2: -2%
                 
-                # Ставимо ордер 1
+                # === РОЗМІЩЕННЯ ОРДЕРІВ ===
+                
+                # TP1: 50% на +1%
                 if q1 > 0:
-                    self.session.place_order(
-                        category="linear",
-                        symbol=s,
-                        side=exit_side,
-                        orderType="Limit",
-                        qty=str(q1),
-                        price=str(p1),
-                        reduceOnly=True
-                    )
-                    logger.info("tp_1_set", symbol=s, price=p1, qty=q1)
+                    try:
+                        r1 = self.session.place_order(
+                            category="linear",
+                            symbol=s,
+                            side=exit_side,
+                            orderType="Limit",
+                            qty=str(q1),
+                            price=str(p1),
+                            reduceOnly=True
+                        )
+                        if r1.get('retCode') == 0:
+                            logger.info("tp1_set", symbol=s, price=p1, qty=q1, pct="50%")
+                        else:
+                            logger.warning("tp1_failed", symbol=s, error=r1.get('retMsg'))
+                    except Exception as e:
+                        logger.error("tp1_error", symbol=s, error=str(e))
                 
-                # Ставимо ордер 2
+                # TP2: 25% на +2%
                 if q2 > 0:
-                    self.session.place_order(
-                        category="linear",
-                        symbol=s,
-                        side=exit_side,
-                        orderType="Limit",
-                        qty=str(q2),
-                        price=str(p2),
-                        reduceOnly=True
-                    )
-                    logger.info("tp_2_set", symbol=s, price=p2, qty=q2)
+                    try:
+                        r2 = self.session.place_order(
+                            category="linear",
+                            symbol=s,
+                            side=exit_side,
+                            orderType="Limit",
+                            qty=str(q2),
+                            price=str(p2),
+                            reduceOnly=True
+                        )
+                        if r2.get('retCode') == 0:
+                            logger.info("tp2_set", symbol=s, price=p2, qty=q2, pct="25%")
+                        else:
+                            logger.warning("tp2_failed", symbol=s, error=r2.get('retMsg'))
+                    except Exception as e:
+                        logger.error("tp2_error", symbol=s, error=str(e))
+                
+                # Логуємо що 25% залишається для Trailing
+                if q_trailing > 0:
+                    logger.info("trailing_reserved", symbol=s, qty=q_trailing, pct="25%", 
+                               note="Will activate after TP2")
+                
+                return
 
-            # 3. Режим Ladder_3: Драбинка на 3 рівні
+            # 3. Режим Ladder_3: Драбинка на 3 рівні (без trailing)
             elif mode == "Ladder_3":
                 base_tp = float(d.get('takeProfitPercent', settings.get('fixedTP', 3.0))) / 100
                 q_step = self.round_val(qty * 0.33, step)
@@ -502,7 +570,7 @@ class BybitTradingBot:
                     else:
                         current_q = q_step
                     
-                    if current_q > 0:
+                    if current_q >= min_qty:
                         self.session.place_order(
                             category="linear",
                             symbol=s,
