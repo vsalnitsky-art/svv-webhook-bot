@@ -1,355 +1,334 @@
-{% extends "base.html" %}
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+🎯 SVV Webhook Bot - Enhanced Market Scanner
+=============================================
+Версія: 3.2.1 (Fixed float conversion)
 
-{% block title %}Активні Позиції{% endblock %}
+Функціонал:
+1. Моніторинг активних позицій
+2. Smart TP Tracking (50/25/25)
+3. Auto Break-Even після TP1
+4. Auto Trailing після TP2
+5. RSI розрахунок для виходу
+"""
+import threading
+import time
+import logging
+import pandas as pd
+from settings_manager import settings
+from bot import bot_instance
+from indicators import simple_rsi, simple_atr
 
-{% block head %}
-<style>
-    /* ===== ПОКРАЩЕНІ СТИЛІ ДЛЯ СОРТУВАННЯ ===== */
-    th.sortable { 
-        cursor: pointer; 
-        user-select: none; 
-        position: relative;
-        font-weight: 600;
-        transition: background-color 0.2s ease;
-    }
-    
-    th.sortable:hover { 
-        background-color: #e8f0f7;
-        color: var(--accent, #3b82f6);
-    }
+logger = logging.getLogger(__name__)
 
-    /* Стрілочки сортування */
-    th.sortable::after { 
-        content: ' ↕'; 
-        font-size: 0.75em; 
-        opacity: 0.3;
-        margin-left: 4px;
-        transition: opacity 0.2s ease;
-    }
-    
-    th.sortable:hover::after {
-        opacity: 0.6;
-    }
-    
-    th.asc::after { 
-        content: ' ↑'; 
-        opacity: 1; 
-        color: var(--accent, #3b82f6);
-        font-weight: bold;
-    }
-    
-    th.desc::after { 
-        content: ' ↓'; 
-        opacity: 1; 
-        color: var(--accent, #3b82f6);
-        font-weight: bold;
-    }
-    
-    /* Активна колонка */
-    th.sortable.asc,
-    th.sortable.desc {
-        background-color: #eff6ff;
-        color: var(--accent, #3b82f6);
-    }
 
-    /* Таблиця */
-    #monitorTable tbody tr {
-        transition: background-color 0.15s ease;
-    }
-    #monitorTable tbody tr:hover {
-        background-color: #f8fafc;
-    }
-
-    .blinking { animation: blinker 1s linear infinite; }
-    @keyframes blinker { 50% { opacity: 0; } }
-</style>
-{% endblock %}
-
-{% block content %}
-<div class="container-fluid">
+class EnhancedMarketScanner:
+    """
+    🎯 Smart Position Monitor
     
-    <div class="card-custom mb-4 border-0">
-        <div class="card-body py-3">
-            <div class="row align-items-center">
+    Відстежує позиції та автоматично:
+    - Переміщує SL в Break-Even після TP1 (50%)
+    - Активує Trailing Stop після TP2 (25%)
+    - Залишок 25% працює на Trailing
+    """
+    
+    def __init__(self, bot_instance, config):
+        self.bot = bot_instance
+        self.config = config
+        self.data = {}  # {symbol: position_data}
+
+    def _safe_float(self, value, default=0.0):
+        """
+        Безпечне конвертування в float.
+        Bybit API може повертати '', None, або невалідні значення.
+        """
+        if value is None or value == '':
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_int(self, value, default=0):
+        """Безпечне конвертування в int."""
+        if value is None or value == '':
+            return default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
+    def start(self):
+        """Запускає фоновий потік моніторингу"""
+        threading.Thread(target=self.loop, daemon=True).start()
+        logger.info("✅ Enhanced Market Scanner Started (Smart TP Mode)")
+
+    def loop(self):
+        """Головний цикл моніторингу"""
+        while True:
+            try:
+                self.monitor()
+            except Exception as e:
+                logger.error(f"Monitor loop error: {e}")
+            time.sleep(5)  # Перевіряємо кожні 5 сек
+
+    def get_active(self):
+        """Отримує список активних позицій"""
+        try:
+            r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
+            if r['retCode'] == 0:
+                positions = []
+                for p in r['result']['list']:
+                    size = self._safe_float(p.get('size'), 0)
+                    if size > 0:
+                        positions.append(p)
+                return positions
+        except Exception as e:
+            logger.error(f"Get active positions error: {e}")
+        return []
+
+    def fetch_candles(self, symbol, timeframe, limit=200):
+        """
+        Завантаження свічок для RSI/ATR.
+        """
+        try:
+            tf_map = {'5':'5', '15':'15', '30':'30', '45':'15', 
+                      '60':'60', '120':'120', '240':'240', 'D':'D', 'W':'W'}
+            req_tf = tf_map.get(str(timeframe), '60')
+            
+            req_limit = max(limit, 200)
+            if str(timeframe) == '45':
+                req_limit = req_limit * 3
+            if req_limit > 1000:
+                req_limit = 1000
+            
+            r = self.bot.session.get_kline(
+                category="linear", 
+                symbol=symbol, 
+                interval=req_tf, 
+                limit=req_limit
+            )
+            
+            if r['retCode'] == 0 and r['result']['list']:
+                df = pd.DataFrame(
+                    r['result']['list'], 
+                    columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover']
+                )
                 
-                <div class="col-md-4 border-end">
-                    <div class="d-flex align-items-center">
-                        <div class="me-3">
-                            <i class="ri-shield-star-line fs-2 text-primary"></i>
-                        </div>
-                        <div>
-                            <div class="small text-muted fw-bold text-uppercase">Стратегія Виходу</div>
-                            <div class="fw-bold fs-5">
-                                {% if conf.get('exit_enableStrategy') %}
-                                    <span class="text-success">АКТИВНА 🟢</span>
-                                {% else %}
-                                    <span class="text-danger">ВИМКНЕНА 🔴</span>
-                                {% endif %}
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                cols = ['open', 'high', 'low', 'close', 'volume', 'turnover']
+                df[cols] = df[cols].astype(float)
+                df['time'] = pd.to_numeric(df['time'])
+                df['datetime'] = pd.to_datetime(df['time'], unit='ms')
                 
-                <div class="col-md-4 border-end">
-                    <div class="d-flex align-items-center justify-content-center">
-                        <div>
-                            <div class="small text-muted fw-bold text-uppercase mb-1">Робочий Таймфрейм</div>
-                            <span class="badge bg-light text-dark border p-2 font-mono fs-6">
-                                {% set h = conf.get('htfSelection')|string %}
-                                {% if h == '60' %}1H (Hour)
-                                {% elif h == '240' %}4H (Swing)
-                                {% elif h == 'D' %}1D (Day)
-                                {% else %}{{ h }}m (Intraday){% endif %}
-                            </span>
-                        </div>
-                    </div>
-                </div>
+                df = df.sort_values('datetime').reset_index(drop=True)
+                
+                if str(timeframe) == '45':
+                    df.set_index('datetime', inplace=True)
+                    df = df.resample('45min', origin='start_day', label='left', closed='left').agg({
+                        'open': 'first', 'high': 'max', 'low': 'min', 
+                        'close': 'last', 'volume': 'sum', 'turnover': 'sum', 'time': 'first'
+                    })
+                    df.dropna(inplace=True)
+                    df = df.reset_index(drop=True)
+                
+                if len(df) > 1:
+                    df = df.iloc[:-1].reset_index(drop=True)
+                
+                return df
+                
+        except Exception as e:
+            logger.error(f"Fetch candles error {symbol}: {e}")
+        return None
 
-                <div class="col-md-4">
-                     <div class="d-flex align-items-center justify-content-end">
-                        <div class="text-end">
-                            <div class="small text-muted fw-bold text-uppercase mb-1">Пороги RSI</div>
-                            <div class="font-mono small">
-                                <span class="text-danger fw-bold">Long Exit: >{{ conf.get('exit_rsiOverbought') }}</span><br>
-                                <span class="text-success fw-bold">Short Exit: <{{ conf.get('exit_rsiOversold') }}</span>
-                            </div>
-                        </div>
-                         <div class="ms-3">
-                             <a href="/settings" class="btn btn-sm btn-outline-secondary"><i class="ri-settings-4-line"></i></a>
-                         </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h4 class="fw-bold text-dark mb-0">Монітор Угод</h4>
-        <span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 px-3 py-2 font-mono">
-            {{ active|length }} LIVE
-        </span>
-    </div>
-
-    <div class="card-custom overflow-hidden">
-        <div class="table-responsive">
-            <table class="table align-middle mb-0" id="monitorTable">
-                <thead class="bg-light text-uppercase small text-muted" style="font-size: 11px; letter-spacing: 1px;">
-                    <tr>
-                        <th class="py-3 ps-4 border-bottom sortable" data-column="0">Символ</th>
-                        <th class="py-3 border-bottom sortable" data-column="1">Сторона</th>
-                        <th class="py-3 border-bottom sortable" data-column="2">Об'єм</th>
-                        <th class="py-3 border-bottom sortable" data-column="3">Вхід</th>
-                        <th class="py-3 border-bottom sortable" data-column="4">HTF RSI</th>
-                        <th class="py-3 border-bottom sortable" data-column="5">Статус Виходу</th> 
-                        <th class="py-3 border-bottom sortable" data-column="6">Нереал. P&L</th>
-                        <th class="py-3 pe-4 text-end border-bottom sortable" data-column="7">Час</th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for a in active %}
-                    <tr>
-                        <td class="ps-4">
-                            <span class="fw-bold text-dark font-mono">{{ a.symbol }}</span>
-                        </td>
-                        
-                        <td data-value="{{ 'Buy' if a.side == 'Buy' else 'Sell' }}">
-                            {% if a.side == 'Buy' %}
-                                <span class="badge bg-success-subtle text-success border border-success-subtle">LONG</span>
-                            {% else %}
-                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">SHORT</span>
-                            {% endif %}
-                        </td>
-                        
-                        <td class="font-mono text-muted small" data-value="{{ a.size }}">{{ a.size }}</td>
-                        <td class="font-mono text-dark small" data-value="{{ a.entry }}">{{ a.entry }}</td>
-                        
-                        <td data-value="{{ a.rsi }}">
-                            <div class="d-flex align-items-center">
-                                <span class="font-mono small me-2 fw-bold {{ 'text-danger' if a.rsi > conf.get('exit_rsiOverbought')|float else 'text-success' if a.rsi < conf.get('exit_rsiOversold')|float else 'text-muted' }}">{{ a.rsi }}</span>
-                            </div>
-                        </td>
-
-                        <td data-value="{{ 'EXIT' if 'EXIT' in a.exit_status else 'Warning' if 'Warning' in a.exit_status else 'SAFE' }}">
-                            {% if 'EXIT' in a.exit_status %}
-                                <span class="badge bg-danger text-white blinking">CLOSING...</span>
-                            {% elif 'Warning' in a.exit_status %}
-                                <span class="badge bg-warning text-dark border border-warning">⚠️ ZONE</span>
-                            {% else %}
-                                <span class="badge bg-light text-muted border">SAFE</span>
-                            {% endif %}
-                            <div class="small text-muted font-mono" style="font-size: 0.75rem;">{{ a.exit_details }}</div>
-                        </td>
-                        
-                        <td data-value="{{ a.pnl }}">
-                            <span class="fw-bold font-mono {{ 'text-success' if a.pnl > 0 else 'text-danger' }}">
-                                {{ "+" if a.pnl > 0 }}{{ a.pnl }} USDT
-                            </span>
-                        </td>
-                        
-                        <td class="text-end pe-4 text-muted small font-mono" data-value="{{ a.time }}">
-                            {{ a.time }}
-                        </td>
-                    </tr>
-                {% else %}
-                    <tr>
-                        <td colspan="8" class="text-center py-5">
-                            <div class="py-4">
-                                <i class="ri-inbox-line text-secondary opacity-25" style="font-size: 3rem;"></i>
-                                <p class="text-muted small mt-2">Немає відкритих позицій</p>
-                            </div>
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-
-<script>
-// ===== ПОКРАЩЕНЕ СОРТУВАННЯ З localStorage =====
-class TableSorter {
-    constructor(tableId, defaultColumn = null, defaultDirection = 'desc') {
-        this.table = document.getElementById(tableId);
-        if (!this.table) return;
-        
-        this.sortColumn = null;
-        this.sortDirection = 'asc';
-        this.storageKey = `table_sort_${tableId}`;
-        this.defaultColumn = defaultColumn;
-        this.defaultDirection = defaultDirection;
-        
-        this.attachSortHandlers();
-    }
+    def get_coin_data(self, symbol):
+        """Отримує дані про монету з кешу"""
+        return self.data.get(symbol, {})
     
-    attachSortHandlers() {
-        document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
-            th.addEventListener('click', () => {
-                const colIndex = parseInt(th.getAttribute('data-column'));
-                this.sort(colIndex, th, true); // true = toggle direction
-            });
-        });
-    }
-    
-    sort(columnIndex, headerElement, toggle = false) {
-        const rows = Array.from(this.table.querySelectorAll('tbody tr'));
-        
-        // Пропускаємо якщо немає даних
-        if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td[colspan]'))) {
-            return;
-        }
-        
-        // Визначаємо напрямок
-        if (toggle && this.sortColumn === columnIndex) {
-            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
-        } else if (toggle) {
-            this.sortDirection = 'desc'; // Перший клік - DESC (найбільше зверху)
-        }
-        // Якщо toggle=false, використовуємо поточний sortDirection
-        
-        // Видаляємо класи з усіх заголовків
-        document.querySelectorAll(`#${this.table.id} th.sortable`).forEach(th => {
-            th.classList.remove('asc', 'desc');
-        });
-        
-        this.sortColumn = columnIndex;
-        
-        // Сортуємо рядки
-        rows.sort((rowA, rowB) => {
-            let cellA = rowA.children[columnIndex];
-            let cellB = rowB.children[columnIndex];
-            
-            if (!cellA || !cellB) return 0;
-            
-            // Отримуємо значення (пріоритет для data-value)
-            let valA = cellA.getAttribute('data-value') || cellA.innerText.trim();
-            let valB = cellB.getAttribute('data-value') || cellB.innerText.trim();
-            
-            // Спробуємо порівняти як числа
-            let numA = parseFloat(valA);
-            let numB = parseFloat(valB);
-            
-            if (!isNaN(numA) && !isNaN(numB)) {
-                return this.sortDirection === 'asc' ? numA - numB : numB - numA;
-            } else {
-                valA = valA.toLowerCase();
-                valB = valB.toLowerCase();
-                if (valA === valB) return 0;
-                if (this.sortDirection === 'asc') {
-                    return valA > valB ? 1 : -1;
-                } else {
-                    return valA < valB ? 1 : -1;
-                }
-            }
-        });
-        
-        // Вставляємо відсортовані рядки
-        const tbody = this.table.querySelector('tbody');
-        rows.forEach(row => tbody.appendChild(row));
-        
-        // Оновлюємо індикатор напрямку
-        headerElement.classList.add(this.sortDirection);
-        
-        // Зберігаємо стан
-        this.saveSortState();
-    }
-    
-    saveSortState() {
-        const state = {
-            column: this.sortColumn,
-            direction: this.sortDirection
-        };
-        localStorage.setItem(this.storageKey, JSON.stringify(state));
-    }
-    
-    loadSortState() {
-        const saved = localStorage.getItem(this.storageKey);
-        if (saved) {
-            try {
-                const state = JSON.parse(saved);
-                return state;
-            } catch (e) {
-                return null;
-            }
-        }
-        return null;
-    }
-    
-    applyInitialSort() {
-        // Спочатку намагаємось завантажити збережений стан
-        const savedState = this.loadSortState();
-        
-        let columnToSort, directionToUse;
-        
-        if (savedState && savedState.column !== null) {
-            columnToSort = savedState.column;
-            directionToUse = savedState.direction;
-        } else if (this.defaultColumn !== null) {
-            // Використовуємо дефолтне сортування
-            columnToSort = this.defaultColumn;
-            directionToUse = this.defaultDirection;
-        } else {
-            return; // Немає сортування
-        }
-        
-        const headers = this.table.querySelectorAll('th.sortable');
-        const headerToSort = Array.from(headers).find(th => 
-            parseInt(th.getAttribute('data-column')) === columnToSort
-        );
-        
-        if (headerToSort) {
-            this.sortDirection = directionToUse;
-            this.sort(columnToSort, headerToSort, false);
-        }
-    }
-}
+    def get_current_rsi(self, symbol):
+        """Отримує поточний RSI для монети"""
+        return self.data.get(symbol, {}).get('rsi', 0)
 
-// ═══════════════════════════════════════════════════════════════
-// ІНІЦІАЛІЗАЦІЯ: Сортування по RSI (колонка 4) DESC за замовчуванням
-// ═══════════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
-    const sorter = new TableSorter('monitorTable', 4, 'desc'); // 4 = HTF RSI
-    sorter.applyInitialSort();
-});
-</script>
-{% endblock %}
+    def monitor(self):
+        """
+        🎯 ГОЛОВНА ЛОГІКА МОНІТОРИНГУ
+        """
+        active_pos = self.get_active()
+        active_syms = [p['symbol'] for p in active_pos]
+        
+        # Очищаємо дані для закритих позицій
+        for k in list(self.data.keys()):
+            if k not in active_syms: 
+                del self.data[k]
+        
+        if not active_pos:
+            return
+
+        # === НАЛАШТУВАННЯ ===
+        exit_tf = settings.get("exit_ltf", "60")
+        tp_mode = settings.get("tp_mode", "Smart_TP")
+        atr_len = int(settings.get("trailing_atr_length", 14))
+        atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))
+
+        for p in active_pos:
+            s = "unknown"
+            try:
+                s = p.get('symbol', 'unknown')
+                side = p.get('side', '')
+                
+                # ✅ Безпечне конвертування
+                entry_price = self._safe_float(p.get('avgPrice'), 0)
+                current_qty = self._safe_float(p.get('size'), 0)
+                position_idx = self._safe_int(p.get('positionIdx'), 0)
+                current_sl = self._safe_float(p.get('stopLoss'), 0)
+                
+                # Пропускаємо якщо немає даних
+                if entry_price <= 0 or current_qty <= 0 or not side:
+                    continue
+                
+                # Отримуємо поточну ціну
+                try:
+                    last_price = self._safe_float(self.bot.get_price(s), entry_price)
+                except:
+                    last_price = entry_price
+
+                # === ІНІЦІАЛІЗАЦІЯ ДАНИХ ПОЗИЦІЇ ===
+                if s not in self.data:
+                    created_time = self._safe_int(p.get('createdTime'), 0)
+                    self.data[s] = {
+                        'rsi': 0,
+                        'exit_status': 'Active',
+                        'exit_details': 'Monitoring...',
+                        'initial_qty': current_qty,
+                        'entry_price': entry_price,
+                        'entry_sl': current_sl,
+                        'position_time': created_time,
+                        'tp1_hit': False,
+                        'tp2_hit': False,
+                        'be_set': False,
+                        'trailing_active': False,
+                        'last_sl_update': current_sl if current_sl > 0 else 0
+                    }
+                    logger.info(f"📊 New position tracked: {s} {side} qty={current_qty} entry={entry_price}")
+
+                pos_data = self.data[s]
+                initial_qty = pos_data['initial_qty']
+                
+                # === SMART TP TRACKING ===
+                if tp_mode in ["Smart_TP", "Fixed_1_50"]:
+                    qty_ratio = current_qty / initial_qty if initial_qty > 0 else 1.0
+                    
+                    # --- TP1 CHECK ---
+                    if not pos_data['tp1_hit'] and qty_ratio <= 0.55:
+                        pos_data['tp1_hit'] = True
+                        logger.info(f"✅ TP1 HIT: {s} - 50% closed. Remaining: {round(qty_ratio*100)}%")
+                        
+                        if not pos_data['be_set']:
+                            be_buffer = 0.001
+                            if side == "Buy":
+                                be_price = entry_price * (1 + be_buffer)
+                                if current_sl == 0 or be_price > current_sl:
+                                    if self.bot.update_sl(s, be_price, position_idx):
+                                        pos_data['be_set'] = True
+                                        pos_data['last_sl_update'] = be_price
+                                        logger.info(f"🛡️ BE SET: {s} SL moved to {be_price}")
+                            else:
+                                be_price = entry_price * (1 - be_buffer)
+                                if current_sl == 0 or be_price < current_sl:
+                                    if self.bot.update_sl(s, be_price, position_idx):
+                                        pos_data['be_set'] = True
+                                        pos_data['last_sl_update'] = be_price
+                                        logger.info(f"🛡️ BE SET: {s} SL moved to {be_price}")
+                    
+                    # --- TP2 CHECK ---
+                    if pos_data['tp1_hit'] and not pos_data['tp2_hit'] and qty_ratio <= 0.30:
+                        pos_data['tp2_hit'] = True
+                        pos_data['trailing_active'] = True
+                        logger.info(f"✅ TP2 HIT: {s} - Trailing ACTIVATED for remaining {round(qty_ratio*100)}%")
+
+                # === FETCH INDICATORS ===
+                df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
+                
+                if df is not None and len(df) >= 15:
+                    rsi_val = simple_rsi(df['close'], period=14)
+                    atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
+                    
+                    pos_data['rsi'] = int(round(rsi_val)) if rsi_val else 0
+                    
+                    status = "Active"
+                    details = f"RSI: {round(rsi_val, 1)}" if rsi_val else "RSI: N/A"
+                    
+                    if pos_data['tp1_hit'] and not pos_data['tp2_hit']:
+                        status = "TP1 ✓ BE"
+                        details = f"RSI: {round(rsi_val, 1)} | Waiting TP2" if rsi_val else "Waiting TP2"
+                    
+                    # === TRAILING STOP LOGIC ===
+                    if pos_data['trailing_active'] and atr_val and atr_val > 0:
+                        status = "TRAILING 🚀"
+                        details = f"ATR: {round(atr_val, 4)}"
+                        
+                        last_sl = pos_data.get('last_sl_update', current_sl)
+                        new_sl = 0.0
+                        should_update = False
+
+                        if side == "Buy":
+                            calc_sl = last_price - (atr_val * atr_mult)
+                            be_level = entry_price * 1.001
+                            calc_sl = max(calc_sl, be_level)
+                            
+                            if last_sl <= 0 or (calc_sl > last_sl and (calc_sl - last_sl) / last_sl > 0.001):
+                                new_sl = calc_sl
+                                should_update = True
+
+                        elif side == "Sell":
+                            calc_sl = last_price + (atr_val * atr_mult)
+                            be_level = entry_price * 0.999
+                            calc_sl = min(calc_sl, be_level)
+                            
+                            if last_sl <= 0 or (calc_sl < last_sl and (last_sl - calc_sl) / last_sl > 0.001):
+                                new_sl = calc_sl
+                                should_update = True
+
+                        if should_update and new_sl > 0:
+                            success = self.bot.update_sl(s, new_sl, position_idx)
+                            if success:
+                                pos_data['last_sl_update'] = new_sl
+                                logger.info(f"⛓️ TRAILING: {s} SL updated {last_sl:.4f} → {new_sl:.4f}")
+                                details += " | SL ✓"
+                            else:
+                                details += " | SL OK"
+                        else:
+                            details += " | SL OK"
+                    
+                    # === RSI WARNING ===
+                    if not pos_data['trailing_active'] and rsi_val:
+                        lb = float(settings.get('obt_entryRsiOversold', 30))
+                        ub = float(settings.get('obt_entryRsiOverbought', 70))
+                        
+                        if side == "Buy" and rsi_val >= ub:
+                            status = "⚠️ RSI High"
+                            details += f" (≥{ub})"
+                        elif side == "Sell" and rsi_val <= lb:
+                            status = "⚠️ RSI Low"
+                            details += f" (≤{lb})"
+                    
+                    pos_data['exit_status'] = status
+                    pos_data['exit_details'] = details
+                
+                else:
+                    pos_data['exit_status'] = 'No Data'
+                    pos_data['exit_details'] = 'Waiting...'
+                
+                time.sleep(0.2)
+                
+            except Exception as e:
+                logger.error(f"Monitor position error {s}: {e}")
+                continue
+
+    def get_market_pressure(self, s):
+        """Заповнювач для сумісності"""
+        return 0
+        
+    def get_active_symbols(self):
+        """Отримує активні символи"""
+        return self.get_active()
