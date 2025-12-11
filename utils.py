@@ -288,14 +288,24 @@ metrics = TradeMetrics()
 
 # ===== HELPERS =====
 def safe_float(val: Any, default: float = 0.0) -> float:
-    """Безпечно конвертує значення у float"""
+    """
+    Безпечно конвертує значення у float.
+    Bybit API може повертати '', None, або невалідні значення.
+    """
+    if val is None or val == '':
+        return default
     try:
         return float(val)
     except (ValueError, TypeError):
         return default
 
 def safe_int(val: Any, default: int = 0) -> int:
-    """Безпечно конвертує значення у int"""
+    """
+    Безпечно конвертує значення у int.
+    Bybit API може повертати '', None, або невалідні значення.
+    """
+    if val is None or val == '':
+        return default
     try:
         return int(float(val))
     except (ValueError, TypeError):
