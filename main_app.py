@@ -33,6 +33,19 @@ from whale_core import whale_core
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
+
+# === SAFE FLOAT HELPER ===
+def safe_float(val, default=0.0):
+    """
+    Безпечне конвертування в float.
+    Bybit API може повертати '', None, або невалідні значення.
+    """
+    if val is None or val == '':
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
 logger = get_logger()
 
 app = Flask(__name__)
@@ -81,17 +94,19 @@ except Exception as e:
 def monitor_active():
     """🔄 Мониторит активные позиции з логуванням"""
     logger.info("monitor_active_started")
+    
     while True:
         try:
             r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
             if r.get('retCode') == 0:
                 for p in r['result']['list']:
-                    if float(p.get('size', 0)) > 0:
+                    size = safe_float(p.get('size'), 0)
+                    if size > 0:
                         try:
                             stats_service.save_monitor_log({
                                 'symbol': p['symbol'],
-                                'price': float(p.get('avgPrice', 0)),
-                                'pnl': float(p.get('unrealisedPnl', 0)),
+                                'price': safe_float(p.get('avgPrice'), 0),
+                                'pnl': safe_float(p.get('unrealisedPnl'), 0),
                                 'rsi': scanner.get_current_rsi(p['symbol']),
                                 'pressure': scanner.get_market_pressure(p['symbol'])
                             })
@@ -369,7 +384,7 @@ def index_page():
     try:
         active_positions = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
         if active_positions.get('retCode') == 0:
-            active_count = len([p for p in active_positions['result']['list'] if float(p.get('size', 0)) > 0])
+            active_count = len([p for p in active_positions['result']['list'] if safe_float(p.get('size'), 0) > 0])
         else:
             active_count = 0
     except:
@@ -404,13 +419,13 @@ def scanner_page():
         r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
         if r.get('retCode') == 0:
             for p in r['result']['list']:
-                if float(p.get('size', 0)) > 0:
+                size = safe_float(p.get('size'), 0)
+                if size > 0:
                     symbol = p['symbol']
                     coin_data = scanner.get_coin_data(symbol)
                     
                     # ✨ ФОРМАТУВАННЯ ЧИСЕЛ
-                    size = float(p.get('size', 0))
-                    entry = float(p.get('avgPrice', 0))
+                    entry = safe_float(p.get('avgPrice'), 0)
                     
                     # Визначаємо скільки знаків для ціни (залежить від вартості)
                     if entry >= 1000:
@@ -426,7 +441,7 @@ def scanner_page():
                     active.append({
                         'symbol': symbol,
                         'side': p['side'],
-                        'pnl': round(float(p.get('unrealisedPnl', 0)), 2),
+                        'pnl': round(safe_float(p.get('unrealisedPnl'), 0), 2),
                         'rsi': coin_data.get('rsi', 0),
                         'exit_status': coin_data.get('exit_status', 'Safe'),
                         'exit_details': coin_data.get('exit_details', '-'),
