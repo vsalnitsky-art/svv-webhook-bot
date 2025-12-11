@@ -3,7 +3,7 @@
 """
 🎯 SVV Webhook Bot - Enhanced Market Scanner
 =============================================
-Версія: 3.2 (Smart TP Monitor)
+Версія: 3.2.1 (Fixed float conversion)
 
 Функціонал:
 1. Моніторинг активних позицій
@@ -38,26 +38,59 @@ class EnhancedMarketScanner:
         self.config = config
         self.data = {}  # {symbol: position_data}
 
+    def _safe_float(self, value, default=0.0):
+        """
+        Безпечне конвертування в float.
+        Bybit API може повертати '', None, або невалідні значення.
+        """
+        if value is None or value == '':
+            return default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
+    def _safe_int(self, value, default=0):
+        """Безпечне конвертування в int."""
+        if value is None or value == '':
+            return default
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+
     def start(self):
         """Запускає фоновий потік моніторингу"""
         threading.Thread(target=self.loop, daemon=True).start()
-        logger.info("✅ Enhanced Market Scanner Started (Smart TP Mode)")
+        logger.info("✅ Enhanced Market Scanner Started (Smart TP Mode) v3.2.2")
 
     def loop(self):
         """Головний цикл моніторингу"""
         while True:
             try:
                 self.monitor()
+            except ValueError as e:
+                # Специфічно для float conversion errors
+                import traceback
+                logger.error(f"Monitor loop ValueError: {e}")
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
             except Exception as e:
+                import traceback
                 logger.error(f"Monitor loop error: {e}")
-            time.sleep(5)  # Перевіряємо кожні 5 сек
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            time.sleep(5)
 
     def get_active(self):
         """Отримує список активних позицій"""
         try:
             r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
             if r['retCode'] == 0:
-                return [p for p in r['result']['list'] if float(p['size']) > 0]
+                positions = []
+                for p in r['result']['list']:
+                    size = self._safe_float(p.get('size'), 0)
+                    if size > 0:
+                        positions.append(p)
+                return positions
         except Exception as e:
             logger.error(f"Get active positions error: {e}")
         return []
@@ -65,11 +98,6 @@ class EnhancedMarketScanner:
     def fetch_candles(self, symbol, timeframe, limit=200):
         """
         Завантаження свічок для RSI/ATR.
-        
-        Важливо:
-        - Порядок: Старі → Нові
-        - Виключаємо останню незакриту свічку
-        - Мінімум 200 свічок для точного RSI
         """
         try:
             tf_map = {'5':'5', '15':'15', '30':'30', '45':'15', 
@@ -100,10 +128,8 @@ class EnhancedMarketScanner:
                 df['time'] = pd.to_numeric(df['time'])
                 df['datetime'] = pd.to_datetime(df['time'], unit='ms')
                 
-                # Сортуємо: Старі → Нові
                 df = df.sort_values('datetime').reset_index(drop=True)
                 
-                # Ресемплінг для 45хв
                 if str(timeframe) == '45':
                     df.set_index('datetime', inplace=True)
                     df = df.resample('45min', origin='start_day', label='left', closed='left').agg({
@@ -113,7 +139,6 @@ class EnhancedMarketScanner:
                     df.dropna(inplace=True)
                     df = df.reset_index(drop=True)
                 
-                # Виключаємо останню незакриту свічку
                 if len(df) > 1:
                     df = df.iloc[:-1].reset_index(drop=True)
                 
@@ -134,11 +159,6 @@ class EnhancedMarketScanner:
     def monitor(self):
         """
         🎯 ГОЛОВНА ЛОГІКА МОНІТОРИНГУ
-        
-        Smart TP Algorithm:
-        1. При відкритті - запам'ятовуємо initial_qty
-        2. Коли qty ≤ 50% initial → TP1 виконався → SL в BE
-        3. Коли qty ≤ 25% initial → TP2 виконався → Trailing ON
         """
         active_pos = self.get_active()
         active_syms = [p['symbol'] for p in active_pos]
@@ -154,174 +174,163 @@ class EnhancedMarketScanner:
         # === НАЛАШТУВАННЯ ===
         exit_tf = settings.get("exit_ltf", "60")
         tp_mode = settings.get("tp_mode", "Smart_TP")
-        
-        # Trailing параметри (використовуються після TP2)
-        atr_len = int(settings.get("trailing_atr_length", 14))
-        atr_mult = float(settings.get("trailing_atr_multiplier", 2.5))
+        atr_len = self._safe_int(settings.get("trailing_atr_length", 14), 14)
+        atr_mult = self._safe_float(settings.get("trailing_atr_multiplier", 2.5), 2.5)
 
         for p in active_pos:
-            s = p['symbol']
-            side = p['side']
-            entry_price = float(p['avgPrice'])
-            current_qty = float(p['size'])
-            position_idx = int(p.get('positionIdx', 0))
-            current_sl = float(p.get('stopLoss', 0.0))
-            
-            # Отримуємо поточну ціну
+            s = "unknown"
             try:
-                last_price = float(self.bot.get_price(s))
-            except:
-                last_price = entry_price
-
-            # === ІНІЦІАЛІЗАЦІЯ ДАНИХ ПОЗИЦІЇ ===
-            if s not in self.data:
-                self.data[s] = {
-                    'rsi': 0,
-                    'exit_status': 'Active',
-                    'exit_details': 'Monitoring...',
-                    
-                    # 🎯 Smart TP Tracking
-                    'initial_qty': current_qty,      # Початковий розмір позиції
-                    'entry_price': entry_price,
-                    'entry_sl': current_sl,
-                    'position_time': int(p.get('createdTime', 0)),
-                    
-                    # TP/BE/Trailing стани
-                    'tp1_hit': False,      # TP1 виконався (50% закрито)
-                    'tp2_hit': False,      # TP2 виконався (ще 25% закрито)
-                    'be_set': False,       # Break-Even встановлено
-                    'trailing_active': False,  # Trailing активний
-                    'last_sl_update': 0    # Останнє значення SL
-                }
-                logger.info(f"📊 New position tracked: {s} {side} qty={current_qty} entry={entry_price}")
-
-            pos_data = self.data[s]
-            initial_qty = pos_data['initial_qty']
-            
-            # === SMART TP TRACKING (для режимів Smart_TP / Fixed_1_50) ===
-            if tp_mode in ["Smart_TP", "Fixed_1_50"]:
+                s = p.get('symbol', 'unknown')
+                side = p.get('side', '')
                 
-                # Визначаємо скільки % позиції залишилось
-                qty_ratio = current_qty / initial_qty if initial_qty > 0 else 1.0
+                # ✅ Безпечне конвертування
+                entry_price = self._safe_float(p.get('avgPrice'), 0)
+                current_qty = self._safe_float(p.get('size'), 0)
+                position_idx = self._safe_int(p.get('positionIdx'), 0)
+                current_sl = self._safe_float(p.get('stopLoss'), 0)
                 
-                # --- TP1 CHECK (qty ≤ 55% означає що TP1 виконався) ---
-                if not pos_data['tp1_hit'] and qty_ratio <= 0.55:
-                    pos_data['tp1_hit'] = True
-                    logger.info(f"✅ TP1 HIT: {s} - 50% closed. Remaining: {round(qty_ratio*100)}%")
+                # Пропускаємо якщо немає даних
+                if entry_price <= 0 or current_qty <= 0 or not side:
+                    continue
+                
+                # Отримуємо поточну ціну
+                try:
+                    last_price = self._safe_float(self.bot.get_price(s), entry_price)
+                except:
+                    last_price = entry_price
+
+                # === ІНІЦІАЛІЗАЦІЯ ДАНИХ ПОЗИЦІЇ ===
+                if s not in self.data:
+                    created_time = self._safe_int(p.get('createdTime'), 0)
+                    self.data[s] = {
+                        'rsi': 0,
+                        'exit_status': 'Active',
+                        'exit_details': 'Monitoring...',
+                        'initial_qty': current_qty,
+                        'entry_price': entry_price,
+                        'entry_sl': current_sl,
+                        'position_time': created_time,
+                        'tp1_hit': False,
+                        'tp2_hit': False,
+                        'be_set': False,
+                        'trailing_active': False,
+                        'last_sl_update': current_sl if current_sl > 0 else 0
+                    }
+                    logger.info(f"📊 New position tracked: {s} {side} qty={current_qty} entry={entry_price}")
+
+                pos_data = self.data[s]
+                initial_qty = pos_data['initial_qty']
+                
+                # === SMART TP TRACKING ===
+                if tp_mode in ["Smart_TP", "Fixed_1_50"]:
+                    qty_ratio = current_qty / initial_qty if initial_qty > 0 else 1.0
                     
-                    # → Переміщуємо SL в Break-Even
-                    if not pos_data['be_set']:
-                        be_buffer = 0.001  # 0.1% буфер
+                    # --- TP1 CHECK ---
+                    if not pos_data['tp1_hit'] and qty_ratio <= 0.55:
+                        pos_data['tp1_hit'] = True
+                        logger.info(f"✅ TP1 HIT: {s} - 50% closed. Remaining: {round(qty_ratio*100)}%")
                         
+                        if not pos_data['be_set']:
+                            be_buffer = 0.001
+                            if side == "Buy":
+                                be_price = entry_price * (1 + be_buffer)
+                                if current_sl == 0 or be_price > current_sl:
+                                    if self.bot.update_sl(s, be_price, position_idx):
+                                        pos_data['be_set'] = True
+                                        pos_data['last_sl_update'] = be_price
+                                        logger.info(f"🛡️ BE SET: {s} SL moved to {be_price}")
+                            else:
+                                be_price = entry_price * (1 - be_buffer)
+                                if current_sl == 0 or be_price < current_sl:
+                                    if self.bot.update_sl(s, be_price, position_idx):
+                                        pos_data['be_set'] = True
+                                        pos_data['last_sl_update'] = be_price
+                                        logger.info(f"🛡️ BE SET: {s} SL moved to {be_price}")
+                    
+                    # --- TP2 CHECK ---
+                    if pos_data['tp1_hit'] and not pos_data['tp2_hit'] and qty_ratio <= 0.30:
+                        pos_data['tp2_hit'] = True
+                        pos_data['trailing_active'] = True
+                        logger.info(f"✅ TP2 HIT: {s} - Trailing ACTIVATED for remaining {round(qty_ratio*100)}%")
+
+                # === FETCH INDICATORS ===
+                df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
+                
+                if df is not None and len(df) >= 15:
+                    rsi_val = simple_rsi(df['close'], period=14)
+                    atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
+                    
+                    pos_data['rsi'] = int(round(rsi_val)) if rsi_val else 0
+                    
+                    status = "Active"
+                    details = f"RSI: {round(rsi_val, 1)}" if rsi_val else "RSI: N/A"
+                    
+                    if pos_data['tp1_hit'] and not pos_data['tp2_hit']:
+                        status = "TP1 ✓ BE"
+                        details = f"RSI: {round(rsi_val, 1)} | Waiting TP2" if rsi_val else "Waiting TP2"
+                    
+                    # === TRAILING STOP LOGIC ===
+                    if pos_data['trailing_active'] and atr_val and atr_val > 0:
+                        status = "TRAILING 🚀"
+                        details = f"ATR: {round(atr_val, 4)}"
+                        
+                        last_sl = pos_data.get('last_sl_update', current_sl)
+                        new_sl = 0.0
+                        should_update = False
+
                         if side == "Buy":
-                            be_price = entry_price * (1 + be_buffer)
-                            # BE має бути вище поточного SL
-                            if current_sl == 0 or be_price > current_sl:
-                                if self.bot.update_sl(s, be_price, position_idx):
-                                    pos_data['be_set'] = True
-                                    pos_data['last_sl_update'] = be_price
-                                    logger.info(f"🛡️ BE SET: {s} SL moved to {be_price} (+0.1%)")
-                        else:  # Sell
-                            be_price = entry_price * (1 - be_buffer)
-                            # BE має бути нижче поточного SL
-                            if current_sl == 0 or be_price < current_sl:
-                                if self.bot.update_sl(s, be_price, position_idx):
-                                    pos_data['be_set'] = True
-                                    pos_data['last_sl_update'] = be_price
-                                    logger.info(f"🛡️ BE SET: {s} SL moved to {be_price} (-0.1%)")
-                
-                # --- TP2 CHECK (qty ≤ 30% означає що TP2 виконався) ---
-                if pos_data['tp1_hit'] and not pos_data['tp2_hit'] and qty_ratio <= 0.30:
-                    pos_data['tp2_hit'] = True
-                    pos_data['trailing_active'] = True
-                    logger.info(f"✅ TP2 HIT: {s} - 75% total closed. Trailing ACTIVATED for remaining {round(qty_ratio*100)}%")
+                            calc_sl = last_price - (atr_val * atr_mult)
+                            be_level = entry_price * 1.001
+                            calc_sl = max(calc_sl, be_level)
+                            
+                            if last_sl <= 0 or (calc_sl > last_sl and (calc_sl - last_sl) / last_sl > 0.001):
+                                new_sl = calc_sl
+                                should_update = True
 
-            # === FETCH DATA FOR INDICATORS ===
-            df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
-            
-            if df is not None and len(df) >= 15:
-                # Розрахунок індикаторів
-                rsi_val = simple_rsi(df['close'], period=14)
-                atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
-                
-                pos_data['rsi'] = int(round(rsi_val))
-                
-                # === ВИЗНАЧЕННЯ СТАТУСУ ===
-                status = "Active"
-                details = f"RSI: {round(rsi_val, 1)}"
-                
-                if pos_data['tp1_hit'] and not pos_data['tp2_hit']:
-                    status = "TP1 ✓ BE"
-                    details = f"RSI: {round(rsi_val, 1)} | Waiting TP2"
-                
-                # === TRAILING STOP LOGIC (тільки після TP2) ===
-                if pos_data['trailing_active']:
-                    status = "TRAILING 🚀"
-                    details = f"ATR: {round(atr_val, 4)}"
-                    
-                    last_sl = pos_data.get('last_sl_update', current_sl)
-                    new_sl = 0.0
-                    should_update = False
+                        elif side == "Sell":
+                            calc_sl = last_price + (atr_val * atr_mult)
+                            be_level = entry_price * 0.999
+                            calc_sl = min(calc_sl, be_level)
+                            
+                            if last_sl <= 0 or (calc_sl < last_sl and (last_sl - calc_sl) / last_sl > 0.001):
+                                new_sl = calc_sl
+                                should_update = True
 
-                    if side == "Buy":
-                        # Trailing SL = Price - (ATR × mult)
-                        calc_sl = last_price - (atr_val * atr_mult)
-                        
-                        # SL не може бути нижче BE
-                        be_level = entry_price * 1.001
-                        calc_sl = max(calc_sl, be_level)
-                        
-                        # Оновлюємо тільки якщо новий SL ВИЩИЙ
-                        if calc_sl > last_sl and (calc_sl - last_sl) / last_sl > 0.001:
-                            new_sl = calc_sl
-                            should_update = True
-
-                    elif side == "Sell":
-                        # Trailing SL = Price + (ATR × mult)
-                        calc_sl = last_price + (atr_val * atr_mult)
-                        
-                        # SL не може бути вище BE
-                        be_level = entry_price * 0.999
-                        calc_sl = min(calc_sl, be_level)
-                        
-                        # Оновлюємо тільки якщо новий SL НИЖЧИЙ
-                        if last_sl == 0 or (calc_sl < last_sl and (last_sl - calc_sl) / last_sl > 0.001):
-                            new_sl = calc_sl
-                            should_update = True
-
-                    # Оновлюємо SL якщо потрібно
-                    if should_update and new_sl > 0:
-                        success = self.bot.update_sl(s, new_sl, position_idx)
-                        if success:
-                            pos_data['last_sl_update'] = new_sl
-                            logger.info(f"⛓️ TRAILING: {s} SL updated {last_sl:.4f} → {new_sl:.4f}")
-                            details += " | SL ✓"
+                        if should_update and new_sl > 0:
+                            success = self.bot.update_sl(s, new_sl, position_idx)
+                            if success:
+                                pos_data['last_sl_update'] = new_sl
+                                logger.info(f"⛓️ TRAILING: {s} SL updated {last_sl:.4f} → {new_sl:.4f}")
+                                details += " | SL ✓"
+                            else:
+                                details += " | SL OK"
                         else:
                             details += " | SL OK"
-                    else:
-                        details += " | SL OK"
-                
-                # === RSI WARNING (для активних позицій без trailing) ===
-                if not pos_data['trailing_active']:
-                    lb = float(settings.get('obt_entryRsiOversold', 30))
-                    ub = float(settings.get('obt_entryRsiOverbought', 70))
                     
-                    if side == "Buy" and rsi_val >= ub:
-                        status = "⚠️ RSI High"
-                        details += f" (≥{ub})"
-                    elif side == "Sell" and rsi_val <= lb:
-                        status = "⚠️ RSI Low"
-                        details += f" (≤{lb})"
+                    # === RSI WARNING ===
+                    if not pos_data['trailing_active'] and rsi_val:
+                        lb = self._safe_float(settings.get('obt_entryRsiOversold', 30), 30)
+                        ub = self._safe_float(settings.get('obt_entryRsiOverbought', 70), 70)
+                        
+                        if side == "Buy" and rsi_val >= ub:
+                            status = "⚠️ RSI High"
+                            details += f" (≥{ub})"
+                        elif side == "Sell" and rsi_val <= lb:
+                            status = "⚠️ RSI Low"
+                            details += f" (≤{lb})"
+                    
+                    pos_data['exit_status'] = status
+                    pos_data['exit_details'] = details
                 
-                pos_data['exit_status'] = status
-                pos_data['exit_details'] = details
-            
-            else:
-                pos_data['exit_status'] = 'No Data'
-                pos_data['exit_details'] = 'Waiting...'
-            
-            # Затримка між монетами
-            time.sleep(0.2)
+                else:
+                    pos_data['exit_status'] = 'No Data'
+                    pos_data['exit_details'] = 'Waiting...'
+                
+                time.sleep(0.2)
+                
+            except Exception as e:
+                logger.error(f"Monitor position error {s}: {e}")
+                continue
 
     def get_market_pressure(self, s):
         """Заповнювач для сумісності"""
