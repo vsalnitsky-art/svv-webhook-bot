@@ -265,7 +265,7 @@ class EnhancedMarketScanner:
         while True:
             try:
                 pos = self.bot.session.get_positions(category="linear", settleCoin="USDT")['result']['list']
-                actives = [p['symbol'] for p in pos if float(p['size']) > 0]
+                actives = [p['symbol'] for p in pos if safe_float(p.get('size'), 0) > 0]
                 if not actives: self.data = {}; time.sleep(5); continue
                 tickers = self.bot.get_all_tickers()
                 for t in tickers:
@@ -410,7 +410,7 @@ class BybitTradingBot:
                 return {"status": "ignored"}
             
             pos = self.session.get_positions(category="linear", symbol=norm)['result']['list']
-            if any(float(p['size'])>0 for p in pos): return {"status": "ignored"}
+            if any(safe_float(p.get('size'), 0)>0 for p in pos): return {"status": "ignored"}
             
             # risk = float(da# ta.get('riskPercent', settings.get('riskPercent'))); lev = int(da# ta.get('leverage', settings.get('leverage')))
             price = self.get_price(norm); lot, tick = self.get_instr(norm)
@@ -459,7 +459,7 @@ def monitor_active():
             r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
             if r['retCode']==0:
                 for p in r['result']['list']:
-                    if float(p['size'])>0: stats_service.save_monitor_log({'symbol':p['symbol'], 'price':float(p['avgPrice']), 'pnl':float(p['unrealisedPnl']), 'rsi':scanner.get_current_rsi(p['symbol']), 'pressure':scanner.get_market_pressure(p['symbol'])})
+                    if safe_float(p.get('size'), 0)>0: stats_service.save_monitor_log({'symbol':p['symbol'], 'price':safe_float(p.get('avgPrice'), 0), 'pnl':safe_float(p.get('unrealisedPnl'), 0), 'rsi':scanner.get_current_rsi(p['symbol']), 'pressure':scanner.get_market_pressure(p['symbol'])})
         except: pass
         time.sleep(10)
 def keep_alive():
@@ -478,9 +478,9 @@ def scanner_page():
         r = bot_instance.session.get_positions(category="linear", settleCoin="USDT")
         if r['retCode']==0:
             for p in r['result']['list']:
-                if float(p['size'])>0:
+                if safe_float(p.get('size'), 0)>0:
                     ts = p.get('createdTime') or p.get('updatedTime', time.time()*1000)
-                    active.append({'symbol':p['symbol'], 'side':p['side'], 'pnl':round(float(p['unrealisedPnl']),2), 'rsi':scanner.get_current_rsi(p['symbol']), 'pressure':round(scanner.get_market_pressure(p['symbol'])), 'size':p['size'], 'entry':p['avgPrice'], 'time':datetime.fromtimestamp(int(ts)/1000).strftime('%d.%m %H:%M')})
+                    active.append({'symbol':p['symbol'], 'side':p['side'], 'pnl':round(safe_float(p.get('unrealisedPnl'), 0),2), 'rsi':scanner.get_current_rsi(p['symbol']), 'pressure':round(scanner.get_market_pressure(p['symbol'])), 'size':p['size'], 'entry':p['avgPrice'], 'time':datetime.fromtimestamp(int(ts)/1000).strftime('%d.%m %H:%M')})
     except: pass
     return render_template('scanner.html', active=active)
 @app.route('/analyzer')
