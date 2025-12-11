@@ -81,8 +81,14 @@ class SettingsManager:
         self.reload_settings()
 
     def _cast_value(self, key, value_str):
-        if key not in DEFAULT_SETTINGS: return value_str
+        if key not in DEFAULT_SETTINGS: 
+            return value_str
         default_val = DEFAULT_SETTINGS[key]
+        
+        # Обробка порожніх рядків - повертаємо default
+        if value_str is None or value_str == '':
+            return default_val
+            
         try:
             if isinstance(default_val, bool): 
                 return str(value_str).lower() in ['true', 'on', '1']
