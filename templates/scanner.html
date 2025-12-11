@@ -70,7 +70,10 @@ class EnhancedMarketScanner:
             try:
                 self.monitor()
             except Exception as e:
+                # Детальне логування для діагностики
+                import traceback
                 logger.error(f"Monitor loop error: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
             time.sleep(5)  # Перевіряємо кожні 5 сек
 
     def get_active(self):
