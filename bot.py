@@ -87,10 +87,23 @@ class BybitTradingBot:
             return None, None
 
     def round_val(self, val, step):
-        """Округлює значення до кроку"""
+        """
+        Округлює значення до кроку (tickSize/qtyStep).
+        Використовує Decimal для уникнення floating-point помилок.
+        """
         try:
-            d = abs(Decimal(str(step)).as_tuple().exponent)
-            return round(val // step * step, d)
+            from decimal import Decimal, ROUND_DOWN
+            # Конвертуємо в Decimal для точності
+            d_val = Decimal(str(val))
+            d_step = Decimal(str(step))
+            
+            # Округлюємо вниз до найближчого кроку
+            result = (d_val / d_step).quantize(Decimal('1'), rounding=ROUND_DOWN) * d_step
+            
+            # Визначаємо кількість знаків після коми
+            decimals = abs(d_step.as_tuple().exponent)
+            
+            return float(round(result, decimals))
         except: 
             return val
 
@@ -553,7 +566,7 @@ class BybitTradingBot:
 
             # 3. Режим Ladder_3: Драбинка на 3 рівні (без trailing)
             elif mode == "Ladder_3":
-                base_tp = float(d.get('takeProfitPercent', settings.get('fixedTP', 3.0))) / 100
+                base_tp = safe_float(d.get('takeProfitPercent', settings.get('fixedTP', 3.0)), 3.0) / 100
                 q_step = self.round_val(qty * 0.33, step)
                 
                 multipliers = [1/3, 2/3, 1.0]
