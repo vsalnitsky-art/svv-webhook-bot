@@ -443,8 +443,8 @@
                         <th>MFI</th>
                         <th>Mom</th>
                         <th>HMA</th>
-                        <th>HTF</th>
-                        <th>Signal</th>
+                        <th>HTF Sig</th>
+                        <th>Last Signal</th>
                         <th class="text-center">Status</th>
                     </tr>
                 </thead>
@@ -613,7 +613,10 @@ function displayResults(results) {
         const momClass = r.momentum === 'rising' ? 'trend-bull' : r.momentum === 'falling' ? 'trend-bear' : 'trend-neutral';
         const hmaClass = r.hma_cloud === 'bullish' ? 'trend-bull' : r.hma_cloud === 'bearish' ? 'trend-bear' : 'trend-neutral';
         const htfClass = r.htf_signal === 'BUY' ? 'trend-bull' : r.htf_signal === 'SELL' ? 'trend-bear' : 'trend-neutral';
-        const signalClass = r.signal === 'BUY' ? 'signal-buy' : 'signal-sell';
+        
+        // Last Signal визначає напрямок
+        const lastSignal = r.last_signal || r.signal;
+        const signalClass = lastSignal === 'BUY' ? 'signal-buy' : 'signal-sell';
         
         html += `
             <tr>
@@ -625,7 +628,7 @@ function displayResults(results) {
                 <td class="${momClass}">${r.momentum === 'rising' ? '↑' : r.momentum === 'falling' ? '↓' : '—'}</td>
                 <td class="${hmaClass}">${capitalize(r.hma_cloud)}</td>
                 <td class="${htfClass}">${r.htf_signal}</td>
-                <td><span class="${signalClass}">${r.signal}</span></td>
+                <td><span class="${signalClass}">${lastSignal}</span></td>
                 <td class="text-center"><span class="status-ready">✓ READY</span></td>
             </tr>
         `;
@@ -637,8 +640,8 @@ function displayResults(results) {
 // Update stats
 function updateStats(results) {
     document.getElementById('statFound').textContent = results.length;
-    document.getElementById('statBuy').textContent = results.filter(r => r.signal === 'BUY').length;
-    document.getElementById('statSell').textContent = results.filter(r => r.signal === 'SELL').length;
+    document.getElementById('statBuy').textContent = results.filter(r => (r.last_signal || r.signal) === 'BUY').length;
+    document.getElementById('statSell').textContent = results.filter(r => (r.last_signal || r.signal) === 'SELL').length;
     document.getElementById('statTime').textContent = new Date().toLocaleTimeString('uk-UA');
 }
 
