@@ -649,6 +649,82 @@ def import_settings():
         logger.error("import_settings_error", error=str(e), exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+# ===== RSI/MFI SCREENER ROUTES =====
+
+@app.route('/rsi_screener')
+def rsi_screener_page():
+    """RSI/MFI Screener сторінка"""
+    return render_template('rsi_screener.html')
+
+@app.route('/rsi_screener/settings', methods=['GET'])
+def rsi_screener_get_settings():
+    """Отримати налаштування RSI Screener"""
+    try:
+        all_settings = settings.get_all()
+        screener_settings = {k: v for k, v in all_settings.items() if k.startswith('screener_')}
+        return jsonify(screener_settings)
+    except Exception as e:
+        logger.error(f"RSI Screener settings error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/rsi_screener/settings', methods=['POST'])
+def rsi_screener_save_settings():
+    """Зберегти налаштування RSI Screener"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        # Фільтруємо тільки screener налаштування
+        screener_data = {k: v for k, v in data.items() if k.startswith('screener_')}
+        settings.save_settings(screener_data)
+        
+        logger.info("RSI Screener settings saved")
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        logger.error(f"RSI Screener save error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/rsi_screener/scan', methods=['POST'])
+def rsi_screener_scan():
+    """Запустити скан RSI/MFI"""
+    try:
+        from rsi_screener import RSIMFIScreener
+        from pybit.unified_trading import HTTP
+        
+        # Отримуємо налаштування з запиту
+        data = request.get_json() or {}
+        
+        # Об'єднуємо з збереженими налаштуваннями
+        all_settings = settings.get_all()
+        scan_settings = {**all_settings, **data}
+        
+        # Підключаємося до Bybit
+        api_key, api_secret = get_api_credentials()
+        session = HTTP(
+            testnet=os.environ.get("TESTNET", "false").lower() == "true",
+            api_key=api_key,
+            api_secret=api_secret
+        )
+        
+        # Створюємо скринер
+        screener = RSIMFIScreener(session=session, settings=scan_settings)
+        
+        # Запускаємо скан
+        results = screener.scan()
+        
+        logger.info(f"RSI Screener scan complete: {len(results)} matches")
+        
+        return jsonify({
+            "status": "ok",
+            "results": results,
+            "count": len(results)
+        })
+        
+    except Exception as e:
+        logger.error(f"RSI Screener scan error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
 # ===== ЗАПУСК =====
 
 if __name__ == '__main__':
