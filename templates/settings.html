@@ -238,29 +238,34 @@ fullContent:
                     
                     <div class="col-12"><hr class="my-2 opacity-10"></div>
                     
+                    <!-- MANUAL TRAILING SECTION -->
                     <div class="col-12">
                         <div class="form-check form-switch">
                             <input class="form-check-input" type="checkbox" name="trailing_enabled" id="trailingSwitch" {{ 'checked' if conf.get('trailing_enabled') }}>
                             <input type="hidden" name="trailing_enabled" value="false">
-                            <label class="form-check-label fw-bold small text-secondary" for="trailingSwitch">
-                                🔧 Manual Trailing (RSI-based) - окремий режим
+                            <label class="form-check-label fw-bold small text-primary" for="trailingSwitch">
+                                🔧 Manual Trailing - додатковий режим (працює незалежно від Smart TP)
                             </label>
                         </div>
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label small text-warning fw-bold">🪤 RSI Активація (manual)</label>
+                        <label class="form-label small text-warning fw-bold">🪤 RSI Активація</label>
                         <input type="number" class="form-control" name="trailing_rsi_activation" value="{{ conf.get('trailing_rsi_activation', 65) }}">
-                        <div class="form-text small text-muted">Тільки для manual режиму</div>
+                        <div class="form-text small text-muted">Long: RSI≥X | Short: RSI≤(100-X)</div>
                     </div>
                     <div class="col-md-3">
-                        <label class="form-label small text-muted fw-bold">⏱️ Затримка (хв)</label>
+                        <label class="form-label small text-info fw-bold">⏱️ Затримка (хв)</label>
                         <input type="number" step="1" class="form-control" name="trailing_activation_delay" value="{{ conf.get('trailing_activation_delay', 5) }}">
-                        <div class="form-text small text-muted">Тільки для manual режиму</div>
+                        <div class="form-text small text-muted">Активація по часу (0 = вимкнено)</div>
                     </div>
                     
                     <div class="col-12">
-                        <div class="alert alert-info alert-sm border-0 py-2 px-3 text-sm" role="alert">
-                            <strong>Формула:</strong> SL = LastPrice ± (ATR × Множник). Trailing SL ніколи не буде гірше за Break-Even!
+                        <div class="alert alert-secondary border-0 py-2 px-3 small" role="alert">
+                            <div class="fw-bold mb-1">📋 Два режими Trailing:</div>
+                            <div><strong>1. Smart TP:</strong> Trailing активується автоматично після TP2 (+2%)</div>
+                            <div><strong>2. Manual:</strong> Trailing активується по RSI або затримці (для будь-якого TP режиму)</div>
+                            <hr class="my-1 opacity-25">
+                            <div><strong>Формула:</strong> SL = LastPrice ± (ATR × Множник) | SL ≥ Break-Even</div>
                         </div>
                     </div>
                 </div>
