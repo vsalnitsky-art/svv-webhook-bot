@@ -1,0 +1,748 @@
+{% extends "base.html" %}
+
+{% block title %}RSI/MFI Screener - AlgoBot{% endblock %}
+
+{% block head %}
+<style>
+    .scan-btn {
+        background: linear-gradient(135deg, #4f46e5, #7c3aed);
+        border: none;
+        padding: 10px 24px;
+        font-weight: 600;
+        transition: all 0.3s;
+    }
+    .scan-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+    }
+    .scan-btn:disabled {
+        background: #94a3b8;
+        transform: none;
+        box-shadow: none;
+    }
+    
+    .filter-switch {
+        padding: 8px 16px;
+        border-radius: 8px;
+        background: var(--bg-element);
+        transition: all 0.2s;
+    }
+    .filter-switch:hover {
+        background: #e2e8f0;
+    }
+    .filter-switch .form-check-input:checked {
+        background-color: #4f46e5;
+        border-color: #4f46e5;
+    }
+    
+    .result-table th {
+        background: #1e293b;
+        color: #f1f5f9;
+        font-weight: 600;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        white-space: nowrap;
+    }
+    .result-table td {
+        vertical-align: middle;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.85rem;
+    }
+    .result-table tbody tr:hover {
+        background: #f8fafc;
+    }
+    
+    /* Signal badges */
+    .signal-buy {
+        background: linear-gradient(135deg, #059669, #10b981);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 0.8rem;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        animation: pulse-green 2s infinite;
+    }
+    .signal-sell {
+        background: linear-gradient(135deg, #dc2626, #ef4444);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 0.8rem;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        animation: pulse-red 2s infinite;
+    }
+    
+    @keyframes pulse-green {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+        50% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+    }
+    @keyframes pulse-red {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+        50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+    }
+    
+    /* Status badges */
+    .status-ready {
+        color: #00FF00;
+        font-weight: 700;
+        text-shadow: 0 0 8px rgba(0, 255, 0, 0.5);
+    }
+    .status-blocked {
+        color: #ff4444;
+        font-weight: 600;
+    }
+    
+    /* Filter status */
+    .filter-pass { color: #10b981; font-weight: 600; }
+    .filter-fail { color: #ef4444; font-weight: 600; }
+    .filter-off { color: #94a3b8; }
+    
+    /* Trend indicators */
+    .trend-bull { color: #10b981; font-weight: 600; }
+    .trend-bear { color: #ef4444; font-weight: 600; }
+    .trend-neutral { color: #94a3b8; }
+    
+    /* RSI coloring */
+    .rsi-oversold { color: #10b981; font-weight: 600; }
+    .rsi-overbought { color: #ef4444; font-weight: 600; }
+    .rsi-neutral { color: #64748b; }
+    
+    /* Progress bar */
+    .scan-progress {
+        height: 4px;
+        background: #e2e8f0;
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 8px;
+    }
+    .scan-progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #4f46e5, #7c3aed);
+        transition: width 0.3s ease;
+    }
+    
+    /* Accordion styling */
+    .accordion-button:not(.collapsed) {
+        background: #f1f5f9;
+        color: #1e293b;
+    }
+    .accordion-button:focus {
+        box-shadow: none;
+        border-color: #e2e8f0;
+    }
+    
+    /* Settings inputs */
+    .setting-input {
+        max-width: 80px;
+        text-align: center;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    
+    /* Stats cards */
+    .stat-card {
+        background: linear-gradient(135deg, #1e293b, #334155);
+        color: white;
+        border-radius: 12px;
+        padding: 16px 20px;
+    }
+    .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    
+    /* Empty state */
+    .empty-state {
+        padding: 60px 20px;
+        text-align: center;
+        color: #94a3b8;
+    }
+    .empty-state i {
+        font-size: 4rem;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="mb-1 fw-bold">📡 RSI/MFI Screener</h4>
+        <p class="text-muted small mb-0">Сканування ринку з AND фільтрами • Тільки 100% відповідність</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary" onclick="saveSettings()">
+            <i class="ri-save-line me-1"></i>Зберегти
+        </button>
+        <button class="btn btn-primary scan-btn" id="scanBtn" onclick="startScan()">
+            <i class="ri-radar-line me-1"></i>Scan Now
+        </button>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="small text-white-50">Знайдено сигналів</div>
+                    <div class="stat-value" id="statFound">—</div>
+                </div>
+                <i class="ri-signal-tower-fill fs-2 text-white-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="small text-white-50">BUY сигнали</div>
+                    <div class="stat-value text-success" id="statBuy">—</div>
+                </div>
+                <i class="ri-arrow-up-circle-fill fs-2 text-success"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="small text-white-50">SELL сигнали</div>
+                    <div class="stat-value text-danger" id="statSell">—</div>
+                </div>
+                <i class="ri-arrow-down-circle-fill fs-2 text-danger"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="small text-white-50">Останній скан</div>
+                    <div class="stat-value fs-5" id="statTime">—</div>
+                </div>
+                <i class="ri-time-line fs-2 text-white-50"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Settings Panel -->
+<div class="card card-custom mb-4">
+    <div class="card-body">
+        <!-- Main Settings -->
+        <div class="row g-3 mb-3">
+            <div class="col-md-2">
+                <label class="form-label small fw-bold">Main TF</label>
+                <select class="form-select form-select-sm" id="mainTf" onchange="updateHtf()">
+                    <option value="5">5m</option>
+                    <option value="15">15m</option>
+                    <option value="30">30m</option>
+                    <option value="60" selected>1H</option>
+                    <option value="120">2H</option>
+                    <option value="240">4H</option>
+                    <option value="D">1D</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small fw-bold">HTF (auto)</label>
+                <select class="form-select form-select-sm" id="htfTf">
+                    <option value="15">15m</option>
+                    <option value="60">1H</option>
+                    <option value="240" selected>4H</option>
+                    <option value="D">1D</option>
+                    <option value="W">1W</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small fw-bold">Min Volume</label>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="number" class="form-control" id="minVolume" value="10000000" step="1000000">
+                    <span class="input-group-text">M</span>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small fw-bold">🎚️ Фільтри (AND logic)</label>
+                <div class="d-flex flex-wrap gap-2">
+                    <div class="filter-switch">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="filterRsi" checked>
+                            <label class="form-check-label small" for="filterRsi">RSI</label>
+                        </div>
+                    </div>
+                    <div class="filter-switch">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="filterMfi" checked>
+                            <label class="form-check-label small" for="filterMfi">MFI</label>
+                        </div>
+                    </div>
+                    <div class="filter-switch">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="filterMomentum" checked>
+                            <label class="form-check-label small" for="filterMomentum">Momentum</label>
+                        </div>
+                    </div>
+                    <div class="filter-switch">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="filterHma" checked>
+                            <label class="form-check-label small" for="filterHma">HMA Cloud</label>
+                        </div>
+                    </div>
+                    <div class="filter-switch">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="filterHtfSignal" checked>
+                            <label class="form-check-label small" for="filterHtfSignal">HTF Signal</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Progress Bar -->
+        <div id="progressContainer" class="d-none">
+            <div class="d-flex justify-content-between align-items-center">
+                <small class="text-muted">Сканування...</small>
+                <small class="text-muted" id="progressText">0/0</small>
+            </div>
+            <div class="scan-progress">
+                <div class="scan-progress-bar" id="progressBar" style="width: 0%"></div>
+            </div>
+        </div>
+        
+        <!-- Advanced Settings Accordion -->
+        <div class="accordion mt-3" id="advancedAccordion">
+            <div class="accordion-item border-0">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed py-2 px-3 small" type="button" data-bs-toggle="collapse" data-bs-target="#advancedSettings">
+                        <i class="ri-settings-3-line me-2"></i>Розширені налаштування
+                    </button>
+                </h2>
+                <div id="advancedSettings" class="accordion-collapse collapse" data-bs-parent="#advancedAccordion">
+                    <div class="accordion-body pt-3">
+                        <div class="row g-3">
+                            <!-- RSI Settings -->
+                            <div class="col-md-4">
+                                <div class="p-3 bg-light rounded">
+                                    <h6 class="fw-bold mb-3"><i class="ri-bar-chart-2-line me-1"></i>RSI Settings</h6>
+                                    <div class="row g-2">
+                                        <div class="col-4">
+                                            <label class="form-label small">Length</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="rsiLength" value="14" min="2" max="50">
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small">Oversold</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="rsiOversold" value="30" min="10" max="40">
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small">Overbought</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="rsiOverbought" value="70" min="60" max="90">
+                                        </div>
+                                    </div>
+                                    <hr class="my-2">
+                                    <div class="row g-2">
+                                        <div class="col-6">
+                                            <label class="form-label small">Filter ≤ (Long)</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="rsiFilterOverbought" value="60" min="50" max="80">
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">Filter ≥ (Short)</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="rsiFilterOversold" value="40" min="20" max="50">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- MFI Settings -->
+                            <div class="col-md-4">
+                                <div class="p-3 bg-light rounded">
+                                    <h6 class="fw-bold mb-3"><i class="ri-funds-line me-1"></i>MFI Settings</h6>
+                                    <div class="row g-2">
+                                        <div class="col-4">
+                                            <label class="form-label small">Length</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="mfiLength" value="20" min="5" max="50">
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small">Fast EMA</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="mfiFastEma" value="5" min="2" max="20">
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small">Slow EMA</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="mfiSlowEma" value="13" min="5" max="30">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- HMA & Signal Settings -->
+                            <div class="col-md-4">
+                                <div class="p-3 bg-light rounded">
+                                    <h6 class="fw-bold mb-3"><i class="ri-line-chart-line me-1"></i>HMA & Signal</h6>
+                                    <div class="row g-2">
+                                        <div class="col-4">
+                                            <label class="form-label small">HMA Fast</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="hmaFast" value="10" min="5" max="30">
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small">HMA Slow</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="hmaSlow" value="30" min="20" max="100">
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small">Peak Str.</label>
+                                            <input type="number" class="form-control form-control-sm setting-input" id="peakStrength" value="2" min="1" max="5">
+                                        </div>
+                                    </div>
+                                    <hr class="my-2">
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="requireVolume">
+                                        <label class="form-check-label small" for="requireVolume">Volume Confirm</label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="checkbox" id="trendConfirm">
+                                        <label class="form-check-label small" for="trendConfirm">Trend Confirm</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Results Table -->
+<div class="card card-custom">
+    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-bold">
+            <i class="ri-list-check-2 me-2"></i>Результати
+            <span class="badge bg-primary ms-2" id="resultCount">0</span>
+        </h6>
+        <div class="d-flex gap-2">
+            <select class="form-select form-select-sm" style="width: auto;" id="sortBy" onchange="sortResults()">
+                <option value="rsi">Сортувати по RSI</option>
+                <option value="volume">Сортувати по Volume</option>
+                <option value="symbol">Сортувати по Symbol</option>
+            </select>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 result-table" id="resultsTable">
+                <thead>
+                    <tr>
+                        <th class="ps-3">Symbol</th>
+                        <th>Price</th>
+                        <th>Vol 24h</th>
+                        <th>RSI</th>
+                        <th>MFI</th>
+                        <th>Mom</th>
+                        <th>HMA</th>
+                        <th>HTF</th>
+                        <th>Signal</th>
+                        <th class="text-center">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody">
+                    <!-- Results will be inserted here -->
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Empty State -->
+        <div class="empty-state" id="emptyState">
+            <i class="ri-radar-line"></i>
+            <h5>Немає результатів</h5>
+            <p>Натисніть "Scan Now" для пошуку сигналів</p>
+        </div>
+    </div>
+</div>
+
+<script>
+// HTF Auto-mapping
+const htfMapping = {
+    '1': '15', '3': '15', '5': '60', '15': '60', '30': '240',
+    '60': '240', '120': '240', '240': 'D', '360': 'D', '720': 'D',
+    'D': 'W', 'W': 'M'
+};
+
+// Current results storage
+let currentResults = [];
+
+// Update HTF based on Main TF
+function updateHtf() {
+    const mainTf = document.getElementById('mainTf').value;
+    const htfSelect = document.getElementById('htfTf');
+    const autoHtf = htfMapping[mainTf] || '240';
+    htfSelect.value = autoHtf;
+}
+
+// Collect all settings
+function collectSettings() {
+    return {
+        screener_main_tf: document.getElementById('mainTf').value,
+        screener_htf: document.getElementById('htfTf').value,
+        screener_min_volume: parseInt(document.getElementById('minVolume').value) || 10000000,
+        
+        screener_use_rsi_filter: document.getElementById('filterRsi').checked,
+        screener_use_mfi_filter: document.getElementById('filterMfi').checked,
+        screener_use_momentum_filter: document.getElementById('filterMomentum').checked,
+        screener_use_cloud_filter: document.getElementById('filterHma').checked,
+        screener_use_htf_signal_filter: document.getElementById('filterHtfSignal').checked,
+        
+        screener_rsi_length: parseInt(document.getElementById('rsiLength').value) || 14,
+        screener_oversold: parseInt(document.getElementById('rsiOversold').value) || 30,
+        screener_overbought: parseInt(document.getElementById('rsiOverbought').value) || 70,
+        screener_rsi_filter_overbought: parseInt(document.getElementById('rsiFilterOverbought').value) || 60,
+        screener_rsi_filter_oversold: parseInt(document.getElementById('rsiFilterOversold').value) || 40,
+        
+        screener_mfi_length: parseInt(document.getElementById('mfiLength').value) || 20,
+        screener_fast_mfi_ema: parseInt(document.getElementById('mfiFastEma').value) || 5,
+        screener_slow_mfi_ema: parseInt(document.getElementById('mfiSlowEma').value) || 13,
+        
+        screener_hma_fast: parseInt(document.getElementById('hmaFast').value) || 10,
+        screener_hma_slow: parseInt(document.getElementById('hmaSlow').value) || 30,
+        screener_min_peak_strength: parseInt(document.getElementById('peakStrength').value) || 2,
+        
+        screener_require_volume: document.getElementById('requireVolume').checked,
+        screener_trend_confirmation: document.getElementById('trendConfirm').checked
+    };
+}
+
+// Save settings
+async function saveSettings() {
+    const settings = collectSettings();
+    
+    try {
+        const response = await fetch('/rsi_screener/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        
+        if (response.ok) {
+            showToast('Налаштування збережено', 'success');
+        } else {
+            showToast('Помилка збереження', 'danger');
+        }
+    } catch (e) {
+        showToast('Помилка: ' + e.message, 'danger');
+    }
+}
+
+// Start scan
+async function startScan() {
+    const scanBtn = document.getElementById('scanBtn');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    
+    // Disable button
+    scanBtn.disabled = true;
+    scanBtn.innerHTML = '<i class="ri-loader-4-line me-1 spin"></i>Scanning...';
+    
+    // Show progress
+    progressContainer.classList.remove('d-none');
+    progressBar.style.width = '0%';
+    
+    try {
+        const settings = collectSettings();
+        
+        const response = await fetch('/rsi_screener/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        
+        if (!response.ok) {
+            throw new Error('Scan failed');
+        }
+        
+        const data = await response.json();
+        
+        // Update progress to 100%
+        progressBar.style.width = '100%';
+        
+        // Store and display results
+        currentResults = data.results || [];
+        displayResults(currentResults);
+        
+        // Update stats
+        updateStats(currentResults);
+        
+    } catch (e) {
+        showToast('Помилка сканування: ' + e.message, 'danger');
+    } finally {
+        // Re-enable button
+        scanBtn.disabled = false;
+        scanBtn.innerHTML = '<i class="ri-radar-line me-1"></i>Scan Now';
+        
+        // Hide progress after delay
+        setTimeout(() => {
+            progressContainer.classList.add('d-none');
+        }, 1000);
+    }
+}
+
+// Display results
+function displayResults(results) {
+    const tbody = document.getElementById('resultsBody');
+    const emptyState = document.getElementById('emptyState');
+    const resultCount = document.getElementById('resultCount');
+    
+    resultCount.textContent = results.length;
+    
+    if (results.length === 0) {
+        tbody.innerHTML = '';
+        emptyState.style.display = 'block';
+        return;
+    }
+    
+    emptyState.style.display = 'none';
+    
+    let html = '';
+    
+    results.forEach(r => {
+        const rsiClass = r.rsi <= 30 ? 'rsi-oversold' : r.rsi >= 70 ? 'rsi-overbought' : 'rsi-neutral';
+        const mfiClass = r.mfi_cloud === 'bullish' ? 'trend-bull' : r.mfi_cloud === 'bearish' ? 'trend-bear' : 'trend-neutral';
+        const momClass = r.momentum === 'rising' ? 'trend-bull' : r.momentum === 'falling' ? 'trend-bear' : 'trend-neutral';
+        const hmaClass = r.hma_cloud === 'bullish' ? 'trend-bull' : r.hma_cloud === 'bearish' ? 'trend-bear' : 'trend-neutral';
+        const htfClass = r.htf_signal === 'BUY' ? 'trend-bull' : r.htf_signal === 'SELL' ? 'trend-bear' : 'trend-neutral';
+        const signalClass = r.signal === 'BUY' ? 'signal-buy' : 'signal-sell';
+        
+        html += `
+            <tr>
+                <td class="ps-3 fw-bold">${r.symbol}</td>
+                <td>$${formatPrice(r.price)}</td>
+                <td>${formatVolume(r.volume_24h)}</td>
+                <td class="${rsiClass}">${r.rsi.toFixed(1)}</td>
+                <td class="${mfiClass}">${capitalize(r.mfi_cloud)}</td>
+                <td class="${momClass}">${r.momentum === 'rising' ? '↑' : r.momentum === 'falling' ? '↓' : '—'}</td>
+                <td class="${hmaClass}">${capitalize(r.hma_cloud)}</td>
+                <td class="${htfClass}">${r.htf_signal}</td>
+                <td><span class="${signalClass}">${r.signal}</span></td>
+                <td class="text-center"><span class="status-ready">✓ READY</span></td>
+            </tr>
+        `;
+    });
+    
+    tbody.innerHTML = html;
+}
+
+// Update stats
+function updateStats(results) {
+    document.getElementById('statFound').textContent = results.length;
+    document.getElementById('statBuy').textContent = results.filter(r => r.signal === 'BUY').length;
+    document.getElementById('statSell').textContent = results.filter(r => r.signal === 'SELL').length;
+    document.getElementById('statTime').textContent = new Date().toLocaleTimeString('uk-UA');
+}
+
+// Sort results
+function sortResults() {
+    const sortBy = document.getElementById('sortBy').value;
+    
+    currentResults.sort((a, b) => {
+        switch(sortBy) {
+            case 'rsi':
+                return Math.abs(50 - a.rsi) > Math.abs(50 - b.rsi) ? -1 : 1;
+            case 'volume':
+                return b.volume_24h - a.volume_24h;
+            case 'symbol':
+                return a.symbol.localeCompare(b.symbol);
+            default:
+                return 0;
+        }
+    });
+    
+    displayResults(currentResults);
+}
+
+// Utility functions
+function formatPrice(price) {
+    if (price >= 1000) return price.toFixed(0);
+    if (price >= 1) return price.toFixed(2);
+    if (price >= 0.01) return price.toFixed(4);
+    return price.toFixed(6);
+}
+
+function formatVolume(vol) {
+    if (vol >= 1e9) return `$${(vol/1e9).toFixed(1)}B`;
+    if (vol >= 1e6) return `$${(vol/1e6).toFixed(1)}M`;
+    if (vol >= 1e3) return `$${(vol/1e3).toFixed(0)}K`;
+    return `$${vol.toFixed(0)}`;
+}
+
+function capitalize(str) {
+    if (!str) return '—';
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function showToast(message, type = 'info') {
+    // Simple alert for now
+    alert(message);
+}
+
+// Load saved settings on page load
+async function loadSettings() {
+    try {
+        const response = await fetch('/rsi_screener/settings');
+        if (response.ok) {
+            const settings = await response.json();
+            
+            // Apply settings to form
+            if (settings.screener_main_tf) document.getElementById('mainTf').value = settings.screener_main_tf;
+            if (settings.screener_htf) document.getElementById('htfTf').value = settings.screener_htf;
+            if (settings.screener_min_volume) document.getElementById('minVolume').value = settings.screener_min_volume;
+            
+            document.getElementById('filterRsi').checked = settings.screener_use_rsi_filter !== false;
+            document.getElementById('filterMfi').checked = settings.screener_use_mfi_filter !== false;
+            document.getElementById('filterMomentum').checked = settings.screener_use_momentum_filter !== false;
+            document.getElementById('filterHma').checked = settings.screener_use_cloud_filter !== false;
+            document.getElementById('filterHtfSignal').checked = settings.screener_use_htf_signal_filter !== false;
+            
+            if (settings.screener_rsi_length) document.getElementById('rsiLength').value = settings.screener_rsi_length;
+            if (settings.screener_oversold) document.getElementById('rsiOversold').value = settings.screener_oversold;
+            if (settings.screener_overbought) document.getElementById('rsiOverbought').value = settings.screener_overbought;
+            if (settings.screener_rsi_filter_overbought) document.getElementById('rsiFilterOverbought').value = settings.screener_rsi_filter_overbought;
+            if (settings.screener_rsi_filter_oversold) document.getElementById('rsiFilterOversold').value = settings.screener_rsi_filter_oversold;
+            
+            if (settings.screener_mfi_length) document.getElementById('mfiLength').value = settings.screener_mfi_length;
+            if (settings.screener_fast_mfi_ema) document.getElementById('mfiFastEma').value = settings.screener_fast_mfi_ema;
+            if (settings.screener_slow_mfi_ema) document.getElementById('mfiSlowEma').value = settings.screener_slow_mfi_ema;
+            
+            if (settings.screener_hma_fast) document.getElementById('hmaFast').value = settings.screener_hma_fast;
+            if (settings.screener_hma_slow) document.getElementById('hmaSlow').value = settings.screener_hma_slow;
+            if (settings.screener_min_peak_strength) document.getElementById('peakStrength').value = settings.screener_min_peak_strength;
+            
+            document.getElementById('requireVolume').checked = settings.screener_require_volume === true;
+            document.getElementById('trendConfirm').checked = settings.screener_trend_confirmation === true;
+        }
+    } catch (e) {
+        console.error('Failed to load settings:', e);
+    }
+}
+
+// Add spinning animation
+const style = document.createElement('style');
+style.textContent = `
+    .spin {
+        animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+`;
+document.head.appendChild(style);
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    loadSettings();
+});
+</script>
+{% endblock %}
