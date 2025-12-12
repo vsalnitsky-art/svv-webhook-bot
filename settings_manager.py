@@ -1,341 +1,182 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-🎯 SVV Webhook Bot - Enhanced Market Scanner
-=============================================
-Версія: 3.2.1 (Fixed float conversion)
-
-Функціонал:
-1. Моніторинг активних позицій
-2. Smart TP Tracking (50/25/25)
-3. Auto Break-Even після TP1
-4. Auto Trailing після TP2
-5. RSI розрахунок для виходу
-"""
-import threading
-import time
 import logging
-import pandas as pd
-from settings_manager import settings
-from bot import bot_instance
-from indicators import simple_rsi, simple_atr
+from models import db_manager, BotSetting
 
 logger = logging.getLogger(__name__)
 
-
-class EnhancedMarketScanner:
-    """
-    🎯 Smart Position Monitor
+DEFAULT_SETTINGS = {
+    # === GENERAL ===
+    "scanner_quote_coin": "USDT",
+    "scanner_mode": "Manual",
+    "scan_limit": 100,
+    "scan_min_volume": 10,
+    "scan_use_min_volume": True,
     
-    Відстежує позиції та автоматично:
-    - Переміщує SL в Break-Even після TP1 (50%)
-    - Активує Trailing Stop після TP2 (25%)
-    - Залишок 25% працює на Trailing
-    """
+    # === TELEGRAM ===
+    "telegram_enabled": False,
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+
+    # === STRATEGY FILTERS (Для сумісності, якщо знадобиться) ===
+    "obt_useCloudFilter": True,
+    "obt_useObvFilter": True,
+    "obt_useRsiFilter": True,
+    "obt_useOBRetest": False, 
+
+    # === TIMEFRAMES ===
+    "htfSelection": "240",
+    "ltfSelection": "45",
     
-    def __init__(self, bot_instance, config):
-        self.bot = bot_instance
-        self.config = config
-        self.data = {}  # {symbol: position_data}
+    # === INDICATORS ===
+    "obt_cloudFastLen": 10,
+    "obt_cloudSlowLen": 40,
+    "obt_rsiLength": 14,
+    "obt_entryRsiOversold": 45,
+    "obt_entryRsiOverbought": 55,
+    "obt_obvEntryLen": 20,
+    "obt_swingLength": 5,
 
-    def _safe_float(self, value, default=0.0):
-        """
-        Безпечне конвертування в float.
-        Bybit API може повертати '', None, або невалідні значення.
-        """
-        if value is None or value == '':
-            return default
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return default
-
-    def _safe_int(self, value, default=0):
-        """Безпечне конвертування в int."""
-        if value is None or value == '':
-            return default
-        try:
-            return int(value)
-        except (ValueError, TypeError):
-            return default
-
-    def start(self):
-        """Запускає фоновий потік моніторингу"""
-        threading.Thread(target=self.loop, daemon=True).start()
-        logger.info("✅ Enhanced Market Scanner Started (Smart TP Mode) v3.2.2")
-
-    def loop(self):
-        """Головний цикл моніторингу"""
-        while True:
-            try:
-                self.monitor()
-            except ValueError as e:
-                # Специфічно для float conversion errors
-                import traceback
-                logger.error(f"Monitor loop ValueError: {e}")
-                logger.error(f"Full traceback:\n{traceback.format_exc()}")
-            except Exception as e:
-                import traceback
-                logger.error(f"Monitor loop error: {e}")
-                logger.error(f"Full traceback:\n{traceback.format_exc()}")
-            time.sleep(5)
-
-    def get_active(self):
-        """Отримує список активних позицій"""
-        try:
-            r = self.bot.session.get_positions(category="linear", settleCoin="USDT")
-            if r['retCode'] == 0:
-                positions = []
-                for p in r['result']['list']:
-                    size = self._safe_float(p.get('size'), 0)
-                    if size > 0:
-                        positions.append(p)
-                return positions
-        except Exception as e:
-            logger.error(f"Get active positions error: {e}")
-        return []
-
-    def fetch_candles(self, symbol, timeframe, limit=200):
-        """
-        Завантаження свічок для RSI/ATR.
-        """
-        try:
-            tf_map = {'5':'5', '15':'15', '30':'30', '45':'15', 
-                      '60':'60', '120':'120', '240':'240', 'D':'D', 'W':'W'}
-            req_tf = tf_map.get(str(timeframe), '60')
-            
-            req_limit = max(limit, 200)
-            if str(timeframe) == '45':
-                req_limit = req_limit * 3
-            if req_limit > 1000:
-                req_limit = 1000
-            
-            r = self.bot.session.get_kline(
-                category="linear", 
-                symbol=symbol, 
-                interval=req_tf, 
-                limit=req_limit
-            )
-            
-            if r['retCode'] == 0 and r['result']['list']:
-                df = pd.DataFrame(
-                    r['result']['list'], 
-                    columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover']
-                )
-                
-                cols = ['open', 'high', 'low', 'close', 'volume', 'turnover']
-                df[cols] = df[cols].astype(float)
-                df['time'] = pd.to_numeric(df['time'])
-                df['datetime'] = pd.to_datetime(df['time'], unit='ms')
-                
-                df = df.sort_values('datetime').reset_index(drop=True)
-                
-                if str(timeframe) == '45':
-                    df.set_index('datetime', inplace=True)
-                    df = df.resample('45min', origin='start_day', label='left', closed='left').agg({
-                        'open': 'first', 'high': 'max', 'low': 'min', 
-                        'close': 'last', 'volume': 'sum', 'turnover': 'sum', 'time': 'first'
-                    })
-                    df.dropna(inplace=True)
-                    df = df.reset_index(drop=True)
-                
-                if len(df) > 1:
-                    df = df.iloc[:-1].reset_index(drop=True)
-                
-                return df
-                
-        except Exception as e:
-            logger.error(f"Fetch candles error {symbol}: {e}")
-        return None
-
-    def get_coin_data(self, symbol):
-        """Отримує дані про монету з кешу"""
-        return self.data.get(symbol, {})
+    # === SMART EXIT & TRAILING ===
+    "exit_enableStrategy": False,  # Світч для RSI-based exit стратегії
+    "exit_ltf": "60",              # LTF для розрахунків виходу (60хв = стандарт Bybit)
     
-    def get_current_rsi(self, symbol):
-        """Отримує поточний RSI для монети"""
-        return self.data.get(symbol, {}).get('rsi', 0)
+    # ✨ TRAILING тепер активується АВТОМАТИЧНО після TP2!
+    "trailing_enabled": False,      # Manual trailing (вимкнено для Smart TP)
+    "trailing_rsi_activation": 65,  # Не використовується в Smart TP
+    "trailing_atr_length": 14,      # Період ATR для trailing
+    "trailing_atr_multiplier": 2.5, # Множник ATR (SL = Price ± ATR × mult)
+    "trailing_activation_delay": 5, # Не використовується в Smart TP
 
-    def monitor(self):
-        """
-        🎯 ГОЛОВНА ЛОГІКА МОНІТОРИНГУ
-        """
-        active_pos = self.get_active()
-        active_syms = [p['symbol'] for p in active_pos]
+    "exit_rsiOverbought": 70,
+    "exit_rsiOversold": 30,
+    "exit_obvLength": 10,
+
+    # === RISK ===
+    "riskPercent": 2.0,
+    "leverage": 20,
+    "use_tp": True,  # 🎯 Take Profit увімкнено за замовчуванням
+    "tp_mode": "Smart_TP",  # ✨ НОВИЙ РЕЖИМ: 50/25/25 з auto-BE та Trailing
+    "fixedTP": 3.0,
+    "sl_mode": "OB_Extremity",
+    "fixedSL": 1.5,
+    "obBufferPercent": 0.2,
+
+    # === SMART MONEY SIMULATOR ===
+    "sm_entry_mode": "Market",
+    "sm_sl_buffer": 0.2,
+    "sm_tp_mode": "None",
+    "sm_tp_value": 3.0,
+
+    # === WHALE STRATEGY RSI FILTER ===
+    "whale_rsi_filter_enabled": False,  # Вкл/Викл RSI фільтр
+    "whale_rsi_min": 30,                # Шукати RSI <= цього (перепроданість)
+    "whale_rsi_max": 70                 # Шукати RSI >= цього (перекупленість)
+}
+
+class SettingsManager:
+    def __init__(self):
+        self.db = db_manager
+        self._cache = {}
+        self.reload_settings()
+
+    def _cast_value(self, key, value_str):
+        if key not in DEFAULT_SETTINGS: 
+            return value_str
+        default_val = DEFAULT_SETTINGS[key]
         
-        # Очищаємо дані для закритих позицій
-        for k in list(self.data.keys()):
-            if k not in active_syms: 
-                del self.data[k]
-        
-        if not active_pos:
-            return
+        # Обробка порожніх рядків - повертаємо default
+        if value_str is None or value_str == '':
+            return default_val
+            
+        try:
+            if isinstance(default_val, bool): 
+                return str(value_str).lower() in ['true', 'on', '1']
+            elif isinstance(default_val, int): 
+                return int(float(value_str))
+            elif isinstance(default_val, float): 
+                return float(value_str)
+            else: 
+                return str(value_str)
+        except: 
+            return default_val
 
-        # === НАЛАШТУВАННЯ ===
-        exit_tf = settings.get("exit_ltf", "60")
-        tp_mode = settings.get("tp_mode", "Smart_TP")
-        atr_len = self._safe_int(settings.get("trailing_atr_length", 14), 14)
-        atr_mult = self._safe_float(settings.get("trailing_atr_multiplier", 2.5), 2.5)
-
-        for p in active_pos:
-            s = "unknown"
-            try:
-                s = p.get('symbol', 'unknown')
-                side = p.get('side', '')
+    def reload_settings(self):
+        session = self.db.get_session()
+        try:
+            db_settings = session.query(BotSetting).all()
+            if not db_settings:
+                self._cache = DEFAULT_SETTINGS.copy()
+                for k, v in DEFAULT_SETTINGS.items():
+                    val_str = "true" if v is True else "false" if v is False else str(v)
+                    session.add(BotSetting(key=k, value=val_str))
+                session.commit()
+            else:
+                loaded = {}
+                db_keys = set()
+                for s in db_settings: 
+                    loaded[s.key] = self._cast_value(s.key, s.value)
+                    db_keys.add(s.key)
                 
-                # ✅ Безпечне конвертування
-                entry_price = self._safe_float(p.get('avgPrice'), 0)
-                current_qty = self._safe_float(p.get('size'), 0)
-                position_idx = self._safe_int(p.get('positionIdx'), 0)
-                current_sl = self._safe_float(p.get('stopLoss'), 0)
-                
-                # Пропускаємо якщо немає даних
-                if entry_price <= 0 or current_qty <= 0 or not side:
-                    continue
-                
-                # Отримуємо поточну ціну
-                try:
-                    last_price = self._safe_float(self.bot.get_price(s), entry_price)
-                except:
-                    last_price = entry_price
+                missing_keys = set(DEFAULT_SETTINGS.keys()) - db_keys
+                if missing_keys:
+                    for k in missing_keys:
+                        v = DEFAULT_SETTINGS[k]
+                        val_str = "true" if v is True else "false" if v is False else str(v)
+                        session.add(BotSetting(key=k, value=val_str))
+                        loaded[k] = v
+                    session.commit()
 
-                # === ІНІЦІАЛІЗАЦІЯ ДАНИХ ПОЗИЦІЇ ===
-                if s not in self.data:
-                    created_time = self._safe_int(p.get('createdTime'), 0)
-                    self.data[s] = {
-                        'rsi': 0,
-                        'exit_status': 'Active',
-                        'exit_details': 'Monitoring...',
-                        'initial_qty': current_qty,
-                        'entry_price': entry_price,
-                        'entry_sl': current_sl,
-                        'position_time': created_time,
-                        'tp1_hit': False,
-                        'tp2_hit': False,
-                        'be_set': False,
-                        'trailing_active': False,
-                        'last_sl_update': current_sl if current_sl > 0 else 0
-                    }
-                    logger.info(f"📊 New position tracked: {s} {side} qty={current_qty} entry={entry_price}")
+                merged = DEFAULT_SETTINGS.copy()
+                merged.update(loaded)
+                self._cache = merged
+        except Exception as e:
+            logger.error(f"Settings load error: {e}")
+            self._cache = DEFAULT_SETTINGS.copy()
+        finally: 
+            session.close()
 
-                pos_data = self.data[s]
-                initial_qty = pos_data['initial_qty']
-                
-                # === SMART TP TRACKING ===
-                if tp_mode in ["Smart_TP", "Fixed_1_50"]:
-                    qty_ratio = current_qty / initial_qty if initial_qty > 0 else 1.0
-                    
-                    # --- TP1 CHECK ---
-                    if not pos_data['tp1_hit'] and qty_ratio <= 0.55:
-                        pos_data['tp1_hit'] = True
-                        logger.info(f"✅ TP1 HIT: {s} - 50% closed. Remaining: {round(qty_ratio*100)}%")
-                        
-                        if not pos_data['be_set']:
-                            be_buffer = 0.001
-                            if side == "Buy":
-                                be_price = entry_price * (1 + be_buffer)
-                                if current_sl == 0 or be_price > current_sl:
-                                    if self.bot.update_sl(s, be_price, position_idx):
-                                        pos_data['be_set'] = True
-                                        pos_data['last_sl_update'] = be_price
-                                        logger.info(f"🛡️ BE SET: {s} SL moved to {be_price}")
-                            else:
-                                be_price = entry_price * (1 - be_buffer)
-                                if current_sl == 0 or be_price < current_sl:
-                                    if self.bot.update_sl(s, be_price, position_idx):
-                                        pos_data['be_set'] = True
-                                        pos_data['last_sl_update'] = be_price
-                                        logger.info(f"🛡️ BE SET: {s} SL moved to {be_price}")
-                    
-                    # --- TP2 CHECK ---
-                    if pos_data['tp1_hit'] and not pos_data['tp2_hit'] and qty_ratio <= 0.30:
-                        pos_data['tp2_hit'] = True
-                        pos_data['trailing_active'] = True
-                        logger.info(f"✅ TP2 HIT: {s} - Trailing ACTIVATED for remaining {round(qty_ratio*100)}%")
-
-                # === FETCH INDICATORS ===
-                df = self.fetch_candles(s, exit_tf, limit=atr_len + 50)
-                
-                if df is not None and len(df) >= 15:
-                    rsi_val = simple_rsi(df['close'], period=14)
-                    atr_val = simple_atr(df['high'], df['low'], df['close'], period=atr_len)
-                    
-                    pos_data['rsi'] = int(round(rsi_val)) if rsi_val else 0
-                    
-                    status = "Active"
-                    details = f"RSI: {round(rsi_val, 1)}" if rsi_val else "RSI: N/A"
-                    
-                    if pos_data['tp1_hit'] and not pos_data['tp2_hit']:
-                        status = "TP1 ✓ BE"
-                        details = f"RSI: {round(rsi_val, 1)} | Waiting TP2" if rsi_val else "Waiting TP2"
-                    
-                    # === TRAILING STOP LOGIC ===
-                    if pos_data['trailing_active'] and atr_val and atr_val > 0:
-                        status = "TRAILING 🚀"
-                        details = f"ATR: {round(atr_val, 4)}"
-                        
-                        last_sl = pos_data.get('last_sl_update', current_sl)
-                        new_sl = 0.0
-                        should_update = False
-
-                        if side == "Buy":
-                            calc_sl = last_price - (atr_val * atr_mult)
-                            be_level = entry_price * 1.001
-                            calc_sl = max(calc_sl, be_level)
-                            
-                            if last_sl <= 0 or (calc_sl > last_sl and (calc_sl - last_sl) / last_sl > 0.001):
-                                new_sl = calc_sl
-                                should_update = True
-
-                        elif side == "Sell":
-                            calc_sl = last_price + (atr_val * atr_mult)
-                            be_level = entry_price * 0.999
-                            calc_sl = min(calc_sl, be_level)
-                            
-                            if last_sl <= 0 or (calc_sl < last_sl and (last_sl - calc_sl) / last_sl > 0.001):
-                                new_sl = calc_sl
-                                should_update = True
-
-                        if should_update and new_sl > 0:
-                            success = self.bot.update_sl(s, new_sl, position_idx)
-                            if success:
-                                pos_data['last_sl_update'] = new_sl
-                                logger.info(f"⛓️ TRAILING: {s} SL updated {last_sl:.4f} → {new_sl:.4f}")
-                                details += " | SL ✓"
-                            else:
-                                details += " | SL OK"
-                        else:
-                            details += " | SL OK"
-                    
-                    # === RSI WARNING ===
-                    if not pos_data['trailing_active'] and rsi_val:
-                        lb = self._safe_float(settings.get('obt_entryRsiOversold', 30), 30)
-                        ub = self._safe_float(settings.get('obt_entryRsiOverbought', 70), 70)
-                        
-                        if side == "Buy" and rsi_val >= ub:
-                            status = "⚠️ RSI High"
-                            details += f" (≥{ub})"
-                        elif side == "Sell" and rsi_val <= lb:
-                            status = "⚠️ RSI Low"
-                            details += f" (≤{lb})"
-                    
-                    pos_data['exit_status'] = status
-                    pos_data['exit_details'] = details
-                
+    def save_settings(self, new_settings_dict):
+        session = self.db.get_session()
+        try:
+            for k, v in new_settings_dict.items():
+                val_to_store = str(v)
+                if k in DEFAULT_SETTINGS:
+                    default_type = type(DEFAULT_SETTINGS[k])
+                    if default_type == bool:
+                        is_true = (v == 'on' or v == 'true' or v is True)
+                        val_to_store = "true" if is_true else "false"
+                        self._cache[k] = is_true
+                    else:
+                        self._cache[k] = self._cast_value(k, v)
+                        val_to_store = str(v)
                 else:
-                    pos_data['exit_status'] = 'No Data'
-                    pos_data['exit_details'] = 'Waiting...'
+                    self._cache[k] = v
                 
-                time.sleep(0.2)
-                
-            except Exception as e:
-                logger.error(f"Monitor position error {s}: {e}")
-                continue
+                existing = session.query(BotSetting).filter_by(key=k).first()
+                if existing: existing.value = val_to_store
+                else: session.add(BotSetting(key=k, value=val_to_store))
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Settings save error: {e}")
+        finally: session.close()
 
-    def get_market_pressure(self, s):
-        """Заповнювач для сумісності"""
-        return 0
-        
-    def get_active_symbols(self):
-        """Отримує активні символи"""
-        return self.get_active()
+    def get_all(self): return self._cache.copy()
+    def get(self, key, default=None): 
+        return self._cache.get(key, default if default is not None else DEFAULT_SETTINGS.get(key))
+    
+    def import_settings(self, json_data):
+        session = self.db.get_session()
+        try:
+            for k, v in json_data.items():
+                val = str(v).lower() if isinstance(v, bool) else str(v)
+                self._cache[k] = v
+                ex = session.query(BotSetting).filter_by(key=k).first()
+                if ex: ex.value = val
+                else: session.add(BotSetting(key=k, value=val))
+            session.commit(); return True
+        except: return False
+        finally: session.close()
+
+settings = SettingsManager()
