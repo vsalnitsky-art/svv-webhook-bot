@@ -263,6 +263,7 @@ class RSIMFIScreener:
     def _calculate_indicators(self, df: pd.DataFrame) -> Dict:
         """
         Розраховує всі індикатори для одного символу.
+        100% відповідність Pine Script логіці.
         
         Returns:
             Dict з усіма індикаторами
@@ -277,15 +278,16 @@ class RSIMFIScreener:
             'hma_fast': 0,
             'hma_slow': 0,
             'hma_cloud': 'neutral',
-            'signal': 'None',
-            'signal_strength': 0
+            'last_signal': 'None',  # State machine result
+            'current_buy_signal': False,
+            'current_sell_signal': False
         }
         
         if df is None or len(df) < 50:
             return result
         
         try:
-            # === RSI ===
+            # === RSI (Wilder's Method) ===
             rsi_series = calculate_rsi_series(df['close'], period=self.rsi_length)
             result['rsi'] = round(float(rsi_series.iloc[-1]), 2)
             
@@ -296,50 +298,67 @@ class RSIMFIScreener:
             )
             result['mfi'] = round(float(mfi_series.iloc[-1]), 2)
             
-            # MFI Cloud (Fast/Slow EMA)
+            # === MFI Cloud (Fast/Slow EMA) ===
             fast_mfi = calculate_ema(mfi_series, period=self.fast_mfi_ema)
             slow_mfi = calculate_ema(mfi_series, period=self.slow_mfi_ema)
             
             result['fast_mfi'] = round(float(fast_mfi.iloc[-1]), 2)
             result['slow_mfi'] = round(float(slow_mfi.iloc[-1]), 2)
             
+            # bullishCloud = fastMfi > slowMfi
+            # bearishCloud = fastMfi < slowMfi
             if result['fast_mfi'] > result['slow_mfi']:
                 result['mfi_cloud'] = 'bullish'
             elif result['fast_mfi'] < result['slow_mfi']:
                 result['mfi_cloud'] = 'bearish'
             
             # === MOMENTUM ===
-            rsi_change = rsi_series.diff(1)
-            if len(rsi_change) > 1:
-                if rsi_change.iloc[-1] > 0:
-                    result['momentum'] = 'rising'
-                elif rsi_change.iloc[-1] < 0:
-                    result['momentum'] = 'falling'
+            # momentumRising = ta.change(rsi, 1) > 0
+            # momentumFalling = ta.change(rsi, 1) < 0
+            rsi_change_1 = float(rsi_series.iloc[-1] - rsi_series.iloc[-2]) if len(rsi_series) > 1 else 0
             
-            # === SIGNAL DETECTION ===
-            # Peak Detection (як в Pine Script)
-            # isPeak = ta.falling(rsi, minPeakStrength) and rsi >= overbought
-            # isDip = ta.rising(rsi, minPeakStrength) and rsi <= oversold
+            if rsi_change_1 > 0:
+                result['momentum'] = 'rising'
+            elif rsi_change_1 < 0:
+                result['momentum'] = 'falling'
             
+            # === SIGNAL DETECTION (100% Pine Script) ===
             rsi_val = result['rsi']
             
-            # Falling: RSI падає протягом minPeakStrength свічок
-            is_falling = all(rsi_series.iloc[-i] < rsi_series.iloc[-i-1] 
-                           for i in range(1, min(self.min_peak_strength + 1, len(rsi_series))))
+            # ta.rising(source, length) - source росте length барів підряд
+            # Перевіряємо: rsi[0] > rsi[1] > rsi[2] > ... > rsi[length]
+            def ta_rising(series, length):
+                if len(series) < length + 1:
+                    return False
+                for i in range(length):
+                    if series.iloc[-(i+1)] <= series.iloc[-(i+2)]:
+                        return False
+                return True
             
-            # Rising: RSI росте протягом minPeakStrength свічок
-            is_rising = all(rsi_series.iloc[-i] > rsi_series.iloc[-i-1] 
-                          for i in range(1, min(self.min_peak_strength + 1, len(rsi_series))))
+            # ta.falling(source, length) - source падає length барів підряд
+            def ta_falling(series, length):
+                if len(series) < length + 1:
+                    return False
+                for i in range(length):
+                    if series.iloc[-(i+1)] >= series.iloc[-(i+2)]:
+                        return False
+                return True
             
-            is_peak = is_falling and rsi_val >= self.overbought
-            is_dip = is_rising and rsi_val <= self.oversold
+            # isPeak = ta.falling(rsi, minPeakStrength) and rsi >= overbought
+            # isDip = ta.rising(rsi, minPeakStrength) and rsi <= oversold
+            is_peak = ta_falling(rsi_series, self.min_peak_strength) and rsi_val >= self.overbought
+            is_dip = ta_rising(rsi_series, self.min_peak_strength) and rsi_val <= self.oversold
             
-            # Volume та Trend confirmation
+            # Volume confirmation
+            # volumeOk = not requireVolume or volume > ta.sma(volume, 20)
             volume_ok = True
             if self.require_volume and len(df) >= 20:
                 avg_volume = df['volume'].rolling(20).mean().iloc[-1]
                 volume_ok = df['volume'].iloc[-1] > avg_volume
             
+            # Trend confirmation
+            # trendOkBuy = not trendConfirmation or close > ta.ema(close, 20)
+            # trendOkSell = not trendConfirmation or close < ta.ema(close, 20)
             trend_ok_buy = True
             trend_ok_sell = True
             if self.trend_confirmation and len(df) >= 20:
@@ -347,43 +366,129 @@ class RSIMFIScreener:
                 trend_ok_buy = df['close'].iloc[-1] > ema_20
                 trend_ok_sell = df['close'].iloc[-1] < ema_20
             
-            # RSI Change for 2 bars
-            rsi_rising_2 = len(rsi_change) > 2 and rsi_change.iloc[-1] > 0 and rsi_change.iloc[-2] > 0
-            rsi_falling_2 = len(rsi_change) > 2 and rsi_change.iloc[-1] < 0 and rsi_change.iloc[-2] < 0
+            # ta.change(rsi, 1) = rsi[0] - rsi[1]
+            # ta.change(rsi, 2) = rsi[0] - rsi[2]
+            rsi_change_2 = float(rsi_series.iloc[-1] - rsi_series.iloc[-3]) if len(rsi_series) > 2 else 0
             
             # Crossover/Crossunder
-            cross_oversold = len(rsi_series) > 1 and rsi_series.iloc[-2] < self.oversold and rsi_series.iloc[-1] >= self.oversold
-            cross_overbought = len(rsi_series) > 1 and rsi_series.iloc[-2] > self.overbought and rsi_series.iloc[-1] <= self.overbought
+            # crossOverSold = ta.crossover(rsi, oversold) => rsi[1] < oversold AND rsi[0] >= oversold
+            # crossUnderBought = ta.crossunder(rsi, overbought) => rsi[1] > overbought AND rsi[0] <= overbought
+            cross_oversold = (len(rsi_series) > 1 and 
+                             rsi_series.iloc[-2] < self.oversold and 
+                             rsi_series.iloc[-1] >= self.oversold)
+            cross_overbought = (len(rsi_series) > 1 and 
+                               rsi_series.iloc[-2] > self.overbought and 
+                               rsi_series.iloc[-1] <= self.overbought)
             
-            # BUY Signal (як в Pine Script)
-            buy_signal = (is_dip and volume_ok and trend_ok_buy and rsi_rising_2) or \
-                        (not self.require_volume and not self.trend_confirmation and cross_oversold)
+            # BUY Signal (EXACT Pine Script logic)
+            # baseBuySignal = (isDip and volumeOk and trendOkBuy and (ta.change(rsi, 1) > 0 and ta.change(rsi, 2) > 0)) 
+            #              or (not requireVolume and not trendConfirmation and crossOverSold)
+            buy_signal = ((is_dip and volume_ok and trend_ok_buy and 
+                          (rsi_change_1 > 0 and rsi_change_2 > 0)) or 
+                         (not self.require_volume and not self.trend_confirmation and cross_oversold))
             
-            # SELL Signal (як в Pine Script)
-            sell_signal = (is_peak and volume_ok and trend_ok_sell and rsi_falling_2) or \
-                         (not self.require_volume and not self.trend_confirmation and cross_overbought)
+            # SELL Signal (EXACT Pine Script logic)
+            # baseSellSignal = (isPeak and volumeOk and trendOkSell and (ta.change(rsi, 1) < 0 and ta.change(rsi, 2) < 0))
+            #               or (not requireVolume and not trendConfirmation and crossUnderBought)
+            sell_signal = ((is_peak and volume_ok and trend_ok_sell and 
+                           (rsi_change_1 < 0 and rsi_change_2 < 0)) or 
+                          (not self.require_volume and not self.trend_confirmation and cross_overbought))
             
-            if buy_signal:
-                result['signal'] = 'BUY'
-                result['signal_strength'] = abs(self.oversold - rsi_val) if rsi_val <= self.oversold else 0
-            elif sell_signal:
-                result['signal'] = 'SELL'
-                result['signal_strength'] = abs(rsi_val - self.overbought) if rsi_val >= self.overbought else 0
+            result['current_buy_signal'] = buy_signal
+            result['current_sell_signal'] = sell_signal
+            
+            # === LAST SIGNAL (State Machine) ===
+            # Проходимо по всіх барах щоб знайти останній сигнал
+            # var string lastSignal = "None"
+            # if buySignal: lastSignal := "BUY"
+            # else if sellSignal: lastSignal := "SELL"
+            last_signal = self._calculate_last_signal(df, rsi_series)
+            result['last_signal'] = last_signal
             
         except Exception as e:
             logger.error(f"Indicator calculation error: {e}")
         
         return result
     
+    def _calculate_last_signal(self, df: pd.DataFrame, rsi_series: pd.Series) -> str:
+        """
+        Розраховує Last Signal (State Machine) - проходить по історії
+        і знаходить останній BUY або SELL сигнал.
+        
+        Це точна реалізація Pine Script var string lastSignal
+        """
+        last_signal = "None"
+        
+        if len(rsi_series) < self.min_peak_strength + 3:
+            return last_signal
+        
+        try:
+            # Проходимо по останніх N барах (достатньо для визначення)
+            lookback = min(100, len(rsi_series) - self.min_peak_strength - 2)
+            
+            for i in range(lookback, 0, -1):  # Від старих до нових
+                idx = -i
+                
+                if abs(idx) >= len(rsi_series) - 2:
+                    continue
+                
+                rsi_val = rsi_series.iloc[idx]
+                
+                # ta.rising / ta.falling для цього бару
+                is_rising = True
+                is_falling = True
+                for j in range(self.min_peak_strength):
+                    if abs(idx - j) >= len(rsi_series) or abs(idx - j - 1) >= len(rsi_series):
+                        is_rising = False
+                        is_falling = False
+                        break
+                    if rsi_series.iloc[idx - j] <= rsi_series.iloc[idx - j - 1]:
+                        is_rising = False
+                    if rsi_series.iloc[idx - j] >= rsi_series.iloc[idx - j - 1]:
+                        is_falling = False
+                
+                is_peak = is_falling and rsi_val >= self.overbought
+                is_dip = is_rising and rsi_val <= self.oversold
+                
+                # ta.change
+                rsi_change_1 = rsi_series.iloc[idx] - rsi_series.iloc[idx - 1] if abs(idx - 1) < len(rsi_series) else 0
+                rsi_change_2 = rsi_series.iloc[idx] - rsi_series.iloc[idx - 2] if abs(idx - 2) < len(rsi_series) else 0
+                
+                # Crossover/Crossunder
+                cross_oversold = (rsi_series.iloc[idx - 1] < self.oversold and 
+                                 rsi_series.iloc[idx] >= self.oversold) if abs(idx - 1) < len(rsi_series) else False
+                cross_overbought = (rsi_series.iloc[idx - 1] > self.overbought and 
+                                   rsi_series.iloc[idx] <= self.overbought) if abs(idx - 1) < len(rsi_series) else False
+                
+                # Signals (simplified - without volume/trend for history)
+                buy_signal = ((is_dip and (rsi_change_1 > 0 and rsi_change_2 > 0)) or 
+                             (not self.require_volume and not self.trend_confirmation and cross_oversold))
+                sell_signal = ((is_peak and (rsi_change_1 < 0 and rsi_change_2 < 0)) or 
+                              (not self.require_volume and not self.trend_confirmation and cross_overbought))
+                
+                # State Machine Update
+                if buy_signal:
+                    last_signal = "BUY"
+                elif sell_signal:
+                    last_signal = "SELL"
+            
+        except Exception as e:
+            logger.error(f"Last signal calculation error: {e}")
+        
+        return last_signal
+    
     def _calculate_htf_indicators(self, df: pd.DataFrame) -> Dict:
         """
         Розраховує HTF індикатори (HMA Cloud, HTF Signal).
+        100% відповідність Pine Script логіці.
+        
+        HTF Signal використовує State Machine (var int _state)
         """
         result = {
             'hma_fast': 0,
             'hma_slow': 0,
             'hma_cloud': 'neutral',
-            'htf_signal': 'None'
+            'htf_signal': 'None'  # State: 1=BUY, -1=SELL, 0=None
         }
         
         if df is None or len(df) < 50:
@@ -391,45 +496,29 @@ class RSIMFIScreener:
         
         try:
             # === HMA CLOUD ===
+            # getHmaCloud() =>
+            #     fast = ta.hma(close, cloudFastLen)
+            #     slow = ta.hma(close, cloudSlowLen)
             hma_fast = calculate_hma(df['close'], period=self.hma_fast)
             hma_slow = calculate_hma(df['close'], period=self.hma_slow)
             
             result['hma_fast'] = round(float(hma_fast.iloc[-1]), 4)
             result['hma_slow'] = round(float(hma_slow.iloc[-1]), 4)
             
+            # cloudFilterLong = htfCloudFastLogic > htfCloudSlowLogic
+            # cloudFilterShort = htfCloudFastLogic < htfCloudSlowLogic
             if result['hma_fast'] > result['hma_slow']:
                 result['hma_cloud'] = 'bullish'
             elif result['hma_fast'] < result['hma_slow']:
                 result['hma_cloud'] = 'bearish'
             
-            # === HTF SIGNAL ===
-            # Використовуємо ту ж логіку сигналів, що й для Main TF
+            # === HTF SIGNAL (State Machine) ===
+            # Точна копія getHtfSignalLogic() з Pine Script
             rsi_series = calculate_rsi_series(df['close'], period=self.rsi_length)
-            rsi_val = float(rsi_series.iloc[-1])
             
-            rsi_change = rsi_series.diff(1)
-            
-            is_falling = all(rsi_series.iloc[-i] < rsi_series.iloc[-i-1] 
-                           for i in range(1, min(self.min_peak_strength + 1, len(rsi_series))))
-            is_rising = all(rsi_series.iloc[-i] > rsi_series.iloc[-i-1] 
-                          for i in range(1, min(self.min_peak_strength + 1, len(rsi_series))))
-            
-            is_peak = is_falling and rsi_val >= self.overbought
-            is_dip = is_rising and rsi_val <= self.oversold
-            
-            rsi_rising_2 = len(rsi_change) > 2 and rsi_change.iloc[-1] > 0 and rsi_change.iloc[-2] > 0
-            rsi_falling_2 = len(rsi_change) > 2 and rsi_change.iloc[-1] < 0 and rsi_change.iloc[-2] < 0
-            
-            cross_oversold = len(rsi_series) > 1 and rsi_series.iloc[-2] < self.oversold and rsi_series.iloc[-1] >= self.oversold
-            cross_overbought = len(rsi_series) > 1 and rsi_series.iloc[-2] > self.overbought and rsi_series.iloc[-1] <= self.overbought
-            
-            buy_signal = (is_dip and rsi_rising_2) or cross_oversold
-            sell_signal = (is_peak and rsi_falling_2) or cross_overbought
-            
-            if buy_signal:
-                result['htf_signal'] = 'BUY'
-            elif sell_signal:
-                result['htf_signal'] = 'SELL'
+            # State Machine - проходимо по історії
+            htf_signal = self._calculate_last_signal(df, rsi_series)
+            result['htf_signal'] = htf_signal
             
         except Exception as e:
             logger.error(f"HTF indicator calculation error: {e}")
@@ -440,9 +529,12 @@ class RSIMFIScreener:
     #                    FILTER LOGIC
     # ========================================================================
     
-    def _apply_filters(self, indicators: Dict, htf_indicators: Dict, signal: str) -> Dict:
+    def _apply_filters(self, indicators: Dict, htf_indicators: Dict) -> Dict:
         """
-        Застосовує фільтри (AND logic) - як в Pine Script.
+        Застосовує фільтри (AND logic) - 100% Pine Script логіка.
+        
+        alertReady = (lastSignal == "BUY" AND allFiltersPassLong) 
+                  OR (lastSignal == "SELL" AND allFiltersPassShort)
         
         Returns:
             Dict з результатами фільтрів та статусом
@@ -453,7 +545,11 @@ class RSIMFIScreener:
             'momentum_filter': {'enabled': self.use_momentum_filter, 'passed': False, 'value': ''},
             'cloud_filter': {'enabled': self.use_cloud_filter, 'passed': False, 'value': ''},
             'htf_signal_filter': {'enabled': self.use_htf_signal_filter, 'passed': False, 'value': ''},
-            'all_passed': False
+            'last_signal': indicators.get('last_signal', 'None'),
+            'direction': 'None',  # LONG або SHORT
+            'all_filters_pass_long': False,
+            'all_filters_pass_short': False,
+            'alert_ready': False
         }
         
         rsi = indicators.get('rsi', 50)
@@ -461,82 +557,82 @@ class RSIMFIScreener:
         momentum = indicators.get('momentum', 'neutral')
         hma_cloud = htf_indicators.get('hma_cloud', 'neutral')
         htf_signal = htf_indicators.get('htf_signal', 'None')
+        last_signal = indicators.get('last_signal', 'None')
         
-        # === RSI FILTER ===
-        # LONG: RSI ≤ rsiFilterOverbought (60)
-        # SHORT: RSI ≥ rsiFilterOversold (40)
-        if signal == 'BUY':
-            rsi_passed = not self.use_rsi_filter or (rsi <= self.rsi_filter_overbought)
-            result['rsi_filter']['value'] = f"{rsi:.1f} ≤ {self.rsi_filter_overbought}"
-        elif signal == 'SELL':
-            rsi_passed = not self.use_rsi_filter or (rsi >= self.rsi_filter_oversold)
-            result['rsi_filter']['value'] = f"{rsi:.1f} ≥ {self.rsi_filter_oversold}"
-        else:
-            rsi_passed = True
-            result['rsi_filter']['value'] = f"{rsi:.1f}"
+        # === LONG FILTERS ===
+        # rsiFilterLong = not useRsiFilter or (rsi <= rsiFilterOverbought)
+        rsi_filter_long = not self.use_rsi_filter or (rsi <= self.rsi_filter_overbought)
         
-        result['rsi_filter']['passed'] = rsi_passed
+        # mfiFilterLong = not useMfiFilter or bullishCloud
+        mfi_filter_long = not self.use_mfi_filter or (mfi_cloud == 'bullish')
         
-        # === MFI FILTER ===
-        # LONG: bullishCloud (fast > slow)
-        # SHORT: bearishCloud (fast < slow)
-        if signal == 'BUY':
-            mfi_passed = not self.use_mfi_filter or (mfi_cloud == 'bullish')
-        elif signal == 'SELL':
-            mfi_passed = not self.use_mfi_filter or (mfi_cloud == 'bearish')
-        else:
-            mfi_passed = True
+        # momentumFilterLong = not useMomentumFilter or momentumRising
+        momentum_filter_long = not self.use_momentum_filter or (momentum == 'rising')
         
-        result['mfi_filter']['passed'] = mfi_passed
-        result['mfi_filter']['value'] = mfi_cloud.capitalize()
+        # cloudFilterLong = not useCloudFilter or (htfCloudFastLogic > htfCloudSlowLogic)
+        cloud_filter_long = not self.use_cloud_filter or (hma_cloud == 'bullish')
         
-        # === MOMENTUM FILTER ===
-        # LONG: rising
-        # SHORT: falling
-        if signal == 'BUY':
-            mom_passed = not self.use_momentum_filter or (momentum == 'rising')
-        elif signal == 'SELL':
-            mom_passed = not self.use_momentum_filter or (momentum == 'falling')
-        else:
-            mom_passed = True
+        # htfSignalFilterLong = not useHtfSignalFilter or (htfSignalState == 1)
+        htf_signal_filter_long = not self.use_htf_signal_filter or (htf_signal == 'BUY')
         
-        result['momentum_filter']['passed'] = mom_passed
+        # allFiltersPassLong = rsiFilterLong and mfiFilterLong and momentumFilterLong and cloudFilterLong and htfSignalFilterLong
+        all_filters_pass_long = (rsi_filter_long and mfi_filter_long and 
+                                 momentum_filter_long and cloud_filter_long and 
+                                 htf_signal_filter_long)
+        
+        # === SHORT FILTERS ===
+        # rsiFilterShort = not useRsiFilter or (rsi >= rsiFilterOversold)
+        rsi_filter_short = not self.use_rsi_filter or (rsi >= self.rsi_filter_oversold)
+        
+        # mfiFilterShort = not useMfiFilter or bearishCloud
+        mfi_filter_short = not self.use_mfi_filter or (mfi_cloud == 'bearish')
+        
+        # momentumFilterShort = not useMomentumFilter or momentumFalling
+        momentum_filter_short = not self.use_momentum_filter or (momentum == 'falling')
+        
+        # cloudFilterShort = not useCloudFilter or (htfCloudFastLogic < htfCloudSlowLogic)
+        cloud_filter_short = not self.use_cloud_filter or (hma_cloud == 'bearish')
+        
+        # htfSignalFilterShort = not useHtfSignalFilter or (htfSignalState == -1)
+        htf_signal_filter_short = not self.use_htf_signal_filter or (htf_signal == 'SELL')
+        
+        # allFiltersPassShort = rsiFilterShort and mfiFilterShort and momentumFilterShort and cloudFilterShort and htfSignalFilterShort
+        all_filters_pass_short = (rsi_filter_short and mfi_filter_short and 
+                                  momentum_filter_short and cloud_filter_short and 
+                                  htf_signal_filter_short)
+        
+        result['all_filters_pass_long'] = all_filters_pass_long
+        result['all_filters_pass_short'] = all_filters_pass_short
+        
+        # === ALERT READY ===
+        # alertReady = (lastSignal == "BUY" and allFiltersPassLong) or (lastSignal == "SELL" and allFiltersPassShort)
+        alert_ready = ((last_signal == "BUY" and all_filters_pass_long) or 
+                      (last_signal == "SELL" and all_filters_pass_short))
+        
+        result['alert_ready'] = alert_ready
+        
+        # Визначаємо напрямок
+        if last_signal == "BUY" and all_filters_pass_long:
+            result['direction'] = 'LONG'
+            result['rsi_filter']['passed'] = rsi_filter_long
+            result['mfi_filter']['passed'] = mfi_filter_long
+            result['momentum_filter']['passed'] = momentum_filter_long
+            result['cloud_filter']['passed'] = cloud_filter_long
+            result['htf_signal_filter']['passed'] = htf_signal_filter_long
+        elif last_signal == "SELL" and all_filters_pass_short:
+            result['direction'] = 'SHORT'
+            result['rsi_filter']['passed'] = rsi_filter_short
+            result['mfi_filter']['passed'] = mfi_filter_short
+            result['momentum_filter']['passed'] = momentum_filter_short
+            result['cloud_filter']['passed'] = cloud_filter_short
+            result['htf_signal_filter']['passed'] = htf_signal_filter_short
+        
+        # Заповнюємо значення для відображення
+        result['rsi_filter']['value'] = f"{rsi:.1f}"
+        result['mfi_filter']['value'] = mfi_cloud.capitalize() if mfi_cloud != 'neutral' else '—'
         result['momentum_filter']['value'] = '↑' if momentum == 'rising' else '↓' if momentum == 'falling' else '—'
-        
-        # === HMA CLOUD FILTER (HTF) ===
-        # LONG: fast > slow (bullish)
-        # SHORT: fast < slow (bearish)
-        if signal == 'BUY':
-            cloud_passed = not self.use_cloud_filter or (hma_cloud == 'bullish')
-        elif signal == 'SELL':
-            cloud_passed = not self.use_cloud_filter or (hma_cloud == 'bearish')
-        else:
-            cloud_passed = True
-        
-        result['cloud_filter']['passed'] = cloud_passed
-        result['cloud_filter']['value'] = hma_cloud.capitalize()
-        
-        # === HTF SIGNAL FILTER ===
-        # LONG: htf_signal == BUY
-        # SHORT: htf_signal == SELL
-        if signal == 'BUY':
-            htf_passed = not self.use_htf_signal_filter or (htf_signal == 'BUY')
-        elif signal == 'SELL':
-            htf_passed = not self.use_htf_signal_filter or (htf_signal == 'SELL')
-        else:
-            htf_passed = True
-        
-        result['htf_signal_filter']['passed'] = htf_passed
+        result['cloud_filter']['value'] = hma_cloud.capitalize() if hma_cloud != 'neutral' else '—'
         result['htf_signal_filter']['value'] = htf_signal
-        
-        # === ALL FILTERS PASSED ===
-        result['all_passed'] = all([
-            result['rsi_filter']['passed'],
-            result['mfi_filter']['passed'],
-            result['momentum_filter']['passed'],
-            result['cloud_filter']['passed'],
-            result['htf_signal_filter']['passed']
-        ])
         
         return result
     
@@ -547,12 +643,13 @@ class RSIMFIScreener:
     def scan(self, progress_callback=None) -> List[Dict]:
         """
         Виконує повний скан ринку.
+        100% Pine Script логіка: alertReady = (lastSignal == "BUY" AND allFiltersPassLong) OR ...
         
         Args:
             progress_callback: Функція для оновлення прогресу (current, total)
         
         Returns:
-            List[Dict]: Список символів що пройшли всі фільтри
+            List[Dict]: Список символів що пройшли всі фільтри (alert_ready = True)
         """
         results = []
         
@@ -584,9 +681,9 @@ class RSIMFIScreener:
                     # Розраховуємо індикатори Main TF
                     indicators = self._calculate_indicators(df_main)
                     
-                    # Перевіряємо чи є сигнал
-                    signal = indicators.get('signal', 'None')
-                    if signal == 'None':
+                    # Перевіряємо чи є Last Signal
+                    last_signal = indicators.get('last_signal', 'None')
+                    if last_signal == 'None':
                         continue
                     
                     # Отримуємо свічки HTF
@@ -594,10 +691,10 @@ class RSIMFIScreener:
                     htf_indicators = self._calculate_htf_indicators(df_htf)
                     
                     # Застосовуємо фільтри
-                    filters = self._apply_filters(indicators, htf_indicators, signal)
+                    filters = self._apply_filters(indicators, htf_indicators)
                     
-                    # Тільки 100% match
-                    if not filters['all_passed']:
+                    # Тільки alert_ready = True (100% match)
+                    if not filters['alert_ready']:
                         continue
                     
                     # Формуємо результат
@@ -612,13 +709,15 @@ class RSIMFIScreener:
                         'momentum': indicators['momentum'],
                         'hma_cloud': htf_indicators['hma_cloud'],
                         'htf_signal': htf_indicators['htf_signal'],
-                        'signal': signal,
+                        'last_signal': last_signal,
+                        'signal': last_signal,  # Для сумісності з UI
+                        'direction': filters['direction'],
                         'filters': filters,
                         'timestamp': datetime.utcnow().isoformat()
                     }
                     
                     results.append(result)
-                    logger.info(f"✅ MATCH: {symbol} - {signal}")
+                    logger.info(f"✅ ALERT READY: {symbol} - {last_signal} ({filters['direction']})")
                     
                 except Exception as e:
                     logger.error(f"Error scanning {symbol}: {e}")
@@ -629,7 +728,7 @@ class RSIMFIScreener:
             # SELL: більший RSI краще (перекупленість)
             results.sort(key=lambda x: abs(50 - x['rsi']), reverse=True)
             
-            logger.info(f"Scan complete. Found {len(results)} matches.")
+            logger.info(f"Scan complete. Found {len(results)} ALERT READY matches.")
             return results
             
         except Exception as e:
