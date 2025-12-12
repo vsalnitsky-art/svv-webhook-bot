@@ -168,7 +168,7 @@ fullContent:
 
                     <div class="col-md-6">
                         <label class="form-label small text-primary fw-bold">🎯 Take Profit Mode</label>
-                        <select class="form-select form-select-sm" name="tp_mode">
+                        <select class="form-select form-select-sm" name="tp_mode" id="tpModeSelect" onchange="updateTpDescription()">
                             <option value="None" {{ 'selected' if conf.get('tp_mode')=='None' }}>Без TP (Вимкнено)</option>
                             <option value="Smart_TP" {{ 'selected' if conf.get('tp_mode')=='Smart_TP' }}>🚀 Smart TP (50/25/25 + Trailing)</option>
                             <option value="Fixed_1_50" {{ 'selected' if conf.get('tp_mode')=='Fixed_1_50' }}>Smart TP (Alias)</option>
@@ -190,12 +190,10 @@ fullContent:
                         </div>
                     </div>
                     
+                    <!-- Динамічний опис TP Mode -->
                     <div class="col-12">
-                        <div class="alert alert-success alert-sm border-0 py-2 px-3" role="alert">
-                            <strong>🚀 Smart TP (50/25/25):</strong><br>
-                            • <strong>TP1 (+1%):</strong> Закриває 50% → SL переміщується в Break-Even<br>
-                            • <strong>TP2 (+2%):</strong> Закриває 25% → Trailing Stop активується автоматично<br>
-                            • <strong>Залишок 25%:</strong> Працює на ATR Trailing (без обмеження прибутку!)
+                        <div id="tpModeDescription" class="alert alert-sm border-0 py-2 px-3" role="alert">
+                            <!-- Заповнюється JavaScript -->
                         </div>
                     </div>
                 </div>
@@ -321,6 +319,71 @@ fullContent:
 </div>
 
 <script>
+    // === TP MODE DESCRIPTIONS ===
+    const tpDescriptions = {
+        'None': {
+            class: 'alert-secondary',
+            content: `
+                <strong>⛔ Без Take Profit:</strong><br>
+                • TP ордери НЕ створюються<br>
+                • Позиція закривається тільки по Stop Loss<br>
+                • Або вручну / по сигналу Close<br>
+                <small class="text-muted">💡 Рекомендується увімкнути Manual Trailing для захисту прибутку</small>
+            `
+        },
+        'Smart_TP': {
+            class: 'alert-success',
+            content: `
+                <strong>🚀 Smart TP (50/25/25):</strong><br>
+                • <strong>TP1 (+1%):</strong> Закриває 50% → SL переміщується в Break-Even<br>
+                • <strong>TP2 (+2%):</strong> Закриває 25% → Trailing Stop активується автоматично<br>
+                • <strong>Залишок 25%:</strong> Працює на ATR Trailing (без обмеження прибутку!)<br>
+                <small class="text-muted">💡 Найкращий баланс між фіксацією прибутку та потенціалом росту</small>
+            `
+        },
+        'Fixed_1_50': {
+            class: 'alert-success',
+            content: `
+                <strong>🚀 Smart TP (Alias):</strong><br>
+                • Ідентичний режиму Smart TP (50/25/25)<br>
+                • <strong>TP1 (+1%):</strong> 50% → Break-Even<br>
+                • <strong>TP2 (+2%):</strong> 25% → Trailing ON<br>
+                • <strong>Залишок 25%:</strong> ATR Trailing<br>
+                <small class="text-muted">💡 Збережено для зворотної сумісності</small>
+            `
+        },
+        'Ladder_3': {
+            class: 'alert-info',
+            content: `
+                <strong>📊 Ladder 3 (33/33/33):</strong><br>
+                • <strong>TP1:</strong> 33% @ Fixed TP × 0.33 (наприклад +1% при TP=3%)<br>
+                • <strong>TP2:</strong> 33% @ Fixed TP × 0.66 (наприклад +2%)<br>
+                • <strong>TP3:</strong> 34% @ Fixed TP × 1.00 (наприклад +3%)<br>
+                <small class="text-muted">💡 Класична драбинка. Trailing НЕ активується автоматично</small>
+            `
+        }
+    };
+
+    function updateTpDescription() {
+        const select = document.getElementById('tpModeSelect');
+        const descDiv = document.getElementById('tpModeDescription');
+        const mode = select.value;
+        
+        const desc = tpDescriptions[mode] || tpDescriptions['Smart_TP'];
+        
+        // Оновлюємо клас та вміст
+        descDiv.className = `alert ${desc.class} alert-sm border-0 py-2 px-3`;
+        descDiv.innerHTML = desc.content;
+        
+        // Анімація
+        descDiv.style.transition = 'opacity 0.2s';
+        descDiv.style.opacity = '0.5';
+        setTimeout(() => { descDiv.style.opacity = '1'; }, 100);
+    }
+
+    // Виклик при завантаженні сторінки
+    document.addEventListener('DOMContentLoaded', updateTpDescription);
+
     // Матриця параметрів.
     const paramsMatrix = {
         '15':  { 
@@ -391,4 +454,3 @@ fullContent:
     }
 </script>
 {% endblock %}
-}
