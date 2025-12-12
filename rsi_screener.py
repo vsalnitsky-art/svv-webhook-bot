@@ -717,7 +717,7 @@ class RSIMFIScreener:
                     }
                     
                     results.append(result)
-                    logger.info(f"✅ ALERT READY: {symbol} - {last_signal} ({filters['direction']})")
+                    logger.info(f"✅ MATCH: {symbol} - {last_signal} ({filters['direction']})")
                     
                 except Exception as e:
                     logger.error(f"Error scanning {symbol}: {e}")
@@ -728,7 +728,7 @@ class RSIMFIScreener:
             # SELL: більший RSI краще (перекупленість)
             results.sort(key=lambda x: abs(50 - x['rsi']), reverse=True)
             
-            logger.info(f"Scan complete. Found {len(results)} ALERT READY matches.")
+            logger.info(f"Scan complete. Found {len(results)} matches.")
             return results
             
         except Exception as e:
