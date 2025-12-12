@@ -17,6 +17,45 @@ DEFAULT_SETTINGS = {
     "telegram_enabled": False,
     "telegram_bot_token": "",
     "telegram_chat_id": "",
+    
+    # === RSI/MFI SCREENER ===
+    # Timeframes
+    "screener_main_tf": "60",           # 1h
+    "screener_htf": "240",              # 4h (auto-linked)
+    
+    # Volume
+    "screener_min_volume": 10000000,    # $10M
+    
+    # RSI Settings
+    "screener_rsi_length": 14,
+    "screener_oversold": 30,
+    "screener_overbought": 70,
+    
+    # MFI Settings
+    "screener_mfi_length": 20,
+    "screener_fast_mfi_ema": 5,
+    "screener_slow_mfi_ema": 13,
+    
+    # HMA Settings
+    "screener_hma_fast": 10,
+    "screener_hma_slow": 30,
+    
+    # Signal Settings
+    "screener_min_peak_strength": 2,
+    "screener_require_volume": False,
+    "screener_trend_confirmation": False,
+    
+    # Filter Levels
+    "screener_rsi_filter_overbought": 60,  # Long: RSI ≤ 60
+    "screener_rsi_filter_oversold": 40,    # Short: RSI ≥ 40
+    
+    # Filters ON/OFF (all ON by default)
+    "screener_use_rsi_filter": True,
+    "screener_use_mfi_filter": True,
+    "screener_use_momentum_filter": True,
+    "screener_use_cloud_filter": True,
+    "screener_use_htf_signal_filter": True,
+    "screener_use_last_signal_filter": True,
 
     # === STRATEGY FILTERS (Для сумісності, якщо знадобиться) ===
     "obt_useCloudFilter": True,
