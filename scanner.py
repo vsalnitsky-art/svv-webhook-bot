@@ -62,7 +62,7 @@ class EnhancedMarketScanner:
     def start(self):
         """Запускає фоновий потік моніторингу"""
         threading.Thread(target=self.loop, daemon=True).start()
-        logger.info("✅ Enhanced Market Scanner Started (Smart TP Mode) v3.2.2")
+        logger.info("✅ Enhanced Market Scanner Started (Smart TP + Manual Trailing) v3.3")
 
     def loop(self):
         """Головний цикл моніторингу"""
@@ -159,6 +159,10 @@ class EnhancedMarketScanner:
     def monitor(self):
         """
         🎯 ГОЛОВНА ЛОГІКА МОНІТОРИНГУ
+        
+        Два режими Trailing:
+        1. Smart TP Mode: Trailing активується автоматично після TP2
+        2. Manual Mode: Trailing активується по RSI або затримці
         """
         active_pos = self.get_active()
         active_syms = [p['symbol'] for p in active_pos]
@@ -174,8 +178,15 @@ class EnhancedMarketScanner:
         # === НАЛАШТУВАННЯ ===
         exit_tf = settings.get("exit_ltf", "60")
         tp_mode = settings.get("tp_mode", "Smart_TP")
+        
+        # Trailing параметри (спільні для обох режимів)
         atr_len = self._safe_int(settings.get("trailing_atr_length", 14), 14)
         atr_mult = self._safe_float(settings.get("trailing_atr_multiplier", 2.5), 2.5)
+        
+        # Manual trailing параметри
+        manual_trailing_enabled = settings.get("trailing_enabled", False)
+        rsi_activation = self._safe_float(settings.get("trailing_rsi_activation", 65), 65)
+        activation_delay_min = self._safe_int(settings.get("trailing_activation_delay", 5), 5)
 
         for p in active_pos:
             s = "unknown"
@@ -214,6 +225,7 @@ class EnhancedMarketScanner:
                         'tp2_hit': False,
                         'be_set': False,
                         'trailing_active': False,
+                        'trailing_reason': '',  # Причина активації
                         'last_sl_update': current_sl if current_sl > 0 else 0
                     }
                     logger.info(f"📊 New position tracked: {s} {side} qty={current_qty} entry={entry_price}")
@@ -221,7 +233,7 @@ class EnhancedMarketScanner:
                 pos_data = self.data[s]
                 initial_qty = pos_data['initial_qty']
                 
-                # === SMART TP TRACKING ===
+                # === SMART TP TRACKING (автоматичний trailing після TP2) ===
                 if tp_mode in ["Smart_TP", "Fixed_1_50"]:
                     qty_ratio = current_qty / initial_qty if initial_qty > 0 else 1.0
                     
@@ -247,10 +259,11 @@ class EnhancedMarketScanner:
                                         pos_data['last_sl_update'] = be_price
                                         logger.info(f"🛡️ BE SET: {s} SL moved to {be_price}")
                     
-                    # --- TP2 CHECK ---
+                    # --- TP2 CHECK → Auto Trailing ---
                     if pos_data['tp1_hit'] and not pos_data['tp2_hit'] and qty_ratio <= 0.30:
                         pos_data['tp2_hit'] = True
                         pos_data['trailing_active'] = True
+                        pos_data['trailing_reason'] = 'TP2'
                         logger.info(f"✅ TP2 HIT: {s} - Trailing ACTIVATED for remaining {round(qty_ratio*100)}%")
 
                 # === FETCH INDICATORS ===
@@ -265,14 +278,46 @@ class EnhancedMarketScanner:
                     status = "Active"
                     details = f"RSI: {round(rsi_val, 1)}" if rsi_val else "RSI: N/A"
                     
+                    # === MANUAL TRAILING ACTIVATION ===
+                    # Активується незалежно від Smart TP, якщо trailing_enabled = True
+                    if manual_trailing_enabled and not pos_data['trailing_active']:
+                        should_activate = False
+                        activation_reason = ''
+                        
+                        # 1. Активація по RSI
+                        if rsi_val:
+                            if side == "Buy" and rsi_val >= rsi_activation:
+                                should_activate = True
+                                activation_reason = f'RSI≥{int(rsi_activation)}'
+                            elif side == "Sell" and rsi_val <= (100 - rsi_activation):
+                                should_activate = True
+                                activation_reason = f'RSI≤{int(100-rsi_activation)}'
+                        
+                        # 2. Активація по затримці (якщо не активувався по RSI)
+                        if not should_activate and activation_delay_min > 0:
+                            position_time = pos_data.get('position_time', 0)
+                            if position_time > 0:
+                                elapsed_min = (time.time() * 1000 - position_time) / 60000
+                                if elapsed_min >= activation_delay_min:
+                                    should_activate = True
+                                    activation_reason = f'{int(elapsed_min)}min'
+                        
+                        # Активуємо trailing
+                        if should_activate:
+                            pos_data['trailing_active'] = True
+                            pos_data['trailing_reason'] = activation_reason
+                            logger.info(f"🚀 MANUAL TRAILING: {s} activated by {activation_reason}")
+                    
+                    # Статус для Smart TP
                     if pos_data['tp1_hit'] and not pos_data['tp2_hit']:
                         status = "TP1 ✓ BE"
                         details = f"RSI: {round(rsi_val, 1)} | Waiting TP2" if rsi_val else "Waiting TP2"
                     
                     # === TRAILING STOP LOGIC ===
                     if pos_data['trailing_active'] and atr_val and atr_val > 0:
-                        status = "TRAILING 🚀"
-                        details = f"ATR: {round(atr_val, 4)}"
+                        reason = pos_data.get('trailing_reason', '')
+                        status = f"TRAILING 🚀 ({reason})" if reason else "TRAILING 🚀"
+                        details = f"ATR×{atr_mult}: {round(atr_val * atr_mult, 2)}"
                         
                         last_sl = pos_data.get('last_sl_update', current_sl)
                         new_sl = 0.0
