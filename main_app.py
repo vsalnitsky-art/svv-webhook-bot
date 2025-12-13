@@ -489,26 +489,37 @@ def smart_money_settings():
     # GET - перезавантажуємо з БД для актуальності (для multi-worker)
     settings.reload_settings()
     
+    # Явно конвертуємо boolean значення
+    auto_scan = settings.get('ob_auto_scan', False)
+    auto_add = settings.get('ob_auto_add_from_screener', False)
+    exec_trades = settings.get('ob_execute_trades', False)
+    
+    # Ensure they are actual booleans
+    auto_scan = bool(auto_scan) if not isinstance(auto_scan, bool) else auto_scan
+    auto_add = bool(auto_add) if not isinstance(auto_add, bool) else auto_add
+    exec_trades = bool(exec_trades) if not isinstance(exec_trades, bool) else exec_trades
+    
+    logger.info(f"📤 GET /smart_money/settings: auto_scan={auto_scan} ({type(auto_scan).__name__}), auto_add={auto_add} ({type(auto_add).__name__})")
+    
     result = {
         'ob_source_tf': settings.get('ob_source_tf', '15'),
         'ob_swing_length': settings.get('ob_swing_length', 3),
         'ob_zone_count': settings.get('ob_zone_count', 'High'),
         'ob_max_atr_mult': settings.get('ob_max_atr_mult', 3.5),
         'ob_invalidation_method': settings.get('ob_invalidation_method', 'Wick'),
-        'ob_combine_obs': settings.get('ob_combine_obs', True),
+        'ob_combine_obs': bool(settings.get('ob_combine_obs', True)),
         'ob_entry_mode': settings.get('ob_entry_mode', 'Immediate'),
         'ob_selection': settings.get('ob_selection', 'Newest'),
         'ob_sl_atr_mult': settings.get('ob_sl_atr_mult', 0.3),
         'ob_watchlist_timeout': settings.get('ob_watchlist_timeout', '24h'),
         'ob_scan_interval': settings.get('ob_scan_interval', 60),
         'ob_watchlist_limit': settings.get('ob_watchlist_limit', 50),
-        'ob_persistence_check': settings.get('ob_persistence_check', False),
-        'ob_auto_scan': settings.get('ob_auto_scan', False),
-        'ob_auto_add_from_screener': settings.get('ob_auto_add_from_screener', False),
-        'ob_execute_trades': settings.get('ob_execute_trades', False)
+        'ob_persistence_check': bool(settings.get('ob_persistence_check', False)),
+        'ob_auto_scan': auto_scan,
+        'ob_auto_add_from_screener': auto_add,
+        'ob_execute_trades': exec_trades
     }
     
-    logger.info(f"📤 GET /smart_money/settings: auto_scan={result['ob_auto_scan']}, auto_add={result['ob_auto_add_from_screener']}")
     return jsonify(result)
 
 
