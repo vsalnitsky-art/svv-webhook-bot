@@ -801,6 +801,11 @@ class RSIMFIScreener:
             
             # Перевіряємо чи увімкнено auto-add
             if not settings.get('ob_auto_add_from_screener', False):
+                logger.info("Auto-add to Smart Money is disabled")
+                return
+            
+            if not results:
+                logger.info("No results to add to Smart Money watchlist")
                 return
             
             session = db_manager.get_session()
@@ -813,7 +818,12 @@ class RSIMFIScreener:
                 
                 for result in results:
                     symbol = result['symbol']
-                    direction = result.get('direction', 'BUY')
+                    # Конвертуємо LONG→BUY, SHORT→SELL для бази даних
+                    raw_direction = result.get('direction', 'LONG')
+                    if raw_direction in ['LONG', 'BUY']:
+                        direction = 'BUY'
+                    else:
+                        direction = 'SELL'
                     
                     # Перевіряємо чи вже є
                     existing = session.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
@@ -853,6 +863,8 @@ class RSIMFIScreener:
                 
                 if added_count > 0 or updated_count > 0:
                     logger.info(f"✅ Smart Money watchlist: +{added_count} added, {updated_count} updated")
+                else:
+                    logger.info("No new symbols to add (all already in watchlist)")
                     
             finally:
                 session.close()
