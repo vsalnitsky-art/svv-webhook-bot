@@ -96,6 +96,58 @@
         background-color: #3b82f6;
         border-color: #3b82f6;
     }
+    
+    /* Auto Scan Status Panel */
+    .auto-scan-panel {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px 20px;
+    }
+    .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 8px;
+    }
+    .status-dot.active {
+        background: #10b981;
+        box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+        animation: pulse-green 1.5s infinite;
+    }
+    .status-dot.scanning {
+        background: #3b82f6;
+        box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+        animation: pulse-blue 0.8s infinite;
+    }
+    .status-dot.inactive {
+        background: #94a3b8;
+    }
+    @keyframes pulse-green {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.7; transform: scale(1.2); }
+    }
+    @keyframes pulse-blue {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    .countdown-badge {
+        font-family: 'Monaco', 'Menlo', monospace;
+        font-size: 1.1rem;
+        background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+        color: white;
+        padding: 6px 14px;
+        border-radius: 8px;
+        font-weight: 700;
+    }
+    .stats-mini {
+        font-size: 0.85rem;
+        color: #64748b;
+    }
+    .stats-mini strong {
+        color: #1e293b;
+    }
 </style>
 {% endblock %}
 
@@ -159,13 +211,6 @@
                         <input type="number" class="form-control border-start-0 border-end-0 ps-2" id="minVolume" value="10" min="1" onchange="autoSave()">
                         <span class="input-group-text bg-white border-start-0">M</span>
                     </div>
-                </div>
-
-                <div class="col-md-3">
-                    <label class="form-label d-block">&nbsp;</label>
-                    <button type="button" id="btn-scan" class="btn btn-primary btn-lg w-100 shadow fw-bold" onclick="startScan()">
-                        СКАНУВАТИ 🚀
-                    </button>
                 </div>
                 
             </div>
@@ -312,6 +357,69 @@
                 </div>
             </div>
             
+        </div>
+    </div>
+
+    <!-- Auto Scan Status Panel -->
+    <div class="card-custom mb-4 border-0 shadow-sm">
+        <div class="card-body auto-scan-panel">
+            <div class="row align-items-center">
+                <!-- Status & Toggle -->
+                <div class="col-md-4">
+                    <div class="d-flex align-items-center">
+                        <span id="autoScanDot" class="status-dot inactive"></span>
+                        <span id="autoScanStatus" class="fw-bold me-3">Auto Scan: OFF</span>
+                        
+                        <div class="form-check form-switch ms-2">
+                            <input class="form-check-input" type="checkbox" id="autoScanToggle" 
+                                   style="width: 3em; height: 1.5em; cursor: pointer;"
+                                   onchange="toggleAutoScan()">
+                        </div>
+                    </div>
+                    <div class="stats-mini mt-2">
+                        <span class="me-3"><i class="ri-time-line"></i> Last: <strong id="lastScanTime">—</strong></span>
+                        <span><i class="ri-search-eye-line"></i> Found: <strong id="lastFoundCount">—</strong></span>
+                    </div>
+                </div>
+                
+                <!-- Interval Selector -->
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold text-muted mb-1">Scan Interval</label>
+                    <select class="form-select form-select-sm" id="scanIntervalSelect" onchange="updateScanInterval()">
+                        <option value="5">Every 5 min</option>
+                        <option value="10">Every 10 min</option>
+                        <option value="15" selected>Every 15 min</option>
+                        <option value="30">Every 30 min</option>
+                        <option value="60">Every 1 hour</option>
+                    </select>
+                </div>
+                
+                <!-- Countdown -->
+                <div class="col-md-3 text-center">
+                    <div class="small text-muted mb-1">Next Scan</div>
+                    <div id="nextScanCountdown" class="countdown-badge">
+                        --:--
+                    </div>
+                </div>
+                
+                <!-- Manual Scan Button -->
+                <div class="col-md-2 text-end">
+                    <button type="button" id="btn-scan" class="btn btn-primary btn-lg shadow fw-bold" onclick="startScan()">
+                        <i class="ri-radar-line me-1"></i> SCAN
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Progress bar for auto-scan -->
+            <div id="autoScanProgress" class="mt-3" style="display: none;">
+                <div class="d-flex justify-content-between mb-1">
+                    <span class="small fw-bold text-primary" id="autoScanProgressText">Scanning...</span>
+                    <span class="small fw-bold" id="autoScanProgressPercent">0%</span>
+                </div>
+                <div class="progress" style="height: 6px; border-radius: 3px;">
+                    <div id="autoScanProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%"></div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -766,6 +874,14 @@ async function loadSettings() {
             document.getElementById('requireVolume').checked = s.screener_require_volume === true;
             document.getElementById('trendConfirm').checked = s.screener_trend_confirmation === true;
             
+            // Auto Scan settings
+            if (s.screener_auto_scan !== undefined) {
+                document.getElementById('autoScanToggle').checked = s.screener_auto_scan === true;
+            }
+            if (s.screener_scan_interval) {
+                document.getElementById('scanIntervalSelect').value = s.screener_scan_interval;
+            }
+            
             updateInfoBadges();
         }
     } catch (e) {
@@ -773,11 +889,182 @@ async function loadSettings() {
     }
 }
 
+// ===== AUTO SCAN FUNCTIONS =====
+
+let autoScanStatusInterval = null;
+let countdownInterval = null;
+let nextScanTime = null;
+
+async function toggleAutoScan() {
+    const enabled = document.getElementById('autoScanToggle').checked;
+    const interval = parseInt(document.getElementById('scanIntervalSelect').value);
+    
+    try {
+        const resp = await fetch('/rsi_screener/auto_scan', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled, interval})
+        });
+        
+        if (resp.ok) {
+            updateAutoScanUI(enabled);
+            showToast(enabled ? '✅ Auto Scan enabled' : '⏹️ Auto Scan disabled');
+        }
+    } catch (e) {
+        console.error('Toggle auto scan error:', e);
+    }
+}
+
+async function updateScanInterval() {
+    const enabled = document.getElementById('autoScanToggle').checked;
+    const interval = parseInt(document.getElementById('scanIntervalSelect').value);
+    
+    if (!enabled) return;
+    
+    try {
+        await fetch('/rsi_screener/auto_scan', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled, interval})
+        });
+        showToast(`⏱️ Interval set to ${interval} min`);
+    } catch (e) {
+        console.error('Update interval error:', e);
+    }
+}
+
+function updateAutoScanUI(enabled) {
+    const dot = document.getElementById('autoScanDot');
+    const status = document.getElementById('autoScanStatus');
+    
+    if (enabled) {
+        dot.className = 'status-dot active';
+        status.textContent = 'Auto Scan: ON';
+        status.className = 'fw-bold me-3 text-success';
+    } else {
+        dot.className = 'status-dot inactive';
+        status.textContent = 'Auto Scan: OFF';
+        status.className = 'fw-bold me-3';
+        document.getElementById('nextScanCountdown').textContent = '--:--';
+        nextScanTime = null;
+    }
+}
+
+async function loadAutoScanStatus() {
+    try {
+        const resp = await fetch('/rsi_screener/status');
+        if (!resp.ok) return;
+        
+        const data = await resp.json();
+        
+        // Update toggle
+        document.getElementById('autoScanToggle').checked = data.auto_scan_enabled;
+        document.getElementById('scanIntervalSelect').value = data.scan_interval;
+        
+        // Update UI
+        updateAutoScanUI(data.auto_scan_enabled);
+        
+        // Update last scan info
+        if (data.last_scan) {
+            const lastTime = new Date(data.last_scan);
+            document.getElementById('lastScanTime').textContent = 
+                lastTime.toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
+        }
+        document.getElementById('lastFoundCount').textContent = data.last_found || '0';
+        
+        // Update next scan time
+        if (data.next_scan && data.auto_scan_enabled) {
+            nextScanTime = new Date(data.next_scan);
+        } else {
+            nextScanTime = null;
+        }
+        
+        // Update scanning state
+        const dot = document.getElementById('autoScanDot');
+        const progressPanel = document.getElementById('autoScanProgress');
+        
+        if (data.is_scanning) {
+            dot.className = 'status-dot scanning';
+            progressPanel.style.display = 'block';
+            document.getElementById('autoScanProgressText').textContent = 'Scanning market...';
+            document.getElementById('autoScanProgressBar').style.width = '50%';
+        } else {
+            if (data.auto_scan_enabled) {
+                dot.className = 'status-dot active';
+            }
+            progressPanel.style.display = 'none';
+        }
+        
+    } catch (e) {
+        console.error('Load auto scan status error:', e);
+    }
+}
+
+function updateCountdown() {
+    const countdownEl = document.getElementById('nextScanCountdown');
+    
+    if (!nextScanTime) {
+        countdownEl.textContent = '--:--';
+        return;
+    }
+    
+    const now = new Date();
+    const diff = nextScanTime - now;
+    
+    if (diff <= 0) {
+        countdownEl.textContent = 'NOW';
+        countdownEl.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+        return;
+    }
+    
+    countdownEl.style.background = 'linear-gradient(135deg, #3b82f6, #1d4ed8)';
+    
+    const minutes = Math.floor(diff / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+    
+    countdownEl.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function showToast(message) {
+    // Simple toast notification
+    let toast = document.getElementById('toast-notification');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast-notification';
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            background: #1e293b;
+            color: white;
+            border-radius: 8px;
+            font-weight: 600;
+            z-index: 9999;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: opacity 0.3s ease;
+        `;
+        document.body.appendChild(toast);
+    }
+    
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    
+    setTimeout(() => {
+        toast.style.opacity = '0';
+    }, 2000);
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
+    loadAutoScanStatus();
     tableSorter = new TableSorter('resultsTable');
     updateInfoBadges();
+    
+    // Start status polling
+    autoScanStatusInterval = setInterval(loadAutoScanStatus, 5000);
+    countdownInterval = setInterval(updateCountdown, 1000);
 });
 </script>
 {% endblock %}
