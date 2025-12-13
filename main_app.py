@@ -747,6 +747,88 @@ def verify_rsi_mfi_filters(symbol: str, direction: str) -> bool:
         return True
 
 
+def execute_ob_trade(ob, bybit_session=None) -> dict:
+    """
+    Відкриття угоди на основі Order Block
+    
+    Args:
+        ob: DetectedOrderBlock об'єкт або dict з параметрами OB
+        bybit_session: Bybit HTTP session (опціонально)
+        
+    Returns:
+        dict з результатом операції
+    """
+    try:
+        from bot import TradingBot
+        
+        # Отримуємо параметри OB
+        if hasattr(ob, 'symbol'):
+            # Це DetectedOrderBlock об'єкт
+            symbol = ob.symbol
+            direction = ob.direction
+            entry_price = ob.entry_price
+            sl_price = ob.sl_price
+            current_price = ob.current_price
+            ob_top = ob.ob_top
+            ob_bottom = ob.ob_bottom
+        else:
+            # Це dict
+            symbol = ob['symbol']
+            direction = ob['direction']
+            entry_price = ob['entry_price']
+            sl_price = ob['sl_price']
+            current_price = ob['current_price']
+            ob_top = ob['ob_top']
+            ob_bottom = ob['ob_bottom']
+        
+        # Розрахунок Stop Loss у відсотках
+        if direction == 'BUY':
+            # Для LONG: SL нижче entry
+            sl_percent = abs((entry_price - sl_price) / entry_price * 100)
+            action = "Buy"
+        else:
+            # Для SHORT: SL вище entry
+            sl_percent = abs((sl_price - entry_price) / entry_price * 100)
+            action = "Sell"
+        
+        # Отримуємо налаштування ризику
+        risk_percent = settings.get('risk_percent', 1.0)
+        leverage = settings.get('leverage', 10)
+        
+        logger.info(f"🚀 Executing OB Trade: {symbol} {direction}")
+        logger.info(f"   Entry: {entry_price:.4f}, SL: {sl_price:.4f} ({sl_percent:.2f}%)")
+        logger.info(f"   OB Zone: [{ob_bottom:.4f} - {ob_top:.4f}]")
+        logger.info(f"   Risk: {risk_percent}%, Leverage: {leverage}x")
+        
+        # Створюємо бота
+        api_key, api_secret = get_api_credentials()
+        bot = TradingBot(api_key, api_secret)
+        
+        # Формуємо дані для place_order
+        trade_data = {
+            'action': action,
+            'symbol': symbol,
+            'riskPercent': risk_percent,
+            'leverage': leverage,
+            'stopLossPercent': sl_percent,
+            'entryPrice': current_price  # Використовуємо поточну ціну як entry
+        }
+        
+        # Виконуємо ордер
+        result = bot.place_order(trade_data)
+        
+        if result.get('status') == 'ok':
+            logger.info(f"✅ Trade executed: {symbol} {direction} qty={result.get('qty')}")
+            return {'status': 'ok', 'trade_result': result}
+        else:
+            logger.warning(f"⚠️ Trade issue: {symbol} - {result.get('reason', 'Unknown')}")
+            return {'status': 'warning', 'reason': result.get('reason'), 'trade_result': result}
+            
+    except Exception as e:
+        logger.error(f"❌ Execute OB trade error for {ob.symbol if hasattr(ob, 'symbol') else ob.get('symbol')}: {e}", exc_info=True)
+        return {'status': 'error', 'reason': str(e)}
+
+
 def scheduled_ob_scan():
     """Scheduled Order Block scan - часте сканування"""
     global ob_scanner_state, screener_lock
@@ -795,6 +877,81 @@ def scheduled_ob_scan():
             scan_settings = settings.get_all()
             scanner = OrderBlockScanner(session=bybit_session, settings=scan_settings)
             
+            # ===== ЧАСТИНА 1: Моніторинг існуючих OB (ретест) =====
+            # Перевіряємо чи ціна торкнулась існуючих OB зон
+            existing_obs = session_db.query(DetectedOrderBlock).filter(
+                DetectedOrderBlock.status.in_(['Valid', 'Waiting Retest'])
+            ).all()
+            
+            triggered_count = 0
+            for ob in existing_obs:
+                try:
+                    # Отримуємо поточну ціну
+                    ticker = bybit_session.get_tickers(category="linear", symbol=ob.symbol)
+                    if ticker.get('retCode') != 0:
+                        continue
+                    
+                    ticker_data = ticker.get('result', {}).get('list', [{}])[0]
+                    current_price = float(ticker_data.get('lastPrice', 0))
+                    high_24h = float(ticker_data.get('highPrice24h', current_price))
+                    low_24h = float(ticker_data.get('lowPrice24h', current_price))
+                    
+                    if current_price <= 0:
+                        continue
+                    
+                    # Перевіряємо чи ціна в зоні OB
+                    price_in_zone = (current_price >= ob.ob_bottom and current_price <= ob.ob_top)
+                    
+                    # Оновлюємо поточну ціну
+                    ob.current_price = current_price
+                    
+                    if price_in_zone and ob.status in ['Valid', 'Waiting Retest']:
+                        logger.info(f"🎯 RETEST DETECTED: {ob.symbol} price ${current_price:.4f} in OB zone [{ob.ob_bottom:.4f} - {ob.ob_top:.4f}]")
+                        
+                        # Ретест НЕ проходить через фільтри! Просто активуємо OB
+                        ob.status = 'Triggered'
+                        triggered_count += 1
+                        
+                        # Якщо Execute Trades увімкнено - відкриваємо угоду
+                        if settings.get('ob_execute_trades', False):
+                            logger.info(f"🚀 Opening trade for {ob.symbol} ({ob.direction}) - RETEST triggered")
+                            trade_result = execute_ob_trade(ob, bybit_session)
+                            if trade_result.get('status') == 'ok':
+                                ob.executed_at = datetime.utcnow()
+                                ob.status = 'Executed'
+                                ob.trade_result = f"Executed via retest"
+                            else:
+                                ob.trade_result = f"Failed: {trade_result.get('reason', 'Unknown')}"
+                    
+                    # Перевірка інвалідації
+                    invalidation_method = scan_settings.get('ob_invalidation_method', 'Wick')
+                    is_invalidated = False
+                    
+                    if ob.direction == 'BUY':
+                        # Bullish OB інвалідується якщо ціна пішла нижче bottom
+                        if invalidation_method == 'Wick':
+                            is_invalidated = current_price < ob.ob_bottom
+                        else:  # Close
+                            is_invalidated = current_price < ob.ob_bottom
+                    else:  # SELL
+                        # Bearish OB інвалідується якщо ціна пішла вище top
+                        if invalidation_method == 'Wick':
+                            is_invalidated = current_price > ob.ob_top
+                        else:  # Close
+                            is_invalidated = current_price > ob.ob_top
+                    
+                    if is_invalidated and ob.status not in ['Executed', 'Invalidated']:
+                        logger.info(f"❌ OB INVALIDATED: {ob.symbol} - price ${current_price:.4f} broke zone")
+                        ob.status = 'Invalidated'
+                        
+                except Exception as e:
+                    logger.warning(f"Error checking OB {ob.symbol}: {e}")
+                    continue
+            
+            if triggered_count > 0:
+                logger.info(f"🎯 Triggered {triggered_count} OB retests")
+            
+            # ===== ЧАСТИНА 2: Сканування нових OB =====
             results = scanner.scan_watchlist(watchlist, delay=0.3)
             
             found_count = 0
@@ -802,18 +959,20 @@ def scheduled_ob_scan():
                 symbol = result['symbol']
                 direction = result['direction']
                 
-                existing = session_db.query(DetectedOrderBlock).filter_by(
-                    symbol=symbol,
-                    status='Valid'
+                # Перевіряємо чи вже є такий OB (будь-який статус крім Invalidated)
+                existing = session_db.query(DetectedOrderBlock).filter(
+                    DetectedOrderBlock.symbol == symbol,
+                    DetectedOrderBlock.status.in_(['Valid', 'Waiting Retest', 'Triggered'])
                 ).first()
                 
                 if existing:
                     continue
                 
-                # Перевірка RSI/MFI фільтрів перед збереженням (якщо Execute Trades увімкнено)
+                # 🔑 Перевірка RSI/MFI фільтрів ТІЛЬКИ для НОВИХ OB
+                # Ретест не проходить через фільтри!
                 if settings.get('ob_execute_trades', False):
                     if not verify_rsi_mfi_filters(symbol, direction):
-                        logger.info(f"⏭️ Skipping {symbol} - RSI/MFI filters not passed")
+                        logger.info(f"⏭️ Skipping NEW OB {symbol} - RSI/MFI filters not passed")
                         continue
                 
                 new_ob = DetectedOrderBlock(
@@ -831,6 +990,25 @@ def scheduled_ob_scan():
                 )
                 session_db.add(new_ob)
                 found_count += 1
+                logger.info(f"✨ NEW OB: {symbol} {direction} zone [{result['ob_bottom']:.4f} - {result['ob_top']:.4f}]")
+                
+                # 🚀 Якщо Execute Trades ON та OB готовий до входу (Immediate mode)
+                if settings.get('ob_execute_trades', False):
+                    entry_mode = scan_settings.get('ob_entry_mode', 'Immediate')
+                    
+                    if entry_mode == 'Immediate' or result['status'] == 'Triggered':
+                        # Для Immediate mode - відкриваємо угоду одразу
+                        logger.info(f"🚀 Opening trade for NEW OB: {symbol} ({direction})")
+                        trade_result = execute_ob_trade(result, bybit_session)
+                        if trade_result.get('status') == 'ok':
+                            new_ob.executed_at = datetime.utcnow()
+                            new_ob.status = 'Executed'
+                            new_ob.trade_result = f"Executed immediately"
+                        else:
+                            new_ob.trade_result = f"Failed: {trade_result.get('reason', 'Unknown')}"
+                    else:
+                        # Retest mode - чекаємо ретест
+                        logger.info(f"⏳ Waiting for retest: {symbol} ({direction})")
             
             session_db.commit()
             
@@ -838,12 +1016,13 @@ def scheduled_ob_scan():
             ob_scanner_state['last_scan'] = {
                 'time': datetime.utcnow().isoformat(),
                 'found': found_count,
+                'triggered': triggered_count,
                 'scanned': len(watchlist)
             }
             ob_scanner_state['last_found'] = found_count
             ob_scanner_state['last_scanned'] = len(watchlist)
             
-            logger.info(f"✅ OB Scanner: Found {found_count} OBs from {len(watchlist)} symbols")
+            logger.info(f"✅ OB Scanner: Found {found_count} new OBs, {triggered_count} retests from {len(watchlist)} symbols")
             
         finally:
             session_db.close()
