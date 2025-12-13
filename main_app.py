@@ -479,6 +479,10 @@ def smart_money_settings():
     if request.method == 'POST':
         data = request.get_json() or {}
         settings.save_settings(data)
+        
+        # Оновити scheduler якщо змінилось auto_scan
+        update_ob_scheduler()
+        
         return jsonify({'status': 'ok'})
     
     # GET - повернути поточні налаштування
@@ -496,6 +500,7 @@ def smart_money_settings():
         'ob_watchlist_limit': settings.get('ob_watchlist_limit', 50),
         'ob_persistence_check': settings.get('ob_persistence_check', False),
         'ob_auto_scan': settings.get('ob_auto_scan', False),
+        'ob_auto_add_from_screener': settings.get('ob_auto_add_from_screener', False),
         'ob_execute_trades': settings.get('ob_execute_trades', False)
     })
 
@@ -618,6 +623,192 @@ def smart_money_detected_delete(ob_id):
         return jsonify({'error': str(e)}), 500
     finally:
         session_db.close()
+
+
+# ===== OB SCANNER STATUS & SCHEDULER =====
+ob_scanner_state = {
+    'is_scanning': False,
+    'last_scan': None,
+    'next_scan': None,
+    'last_found': 0,
+    'last_scanned': 0
+}
+
+def get_next_candle_close(tf_minutes: int) -> datetime:
+    """Розрахунок часу закриття наступної свічки (синхронізація з біржею)"""
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    
+    # Поточна хвилина від початку дня
+    current_minutes = now.hour * 60 + now.minute
+    
+    # Наступне закриття свічки
+    next_close_minute = ((current_minutes // tf_minutes) + 1) * tf_minutes
+    
+    # Якщо перевищує добу, переходимо на наступний день
+    if next_close_minute >= 1440:
+        next_close_minute = tf_minutes
+        next_day = now.date() + timedelta(days=1)
+        next_close = datetime(next_day.year, next_day.month, next_day.day,
+                             next_close_minute // 60, next_close_minute % 60, 5)
+    else:
+        next_close = now.replace(
+            hour=next_close_minute // 60,
+            minute=next_close_minute % 60,
+            second=5,  # +5 сек буфер для біржі
+            microsecond=0
+        )
+    
+    # Додаємо offset для OB Scanner (TF/2 хвилин після RSI Screener)
+    # Це розділяє процеси RSI та OB сканування
+    offset_minutes = tf_minutes // 2
+    next_close = next_close + timedelta(minutes=offset_minutes)
+    
+    return next_close
+
+
+def scheduled_ob_scan():
+    """Scheduled Order Block scan"""
+    global ob_scanner_state
+    
+    if ob_scanner_state['is_scanning']:
+        logger.warning("OB Scanner: Already scanning, skip")
+        return
+    
+    if not settings.get('ob_auto_scan', False):
+        return
+    
+    logger.info("🔄 OB Scanner: Starting scheduled scan...")
+    ob_scanner_state['is_scanning'] = True
+    
+    try:
+        # Виконуємо сканування
+        from models import SmartMoneyTicker, DetectedOrderBlock
+        from order_block_scanner import OrderBlockScanner
+        
+        session_db = db_manager.get_session()
+        try:
+            watchlist_items = session_db.query(SmartMoneyTicker).all()
+            if not watchlist_items:
+                logger.info("OB Scanner: Watchlist is empty")
+                return
+            
+            watchlist = [{'symbol': item.symbol, 'direction': item.direction or 'BUY'} for item in watchlist_items]
+            
+            # Підключення до Bybit
+            api_key, api_secret = get_api_credentials()
+            from pybit.unified_trading import HTTP
+            bybit_session = HTTP(
+                testnet=os.environ.get("TESTNET", "false").lower() == "true",
+                api_key=api_key,
+                api_secret=api_secret
+            )
+            
+            scan_settings = settings.get_all()
+            scanner = OrderBlockScanner(session=bybit_session, settings=scan_settings)
+            
+            results = scanner.scan_watchlist(watchlist, delay=0.5)
+            
+            found_count = 0
+            for result in results:
+                symbol = result['symbol']
+                
+                existing = session_db.query(DetectedOrderBlock).filter_by(
+                    symbol=symbol,
+                    status='Valid'
+                ).first()
+                
+                if existing:
+                    continue
+                
+                new_ob = DetectedOrderBlock(
+                    symbol=symbol,
+                    direction=result['direction'],
+                    ob_type=result['ob_type'],
+                    ob_top=result['ob_top'],
+                    ob_bottom=result['ob_bottom'],
+                    entry_price=result['entry_price'],
+                    sl_price=result['sl_price'],
+                    current_price=result['current_price'],
+                    atr=result['atr'],
+                    status=result['status'],
+                    timeframe=scan_settings.get('ob_source_tf', '15')
+                )
+                session_db.add(new_ob)
+                found_count += 1
+            
+            session_db.commit()
+            
+            # Оновлюємо стан
+            ob_scanner_state['last_scan'] = {
+                'time': datetime.utcnow().isoformat(),
+                'found': found_count,
+                'scanned': len(watchlist)
+            }
+            ob_scanner_state['last_found'] = found_count
+            ob_scanner_state['last_scanned'] = len(watchlist)
+            
+            logger.info(f"✅ OB Scanner: Found {found_count} OBs from {len(watchlist)} symbols")
+            
+        finally:
+            session_db.close()
+            
+    except Exception as e:
+        logger.error(f"❌ OB Scanner error: {e}", exc_info=True)
+    finally:
+        ob_scanner_state['is_scanning'] = False
+        
+        # Розрахунок наступного сканування
+        tf_minutes = int(settings.get('ob_source_tf', '15'))
+        ob_scanner_state['next_scan'] = get_next_candle_close(tf_minutes).isoformat()
+
+
+def update_ob_scheduler():
+    """Оновлення scheduler при зміні налаштувань"""
+    global ob_scheduler_job
+    
+    try:
+        # Видаляємо попередній job якщо є
+        if 'ob_scheduler_job' in globals() and ob_scheduler_job:
+            ob_scheduler_job.remove()
+    except:
+        pass
+    
+    if not settings.get('ob_auto_scan', False):
+        logger.info("OB Scheduler: Auto scan disabled")
+        ob_scanner_state['next_scan'] = None
+        return
+    
+    # Розрахунок інтервалу
+    tf_minutes = int(settings.get('ob_source_tf', '15'))
+    
+    # Розрахунок наступного запуску
+    next_run = get_next_candle_close(tf_minutes)
+    ob_scanner_state['next_scan'] = next_run.isoformat()
+    
+    logger.info(f"OB Scheduler: Next scan at {next_run} (TF: {tf_minutes}m)")
+
+
+@app.route('/smart_money/status')
+def smart_money_status():
+    """Статус сканера для UI"""
+    from models import SmartMoneyTicker
+    session_db = db_manager.get_session()
+    try:
+        watchlist_count = session_db.query(SmartMoneyTicker).count()
+    finally:
+        session_db.close()
+    
+    return jsonify({
+        'auto_scan_enabled': settings.get('ob_auto_scan', False),
+        'auto_add_enabled': settings.get('ob_auto_add_from_screener', False),
+        'is_scanning': ob_scanner_state.get('is_scanning', False),
+        'next_scan': ob_scanner_state.get('next_scan'),
+        'last_scan': ob_scanner_state.get('last_scan'),
+        'source_tf': settings.get('ob_source_tf', '15'),
+        'watchlist_count': watchlist_count,
+        'watchlist_limit': settings.get('ob_watchlist_limit', 50)
+    })
 
 
 @app.route('/smart_money/scan', methods=['POST'])
@@ -931,12 +1122,95 @@ def rsi_screener_scan():
         logger.error(f"RSI Screener scan error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+# ===== SCHEDULER FOR AUTO SCAN =====
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import atexit
+
+ob_scheduler = None
+ob_scheduler_job = None
+
+def init_ob_scheduler():
+    """Ініціалізація scheduler для Order Block сканування"""
+    global ob_scheduler, ob_scheduler_job
+    
+    ob_scheduler = BackgroundScheduler(daemon=True)
+    ob_scheduler.start()
+    
+    # Реєструємо завершення при виході
+    atexit.register(lambda: ob_scheduler.shutdown(wait=False))
+    
+    # Запускаємо планування якщо Auto Scan увімкнено
+    update_ob_scheduler()
+    
+    logger.info("✅ OB Scheduler initialized")
+
+
+def update_ob_scheduler():
+    """Оновлення scheduler при зміні налаштувань"""
+    global ob_scheduler_job
+    
+    if ob_scheduler is None:
+        return
+    
+    try:
+        # Видаляємо попередній job якщо є
+        if ob_scheduler_job is not None:
+            try:
+                ob_scheduler.remove_job('ob_scan_job')
+            except:
+                pass
+            ob_scheduler_job = None
+    except:
+        pass
+    
+    if not settings.get('ob_auto_scan', False):
+        logger.info("OB Scheduler: Auto scan disabled")
+        ob_scanner_state['next_scan'] = None
+        return
+    
+    # Розрахунок інтервалу (TF в хвилинах)
+    tf_minutes = int(settings.get('ob_source_tf', '15'))
+    
+    # Створюємо cron trigger для запуску на кожній свічці
+    # Offset = TF/2 хвилин після закриття свічки (розділення від RSI Screener)
+    offset_minutes = (tf_minutes // 2) % 60
+    
+    if tf_minutes <= 60:
+        # Для TF до 1H - запуск кожні TF хвилин
+        trigger = CronTrigger(minute=f'{offset_minutes}/{tf_minutes}')
+    elif tf_minutes <= 240:
+        # Для 2H-4H - запуск кожні N годин
+        hours = tf_minutes // 60
+        trigger = CronTrigger(hour=f'*/{hours}', minute=offset_minutes)
+    else:
+        # Для більших TF - кожні 4 години
+        trigger = CronTrigger(hour='*/4', minute=offset_minutes)
+    
+    ob_scheduler_job = ob_scheduler.add_job(
+        scheduled_ob_scan,
+        trigger=trigger,
+        id='ob_scan_job',
+        replace_existing=True
+    )
+    
+    # Розрахунок наступного запуску
+    next_run = get_next_candle_close(tf_minutes)
+    ob_scanner_state['next_scan'] = next_run.isoformat()
+    
+    logger.info(f"OB Scheduler: Configured for TF={tf_minutes}m, offset={offset_minutes}m, next: {next_run}")
+
+
 # ===== ЗАПУСК =====
 
 if __name__ == '__main__':
     host = os.environ.get('HOST', '0.0.0.0')
     port = int(os.environ.get('PORT', 10000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
+    
+    # Ініціалізація scheduler
+    init_ob_scheduler()
     
     logger.info("starting_flask", host=host, port=port, debug=debug)
     app.run(host=host, port=port, debug=debug)
