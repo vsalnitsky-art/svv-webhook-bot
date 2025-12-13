@@ -1168,16 +1168,23 @@ def init_ob_scheduler():
     """Ініціалізація scheduler для Order Block сканування"""
     global ob_scheduler, ob_scheduler_job
     
-    ob_scheduler = BackgroundScheduler(daemon=True)
-    ob_scheduler.start()
+    if ob_scheduler is not None:
+        logger.info("OB Scheduler already initialized")
+        return
     
-    # Реєструємо завершення при виході
-    atexit.register(lambda: ob_scheduler.shutdown(wait=False))
-    
-    # Запускаємо планування якщо Auto Scan увімкнено
-    update_ob_scheduler()
-    
-    logger.info("✅ OB Scheduler initialized")
+    try:
+        ob_scheduler = BackgroundScheduler(daemon=True)
+        ob_scheduler.start()
+        
+        # Реєструємо завершення при виході
+        atexit.register(lambda: ob_scheduler.shutdown(wait=False))
+        
+        # Запускаємо планування якщо Auto Scan увімкнено
+        update_ob_scheduler()
+        
+        logger.info("✅ OB Scheduler initialized and running")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize OB Scheduler: {e}")
 
 
 def update_ob_scheduler():
@@ -1185,6 +1192,7 @@ def update_ob_scheduler():
     global ob_scheduler_job
     
     if ob_scheduler is None:
+        logger.warning("OB Scheduler not initialized, cannot update")
         return
     
     try:
@@ -1235,15 +1243,28 @@ def update_ob_scheduler():
     logger.info(f"OB Scheduler: Configured for TF={tf_minutes}m, offset={offset_minutes}m, next: {next_run}")
 
 
+# ===== АВТОМАТИЧНА ІНІЦІАЛІЗАЦІЯ SCHEDULER =====
+# Запускаємо scheduler при імпорті модуля (працює і з Gunicorn)
+def _auto_init_scheduler():
+    """Автоматична ініціалізація при старті"""
+    import threading
+    def delayed_init():
+        import time
+        time.sleep(2)  # Невелика затримка для повної ініціалізації Flask
+        init_ob_scheduler()
+    
+    thread = threading.Thread(target=delayed_init, daemon=True)
+    thread.start()
+
+_auto_init_scheduler()
+
+
 # ===== ЗАПУСК =====
 
 if __name__ == '__main__':
     host = os.environ.get('HOST', '0.0.0.0')
     port = int(os.environ.get('PORT', 10000))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
-    
-    # Ініціалізація scheduler
-    init_ob_scheduler()
     
     logger.info("starting_flask", host=host, port=port, debug=debug)
     app.run(host=host, port=port, debug=debug)
