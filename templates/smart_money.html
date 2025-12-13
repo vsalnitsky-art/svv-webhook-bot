@@ -11,8 +11,25 @@
     .status-triggered { color: #3b82f6; font-weight: 600; }
     .status-executed { color: #6b7280; }
     
-    /* Direction badges */
-    .dir-buy {
+    /* Direction badges - LONG зелений, SHORT червоний */
+    .dir-long {
+        background: linear-gradient(135deg, #059669, #10b981);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.8rem;
+    }
+    .dir-short {
+        background: linear-gradient(135deg, #dc2626, #ef4444);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.8rem;
+    }
+    /* Legacy classes for compatibility */
+    .dir-buy { 
         background: linear-gradient(135deg, #059669, #10b981);
         color: white;
         padding: 3px 10px;
@@ -315,7 +332,7 @@
                             </div>
                         </div>
                         <div class="row g-2 mt-1">
-                            <div class="col-4">
+                            <div class="col-3">
                                 <label class="form-label small">Timeout</label>
                                 <select class="form-select form-select-sm" id="obTimeout">
                                     <option value="No">No timeout</option>
@@ -325,11 +342,20 @@
                                     <option value="72h">72 hours</option>
                                 </select>
                             </div>
-                            <div class="col-4">
+                            <div class="col-3">
+                                <label class="form-label small">Scan Every</label>
+                                <select class="form-select form-select-sm" id="obScanInterval">
+                                    <option value="30">30 sec</option>
+                                    <option value="60" selected>1 min</option>
+                                    <option value="120">2 min</option>
+                                    <option value="300">5 min</option>
+                                </select>
+                            </div>
+                            <div class="col-3">
                                 <label class="form-label small">Max Watchlist</label>
                                 <input type="number" class="form-control form-control-sm text-center" id="obWatchlistLimit" value="50" min="10" max="100">
                             </div>
-                            <div class="col-4">
+                            <div class="col-3">
                                 <div class="form-check mt-4">
                                     <input class="form-check-input" type="checkbox" id="obPersistence">
                                     <label class="form-check-label small">Persistence</label>
@@ -406,9 +432,9 @@
                     <div class="p-3 border-bottom bg-light">
                         <div class="input-group">
                             <input type="text" class="form-control" id="addSymbolInput" placeholder="BTCUSDT">
-                            <select class="form-select" style="max-width: 100px;" id="addSymbolDirection">
-                                <option value="BUY">BUY</option>
-                                <option value="SELL">SELL</option>
+                            <select class="form-select" style="max-width: 110px;" id="addSymbolDirection">
+                                <option value="BUY">LONG</option>
+                                <option value="SELL">SHORT</option>
                             </select>
                             <button class="btn btn-success" onclick="addToWatchlist()">
                                 <i class="ri-add-line"></i>
@@ -586,6 +612,13 @@ async function loadScannerStatus() {
             obScanReason.textContent = '⚠️ Scheduler not running - restart app';
             obScanReason.className = 'status-reason status-reason-error';
             obScanReason.style.display = 'block';
+        } else if (data.is_paused) {
+            // Пауза через RSI Screener
+            obStatus.className = 'status-indicator status-idle';
+            obStatus.textContent = 'PAUSED';
+            obScanReason.textContent = '⏸️ Waiting for RSI/MFI Screener to finish...';
+            obScanReason.className = 'status-reason status-reason-warning';
+            obScanReason.style.display = 'block';
         } else if (data.auto_scan_enabled) {
             if (data.is_scanning) {
                 obStatus.className = 'status-indicator status-scanning';
@@ -642,9 +675,10 @@ async function loadScannerStatus() {
         document.getElementById('watchlistBadge').textContent = 
             `${data.watchlist_count || 0} / ${data.watchlist_limit || 50}`;
         
-        // TF display
+        // TF display with scan interval
         const tfMap = {'5': '5m', '15': '15m', '30': '30m', '60': '1H', '240': '4H'};
-        document.getElementById('obTfDisplay').textContent = tfMap[data.source_tf] || data.source_tf + 'm';
+        const intervalText = data.scan_interval < 60 ? `${data.scan_interval}s` : `${data.scan_interval / 60}m`;
+        document.getElementById('obTfDisplay').textContent = `${tfMap[data.source_tf] || data.source_tf + 'm'} / ${intervalText}`;
         
     } catch (e) {
         console.error('Status load error:', e);
@@ -713,6 +747,7 @@ async function loadSettings() {
         if (s.ob_selection) document.getElementById('obSelection').value = s.ob_selection;
         if (s.ob_sl_atr_mult) document.getElementById('obSlAtrMult').value = s.ob_sl_atr_mult;
         if (s.ob_watchlist_timeout) document.getElementById('obTimeout').value = s.ob_watchlist_timeout;
+        if (s.ob_scan_interval) document.getElementById('obScanInterval').value = s.ob_scan_interval;
         if (s.ob_watchlist_limit) document.getElementById('obWatchlistLimit').value = s.ob_watchlist_limit;
         document.getElementById('obPersistence').checked = s.ob_persistence_check === true;
         
@@ -739,6 +774,7 @@ async function saveSettings() {
         ob_selection: document.getElementById('obSelection').value,
         ob_sl_atr_mult: parseFloat(document.getElementById('obSlAtrMult').value),
         ob_watchlist_timeout: document.getElementById('obTimeout').value,
+        ob_scan_interval: parseInt(document.getElementById('obScanInterval').value),
         ob_watchlist_limit: parseInt(document.getElementById('obWatchlistLimit').value),
         ob_persistence_check: document.getElementById('obPersistence').checked,
         ob_auto_scan: document.getElementById('obAutoScan').checked,
@@ -790,15 +826,17 @@ function renderWatchlist() {
     
     let html = '';
     watchlist.forEach(item => {
-        // Різні кольори для BUY та SELL
-        const dirClass = item.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
+        // LONG = зелений, SHORT = червоний
+        const isLong = item.direction === 'BUY';
+        const dirClass = isLong ? 'dir-long' : 'dir-short';
+        const dirText = isLong ? 'LONG' : 'SHORT';
         const time = new Date(item.added_at).toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
         const sourceIcon = item.source === 'RSI/MFI Screener' ? '🔍' : '✋';
         
         html += `
             <tr>
                 <td class="ps-3 fw-bold font-mono">${item.symbol}</td>
-                <td><span class="${dirClass}">${item.direction}</span></td>
+                <td><span class="${dirClass}">${dirText}</span></td>
                 <td class="small text-muted">${sourceIcon} ${item.source || 'Manual'}</td>
                 <td class="small text-muted font-mono">${time}</td>
                 <td class="pe-3 text-end">
@@ -807,6 +845,7 @@ function renderWatchlist() {
                     </button>
                 </td>
             </tr>`;
+    });
     });
     
     tbody.innerHTML = html;
