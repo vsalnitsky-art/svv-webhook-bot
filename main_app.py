@@ -478,6 +478,7 @@ def smart_money_settings():
     """Налаштування Smart Money"""
     if request.method == 'POST':
         data = request.get_json() or {}
+        logger.info(f"📥 POST /smart_money/settings: {data}")
         settings.save_settings(data)
         
         # Оновити scheduler якщо змінилось auto_scan
@@ -485,8 +486,10 @@ def smart_money_settings():
         
         return jsonify({'status': 'ok'})
     
-    # GET - повернути поточні налаштування
-    return jsonify({
+    # GET - перезавантажуємо з БД для актуальності (для multi-worker)
+    settings.reload_settings()
+    
+    result = {
         'ob_source_tf': settings.get('ob_source_tf', '15'),
         'ob_swing_length': settings.get('ob_swing_length', 3),
         'ob_zone_count': settings.get('ob_zone_count', 'High'),
@@ -503,7 +506,10 @@ def smart_money_settings():
         'ob_auto_scan': settings.get('ob_auto_scan', False),
         'ob_auto_add_from_screener': settings.get('ob_auto_add_from_screener', False),
         'ob_execute_trades': settings.get('ob_execute_trades', False)
-    })
+    }
+    
+    logger.info(f"📤 GET /smart_money/settings: auto_scan={result['ob_auto_scan']}, auto_add={result['ob_auto_add_from_screener']}")
+    return jsonify(result)
 
 
 @app.route('/smart_money/watchlist', methods=['GET'])
