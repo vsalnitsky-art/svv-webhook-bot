@@ -525,7 +525,7 @@ def smart_money_watchlist():
 
 @app.route('/smart_money/watchlist/add', methods=['POST'])
 def smart_money_watchlist_add():
-    """Додати в watchlist"""
+    """Додати в watchlist або оновити direction"""
     from models import SmartMoneyTicker
     data = request.get_json() or {}
     symbol = data.get('symbol', '').upper().strip()
@@ -543,7 +543,16 @@ def smart_money_watchlist_add():
         # Перевірка чи вже існує
         existing = session_db.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
         if existing:
-            return jsonify({'error': 'Symbol already in watchlist'}), 400
+            # Якщо direction відрізняється - оновлюємо
+            if existing.direction != direction:
+                existing.direction = direction
+                existing.source = source
+                existing.added_at = datetime.utcnow()
+                session_db.commit()
+                logger.info(f"Watchlist update: {symbol} direction changed to {direction}")
+                return jsonify({'status': 'ok', 'action': 'updated'})
+            else:
+                return jsonify({'status': 'ok', 'action': 'exists', 'message': 'Symbol already in watchlist with same direction'})
         
         # Перевірка ліміту
         count = session_db.query(SmartMoneyTicker).count()
@@ -557,7 +566,7 @@ def smart_money_watchlist_add():
         session_db.commit()
         
         logger.info(f"Watchlist add: {symbol} {direction}")
-        return jsonify({'status': 'ok'})
+        return jsonify({'status': 'ok', 'action': 'added'})
     except Exception as e:
         session_db.rollback()
         return jsonify({'error': str(e)}), 500
@@ -578,6 +587,23 @@ def smart_money_watchlist_remove(symbol):
             logger.info(f"Watchlist remove: {symbol}")
         return jsonify({'status': 'ok'})
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session_db.close()
+
+
+@app.route('/smart_money/watchlist/clear', methods=['POST'])
+def smart_money_watchlist_clear():
+    """Очистити весь watchlist"""
+    from models import SmartMoneyTicker
+    session_db = db_manager.get_session()
+    try:
+        count = session_db.query(SmartMoneyTicker).delete()
+        session_db.commit()
+        logger.info(f"Watchlist cleared: {count} items removed")
+        return jsonify({'status': 'ok', 'removed': count})
+    except Exception as e:
+        session_db.rollback()
         return jsonify({'error': str(e)}), 500
     finally:
         session_db.close()
@@ -799,6 +825,12 @@ def smart_money_status():
     finally:
         session_db.close()
     
+    # Статус scheduler
+    scheduler_status = {
+        'running': ob_scheduler is not None and ob_scheduler.running if ob_scheduler else False,
+        'job_exists': ob_scheduler_job is not None
+    }
+    
     return jsonify({
         'auto_scan_enabled': settings.get('ob_auto_scan', False),
         'auto_add_enabled': settings.get('ob_auto_add_from_screener', False),
@@ -807,7 +839,8 @@ def smart_money_status():
         'last_scan': ob_scanner_state.get('last_scan'),
         'source_tf': settings.get('ob_source_tf', '15'),
         'watchlist_count': watchlist_count,
-        'watchlist_limit': settings.get('ob_watchlist_limit', 50)
+        'watchlist_limit': settings.get('ob_watchlist_limit', 50),
+        'scheduler_status': scheduler_status
     })
 
 
