@@ -740,6 +740,51 @@ class RSIMFIScreener:
             logger.error(f"Scan error: {e}")
             return []
     
+    def check_symbol_filters(self, symbol: str, direction: str) -> bool:
+        """
+        Перевіряє одну монету через RSI/MFI фільтри.
+        Використовується для валідації перед відкриттям угоди.
+        
+        Args:
+            symbol: Символ для перевірки (наприклад BTCUSDT)
+            direction: Очікуваний напрямок (BUY або SELL)
+            
+        Returns:
+            True якщо монета проходить фільтри в заданому напрямку
+        """
+        try:
+            # Отримуємо дані
+            df = self._fetch_klines(symbol, self.main_tf, limit=300)
+            if df is None or df.empty:
+                logger.warning(f"No data for {symbol}")
+                return False
+            
+            # Обчислюємо індикатори
+            indicators = self._calculate_indicators(df)
+            
+            # HTF дані
+            htf_df = self._fetch_klines(symbol, self.htf, limit=50)
+            htf_indicators = self._calculate_htf_indicators(htf_df) if htf_df is not None else {}
+            
+            # Застосовуємо фільтри
+            filters = self._apply_filters(indicators, htf_indicators)
+            
+            # Перевіряємо чи фільтри проходять для потрібного напрямку
+            if direction.upper() in ['BUY', 'LONG']:
+                passed = filters.get('all_filters_pass_long', False)
+            else:  # SELL, SHORT
+                passed = filters.get('all_filters_pass_short', False)
+            
+            logger.info(f"Filter check for {symbol} ({direction}): {'PASSED' if passed else 'FAILED'}")
+            logger.debug(f"  RSI: {indicators.get('rsi', 0):.1f}, MFI Cloud: {indicators.get('mfi_cloud')}, "
+                        f"Momentum: {indicators.get('momentum')}, HMA Cloud: {htf_indicators.get('hma_cloud')}")
+            
+            return passed
+            
+        except Exception as e:
+            logger.error(f"Filter check error for {symbol}: {e}")
+            return True  # При помилці - не блокуємо
+    
     def _add_to_smart_money_watchlist(self, results: list):
         """
         Автоматичне додавання ALERT READY монет в Smart Money watchlist
