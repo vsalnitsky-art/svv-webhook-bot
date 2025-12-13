@@ -182,6 +182,8 @@
                 <div class="mini-progress">
                     <div class="mini-progress-bar" id="obProgressBar" style="width: 0%"></div>
                 </div>
+                <!-- Reason why not scanning -->
+                <div class="small mt-2" id="obScanReason" style="color: #fbbf24;"></div>
             </div>
             
             <!-- RSI/MFI Integration Status -->
@@ -202,6 +204,8 @@
                 <div class="small opacity-75">
                     <span id="rsiLastAddInfo">Added today: 0 symbols</span>
                 </div>
+                <!-- Reason why not adding -->
+                <div class="small mt-2" id="rsiAddReason" style="color: #fbbf24;"></div>
             </div>
         </div>
     </div>
@@ -373,7 +377,12 @@
             <div class="card-custom border-0 h-100">
                 <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between align-items-center border-bottom border-light">
                     <span><i class="ri-list-check me-2"></i>Watchlist</span>
-                    <span class="badge bg-secondary rounded-pill" id="watchlistCount">0 / 50</span>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-secondary rounded-pill" id="watchlistBadge">0 / 50</span>
+                        <button class="btn btn-sm btn-outline-danger" onclick="clearWatchlist()" title="Clear all">
+                            <i class="ri-delete-bin-line"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="card-body p-0">
                     <!-- Add Symbol Form -->
@@ -508,7 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('obSourceTf').addEventListener('change', updateTfDisplay);
     
     // Start status polling
-    statusUpdateInterval = setInterval(loadScannerStatus, 5000);
+    statusUpdateInterval = setInterval(loadScannerStatus, 3000);
     countdownInterval = setInterval(updateCountdown, 1000);
 });
 
@@ -546,6 +555,12 @@ async function loadScannerStatus() {
         // Update OB Scanner status
         const obStatus = document.getElementById('obScannerStatus');
         const autoAddStatus = document.getElementById('rsiAutoAddStatus');
+        const obScanReason = document.getElementById('obScanReason');
+        const rsiAddReason = document.getElementById('rsiAddReason');
+        
+        // Clear reasons
+        obScanReason.textContent = '';
+        rsiAddReason.textContent = '';
         
         if (data.auto_scan_enabled) {
             if (data.is_scanning) {
@@ -555,21 +570,33 @@ async function loadScannerStatus() {
                 obStatus.className = 'status-indicator status-active';
                 obStatus.textContent = 'ACTIVE';
             }
+            
+            // Check why might not be scanning
+            if (data.watchlist_count === 0) {
+                obScanReason.textContent = '⚠️ Watchlist is empty - add symbols to scan';
+            }
         } else {
             obStatus.className = 'status-indicator status-idle';
             obStatus.textContent = 'IDLE';
+            obScanReason.textContent = '⚠️ Auto Scan is OFF - enable in settings';
         }
         
         // RSI auto-add status
         autoAddStatus.textContent = data.auto_add_enabled ? 'ON' : 'OFF';
-        document.getElementById('rsiIntegrationStatus').className = 
-            data.auto_add_enabled ? 'status-indicator status-active' : 'status-indicator status-idle';
-        document.getElementById('rsiIntegrationStatus').textContent = 
-            data.auto_add_enabled ? 'ACTIVE' : 'IDLE';
+        if (data.auto_add_enabled) {
+            document.getElementById('rsiIntegrationStatus').className = 'status-indicator status-active';
+            document.getElementById('rsiIntegrationStatus').textContent = 'ACTIVE';
+        } else {
+            document.getElementById('rsiIntegrationStatus').className = 'status-indicator status-idle';
+            document.getElementById('rsiIntegrationStatus').textContent = 'IDLE';
+            rsiAddReason.textContent = '⚠️ Auto-add is OFF - enable to auto-populate watchlist';
+        }
         
         // Next scan time
-        if (data.next_scan) {
+        if (data.next_scan && data.auto_scan_enabled) {
             nextScanTime = new Date(data.next_scan);
+        } else {
+            nextScanTime = null;
         }
         
         // Last scan info
@@ -582,10 +609,24 @@ async function loadScannerStatus() {
         // Watchlist count
         document.getElementById('watchlistCount').textContent = 
             `${data.watchlist_count || 0} / ${data.watchlist_limit || 50}`;
+        document.getElementById('watchlistBadge').textContent = 
+            `${data.watchlist_count || 0} / ${data.watchlist_limit || 50}`;
         
         // TF display
         const tfMap = {'5': '5m', '15': '15m', '30': '30m', '60': '1H', '240': '4H'};
         document.getElementById('obTfDisplay').textContent = tfMap[data.source_tf] || data.source_tf + 'm';
+        
+        // Scheduler status
+        if (data.scheduler_status) {
+            const schedInfo = data.scheduler_status;
+            if (schedInfo.running) {
+                if (!data.auto_scan_enabled) {
+                    obScanReason.textContent = '⚠️ Scheduler running but Auto Scan is OFF';
+                }
+            } else {
+                obScanReason.textContent = '❌ Scheduler not running - restart app';
+            }
+        }
         
     } catch (e) {
         console.error('Status load error:', e);
@@ -593,9 +634,12 @@ async function loadScannerStatus() {
 }
 
 function updateCountdown() {
+    const countdownEl = document.getElementById('obNextScan');
+    const progressBar = document.getElementById('obProgressBar');
+    
     if (!nextScanTime) {
-        document.getElementById('obNextScan').textContent = '--:--:--';
-        document.getElementById('obProgressBar').style.width = '0%';
+        countdownEl.textContent = '--:--:--';
+        progressBar.style.width = '0%';
         return;
     }
     
@@ -603,25 +647,28 @@ function updateCountdown() {
     const diff = nextScanTime - now;
     
     if (diff <= 0) {
-        document.getElementById('obNextScan').textContent = 'NOW';
-        document.getElementById('obProgressBar').style.width = '100%';
+        countdownEl.textContent = 'NOW';
+        countdownEl.style.color = '#22c55e';
+        progressBar.style.width = '100%';
         return;
     }
+    
+    countdownEl.style.color = '#fbbf24';
     
     // Format countdown
     const hours = Math.floor(diff / 3600000);
     const minutes = Math.floor((diff % 3600000) / 60000);
     const seconds = Math.floor((diff % 60000) / 1000);
     
-    document.getElementById('obNextScan').textContent = 
+    countdownEl.textContent = 
         `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     
     // Calculate progress (based on TF interval)
     const tf = parseInt(document.getElementById('obSourceTf').value) || 15;
     const intervalMs = tf * 60 * 1000;
     const elapsed = intervalMs - diff;
-    const progress = Math.min(100, (elapsed / intervalMs) * 100);
-    document.getElementById('obProgressBar').style.width = progress + '%';
+    const progress = Math.min(100, Math.max(0, (elapsed / intervalMs) * 100));
+    progressBar.style.width = progress + '%';
 }
 
 function formatTime(isoString) {
@@ -725,6 +772,7 @@ function renderWatchlist() {
     
     let html = '';
     watchlist.forEach(item => {
+        // Різні кольори для BUY та SELL
         const dirClass = item.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
         const time = new Date(item.added_at).toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
         const sourceIcon = item.source === 'RSI/MFI Screener' ? '🔍' : '✋';
@@ -736,8 +784,8 @@ function renderWatchlist() {
                 <td class="small text-muted">${sourceIcon} ${item.source || 'Manual'}</td>
                 <td class="small text-muted font-mono">${time}</td>
                 <td class="pe-3 text-end">
-                    <button class="btn btn-sm btn-outline-danger" onclick="removeFromWatchlist('${item.symbol}')">
-                        <i class="ri-delete-bin-line"></i>
+                    <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removeFromWatchlist('${item.symbol}')">
+                        <i class="ri-close-line"></i>
                     </button>
                 </td>
             </tr>`;
@@ -773,6 +821,7 @@ async function addToWatchlist() {
         if (data.status === 'ok') {
             document.getElementById('addSymbolInput').value = '';
             loadWatchlist();
+            loadScannerStatus();
         } else {
             alert(data.error || 'Error adding symbol');
         }
@@ -781,14 +830,27 @@ async function addToWatchlist() {
     }
 }
 
+// Видалення БЕЗ підтвердження
 async function removeFromWatchlist(symbol) {
-    if (!confirm(`Remove ${symbol} from watchlist?`)) return;
-    
     try {
         await fetch(`/smart_money/watchlist/remove/${symbol}`, {method: 'POST'});
         loadWatchlist();
+        loadScannerStatus();
     } catch (e) {
-        alert('Error removing from watchlist');
+        console.error('Error removing from watchlist');
+    }
+}
+
+// Очищення всього watchlist
+async function clearWatchlist() {
+    if (!confirm('Clear entire watchlist?')) return;
+    
+    try {
+        await fetch('/smart_money/watchlist/clear', {method: 'POST'});
+        loadWatchlist();
+        loadScannerStatus();
+    } catch (e) {
+        alert('Error clearing watchlist');
     }
 }
 
@@ -837,8 +899,8 @@ function renderDetectedOBs() {
                 <td class="${statusClass}">${ob.status}</td>
                 <td class="small text-muted font-mono">${time}</td>
                 <td class="pe-3 text-end">
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteOB(${ob.id})">
-                        <i class="ri-delete-bin-line"></i>
+                    <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteOB(${ob.id})">
+                        <i class="ri-close-line"></i>
                     </button>
                 </td>
             </tr>`;
@@ -847,14 +909,13 @@ function renderDetectedOBs() {
     tbody.innerHTML = html;
 }
 
+// Видалення OB без підтвердження
 async function deleteOB(id) {
-    if (!confirm('Delete this Order Block?')) return;
-    
     try {
         await fetch(`/smart_money/detected/delete/${id}`, {method: 'POST'});
         loadDetectedOBs();
     } catch (e) {
-        alert('Error deleting OB');
+        console.error('Error deleting OB');
     }
 }
 
