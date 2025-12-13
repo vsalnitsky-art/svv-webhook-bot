@@ -595,19 +595,28 @@ async function startScan() {
     statusText.textContent = 'Отримання списку монет...';
     statusPercent.textContent = '0%';
     
+    // Симуляція переліку монет для візуалізації
+    const sampleCoins = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT', 'MATICUSDT'];
+    let coinIndex = 0;
+    let progress = 0;
+    
     try {
         const settings = collectSettings();
         
-        // Fake progress animation
-        let progress = 0;
+        // Анімація прогресу з показом монет
         const progressInterval = setInterval(() => {
-            if (progress < 90) {
-                progress += Math.random() * 15;
-                progressBar.style.width = Math.min(progress, 90) + '%';
-                statusPercent.textContent = Math.round(Math.min(progress, 90)) + '%';
-                statusText.textContent = `Сканування монет... ${Math.round(progress)}%`;
+            if (progress < 85) {
+                progress += Math.random() * 8 + 2;
+                progress = Math.min(progress, 85);
+                progressBar.style.width = progress + '%';
+                statusPercent.textContent = Math.round(progress) + '%';
+                
+                // Показуємо поточну монету
+                const coin = sampleCoins[coinIndex % sampleCoins.length];
+                statusText.textContent = `Сканування: ${coin}...`;
+                coinIndex++;
             }
-        }, 500);
+        }, 400);
         
         const response = await fetch('/rsi_screener/scan', {
             method: 'POST',
@@ -621,9 +630,10 @@ async function startScan() {
         
         const data = await response.json();
         
+        // Завершення - 100%
         progressBar.style.width = '100%';
         statusPercent.textContent = '100%';
-        statusText.textContent = 'Готово!';
+        statusText.textContent = `✓ Знайдено ${data.results?.length || 0} монет`;
         
         currentResults = data.results || [];
         displayResults(currentResults);
@@ -632,11 +642,19 @@ async function startScan() {
         setTimeout(() => tableSorter.applySortState(), 100);
         
     } catch (e) {
+        progressBar.style.width = '100%';
+        progressBar.classList.remove('bg-primary');
+        progressBar.classList.add('bg-danger');
+        statusText.textContent = 'Помилка: ' + e.message;
         alert('Помилка сканування: ' + e.message);
     } finally {
         btn.disabled = false;
         btn.innerHTML = 'СКАНУВАТИ 🚀';
-        setTimeout(() => { statusCard.style.display = 'none'; }, 2000);
+        setTimeout(() => { 
+            statusCard.style.display = 'none';
+            progressBar.classList.remove('bg-danger');
+            progressBar.classList.add('bg-primary');
+        }, 2000);
     }
 }
 
