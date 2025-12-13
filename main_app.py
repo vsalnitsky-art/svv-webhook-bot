@@ -23,7 +23,7 @@ from bot import bot_instance
 from statistics_service import stats_service
 from scanner import EnhancedMarketScanner
 from settings_manager import settings
-from models import db_manager, OrderBlock, PaperTrade, SmartMoneyTicker
+from models import db_manager, OrderBlock, WhaleSignal, SmartMoneyTicker, DetectedOrderBlock
 from market_analyzer import market_analyzer
 from config import get_api_credentials
 from utils import get_logger, validate_webhook_data, metrics, setup_logging
@@ -467,46 +467,252 @@ def analyzer_page():
                           status=market_analyzer.status_message,
                           is_scanning=market_analyzer.is_scanning)
 
-@app.route('/smart_money', methods=['GET', 'POST'])
+@app.route('/smart_money')
 def smart_money_page():
-    """Smart Money вотчліст"""
+    """Smart Money - Order Block Scanner"""
+    return render_template('smart_money.html', conf=settings._cache)
+
+
+@app.route('/smart_money/settings', methods=['GET', 'POST'])
+def smart_money_settings():
+    """Налаштування Smart Money"""
     if request.method == 'POST':
-        form_data = request.form.to_dict()
-        settings.save_settings(form_data)
-        return redirect(url_for('smart_money_page'))
+        data = request.get_json() or {}
+        settings.save_settings(data)
+        return jsonify({'status': 'ok'})
     
+    # GET - повернути поточні налаштування
+    return jsonify({
+        'ob_source_tf': settings.get('ob_source_tf', '15'),
+        'ob_swing_length': settings.get('ob_swing_length', 3),
+        'ob_zone_count': settings.get('ob_zone_count', 'High'),
+        'ob_max_atr_mult': settings.get('ob_max_atr_mult', 3.5),
+        'ob_invalidation_method': settings.get('ob_invalidation_method', 'Wick'),
+        'ob_combine_obs': settings.get('ob_combine_obs', True),
+        'ob_entry_mode': settings.get('ob_entry_mode', 'Immediate'),
+        'ob_selection': settings.get('ob_selection', 'Newest'),
+        'ob_sl_atr_mult': settings.get('ob_sl_atr_mult', 0.3),
+        'ob_watchlist_timeout': settings.get('ob_watchlist_timeout', '24h'),
+        'ob_watchlist_limit': settings.get('ob_watchlist_limit', 50),
+        'ob_persistence_check': settings.get('ob_persistence_check', False),
+        'ob_auto_scan': settings.get('ob_auto_scan', False),
+        'ob_execute_trades': settings.get('ob_execute_trades', False)
+    })
+
+
+@app.route('/smart_money/watchlist', methods=['GET'])
+def smart_money_watchlist():
+    """Отримати watchlist"""
+    from models import SmartMoneyTicker
     session_db = db_manager.get_session()
     try:
-        watchlist = session_db.query(SmartMoneyTicker).all()
-        active_trades = session_db.query(PaperTrade).filter(
-            PaperTrade.status.in_(['OPEN', 'PENDING'])
-        ).order_by(desc(PaperTrade.created_at)).all()
-        history_trades = session_db.query(PaperTrade).filter(
-            PaperTrade.status.in_(['CLOSED_WIN', 'CLOSED_LOSS', 'CANCELED'])
-        ).order_by(desc(PaperTrade.closed_at)).limit(50).all()
-        
-        return render_template('smart_money.html',
-                              watchlist=watchlist,
-                              active_trades=active_trades,
-                              history_trades=history_trades,
-                              conf=settings._cache)
+        items = session_db.query(SmartMoneyTicker).order_by(SmartMoneyTicker.added_at.desc()).all()
+        return jsonify([{
+            'id': item.id,
+            'symbol': item.symbol,
+            'direction': item.direction or 'BUY',
+            'source': item.source or 'Manual',
+            'added_at': item.added_at.isoformat() if item.added_at else None
+        } for item in items])
     finally:
         session_db.close()
 
-@app.route('/smart_money/delete/<symbol>', methods=['POST'])
-def delete_ticker(symbol):
-    """Видалення из вотчліста"""
+
+@app.route('/smart_money/watchlist/add', methods=['POST'])
+def smart_money_watchlist_add():
+    """Додати в watchlist"""
+    from models import SmartMoneyTicker
+    data = request.get_json() or {}
+    symbol = data.get('symbol', '').upper().strip()
+    direction = data.get('direction', 'BUY')
+    source = data.get('source', 'Manual')
+    
+    if not symbol:
+        return jsonify({'error': 'Symbol required'}), 400
+    
+    if not symbol.endswith('USDT'):
+        symbol += 'USDT'
+    
+    session_db = db_manager.get_session()
+    try:
+        # Перевірка чи вже існує
+        existing = session_db.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
+        if existing:
+            return jsonify({'error': 'Symbol already in watchlist'}), 400
+        
+        # Перевірка ліміту
+        count = session_db.query(SmartMoneyTicker).count()
+        limit = settings.get('ob_watchlist_limit', 50)
+        if count >= limit:
+            return jsonify({'error': f'Watchlist limit reached ({limit})'}), 400
+        
+        # Додаємо
+        new_item = SmartMoneyTicker(symbol=symbol, direction=direction, source=source)
+        session_db.add(new_item)
+        session_db.commit()
+        
+        logger.info(f"Watchlist add: {symbol} {direction}")
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        session_db.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session_db.close()
+
+
+@app.route('/smart_money/watchlist/remove/<symbol>', methods=['POST'])
+def smart_money_watchlist_remove(symbol):
+    """Видалити з watchlist"""
+    from models import SmartMoneyTicker
     session_db = db_manager.get_session()
     try:
         item = session_db.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
         if item:
             session_db.delete(item)
             session_db.commit()
-            logger.info("ticker_deleted", symbol=symbol)
+            logger.info(f"Watchlist remove: {symbol}")
         return jsonify({'status': 'ok'})
     except Exception as e:
-        logger.error("delete_ticker_error", symbol=symbol, error=str(e))
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session_db.close()
+
+
+@app.route('/smart_money/detected', methods=['GET'])
+def smart_money_detected():
+    """Отримати знайдені Order Blocks"""
+    from models import DetectedOrderBlock
+    session_db = db_manager.get_session()
+    try:
+        items = session_db.query(DetectedOrderBlock).order_by(DetectedOrderBlock.detected_at.desc()).limit(100).all()
+        return jsonify([{
+            'id': item.id,
+            'symbol': item.symbol,
+            'direction': item.direction,
+            'ob_type': item.ob_type,
+            'ob_top': item.ob_top,
+            'ob_bottom': item.ob_bottom,
+            'entry_price': item.entry_price,
+            'sl_price': item.sl_price,
+            'current_price': item.current_price,
+            'status': item.status,
+            'timeframe': item.timeframe,
+            'detected_at': item.detected_at.isoformat() if item.detected_at else None
+        } for item in items])
+    finally:
+        session_db.close()
+
+
+@app.route('/smart_money/detected/delete/<int:ob_id>', methods=['POST'])
+def smart_money_detected_delete(ob_id):
+    """Видалити Order Block"""
+    from models import DetectedOrderBlock
+    session_db = db_manager.get_session()
+    try:
+        item = session_db.query(DetectedOrderBlock).filter_by(id=ob_id).first()
+        if item:
+            session_db.delete(item)
+            session_db.commit()
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session_db.close()
+
+
+@app.route('/smart_money/scan', methods=['POST'])
+def smart_money_scan():
+    """Сканування watchlist на Order Blocks"""
+    from models import SmartMoneyTicker, DetectedOrderBlock
+    from order_block_scanner import OrderBlockScanner
+    
+    session_db = db_manager.get_session()
+    try:
+        # Отримуємо watchlist
+        watchlist_items = session_db.query(SmartMoneyTicker).all()
+        if not watchlist_items:
+            return jsonify({'status': 'ok', 'found': 0, 'message': 'Watchlist is empty'})
+        
+        # Підготовка даних
+        watchlist = [{'symbol': item.symbol, 'direction': item.direction or 'BUY'} for item in watchlist_items]
+        
+        # Підключення до Bybit
+        api_key, api_secret = get_api_credentials()
+        from pybit.unified_trading import HTTP
+        bybit_session = HTTP(
+            testnet=os.environ.get("TESTNET", "false").lower() == "true",
+            api_key=api_key,
+            api_secret=api_secret
+        )
+        
+        # Створюємо сканер
+        scan_settings = settings.get_all()
+        scanner = OrderBlockScanner(session=bybit_session, settings=scan_settings)
+        
+        # Сканування
+        results = scanner.scan_watchlist(watchlist, delay=0.5)
+        
+        # Зберігаємо знайдені OB
+        found_count = 0
+        executed_symbols = []
+        
+        for result in results:
+            symbol = result['symbol']
+            
+            # Перевіряємо чи вже є такий OB
+            existing = session_db.query(DetectedOrderBlock).filter_by(
+                symbol=symbol,
+                status='Valid'
+            ).first()
+            
+            if existing:
+                continue
+            
+            # Зберігаємо новий OB
+            new_ob = DetectedOrderBlock(
+                symbol=symbol,
+                direction=result['direction'],
+                ob_type=result['ob_type'],
+                ob_top=result['ob_top'],
+                ob_bottom=result['ob_bottom'],
+                entry_price=result['entry_price'],
+                sl_price=result['sl_price'],
+                current_price=result['current_price'],
+                atr=result['atr'],
+                status=result['status'],
+                timeframe=scan_settings.get('ob_source_tf', '15')
+            )
+            session_db.add(new_ob)
+            found_count += 1
+            
+            # Якщо Execute Trades увімкнено і статус Valid
+            if settings.get('ob_execute_trades', False) and result['status'] == 'Valid':
+                # TODO: Виконати угоду через bot_instance
+                # Поки що тільки логуємо
+                logger.info(f"Would execute trade: {symbol} {result['direction']}")
+                executed_symbols.append(symbol)
+        
+        session_db.commit()
+        
+        # Видаляємо виконані символи з watchlist
+        for symbol in executed_symbols:
+            item = session_db.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
+            if item:
+                session_db.delete(item)
+        session_db.commit()
+        
+        logger.info(f"OB Scan complete: {found_count} found, {len(executed_symbols)} executed")
+        
+        return jsonify({
+            'status': 'ok',
+            'found': found_count,
+            'executed': len(executed_symbols),
+            'scanned': len(watchlist)
+        })
+        
+    except Exception as e:
+        logger.error(f"OB Scan error: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
     finally:
         session_db.close()
 
