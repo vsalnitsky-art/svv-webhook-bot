@@ -110,7 +110,28 @@ DEFAULT_SETTINGS = {
     # === WHALE STRATEGY RSI FILTER ===
     "whale_rsi_filter_enabled": False,  # Вкл/Викл RSI фільтр
     "whale_rsi_min": 30,                # Шукати RSI <= цього (перепроданість)
-    "whale_rsi_max": 70                 # Шукати RSI >= цього (перекупленість)
+    "whale_rsi_max": 70,                # Шукати RSI >= цього (перекупленість)
+    
+    # === ORDER BLOCK SCANNER (Smart Money) ===
+    # Detection Settings
+    "ob_source_tf": "15",               # Таймфрейм для пошуку OB
+    "ob_swing_length": 3,               # Довжина свінга (min: 2)
+    "ob_zone_count": "High",            # One(1), Low(3), Medium(5), High(10)
+    "ob_max_atr_mult": 3.5,             # Макс. розмір OB в ATR
+    "ob_invalidation_method": "Wick",   # Wick або Close
+    "ob_combine_obs": True,             # Комбінувати перекриваючі OB
+    
+    # Entry Settings
+    "ob_entry_mode": "Immediate",       # Immediate або Retest
+    "ob_selection": "Newest",           # Newest або Closest
+    "ob_persistence_check": False,      # Чекати 1 бар підтвердження
+    "ob_sl_atr_mult": 0.3,              # ATR множник для SL
+    
+    # Automation
+    "ob_auto_scan": False,              # Автоматичне сканування
+    "ob_execute_trades": False,         # Відкривати угоди (за замовчуванням вимкнено!)
+    "ob_watchlist_timeout": "24h",      # No, 12h, 24h, 48h, 72h
+    "ob_watchlist_limit": 50            # Макс. монет в watchlist
 }
 
 class SettingsManager:
