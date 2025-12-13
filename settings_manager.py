@@ -56,6 +56,10 @@ DEFAULT_SETTINGS = {
     "screener_use_cloud_filter": True,
     "screener_use_htf_signal_filter": True,
     "screener_use_last_signal_filter": True,
+    
+    # Auto Scan Settings
+    "screener_auto_scan": False,            # Автоматичне сканування
+    "screener_scan_interval": 15,           # Інтервал в хвилинах (5, 10, 15, 30, 60)
 
     # === STRATEGY FILTERS (Для сумісності, якщо знадобиться) ===
     "obt_useCloudFilter": True,
