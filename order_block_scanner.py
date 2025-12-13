@@ -127,71 +127,57 @@ class SwingDetector:
     """
     Детекція свінгів (100% логіка з Pine Script)
     
+    Pine Script:
     findOBSwings(len) =>
         var swingType = 0
         upper = ta.highest(len)
         lower = ta.lowest(len)
         swingType := high[len] > upper ? 0 : low[len] < lower ? 1 : swingType
+    
+    swingType = 0 означає Swing High
+    swingType = 1 означає Swing Low
     """
     
     def __init__(self, swing_length: int = 3):
         self.swing_length = swing_length
     
-    def find_swings(self, df: pd.DataFrame) -> Tuple[List[OBSwing], List[OBSwing]]:
+    def find_swings(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Знаходить swing high та swing low points
+        Знаходить swing type для кожного бару
         
         Returns:
-            Tuple[tops, bottoms] - списки свінгів
+            Tuple[swing_types, swing_indices] - масиви свінг типів та індексів
         """
         highs = df['high'].values
         lows = df['low'].values
-        volumes = df['volume'].values
+        n = len(df)
         
-        tops = []
-        bottoms = []
+        swing_types = np.zeros(n, dtype=int)  # 0 = high, 1 = low
+        swing_highs = np.zeros(n)  # Y-координата swing high
+        swing_lows = np.zeros(n)   # Y-координата swing low
         
-        swing_type = 0
-        current_top = OBSwing()
-        current_bottom = OBSwing()
+        swing_type = 0  # var swingType = 0 (persistent)
         
-        for i in range(self.swing_length, len(df)):
-            # ta.highest(len) - максимум за останні len барів (не включаючи поточний)
-            upper = np.max(highs[i - self.swing_length:i])
-            # ta.lowest(len) - мінімум за останні len барів
-            lower = np.min(lows[i - self.swing_length:i])
+        for i in range(self.swing_length, n):
+            # ta.highest(len) - максимум за останні len барів (не включаючи [len])
+            # В Pine Script це high[1] to high[len]
+            upper = np.max(highs[i - self.swing_length + 1:i + 1])
+            lower = np.min(lows[i - self.swing_length + 1:i + 1])
             
-            # Визначаємо тип свінга
-            # high[len] > upper означає high на відстані len барів назад > upper
-            idx_back = i - self.swing_length
-            if idx_back >= 0:
-                if highs[idx_back] > upper:
-                    swing_type = 0  # Swing High
-                elif lows[idx_back] < lower:
-                    swing_type = 1  # Swing Low
+            # high[len] - значення high на len барів назад
+            idx_len = i - self.swing_length
+            if idx_len >= 0:
+                # swingType := high[len] > upper ? 0 : low[len] < lower ? 1 : swingType
+                if highs[idx_len] > upper:
+                    swing_type = 0  # Swing High detected
+                    swing_highs[i] = highs[idx_len]
+                elif lows[idx_len] < lower:
+                    swing_type = 1  # Swing Low detected
+                    swing_lows[i] = lows[idx_len]
             
-            # Створюємо нові свінги при зміні типу
-            prev_swing_type = 0 if i == self.swing_length else swing_type
-            
-            if swing_type == 0 and (i == self.swing_length or swing_type != prev_swing_type):
-                # Новий Swing High
-                current_top = OBSwing(
-                    x=idx_back,
-                    y=highs[idx_back],
-                    swing_volume=volumes[idx_back]
-                )
-                tops.append(current_top)
-            
-            if swing_type == 1 and (i == self.swing_length or swing_type != prev_swing_type):
-                # Новий Swing Low
-                current_bottom = OBSwing(
-                    x=idx_back,
-                    y=lows[idx_back],
-                    swing_volume=volumes[idx_back]
-                )
-                bottoms.append(current_bottom)
+            swing_types[i] = swing_type
         
-        return tops, bottoms
+        return swing_types, swing_highs, swing_lows
 
 
 # ============================================================================
@@ -203,9 +189,9 @@ class OrderBlockDetector:
     Детекція Order Blocks (100% логіка з Pine Script)
     
     Алгоритм:
-    1. Знайти swing points
-    2. При пробитті swing high вгору → Bullish OB
-    3. При пробитті swing low вниз → Bearish OB
+    1. Відстежуємо swing points (top/bottom)
+    2. При пробитті swing high вгору → Bullish OB (остання ведмежа свічка)
+    3. При пробитті swing low вниз → Bearish OB (остання бича свічка)
     4. Перевірка інвалідації на кожному барі
     """
     
@@ -261,6 +247,7 @@ class OrderBlockDetector:
             Tuple[bullish_obs, bearish_obs]
         """
         if len(df) < self.swing_length + 10:
+            logger.warning(f"Not enough data: {len(df)} bars, need {self.swing_length + 10}")
             return [], []
         
         # Розрахунок ATR
@@ -272,32 +259,45 @@ class OrderBlockDetector:
         lows = df['low'].values
         closes = df['close'].values
         volumes = df['volume'].values
-        timestamps = df['timestamp'].values if 'timestamp' in df.columns else range(len(df))
+        timestamps = df['timestamp'].values if 'timestamp' in df.columns else np.arange(len(df))
         
         bullish_obs: List[OrderBlockInfo] = []
         bearish_obs: List[OrderBlockInfo] = []
         
-        # Знаходимо свінги
-        tops, bottoms = self.swing_detector.find_swings(df)
+        # Знаходимо свінги - тепер це persistent tracking
+        swing_types, swing_highs, swing_lows = self.swing_detector.find_swings(df)
         
-        # Поточний swing для відстеження
-        current_top = OBSwing()
-        current_bottom = OBSwing()
+        # Поточний swing для відстеження (Pine Script var)
+        current_top_y = 0.0
+        current_top_x = 0
+        current_top_crossed = False
+        current_top_volume = 0.0
+        
+        current_bottom_y = 0.0
+        current_bottom_x = 0
+        current_bottom_crossed = False
+        current_bottom_volume = 0.0
         
         # Проходимо по барах
         for i in range(self.swing_length + 1, len(df)):
             current_atr = atr.iloc[i] if not pd.isna(atr.iloc[i]) else 0
             
-            # Оновлюємо поточні свінги
-            for top in tops:
-                if top.x == i - self.swing_length:
-                    current_top = top
-                    break
-            
-            for bottom in bottoms:
-                if bottom.x == i - self.swing_length:
-                    current_bottom = bottom
-                    break
+            # Оновлюємо поточні свінги коли знаходимо нові
+            idx_len = i - self.swing_length
+            if idx_len >= 0:
+                # Новий Swing High
+                if swing_highs[i] > 0:
+                    current_top_y = swing_highs[i]
+                    current_top_x = idx_len
+                    current_top_crossed = False
+                    current_top_volume = volumes[idx_len]
+                
+                # Новий Swing Low  
+                if swing_lows[i] > 0:
+                    current_bottom_y = swing_lows[i]
+                    current_bottom_x = idx_len
+                    current_bottom_crossed = False
+                    current_bottom_volume = volumes[idx_len]
             
             # ===== INVALIDATION CHECK FOR EXISTING OBs =====
             
@@ -307,16 +307,16 @@ class OrderBlockDetector:
                     if self.invalidation_method == InvalidationMethod.WICK:
                         if lows[i] < ob.bottom:
                             ob.breaker = True
-                            ob.break_time = int(timestamps[i]) if isinstance(timestamps[i], (int, float)) else i
+                            ob.break_time = int(timestamps[i]) if isinstance(timestamps[i], (int, float, np.integer)) else i
                             ob.bb_volume = volumes[i]
                     else:  # Close method
                         if min(opens[i], closes[i]) < ob.bottom:
                             ob.breaker = True
-                            ob.break_time = int(timestamps[i]) if isinstance(timestamps[i], (int, float)) else i
+                            ob.break_time = int(timestamps[i]) if isinstance(timestamps[i], (int, float, np.integer)) else i
                             ob.bb_volume = volumes[i]
             
-            # Видаляємо breaker OBs якщо ціна пробила їх назад
-            bullish_obs = [ob for ob in bullish_obs if not (ob.breaker and highs[i] > ob.top)]
+            # Видаляємо breaker OBs
+            bullish_obs = [ob for ob in bullish_obs if not ob.breaker]
             
             # Перевірка інвалідації Bearish OBs
             for ob in bearish_obs:
@@ -324,105 +324,110 @@ class OrderBlockDetector:
                     if self.invalidation_method == InvalidationMethod.WICK:
                         if highs[i] > ob.top:
                             ob.breaker = True
-                            ob.break_time = int(timestamps[i]) if isinstance(timestamps[i], (int, float)) else i
+                            ob.break_time = int(timestamps[i]) if isinstance(timestamps[i], (int, float, np.integer)) else i
                             ob.bb_volume = volumes[i]
                     else:  # Close method
                         if max(opens[i], closes[i]) > ob.top:
                             ob.breaker = True
-                            ob.break_time = int(timestamps[i]) if isinstance(timestamps[i], (int, float)) else i
+                            ob.break_time = int(timestamps[i]) if isinstance(timestamps[i], (int, float, np.integer)) else i
                             ob.bb_volume = volumes[i]
             
-            # Видаляємо breaker OBs якщо ціна пробила їх назад
-            bearish_obs = [ob for ob in bearish_obs if not (ob.breaker and lows[i] < ob.bottom)]
+            # Видаляємо breaker OBs
+            bearish_obs = [ob for ob in bearish_obs if not ob.breaker]
             
             # ===== BULLISH OB DETECTION =====
-            # Пробиття swing high вгору
-            if direction in [None, "BUY"] and current_top.y > 0 and not current_top.crossed:
-                if closes[i] > current_top.y:
-                    current_top.crossed = True
+            # Пробиття swing high вгору → шукаємо останню ведмежу свічку
+            if direction in [None, "BUY"] and current_top_y > 0 and not current_top_crossed:
+                if closes[i] > current_top_y:
+                    current_top_crossed = True
                     
-                    # Шукаємо останню ведмежу свічку перед пробиттям
+                    # Шукаємо найнижчу точку (ведмежу свічку) між swing і пробиттям
                     box_btm = min(closes[i-1], opens[i-1])
                     box_top = max(closes[i-1], opens[i-1])
-                    box_loc = int(timestamps[i-1]) if isinstance(timestamps[i-1], (int, float)) else i-1
+                    box_loc = int(timestamps[i-1]) if isinstance(timestamps[i-1], (int, float, np.integer)) else i-1
                     
-                    # Шукаємо мінімальну точку між swing і поточним баром
-                    for j in range(1, min(i - current_top.x, i)):
-                        if j >= len(lows):
+                    # Проходимо від поточного бару назад до swing
+                    search_range = min(i - current_top_x, i)
+                    for j in range(1, search_range):
+                        idx = i - j
+                        if idx < 0:
                             break
-                        current_min = min(closes[i-j], opens[i-j])
+                        current_min = min(closes[idx], opens[idx])
                         if current_min < box_btm:
                             box_btm = current_min
-                            box_top = max(closes[i-j], opens[i-j])
-                            box_loc = int(timestamps[i-j]) if isinstance(timestamps[i-j], (int, float)) else i-j
-                    
-                    # Створюємо Bullish OB
-                    new_ob = OrderBlockInfo(
-                        top=box_top,
-                        bottom=box_btm,
-                        ob_volume=volumes[i] + volumes[i-1] + volumes[i-2] if i >= 2 else volumes[i],
-                        ob_type=OBType.BULL,
-                        start_time=box_loc,
-                        ob_low_volume=volumes[i-2] if i >= 2 else 0,
-                        ob_high_volume=volumes[i] + volumes[i-1] if i >= 1 else volumes[i]
-                    )
+                            box_top = max(closes[idx], opens[idx])
+                            box_loc = int(timestamps[idx]) if isinstance(timestamps[idx], (int, float, np.integer)) else idx
                     
                     # Перевірка розміру OB
-                    ob_size = new_ob.get_size()
+                    ob_size = box_top - box_btm
                     if current_atr > 0 and ob_size <= current_atr * self.max_atr_mult:
+                        # Створюємо Bullish OB
+                        new_ob = OrderBlockInfo(
+                            top=box_top,
+                            bottom=box_btm,
+                            ob_volume=volumes[i] + (volumes[i-1] if i >= 1 else 0) + (volumes[i-2] if i >= 2 else 0),
+                            ob_type=OBType.BULL,
+                            start_time=box_loc,
+                            ob_low_volume=volumes[i-2] if i >= 2 else 0,
+                            ob_high_volume=volumes[i] + (volumes[i-1] if i >= 1 else 0)
+                        )
+                        
                         bullish_obs.insert(0, new_ob)
                         if len(bullish_obs) > self.max_order_blocks:
                             bullish_obs.pop()
+                        
+                        logger.debug(f"Bullish OB detected: top={box_top:.6f}, bottom={box_btm:.6f}, size={ob_size:.6f}, ATR={current_atr:.6f}")
             
             # ===== BEARISH OB DETECTION =====
-            # Пробиття swing low вниз
-            if direction in [None, "SELL"] and current_bottom.y > 0 and not current_bottom.crossed:
-                if closes[i] < current_bottom.y:
-                    current_bottom.crossed = True
+            # Пробиття swing low вниз → шукаємо останню бичу свічку
+            if direction in [None, "SELL"] and current_bottom_y > 0 and not current_bottom_crossed:
+                if closes[i] < current_bottom_y:
+                    current_bottom_crossed = True
                     
-                    # Шукаємо останню бичу свічку перед пробиттям
+                    # Шукаємо найвищу точку (бичу свічку) між swing і пробиттям
                     box_top = max(closes[i-1], opens[i-1])
                     box_btm = min(closes[i-1], opens[i-1])
-                    box_loc = int(timestamps[i-1]) if isinstance(timestamps[i-1], (int, float)) else i-1
+                    box_loc = int(timestamps[i-1]) if isinstance(timestamps[i-1], (int, float, np.integer)) else i-1
                     
-                    # Шукаємо максимальну точку між swing і поточним баром
-                    for j in range(1, min(i - current_bottom.x, i)):
-                        if j >= len(highs):
+                    # Проходимо від поточного бару назад до swing
+                    search_range = min(i - current_bottom_x, i)
+                    for j in range(1, search_range):
+                        idx = i - j
+                        if idx < 0:
                             break
-                        current_max = max(closes[i-j], opens[i-j])
+                        current_max = max(closes[idx], opens[idx])
                         if current_max > box_top:
                             box_top = current_max
-                            box_btm = min(closes[i-j], opens[i-j])
-                            box_loc = int(timestamps[i-j]) if isinstance(timestamps[i-j], (int, float)) else i-j
-                    
-                    # Створюємо Bearish OB
-                    new_ob = OrderBlockInfo(
-                        top=box_top,
-                        bottom=box_btm,
-                        ob_volume=volumes[i] + volumes[i-1] + volumes[i-2] if i >= 2 else volumes[i],
-                        ob_type=OBType.BEAR,
-                        start_time=box_loc,
-                        ob_low_volume=volumes[i] + volumes[i-1] if i >= 1 else volumes[i],
-                        ob_high_volume=volumes[i-2] if i >= 2 else 0
-                    )
+                            box_btm = min(closes[idx], opens[idx])
+                            box_loc = int(timestamps[idx]) if isinstance(timestamps[idx], (int, float, np.integer)) else idx
                     
                     # Перевірка розміру OB
-                    ob_size = new_ob.get_size()
+                    ob_size = box_top - box_btm
                     if current_atr > 0 and ob_size <= current_atr * self.max_atr_mult:
+                        # Створюємо Bearish OB
+                        new_ob = OrderBlockInfo(
+                            top=box_top,
+                            bottom=box_btm,
+                            ob_volume=volumes[i] + (volumes[i-1] if i >= 1 else 0) + (volumes[i-2] if i >= 2 else 0),
+                            ob_type=OBType.BEAR,
+                            start_time=box_loc,
+                            ob_low_volume=volumes[i-2] if i >= 2 else 0,
+                            ob_high_volume=volumes[i] + (volumes[i-1] if i >= 1 else 0)
+                        )
+                        
                         bearish_obs.insert(0, new_ob)
                         if len(bearish_obs) > self.max_order_blocks:
                             bearish_obs.pop()
+                        
+                        logger.debug(f"Bearish OB detected: top={box_top:.6f}, bottom={box_btm:.6f}, size={ob_size:.6f}, ATR={current_atr:.6f}")
         
-        # Комбінування OBs якщо увімкнено
-        if self.combine_obs:
-            bullish_obs = self._combine_overlapping_obs(bullish_obs)
-            bearish_obs = self._combine_overlapping_obs(bearish_obs)
+        # Фільтруємо тільки валідні OBs (не breaker)
+        valid_bullish = [ob for ob in bullish_obs if not ob.breaker][:self.max_zones]
+        valid_bearish = [ob for ob in bearish_obs if not ob.breaker][:self.max_zones]
         
-        # Обмеження кількості зон
-        bullish_obs = bullish_obs[:self.max_zones]
-        bearish_obs = bearish_obs[:self.max_zones]
+        logger.info(f"OB Detection complete: {len(valid_bullish)} bullish, {len(valid_bearish)} bearish")
         
-        return bullish_obs, bearish_obs
+        return valid_bullish, valid_bearish
     
     def _combine_overlapping_obs(self, obs: List[OrderBlockInfo]) -> List[OrderBlockInfo]:
         """Комбінування перекриваючих Order Blocks"""
