@@ -47,8 +47,33 @@ class OrderBlock(Base):
     created_at = Column(DateTime, default=datetime.utcnow); status = Column(String(20), default='PENDING'); volume_score = Column(Float, default=0.0)
 
 class SmartMoneyTicker(Base):
+    """Watchlist для Smart Money сканера"""
     __tablename__ = 'smart_money_watchlist'
-    id = Column(Integer, primary_key=True); symbol = Column(String(20), unique=True, index=True); added_at = Column(DateTime, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), unique=True, index=True)
+    direction = Column(String(10))  # BUY або SELL
+    source = Column(String(20), default='Manual')  # Manual або Screener
+    added_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DetectedOrderBlock(Base):
+    """Знайдені Order Blocks (для тестування перед реальними угодами)"""
+    __tablename__ = 'detected_order_blocks'
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), index=True)
+    direction = Column(String(10))  # BUY або SELL
+    ob_type = Column(String(10))    # Bull або Bear
+    ob_top = Column(Float)
+    ob_bottom = Column(Float)
+    entry_price = Column(Float)
+    sl_price = Column(Float)
+    current_price = Column(Float)
+    atr = Column(Float)
+    status = Column(String(20), default='Valid')  # Valid, Waiting Retest, Triggered, Executed
+    timeframe = Column(String(10))
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    executed_at = Column(DateTime, nullable=True)
+    trade_result = Column(String(50), nullable=True)  # Результат угоди якщо виконано
 
 class PaperTrade(Base):
     __tablename__ = 'paper_trades'
@@ -113,6 +138,8 @@ class DatabaseManager:
             from sqlalchemy import inspect, text
             
             inspector = inspect(self.engine)
+            
+            # === TRADES TABLE ===
             columns = {col['name'] for col in inspector.get_columns('trades')}
             
             # Колонки які потрібно додати
@@ -131,6 +158,27 @@ class DatabaseManager:
                             logger.info(f"✅ Migration: Added column '{col_name}' to trades")
                         except Exception as e:
                             logger.warning(f"⚠️ Migration: Column '{col_name}' already exists or error: {e}")
+            
+            # === SMART_MONEY_WATCHLIST TABLE ===
+            try:
+                sm_columns = {col['name'] for col in inspector.get_columns('smart_money_watchlist')}
+                sm_needed = {
+                    'direction': "VARCHAR(10) DEFAULT 'BUY'",
+                    'source': "VARCHAR(20) DEFAULT 'Manual'"
+                }
+                
+                with self.engine.connect() as conn:
+                    for col_name, col_def in sm_needed.items():
+                        if col_name not in sm_columns:
+                            try:
+                                conn.execute(text(f"ALTER TABLE smart_money_watchlist ADD COLUMN {col_name} {col_def}"))
+                                conn.commit()
+                                logger.info(f"✅ Migration: Added column '{col_name}' to smart_money_watchlist")
+                            except Exception as e:
+                                pass  # Column might exist
+            except Exception as e:
+                pass  # Table might not exist yet
+                
         except Exception as e:
             logger.warning(f"⚠️ Migration failed: {e}")
     
