@@ -391,9 +391,6 @@
                             <button class="btn btn-outline-primary" id="btnManualScan" onclick="manualScan()">
                                 <i class="ri-radar-line me-1"></i>Scan Now
                             </button>
-                            <button class="btn btn-primary fw-bold" onclick="saveSettings()">
-                                <i class="ri-save-line me-1"></i>Save
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -544,6 +541,7 @@ let detectedOBs = [];
 let isScanning = false;
 let statusUpdateInterval = null;
 let countdownInterval = null;
+let saveTimeout = null;  // Для debounce
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -562,7 +560,137 @@ document.addEventListener('DOMContentLoaded', () => {
     // Start status polling
     statusUpdateInterval = setInterval(loadScannerStatus, 3000);
     countdownInterval = setInterval(updateCountdown, 1000);
+    
+    // ===== AUTO-SAVE: слухачі на всі інпути =====
+    setupAutoSave();
 });
+
+// ===== AUTO-SAVE SETUP =====
+function setupAutoSave() {
+    // Список всіх елементів налаштувань
+    const settingsInputs = [
+        'obSourceTf', 'obSwingLength', 'obZoneCount', 'obMaxAtrMult', 
+        'obInvalidation', 'obCombineObs', 'obEntryMode', 'obSelection',
+        'obSlAtrMult', 'obTimeout', 'obScanInterval', 'obWatchlistLimit',
+        'obPersistence', 'obAutoScan', 'obAutoAddFromScreener', 'obExecuteTrades'
+    ];
+    
+    settingsInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            // Для checkbox/switch - change event
+            // Для input/select - input event з debounce
+            const eventType = (el.type === 'checkbox') ? 'change' : 'input';
+            
+            el.addEventListener(eventType, () => {
+                // Debounce: чекаємо 500ms перед збереженням
+                if (saveTimeout) clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(() => {
+                    autoSaveSettings();
+                }, el.type === 'checkbox' ? 0 : 500);  // Checkbox - одразу, input - з затримкою
+            });
+            
+            // Для select також слухаємо change
+            if (el.tagName === 'SELECT') {
+                el.addEventListener('change', () => {
+                    autoSaveSettings();
+                });
+            }
+        }
+    });
+}
+
+// ===== AUTO-SAVE FUNCTION =====
+async function autoSaveSettings() {
+    const settings = {
+        ob_source_tf: document.getElementById('obSourceTf').value,
+        ob_swing_length: parseInt(document.getElementById('obSwingLength').value),
+        ob_zone_count: document.getElementById('obZoneCount').value,
+        ob_max_atr_mult: parseFloat(document.getElementById('obMaxAtrMult').value),
+        ob_invalidation_method: document.getElementById('obInvalidation').value,
+        ob_combine_obs: document.getElementById('obCombineObs').checked,
+        ob_entry_mode: document.getElementById('obEntryMode').value,
+        ob_selection: document.getElementById('obSelection').value,
+        ob_sl_atr_mult: parseFloat(document.getElementById('obSlAtrMult').value),
+        ob_watchlist_timeout: document.getElementById('obTimeout').value,
+        ob_scan_interval: parseInt(document.getElementById('obScanInterval').value),
+        ob_watchlist_limit: parseInt(document.getElementById('obWatchlistLimit').value),
+        ob_persistence_check: document.getElementById('obPersistence').checked,
+        ob_auto_scan: document.getElementById('obAutoScan').checked,
+        ob_auto_add_from_screener: document.getElementById('obAutoAddFromScreener').checked,
+        ob_execute_trades: document.getElementById('obExecuteTrades').checked
+    };
+    
+    // Показуємо індикатор збереження
+    showSaveIndicator('saving');
+    
+    try {
+        const resp = await fetch('/smart_money/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(settings)
+        });
+        
+        if (resp.ok) {
+            showSaveIndicator('saved');
+            loadScannerStatus();  // Оновлюємо статус
+        } else {
+            showSaveIndicator('error');
+        }
+    } catch (e) {
+        console.error('Auto-save error:', e);
+        showSaveIndicator('error');
+    }
+}
+
+// ===== SAVE INDICATOR =====
+function showSaveIndicator(status) {
+    // Знаходимо або створюємо індикатор
+    let indicator = document.getElementById('saveIndicator');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.id = 'saveIndicator';
+        indicator.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 9999;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        `;
+        document.body.appendChild(indicator);
+    }
+    
+    if (status === 'saving') {
+        indicator.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Saving...';
+        indicator.style.background = '#3b82f6';
+        indicator.style.color = 'white';
+        indicator.style.opacity = '1';
+    } else if (status === 'saved') {
+        indicator.innerHTML = '✓ Saved';
+        indicator.style.background = '#10b981';
+        indicator.style.color = 'white';
+        indicator.style.opacity = '1';
+        
+        // Ховаємо через 1.5 сек
+        setTimeout(() => {
+            indicator.style.opacity = '0';
+        }, 1500);
+    } else if (status === 'error') {
+        indicator.innerHTML = '✗ Error';
+        indicator.style.background = '#ef4444';
+        indicator.style.color = 'white';
+        indicator.style.opacity = '1';
+        
+        setTimeout(() => {
+            indicator.style.opacity = '0';
+        }, 3000);
+    }
+}
 
 // ===== TRADE TOGGLE =====
 function updateTradeToggle() {
@@ -762,39 +890,9 @@ async function loadSettings() {
     }
 }
 
+// saveSettings тепер просто викликає autoSaveSettings
 async function saveSettings() {
-    const settings = {
-        ob_source_tf: document.getElementById('obSourceTf').value,
-        ob_swing_length: parseInt(document.getElementById('obSwingLength').value),
-        ob_zone_count: document.getElementById('obZoneCount').value,
-        ob_max_atr_mult: parseFloat(document.getElementById('obMaxAtrMult').value),
-        ob_invalidation_method: document.getElementById('obInvalidation').value,
-        ob_combine_obs: document.getElementById('obCombineObs').checked,
-        ob_entry_mode: document.getElementById('obEntryMode').value,
-        ob_selection: document.getElementById('obSelection').value,
-        ob_sl_atr_mult: parseFloat(document.getElementById('obSlAtrMult').value),
-        ob_watchlist_timeout: document.getElementById('obTimeout').value,
-        ob_scan_interval: parseInt(document.getElementById('obScanInterval').value),
-        ob_watchlist_limit: parseInt(document.getElementById('obWatchlistLimit').value),
-        ob_persistence_check: document.getElementById('obPersistence').checked,
-        ob_auto_scan: document.getElementById('obAutoScan').checked,
-        ob_auto_add_from_screener: document.getElementById('obAutoAddFromScreener').checked,
-        ob_execute_trades: document.getElementById('obExecuteTrades').checked
-    };
-    
-    try {
-        const resp = await fetch('/smart_money/settings', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(settings)
-        });
-        if (resp.ok) {
-            alert('Settings saved!');
-            loadScannerStatus();
-        }
-    } catch (e) {
-        alert('Error saving settings');
-    }
+    await autoSaveSettings();
 }
 
 // ===== WATCHLIST =====
