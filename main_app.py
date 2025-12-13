@@ -1246,6 +1246,18 @@ import atexit
 ob_scheduler = None
 ob_scheduler_job = None
 
+# RSI/MFI Screener scheduler
+rsi_scheduler = None
+rsi_scheduler_job = None
+
+rsi_screener_state = {
+    'is_scanning': False,
+    'last_scan': None,
+    'next_scan': None,
+    'last_found': 0,
+    'total_scanned': 0
+}
+
 def init_ob_scheduler():
     """Ініціалізація scheduler для Order Block сканування"""
     global ob_scheduler, ob_scheduler_job
@@ -1314,6 +1326,163 @@ def update_ob_scheduler():
     logger.info(f"OB Scheduler: Configured for interval={scan_interval}s, next: {next_run}")
 
 
+# ===== RSI/MFI SCREENER SCHEDULER =====
+
+def scheduled_rsi_mfi_scan():
+    """Автоматичне сканування RSI/MFI Screener"""
+    global screener_lock, rsi_screener_state
+    
+    # Перевіряємо чи не працює вже
+    if screener_lock.get('rsi_mfi_running', False):
+        logger.info("⏸️ RSI/MFI Screener: Already running, skipping")
+        return
+    
+    try:
+        from rsi_screener import RSIMFIScreener
+        from pybit.unified_trading import HTTP
+        
+        rsi_screener_state['is_scanning'] = True
+        screener_lock['rsi_mfi_running'] = True
+        logger.info("🔄 RSI/MFI Auto-Scan started")
+        
+        # Підключення до Bybit
+        api_key, api_secret = get_api_credentials()
+        session = HTTP(
+            testnet=os.environ.get("TESTNET", "false").lower() == "true",
+            api_key=api_key,
+            api_secret=api_secret
+        )
+        
+        # Завантажуємо налаштування
+        scan_settings = settings.get_all()
+        
+        # Створюємо скринер
+        screener = RSIMFIScreener(session=session, settings=scan_settings)
+        
+        # Запускаємо скан
+        results = screener.scan()
+        
+        # Оновлюємо стан
+        rsi_screener_state['last_scan'] = datetime.utcnow().isoformat()
+        rsi_screener_state['last_found'] = len(results)
+        rsi_screener_state['total_scanned'] = getattr(screener, '_last_total_scanned', 0)
+        
+        # Розрахунок наступного запуску
+        scan_interval = int(settings.get('screener_scan_interval', 15))
+        next_run = datetime.utcnow() + timedelta(minutes=scan_interval)
+        rsi_screener_state['next_scan'] = next_run.isoformat()
+        
+        logger.info(f"✅ RSI/MFI Auto-Scan complete: {len(results)} matches found")
+        
+    except Exception as e:
+        logger.error(f"❌ RSI/MFI Auto-Scan error: {e}")
+    finally:
+        rsi_screener_state['is_scanning'] = False
+        screener_lock['rsi_mfi_running'] = False
+
+
+def init_rsi_scheduler():
+    """Ініціалізація scheduler для RSI/MFI сканування"""
+    global rsi_scheduler, rsi_scheduler_job
+    
+    if rsi_scheduler is not None:
+        logger.info("RSI Scheduler already initialized")
+        return
+    
+    try:
+        rsi_scheduler = BackgroundScheduler(daemon=True)
+        rsi_scheduler.start()
+        
+        atexit.register(lambda: rsi_scheduler.shutdown(wait=False))
+        
+        update_rsi_scheduler()
+        
+        logger.info("✅ RSI/MFI Scheduler initialized and running")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize RSI Scheduler: {e}")
+
+
+def update_rsi_scheduler():
+    """Оновлення scheduler RSI/MFI при зміні налаштувань"""
+    global rsi_scheduler_job
+    
+    if rsi_scheduler is None:
+        logger.warning("RSI Scheduler not initialized, cannot update")
+        return
+    
+    try:
+        if rsi_scheduler_job is not None:
+            try:
+                rsi_scheduler.remove_job('rsi_scan_job')
+            except:
+                pass
+            rsi_scheduler_job = None
+    except:
+        pass
+    
+    if not settings.get('screener_auto_scan', False):
+        logger.info("RSI/MFI Scheduler: Auto scan disabled")
+        rsi_screener_state['next_scan'] = None
+        return
+    
+    # Інтервал в хвилинах
+    scan_interval = int(settings.get('screener_scan_interval', 15))
+    
+    from apscheduler.triggers.interval import IntervalTrigger
+    trigger = IntervalTrigger(minutes=scan_interval)
+    
+    rsi_scheduler_job = rsi_scheduler.add_job(
+        scheduled_rsi_mfi_scan,
+        trigger=trigger,
+        id='rsi_scan_job',
+        replace_existing=True
+    )
+    
+    next_run = datetime.utcnow() + timedelta(minutes=scan_interval)
+    rsi_screener_state['next_scan'] = next_run.isoformat()
+    
+    logger.info(f"RSI/MFI Scheduler: Configured for interval={scan_interval}m, next: {next_run}")
+
+
+@app.route('/rsi_screener/status', methods=['GET'])
+def rsi_screener_status():
+    """Статус RSI/MFI Screener"""
+    auto_scan = settings.get('screener_auto_scan', False)
+    scan_interval = settings.get('screener_scan_interval', 15)
+    
+    return jsonify({
+        'is_scanning': rsi_screener_state['is_scanning'],
+        'auto_scan_enabled': auto_scan,
+        'scan_interval': scan_interval,
+        'last_scan': rsi_screener_state['last_scan'],
+        'next_scan': rsi_screener_state['next_scan'] if auto_scan else None,
+        'last_found': rsi_screener_state['last_found'],
+        'total_scanned': rsi_screener_state['total_scanned'],
+        'ob_scanner_paused': screener_lock.get('ob_scanner_running', False)
+    })
+
+
+@app.route('/rsi_screener/auto_scan', methods=['POST'])
+def rsi_screener_toggle_auto():
+    """Toggle auto scan для RSI/MFI Screener"""
+    data = request.get_json() or {}
+    enabled = data.get('enabled', False)
+    interval = data.get('interval', 15)
+    
+    settings.save_settings({
+        'screener_auto_scan': enabled,
+        'screener_scan_interval': interval
+    })
+    
+    update_rsi_scheduler()
+    
+    return jsonify({
+        'status': 'ok',
+        'auto_scan': enabled,
+        'interval': interval
+    })
+
+
 # ===== АВТОМАТИЧНА ІНІЦІАЛІЗАЦІЯ SCHEDULER =====
 # Запускаємо scheduler при імпорті модуля (працює і з Gunicorn)
 def _auto_init_scheduler():
@@ -1323,6 +1492,7 @@ def _auto_init_scheduler():
         import time
         time.sleep(2)  # Невелика затримка для повної ініціалізації Flask
         init_ob_scheduler()
+        init_rsi_scheduler()
     
     thread = threading.Thread(target=delayed_init, daemon=True)
     thread.start()
