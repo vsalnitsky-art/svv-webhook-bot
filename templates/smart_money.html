@@ -33,30 +33,60 @@
     .ob-bull { color: #10b981; font-weight: 600; }
     .ob-bear { color: #ef4444; font-weight: 600; }
     
-    /* Scanner status indicator */
-    .scanner-status {
+    /* Scanner status panel */
+    .status-panel {
+        background: linear-gradient(135deg, #1e293b, #334155);
+        border-radius: 12px;
+        padding: 16px 20px;
+        color: white;
+    }
+    .status-box {
+        background: rgba(255,255,255,0.1);
+        border-radius: 8px;
+        padding: 12px;
+        flex: 1;
+    }
+    .status-box-title {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        color: rgba(255,255,255,0.6);
+        margin-bottom: 4px;
+    }
+    .status-indicator {
         display: inline-flex;
         align-items: center;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        font-weight: 500;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
     }
-    .scanner-idle { background: #f1f5f9; color: #64748b; }
-    .scanner-running { background: #dbeafe; color: #1d4ed8; }
-    .scanner-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        margin-right: 8px;
-    }
-    .scanner-dot-idle { background: #94a3b8; }
-    .scanner-dot-running { background: #3b82f6; animation: pulse 1.5s infinite; }
+    .status-active { background: #22c55e; color: white; }
+    .status-idle { background: #64748b; color: white; }
+    .status-scanning { background: #3b82f6; color: white; animation: pulse-bg 1.5s infinite; }
     
-    @keyframes pulse {
-        0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
-        70% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
-        100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+    @keyframes pulse-bg {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+    
+    .countdown-timer {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #fbbf24;
+    }
+    
+    .mini-progress {
+        height: 4px;
+        background: rgba(255,255,255,0.2);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 8px;
+    }
+    .mini-progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #22c55e, #4ade80);
+        transition: width 1s linear;
     }
     
     /* Trade toggle */
@@ -73,15 +103,32 @@
     /* Table hover */
     .table tbody tr:hover { background-color: #f8fafc; }
     
-    /* Settings groups */
+    /* Collapsible settings */
+    .settings-collapse {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    .settings-collapse summary {
+        padding: 12px 16px;
+        background: #f8fafc;
+        cursor: pointer;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .settings-collapse summary:hover { background: #f1f5f9; }
+    .settings-collapse[open] summary { border-bottom: 1px solid #e2e8f0; }
+    .settings-collapse-body { padding: 16px; background: white; }
+    
     .settings-group {
         background: #f8fafc;
         border-radius: 8px;
         padding: 12px;
-        margin-bottom: 12px;
     }
     .settings-group-title {
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         font-weight: 600;
         text-transform: uppercase;
         color: #64748b;
@@ -94,33 +141,78 @@
 <div class="container-fluid">
     
     <!-- Header -->
-    <div class="card-custom mb-4 border-0">
-        <div class="card-header bg-white py-3 border-bottom border-light d-flex justify-content-between align-items-center">
-            <div class="d-flex align-items-center">
-                <i class="ri-eye-2-line fs-4 text-accent me-2"></i>
-                <div>
-                    <h5 class="fw-bold mb-0 text-dark">Smart Money - Order Block Scanner</h5>
-                    <small class="text-muted">100% Pine Script логіка</small>
-                </div>
-            </div>
-            <div class="d-flex align-items-center gap-3">
-                <!-- Scanner Status -->
-                <div class="scanner-status scanner-idle" id="scannerStatus">
-                    <span class="scanner-dot scanner-dot-idle" id="scannerDot"></span>
-                    <span id="scannerStatusText">IDLE</span>
-                </div>
-                
-                <!-- Trade Toggle -->
-                <div class="trade-toggle trade-toggle-off" id="tradeToggle">
-                    <i class="ri-exchange-line me-2"></i>
-                    <span>Trading: </span>
-                    <span id="tradeToggleText" class="ms-1">OFF</span>
-                </div>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex align-items-center">
+            <i class="ri-eye-2-line fs-4 text-accent me-2"></i>
+            <div>
+                <h5 class="fw-bold mb-0 text-dark">Smart Money - Order Block Scanner</h5>
+                <small class="text-muted">100% Pine Script логіка • Синхронізація з біржею</small>
             </div>
         </div>
         
-        <div class="card-body bg-light bg-opacity-50">
-            <!-- Settings Row 1 -->
+        <!-- Trade Toggle -->
+        <div class="trade-toggle trade-toggle-off" id="tradeToggle">
+            <i class="ri-exchange-line me-2"></i>
+            <span>Trading: </span>
+            <span id="tradeToggleText" class="ms-1">OFF</span>
+        </div>
+    </div>
+    
+    <!-- Auto Scan Status Panel -->
+    <div class="status-panel mb-4" id="statusPanel">
+        <div class="d-flex gap-3">
+            <!-- OB Scanner Status -->
+            <div class="status-box">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <div class="status-box-title">Order Block Scanner</div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="status-indicator status-idle" id="obScannerStatus">IDLE</span>
+                            <span class="small opacity-75">TF: <span id="obTfDisplay">15m</span></span>
+                        </div>
+                    </div>
+                    <div class="text-end">
+                        <div class="status-box-title">Next Scan</div>
+                        <div class="countdown-timer" id="obNextScan">--:--:--</div>
+                    </div>
+                </div>
+                <div class="small opacity-75 mb-1">
+                    <span id="obLastScanInfo">Last: — | Found: — | Scanned: —</span>
+                </div>
+                <div class="mini-progress">
+                    <div class="mini-progress-bar" id="obProgressBar" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <!-- RSI/MFI Integration Status -->
+            <div class="status-box">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <div class="status-box-title">RSI/MFI → Watchlist</div>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="status-indicator status-idle" id="rsiIntegrationStatus">IDLE</span>
+                            <span class="small opacity-75">Auto-add: <span id="rsiAutoAddStatus">OFF</span></span>
+                        </div>
+                    </div>
+                    <div class="text-end">
+                        <div class="status-box-title">Watchlist</div>
+                        <div class="countdown-timer" id="watchlistCount">0 / 50</div>
+                    </div>
+                </div>
+                <div class="small opacity-75">
+                    <span id="rsiLastAddInfo">Added today: 0 symbols</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Collapsible Settings -->
+    <details class="settings-collapse mb-4" id="settingsCollapse">
+        <summary>
+            <span><i class="ri-settings-3-line me-2"></i>Order Block Settings</span>
+            <i class="ri-arrow-down-s-line"></i>
+        </summary>
+        <div class="settings-collapse-body">
             <div class="row g-3">
                 <!-- Detection Settings -->
                 <div class="col-md-6">
@@ -230,11 +322,16 @@
             <!-- Actions Row -->
             <div class="row mt-3">
                 <div class="col-12">
-                    <div class="d-flex align-items-center justify-content-between p-2 bg-white border rounded shadow-sm">
-                        <div class="d-flex align-items-center gap-3">
+                    <div class="d-flex align-items-center justify-content-between p-3 bg-light border rounded">
+                        <div class="d-flex align-items-center gap-4">
                             <div class="form-check form-switch">
                                 <input class="form-check-input" type="checkbox" id="obAutoScan" style="width: 3em; height: 1.5em;">
                                 <label class="form-check-label fw-bold" for="obAutoScan">Auto Scan</label>
+                            </div>
+                            
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="obAutoAddFromScreener" style="width: 3em; height: 1.5em;">
+                                <label class="form-check-label fw-bold" for="obAutoAddFromScreener">Auto-add from RSI/MFI</label>
                             </div>
                             
                             <div class="form-check form-switch">
@@ -248,16 +345,16 @@
                                 <i class="ri-radar-line me-1"></i>Scan Now
                             </button>
                             <button class="btn btn-primary fw-bold" onclick="saveSettings()">
-                                <i class="ri-save-line me-1"></i>Save Settings
+                                <i class="ri-save-line me-1"></i>Save
                             </button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
+    </details>
     
-    <!-- Progress Card -->
+    <!-- Progress Card (for manual scan) -->
     <div class="card-custom mb-4 border-0 shadow-sm" style="display: none" id="progressCard">
         <div class="card-body py-3" style="background: #eff6ff;">
             <div class="d-flex justify-content-between mb-2">
@@ -393,16 +490,26 @@
 let watchlist = [];
 let detectedOBs = [];
 let isScanning = false;
+let statusUpdateInterval = null;
+let countdownInterval = null;
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
     loadWatchlist();
     loadDetectedOBs();
+    loadScannerStatus();
     
     // Update trade toggle display
     updateTradeToggle();
     document.getElementById('obExecuteTrades').addEventListener('change', updateTradeToggle);
+    
+    // Update TF display when changed
+    document.getElementById('obSourceTf').addEventListener('change', updateTfDisplay);
+    
+    // Start status polling
+    statusUpdateInterval = setInterval(loadScannerStatus, 5000);
+    countdownInterval = setInterval(updateCountdown, 1000);
 });
 
 // ===== TRADE TOGGLE =====
@@ -418,6 +525,109 @@ function updateTradeToggle() {
         toggle.className = 'trade-toggle trade-toggle-off';
         text.textContent = 'OFF';
     }
+}
+
+function updateTfDisplay() {
+    const tf = document.getElementById('obSourceTf').value;
+    const tfMap = {'5': '5m', '15': '15m', '30': '30m', '60': '1H', '240': '4H'};
+    document.getElementById('obTfDisplay').textContent = tfMap[tf] || tf + 'm';
+}
+
+// ===== SCANNER STATUS =====
+let nextScanTime = null;
+let lastScanInfo = null;
+
+async function loadScannerStatus() {
+    try {
+        const resp = await fetch('/smart_money/status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        
+        // Update OB Scanner status
+        const obStatus = document.getElementById('obScannerStatus');
+        const autoAddStatus = document.getElementById('rsiAutoAddStatus');
+        
+        if (data.auto_scan_enabled) {
+            if (data.is_scanning) {
+                obStatus.className = 'status-indicator status-scanning';
+                obStatus.textContent = 'SCANNING';
+            } else {
+                obStatus.className = 'status-indicator status-active';
+                obStatus.textContent = 'ACTIVE';
+            }
+        } else {
+            obStatus.className = 'status-indicator status-idle';
+            obStatus.textContent = 'IDLE';
+        }
+        
+        // RSI auto-add status
+        autoAddStatus.textContent = data.auto_add_enabled ? 'ON' : 'OFF';
+        document.getElementById('rsiIntegrationStatus').className = 
+            data.auto_add_enabled ? 'status-indicator status-active' : 'status-indicator status-idle';
+        document.getElementById('rsiIntegrationStatus').textContent = 
+            data.auto_add_enabled ? 'ACTIVE' : 'IDLE';
+        
+        // Next scan time
+        if (data.next_scan) {
+            nextScanTime = new Date(data.next_scan);
+        }
+        
+        // Last scan info
+        if (data.last_scan) {
+            lastScanInfo = data.last_scan;
+            document.getElementById('obLastScanInfo').textContent = 
+                `Last: ${formatTime(data.last_scan.time)} | Found: ${data.last_scan.found} | Scanned: ${data.last_scan.scanned}`;
+        }
+        
+        // Watchlist count
+        document.getElementById('watchlistCount').textContent = 
+            `${data.watchlist_count || 0} / ${data.watchlist_limit || 50}`;
+        
+        // TF display
+        const tfMap = {'5': '5m', '15': '15m', '30': '30m', '60': '1H', '240': '4H'};
+        document.getElementById('obTfDisplay').textContent = tfMap[data.source_tf] || data.source_tf + 'm';
+        
+    } catch (e) {
+        console.error('Status load error:', e);
+    }
+}
+
+function updateCountdown() {
+    if (!nextScanTime) {
+        document.getElementById('obNextScan').textContent = '--:--:--';
+        document.getElementById('obProgressBar').style.width = '0%';
+        return;
+    }
+    
+    const now = new Date();
+    const diff = nextScanTime - now;
+    
+    if (diff <= 0) {
+        document.getElementById('obNextScan').textContent = 'NOW';
+        document.getElementById('obProgressBar').style.width = '100%';
+        return;
+    }
+    
+    // Format countdown
+    const hours = Math.floor(diff / 3600000);
+    const minutes = Math.floor((diff % 3600000) / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+    
+    document.getElementById('obNextScan').textContent = 
+        `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    
+    // Calculate progress (based on TF interval)
+    const tf = parseInt(document.getElementById('obSourceTf').value) || 15;
+    const intervalMs = tf * 60 * 1000;
+    const elapsed = intervalMs - diff;
+    const progress = Math.min(100, (elapsed / intervalMs) * 100);
+    document.getElementById('obProgressBar').style.width = progress + '%';
+}
+
+function formatTime(isoString) {
+    if (!isoString) return '—';
+    const d = new Date(isoString);
+    return d.toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
 }
 
 // ===== SETTINGS =====
@@ -442,9 +652,11 @@ async function loadSettings() {
         document.getElementById('obPersistence').checked = s.ob_persistence_check === true;
         
         document.getElementById('obAutoScan').checked = s.ob_auto_scan === true;
+        document.getElementById('obAutoAddFromScreener').checked = s.ob_auto_add_from_screener === true;
         document.getElementById('obExecuteTrades').checked = s.ob_execute_trades === true;
         
         updateTradeToggle();
+        updateTfDisplay();
     } catch (e) {
         console.error('Load settings error:', e);
     }
@@ -465,6 +677,7 @@ async function saveSettings() {
         ob_watchlist_limit: parseInt(document.getElementById('obWatchlistLimit').value),
         ob_persistence_check: document.getElementById('obPersistence').checked,
         ob_auto_scan: document.getElementById('obAutoScan').checked,
+        ob_auto_add_from_screener: document.getElementById('obAutoAddFromScreener').checked,
         ob_execute_trades: document.getElementById('obExecuteTrades').checked
     };
     
@@ -476,6 +689,7 @@ async function saveSettings() {
         });
         if (resp.ok) {
             alert('Settings saved!');
+            loadScannerStatus();
         }
     } catch (e) {
         alert('Error saving settings');
@@ -497,7 +711,6 @@ async function loadWatchlist() {
 function renderWatchlist() {
     const tbody = document.getElementById('watchlistBody');
     const limit = parseInt(document.getElementById('obWatchlistLimit').value) || 50;
-    document.getElementById('watchlistCount').textContent = `${watchlist.length} / ${limit}`;
     
     if (watchlist.length === 0) {
         tbody.innerHTML = `
@@ -514,12 +727,13 @@ function renderWatchlist() {
     watchlist.forEach(item => {
         const dirClass = item.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
         const time = new Date(item.added_at).toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
+        const sourceIcon = item.source === 'RSI/MFI Screener' ? '🔍' : '✋';
         
         html += `
             <tr>
                 <td class="ps-3 fw-bold font-mono">${item.symbol}</td>
                 <td><span class="${dirClass}">${item.direction}</span></td>
-                <td class="small text-muted">${item.source || 'Manual'}</td>
+                <td class="small text-muted">${sourceIcon} ${item.source || 'Manual'}</td>
                 <td class="small text-muted font-mono">${time}</td>
                 <td class="pe-3 text-end">
                     <button class="btn btn-sm btn-outline-danger" onclick="removeFromWatchlist('${item.symbol}')">
@@ -656,10 +870,9 @@ async function manualScan() {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
     progressCard.style.display = 'block';
     
-    // Update scanner status
-    document.getElementById('scannerStatus').className = 'scanner-status scanner-running';
-    document.getElementById('scannerDot').className = 'scanner-dot scanner-dot-running';
-    document.getElementById('scannerStatusText').textContent = 'SCANNING';
+    // Update status panel
+    document.getElementById('obScannerStatus').className = 'status-indicator status-scanning';
+    document.getElementById('obScannerStatus').textContent = 'SCANNING';
     
     // Fake progress
     let progress = 0;
@@ -684,17 +897,13 @@ async function manualScan() {
             progressText.textContent = `Found ${data.found || 0} Order Blocks`;
             loadDetectedOBs();
             loadWatchlist();
+            loadScannerStatus();
         }
     } catch (e) {
         alert('Scan error');
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="ri-radar-line me-1"></i>Scan Now';
-        
-        // Reset scanner status
-        document.getElementById('scannerStatus').className = 'scanner-status scanner-idle';
-        document.getElementById('scannerDot').className = 'scanner-dot scanner-dot-idle';
-        document.getElementById('scannerStatusText').textContent = 'IDLE';
         
         setTimeout(() => { progressCard.style.display = 'none'; }, 2000);
     }
