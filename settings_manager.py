@@ -168,6 +168,7 @@ class SettingsManager:
         try:
             db_settings = session.query(BotSetting).all()
             if not db_settings:
+                logger.info("📋 No settings in DB, using defaults")
                 self._cache = DEFAULT_SETTINGS.copy()
                 for k, v in DEFAULT_SETTINGS.items():
                     val_str = "true" if v is True else "false" if v is False else str(v)
@@ -179,6 +180,11 @@ class SettingsManager:
                 for s in db_settings: 
                     loaded[s.key] = self._cast_value(s.key, s.value)
                     db_keys.add(s.key)
+                
+                # Log important settings
+                auto_scan = loaded.get('ob_auto_scan', False)
+                auto_add = loaded.get('ob_auto_add_from_screener', False)
+                logger.info(f"📋 Loaded from DB: auto_scan={auto_scan}, auto_add={auto_add}")
                 
                 missing_keys = set(DEFAULT_SETTINGS.keys()) - db_keys
                 if missing_keys:
@@ -201,14 +207,17 @@ class SettingsManager:
     def save_settings(self, new_settings_dict):
         session = self.db.get_session()
         try:
+            logger.info(f"💾 Saving settings: {list(new_settings_dict.keys())}")
+            
             for k, v in new_settings_dict.items():
                 val_to_store = str(v)
                 if k in DEFAULT_SETTINGS:
                     default_type = type(DEFAULT_SETTINGS[k])
                     if default_type == bool:
-                        is_true = (v == 'on' or v == 'true' or v is True)
+                        is_true = (v == 'on' or v == 'true' or v is True or str(v).lower() == 'true')
                         val_to_store = "true" if is_true else "false"
                         self._cache[k] = is_true
+                        logger.info(f"  {k} = {is_true} (bool, stored: {val_to_store})")
                     else:
                         self._cache[k] = self._cast_value(k, v)
                         val_to_store = str(v)
@@ -216,13 +225,18 @@ class SettingsManager:
                     self._cache[k] = v
                 
                 existing = session.query(BotSetting).filter_by(key=k).first()
-                if existing: existing.value = val_to_store
-                else: session.add(BotSetting(key=k, value=val_to_store))
+                if existing: 
+                    existing.value = val_to_store
+                else: 
+                    session.add(BotSetting(key=k, value=val_to_store))
+            
             session.commit()
+            logger.info(f"✅ Settings saved successfully")
         except Exception as e:
             session.rollback()
-            logger.error(f"Settings save error: {e}")
-        finally: session.close()
+            logger.error(f"❌ Settings save error: {e}")
+        finally: 
+            session.close()
 
     def get_all(self): return self._cache.copy()
     def get(self, key, default=None): 
