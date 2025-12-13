@@ -11,7 +11,7 @@ import ctypes
 import os
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from collections import defaultdict
 
@@ -497,6 +497,7 @@ def smart_money_settings():
         'ob_selection': settings.get('ob_selection', 'Newest'),
         'ob_sl_atr_mult': settings.get('ob_sl_atr_mult', 0.3),
         'ob_watchlist_timeout': settings.get('ob_watchlist_timeout', '24h'),
+        'ob_scan_interval': settings.get('ob_scan_interval', 60),
         'ob_watchlist_limit': settings.get('ob_watchlist_limit', 50),
         'ob_persistence_check': settings.get('ob_persistence_check', False),
         'ob_auto_scan': settings.get('ob_auto_scan', False),
@@ -660,9 +661,15 @@ ob_scanner_state = {
     'last_scanned': 0
 }
 
+# Глобальний стан для синхронізації між скринерами
+screener_lock = {
+    'rsi_mfi_running': False,
+    'ob_scanner_running': False
+}
+
+
 def get_next_candle_close(tf_minutes: int) -> datetime:
     """Розрахунок часу закриття наступної свічки (синхронізація з біржею)"""
-    from datetime import datetime, timedelta
     now = datetime.utcnow()
     
     # Поточна хвилина від початку дня
@@ -685,17 +692,54 @@ def get_next_candle_close(tf_minutes: int) -> datetime:
             microsecond=0
         )
     
-    # Додаємо offset для OB Scanner (TF/2 хвилин після RSI Screener)
-    # Це розділяє процеси RSI та OB сканування
-    offset_minutes = tf_minutes // 2
-    next_close = next_close + timedelta(minutes=offset_minutes)
-    
     return next_close
 
 
+def verify_rsi_mfi_filters(symbol: str, direction: str) -> bool:
+    """
+    Перевірка монети через RSI/MFI фільтри перед відкриттям угоди.
+    Повертає True якщо ринок йде в потрібному напрямку.
+    """
+    try:
+        from rsi_screener import RSIMFIScreener
+        
+        api_key, api_secret = get_api_credentials()
+        from pybit.unified_trading import HTTP
+        bybit_session = HTTP(
+            testnet=os.environ.get("TESTNET", "false").lower() == "true",
+            api_key=api_key,
+            api_secret=api_secret
+        )
+        
+        scan_settings = settings.get_all()
+        screener = RSIMFIScreener(session=bybit_session, settings=scan_settings)
+        
+        # Перевіряємо тільки одну монету
+        result = screener.check_symbol_filters(symbol, direction)
+        
+        if result:
+            logger.info(f"✅ RSI/MFI filters PASSED for {symbol} ({direction})")
+            return True
+        else:
+            logger.info(f"❌ RSI/MFI filters FAILED for {symbol} ({direction}) - skip trade")
+            return False
+            
+    except Exception as e:
+        logger.error(f"RSI/MFI filter check error for {symbol}: {e}")
+        # При помилці - не блокуємо угоду
+        return True
+
+
 def scheduled_ob_scan():
-    """Scheduled Order Block scan"""
-    global ob_scanner_state
+    """Scheduled Order Block scan - часте сканування"""
+    global ob_scanner_state, screener_lock
+    
+    # Перевіряємо чи RSI/MFI Screener не працює
+    if screener_lock.get('rsi_mfi_running', False):
+        logger.info("⏸️ OB Scanner: Paused - RSI/MFI Screener is running")
+        # Плануємо наступну спробу через 30 сек
+        ob_scanner_state['next_scan'] = (datetime.utcnow() + timedelta(seconds=30)).isoformat()
+        return
     
     if ob_scanner_state['is_scanning']:
         logger.warning("OB Scanner: Already scanning, skip")
@@ -706,6 +750,7 @@ def scheduled_ob_scan():
     
     logger.info("🔄 OB Scanner: Starting scheduled scan...")
     ob_scanner_state['is_scanning'] = True
+    screener_lock['ob_scanner_running'] = True
     
     try:
         # Виконуємо сканування
@@ -733,11 +778,12 @@ def scheduled_ob_scan():
             scan_settings = settings.get_all()
             scanner = OrderBlockScanner(session=bybit_session, settings=scan_settings)
             
-            results = scanner.scan_watchlist(watchlist, delay=0.5)
+            results = scanner.scan_watchlist(watchlist, delay=0.3)
             
             found_count = 0
             for result in results:
                 symbol = result['symbol']
+                direction = result['direction']
                 
                 existing = session_db.query(DetectedOrderBlock).filter_by(
                     symbol=symbol,
@@ -747,9 +793,15 @@ def scheduled_ob_scan():
                 if existing:
                     continue
                 
+                # Перевірка RSI/MFI фільтрів перед збереженням (якщо Execute Trades увімкнено)
+                if settings.get('ob_execute_trades', False):
+                    if not verify_rsi_mfi_filters(symbol, direction):
+                        logger.info(f"⏭️ Skipping {symbol} - RSI/MFI filters not passed")
+                        continue
+                
                 new_ob = DetectedOrderBlock(
                     symbol=symbol,
-                    direction=result['direction'],
+                    direction=direction,
                     ob_type=result['ob_type'],
                     ob_top=result['ob_top'],
                     ob_bottom=result['ob_bottom'],
@@ -783,10 +835,11 @@ def scheduled_ob_scan():
         logger.error(f"❌ OB Scanner error: {e}", exc_info=True)
     finally:
         ob_scanner_state['is_scanning'] = False
+        screener_lock['ob_scanner_running'] = False
         
-        # Розрахунок наступного сканування
-        tf_minutes = int(settings.get('ob_source_tf', '15'))
-        ob_scanner_state['next_scan'] = get_next_candle_close(tf_minutes).isoformat()
+        # Наступне сканування через 1-2 хвилини
+        scan_interval = int(settings.get('ob_scan_interval', 60))  # секунди
+        ob_scanner_state['next_scan'] = (datetime.utcnow() + timedelta(seconds=scan_interval)).isoformat()
 
 
 def update_ob_scheduler():
@@ -835,9 +888,11 @@ def smart_money_status():
         'auto_scan_enabled': settings.get('ob_auto_scan', False),
         'auto_add_enabled': settings.get('ob_auto_add_from_screener', False),
         'is_scanning': ob_scanner_state.get('is_scanning', False),
+        'is_paused': screener_lock.get('rsi_mfi_running', False),  # Чи на паузі через RSI Screener
         'next_scan': ob_scanner_state.get('next_scan'),
         'last_scan': ob_scanner_state.get('last_scan'),
         'source_tf': settings.get('ob_source_tf', '15'),
+        'scan_interval': settings.get('ob_scan_interval', 60),
         'watchlist_count': watchlist_count,
         'watchlist_limit': settings.get('ob_watchlist_limit', 50),
         'scheduler_status': scheduler_status
@@ -1118,9 +1173,15 @@ def rsi_screener_save_settings():
 @app.route('/rsi_screener/scan', methods=['POST'])
 def rsi_screener_scan():
     """Запустити скан RSI/MFI"""
+    global screener_lock
+    
     try:
         from rsi_screener import RSIMFIScreener
         from pybit.unified_trading import HTTP
+        
+        # Встановлюємо lock - OB Scanner має почекати
+        screener_lock['rsi_mfi_running'] = True
+        logger.info("🔒 RSI/MFI Screener started - OB Scanner paused")
         
         # Отримуємо налаштування з запиту
         data = request.get_json() or {}
@@ -1154,6 +1215,10 @@ def rsi_screener_scan():
     except Exception as e:
         logger.error(f"RSI Screener scan error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+    finally:
+        # Знімаємо lock
+        screener_lock['rsi_mfi_running'] = False
+        logger.info("🔓 RSI/MFI Screener finished - OB Scanner resumed")
 
 # ===== SCHEDULER FOR AUTO SCAN =====
 
@@ -1211,23 +1276,12 @@ def update_ob_scheduler():
         ob_scanner_state['next_scan'] = None
         return
     
-    # Розрахунок інтервалу (TF в хвилинах)
-    tf_minutes = int(settings.get('ob_source_tf', '15'))
+    # Інтервал сканування (за замовчуванням 60 секунд)
+    scan_interval = int(settings.get('ob_scan_interval', 60))
     
-    # Створюємо cron trigger для запуску на кожній свічці
-    # Offset = TF/2 хвилин після закриття свічки (розділення від RSI Screener)
-    offset_minutes = (tf_minutes // 2) % 60
-    
-    if tf_minutes <= 60:
-        # Для TF до 1H - запуск кожні TF хвилин
-        trigger = CronTrigger(minute=f'{offset_minutes}/{tf_minutes}')
-    elif tf_minutes <= 240:
-        # Для 2H-4H - запуск кожні N годин
-        hours = tf_minutes // 60
-        trigger = CronTrigger(hour=f'*/{hours}', minute=offset_minutes)
-    else:
-        # Для більших TF - кожні 4 години
-        trigger = CronTrigger(hour='*/4', minute=offset_minutes)
+    # Створюємо interval trigger для частого сканування
+    from apscheduler.triggers.interval import IntervalTrigger
+    trigger = IntervalTrigger(seconds=scan_interval)
     
     ob_scheduler_job = ob_scheduler.add_job(
         scheduled_ob_scan,
@@ -1237,10 +1291,10 @@ def update_ob_scheduler():
     )
     
     # Розрахунок наступного запуску
-    next_run = get_next_candle_close(tf_minutes)
+    next_run = datetime.utcnow() + timedelta(seconds=scan_interval)
     ob_scanner_state['next_scan'] = next_run.isoformat()
     
-    logger.info(f"OB Scheduler: Configured for TF={tf_minutes}m, offset={offset_minutes}m, next: {next_run}")
+    logger.info(f"OB Scheduler: Configured for interval={scan_interval}s, next: {next_run}")
 
 
 # ===== АВТОМАТИЧНА ІНІЦІАЛІЗАЦІЯ SCHEDULER =====
