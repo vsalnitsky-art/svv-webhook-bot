@@ -729,11 +729,80 @@ class RSIMFIScreener:
             results.sort(key=lambda x: abs(50 - x['rsi']), reverse=True)
             
             logger.info(f"Scan complete. Found {len(results)} matches.")
+            
+            # === AUTO-ADD TO SMART MONEY WATCHLIST ===
+            # Тільки для ALERT READY монет (які пройшли всі фільтри)
+            self._add_to_smart_money_watchlist(results)
+            
             return results
             
         except Exception as e:
             logger.error(f"Scan error: {e}")
             return []
+    
+    def _add_to_smart_money_watchlist(self, results: list):
+        """
+        Автоматичне додавання ALERT READY монет в Smart Money watchlist
+        Тільки якщо налаштування ob_auto_add_from_screener = True
+        """
+        try:
+            from models import db_manager, SmartMoneyTicker
+            from settings_manager import settings
+            
+            # Перевіряємо чи увімкнено auto-add
+            if not settings.get('ob_auto_add_from_screener', False):
+                return
+            
+            session = db_manager.get_session()
+            try:
+                watchlist_limit = settings.get('ob_watchlist_limit', 50)
+                current_count = session.query(SmartMoneyTicker).count()
+                
+                added_count = 0
+                
+                for result in results:
+                    # Перевіряємо ліміт
+                    if current_count + added_count >= watchlist_limit:
+                        # FIFO: видаляємо найстаріший
+                        oldest = session.query(SmartMoneyTicker).order_by(
+                            SmartMoneyTicker.added_at.asc()
+                        ).first()
+                        if oldest:
+                            session.delete(oldest)
+                            logger.info(f"FIFO: Removed oldest {oldest.symbol} from watchlist")
+                    
+                    symbol = result['symbol']
+                    direction = result.get('direction', 'BUY')
+                    
+                    # Перевіряємо чи вже є (унікальність)
+                    existing = session.query(SmartMoneyTicker).filter_by(symbol=symbol).first()
+                    if existing:
+                        # Оновлюємо direction якщо змінився
+                        if existing.direction != direction:
+                            existing.direction = direction
+                            logger.info(f"Updated direction for {symbol}: {direction}")
+                        continue
+                    
+                    # Додаємо нову монету
+                    new_ticker = SmartMoneyTicker(
+                        symbol=symbol,
+                        direction=direction,
+                        source='RSI/MFI Screener'
+                    )
+                    session.add(new_ticker)
+                    added_count += 1
+                    logger.info(f"Auto-added to Smart Money: {symbol} ({direction})")
+                
+                session.commit()
+                
+                if added_count > 0:
+                    logger.info(f"✅ Added {added_count} symbols to Smart Money watchlist")
+                    
+            finally:
+                session.close()
+                
+        except Exception as e:
+            logger.error(f"Error adding to Smart Money watchlist: {e}")
 
 
 # ============================================================================
