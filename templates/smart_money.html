@@ -1,230 +1,712 @@
 {% extends "base.html" %}
 
-{% block title %}Smart Money Simulator{% endblock %}
+{% block title %}Smart Money - Order Block Scanner{% endblock %}
 
 {% block head %}
-<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <style>
-    .layout-grid { display: grid; grid-template-columns: 280px 1fr; gap: 20px; height: calc(100vh - 100px); }
-    .sidebar { background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow-y: auto; display: flex; flex-direction: column; }
-    .main-content { overflow-y: auto; padding-right: 5px; }
+    /* Status badges */
+    .status-valid { color: #10b981; font-weight: 600; }
+    .status-waiting { color: #f59e0b; font-weight: 600; }
+    .status-triggered { color: #3b82f6; font-weight: 600; }
+    .status-executed { color: #6b7280; }
     
-    .watchlist-item { padding: 10px 15px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; transition: 0.2s; }
-    .watchlist-item:hover { background: #f8fafc; }
+    /* Direction badges */
+    .dir-buy {
+        background: linear-gradient(135deg, #059669, #10b981);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.8rem;
+    }
+    .dir-sell {
+        background: linear-gradient(135deg, #dc2626, #ef4444);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-weight: 600;
+        font-size: 0.8rem;
+    }
     
-    .delete-btn { opacity: 0; cursor: pointer; color: #cbd5e1; transition: 0.2s; padding: 5px; }
-    .watchlist-item:hover .delete-btn { opacity: 1; color: #ef4444; }
-    .delete-btn:hover { background: #fee2e2; border-radius: 4px; }
-
-    .panel-card { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-    .table-custom th { font-size: 0.75rem; text-transform: uppercase; color: #64748b; font-weight: 600; background: #f8fafc; }
-    .badge-long { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
-    .badge-short { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-    .status-open { color: #2563eb; font-weight: bold; }
-    .status-pending { color: #d97706; font-weight: bold; }
+    /* OB Type */
+    .ob-bull { color: #10b981; font-weight: 600; }
+    .ob-bear { color: #ef4444; font-weight: 600; }
     
-    .scanner-pulse { background: #0f172a; color: #22d3ee; padding: 10px 15px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; display: flex; align-items: center; margin-bottom: 20px; border: 1px solid #1e293b; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
-    .pulse-dot { width: 8px; height: 8px; background: #22d3ee; border-radius: 50%; display: inline-block; margin-right: 10px; animation: pulse 1.5s infinite; }
-    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.7); } 70% { box-shadow: 0 0 0 6px rgba(34, 211, 238, 0); } 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); } }
+    /* Scanner status indicator */
+    .scanner-status {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+    .scanner-idle { background: #f1f5f9; color: #64748b; }
+    .scanner-running { background: #dbeafe; color: #1d4ed8; }
+    .scanner-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 8px;
+    }
+    .scanner-dot-idle { background: #94a3b8; }
+    .scanner-dot-running { background: #3b82f6; animation: pulse 1.5s infinite; }
+    
+    @keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+        70% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+    }
+    
+    /* Trade toggle */
+    .trade-toggle {
+        display: flex;
+        align-items: center;
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-weight: 600;
+    }
+    .trade-toggle-off { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .trade-toggle-on { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    
+    /* Table hover */
+    .table tbody tr:hover { background-color: #f8fafc; }
+    
+    /* Settings groups */
+    .settings-group {
+        background: #f8fafc;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+    .settings-group-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #64748b;
+        margin-bottom: 8px;
+    }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid h-100">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <div>
-            <h4 class="fw-bold m-0 text-dark">🧠 Smart Money Simulator</h4>
-            <div class="small text-muted">Paper Trading & Backtesting Environment</div>
-        </div>
-        <a href="/analyzer" class="btn btn-outline-primary btn-sm"><i class="ri-search-line me-1"></i>Запустити Сканер</a>
-    </div>
-
-    <div class="scanner-pulse">
-        <span class="pulse-dot"></span>
-        <span id="scanner-status-text">System Ready. Waiting for data...</span>
-    </div>
-
-    <div class="layout-grid">
-        <div class="sidebar shadow-sm">
-            <div class="p-3 bg-light border-bottom fw-bold text-uppercase small text-muted d-flex justify-content-between">
-                <span>Active Watchlist</span>
-                <span class="badge bg-secondary rounded-pill">{{ watchlist|length }}</span>
-            </div>
-            <div class="flex-grow-1" id="watchlist-container">
-                {% for item in watchlist %}
-                <div class="watchlist-item" id="ticker-{{ item.symbol }}">
-                    <div>
-                        <div class="fw-bold">{{ item.symbol }}</div>
-                        <div class="text-muted small" style="font-size: 0.75rem">{{ item.added_at.strftime('%H:%M') }}</div>
-                    </div>
-                    <i class="ri-delete-bin-line delete-btn" onclick="deleteTicker('{{ item.symbol }}')"></i>
+<div class="container-fluid">
+    
+    <!-- Header -->
+    <div class="card-custom mb-4 border-0">
+        <div class="card-header bg-white py-3 border-bottom border-light d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center">
+                <i class="ri-eye-2-line fs-4 text-accent me-2"></i>
+                <div>
+                    <h5 class="fw-bold mb-0 text-dark">Smart Money - Order Block Scanner</h5>
+                    <small class="text-muted">100% Pine Script логіка</small>
                 </div>
-                {% else %}
-                <div class="text-center p-4 text-muted small">Список порожній.<br>Запустіть сканер.</div>
-                {% endfor %}
             </div>
-        </div>
-
-        <div class="main-content">
-            
-            <form method="POST" class="panel-card">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h6 class="fw-bold m-0 text-primary"><i class="ri-equalizer-line me-2"></i>Параметри Симуляції</h6>
-                    <button type="submit" class="btn btn-primary btn-sm px-4 fw-bold">Зберегти Налаштування</button>
+            <div class="d-flex align-items-center gap-3">
+                <!-- Scanner Status -->
+                <div class="scanner-status scanner-idle" id="scannerStatus">
+                    <span class="scanner-dot scanner-dot-idle" id="scannerDot"></span>
+                    <span id="scannerStatusText">IDLE</span>
                 </div>
                 
-                <div class="row g-3">
-                    <div class="col-md-3">
-                        <label class="form-label small fw-bold text-muted">Режим Входу</label>
-                        <select class="form-select form-select-sm" name="sm_entry_mode">
-                            <option value="Market" {{ 'selected' if conf.get('sm_entry_mode') == 'Market' }}>⚡ Market (Aggressive)</option>
-                            <option value="Limit" {{ 'selected' if conf.get('sm_entry_mode') == 'Limit' }}>🔵 Limit (Retest)</option>
-                        </select>
-                    </div>
-
-                    <div class="col-md-3">
-                        <label class="form-label small fw-bold text-muted">Буфер SL (%)</label>
-                        <div class="input-group input-group-sm">
-                            <input type="number" step="0.1" class="form-control" name="sm_sl_buffer" value="{{ conf.get('sm_sl_buffer', 0.2) }}">
-                            <span class="input-group-text">%</span>
+                <!-- Trade Toggle -->
+                <div class="trade-toggle trade-toggle-off" id="tradeToggle">
+                    <i class="ri-exchange-line me-2"></i>
+                    <span>Trading: </span>
+                    <span id="tradeToggleText" class="ms-1">OFF</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card-body bg-light bg-opacity-50">
+            <!-- Settings Row 1 -->
+            <div class="row g-3">
+                <!-- Detection Settings -->
+                <div class="col-md-6">
+                    <div class="settings-group">
+                        <div class="settings-group-title">
+                            <i class="ri-radar-line me-1"></i>Detection
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <label class="form-label small">Source TF</label>
+                                <select class="form-select form-select-sm" id="obSourceTf">
+                                    <option value="5">5m</option>
+                                    <option value="15" selected>15m</option>
+                                    <option value="30">30m</option>
+                                    <option value="60">1H</option>
+                                    <option value="240">4H</option>
+                                </select>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">Swing Len</label>
+                                <input type="number" class="form-control form-control-sm text-center" id="obSwingLength" value="3" min="2" max="10">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">Zones</label>
+                                <select class="form-select form-select-sm" id="obZoneCount">
+                                    <option value="One">One (1)</option>
+                                    <option value="Low">Low (3)</option>
+                                    <option value="Medium">Medium (5)</option>
+                                    <option value="High" selected>High (10)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row g-2 mt-1">
+                            <div class="col-4">
+                                <label class="form-label small">ATR Mult</label>
+                                <input type="number" class="form-control form-control-sm text-center" id="obMaxAtrMult" value="3.5" step="0.1" min="1" max="10">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">Invalidation</label>
+                                <select class="form-select form-select-sm" id="obInvalidation">
+                                    <option value="Wick" selected>Wick</option>
+                                    <option value="Close">Close</option>
+                                </select>
+                            </div>
+                            <div class="col-4">
+                                <div class="form-check mt-4">
+                                    <input class="form-check-input" type="checkbox" id="obCombineObs" checked>
+                                    <label class="form-check-label small">Combine OBs</label>
+                                </div>
+                            </div>
                         </div>
                     </div>
-
-                    <div class="col-md-3">
-                        <label class="form-label small fw-bold text-muted">Режим TP</label>
-                        <select class="form-select form-select-sm" name="sm_tp_mode">
-                            <option value="None" {{ 'selected' if conf.get('sm_tp_mode') == 'None' }}>Без TP</option>
-                            <option value="Fixed" {{ 'selected' if conf.get('sm_tp_mode') == 'Fixed' }}>Фіксований %</option>
-                            <option value="RR" {{ 'selected' if conf.get('sm_tp_mode') == 'RR' }}>Risk : Reward</option>
-                        </select>
-                    </div>
-
-                    <div class="col-md-3">
-                        <label class="form-label small fw-bold text-muted">Значення TP</label>
-                        <input type="number" step="0.1" class="form-control form-control-sm" name="sm_tp_value" value="{{ conf.get('sm_tp_value', 3.0) }}" placeholder="3.0">
-                    </div>
                 </div>
                 
-                <div class="mt-3 pt-3 border-top d-flex gap-3 small text-muted">
-                    <span><i class="ri-filter-line me-1"></i>Filters (HTF): <b>{{ conf.get('htfSelection') }}m</b></span>
-                    <span><i class="ri-time-line me-1"></i>Entry (LTF): <b>{{ conf.get('ltfSelection') }}m</b></span>
-                </div>
-            </form>
-
-            <div class="panel-card p-0 overflow-hidden">
-                <div class="p-3 border-bottom bg-light d-flex justify-content-between align-items-center">
-                    <h6 class="fw-bold m-0 text-dark">🔴 Активні Симуляції</h6>
-                    <span class="badge bg-white text-dark border">{{ active_trades|length }}</span>
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-hover table-custom mb-0 align-middle">
-                        <thead>
-                            <tr>
-                                <th class="ps-4">Час</th>
-                                <th>Монета</th>
-                                <th>Тип</th>
-                                <th>Статус</th>
-                                <th>Вхід</th>
-                                <th>SL</th>
-                                <th>TP</th>
-                                <th class="pe-4 text-end">PnL</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for t in active_trades %}
-                            <tr>
-                                <td class="ps-4 font-mono text-muted">{{ t.created_at.strftime('%d.%m %H:%M') }}</td>
-                                <td class="fw-bold font-mono">{{ t.symbol }}</td>
-                                <td><span class="badge {{ 'badge-long' if t.direction=='Long' else 'badge-short' }}">{{ t.direction }}</span></td>
-                                <td class="small {{ 'status-open' if t.status=='OPEN' else 'status-pending' }}">{{ t.status }}</td>
-                                <td class="font-mono">{{ t.entry_price }}</td>
-                                <td class="font-mono text-danger">{{ t.sl_price }}</td>
-                                <td class="font-mono text-success">{{ t.tp_price if t.tp_price else '-' }}</td>
-                                <td class="pe-4 text-end fw-bold {{ 'text-success' if t.pnl_percent > 0 else 'text-danger' }}">
-                                    {{ "%0.2f"|format(t.pnl_percent) }}%
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr><td colspan="8" class="text-center py-4 text-muted">Немає активних угод</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="panel-card p-0 overflow-hidden">
-                <div class="p-3 border-bottom bg-light">
-                    <h6 class="fw-bold m-0 text-muted">📜 Історія Симуляцій</h6>
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-hover table-custom mb-0 align-middle">
-                        <thead>
-                            <tr>
-                                <th class="ps-4">Закрито</th>
-                                <th>Монета</th>
-                                <th>Тип</th>
-                                <th>Статус</th>
-                                <th>Результат</th>
-                                <th class="pe-4 text-end">Деталі</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for h in history_trades %}
-                            <tr>
-                                <td class="ps-4 font-mono text-muted">{{ h.closed_at.strftime('%d.%m %H:%M') }}</td>
-                                <td class="fw-bold font-mono">{{ h.symbol }}</td>
-                                <td><span class="badge {{ 'badge-long' if h.direction=='Long' else 'badge-short' }}">{{ h.direction }}</span></td>
-                                <td>
-                                    {% if h.status == 'CLOSED_WIN' %}<span class="badge bg-success">WIN</span>
-                                    {% elif h.status == 'CLOSED_LOSS' %}<span class="badge bg-danger">LOSS</span>
-                                    {% else %}<span class="badge bg-secondary">CANCELED</span>{% endif %}
-                                </td>
-                                <td class="fw-bold {{ 'text-success' if h.pnl_percent > 0 else 'text-danger' }}">
-                                    {{ "%0.2f"|format(h.pnl_percent) }}%
-                                </td>
-                                <td class="pe-4 text-end small text-muted">{{ h.details }}</td>
-                            </tr>
-                            {% else %}
-                            <tr><td colspan="6" class="text-center py-4 text-muted">Історія порожня</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                <!-- Entry & Risk Settings -->
+                <div class="col-md-6">
+                    <div class="settings-group">
+                        <div class="settings-group-title">
+                            <i class="ri-flashlight-line me-1"></i>Entry & Risk
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <label class="form-label small">Entry Mode</label>
+                                <select class="form-select form-select-sm" id="obEntryMode">
+                                    <option value="Immediate" selected>Immediate</option>
+                                    <option value="Retest">Retest</option>
+                                </select>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">OB Selection</label>
+                                <select class="form-select form-select-sm" id="obSelection">
+                                    <option value="Newest" selected>Newest</option>
+                                    <option value="Closest">Closest</option>
+                                </select>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">SL ATR Mult</label>
+                                <input type="number" class="form-control form-control-sm text-center" id="obSlAtrMult" value="0.3" step="0.1" min="0.1" max="2">
+                            </div>
+                        </div>
+                        <div class="row g-2 mt-1">
+                            <div class="col-4">
+                                <label class="form-label small">Timeout</label>
+                                <select class="form-select form-select-sm" id="obTimeout">
+                                    <option value="No">No timeout</option>
+                                    <option value="12h">12 hours</option>
+                                    <option value="24h" selected>24 hours</option>
+                                    <option value="48h">48 hours</option>
+                                    <option value="72h">72 hours</option>
+                                </select>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">Max Watchlist</label>
+                                <input type="number" class="form-control form-control-sm text-center" id="obWatchlistLimit" value="50" min="10" max="100">
+                            </div>
+                            <div class="col-4">
+                                <div class="form-check mt-4">
+                                    <input class="form-check-input" type="checkbox" id="obPersistence">
+                                    <label class="form-check-label small">Persistence</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
-
+            
+            <!-- Actions Row -->
+            <div class="row mt-3">
+                <div class="col-12">
+                    <div class="d-flex align-items-center justify-content-between p-2 bg-white border rounded shadow-sm">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="obAutoScan" style="width: 3em; height: 1.5em;">
+                                <label class="form-check-label fw-bold" for="obAutoScan">Auto Scan</label>
+                            </div>
+                            
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="obExecuteTrades" style="width: 3em; height: 1.5em;">
+                                <label class="form-check-label fw-bold text-danger" for="obExecuteTrades">Execute Trades</label>
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-primary" id="btnManualScan" onclick="manualScan()">
+                                <i class="ri-radar-line me-1"></i>Scan Now
+                            </button>
+                            <button class="btn btn-primary fw-bold" onclick="saveSettings()">
+                                <i class="ri-save-line me-1"></i>Save Settings
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Progress Card -->
+    <div class="card-custom mb-4 border-0 shadow-sm" style="display: none" id="progressCard">
+        <div class="card-body py-3" style="background: #eff6ff;">
+            <div class="d-flex justify-content-between mb-2">
+                <span id="progressText" class="fw-bold text-primary">Scanning...</span>
+                <span id="progressPercent" class="fw-bold text-dark">0%</span>
+            </div>
+            <div class="progress" style="height: 8px; border-radius: 4px; background: white;">
+                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row g-4">
+        <!-- Watchlist -->
+        <div class="col-md-5">
+            <div class="card-custom border-0 h-100">
+                <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between align-items-center border-bottom border-light">
+                    <span><i class="ri-list-check me-2"></i>Watchlist</span>
+                    <span class="badge bg-secondary rounded-pill" id="watchlistCount">0 / 50</span>
+                </div>
+                <div class="card-body p-0">
+                    <!-- Add Symbol Form -->
+                    <div class="p-3 border-bottom bg-light">
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="addSymbolInput" placeholder="BTCUSDT">
+                            <select class="form-select" style="max-width: 100px;" id="addSymbolDirection">
+                                <option value="BUY">BUY</option>
+                                <option value="SELL">SELL</option>
+                            </select>
+                            <button class="btn btn-success" onclick="addToWatchlist()">
+                                <i class="ri-add-line"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Watchlist Table -->
+                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="bg-light text-uppercase small text-muted sticky-top">
+                                <tr>
+                                    <th class="py-2 ps-3">Symbol</th>
+                                    <th class="py-2">Direction</th>
+                                    <th class="py-2">Source</th>
+                                    <th class="py-2">Added</th>
+                                    <th class="py-2 pe-3 text-end">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="watchlistBody">
+                                <tr>
+                                    <td colspan="5" class="text-center py-4 text-muted">
+                                        <i class="ri-inbox-line fs-3 d-block mb-2 opacity-25"></i>
+                                        Watchlist is empty
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Detected Order Blocks -->
+        <div class="col-md-7">
+            <div class="card-custom border-0 h-100">
+                <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between align-items-center border-bottom border-light">
+                    <span><i class="ri-checkbox-blank-line me-2"></i>Detected Order Blocks</span>
+                    <span class="badge bg-primary rounded-pill" id="obCount">0</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="bg-light text-uppercase small text-muted sticky-top">
+                                <tr>
+                                    <th class="py-2 ps-3">Symbol</th>
+                                    <th class="py-2">Type</th>
+                                    <th class="py-2">Zone</th>
+                                    <th class="py-2">Entry</th>
+                                    <th class="py-2">SL</th>
+                                    <th class="py-2">Status</th>
+                                    <th class="py-2">Time</th>
+                                    <th class="py-2 pe-3 text-end">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="obBody">
+                                <tr>
+                                    <td colspan="8" class="text-center py-4 text-muted">
+                                        <i class="ri-scan-line fs-3 d-block mb-2 opacity-25"></i>
+                                        No Order Blocks detected yet
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Trade Execution Log -->
+    <div class="card-custom border-0 mt-4">
+        <div class="card-header bg-white fw-bold py-3 border-bottom border-light">
+            <i class="ri-file-list-3-line me-2"></i>Execution Log
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="bg-light text-uppercase small text-muted">
+                        <tr>
+                            <th class="py-2 ps-3">Time</th>
+                            <th class="py-2">Symbol</th>
+                            <th class="py-2">Direction</th>
+                            <th class="py-2">Entry</th>
+                            <th class="py-2">SL</th>
+                            <th class="py-2">Status</th>
+                            <th class="py-2 pe-3">Result</th>
+                        </tr>
+                    </thead>
+                    <tbody id="logBody">
+                        <tr>
+                            <td colspan="7" class="text-center py-4 text-muted">
+                                No executions yet
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
 
 <script>
-    // 1. Live Scanner Status Polling
-    function updateStatus() {
-        fetch('/analyzer/status')
-            .then(response => response.json())
-            .then(data => {
-                document.getElementById('scanner-status-text').textContent = data.message;
-            })
-            .catch(err => console.log('Status Poll Error'));
-    }
-    // Poll every 1.5 seconds
-    setInterval(updateStatus, 1500);
+// ===== STATE =====
+let watchlist = [];
+let detectedOBs = [];
+let isScanning = false;
 
-    // 2. Delete Ticker
-    function deleteTicker(symbol) {
-        if(!confirm('Видалити ' + symbol + ' зі списку спостереження?')) return;
-        
-        fetch('/smart_money/delete/' + symbol, { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                if(data.status === 'ok') {
-                    // Remove element from DOM nicely
-                    const el = document.getElementById('ticker-' + symbol);
-                    el.style.opacity = '0';
-                    setTimeout(() => el.remove(), 300);
-                } else {
-                    alert('Error deleting ticker');
-                }
-            });
+// ===== INIT =====
+document.addEventListener('DOMContentLoaded', () => {
+    loadSettings();
+    loadWatchlist();
+    loadDetectedOBs();
+    
+    // Update trade toggle display
+    updateTradeToggle();
+    document.getElementById('obExecuteTrades').addEventListener('change', updateTradeToggle);
+});
+
+// ===== TRADE TOGGLE =====
+function updateTradeToggle() {
+    const isOn = document.getElementById('obExecuteTrades').checked;
+    const toggle = document.getElementById('tradeToggle');
+    const text = document.getElementById('tradeToggleText');
+    
+    if (isOn) {
+        toggle.className = 'trade-toggle trade-toggle-on';
+        text.textContent = 'ON';
+    } else {
+        toggle.className = 'trade-toggle trade-toggle-off';
+        text.textContent = 'OFF';
     }
+}
+
+// ===== SETTINGS =====
+async function loadSettings() {
+    try {
+        const resp = await fetch('/smart_money/settings');
+        if (!resp.ok) return;
+        const s = await resp.json();
+        
+        if (s.ob_source_tf) document.getElementById('obSourceTf').value = s.ob_source_tf;
+        if (s.ob_swing_length) document.getElementById('obSwingLength').value = s.ob_swing_length;
+        if (s.ob_zone_count) document.getElementById('obZoneCount').value = s.ob_zone_count;
+        if (s.ob_max_atr_mult) document.getElementById('obMaxAtrMult').value = s.ob_max_atr_mult;
+        if (s.ob_invalidation_method) document.getElementById('obInvalidation').value = s.ob_invalidation_method;
+        document.getElementById('obCombineObs').checked = s.ob_combine_obs !== false;
+        
+        if (s.ob_entry_mode) document.getElementById('obEntryMode').value = s.ob_entry_mode;
+        if (s.ob_selection) document.getElementById('obSelection').value = s.ob_selection;
+        if (s.ob_sl_atr_mult) document.getElementById('obSlAtrMult').value = s.ob_sl_atr_mult;
+        if (s.ob_watchlist_timeout) document.getElementById('obTimeout').value = s.ob_watchlist_timeout;
+        if (s.ob_watchlist_limit) document.getElementById('obWatchlistLimit').value = s.ob_watchlist_limit;
+        document.getElementById('obPersistence').checked = s.ob_persistence_check === true;
+        
+        document.getElementById('obAutoScan').checked = s.ob_auto_scan === true;
+        document.getElementById('obExecuteTrades').checked = s.ob_execute_trades === true;
+        
+        updateTradeToggle();
+    } catch (e) {
+        console.error('Load settings error:', e);
+    }
+}
+
+async function saveSettings() {
+    const settings = {
+        ob_source_tf: document.getElementById('obSourceTf').value,
+        ob_swing_length: parseInt(document.getElementById('obSwingLength').value),
+        ob_zone_count: document.getElementById('obZoneCount').value,
+        ob_max_atr_mult: parseFloat(document.getElementById('obMaxAtrMult').value),
+        ob_invalidation_method: document.getElementById('obInvalidation').value,
+        ob_combine_obs: document.getElementById('obCombineObs').checked,
+        ob_entry_mode: document.getElementById('obEntryMode').value,
+        ob_selection: document.getElementById('obSelection').value,
+        ob_sl_atr_mult: parseFloat(document.getElementById('obSlAtrMult').value),
+        ob_watchlist_timeout: document.getElementById('obTimeout').value,
+        ob_watchlist_limit: parseInt(document.getElementById('obWatchlistLimit').value),
+        ob_persistence_check: document.getElementById('obPersistence').checked,
+        ob_auto_scan: document.getElementById('obAutoScan').checked,
+        ob_execute_trades: document.getElementById('obExecuteTrades').checked
+    };
+    
+    try {
+        const resp = await fetch('/smart_money/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(settings)
+        });
+        if (resp.ok) {
+            alert('Settings saved!');
+        }
+    } catch (e) {
+        alert('Error saving settings');
+    }
+}
+
+// ===== WATCHLIST =====
+async function loadWatchlist() {
+    try {
+        const resp = await fetch('/smart_money/watchlist');
+        if (!resp.ok) return;
+        watchlist = await resp.json();
+        renderWatchlist();
+    } catch (e) {
+        console.error('Load watchlist error:', e);
+    }
+}
+
+function renderWatchlist() {
+    const tbody = document.getElementById('watchlistBody');
+    const limit = parseInt(document.getElementById('obWatchlistLimit').value) || 50;
+    document.getElementById('watchlistCount').textContent = `${watchlist.length} / ${limit}`;
+    
+    if (watchlist.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center py-4 text-muted">
+                    <i class="ri-inbox-line fs-3 d-block mb-2 opacity-25"></i>
+                    Watchlist is empty
+                </td>
+            </tr>`;
+        return;
+    }
+    
+    let html = '';
+    watchlist.forEach(item => {
+        const dirClass = item.direction === 'BUY' ? 'dir-buy' : 'dir-sell';
+        const time = new Date(item.added_at).toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
+        
+        html += `
+            <tr>
+                <td class="ps-3 fw-bold font-mono">${item.symbol}</td>
+                <td><span class="${dirClass}">${item.direction}</span></td>
+                <td class="small text-muted">${item.source || 'Manual'}</td>
+                <td class="small text-muted font-mono">${time}</td>
+                <td class="pe-3 text-end">
+                    <button class="btn btn-sm btn-outline-danger" onclick="removeFromWatchlist('${item.symbol}')">
+                        <i class="ri-delete-bin-line"></i>
+                    </button>
+                </td>
+            </tr>`;
+    });
+    
+    tbody.innerHTML = html;
+}
+
+async function addToWatchlist() {
+    const symbol = document.getElementById('addSymbolInput').value.toUpperCase().trim();
+    const direction = document.getElementById('addSymbolDirection').value;
+    
+    if (!symbol) {
+        alert('Enter symbol');
+        return;
+    }
+    
+    // Check limit
+    const limit = parseInt(document.getElementById('obWatchlistLimit').value) || 50;
+    if (watchlist.length >= limit) {
+        alert(`Watchlist limit reached (${limit})`);
+        return;
+    }
+    
+    try {
+        const resp = await fetch('/smart_money/watchlist/add', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol, direction, source: 'Manual'})
+        });
+        
+        const data = await resp.json();
+        if (data.status === 'ok') {
+            document.getElementById('addSymbolInput').value = '';
+            loadWatchlist();
+        } else {
+            alert(data.error || 'Error adding symbol');
+        }
+    } catch (e) {
+        alert('Error adding to watchlist');
+    }
+}
+
+async function removeFromWatchlist(symbol) {
+    if (!confirm(`Remove ${symbol} from watchlist?`)) return;
+    
+    try {
+        await fetch(`/smart_money/watchlist/remove/${symbol}`, {method: 'POST'});
+        loadWatchlist();
+    } catch (e) {
+        alert('Error removing from watchlist');
+    }
+}
+
+// ===== ORDER BLOCKS =====
+async function loadDetectedOBs() {
+    try {
+        const resp = await fetch('/smart_money/detected');
+        if (!resp.ok) return;
+        detectedOBs = await resp.json();
+        renderDetectedOBs();
+    } catch (e) {
+        console.error('Load OBs error:', e);
+    }
+}
+
+function renderDetectedOBs() {
+    const tbody = document.getElementById('obBody');
+    document.getElementById('obCount').textContent = detectedOBs.length;
+    
+    if (detectedOBs.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center py-4 text-muted">
+                    <i class="ri-scan-line fs-3 d-block mb-2 opacity-25"></i>
+                    No Order Blocks detected yet
+                </td>
+            </tr>`;
+        return;
+    }
+    
+    let html = '';
+    detectedOBs.forEach(ob => {
+        const typeClass = ob.ob_type === 'Bull' ? 'ob-bull' : 'ob-bear';
+        const statusClass = ob.status === 'Valid' ? 'status-valid' : 
+                           ob.status === 'Waiting Retest' ? 'status-waiting' :
+                           ob.status === 'Triggered' ? 'status-triggered' : 'status-executed';
+        const time = new Date(ob.detected_at).toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
+        
+        html += `
+            <tr>
+                <td class="ps-3 fw-bold font-mono">${ob.symbol}</td>
+                <td class="${typeClass}">${ob.ob_type}</td>
+                <td class="font-mono small">$${formatPrice(ob.ob_bottom)} - $${formatPrice(ob.ob_top)}</td>
+                <td class="font-mono">$${formatPrice(ob.entry_price)}</td>
+                <td class="font-mono text-danger">$${formatPrice(ob.sl_price)}</td>
+                <td class="${statusClass}">${ob.status}</td>
+                <td class="small text-muted font-mono">${time}</td>
+                <td class="pe-3 text-end">
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteOB(${ob.id})">
+                        <i class="ri-delete-bin-line"></i>
+                    </button>
+                </td>
+            </tr>`;
+    });
+    
+    tbody.innerHTML = html;
+}
+
+async function deleteOB(id) {
+    if (!confirm('Delete this Order Block?')) return;
+    
+    try {
+        await fetch(`/smart_money/detected/delete/${id}`, {method: 'POST'});
+        loadDetectedOBs();
+    } catch (e) {
+        alert('Error deleting OB');
+    }
+}
+
+// ===== SCAN =====
+async function manualScan() {
+    const btn = document.getElementById('btnManualScan');
+    const progressCard = document.getElementById('progressCard');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const progressPercent = document.getElementById('progressPercent');
+    
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
+    progressCard.style.display = 'block';
+    
+    // Update scanner status
+    document.getElementById('scannerStatus').className = 'scanner-status scanner-running';
+    document.getElementById('scannerDot').className = 'scanner-dot scanner-dot-running';
+    document.getElementById('scannerStatusText').textContent = 'SCANNING';
+    
+    // Fake progress
+    let progress = 0;
+    const interval = setInterval(() => {
+        if (progress < 90) {
+            progress += Math.random() * 15;
+            progressBar.style.width = Math.min(progress, 90) + '%';
+            progressPercent.textContent = Math.round(Math.min(progress, 90)) + '%';
+        }
+    }, 300);
+    
+    try {
+        const resp = await fetch('/smart_money/scan', {method: 'POST'});
+        clearInterval(interval);
+        
+        progressBar.style.width = '100%';
+        progressPercent.textContent = '100%';
+        progressText.textContent = 'Complete!';
+        
+        if (resp.ok) {
+            const data = await resp.json();
+            progressText.textContent = `Found ${data.found || 0} Order Blocks`;
+            loadDetectedOBs();
+            loadWatchlist();
+        }
+    } catch (e) {
+        alert('Scan error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="ri-radar-line me-1"></i>Scan Now';
+        
+        // Reset scanner status
+        document.getElementById('scannerStatus').className = 'scanner-status scanner-idle';
+        document.getElementById('scannerDot').className = 'scanner-dot scanner-dot-idle';
+        document.getElementById('scannerStatusText').textContent = 'IDLE';
+        
+        setTimeout(() => { progressCard.style.display = 'none'; }, 2000);
+    }
+}
+
+// ===== HELPERS =====
+function formatPrice(price) {
+    if (!price) return '—';
+    if (price >= 1000) return price.toFixed(0);
+    if (price >= 1) return price.toFixed(2);
+    if (price >= 0.01) return price.toFixed(4);
+    return price.toFixed(6);
+}
 </script>
 {% endblock %}
