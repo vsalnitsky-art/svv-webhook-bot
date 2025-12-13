@@ -544,8 +544,14 @@ let countdownInterval = null;
 let saveTimeout = null;  // Для debounce
 
 // ===== INIT =====
-document.addEventListener('DOMContentLoaded', () => {
-    loadSettings();
+document.addEventListener('DOMContentLoaded', async () => {
+    // Спочатку завантажуємо налаштування і ЧЕКАЄМО
+    await loadSettings();
+    
+    // Тільки після цього налаштовуємо auto-save
+    setupAutoSave();
+    
+    // Завантажуємо інші дані
     loadWatchlist();
     loadDetectedOBs();
     loadScannerStatus();
@@ -560,9 +566,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Start status polling
     statusUpdateInterval = setInterval(loadScannerStatus, 3000);
     countdownInterval = setInterval(updateCountdown, 1000);
-    
-    // ===== AUTO-SAVE: слухачі на всі інпути =====
-    setupAutoSave();
 });
 
 // ===== AUTO-SAVE SETUP =====
@@ -868,26 +871,31 @@ function formatTime(isoString) {
 async function loadSettings() {
     try {
         const resp = await fetch('/smart_money/settings');
-        if (!resp.ok) return;
+        if (!resp.ok) {
+            console.error('❌ Failed to load settings:', resp.status);
+            return;
+        }
         const s = await resp.json();
         
-        // Debug log
-        console.log('📋 Loaded settings:', {
-            auto_scan: s.ob_auto_scan,
-            auto_add: s.ob_auto_add_from_screener,
-            execute: s.ob_execute_trades,
-            types: {
-                auto_scan: typeof s.ob_auto_scan,
-                auto_add: typeof s.ob_auto_add_from_screener
+        // Debug log - raw response
+        console.log('📋 RAW settings from server:', JSON.stringify(s, null, 2));
+        
+        // Функція для надійного парсингу boolean
+        const parseBool = (val) => {
+            if (val === true) return true;
+            if (val === false) return false;
+            if (typeof val === 'string') {
+                return val.toLowerCase() === 'true';
             }
-        });
+            return false;
+        };
         
         if (s.ob_source_tf) document.getElementById('obSourceTf').value = s.ob_source_tf;
         if (s.ob_swing_length) document.getElementById('obSwingLength').value = s.ob_swing_length;
         if (s.ob_zone_count) document.getElementById('obZoneCount').value = s.ob_zone_count;
         if (s.ob_max_atr_mult) document.getElementById('obMaxAtrMult').value = s.ob_max_atr_mult;
         if (s.ob_invalidation_method) document.getElementById('obInvalidation').value = s.ob_invalidation_method;
-        document.getElementById('obCombineObs').checked = s.ob_combine_obs === true || s.ob_combine_obs === 'true';
+        document.getElementById('obCombineObs').checked = parseBool(s.ob_combine_obs);
         
         if (s.ob_entry_mode) document.getElementById('obEntryMode').value = s.ob_entry_mode;
         if (s.ob_selection) document.getElementById('obSelection').value = s.ob_selection;
@@ -895,17 +903,29 @@ async function loadSettings() {
         if (s.ob_watchlist_timeout) document.getElementById('obTimeout').value = s.ob_watchlist_timeout;
         if (s.ob_scan_interval) document.getElementById('obScanInterval').value = s.ob_scan_interval;
         if (s.ob_watchlist_limit) document.getElementById('obWatchlistLimit').value = s.ob_watchlist_limit;
-        document.getElementById('obPersistence').checked = s.ob_persistence_check === true || s.ob_persistence_check === 'true';
+        document.getElementById('obPersistence').checked = parseBool(s.ob_persistence_check);
         
-        // Boolean fields - handle both true and 'true'
-        document.getElementById('obAutoScan').checked = s.ob_auto_scan === true || s.ob_auto_scan === 'true';
-        document.getElementById('obAutoAddFromScreener').checked = s.ob_auto_add_from_screener === true || s.ob_auto_add_from_screener === 'true';
-        document.getElementById('obExecuteTrades').checked = s.ob_execute_trades === true || s.ob_execute_trades === 'true';
+        // Main toggles
+        const autoScan = parseBool(s.ob_auto_scan);
+        const autoAdd = parseBool(s.ob_auto_add_from_screener);
+        const execTrades = parseBool(s.ob_execute_trades);
+        
+        console.log('🔄 Parsed booleans:', {autoScan, autoAdd, execTrades});
+        
+        document.getElementById('obAutoScan').checked = autoScan;
+        document.getElementById('obAutoAddFromScreener').checked = autoAdd;
+        document.getElementById('obExecuteTrades').checked = execTrades;
+        
+        console.log('✅ Toggles set:', {
+            obAutoScan: document.getElementById('obAutoScan').checked,
+            obAutoAdd: document.getElementById('obAutoAddFromScreener').checked,
+            obExec: document.getElementById('obExecuteTrades').checked
+        });
         
         updateTradeToggle();
         updateTfDisplay();
     } catch (e) {
-        console.error('Load settings error:', e);
+        console.error('❌ Load settings error:', e);
     }
 }
 
