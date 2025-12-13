@@ -33,15 +33,16 @@
     .ob-bull { color: #10b981; font-weight: 600; }
     .ob-bear { color: #ef4444; font-weight: 600; }
     
-    /* Scanner status panel */
+    /* Scanner status panel - LIGHT THEME */
     .status-panel {
-        background: linear-gradient(135deg, #1e293b, #334155);
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
         border-radius: 12px;
         padding: 16px 20px;
-        color: white;
     }
     .status-box {
-        background: rgba(255,255,255,0.1);
+        background: white;
+        border: 1px solid #e2e8f0;
         border-radius: 8px;
         padding: 12px;
         flex: 1;
@@ -49,8 +50,9 @@
     .status-box-title {
         font-size: 0.7rem;
         text-transform: uppercase;
-        color: rgba(255,255,255,0.6);
+        color: #64748b;
         margin-bottom: 4px;
+        font-weight: 600;
     }
     .status-indicator {
         display: inline-flex;
@@ -60,9 +62,9 @@
         font-size: 0.75rem;
         font-weight: 600;
     }
-    .status-active { background: #22c55e; color: white; }
-    .status-idle { background: #64748b; color: white; }
-    .status-scanning { background: #3b82f6; color: white; animation: pulse-bg 1.5s infinite; }
+    .status-active { background: #d1fae5; color: #065f46; }
+    .status-idle { background: #f1f5f9; color: #64748b; }
+    .status-scanning { background: #dbeafe; color: #1d4ed8; animation: pulse-bg 1.5s infinite; }
     
     @keyframes pulse-bg {
         0%, 100% { opacity: 1; }
@@ -73,12 +75,12 @@
         font-family: 'JetBrains Mono', monospace;
         font-size: 1.1rem;
         font-weight: 600;
-        color: #fbbf24;
+        color: #0ea5e9;
     }
     
     .mini-progress {
         height: 4px;
-        background: rgba(255,255,255,0.2);
+        background: #e2e8f0;
         border-radius: 2px;
         overflow: hidden;
         margin-top: 8px;
@@ -87,6 +89,21 @@
         height: 100%;
         background: linear-gradient(90deg, #22c55e, #4ade80);
         transition: width 1s linear;
+    }
+    
+    .status-reason {
+        font-size: 0.8rem;
+        margin-top: 8px;
+        padding: 6px 10px;
+        border-radius: 6px;
+    }
+    .status-reason-warning {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    .status-reason-error {
+        background: #fee2e2;
+        color: #991b1b;
     }
     
     /* Trade toggle */
@@ -168,7 +185,7 @@
                         <div class="status-box-title">Order Block Scanner</div>
                         <div class="d-flex align-items-center gap-2">
                             <span class="status-indicator status-idle" id="obScannerStatus">IDLE</span>
-                            <span class="small opacity-75">TF: <span id="obTfDisplay">15m</span></span>
+                            <span class="small text-muted">TF: <span id="obTfDisplay">15m</span></span>
                         </div>
                     </div>
                     <div class="text-end">
@@ -176,14 +193,14 @@
                         <div class="countdown-timer" id="obNextScan">--:--:--</div>
                     </div>
                 </div>
-                <div class="small opacity-75 mb-1">
+                <div class="small text-muted mb-1">
                     <span id="obLastScanInfo">Last: — | Found: — | Scanned: —</span>
                 </div>
                 <div class="mini-progress">
                     <div class="mini-progress-bar" id="obProgressBar" style="width: 0%"></div>
                 </div>
                 <!-- Reason why not scanning -->
-                <div class="small mt-2" id="obScanReason" style="color: #fbbf24;"></div>
+                <div class="status-reason status-reason-warning" id="obScanReason" style="display: none;"></div>
             </div>
             
             <!-- RSI/MFI Integration Status -->
@@ -193,7 +210,7 @@
                         <div class="status-box-title">RSI/MFI → Watchlist</div>
                         <div class="d-flex align-items-center gap-2">
                             <span class="status-indicator status-idle" id="rsiIntegrationStatus">IDLE</span>
-                            <span class="small opacity-75">Auto-add: <span id="rsiAutoAddStatus">OFF</span></span>
+                            <span class="small text-muted">Auto-add: <span id="rsiAutoAddStatus">OFF</span></span>
                         </div>
                     </div>
                     <div class="text-end">
@@ -201,11 +218,11 @@
                         <div class="countdown-timer" id="watchlistCount">0 / 50</div>
                     </div>
                 </div>
-                <div class="small opacity-75">
+                <div class="small text-muted">
                     <span id="rsiLastAddInfo">Added today: 0 symbols</span>
                 </div>
                 <!-- Reason why not adding -->
-                <div class="small mt-2" id="rsiAddReason" style="color: #fbbf24;"></div>
+                <div class="status-reason status-reason-warning" id="rsiAddReason" style="display: none;"></div>
             </div>
         </div>
     </div>
@@ -558,11 +575,18 @@ async function loadScannerStatus() {
         const obScanReason = document.getElementById('obScanReason');
         const rsiAddReason = document.getElementById('rsiAddReason');
         
-        // Clear reasons
-        obScanReason.textContent = '';
-        rsiAddReason.textContent = '';
+        // Hide reasons by default
+        obScanReason.style.display = 'none';
+        rsiAddReason.style.display = 'none';
         
-        if (data.auto_scan_enabled) {
+        // Scheduler check first
+        if (data.scheduler_status && !data.scheduler_status.running) {
+            obStatus.className = 'status-indicator status-idle';
+            obStatus.textContent = 'IDLE';
+            obScanReason.textContent = '⚠️ Scheduler not running - restart app';
+            obScanReason.className = 'status-reason status-reason-error';
+            obScanReason.style.display = 'block';
+        } else if (data.auto_scan_enabled) {
             if (data.is_scanning) {
                 obStatus.className = 'status-indicator status-scanning';
                 obStatus.textContent = 'SCANNING';
@@ -574,11 +598,15 @@ async function loadScannerStatus() {
             // Check why might not be scanning
             if (data.watchlist_count === 0) {
                 obScanReason.textContent = '⚠️ Watchlist is empty - add symbols to scan';
+                obScanReason.className = 'status-reason status-reason-warning';
+                obScanReason.style.display = 'block';
             }
         } else {
             obStatus.className = 'status-indicator status-idle';
             obStatus.textContent = 'IDLE';
             obScanReason.textContent = '⚠️ Auto Scan is OFF - enable in settings';
+            obScanReason.className = 'status-reason status-reason-warning';
+            obScanReason.style.display = 'block';
         }
         
         // RSI auto-add status
@@ -590,10 +618,12 @@ async function loadScannerStatus() {
             document.getElementById('rsiIntegrationStatus').className = 'status-indicator status-idle';
             document.getElementById('rsiIntegrationStatus').textContent = 'IDLE';
             rsiAddReason.textContent = '⚠️ Auto-add is OFF - enable to auto-populate watchlist';
+            rsiAddReason.className = 'status-reason status-reason-warning';
+            rsiAddReason.style.display = 'block';
         }
         
         // Next scan time
-        if (data.next_scan && data.auto_scan_enabled) {
+        if (data.next_scan && data.auto_scan_enabled && data.scheduler_status?.running) {
             nextScanTime = new Date(data.next_scan);
         } else {
             nextScanTime = null;
@@ -615,18 +645,6 @@ async function loadScannerStatus() {
         // TF display
         const tfMap = {'5': '5m', '15': '15m', '30': '30m', '60': '1H', '240': '4H'};
         document.getElementById('obTfDisplay').textContent = tfMap[data.source_tf] || data.source_tf + 'm';
-        
-        // Scheduler status
-        if (data.scheduler_status) {
-            const schedInfo = data.scheduler_status;
-            if (schedInfo.running) {
-                if (!data.auto_scan_enabled) {
-                    obScanReason.textContent = '⚠️ Scheduler running but Auto Scan is OFF';
-                }
-            } else {
-                obScanReason.textContent = '❌ Scheduler not running - restart app';
-            }
-        }
         
     } catch (e) {
         console.error('Status load error:', e);
