@@ -621,6 +621,13 @@ async function autoSaveSettings() {
         ob_execute_trades: document.getElementById('obExecuteTrades').checked
     };
     
+    // Debug log
+    console.log('💾 Saving settings:', {
+        auto_scan: settings.ob_auto_scan,
+        auto_add: settings.ob_auto_add_from_screener,
+        execute: settings.ob_execute_trades
+    });
+    
     // Показуємо індикатор збереження
     showSaveIndicator('saving');
     
@@ -864,12 +871,23 @@ async function loadSettings() {
         if (!resp.ok) return;
         const s = await resp.json();
         
+        // Debug log
+        console.log('📋 Loaded settings:', {
+            auto_scan: s.ob_auto_scan,
+            auto_add: s.ob_auto_add_from_screener,
+            execute: s.ob_execute_trades,
+            types: {
+                auto_scan: typeof s.ob_auto_scan,
+                auto_add: typeof s.ob_auto_add_from_screener
+            }
+        });
+        
         if (s.ob_source_tf) document.getElementById('obSourceTf').value = s.ob_source_tf;
         if (s.ob_swing_length) document.getElementById('obSwingLength').value = s.ob_swing_length;
         if (s.ob_zone_count) document.getElementById('obZoneCount').value = s.ob_zone_count;
         if (s.ob_max_atr_mult) document.getElementById('obMaxAtrMult').value = s.ob_max_atr_mult;
         if (s.ob_invalidation_method) document.getElementById('obInvalidation').value = s.ob_invalidation_method;
-        document.getElementById('obCombineObs').checked = s.ob_combine_obs !== false;
+        document.getElementById('obCombineObs').checked = s.ob_combine_obs === true || s.ob_combine_obs === 'true';
         
         if (s.ob_entry_mode) document.getElementById('obEntryMode').value = s.ob_entry_mode;
         if (s.ob_selection) document.getElementById('obSelection').value = s.ob_selection;
@@ -877,11 +895,12 @@ async function loadSettings() {
         if (s.ob_watchlist_timeout) document.getElementById('obTimeout').value = s.ob_watchlist_timeout;
         if (s.ob_scan_interval) document.getElementById('obScanInterval').value = s.ob_scan_interval;
         if (s.ob_watchlist_limit) document.getElementById('obWatchlistLimit').value = s.ob_watchlist_limit;
-        document.getElementById('obPersistence').checked = s.ob_persistence_check === true;
+        document.getElementById('obPersistence').checked = s.ob_persistence_check === true || s.ob_persistence_check === 'true';
         
-        document.getElementById('obAutoScan').checked = s.ob_auto_scan === true;
-        document.getElementById('obAutoAddFromScreener').checked = s.ob_auto_add_from_screener === true;
-        document.getElementById('obExecuteTrades').checked = s.ob_execute_trades === true;
+        // Boolean fields - handle both true and 'true'
+        document.getElementById('obAutoScan').checked = s.ob_auto_scan === true || s.ob_auto_scan === 'true';
+        document.getElementById('obAutoAddFromScreener').checked = s.ob_auto_add_from_screener === true || s.ob_auto_add_from_screener === 'true';
+        document.getElementById('obExecuteTrades').checked = s.ob_execute_trades === true || s.ob_execute_trades === 'true';
         
         updateTradeToggle();
         updateTfDisplay();
