@@ -131,6 +131,7 @@ DEFAULT_SETTINGS = {
     "ob_auto_scan": False,              # Автоматичне сканування
     "ob_auto_add_from_screener": False, # Автоматично додавати з RSI/MFI Screener
     "ob_execute_trades": False,         # Відкривати угоди (за замовчуванням вимкнено!)
+    "ob_scan_interval": 60,             # Інтервал сканування OB в секундах
     "ob_watchlist_timeout": "24h",      # No, 12h, 24h, 48h, 72h
     "ob_watchlist_limit": 50            # Макс. монет в watchlist
 }
