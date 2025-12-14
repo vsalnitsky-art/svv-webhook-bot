@@ -341,9 +341,10 @@ class OrderBlockDetector:
                 if closes[i] > current_top_y:
                     current_top_crossed = True
                     
-                    # Шукаємо найнижчу точку (ведмежу свічку) між swing і пробиттям
-                    box_btm = min(closes[i-1], opens[i-1])
-                    box_top = max(closes[i-1], opens[i-1])
+                    # Шукаємо свічку з найнижчим low між swing і пробиттям
+                    # OB зона = весь діапазон свічки (high-low), не тільки body!
+                    box_btm = lows[i-1]
+                    box_top = highs[i-1]
                     box_loc = int(timestamps[i-1]) if isinstance(timestamps[i-1], (int, float, np.integer)) else i-1
                     
                     # Проходимо від поточного бару назад до swing
@@ -352,10 +353,10 @@ class OrderBlockDetector:
                         idx = i - j
                         if idx < 0:
                             break
-                        current_min = min(closes[idx], opens[idx])
-                        if current_min < box_btm:
-                            box_btm = current_min
-                            box_top = max(closes[idx], opens[idx])
+                        # Шукаємо свічку з найнижчим low (остання ведмежа перед пробиттям)
+                        if lows[idx] < box_btm:
+                            box_btm = lows[idx]
+                            box_top = highs[idx]
                             box_loc = int(timestamps[idx]) if isinstance(timestamps[idx], (int, float, np.integer)) else idx
                     
                     # Перевірка розміру OB
@@ -384,9 +385,10 @@ class OrderBlockDetector:
                 if closes[i] < current_bottom_y:
                     current_bottom_crossed = True
                     
-                    # Шукаємо найвищу точку (бичу свічку) між swing і пробиттям
-                    box_top = max(closes[i-1], opens[i-1])
-                    box_btm = min(closes[i-1], opens[i-1])
+                    # Шукаємо свічку з найвищим high між swing і пробиттям
+                    # OB зона = весь діапазон свічки (high-low), не тільки body!
+                    box_top = highs[i-1]
+                    box_btm = lows[i-1]
                     box_loc = int(timestamps[i-1]) if isinstance(timestamps[i-1], (int, float, np.integer)) else i-1
                     
                     # Проходимо від поточного бару назад до swing
@@ -395,10 +397,10 @@ class OrderBlockDetector:
                         idx = i - j
                         if idx < 0:
                             break
-                        current_max = max(closes[idx], opens[idx])
-                        if current_max > box_top:
-                            box_top = current_max
-                            box_btm = min(closes[idx], opens[idx])
+                        # Шукаємо свічку з найвищим high (остання бича перед пробиттям)
+                        if highs[idx] > box_top:
+                            box_top = highs[idx]
+                            box_btm = lows[idx]
                             box_loc = int(timestamps[idx]) if isinstance(timestamps[idx], (int, float, np.integer)) else idx
                     
                     # Перевірка розміру OB
