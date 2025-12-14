@@ -30,6 +30,8 @@ from utils import get_logger, validate_webhook_data, metrics, setup_logging
 
 # === WHALE MODULE IMPORT (INTEGRATION) ===
 from whale_core import whale_core
+# ✅ ДОДАНО: Імпорт реєстрації маршрутів Whale Pro
+from whale_pro import register_routes as register_whale_pro
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -1678,6 +1680,8 @@ def _auto_init_scheduler():
 
 _auto_init_scheduler()
 
+# === WHALE PRO ROUTES ===
+register_whale_pro(app)
 
 # ===== ЗАПУСК =====
 
