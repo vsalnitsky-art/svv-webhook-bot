@@ -15,25 +15,21 @@ from sqlalchemy import Column, Integer, Float, String, DateTime, Boolean
 
 # Imports from PRO indicators
 from indicators_pro import calculate_rvol, check_ttm_squeeze, calculate_adx
-from indicators import calculate_ema, calculate_obv, calculate_slope, simple_rsi
+from indicators import calculate_ema, calculate_obv, calculate_slope
 
 logger = logging.getLogger("WhalePro")
 
-# === MODEL DEFINITION (Append Only) ===
-# Ми визначаємо модель тут, але вона буде створена динамічно при першому запуску
+# === MODEL DEFINITION ===
 class WhaleProSignal(Base):
     __tablename__ = 'whale_pro_signals'
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), index=True)
     price = Column(Float)
     score = Column(Integer)
-    
-    # Нові метрики
     rvol = Column(Float)
     adx = Column(Float)
     is_squeeze = Column(Boolean)
-    btc_trend = Column(String(10)) # BULL / BEAR
-    
+    btc_trend = Column(String(10)) 
     details = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -45,14 +41,22 @@ class WhaleProCore:
         self.last_scan_time = None
         self.btc_trend_status = "UNKNOWN"
         
+        # Автоматизація (Нові змінні)
+        self.auto_running = False
+        self.auto_interval_min = 60
+        self._stop_event = threading.Event()
+        
         # Налаштування PRO
         self.CONFIG = {
-            "timeframe": "240",        # 4H (рекомендовано для Pro)
-            "limit_coins": 50,         # Топ 50 за ліквідністю
-            "min_vol_usdt": 20000000,  # 20M USDT (фільтр сміття)
-            "rvol_min": 1.5,           # Об'єм в 1.5 рази вище середнього
-            "adx_min": 20              # Сила тренду
+            "timeframe": "240",        # 4H (Inst.)
+            "limit_coins": 50,
+            "min_vol_usdt": 20000000,
+            "rvol_min": 1.5,
+            "adx_min": 20
         }
+        
+        # Запуск фонового потоку планувальника
+        threading.Thread(target=self._scheduler_loop, daemon=True).start()
 
     def ensure_table(self):
         """Створює таблицю для Pro сигналів якщо не існує"""
@@ -83,7 +87,6 @@ class WhaleProCore:
                     df = df.iloc[:-1].reset_index(drop=True)
                 return df
         except Exception as e:
-            # logger.error(f"Fetch error {symbol}: {e}")
             pass
         return None
 
@@ -93,7 +96,6 @@ class WhaleProCore:
         Якщо BTC під EMA 200 на 4H - це небезпечний ринок.
         """
         try:
-            # logger.info("🔍 Analyzing BTC Trend...")
             df = self.fetch_data("BTCUSDT", limit=300)
             if df is None: return "NEUTRAL"
             
@@ -154,7 +156,6 @@ class WhaleProCore:
                     reasons.append("TTM Squeeze")
                 
                 # Accumulation (Price Flat/Down, OBV Up)
-                # Нормалізуємо нахил ціни
                 if close.iloc[-1] > 0:
                     norm_p_slope = (price_slope / close.iloc[-1]) * 100
                 else:
@@ -185,7 +186,6 @@ class WhaleProCore:
             return None
 
         except Exception as e:
-            # logger.error(f"Analyze {symbol} error: {e}") 
             return None
 
     def save_result(self, symbol, data):
@@ -266,7 +266,8 @@ class WhaleProCore:
             
             # 4. Scan Loop
             for i, t in enumerate(targets):
-                if not self.is_scanning: break
+                # Перериваємо якщо вимкнули авто або ручний скан
+                if not self.is_scanning and not self.auto_running: break
                 
                 sym = t['symbol']
                 self.status = f"Analysing {sym} (RVOL/ADX)..."
@@ -278,7 +279,7 @@ class WhaleProCore:
                     if res:
                         self.save_result(sym, res)
                 
-                time.sleep(0.05)
+                time.sleep(0.1) # Затримка для API
             
             self.progress = 100
             self.status = "Pro Scan Completed"
@@ -293,7 +294,6 @@ class WhaleProCore:
     def start_scan(self, config=None):
         if self.is_scanning: return False
         if config:
-            # Оновлюємо конфіг, конвертуємо типи
             if 'min_vol_usdt' in config:
                 try: self.CONFIG['min_vol_usdt'] = int(config['min_vol_usdt'])
                 except: pass
@@ -305,6 +305,29 @@ class WhaleProCore:
                 
         threading.Thread(target=self._scan_thread).start()
         return True
+
+    # === AUTOMATION LOGIC ===
+    def set_automation(self, enabled, interval):
+        """Вмикає/вимикає авто-сканування"""
+        self.auto_running = enabled
+        self.auto_interval_min = int(interval)
+        logger.info(f"Whale Auto: {enabled}, Interval: {interval}m")
+
+    def _scheduler_loop(self):
+        """Фоновий цикл планувальника"""
+        while not self._stop_event.is_set():
+            if self.auto_running and not self.is_scanning:
+                logger.info("⏰ Whale Auto-Scan Triggered")
+                self.start_scan()
+                
+                # Чекаємо інтервал (в хвилинах) перед наступним запуском
+                # Використовуємо цикл по секунді, щоб можна було зупинити очікування
+                sleep_seconds = self.auto_interval_min * 60
+                for _ in range(sleep_seconds):
+                    if not self.auto_running: break
+                    time.sleep(1)
+            else:
+                time.sleep(5)
 
 whale_pro = WhaleProCore()
 
@@ -320,6 +343,8 @@ def register_routes(app):
                              is_scanning=whale_pro.is_scanning,
                              btc_trend=whale_pro.btc_trend_status,
                              last_time=whale_pro.last_scan_time,
+                             auto_running=whale_pro.auto_running,
+                             auto_interval=whale_pro.auto_interval_min,
                              conf=settings._cache)
 
     @app.route('/whale_pro/scan', methods=['POST'])
@@ -327,3 +352,11 @@ def register_routes(app):
         data = request.json or {}
         whale_pro.start_scan(data)
         return jsonify({'status': 'started'})
+
+    @app.route('/whale_pro/auto', methods=['POST'])
+    def whale_pro_auto():
+        data = request.json or {}
+        enabled = data.get('enabled', False)
+        interval = data.get('interval', 60)
+        whale_pro.set_automation(enabled, interval)
+        return jsonify({'status': 'ok'})
