@@ -149,11 +149,14 @@ function startProScan() {
     
     btn.disabled = true;
     
+    // Отримуємо CSRF токен з мета-тега
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    
     fetch('/whale_pro/scan', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'X-CSRFToken': '{{ csrf_token() }}'
+            'X-CSRFToken': csrfToken
         },
         body: JSON.stringify({
             timeframe: tf,
