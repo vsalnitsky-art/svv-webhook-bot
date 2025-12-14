@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Whale Pro{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h3 class="fw-bold m-0 text-primary">
+                <i class="ri-vip-diamond-line me-2"></i>Whale PRO
+            </h3>
+            <p class="text-muted small m-0">Інституційний аналіз: RVOL + TTM Squeeze + ADX</p>
+        </div>
+        
+        <div class="px-4 py-2 rounded-3 border bg-white d-flex align-items-center">
+            <span class="small fw-bold text-muted me-2">BTC TREND:</span>
+            {% if btc_trend == 'BULLISH' %}
+                <span class="badge bg-success">BULLISH 🚀</span>
+            {% elif btc_trend == 'BEARISH' %}
+                <span class="badge bg-danger">BEARISH 🐻</span>
+            {% else %}
+                <span class="badge bg-secondary">WAITING...</span>
+            {% endif %}
+        </div>
+
+        <div>
+            <button onclick="startProScan()" id="scanBtn" class="btn btn-primary fw-bold shadow-sm" {{ 'disabled' if is_scanning }}>
+                {% if is_scanning %}
+                <span class="spinner-border spinner-border-sm me-2"></span> {{ progress }}%
+                {% else %}
+                <i class="ri-radar-line me-2"></i> SCAN PRO
+                {% endif %}
+            </button>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body bg-light rounded-3">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-2">
+                    <label class="small fw-bold text-muted text-uppercase">Timeframe</label>
+                    <select class="form-select form-select-sm" id="tf">
+                        <option value="60">1H</option>
+                        <option value="240" selected>4H (Inst.)</option>
+                        <option value="D">1D</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="small fw-bold text-muted text-uppercase">Min Vol ($)</label>
+                    <select class="form-select form-select-sm" id="min_vol">
+                        <option value="10000000">10M+</option>
+                        <option value="20000000" selected>20M+ (Whale)</option>
+                        <option value="50000000">50M+ (Mega)</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="small fw-bold text-muted text-uppercase">Min RVOL</label>
+                    <input type="number" class="form-control form-control-sm" id="min_rvol" value="1.5" step="0.1">
+                </div>
+                <div class="col-md-3">
+                    <div class="small text-muted text-uppercase fw-bold">Status</div>
+                    <div class="fw-bold text-dark" id="status-text">{{ status }}</div>
+                </div>
+                <div class="col-md-3 text-end">
+                    <small class="text-muted">Last update: <span class="fw-bold">{{ last_time }}</span></small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-light text-uppercase small text-muted">
+                    <tr>
+                        <th class="ps-4">Time</th>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>RVOL</th>
+                        <th>Squeeze</th>
+                        <th>ADX</th>
+                        <th>Score</th>
+                        <th>Details</th>
+                        <th class="text-end pe-4">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in history %}
+                    <tr>
+                        <td class="ps-4 text-muted small font-mono">{{ row.time }}</td>
+                        <td class="fw-bold text-primary">{{ row.symbol }}</td>
+                        <td class="font-mono">{{ row.price }}</td>
+                        
+                        <td>
+                            {% if row.rvol >= 2.0 %}
+                                <span class="badge bg-danger">x{{ row.rvol }} 🔥</span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark">x{{ row.rvol }}</span>
+                            {% endif %}
+                        </td>
+                        
+                        <td>
+                            {% if row.is_squeeze %}
+                                <span class="badge bg-dark">TTM SQUEEZE 🤏</span>
+                            {% else %}
+                                <span class="text-muted small">-</span>
+                            {% endif %}
+                        </td>
+                        
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <span class="small font-mono me-2">{{ row.adx }}</span>
+                                <div class="progress" style="height: 4px; width: 50px;">
+                                    <div class="progress-bar bg-info" style="width: {{ row.adx }}%"></div>
+                                </div>
+                            </div>
+                        </td>
+                        
+                        <td><span class="fw-bold">{{ row.score }}</span></td>
+                        
+                        <td class="small text-muted">{{ row.details }}</td>
+                        
+                        <td class="text-end pe-4">
+                            <a href="https://www.bybit.com/trade/usdt/{{ row.symbol }}" target="_blank" class="btn btn-sm btn-outline-light text-dark border">
+                                <i class="ri-line-chart-line"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="9" class="text-center py-5 text-muted">
+                            <i class="ri-vip-diamond-line fs-1 opacity-25"></i>
+                            <p class="mt-2">Waiting for scan...</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function startProScan() {
+    const btn = document.getElementById('scanBtn');
+    const tf = document.getElementById('tf').value;
+    const min_vol = document.getElementById('min_vol').value;
+    const min_rvol = document.getElementById('min_rvol').value;
+    
+    btn.disabled = true;
+    
+    fetch('/whale_pro/scan', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({
+            timeframe: tf,
+            min_vol_usdt: parseInt(min_vol),
+            rvol_min: parseFloat(min_rvol)
+        })
+    }).then(() => {
+        setTimeout(() => location.reload(), 1000);
+    });
+}
+
+{% if is_scanning %}
+setTimeout(() => location.reload(), 2000);
+{% endif %}
+</script>
+{% endblock %}
