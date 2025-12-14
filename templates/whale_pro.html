@@ -4,6 +4,7 @@
 
 {% block content %}
 <div class="container-fluid mt-4">
+    
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
             <h3 class="fw-bold m-0 text-primary">
@@ -12,18 +13,18 @@
             <p class="text-muted small m-0">Інституційний аналіз: RVOL + TTM Squeeze + ADX</p>
         </div>
         
-        <div class="px-4 py-2 rounded-3 border bg-white d-flex align-items-center">
-            <span class="small fw-bold text-muted me-2">BTC TREND:</span>
-            {% if btc_trend == 'BULLISH' %}
-                <span class="badge bg-success">BULLISH 🚀</span>
-            {% elif btc_trend == 'BEARISH' %}
-                <span class="badge bg-danger">BEARISH 🐻</span>
-            {% else %}
-                <span class="badge bg-secondary">WAITING...</span>
-            {% endif %}
-        </div>
+        <div class="d-flex gap-3 align-items-center">
+            <div class="px-3 py-2 rounded-3 border bg-white d-flex align-items-center shadow-sm">
+                <span class="small fw-bold text-muted me-2">BTC TREND:</span>
+                {% if btc_trend == 'BULLISH' %}
+                    <span class="badge bg-success">BULLISH 🚀</span>
+                {% elif btc_trend == 'BEARISH' %}
+                    <span class="badge bg-danger">BEARISH 🐻</span>
+                {% else %}
+                    <span class="badge bg-secondary">WAITING...</span>
+                {% endif %}
+            </div>
 
-        <div>
             <button onclick="startProScan()" id="scanBtn" class="btn btn-primary fw-bold shadow-sm" {{ 'disabled' if is_scanning }}>
                 {% if is_scanning %}
                 <span class="spinner-border spinner-border-sm me-2"></span> {{ progress }}%
@@ -35,34 +36,107 @@
     </div>
 
     <div class="card border-0 shadow-sm mb-4">
-        <div class="card-body bg-light rounded-3">
+        <div class="card-header bg-white py-2 border-bottom cursor-pointer" data-bs-toggle="collapse" data-bs-target="#strategyInfo">
+            <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-bold text-primary"><i class="ri-information-fill me-2"></i>Як працює ця стратегія?</span>
+                <i class="ri-arrow-down-s-line text-muted"></i>
+            </div>
+        </div>
+        <div class="collapse show" id="strategyInfo">
+            <div class="card-body bg-light">
+                <div class="row g-4">
+                    <div class="col-md-3 border-end">
+                        <h6 class="fw-bold text-dark"><i class="ri-bar-chart-grouped-fill text-danger me-2"></i>RVOL (Relative Volume)</h6>
+                        <p class="small text-muted mb-0">
+                            Показує аномальний об'єм. Якщо <strong>RVOL > 1.5</strong>, це означає, що поточний об'єм на 50% вищий за середній. Це сліди "розумних грошей".
+                        </p>
+                    </div>
+                    <div class="col-md-3 border-end">
+                        <h6 class="fw-bold text-dark"><i class="ri-compress-line text-primary me-2"></i>TTM Squeeze</h6>
+                        <p class="small text-muted mb-0">
+                            Стан, коли смуги Боллінджера входять всередину Каналів Кельтнера. Це означає <strong>накопичення енергії</strong> перед сильним пострілом ціни.
+                        </p>
+                    </div>
+                    <div class="col-md-3 border-end">
+                        <h6 class="fw-bold text-dark"><i class="ri-line-chart-line text-success me-2"></i>ADX Trend</h6>
+                        <p class="small text-muted mb-0">
+                            Індекс сили тренду. Якщо <strong>ADX < 25</strong>, ринок у флеті (накопичення). Якщо ADX росте, починається новий тренд.
+                        </p>
+                    </div>
+                    <div class="col-md-3">
+                        <h6 class="fw-bold text-dark"><i class="ri-money-dollar-circle-line text-warning me-2"></i>Accumulation</h6>
+                        <p class="small text-muted mb-0">
+                            Дивергенція: Ціна стоїть на місці або падає, але <strong>OBV (On-Balance Volume) росте</strong>. Це означає, що кити лімітними ордерами скуповують актив.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body bg-white rounded-3">
             <div class="row g-3 align-items-end">
+                
                 <div class="col-md-2">
-                    <label class="small fw-bold text-muted text-uppercase">Timeframe</label>
+                    <div class="d-flex align-items-center mb-1">
+                        <label class="small fw-bold text-muted text-uppercase me-1">Timeframe</label>
+                        <i class="ri-question-line text-muted" style="cursor: help;" data-bs-toggle="tooltip" title="Таймфрейм аналізу. 4H (240) рекомендовано для пошуку глобальних рухів 'китів'."></i>
+                    </div>
                     <select class="form-select form-select-sm" id="tf">
                         <option value="60">1H</option>
                         <option value="240" selected>4H (Inst.)</option>
                         <option value="D">1D</option>
                     </select>
                 </div>
+
                 <div class="col-md-2">
-                    <label class="small fw-bold text-muted text-uppercase">Min Vol ($)</label>
+                    <div class="d-flex align-items-center mb-1">
+                        <label class="small fw-bold text-muted text-uppercase me-1">Min Vol ($)</label>
+                        <i class="ri-question-line text-muted" style="cursor: help;" data-bs-toggle="tooltip" title="Фільтр ліквідності. 20М+ відсіює 'сміттєві' монети з низькою ліквідністю."></i>
+                    </div>
                     <select class="form-select form-select-sm" id="min_vol">
                         <option value="10000000">10M+</option>
                         <option value="20000000" selected>20M+ (Whale)</option>
                         <option value="50000000">50M+ (Mega)</option>
                     </select>
                 </div>
+
                 <div class="col-md-2">
-                    <label class="small fw-bold text-muted text-uppercase">Min RVOL</label>
+                    <div class="d-flex align-items-center mb-1">
+                        <label class="small fw-bold text-muted text-uppercase me-1">Min RVOL</label>
+                        <i class="ri-question-line text-muted" style="cursor: help;" data-bs-toggle="tooltip" title="Поріг аномального об'єму. 1.5 означає, що об'єм має бути в 1.5 рази більшим за середній."></i>
+                    </div>
                     <input type="number" class="form-control form-control-sm" id="min_rvol" value="1.5" step="0.1">
                 </div>
-                <div class="col-md-3">
-                    <div class="small text-muted text-uppercase fw-bold">Status</div>
-                    <div class="fw-bold text-dark" id="status-text">{{ status }}</div>
+
+                <div class="col-md-3 border-start ps-4">
+                    <div class="d-flex align-items-center mb-2">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="autoScanToggle" {{ 'checked' if auto_running }} onchange="toggleAutoScan()">
+                            <label class="form-check-label small fw-bold text-dark" for="autoScanToggle">Авто-режим</label>
+                        </div>
+                        <span id="autoBadge" class="badge ms-2 {{ 'bg-success' if auto_running else 'bg-secondary' }}">
+                            {{ 'ON' if auto_running else 'OFF' }}
+                        </span>
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light">Інтервал</span>
+                        <select class="form-select" id="autoInterval" onchange="toggleAutoScan()">
+                            <option value="15" {{ 'selected' if auto_interval == 15 }}>15 хв</option>
+                            <option value="30" {{ 'selected' if auto_interval == 30 }}>30 хв</option>
+                            <option value="60" {{ 'selected' if auto_interval == 60 }}>1 година</option>
+                            <option value="240" {{ 'selected' if auto_interval == 240 }}>4 години</option>
+                        </select>
+                    </div>
                 </div>
+
                 <div class="col-md-3 text-end">
-                    <small class="text-muted">Last update: <span class="fw-bold">{{ last_time }}</span></small>
+                    <div class="small text-muted mb-1">Status: <span class="fw-bold text-dark">{{ status }}</span></div>
+                    <small class="text-muted">Last update: <span class="fw-bold">{{ last_time or "Never" }}</span></small>
+                    <div id="nextScanCountdown" class="mt-1 badge bg-light text-primary border border-primary-subtle">
+                        --:--:--
+                    </div>
                 </div>
             </div>
         </div>
@@ -76,9 +150,21 @@
                         <th class="ps-4">Time</th>
                         <th>Symbol</th>
                         <th>Price</th>
-                        <th>RVOL</th>
-                        <th>Squeeze</th>
-                        <th>ADX</th>
+                        <th>
+                            RVOL
+                            <i class="ri-question-line text-muted ms-1" style="font-size: 0.8em; cursor: help;" 
+                               data-bs-toggle="tooltip" title="Relative Volume: Співвідношення поточного об'єму до середнього."></i>
+                        </th>
+                        <th>
+                            Squeeze
+                            <i class="ri-question-line text-muted ms-1" style="font-size: 0.8em; cursor: help;" 
+                               data-bs-toggle="tooltip" title="TTM Squeeze: Bollinger Bands знаходяться всередині Keltner Channels. Ознака накопичення енергії."></i>
+                        </th>
+                        <th>
+                            ADX
+                            <i class="ri-question-line text-muted ms-1" style="font-size: 0.8em; cursor: help;" 
+                               data-bs-toggle="tooltip" title="Сила тренду. <25: Флет/Накопичення. >25 та росте: Початок тренду."></i>
+                        </th>
                         <th>Score</th>
                         <th>Details</th>
                         <th class="text-end pe-4">Action</th>
@@ -141,6 +227,9 @@
 </div>
 
 <script>
+// Отримання CSRF токену
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
 function startProScan() {
     const btn = document.getElementById('scanBtn');
     const tf = document.getElementById('tf').value;
@@ -148,9 +237,6 @@ function startProScan() {
     const min_rvol = document.getElementById('min_rvol').value;
     
     btn.disabled = true;
-    
-    // Отримуємо CSRF токен з мета-тега
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
     
     fetch('/whale_pro/scan', {
         method: 'POST',
@@ -166,6 +252,58 @@ function startProScan() {
     }).then(() => {
         setTimeout(() => location.reload(), 1000);
     });
+}
+
+function toggleAutoScan() {
+    const enabled = document.getElementById('autoScanToggle').checked;
+    const interval = document.getElementById('autoInterval').value;
+    const badge = document.getElementById('autoBadge');
+    
+    // Оновлюємо UI миттєво
+    badge.className = enabled ? 'badge ms-2 bg-success' : 'badge ms-2 bg-secondary';
+    badge.textContent = enabled ? 'ON' : 'OFF';
+    
+    fetch('/whale_pro/auto', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({
+            enabled: enabled,
+            interval: parseInt(interval)
+        })
+    });
+}
+
+// Ініціалізація тултипів
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl)
+    })
+});
+
+// Клієнтський таймер для зворотного відліку (естетичний)
+// В реальному проекті можна синхронізувати з сервером, але це проста емуляція
+let autoInterval = {{ auto_interval }};
+let isAuto = {{ 'true' if auto_running else 'false' }};
+
+if (isAuto) {
+    // Встановлюємо таймер на інтервал (приблизний, бо не знаємо точного часу наступного скану з сервера)
+    const countdownEl = document.getElementById('nextScanCountdown');
+    let timeLeft = autoInterval * 60; // seconds
+    
+    setInterval(() => {
+        if (timeLeft <= 0) timeLeft = autoInterval * 60;
+        timeLeft--;
+        
+        const h = Math.floor(timeLeft / 3600);
+        const m = Math.floor((timeLeft % 3600) / 60);
+        const s = timeLeft % 60;
+        
+        countdownEl.textContent = `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    }, 1000);
 }
 
 {% if is_scanning %}
