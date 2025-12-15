@@ -550,7 +550,7 @@ class OrderBlockScanner:
         }
         return tf_map.get(self.source_tf, '15')
     
-    def _fetch_klines(self, symbol: str, limit: int = 200) -> Optional[pd.DataFrame]:
+    def _fetch_klines(self, symbol: str, limit: int = 1000) -> Optional[pd.DataFrame]:
         """Отримання свічок з біржі"""
         try:
             response = self.session.get_kline(
