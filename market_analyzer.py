@@ -42,7 +42,7 @@ class MarketAnalyzer:
             logger.error(f"Error getting tickers: {e}")
             return []
 
-    def fetch_candles(self, symbol, timeframe, limit=300):
+    def fetch_candles(self, symbol, timeframe, limit=1000):
         """
         Завантаження свічок для RSI - 100% сумісність з TradingView.
         
@@ -152,7 +152,7 @@ class MarketAnalyzer:
                 try:
                     # 2. Отримуємо дані (300 свічок для точності RSI)
                     # ✅ Тепер з правильною прив'язкою до сітки часу і ПРАВИЛЬНИМ ТФ!
-                    df = self.fetch_candles(sym, exit_tf, limit=300)
+                    df = self.fetch_candles(sym, exit_tf, limit=1000)
                     
                     if df is None or len(df) < rsi_len: 
                         time.sleep(0.05)
