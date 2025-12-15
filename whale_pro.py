@@ -65,7 +65,7 @@ class WhaleProCore:
         except Exception as e:
             logger.error(f"Table creation error: {e}")
 
-    def fetch_data(self, symbol, limit=300):
+    def fetch_data(self, symbol, limit=1000):
         """Завантажує дані (сумісність з indicators.py)"""
         try:
             # Мапінг
@@ -96,7 +96,7 @@ class WhaleProCore:
         Якщо BTC під EMA 200 на 4H - це небезпечний ринок.
         """
         try:
-            df = self.fetch_data("BTCUSDT", limit=300)
+            df = self.fetch_data("BTCUSDT", limit=1000)
             if df is None: return "NEUTRAL"
             
             close = df['close']
