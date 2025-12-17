@@ -32,7 +32,7 @@ from utils import get_logger, validate_webhook_data, metrics, setup_logging
 from whale_core import whale_core
 # ✅ IMPORT WHALE PRO
 from whale_pro import register_routes as register_whale_pro
-# ✅ IMPORT WHALE SNIPER (NEW STRATEGY)
+# ✅ IMPORT WHALE SNIPER (ВИПРАВЛЕНО: Додано імпорт)
 from sniper_strategy import sniper_bot
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
@@ -359,47 +359,47 @@ def whale_scan_start():
     started = whale_core.start_scan(override_cfg=data)
     return jsonify({"status": "started" if started else "busy"})
 
-    # ==========================
-    #    WHALE SNIPER (UPDATED)
-    # ==========================
+# ==========================================
+# 🎯 WHALE SNIPER (ВИПРАВЛЕНО: Додані маршрути)
+# ==========================================
+@app.route('/sniper')
+def sniper_page():
+    """Page for the new Sniper Strategy"""
+    return render_template('sniper.html',
+                         status=sniper_bot.status,
+                         progress=sniper_bot.progress,
+                         last_time=sniper_bot.last_run_time,
+                         is_running=sniper_bot.is_running,
+                         history=sniper_bot.found_signals,
+                         conf=settings._cache)
+
+@app.route('/sniper/toggle', methods=['POST'])
+def sniper_toggle():
+    """Start/Stop Sniper"""
+    data = request.json or {}
+    enable = data.get('enable', False)
     
-    @app.route('/sniper')
-    def sniper_page():
-        """Page for the new Sniper Strategy"""
-        return render_template('sniper.html',
-                             status=sniper_bot.status,
-                             progress=sniper_bot.progress,
-                             last_time=sniper_bot.last_run_time,
-                             is_running=sniper_bot.is_running,
-                             history=sniper_bot.found_signals,
-                             conf=settings._cache)
+    if enable:
+        sniper_bot.start()
+    else:
+        sniper_bot.stop()
+        
+    return jsonify({'status': 'ok', 'is_running': sniper_bot.is_running})
 
-    @app.route('/sniper/toggle', methods=['POST'])
-    def sniper_toggle():
-        """Start/Stop Sniper"""
-        data = request.json or {}
-        enable = data.get('enable', False)
-        
-        if enable:
-            sniper_bot.start()
-        else:
-            sniper_bot.stop()
-            
-        return jsonify({'status': 'ok', 'is_running': sniper_bot.is_running})
+@app.route('/sniper/settings', methods=['POST'])
+def sniper_settings_save():
+    """Save Sniper Settings dynamically"""
+    data = request.json or {}
+    logger.info(f"Sniper Settings Update: {data}")
+    
+    # Save to global settings
+    settings.save_settings(data)
+    
+    # Apply to live bot
+    sniper_bot.update_config()
+    
+    return jsonify({'status': 'ok'})
 
-    @app.route('/sniper/settings', methods=['POST'])
-    def sniper_settings_save():
-        """Save Sniper Settings dynamically"""
-        data = request.json or {}
-        logger.info(f"Sniper Settings Update: {data}")
-        
-        # Save to global settings
-        settings.save_settings(data)
-        
-        # Apply to live bot
-        sniper_bot.update_config()
-        
-        return jsonify({'status': 'ok'})
 # ==========================================
 
 @app.route('/', methods=['GET'])
