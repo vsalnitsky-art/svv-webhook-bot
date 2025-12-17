@@ -31,33 +31,56 @@ class WhaleSniper:
     def __init__(self):
         self.is_running = False
         self.status = "Ready"
-        self.last_run_time = None
+        self.progress = 0  # Для прогрес-бару (0-100)
+        self.last_run_time = "-"
         self._stop_event = threading.Event()
         self.found_signals = [] # Локальний кеш для UI
         
-        # Налаштування Снайпера
+        # Завантажуємо налаштування або беремо дефолтні (Агресивні)
         self.CONFIG = {
-            "btc_check": True,          # Тільки якщо BTC Bullish
-            "min_vol_usdt": 15_000_000, # Ліквідність > 15M
-            "rvol_min": 2.0,            # Сильний сплеск об'єму (Whale)
-            "adx_min": 20,              # Наявність тренду
-            "ob_timeframe": "15",       # Робочий ТФ для входу
-            "rsi_trigger": 40,          # RSI має бути низьким при торканні OB
-            "scan_interval": 300        # Пауза 5 хв між циклами
+            "btc_check": settings.get("sniper_btc_check", True),
+            "min_vol_usdt": float(settings.get("sniper_min_vol", 10_000_000)), 
+            "rvol_min": float(settings.get("sniper_rvol", 2.2)),
+            "adx_min": int(settings.get("sniper_adx", 20)),
+            "ob_timeframe": "15",
+            "rsi_trigger": int(settings.get("sniper_rsi", 45)),
+            "ob_swing": int(settings.get("sniper_ob_swing", 3)),
+            "ob_atr": float(settings.get("sniper_ob_atr", 2.5)),
+            "scan_interval": 300
         }
         
-        # Ініціалізація сканера OB з агресивними налаштуваннями
+        # Ініціалізація сканера OB
+        self._init_scanner()
+
+    def _init_scanner(self):
+        """Ініціалізація сканера з поточними налаштуваннями"""
         ob_settings = {
             'ob_source_tf': self.CONFIG['ob_timeframe'],
-            'ob_swing_length': 5,
+            'ob_swing_length': self.CONFIG['ob_swing'],
             'ob_zone_count': 'High',
-            'ob_max_atr_mult': 4.0,     
+            'ob_max_atr_mult': self.CONFIG['ob_atr'],
             'ob_combine_obs': True,
             'ob_entry_mode': 'Immediate', 
             'ob_selection': 'Closest'
         }
-        # Створюємо екземпляр сканера
         self.ob_scanner = OrderBlockScanner(bot_instance.session, ob_settings)
+
+    def update_config(self):
+        """Оновлення конфігурації з UI без перезапуску"""
+        try:
+            self.CONFIG["btc_check"] = settings.get("sniper_btc_check", True)
+            self.CONFIG["min_vol_usdt"] = float(settings.get("sniper_min_vol", 10_000_000))
+            self.CONFIG["rvol_min"] = float(settings.get("sniper_rvol", 2.2))
+            self.CONFIG["adx_min"] = int(settings.get("sniper_adx", 20))
+            self.CONFIG["rsi_trigger"] = int(settings.get("sniper_rsi", 45))
+            self.CONFIG["ob_swing"] = int(settings.get("sniper_ob_swing", 3))
+            self.CONFIG["ob_atr"] = float(settings.get("sniper_ob_atr", 2.5))
+            
+            # Переініціалізація сканера з новими параметрами OB
+            self._init_scanner()
+            logger.info(f"Sniper config updated: {self.CONFIG}")
+        except Exception as e:
+            logger.error(f"Config update error: {e}")
 
     def check_market_conditions(self):
         """КРОК 1: Перевірка BTC"""
@@ -67,12 +90,15 @@ class WhaleSniper:
         trend = whale_pro.analyze_btc_trend()
         if trend != "BULLISH":
             self.status = f"Paused: BTC is {trend}"
+            self.progress = 0
             return False
         return True
 
     def find_whale_tracks(self):
-        """КРОК 2: Пошук монет з RVOL > 2"""
-        self.status = "Scanning Vol & Trend..."
+        """КРОК 2: Пошук монет з RVOL > X"""
+        self.status = "🔍 Filtering Volume & Trend..."
+        self.progress = 10
+        
         tickers = bot_instance.get_all_tickers()
         candidates = []
         
@@ -83,37 +109,45 @@ class WhaleSniper:
             and float(t.get('turnover24h', 0)) > self.CONFIG['min_vol_usdt']
         ]
         
-        # Сортуємо по об'єму, беремо ТОП-40
+        # Сортуємо по об'єму, беремо ТОП-50
         targets.sort(key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
-        check_list = targets[:40]
+        check_list = targets[:50]
+        total_check = len(check_list)
         
-        for t in check_list:
+        for i, t in enumerate(check_list):
             if not self.is_running: break
             
             sym = t['symbol']
-            # Використовуємо функцію з whale_pro, яка вже має limit=1000
-            df = whale_pro.fetch_data(sym)
+            # Візуалізація процесу
+            self.status = f"Scanning {sym} ({i+1}/{total_check})"
+            self.progress = 10 + int((i / total_check) * 40) # 10% -> 50%
             
+            df = whale_pro.fetch_data(sym)
             if df is not None:
                 res = whale_pro.analyze_ticker_pro(sym, df)
                 if res:
-                    # Фільтр: Є об'єм і є хоч якийсь тренд
+                    # Фільтр: RVOL та ADX з налаштувань
                     if res['rvol'] >= self.CONFIG['rvol_min'] and res['adx'] >= self.CONFIG['adx_min']:
                         candidates.append(sym)
                         
-            time.sleep(0.1) # Захист API
+            time.sleep(0.05)
             
         return candidates
 
     def hunt_targets(self, candidates):
         """КРОК 3 і 4: Перевірка OB та RSI"""
-        self.status = f"Hunting in {len(candidates)} coins..."
+        if not candidates:
+            return
+
+        total_cand = len(candidates)
+        self.status = f"🎯 Hunting in {total_cand} targets..."
         
-        for sym in candidates:
+        for i, sym in enumerate(candidates):
             if not self.is_running: break
             
+            self.progress = 50 + int((i / total_cand) * 50) # 50% -> 100%
+            
             # 1. Шукаємо Order Block (Тільки BUY)
-            # Сканер сам завантажить 1000 свічок завдяки нашим правкам
             ob_result = self.ob_scanner.scan_symbol(sym, "BUY")
             
             if ob_result and ob_result.get('status') in ['Valid', 'Triggered']:
@@ -123,17 +157,15 @@ class WhaleSniper:
                 # Відстань до входу у відсотках
                 dist = (curr - entry) / entry * 100
                 
-                # ЛОГІКА: Ціна має бути або в зоні, або трохи вище (до 1%)
-                # Ми чекаємо відкату
-                if -1.0 <= dist <= 1.0:
+                # ЛОГІКА: Ціна має бути або в зоні, або трохи вище (до 1.5%)
+                if -1.0 <= dist <= 1.5:
                     
                     # 2. RSI Trigger
-                    # Довантажуємо дані для точного RSI
                     df = whale_pro.fetch_data(sym)
                     if df is not None:
                         rsi = simple_rsi(df['close'], period=14).iloc[-1]
                         
-                        # Якщо RSI перепроданий - це СИГНАЛ
+                        # Порівнюємо з налаштуванням RSI Trigger
                         if rsi <= self.CONFIG['rsi_trigger']:
                             self.fire_signal(sym, curr, rsi, ob_result, dist)
                             
@@ -146,30 +178,28 @@ class WhaleSniper:
         
         session = db_manager.get_session()
         try:
-            # Зберігаємо в ту ж таблицю, що і Whale, але з поміткою SNIPER
             sig = WhaleSignal(
                 symbol=symbol,
                 price=price,
-                score=99, # Елітний сигнал
+                score=99,
                 squeeze_val=0,
                 obv_slope=0,
-                details=f"SNIPER 🎯 (RVOL+OB+RSI {round(rsi,1)})",
+                details=f"SNIPER (RVOL {self.CONFIG['rvol_min']}+ | RSI {round(rsi,1)})",
                 created_at=datetime.utcnow(),
                 rsi=rsi
             )
             session.add(sig)
             session.commit()
             
-            # Додаємо в локальний список для UI
             self.found_signals.insert(0, {
                 'time': datetime.now().strftime("%H:%M"),
                 'symbol': symbol,
                 'price': price,
                 'rsi': round(rsi, 1),
                 'ob_entry': ob_data['entry_price'],
-                'details': f"Retest OB + RSI < {self.CONFIG['rsi_trigger']}"
+                'details': f"Near OB ({round(dist,2)}%) + RSI < {self.CONFIG['rsi_trigger']}"
             })
-            self.found_signals = self.found_signals[:20] # Тримаємо останні 20
+            self.found_signals = self.found_signals[:20]
             
         except Exception as e:
             logger.error(f"Save sniper error: {e}")
@@ -178,6 +208,7 @@ class WhaleSniper:
 
     def start(self):
         if self.is_running: return
+        self.update_config() # Оновити налаштування перед стартом
         self.is_running = True
         self._stop_event.clear()
         threading.Thread(target=self._loop, daemon=True).start()
@@ -187,10 +218,12 @@ class WhaleSniper:
         self.is_running = False
         self._stop_event.set()
         self.status = "Stopped"
+        self.progress = 0
 
     def _loop(self):
         while self.is_running:
             try:
+                self.progress = 0
                 # 1. Перевірка BTC
                 if self.check_market_conditions():
                     
@@ -203,11 +236,12 @@ class WhaleSniper:
                     else:
                         self.status = "No Whale Volume found"
                         
-                    self.last_run_time = datetime.now().strftime("%H:%M")
+                    self.last_run_time = datetime.now().strftime("%H:%M:%S")
                     self.status = "Waiting next cycle..."
+                    self.progress = 100
                 
-                # Очікування з можливістю зупинки
-                for _ in range(self.CONFIG['scan_interval']):
+                # Очікування
+                for i in range(self.CONFIG['scan_interval']):
                     if not self.is_running: break
                     time.sleep(1)
                     
@@ -216,5 +250,4 @@ class WhaleSniper:
                 self.status = "Error (Restarting...)"
                 time.sleep(60)
 
-# Глобальний екземпляр
 sniper_bot = WhaleSniper()
