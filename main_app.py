@@ -32,6 +32,8 @@ from utils import get_logger, validate_webhook_data, metrics, setup_logging
 from whale_core import whale_core
 # ✅ IMPORT WHALE PRO
 from whale_pro import register_routes as register_whale_pro
+# ✅ IMPORT WHALE SNIPER (NEW STRATEGY)
+from sniper_strategy import sniper_bot
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -356,6 +358,31 @@ def whale_scan_start():
     data = request.json or {}
     started = whale_core.start_scan(override_cfg=data)
     return jsonify({"status": "started" if started else "busy"})
+
+# ==========================================
+# 🎯 WHALE SNIPER (NEW!)
+# ==========================================
+@app.route('/sniper')
+def sniper_page():
+    """Page for the new Sniper Strategy"""
+    return render_template('sniper.html',
+                         status=sniper_bot.status,
+                         is_running=sniper_bot.is_running,
+                         history=sniper_bot.found_signals)
+
+@app.route('/sniper/toggle', methods=['POST'])
+def sniper_toggle():
+    """Start/Stop Sniper"""
+    data = request.json or {}
+    enable = data.get('enable', False)
+    
+    if enable:
+        sniper_bot.start()
+    else:
+        sniper_bot.stop()
+        
+    return jsonify({'status': 'ok', 'is_running': sniper_bot.is_running})
+
 # ==========================================
 
 @app.route('/', methods=['GET'])
