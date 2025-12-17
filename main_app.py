@@ -32,7 +32,7 @@ from utils import get_logger, validate_webhook_data, metrics, setup_logging
 from whale_core import whale_core
 # ✅ IMPORT WHALE PRO
 from whale_pro import register_routes as register_whale_pro
-# ✅ IMPORT WHALE SNIPER (ВИПРАВЛЕНО: Додано імпорт)
+# ✅ IMPORT WHALE SNIPER (ADDED)
 from sniper_strategy import sniper_bot
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
@@ -360,7 +360,7 @@ def whale_scan_start():
     return jsonify({"status": "started" if started else "busy"})
 
 # ==========================================
-# 🎯 WHALE SNIPER (ВИПРАВЛЕНО: Додані маршрути)
+# 🎯 WHALE SNIPER (ROUTES)
 # ==========================================
 @app.route('/sniper')
 def sniper_page():
