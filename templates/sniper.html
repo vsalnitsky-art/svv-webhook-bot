@@ -7,74 +7,111 @@
     
     <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
-            <h3 class="fw-bold m-0 text-danger">
-                <i class="ri-crosshair-2-line me-2"></i>Whale SNIPER
-            </h3>
-            <p class="text-muted small m-0">Elite Strategy: Trend + Structure + Momentum</p>
+            <div class="d-flex align-items-center gap-2">
+                <h3 class="fw-bold m-0 text-danger">
+                    <i class="ri-crosshair-2-line me-2"></i>Whale SNIPER
+                </h3>
+                {% if is_running %}
+                <div class="spinner-grow text-success spinner-grow-sm" role="status" title="System Active"></div>
+                {% endif %}
+            </div>
+            <p class="text-muted small m-0 mt-1">
+                Last Scan: <span class="fw-bold text-dark font-mono">{{ last_time }}</span>
+            </p>
         </div>
         
         <div class="d-flex gap-3 align-items-center">
-            <div class="px-3 py-2 rounded-3 border bg-white shadow-sm">
-                <span class="small fw-bold text-muted me-2">STATUS:</span>
-                <span class="fw-bold {{ 'text-success' if is_running else 'text-danger' }}">
+            <button class="btn btn-light border shadow-sm" data-bs-toggle="modal" data-bs-target="#settingsModal">
+                <i class="ri-settings-4-line me-1"></i> Settings
+            </button>
+
+            <div class="px-3 py-2 rounded-3 border bg-white shadow-sm d-flex flex-column justify-content-center" style="min-width: 180px;">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="small fw-bold text-muted">STATUS</span>
+                    <span class="badge {{ 'bg-success' if is_running else 'bg-danger' }}">
+                        {{ 'RUNNING' if is_running else 'STOPPED' }}
+                    </span>
+                </div>
+                <div class="small text-truncate text-dark fw-medium" style="max-width: 200px;">
                     {{ status }}
-                </span>
+                </div>
+                {% if is_running %}
+                <div class="progress mt-2" style="height: 4px;">
+                    <div class="progress-bar bg-danger progress-bar-striped progress-bar-animated" 
+                         role="progressbar" 
+                         style="width: {{ progress }}%"></div>
+                </div>
+                {% endif %}
             </div>
 
             {% if is_running %}
-            <button onclick="toggleSniper(false)" class="btn btn-danger fw-bold shadow-sm">
-                <i class="ri-stop-circle-line me-2"></i>STOP SNIPER
+            <button onclick="toggleSniper(false)" class="btn btn-danger fw-bold shadow-sm h-100">
+                <i class="ri-stop-circle-line"></i> STOP
             </button>
             {% else %}
-            <button onclick="toggleSniper(true)" class="btn btn-success fw-bold shadow-sm">
-                <i class="ri-play-circle-line me-2"></i>START SNIPER
+            <button onclick="toggleSniper(true)" class="btn btn-success fw-bold shadow-sm h-100">
+                <i class="ri-play-circle-line"></i> START
             </button>
             {% endif %}
         </div>
     </div>
 
-    <div class="row g-4 mb-4">
-        <div class="col-md-3">
-            <div class="card border-0 shadow-sm h-100 border-start border-4 border-success">
-                <div class="card-body">
-                    <h6 class="text-uppercase text-muted small fw-bold">1. BTC Trend</h6>
-                    <h4 class="fw-bold text-dark mb-0">The Shield 🛡️</h4>
-                    <p class="small text-muted mt-2 mb-0">Вхід лише коли BTC вище EMA 200</p>
+    <div class="row g-3 mb-4">
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm h-100 bg-light">
+                <div class="card-body p-3 text-center">
+                    <div class="small text-muted fw-bold mb-1">MIN VOLUME</div>
+                    <h5 class="fw-bold text-primary m-0">${{ (conf.get('sniper_min_vol', 10000000)|float / 1000000)|round(0) }}M</h5>
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="card border-0 shadow-sm h-100 border-start border-4 border-primary">
-                <div class="card-body">
-                    <h6 class="text-uppercase text-muted small fw-bold">2. Whale Volume</h6>
-                    <h4 class="fw-bold text-dark mb-0">The Track 👣</h4>
-                    <p class="small text-muted mt-2 mb-0">RVOL > 2.0 (Аномальні гроші)</p>
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm h-100 bg-light">
+                <div class="card-body p-3 text-center">
+                    <div class="small text-muted fw-bold mb-1">RVOL MIN</div>
+                    <h5 class="fw-bold text-primary m-0">{{ conf.get('sniper_rvol', 2.2) }}</h5>
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="card border-0 shadow-sm h-100 border-start border-4 border-warning">
-                <div class="card-body">
-                    <h6 class="text-uppercase text-muted small fw-bold">3. Order Block</h6>
-                    <h4 class="fw-bold text-dark mb-0">The Trap 🪤</h4>
-                    <p class="small text-muted mt-2 mb-0">Відкат ціни до зони закупки</p>
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm h-100 bg-light">
+                <div class="card-body p-3 text-center">
+                    <div class="small text-muted fw-bold mb-1">OB SWING</div>
+                    <h5 class="fw-bold text-danger m-0">{{ conf.get('sniper_ob_swing', 3) }}</h5>
                 </div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="card border-0 shadow-sm h-100 border-start border-4 border-danger">
-                <div class="card-body">
-                    <h6 class="text-uppercase text-muted small fw-bold">4. RSI Trigger</h6>
-                    <h4 class="fw-bold text-dark mb-0">The Shot 🔫</h4>
-                    <p class="small text-muted mt-2 mb-0">Вхід при RSI < 40 (Oversold)</p>
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm h-100 bg-light">
+                <div class="card-body p-3 text-center">
+                    <div class="small text-muted fw-bold mb-1">ATR MULT</div>
+                    <h5 class="fw-bold text-danger m-0">{{ conf.get('sniper_ob_atr', 2.5) }}</h5>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm h-100 bg-light">
+                <div class="card-body p-3 text-center">
+                    <div class="small text-muted fw-bold mb-1">RSI TRIG</div>
+                    <h5 class="fw-bold text-success m-0">{{ conf.get('sniper_rsi', 45) }}</h5>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm h-100 bg-light">
+                <div class="card-body p-3 text-center">
+                    <div class="small text-muted fw-bold mb-1">BTC FILTER</div>
+                    <h5 class="fw-bold {{ 'text-success' if conf.get('sniper_btc_check', True) else 'text-muted' }} m-0">
+                        {{ 'ON' if conf.get('sniper_btc_check', True) else 'OFF' }}
+                    </h5>
                 </div>
             </div>
         </div>
     </div>
 
     <div class="card border-0 shadow-sm">
-        <div class="card-header bg-white py-3">
-            <h6 class="fw-bold m-0"><i class="ri-file-list-3-line me-2"></i>Sniper Targets</h6>
+        <div class="card-header bg-white py-3 border-0">
+            <h6 class="fw-bold m-0"><i class="ri-file-list-3-line me-2"></i>Live Targets</h6>
         </div>
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
@@ -83,10 +120,10 @@
                         <th class="ps-4">Time</th>
                         <th>Symbol</th>
                         <th>Price</th>
-                        <th>RSI Trigger</th>
+                        <th>RSI</th>
                         <th>OB Entry</th>
                         <th>Details</th>
-                        <th class="text-end pe-4">Chart</th>
+                        <th class="text-end pe-4">Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -95,25 +132,88 @@
                         <td class="ps-4 font-mono small text-muted">{{ row.time }}</td>
                         <td class="fw-bold text-danger">{{ row.symbol }}</td>
                         <td class="font-mono">{{ row.price }}</td>
-                        <td><span class="badge bg-danger">RSI {{ row.rsi }}</span></td>
+                        <td>
+                            <span class="badge bg-opacity-10 text-success bg-success border border-success">
+                                {{ row.rsi }}
+                            </span>
+                        </td>
                         <td class="font-mono text-primary">{{ row.ob_entry }}</td>
-                        <td class="small">{{ row.details }}</td>
+                        <td class="small text-muted">{{ row.details }}</td>
                         <td class="text-end pe-4">
                             <a href="https://www.bybit.com/trade/usdt/{{ row.symbol }}" target="_blank" class="btn btn-sm btn-light border">
-                                <i class="ri-line-chart-line"></i>
+                                <i class="ri-line-chart-line"></i> Chart
                             </a>
                         </td>
                     </tr>
                     {% else %}
                     <tr>
                         <td colspan="7" class="text-center py-5 text-muted">
-                            <i class="ri-crosshair-2-line fs-1 opacity-25"></i>
-                            <p class="mt-2">Waiting for targets...</p>
+                            <div class="mb-3">
+                                <i class="ri-radar-line fs-1 opacity-25"></i>
+                            </div>
+                            <p class="m-0">Scanning market for sniper entries...</p>
+                            <small>Wait for RVOL + OB Retest + RSI signals</small>
                         </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="settingsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold"><i class="ri-equalizer-line me-2"></i>Strategy Settings</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="sniperSettingsForm">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Liquidity Filter (USDT)</label>
+                        <select class="form-select" name="sniper_min_vol">
+                            <option value="5000000" {{ 'selected' if conf.get('sniper_min_vol')|float == 5000000 }}>5M (High Risk)</option>
+                            <option value="10000000" {{ 'selected' if conf.get('sniper_min_vol', 10000000)|float == 10000000 }}>10M (Balanced)</option>
+                            <option value="20000000" {{ 'selected' if conf.get('sniper_min_vol')|float == 20000000 }}>20M (Safe)</option>
+                        </select>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">RVOL Min</label>
+                            <input type="number" step="0.1" class="form-control" name="sniper_rvol" value="{{ conf.get('sniper_rvol', 2.2) }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">RSI Trigger (<)</label>
+                            <input type="number" class="form-control" name="sniper_rsi" value="{{ conf.get('sniper_rsi', 45) }}">
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">OB Swing Length</label>
+                            <input type="number" class="form-control" name="sniper_ob_swing" value="{{ conf.get('sniper_ob_swing', 3) }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-bold">OB Max ATR</label>
+                            <input type="number" step="0.1" class="form-control" name="sniper_ob_atr" value="{{ conf.get('sniper_ob_atr', 2.5) }}">
+                        </div>
+                    </div>
+                    
+                    <div class="form-check form-switch bg-light p-3 rounded">
+                        <input class="form-check-input ms-0 me-3" type="checkbox" name="sniper_btc_check" 
+                               {{ 'checked' if conf.get('sniper_btc_check', True) else '' }}>
+                        <label class="form-check-label fw-bold">BTC Trend Filter (EMA200)</label>
+                        <div class="small text-muted mt-1">Safety switch: pause trading if BTC is bearish</div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
+            </div>
         </div>
     </div>
 </div>
@@ -124,17 +224,39 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || 
 function toggleSniper(enable) {
     fetch('/sniper/toggle', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken
-        },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
         body: JSON.stringify({ enable: enable })
     }).then(() => location.reload());
 }
 
-// Автооновлення сторінки кожні 10 сек, якщо запущено
+function saveSettings() {
+    const form = document.getElementById('sniperSettingsForm');
+    const formData = new FormData(form);
+    const data = {};
+    
+    // Handle checkbox manually
+    data['sniper_btc_check'] = form.querySelector('[name="sniper_btc_check"]').checked;
+    
+    formData.forEach((value, key) => {
+        if (key !== 'sniper_btc_check') data[key] = value;
+    });
+
+    fetch('/sniper/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+        body: JSON.stringify(data)
+    }).then(res => res.json()).then(res => {
+        if(res.status === 'ok') {
+            location.reload();
+        } else {
+            alert('Error saving settings');
+        }
+    });
+}
+
+// Auto-refresh if running
 {% if is_running %}
-setTimeout(() => location.reload(), 10000);
+setTimeout(() => location.reload(), 5000);
 {% endif %}
 </script>
 {% endblock %}
