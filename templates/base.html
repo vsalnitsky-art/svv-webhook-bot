@@ -16,7 +16,7 @@
             --bg-body: #f8fafc; --bg-sidebar: #ffffff; --bg-card: #ffffff; --bg-element: #f1f5f9;
             --border-subtle: #e2e8f0; --border-strong: #cbd5e1;
             --text-main: #0f172a; --text-muted: #64748b;
-            --accent: #4f46e5; --success: #059669; --danger: #dc2626;
+            --accent: #4f46e5; --success: #059669; --danger: #ef4444;
             --sidebar-width: 260px; --sidebar-collapsed-width: 72px; --transition-speed: 0.3s;
             --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05); --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
         }
@@ -83,6 +83,8 @@
             <li><a href="/smart_money" class="nav-link {{ 'active' if '/smart_money' in request.path }}"><i class="ri-eye-2-line nav-icon"></i><span class="nav-label">Smart Money</span></a></li>
             
             <li><a href="/whale_pro" class="nav-link {{ 'active' if '/whale_pro' in request.path }}"><i class="ri-vip-diamond-line nav-icon"></i><span class="nav-label">Whale PRO</span></a></li>
+
+            <li><a href="/sniper" class="nav-link {{ 'active' if '/sniper' in request.path }}"><i class="ri-crosshair-2-line nav-icon"></i><span class="nav-label">Whale Sniper</span></a></li>
             
             <li class="px-3 pt-3 pb-2 small text-muted fw-bold text-uppercase nav-label" style="font-size: 0.7rem;">Система</li>
             
