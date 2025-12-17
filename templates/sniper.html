@@ -25,14 +25,14 @@
                 <i class="ri-settings-4-line me-1"></i> Settings
             </button>
 
-            <div class="px-3 py-2 rounded-3 border bg-white shadow-sm d-flex flex-column justify-content-center" style="min-width: 180px;">
+            <div class="px-3 py-2 rounded-3 border bg-white shadow-sm d-flex flex-column justify-content-center" style="min-width: 220px;">
                 <div class="d-flex justify-content-between align-items-center mb-1">
                     <span class="small fw-bold text-muted">STATUS</span>
                     <span class="badge {{ 'bg-success' if is_running else 'bg-danger' }}">
                         {{ 'RUNNING' if is_running else 'STOPPED' }}
                     </span>
                 </div>
-                <div class="small text-truncate text-dark fw-medium" style="max-width: 200px;">
+                <div class="small text-truncate text-dark fw-medium" style="max-width: 250px;">
                     {{ status }}
                 </div>
                 {% if is_running %}
@@ -92,7 +92,7 @@
         <div class="col-md-2">
             <div class="card border-0 shadow-sm h-100 bg-light">
                 <div class="card-body p-3 text-center">
-                    <div class="small text-muted fw-bold mb-1">RSI TRIG</div>
+                    <div class="small text-muted fw-bold mb-1">RSI TRIGGER</div>
                     <h5 class="fw-bold text-success m-0">{{ conf.get('sniper_rsi', 45) }}</h5>
                 </div>
             </div>
@@ -100,10 +100,14 @@
         <div class="col-md-2">
             <div class="card border-0 shadow-sm h-100 bg-light">
                 <div class="card-body p-3 text-center">
-                    <div class="small text-muted fw-bold mb-1">BTC FILTER</div>
-                    <h5 class="fw-bold {{ 'text-success' if conf.get('sniper_btc_check', True) else 'text-muted' }} m-0">
-                        {{ 'ON' if conf.get('sniper_btc_check', True) else 'OFF' }}
-                    </h5>
+                    <div class="small text-muted fw-bold mb-1">ADAPTIVE MODE</div>
+                    {% if 'BULLISH' in status or 'LONG' in status %}
+                        <h5 class="fw-bold text-success m-0">LONG ONLY</h5>
+                    {% elif 'BEARISH' in status or 'SHORT' in status %}
+                        <h5 class="fw-bold text-danger m-0">SHORT ONLY</h5>
+                    {% else %}
+                        <h5 class="fw-bold text-muted m-0">AUTO</h5>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -119,6 +123,7 @@
                     <tr>
                         <th class="ps-4">Time</th>
                         <th>Symbol</th>
+                        <th>Mode</th>
                         <th>Price</th>
                         <th>RSI</th>
                         <th>OB Entry</th>
@@ -130,10 +135,17 @@
                     {% for row in history %}
                     <tr>
                         <td class="ps-4 font-mono small text-muted">{{ row.time }}</td>
-                        <td class="fw-bold text-danger">{{ row.symbol }}</td>
+                        <td class="fw-bold text-dark">{{ row.symbol }}</td>
+                        <td>
+                            {% if row.mode == 'LONG' %}
+                                <span class="badge bg-success">LONG</span>
+                            {% else %}
+                                <span class="badge bg-danger">SHORT</span>
+                            {% endif %}
+                        </td>
                         <td class="font-mono">{{ row.price }}</td>
                         <td>
-                            <span class="badge bg-opacity-10 text-success bg-success border border-success">
+                            <span class="fw-bold {{ 'text-success' if row.mode == 'LONG' else 'text-danger' }}">
                                 {{ row.rsi }}
                             </span>
                         </td>
@@ -147,7 +159,7 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="7" class="text-center py-5 text-muted">
+                        <td colspan="8" class="text-center py-5 text-muted">
                             <div class="mb-3">
                                 <i class="ri-radar-line fs-1 opacity-25"></i>
                             </div>
@@ -186,8 +198,9 @@
                             <input type="number" step="0.1" class="form-control" name="sniper_rvol" value="{{ conf.get('sniper_rvol', 2.2) }}">
                         </div>
                         <div class="col-6">
-                            <label class="form-label small fw-bold">RSI Trigger (<)</label>
+                            <label class="form-label small fw-bold">RSI Trigger (Base)</label>
                             <input type="number" class="form-control" name="sniper_rsi" value="{{ conf.get('sniper_rsi', 45) }}">
+                            <div class="form-text small">Long < X | Short > (100-X)</div>
                         </div>
                     </div>
 
@@ -205,8 +218,8 @@
                     <div class="form-check form-switch bg-light p-3 rounded">
                         <input class="form-check-input ms-0 me-3" type="checkbox" name="sniper_btc_check" 
                                {{ 'checked' if conf.get('sniper_btc_check', True) else '' }}>
-                        <label class="form-check-label fw-bold">BTC Trend Filter (EMA200)</label>
-                        <div class="small text-muted mt-1">Safety switch: pause trading if BTC is bearish</div>
+                        <label class="form-check-label fw-bold">Adaptive Market Mode (BTC Trend)</label>
+                        <div class="small text-muted mt-1">If ON: Auto switch Long/Short based on BTC. If OFF: Always Long.</div>
                     </div>
                 </form>
             </div>
@@ -234,7 +247,6 @@ function saveSettings() {
     const formData = new FormData(form);
     const data = {};
     
-    // Handle checkbox manually
     data['sniper_btc_check'] = form.querySelector('[name="sniper_btc_check"]').checked;
     
     formData.forEach((value, key) => {
@@ -254,7 +266,6 @@ function saveSettings() {
     });
 }
 
-// Auto-refresh if running
 {% if is_running %}
 setTimeout(() => location.reload(), 5000);
 {% endif %}
