@@ -3,7 +3,6 @@
 {% block title %}Smart Money - Order Block Scanner{% endblock %}
 
 {% block head %}
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <style>
     /* Status badges */
     .status-valid { color: #10b981; font-weight: 600; }
@@ -11,7 +10,7 @@
     .status-triggered { color: #3b82f6; font-weight: 600; }
     .status-executed { color: #6b7280; }
     
-    /* Direction badges - LONG зелений, SHORT червоний */
+    /* Direction badges */
     .dir-long {
         background: linear-gradient(135deg, #059669, #10b981);
         color: white;
@@ -28,35 +27,19 @@
         font-weight: 600;
         font-size: 0.8rem;
     }
-    /* Legacy classes for compatibility */
-    .dir-buy { 
-        background: linear-gradient(135deg, #059669, #10b981);
-        color: white;
-        padding: 3px 10px;
-        border-radius: 4px;
-        font-weight: 600;
-        font-size: 0.8rem;
-    }
-    .dir-sell {
-        background: linear-gradient(135deg, #dc2626, #ef4444);
-        color: white;
-        padding: 3px 10px;
-        border-radius: 4px;
-        font-weight: 600;
-        font-size: 0.8rem;
-    }
     
     /* OB Type */
     .ob-bull { color: #10b981; font-weight: 600; }
     .ob-bear { color: #ef4444; font-weight: 600; }
     
-    /* Scanner status panel - LIGHT THEME */
+    /* Status panel */
     .status-panel {
-        background: #f8fafc;
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
         border: 1px solid #e2e8f0;
         border-radius: 12px;
         padding: 16px 20px;
     }
+    
     .status-box {
         background: white;
         border: 1px solid #e2e8f0;
@@ -64,6 +47,7 @@
         padding: 12px;
         flex: 1;
     }
+    
     .status-box-title {
         font-size: 0.7rem;
         text-transform: uppercase;
@@ -71,6 +55,7 @@
         margin-bottom: 4px;
         font-weight: 600;
     }
+    
     .status-indicator {
         display: inline-flex;
         align-items: center;
@@ -95,78 +80,125 @@
         color: #0ea5e9;
     }
     
-    .mini-progress {
-        height: 4px;
-        background: #e2e8f0;
-        border-radius: 2px;
-        overflow: hidden;
-        margin-top: 8px;
-    }
-    .mini-progress-bar {
-        height: 100%;
-        background: linear-gradient(90deg, #22c55e, #4ade80);
-        transition: width 1s linear;
-    }
-    
-    .status-reason {
-        font-size: 0.8rem;
-        margin-top: 8px;
-        padding: 6px 10px;
-        border-radius: 6px;
-    }
-    .status-reason-warning {
-        background: #fef3c7;
-        color: #92400e;
-    }
-    .status-reason-error {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-    
-    /* Trade toggle */
+    /* Trade toggles */
     .trade-toggle {
         display: flex;
         align-items: center;
         padding: 8px 16px;
         border-radius: 8px;
         font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
     }
     .trade-toggle-off { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
     .trade-toggle-on { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .trade-toggle:hover { transform: scale(1.02); }
     
-    /* Table hover */
-    .table tbody tr:hover { background-color: #f8fafc; }
-    
-    /* Collapsible settings */
-    .settings-collapse {
+    /* Settings */
+    .settings-section {
+        background: white;
         border: 1px solid #e2e8f0;
-        border-radius: 8px;
+        border-radius: 12px;
         overflow: hidden;
+        margin-bottom: 1rem;
     }
-    .settings-collapse summary {
-        padding: 12px 16px;
+    
+    .settings-header {
         background: #f8fafc;
+        padding: 12px 16px;
+        border-bottom: 1px solid #e2e8f0;
         cursor: pointer;
-        font-weight: 600;
         display: flex;
-        align-items: center;
         justify-content: space-between;
+        align-items: center;
+        font-weight: 600;
     }
-    .settings-collapse summary:hover { background: #f1f5f9; }
-    .settings-collapse[open] summary { border-bottom: 1px solid #e2e8f0; }
-    .settings-collapse-body { padding: 16px; background: white; }
+    .settings-header:hover { background: #f1f5f9; }
+    
+    .settings-body {
+        padding: 16px;
+    }
     
     .settings-group {
         background: #f8fafc;
         border-radius: 8px;
         padding: 12px;
+        margin-bottom: 12px;
     }
+    
     .settings-group-title {
         font-size: 0.7rem;
         font-weight: 600;
         text-transform: uppercase;
         color: #64748b;
         margin-bottom: 8px;
+    }
+    
+    /* Help button */
+    .help-btn {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #e5e7eb;
+        color: #6b7280;
+        border: none;
+        font-size: 0.6rem;
+        font-weight: 700;
+        cursor: help;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 4px;
+    }
+    .help-btn:hover { background: #3b82f6; color: white; }
+    
+    /* Progress */
+    .scan-progress {
+        height: 4px;
+        background: #e2e8f0;
+        border-radius: 2px;
+        overflow: hidden;
+    }
+    .scan-progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+        transition: width 0.5s ease;
+    }
+    
+    /* Tables */
+    .table-container {
+        max-height: 350px;
+        overflow-y: auto;
+    }
+    
+    /* Stats cards */
+    .stat-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 12px;
+        text-align: center;
+    }
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+    }
+    .stat-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        color: #64748b;
+    }
+    
+    /* Tabs */
+    .nav-tabs .nav-link {
+        color: #64748b;
+        border: none;
+        font-weight: 600;
+    }
+    .nav-tabs .nav-link.active {
+        color: #3b82f6;
+        border-bottom: 2px solid #3b82f6;
+        background: transparent;
     }
 </style>
 {% endblock %}
@@ -177,287 +209,313 @@
     <!-- Header -->
     <div class="d-flex justify-content-between align-items-center mb-3">
         <div class="d-flex align-items-center">
-            <i class="ri-eye-2-line fs-4 text-accent me-2"></i>
+            <i class="ri-eye-2-line fs-4 text-primary me-2"></i>
             <div>
-                <h5 class="fw-bold mb-0 text-dark">Smart Money - Order Block Scanner</h5>
-                <small class="text-muted">100% Pine Script логіка • Синхронізація з біржею</small>
+                <h5 class="fw-bold mb-0">Smart Money - Order Block Scanner</h5>
+                <small class="text-muted">Timestamp фільтрація • Immediate/Retest • OB Exit</small>
             </div>
         </div>
         
-        <!-- Trade Toggle -->
-        <div class="trade-toggle trade-toggle-off" id="tradeToggle">
-            <i class="ri-exchange-line me-2"></i>
-            <span>Trading: </span>
-            <span id="tradeToggleText" class="ms-1">OFF</span>
-        </div>
-    </div>
-    
-    <!-- Auto Scan Status Panel -->
-    <div class="status-panel mb-4" id="statusPanel">
-        <div class="d-flex gap-3">
-            <!-- OB Scanner Status -->
-            <div class="status-box">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <div>
-                        <div class="status-box-title">Order Block Scanner</div>
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="status-indicator status-idle" id="obScannerStatus">IDLE</span>
-                            <span class="small text-muted">TF: <span id="obTfDisplay">15m</span></span>
-                        </div>
-                    </div>
-                    <div class="text-end">
-                        <div class="status-box-title">Next Scan</div>
-                        <div class="countdown-timer" id="obNextScan">--:--:--</div>
-                    </div>
-                </div>
-                <div class="small text-muted mb-1">
-                    <span id="obLastScanInfo">Last: — | Found: — | Scanned: —</span>
-                </div>
-                <div class="mini-progress">
-                    <div class="mini-progress-bar" id="obProgressBar" style="width: 0%"></div>
-                </div>
-                <!-- Reason why not scanning -->
-                <div class="status-reason status-reason-warning" id="obScanReason" style="display: none;"></div>
+        <!-- Trading Toggle -->
+        <div class="d-flex gap-2">
+            <div class="trade-toggle trade-toggle-off" id="paperToggle" onclick="togglePaper()">
+                <i class="ri-file-text-line me-2"></i>
+                <span>Paper: <span id="paperStatus">ON</span></span>
             </div>
-            
-            <!-- RSI/MFI Integration Status -->
-            <div class="status-box">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <div>
-                        <div class="status-box-title">RSI/MFI → Watchlist</div>
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="status-indicator status-idle" id="rsiIntegrationStatus">IDLE</span>
-                            <span class="small text-muted">Auto-add: <span id="rsiAutoAddStatus">OFF</span></span>
-                        </div>
-                    </div>
-                    <div class="text-end">
-                        <div class="status-box-title">Watchlist</div>
-                        <div class="countdown-timer" id="watchlistCount">0 / 50</div>
-                    </div>
-                </div>
-                <div class="small text-muted">
-                    <span id="rsiLastAddInfo">Added today: 0 symbols</span>
-                </div>
-                <!-- Reason why not adding -->
-                <div class="status-reason status-reason-warning" id="rsiAddReason" style="display: none;"></div>
+            <div class="trade-toggle trade-toggle-off" id="tradeToggle" onclick="toggleTrading()">
+                <i class="ri-exchange-line me-2"></i>
+                <span>Trading: <span id="tradeStatus">OFF</span></span>
             </div>
         </div>
     </div>
     
-    <!-- Collapsible Settings -->
-    <details class="settings-collapse mb-4" id="settingsCollapse">
-        <summary>
-            <span><i class="ri-settings-3-line me-2"></i>Order Block Settings</span>
-            <i class="ri-arrow-down-s-line"></i>
-        </summary>
-        <div class="settings-collapse-body">
-            <div class="row g-3">
-                <!-- Detection Settings -->
-                <div class="col-md-6">
-                    <div class="settings-group">
-                        <div class="settings-group-title">
-                            <i class="ri-radar-line me-1"></i>Detection
+    <!-- Status Panel -->
+    <div class="status-panel mb-4">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="status-box">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="status-box-title">OB Scanner</div>
+                            <span class="status-indicator status-idle" id="scannerStatus">IDLE</span>
+                            <span class="small text-muted ms-2">TF: <span id="tfDisplay">15m</span></span>
                         </div>
-                        <div class="row g-2">
-                            <div class="col-4">
-                                <label class="form-label small">Source TF</label>
-                                <select class="form-select form-select-sm" id="obSourceTf">
-                                    <option value="5">5m</option>
-                                    <option value="15" selected>15m</option>
-                                    <option value="30">30m</option>
-                                    <option value="60">1H</option>
-                                    <option value="240">4H</option>
-                                </select>
-                            </div>
-                            <div class="col-4">
-                                <label class="form-label small">Swing Len</label>
-                                <input type="number" class="form-control form-control-sm text-center" id="obSwingLength" value="3" min="2" max="10">
-                            </div>
-                            <div class="col-4">
-                                <label class="form-label small">Zones</label>
-                                <select class="form-select form-select-sm" id="obZoneCount">
-                                    <option value="One">One (1)</option>
-                                    <option value="Low">Low (3)</option>
-                                    <option value="Medium">Medium (5)</option>
-                                    <option value="High" selected>High (10)</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="row g-2 mt-1">
-                            <div class="col-4">
-                                <label class="form-label small">ATR Mult</label>
-                                <input type="number" class="form-control form-control-sm text-center" id="obMaxAtrMult" value="3.5" step="0.1" min="1" max="10">
-                            </div>
-                            <div class="col-4">
-                                <label class="form-label small">Invalidation</label>
-                                <select class="form-select form-select-sm" id="obInvalidation">
-                                    <option value="Wick" selected>Wick</option>
-                                    <option value="Close">Close</option>
-                                </select>
-                            </div>
-                            <div class="col-4">
-                                <div class="form-check mt-4">
-                                    <input class="form-check-input" type="checkbox" id="obCombineObs" checked>
-                                    <label class="form-check-label small">Combine OBs</label>
-                                </div>
-                            </div>
+                        <div class="text-end">
+                            <div class="status-box-title">Last Scan</div>
+                            <div class="countdown-timer" id="lastScanTime">--:--</div>
                         </div>
                     </div>
-                </div>
-                
-                <!-- Entry & Risk Settings -->
-                <div class="col-md-6">
-                    <div class="settings-group">
-                        <div class="settings-group-title">
-                            <i class="ri-flashlight-line me-1"></i>Entry & Risk
-                        </div>
-                        <div class="row g-2">
-                            <div class="col-4">
-                                <label class="form-label small">Entry Mode</label>
-                                <select class="form-select form-select-sm" id="obEntryMode">
-                                    <option value="Immediate" selected>Immediate</option>
-                                    <option value="Retest">Retest</option>
-                                </select>
-                            </div>
-                            <div class="col-4">
-                                <label class="form-label small">OB Selection</label>
-                                <select class="form-select form-select-sm" id="obSelection">
-                                    <option value="Newest" selected>Newest</option>
-                                    <option value="Closest">Closest</option>
-                                </select>
-                            </div>
-                            <div class="col-4">
-                                <label class="form-label small">SL ATR Mult</label>
-                                <input type="number" class="form-control form-control-sm text-center" id="obSlAtrMult" value="0.3" step="0.1" min="0.1" max="2">
-                            </div>
-                        </div>
-                        <div class="row g-2 mt-1">
-                            <div class="col-3">
-                                <label class="form-label small">Timeout</label>
-                                <select class="form-select form-select-sm" id="obTimeout">
-                                    <option value="No">No timeout</option>
-                                    <option value="12h">12 hours</option>
-                                    <option value="24h" selected>24 hours</option>
-                                    <option value="48h">48 hours</option>
-                                    <option value="72h">72 hours</option>
-                                </select>
-                            </div>
-                            <div class="col-3">
-                                <label class="form-label small">Scan Every</label>
-                                <select class="form-select form-select-sm" id="obScanInterval">
-                                    <option value="30">30 sec</option>
-                                    <option value="60" selected>1 min</option>
-                                    <option value="120">2 min</option>
-                                    <option value="300">5 min</option>
-                                </select>
-                            </div>
-                            <div class="col-3">
-                                <label class="form-label small">Max Watchlist</label>
-                                <input type="number" class="form-control form-control-sm text-center" id="obWatchlistLimit" value="50" min="10" max="100">
-                            </div>
-                            <div class="col-3">
-                                <div class="form-check mt-4">
-                                    <input class="form-check-input" type="checkbox" id="obPersistence">
-                                    <label class="form-check-label small">Persistence</label>
-                                </div>
-                            </div>
-                        </div>
+                    <div class="small text-muted mt-2" id="scanInfo">Found: — | Scanned: —</div>
+                    <div class="scan-progress mt-2">
+                        <div class="scan-progress-bar" id="scanProgress" style="width: 0%"></div>
                     </div>
                 </div>
             </div>
             
-            <!-- Actions Row -->
-            <div class="row mt-3">
-                <div class="col-12">
-                    <div class="d-flex align-items-center justify-content-between p-3 bg-light border rounded">
-                        <div class="d-flex align-items-center gap-4">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="obAutoScan" style="width: 3em; height: 1.5em;">
-                                <label class="form-check-label fw-bold" for="obAutoScan">Auto Scan</label>
+            <div class="col-md-4">
+                <div class="status-box">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="status-box-title">Exit Monitor</div>
+                            <span class="status-indicator status-idle" id="exitStatus">OFF</span>
+                        </div>
+                        <div class="text-end">
+                            <div class="status-box-title">Open Positions</div>
+                            <div class="countdown-timer" id="openPositions">0</div>
+                        </div>
+                    </div>
+                    <div class="small text-muted mt-2">OB Exit: <span id="obExitStatus">Disabled</span></div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="row g-2">
+                    <div class="col-4">
+                        <div class="stat-card">
+                            <div class="stat-value text-primary" id="statTotal">0</div>
+                            <div class="stat-label">Total</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="stat-card">
+                            <div class="stat-value text-success" id="statWinRate">0%</div>
+                            <div class="stat-label">Win Rate</div>
+                        </div>
+                    </div>
+                    <div class="col-4">
+                        <div class="stat-card">
+                            <div class="stat-value" id="statPnl">$0</div>
+                            <div class="stat-label">P&L</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Settings Sections -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="settings-section">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#settingsCollapse">
+                    <span><i class="ri-settings-3-line me-2"></i>Settings</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse" id="settingsCollapse">
+                    <div class="settings-body">
+                        <div class="row g-3">
+                            <!-- Detection -->
+                            <div class="col-md-4">
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="ri-radar-line me-1"></i>Detection</div>
+                                    <div class="row g-2">
+                                        <div class="col-6">
+                                            <label class="form-label small">Source TF <button class="help-btn" title="Таймфрейм для пошуку Order Blocks">?</button></label>
+                                            <select class="form-select form-select-sm" id="obSourceTf">
+                                                <option value="5">5m</option>
+                                                <option value="15" selected>15m</option>
+                                                <option value="30">30m</option>
+                                                <option value="60">1H</option>
+                                                <option value="240">4H</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">Swing Len <button class="help-btn" title="Кількість свічок для swing point">?</button></label>
+                                            <input type="number" class="form-control form-control-sm" id="obSwingLength" value="3" min="2" max="10">
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">Invalidation</label>
+                                            <select class="form-select form-select-sm" id="obInvalidation">
+                                                <option value="Wick" selected>Wick</option>
+                                                <option value="Close">Close</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">ATR Mult</label>
+                                            <input type="number" class="form-control form-control-sm" id="obAtrMult" value="3.5" step="0.1">
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="obAutoAddFromScreener" style="width: 3em; height: 1.5em;">
-                                <label class="form-check-label fw-bold" for="obAutoAddFromScreener">Auto-add from RSI/MFI</label>
+                            <!-- Entry -->
+                            <div class="col-md-4">
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="ri-login-box-line me-1"></i>Entry</div>
+                                    <div class="row g-2">
+                                        <div class="col-6">
+                                            <label class="form-label small">Entry Mode <button class="help-btn" title="Immediate - одразу, Retest - чекати вхід/вихід ціни">?</button></label>
+                                            <select class="form-select form-select-sm" id="obEntryMode">
+                                                <option value="Immediate" selected>Immediate</option>
+                                                <option value="Retest">Retest</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">OB Selection</label>
+                                            <select class="form-select form-select-sm" id="obSelection">
+                                                <option value="Newest" selected>Newest</option>
+                                                <option value="Closest">Closest</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">SL ATR Mult</label>
+                                            <input type="number" class="form-control form-control-sm" id="obSlAtrMult" value="0.3" step="0.1">
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">Timeout</label>
+                                            <select class="form-select form-select-sm" id="obTimeout">
+                                                <option value="No">No timeout</option>
+                                                <option value="12h">12 hours</option>
+                                                <option value="24h" selected>24 hours</option>
+                                                <option value="48h">48 hours</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" id="obExecuteTrades" style="width: 3em; height: 1.5em;">
-                                <label class="form-check-label fw-bold text-danger" for="obExecuteTrades">Execute Trades</label>
+                            <!-- Exit -->
+                            <div class="col-md-4">
+                                <div class="settings-group">
+                                    <div class="settings-group-title"><i class="ri-logout-box-line me-1"></i>Exit (OB)</div>
+                                    <div class="row g-2">
+                                        <div class="col-12">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="obExitEnabled">
+                                                <label class="form-check-label small fw-bold" for="obExitEnabled">
+                                                    Enable OB Exit <button class="help-btn" title="Закривати по протилежному OB">?</button>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">Exit TF</label>
+                                            <select class="form-select form-select-sm" id="obExitTf">
+                                                <option value="same" selected>Same as Entry</option>
+                                                <option value="5">5m</option>
+                                                <option value="15">15m</option>
+                                                <option value="60">1H</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">Exit Mode</label>
+                                            <select class="form-select form-select-sm" id="obExitMode">
+                                                <option value="Full Close" selected>Full Close</option>
+                                                <option value="Partial + Trail">Partial + Trail</option>
+                                                <option value="Move SL Only">Move SL Only</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="form-check mt-2">
+                                                <input class="form-check-input" type="checkbox" id="obExitOnlyProfit">
+                                                <label class="form-check-label small">Only in profit</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">Min Hold (min)</label>
+                                            <input type="number" class="form-control form-control-sm" id="obExitMinHold" value="0" min="0">
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-outline-primary" id="btnManualScan" onclick="manualScan()">
-                                <i class="ri-radar-line me-1"></i>Scan Now
-                            </button>
+                        <!-- Actions Row -->
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <div class="d-flex align-items-center justify-content-between p-3 bg-light rounded">
+                                    <div class="d-flex align-items-center gap-4">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="obAutoScan" style="width: 2.5em; height: 1.3em;">
+                                            <label class="form-check-label fw-bold small">Auto Scan</label>
+                                        </div>
+                                        <div>
+                                            <label class="small me-1">Interval:</label>
+                                            <select class="form-select form-select-sm d-inline-block" style="width: 80px;" id="obScanInterval">
+                                                <option value="30">30s</option>
+                                                <option value="60" selected>1m</option>
+                                                <option value="120">2m</option>
+                                                <option value="300">5m</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="small me-1">Limit:</label>
+                                            <input type="number" class="form-control form-control-sm d-inline-block" style="width: 60px;" id="obWatchlistLimit" value="50">
+                                        </div>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-outline-secondary btn-sm" onclick="saveSettings()">
+                                            <i class="ri-save-line me-1"></i>Save
+                                        </button>
+                                        <button class="btn btn-primary" id="btnScan" onclick="manualScan()">
+                                            <i class="ri-radar-line me-1"></i>Scan Now
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-    </details>
-    
-    <!-- Progress Card (for manual scan) -->
-    <div class="card-custom mb-4 border-0 shadow-sm" style="display: none" id="progressCard">
-        <div class="card-body py-3" style="background: #eff6ff;">
-            <div class="d-flex justify-content-between mb-2">
-                <span id="progressText" class="fw-bold text-primary">Scanning...</span>
-                <span id="progressPercent" class="fw-bold text-dark">0%</span>
-            </div>
-            <div class="progress" style="height: 8px; border-radius: 4px; background: white;">
-                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width: 0%"></div>
-            </div>
-        </div>
     </div>
     
-    <div class="row g-4">
-        <!-- Watchlist -->
-        <div class="col-md-5">
-            <div class="card-custom border-0 h-100">
-                <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between align-items-center border-bottom border-light">
-                    <span><i class="ri-list-check me-2"></i>Watchlist</span>
-                    <div class="d-flex align-items-center gap-2">
-                        <span class="badge bg-secondary rounded-pill" id="watchlistBadge">0 / 50</span>
-                        <button class="btn btn-sm btn-outline-danger" onclick="clearWatchlist()" title="Clear all">
-                            <i class="ri-delete-bin-line"></i>
-                        </button>
-                    </div>
+    <!-- Tabs -->
+    <ul class="nav nav-tabs mb-3" id="mainTabs">
+        <li class="nav-item">
+            <a class="nav-link active" data-bs-toggle="tab" href="#tabWatchlist">
+                <i class="ri-list-check me-1"></i>Watchlist <span class="badge bg-secondary" id="watchlistBadge">0</span>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="tab" href="#tabDetected">
+                <i class="ri-focus-3-line me-1"></i>Detected OBs <span class="badge bg-primary" id="obBadge">0</span>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="tab" href="#tabExecution">
+                <i class="ri-file-list-3-line me-1"></i>Execution Log <span class="badge bg-success" id="execBadge">0</span>
+            </a>
+        </li>
+    </ul>
+    
+    <div class="tab-content">
+        <!-- Watchlist Tab -->
+        <div class="tab-pane fade show active" id="tabWatchlist">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                    <span class="fw-bold">Watchlist</span>
+                    <button class="btn btn-sm btn-outline-danger" onclick="clearWatchlist()">
+                        <i class="ri-delete-bin-line me-1"></i>Clear All
+                    </button>
                 </div>
                 <div class="card-body p-0">
-                    <!-- Add Symbol Form -->
-                    <div class="p-3 border-bottom bg-light">
+                    <!-- Add Form -->
+                    <div class="p-3 bg-light border-bottom">
                         <div class="input-group">
-                            <input type="text" class="form-control" id="addSymbolInput" placeholder="BTCUSDT">
-                            <select class="form-select" style="max-width: 110px;" id="addSymbolDirection">
+                            <input type="text" class="form-control" id="addSymbol" placeholder="BTCUSDT">
+                            <select class="form-select" style="max-width: 100px;" id="addDirection">
                                 <option value="BUY">LONG</option>
                                 <option value="SELL">SHORT</option>
                             </select>
                             <button class="btn btn-success" onclick="addToWatchlist()">
-                                <i class="ri-add-line"></i>
+                                <i class="ri-add-line"></i> Add
                             </button>
                         </div>
                     </div>
                     
-                    <!-- Watchlist Table -->
-                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                    <div class="table-container">
                         <table class="table table-hover align-middle mb-0">
-                            <thead class="bg-light text-uppercase small text-muted sticky-top">
+                            <thead class="bg-light sticky-top">
                                 <tr>
-                                    <th class="py-2 ps-3">Symbol</th>
-                                    <th class="py-2">Direction</th>
-                                    <th class="py-2">Source</th>
-                                    <th class="py-2">Added</th>
-                                    <th class="py-2 pe-3 text-end">Action</th>
+                                    <th class="ps-3">Symbol</th>
+                                    <th>Direction</th>
+                                    <th>Source</th>
+                                    <th>Added</th>
+                                    <th class="text-end pe-3">Action</th>
                                 </tr>
                             </thead>
                             <tbody id="watchlistBody">
-                                <tr>
-                                    <td colspan="5" class="text-center py-4 text-muted">
-                                        <i class="ri-inbox-line fs-3 d-block mb-2 opacity-25"></i>
-                                        Watchlist is empty
-                                    </td>
-                                </tr>
+                                <tr><td colspan="5" class="text-center py-4 text-muted">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -465,248 +523,338 @@
             </div>
         </div>
         
-        <!-- Detected Order Blocks -->
-        <div class="col-md-7">
-            <div class="card-custom border-0 h-100">
-                <div class="card-header bg-white fw-bold py-3 d-flex justify-content-between align-items-center border-bottom border-light">
-                    <span><i class="ri-checkbox-blank-line me-2"></i>Detected Order Blocks</span>
-                    <span class="badge bg-primary rounded-pill" id="obCount">0</span>
+        <!-- Detected OBs Tab -->
+        <div class="tab-pane fade" id="tabDetected">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                    <span class="fw-bold">Detected Order Blocks</span>
+                    <button class="btn btn-sm btn-outline-danger" onclick="clearDetectedOBs()">
+                        <i class="ri-delete-bin-line me-1"></i>Clear All
+                    </button>
                 </div>
                 <div class="card-body p-0">
-                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                    <div class="table-container">
                         <table class="table table-hover align-middle mb-0">
-                            <thead class="bg-light text-uppercase small text-muted sticky-top">
+                            <thead class="bg-light sticky-top">
                                 <tr>
-                                    <th class="py-2 ps-3">Symbol</th>
-                                    <th class="py-2">Type</th>
-                                    <th class="py-2">Zone</th>
-                                    <th class="py-2">Entry</th>
-                                    <th class="py-2">SL</th>
-                                    <th class="py-2">Status</th>
-                                    <th class="py-2">Time</th>
-                                    <th class="py-2 pe-3 text-end">Action</th>
+                                    <th class="ps-3">Symbol</th>
+                                    <th>Type</th>
+                                    <th>Zone</th>
+                                    <th>Entry</th>
+                                    <th>SL</th>
+                                    <th>Status</th>
+                                    <th>Detected</th>
+                                    <th class="text-end pe-3">Action</th>
                                 </tr>
                             </thead>
                             <tbody id="obBody">
-                                <tr>
-                                    <td colspan="8" class="text-center py-4 text-muted">
-                                        <i class="ri-scan-line fs-3 d-block mb-2 opacity-25"></i>
-                                        No Order Blocks detected yet
-                                    </td>
-                                </tr>
+                                <tr><td colspan="8" class="text-center py-4 text-muted">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
-    
-    <!-- Trade Execution Log -->
-    <div class="card-custom border-0 mt-4">
-        <div class="card-header bg-white fw-bold py-3 border-bottom border-light">
-            <i class="ri-file-list-3-line me-2"></i>Execution Log
-        </div>
-        <div class="card-body p-0">
-            <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
-                    <thead class="bg-light text-uppercase small text-muted">
-                        <tr>
-                            <th class="py-2 ps-3">Time</th>
-                            <th class="py-2">Symbol</th>
-                            <th class="py-2">Direction</th>
-                            <th class="py-2">Entry</th>
-                            <th class="py-2">SL</th>
-                            <th class="py-2">Status</th>
-                            <th class="py-2 pe-3">Result</th>
-                        </tr>
-                    </thead>
-                    <tbody id="logBody">
-                        <tr>
-                            <td colspan="7" class="text-center py-4 text-muted">
-                                No executions yet
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+        
+        <!-- Execution Log Tab -->
+        <div class="tab-pane fade" id="tabExecution">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                    <span class="fw-bold">Execution Log</span>
+                    <div class="d-flex gap-2">
+                        <select class="form-select form-select-sm" style="width: 100px;" id="execFilter">
+                            <option value="all">All</option>
+                            <option value="open">Open</option>
+                            <option value="closed">Closed</option>
+                            <option value="paper">Paper</option>
+                            <option value="real">Real</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-container" style="max-height: 500px;">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="bg-light sticky-top">
+                                <tr>
+                                    <th class="ps-3">Symbol</th>
+                                    <th>Dir</th>
+                                    <th>Entry</th>
+                                    <th>Exit</th>
+                                    <th>P&L</th>
+                                    <th>Status</th>
+                                    <th>Exit Reason</th>
+                                    <th>Mode</th>
+                                    <th>Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="execBody">
+                                <tr><td colspan="9" class="text-center py-4 text-muted">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 </div>
 
 <script>
-// ===== STATE =====
 let watchlist = [];
 let detectedOBs = [];
-let isScanning = false;
-let statusUpdateInterval = null;
-let countdownInterval = null;
-let saveTimeout = null;  // Для debounce
+let executionLog = [];
+let config = {};
 
-// ===== INIT =====
-document.addEventListener('DOMContentLoaded', async () => {
-    // Спочатку завантажуємо налаштування і ЧЕКАЄМО
-    await loadSettings();
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    loadAll();
+    setInterval(loadStatus, 3000);
     
-    // Тільки після цього налаштовуємо auto-save
-    setupAutoSave();
-    
-    // Завантажуємо інші дані
-    loadWatchlist();
-    loadDetectedOBs();
-    loadScannerStatus();
-    
-    // Update trade toggle display
-    updateTradeToggle();
-    document.getElementById('obExecuteTrades').addEventListener('change', updateTradeToggle);
-    
-    // Update TF display when changed
-    document.getElementById('obSourceTf').addEventListener('change', updateTfDisplay);
-    
-    // Start status polling
-    statusUpdateInterval = setInterval(loadScannerStatus, 3000);
-    countdownInterval = setInterval(updateCountdown, 1000);
+    // Init tooltips
+    document.querySelectorAll('.help-btn').forEach(btn => {
+        new bootstrap.Tooltip(btn);
+    });
 });
 
-// ===== AUTO-SAVE SETUP =====
-function setupAutoSave() {
-    // Список всіх елементів налаштувань
-    const settingsInputs = [
-        'obSourceTf', 'obSwingLength', 'obZoneCount', 'obMaxAtrMult', 
-        'obInvalidation', 'obCombineObs', 'obEntryMode', 'obSelection',
-        'obSlAtrMult', 'obTimeout', 'obScanInterval', 'obWatchlistLimit',
-        'obPersistence', 'obAutoScan', 'obAutoAddFromScreener', 'obExecuteTrades'
-    ];
-    
-    settingsInputs.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            // Для checkbox/switch - change event
-            // Для input/select - input event з debounce
-            const eventType = (el.type === 'checkbox') ? 'change' : 'input';
-            
-            el.addEventListener(eventType, () => {
-                // Debounce: чекаємо 500ms перед збереженням
-                if (saveTimeout) clearTimeout(saveTimeout);
-                saveTimeout = setTimeout(() => {
-                    autoSaveSettings();
-                }, el.type === 'checkbox' ? 0 : 500);  // Checkbox - одразу, input - з затримкою
-            });
-            
-            // Для select також слухаємо change
-            if (el.tagName === 'SELECT') {
-                el.addEventListener('change', () => {
-                    autoSaveSettings();
-                });
-            }
-        }
-    });
+async function loadAll() {
+    await Promise.all([
+        loadWatchlist(),
+        loadDetectedOBs(),
+        loadExecutionLog(),
+        loadStatus(),
+        loadConfig()
+    ]);
 }
 
-// ===== AUTO-SAVE FUNCTION =====
-async function autoSaveSettings() {
-    const settings = {
-        ob_source_tf: document.getElementById('obSourceTf').value,
-        ob_swing_length: parseInt(document.getElementById('obSwingLength').value),
-        ob_zone_count: document.getElementById('obZoneCount').value,
-        ob_max_atr_mult: parseFloat(document.getElementById('obMaxAtrMult').value),
-        ob_invalidation_method: document.getElementById('obInvalidation').value,
-        ob_combine_obs: document.getElementById('obCombineObs').checked,
-        ob_entry_mode: document.getElementById('obEntryMode').value,
-        ob_selection: document.getElementById('obSelection').value,
-        ob_sl_atr_mult: parseFloat(document.getElementById('obSlAtrMult').value),
-        ob_watchlist_timeout: document.getElementById('obTimeout').value,
-        ob_scan_interval: parseInt(document.getElementById('obScanInterval').value),
-        ob_watchlist_limit: parseInt(document.getElementById('obWatchlistLimit').value),
-        ob_persistence_check: document.getElementById('obPersistence').checked,
-        ob_auto_scan: document.getElementById('obAutoScan').checked,
-        ob_auto_add_from_screener: document.getElementById('obAutoAddFromScreener').checked,
-        ob_execute_trades: document.getElementById('obExecuteTrades').checked
-    };
-    
-    // Debug log
-    console.log('💾 Saving settings:', {
-        auto_scan: settings.ob_auto_scan,
-        auto_add: settings.ob_auto_add_from_screener,
-        execute: settings.ob_execute_trades
-    });
-    
-    // Показуємо індикатор збереження
-    showSaveIndicator('saving');
-    
+// ===== WATCHLIST =====
+async function loadWatchlist() {
     try {
-        const resp = await fetch('/smart_money/settings', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(settings)
-        });
-        
-        if (resp.ok) {
-            showSaveIndicator('saved');
-            loadScannerStatus();  // Оновлюємо статус
-        } else {
-            showSaveIndicator('error');
-        }
-    } catch (e) {
-        console.error('Auto-save error:', e);
-        showSaveIndicator('error');
-    }
+        const resp = await fetch('/smart_money/api/watchlist');
+        watchlist = await resp.json();
+        renderWatchlist();
+    } catch (e) { console.error('Load watchlist error:', e); }
 }
 
-// ===== SAVE INDICATOR =====
-function showSaveIndicator(status) {
-    // Знаходимо або створюємо індикатор
-    let indicator = document.getElementById('saveIndicator');
-    if (!indicator) {
-        indicator = document.createElement('div');
-        indicator.id = 'saveIndicator';
-        indicator.style.cssText = `
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 600;
-            z-index: 9999;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        `;
-        document.body.appendChild(indicator);
+function renderWatchlist() {
+    const tbody = document.getElementById('watchlistBody');
+    document.getElementById('watchlistBadge').textContent = watchlist.length;
+    
+    if (watchlist.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">
+            <i class="ri-inbox-line fs-2 d-block mb-2 opacity-25"></i>Watchlist empty</td></tr>`;
+        return;
     }
     
-    if (status === 'saving') {
-        indicator.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Saving...';
-        indicator.style.background = '#3b82f6';
-        indicator.style.color = 'white';
-        indicator.style.opacity = '1';
-    } else if (status === 'saved') {
-        indicator.innerHTML = '✓ Saved';
-        indicator.style.background = '#10b981';
-        indicator.style.color = 'white';
-        indicator.style.opacity = '1';
+    tbody.innerHTML = watchlist.map(item => {
+        const dirClass = item.direction === 'BUY' ? 'dir-long' : 'dir-short';
+        const dirText = item.direction === 'BUY' ? 'LONG' : 'SHORT';
+        const time = item.added_at ? new Date(item.added_at).toLocaleString('uk-UA', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
         
-        // Ховаємо через 1.5 сек
-        setTimeout(() => {
-            indicator.style.opacity = '0';
-        }, 1500);
-    } else if (status === 'error') {
-        indicator.innerHTML = '✗ Error';
-        indicator.style.background = '#ef4444';
-        indicator.style.color = 'white';
-        indicator.style.opacity = '1';
-        
-        setTimeout(() => {
-            indicator.style.opacity = '0';
-        }, 3000);
+        return `<tr>
+            <td class="ps-3 fw-bold font-monospace">${item.symbol}</td>
+            <td><span class="${dirClass}">${dirText}</span></td>
+            <td class="small text-muted">${item.source}</td>
+            <td class="small text-muted font-monospace">${time}</td>
+            <td class="text-end pe-3">
+                <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removeFromWatchlist('${item.symbol}')">
+                    <i class="ri-close-line"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function addToWatchlist() {
+    const symbol = document.getElementById('addSymbol').value.toUpperCase().trim();
+    const direction = document.getElementById('addDirection').value;
+    
+    if (!symbol) return alert('Enter symbol');
+    
+    const resp = await fetch('/smart_money/api/watchlist/add', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol, direction, source: 'Manual'})
+    });
+    
+    const data = await resp.json();
+    if (data.status === 'ok') {
+        document.getElementById('addSymbol').value = '';
+        loadWatchlist();
+    } else {
+        alert(data.error || 'Error');
     }
 }
 
-// ===== TRADE TOGGLE =====
-function updateTradeToggle() {
-    const isOn = document.getElementById('obExecuteTrades').checked;
-    const toggle = document.getElementById('tradeToggle');
-    const text = document.getElementById('tradeToggleText');
+async function removeFromWatchlist(symbol) {
+    await fetch(`/smart_money/api/watchlist/remove/${symbol}`, {method: 'POST'});
+    loadWatchlist();
+}
+
+async function clearWatchlist() {
+    if (!confirm('Clear entire watchlist?')) return;
+    await fetch('/smart_money/api/watchlist/clear', {method: 'POST'});
+    loadWatchlist();
+}
+
+// ===== DETECTED OBs =====
+async function loadDetectedOBs() {
+    try {
+        const resp = await fetch('/smart_money/api/detected');
+        detectedOBs = await resp.json();
+        renderDetectedOBs();
+    } catch (e) { console.error('Load OBs error:', e); }
+}
+
+function renderDetectedOBs() {
+    const tbody = document.getElementById('obBody');
+    document.getElementById('obBadge').textContent = detectedOBs.length;
+    
+    if (detectedOBs.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">
+            <i class="ri-scan-line fs-2 d-block mb-2 opacity-25"></i>No OBs detected</td></tr>`;
+        return;
+    }
+    
+    tbody.innerHTML = detectedOBs.map(ob => {
+        const typeClass = ob.ob_type === 'Bull' ? 'ob-bull' : 'ob-bear';
+        const statusClass = ob.status === 'Valid' ? 'status-valid' : 
+                           ob.status === 'Waiting Retest' ? 'status-waiting' : 'status-triggered';
+        const time = ob.detected_at ? new Date(ob.detected_at).toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'}) : '—';
+        
+        return `<tr>
+            <td class="ps-3 fw-bold font-monospace">${ob.symbol}</td>
+            <td class="${typeClass}">${ob.ob_type}</td>
+            <td class="small font-monospace">$${formatPrice(ob.ob_bottom)} - $${formatPrice(ob.ob_top)}</td>
+            <td class="font-monospace">$${formatPrice(ob.entry_price)}</td>
+            <td class="font-monospace text-danger">$${formatPrice(ob.sl_price)}</td>
+            <td class="${statusClass}">${ob.status}</td>
+            <td class="small text-muted">${time}</td>
+            <td class="text-end pe-3">
+                <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteOB(${ob.id})">
+                    <i class="ri-close-line"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function deleteOB(id) {
+    await fetch(`/smart_money/api/detected/delete/${id}`, {method: 'POST'});
+    loadDetectedOBs();
+}
+
+async function clearDetectedOBs() {
+    if (!confirm('Clear all detected OBs?')) return;
+    await fetch('/smart_money/api/detected/clear', {method: 'POST'});
+    loadDetectedOBs();
+}
+
+// ===== EXECUTION LOG =====
+async function loadExecutionLog() {
+    try {
+        const resp = await fetch('/smart_money/api/execution_log');
+        executionLog = await resp.json();
+        renderExecutionLog();
+        loadStats();
+    } catch (e) { console.error('Load exec log error:', e); }
+}
+
+function renderExecutionLog() {
+    const tbody = document.getElementById('execBody');
+    const filter = document.getElementById('execFilter').value;
+    
+    let filtered = executionLog;
+    if (filter === 'open') filtered = executionLog.filter(e => e.status === 'OPEN');
+    else if (filter === 'closed') filtered = executionLog.filter(e => e.status === 'CLOSED');
+    else if (filter === 'paper') filtered = executionLog.filter(e => e.paper_trade);
+    else if (filter === 'real') filtered = executionLog.filter(e => !e.paper_trade);
+    
+    document.getElementById('execBadge').textContent = filtered.length;
+    document.getElementById('openPositions').textContent = executionLog.filter(e => e.status === 'OPEN').length;
+    
+    if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-muted">
+            <i class="ri-file-list-line fs-2 d-block mb-2 opacity-25"></i>No executions</td></tr>`;
+        return;
+    }
+    
+    tbody.innerHTML = filtered.map(e => {
+        const dirClass = e.direction === 'LONG' ? 'dir-long' : 'dir-short';
+        const pnlClass = e.pnl_percent > 0 ? 'text-success' : (e.pnl_percent < 0 ? 'text-danger' : '');
+        const statusBadge = e.status === 'OPEN' ? '<span class="badge bg-primary">OPEN</span>' : '<span class="badge bg-secondary">CLOSED</span>';
+        const modeBadge = e.paper_trade ? '<span class="badge bg-warning text-dark">Paper</span>' : '<span class="badge bg-success">Real</span>';
+        
+        return `<tr>
+            <td class="ps-3 fw-bold font-monospace">${e.symbol}</td>
+            <td><span class="${dirClass}">${e.direction}</span></td>
+            <td class="font-monospace small">$${formatPrice(e.entry_price)}</td>
+            <td class="font-monospace small">${e.exit_price ? '$' + formatPrice(e.exit_price) : '—'}</td>
+            <td class="fw-bold ${pnlClass}">${e.pnl_percent ? e.pnl_percent.toFixed(2) + '%' : '—'}</td>
+            <td>${statusBadge}</td>
+            <td class="small text-muted">${e.exit_reason || '—'}</td>
+            <td>${modeBadge}</td>
+            <td class="small text-muted">${e.entry_time || '—'}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function loadStats() {
+    try {
+        const resp = await fetch('/smart_money/api/stats');
+        const stats = await resp.json();
+        
+        document.getElementById('statTotal').textContent = stats.total;
+        document.getElementById('statWinRate').textContent = stats.win_rate + '%';
+        document.getElementById('statPnl').textContent = (stats.total_pnl >= 0 ? '+' : '') + stats.total_pnl.toFixed(2) + '%';
+        document.getElementById('statPnl').className = 'stat-value ' + (stats.total_pnl >= 0 ? 'text-success' : 'text-danger');
+    } catch (e) { console.error('Load stats error:', e); }
+}
+
+// ===== STATUS =====
+async function loadStatus() {
+    try {
+        const resp = await fetch('/smart_money/api/status');
+        const status = await resp.json();
+        
+        // Scanner status
+        const scannerEl = document.getElementById('scannerStatus');
+        if (status.is_scanning) {
+            scannerEl.textContent = 'SCANNING';
+            scannerEl.className = 'status-indicator status-scanning';
+        } else if (status.auto_scan_running) {
+            scannerEl.textContent = 'AUTO';
+            scannerEl.className = 'status-indicator status-active';
+        } else {
+            scannerEl.textContent = 'IDLE';
+            scannerEl.className = 'status-indicator status-idle';
+        }
+        
+        document.getElementById('scanProgress').style.width = status.scan_progress + '%';
+        document.getElementById('lastScanTime').textContent = status.last_scan_time || '--:--';
+        document.getElementById('scanInfo').textContent = `Found: ${status.last_scan_found} | Scanned: ${status.last_scan_total}`;
+        document.getElementById('tfDisplay').textContent = status.config?.ob_source_tf || '15m';
+        
+        // Exit status
+        const exitEl = document.getElementById('exitStatus');
+        if (status.exit_monitor_running) {
+            exitEl.textContent = 'ACTIVE';
+            exitEl.className = 'status-indicator status-active';
+        } else {
+            exitEl.textContent = 'OFF';
+            exitEl.className = 'status-indicator status-idle';
+        }
+        
+        document.getElementById('obExitStatus').textContent = status.config?.ob_exit_enabled ? 'Enabled' : 'Disabled';
+        
+        // Trading toggles
+        updateToggle('tradeToggle', 'tradeStatus', status.config?.ob_execute_trades);
+        updateToggle('paperToggle', 'paperStatus', status.config?.ob_paper_trading);
+        
+    } catch (e) { console.error('Load status error:', e); }
+}
+
+function updateToggle(toggleId, textId, isOn) {
+    const toggle = document.getElementById(toggleId);
+    const text = document.getElementById(textId);
     
     if (isOn) {
         toggle.className = 'trade-toggle trade-toggle-on';
@@ -717,451 +865,124 @@ function updateTradeToggle() {
     }
 }
 
-function updateTfDisplay() {
-    const tf = document.getElementById('obSourceTf').value;
-    const tfMap = {'5': '5m', '15': '15m', '30': '30m', '60': '1H', '240': '4H'};
-    document.getElementById('obTfDisplay').textContent = tfMap[tf] || tf + 'm';
-}
-
-// ===== SCANNER STATUS =====
-let nextScanTime = null;
-let lastScanInfo = null;
-
-async function loadScannerStatus() {
+// ===== CONFIG =====
+async function loadConfig() {
     try {
-        const resp = await fetch('/smart_money/status');
-        if (!resp.ok) return;
-        const data = await resp.json();
+        const resp = await fetch('/smart_money/api/config');
+        config = await resp.json();
         
-        // Update OB Scanner status
-        const obStatus = document.getElementById('obScannerStatus');
-        const autoAddStatus = document.getElementById('rsiAutoAddStatus');
-        const obScanReason = document.getElementById('obScanReason');
-        const rsiAddReason = document.getElementById('rsiAddReason');
+        // Apply to form
+        document.getElementById('obSourceTf').value = config.ob_source_tf || '15';
+        document.getElementById('obSwingLength').value = config.ob_swing_length || 3;
+        document.getElementById('obInvalidation').value = config.ob_invalidation_method || 'Wick';
+        document.getElementById('obAtrMult').value = config.ob_max_atr_mult || 3.5;
+        document.getElementById('obEntryMode').value = config.ob_entry_mode || 'Immediate';
+        document.getElementById('obSelection').value = config.ob_selection || 'Newest';
+        document.getElementById('obSlAtrMult').value = config.ob_sl_atr_mult || 0.3;
+        document.getElementById('obTimeout').value = config.ob_timeout || '24h';
+        document.getElementById('obExitEnabled').checked = config.ob_exit_enabled || false;
+        document.getElementById('obExitTf').value = config.ob_exit_tf || 'same';
+        document.getElementById('obExitMode').value = config.ob_exit_mode || 'Full Close';
+        document.getElementById('obExitOnlyProfit').checked = config.ob_exit_only_profit || false;
+        document.getElementById('obExitMinHold').value = config.ob_exit_min_hold || 0;
+        document.getElementById('obAutoScan').checked = config.ob_auto_scan || false;
+        document.getElementById('obScanInterval').value = config.ob_scan_interval || 60;
+        document.getElementById('obWatchlistLimit').value = config.ob_watchlist_limit || 50;
         
-        // Hide reasons by default
-        obScanReason.style.display = 'none';
-        rsiAddReason.style.display = 'none';
-        
-        // Scheduler check first
-        if (data.scheduler_status && !data.scheduler_status.running) {
-            obStatus.className = 'status-indicator status-idle';
-            obStatus.textContent = 'IDLE';
-            obScanReason.textContent = '⚠️ Scheduler not running - restart app';
-            obScanReason.className = 'status-reason status-reason-error';
-            obScanReason.style.display = 'block';
-        } else if (data.is_paused) {
-            // Пауза через RSI Screener
-            obStatus.className = 'status-indicator status-idle';
-            obStatus.textContent = 'PAUSED';
-            obScanReason.textContent = '⏸️ Waiting for RSI/MFI Screener to finish...';
-            obScanReason.className = 'status-reason status-reason-warning';
-            obScanReason.style.display = 'block';
-        } else if (data.auto_scan_enabled) {
-            if (data.is_scanning) {
-                obStatus.className = 'status-indicator status-scanning';
-                obStatus.textContent = 'SCANNING';
-            } else {
-                obStatus.className = 'status-indicator status-active';
-                obStatus.textContent = 'ACTIVE';
-            }
-            
-            // Check why might not be scanning
-            if (data.watchlist_count === 0) {
-                obScanReason.textContent = '⚠️ Watchlist is empty - add symbols to scan';
-                obScanReason.className = 'status-reason status-reason-warning';
-                obScanReason.style.display = 'block';
-            }
-        } else {
-            obStatus.className = 'status-indicator status-idle';
-            obStatus.textContent = 'IDLE';
-            obScanReason.textContent = '⚠️ Auto Scan is OFF - enable in settings';
-            obScanReason.className = 'status-reason status-reason-warning';
-            obScanReason.style.display = 'block';
-        }
-        
-        // RSI auto-add status
-        autoAddStatus.textContent = data.auto_add_enabled ? 'ON' : 'OFF';
-        if (data.auto_add_enabled) {
-            document.getElementById('rsiIntegrationStatus').className = 'status-indicator status-active';
-            document.getElementById('rsiIntegrationStatus').textContent = 'ACTIVE';
-        } else {
-            document.getElementById('rsiIntegrationStatus').className = 'status-indicator status-idle';
-            document.getElementById('rsiIntegrationStatus').textContent = 'IDLE';
-            rsiAddReason.textContent = '⚠️ Auto-add is OFF - enable to auto-populate watchlist';
-            rsiAddReason.className = 'status-reason status-reason-warning';
-            rsiAddReason.style.display = 'block';
-        }
-        
-        // Next scan time
-        if (data.next_scan && data.auto_scan_enabled && data.scheduler_status?.running) {
-            nextScanTime = new Date(data.next_scan);
-        } else {
-            nextScanTime = null;
-        }
-        
-        // Last scan info
-        if (data.last_scan) {
-            lastScanInfo = data.last_scan;
-            document.getElementById('obLastScanInfo').textContent = 
-                `Last: ${formatTime(data.last_scan.time)} | Found: ${data.last_scan.found} | Scanned: ${data.last_scan.scanned}`;
-        }
-        
-        // Watchlist count
-        document.getElementById('watchlistCount').textContent = 
-            `${data.watchlist_count || 0} / ${data.watchlist_limit || 50}`;
-        document.getElementById('watchlistBadge').textContent = 
-            `${data.watchlist_count || 0} / ${data.watchlist_limit || 50}`;
-        
-        // TF display with scan interval
-        const tfMap = {'5': '5m', '15': '15m', '30': '30m', '60': '1H', '240': '4H'};
-        const intervalText = data.scan_interval < 60 ? `${data.scan_interval}s` : `${data.scan_interval / 60}m`;
-        document.getElementById('obTfDisplay').textContent = `${tfMap[data.source_tf] || data.source_tf + 'm'} / ${intervalText}`;
-        
-    } catch (e) {
-        console.error('Status load error:', e);
-    }
+    } catch (e) { console.error('Load config error:', e); }
 }
 
-function updateCountdown() {
-    const countdownEl = document.getElementById('obNextScan');
-    const progressBar = document.getElementById('obProgressBar');
-    
-    if (!nextScanTime) {
-        countdownEl.textContent = '--:--:--';
-        progressBar.style.width = '0%';
-        return;
-    }
-    
-    const now = new Date();
-    const diff = nextScanTime - now;
-    
-    if (diff <= 0) {
-        countdownEl.textContent = 'NOW';
-        countdownEl.style.color = '#22c55e';
-        progressBar.style.width = '100%';
-        return;
-    }
-    
-    countdownEl.style.color = '#fbbf24';
-    
-    // Format countdown
-    const hours = Math.floor(diff / 3600000);
-    const minutes = Math.floor((diff % 3600000) / 60000);
-    const seconds = Math.floor((diff % 60000) / 1000);
-    
-    countdownEl.textContent = 
-        `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    
-    // Calculate progress (based on TF interval)
-    const tf = parseInt(document.getElementById('obSourceTf').value) || 15;
-    const intervalMs = tf * 60 * 1000;
-    const elapsed = intervalMs - diff;
-    const progress = Math.min(100, Math.max(0, (elapsed / intervalMs) * 100));
-    progressBar.style.width = progress + '%';
-}
-
-function formatTime(isoString) {
-    if (!isoString) return '—';
-    const d = new Date(isoString);
-    return d.toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-}
-
-// ===== SETTINGS =====
-async function loadSettings() {
-    try {
-        const resp = await fetch('/smart_money/settings');
-        if (!resp.ok) {
-            console.error('❌ Failed to load settings:', resp.status);
-            return;
-        }
-        const s = await resp.json();
-        
-        // Debug log - raw response
-        console.log('📋 RAW settings from server:', JSON.stringify(s, null, 2));
-        
-        // Функція для надійного парсингу boolean
-        const parseBool = (val) => {
-            if (val === true) return true;
-            if (val === false) return false;
-            if (typeof val === 'string') {
-                return val.toLowerCase() === 'true';
-            }
-            return false;
-        };
-        
-        if (s.ob_source_tf) document.getElementById('obSourceTf').value = s.ob_source_tf;
-        if (s.ob_swing_length) document.getElementById('obSwingLength').value = s.ob_swing_length;
-        if (s.ob_zone_count) document.getElementById('obZoneCount').value = s.ob_zone_count;
-        if (s.ob_max_atr_mult) document.getElementById('obMaxAtrMult').value = s.ob_max_atr_mult;
-        if (s.ob_invalidation_method) document.getElementById('obInvalidation').value = s.ob_invalidation_method;
-        document.getElementById('obCombineObs').checked = parseBool(s.ob_combine_obs);
-        
-        if (s.ob_entry_mode) document.getElementById('obEntryMode').value = s.ob_entry_mode;
-        if (s.ob_selection) document.getElementById('obSelection').value = s.ob_selection;
-        if (s.ob_sl_atr_mult) document.getElementById('obSlAtrMult').value = s.ob_sl_atr_mult;
-        if (s.ob_watchlist_timeout) document.getElementById('obTimeout').value = s.ob_watchlist_timeout;
-        if (s.ob_scan_interval) document.getElementById('obScanInterval').value = s.ob_scan_interval;
-        if (s.ob_watchlist_limit) document.getElementById('obWatchlistLimit').value = s.ob_watchlist_limit;
-        document.getElementById('obPersistence').checked = parseBool(s.ob_persistence_check);
-        
-        // Main toggles
-        const autoScan = parseBool(s.ob_auto_scan);
-        const autoAdd = parseBool(s.ob_auto_add_from_screener);
-        const execTrades = parseBool(s.ob_execute_trades);
-        
-        console.log('🔄 Parsed booleans:', {autoScan, autoAdd, execTrades});
-        
-        document.getElementById('obAutoScan').checked = autoScan;
-        document.getElementById('obAutoAddFromScreener').checked = autoAdd;
-        document.getElementById('obExecuteTrades').checked = execTrades;
-        
-        console.log('✅ Toggles set:', {
-            obAutoScan: document.getElementById('obAutoScan').checked,
-            obAutoAdd: document.getElementById('obAutoAddFromScreener').checked,
-            obExec: document.getElementById('obExecuteTrades').checked
-        });
-        
-        updateTradeToggle();
-        updateTfDisplay();
-    } catch (e) {
-        console.error('❌ Load settings error:', e);
-    }
-}
-
-// saveSettings тепер просто викликає autoSaveSettings
 async function saveSettings() {
-    await autoSaveSettings();
-}
-
-// ===== WATCHLIST =====
-async function loadWatchlist() {
-    try {
-        const resp = await fetch('/smart_money/watchlist');
-        if (!resp.ok) return;
-        watchlist = await resp.json();
-        renderWatchlist();
-    } catch (e) {
-        console.error('Load watchlist error:', e);
-    }
-}
-
-function renderWatchlist() {
-    const tbody = document.getElementById('watchlistBody');
-    const limit = parseInt(document.getElementById('obWatchlistLimit').value) || 50;
+    const newConfig = {
+        ob_source_tf: document.getElementById('obSourceTf').value,
+        ob_swing_length: parseInt(document.getElementById('obSwingLength').value),
+        ob_invalidation_method: document.getElementById('obInvalidation').value,
+        ob_max_atr_mult: parseFloat(document.getElementById('obAtrMult').value),
+        ob_entry_mode: document.getElementById('obEntryMode').value,
+        ob_selection: document.getElementById('obSelection').value,
+        ob_sl_atr_mult: parseFloat(document.getElementById('obSlAtrMult').value),
+        ob_timeout: document.getElementById('obTimeout').value,
+        ob_exit_enabled: document.getElementById('obExitEnabled').checked,
+        ob_exit_tf: document.getElementById('obExitTf').value,
+        ob_exit_mode: document.getElementById('obExitMode').value,
+        ob_exit_only_profit: document.getElementById('obExitOnlyProfit').checked,
+        ob_exit_min_hold: parseInt(document.getElementById('obExitMinHold').value),
+        ob_auto_scan: document.getElementById('obAutoScan').checked,
+        ob_scan_interval: parseInt(document.getElementById('obScanInterval').value),
+        ob_watchlist_limit: parseInt(document.getElementById('obWatchlistLimit').value)
+    };
     
-    if (watchlist.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="5" class="text-center py-4 text-muted">
-                    <i class="ri-inbox-line fs-3 d-block mb-2 opacity-25"></i>
-                    Watchlist is empty
-                </td>
-            </tr>`;
-        return;
-    }
-    
-    let html = '';
-    watchlist.forEach(item => {
-        // LONG = зелений, SHORT = червоний
-        const isLong = item.direction === 'BUY';
-        const dirClass = isLong ? 'dir-long' : 'dir-short';
-        const dirText = isLong ? 'LONG' : 'SHORT';
-        const time = new Date(item.added_at).toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
-        const sourceIcon = item.source === 'RSI/MFI Screener' ? '🔍' : '✋';
-        
-        html += `
-            <tr>
-                <td class="ps-3 fw-bold font-mono">${item.symbol}</td>
-                <td><span class="${dirClass}">${dirText}</span></td>
-                <td class="small text-muted">${sourceIcon} ${item.source || 'Manual'}</td>
-                <td class="small text-muted font-mono">${time}</td>
-                <td class="pe-3 text-end">
-                    <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="removeFromWatchlist('${item.symbol}')">
-                        <i class="ri-close-line"></i>
-                    </button>
-                </td>
-            </tr>`;
+    await fetch('/smart_money/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(newConfig)
     });
     
-    tbody.innerHTML = html;
+    alert('Settings saved!');
+    loadStatus();
 }
 
-async function addToWatchlist() {
-    const symbol = document.getElementById('addSymbolInput').value.toUpperCase().trim();
-    const direction = document.getElementById('addSymbolDirection').value;
-    
-    if (!symbol) {
-        alert('Enter symbol');
-        return;
-    }
-    
-    // Check limit
-    const limit = parseInt(document.getElementById('obWatchlistLimit').value) || 50;
-    if (watchlist.length >= limit) {
-        alert(`Watchlist limit reached (${limit})`);
-        return;
-    }
-    
-    try {
-        const resp = await fetch('/smart_money/watchlist/add', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({symbol, direction, source: 'Manual'})
-        });
-        
-        const data = await resp.json();
-        if (data.status === 'ok') {
-            document.getElementById('addSymbolInput').value = '';
-            loadWatchlist();
-            loadScannerStatus();
-        } else {
-            alert(data.error || 'Error adding symbol');
-        }
-    } catch (e) {
-        alert('Error adding to watchlist');
-    }
-}
-
-// Видалення БЕЗ підтвердження
-async function removeFromWatchlist(symbol) {
-    try {
-        await fetch(`/smart_money/watchlist/remove/${symbol}`, {method: 'POST'});
-        loadWatchlist();
-        loadScannerStatus();
-    } catch (e) {
-        console.error('Error removing from watchlist');
-    }
-}
-
-// Очищення всього watchlist
-async function clearWatchlist() {
-    if (!confirm('Clear entire watchlist?')) return;
-    
-    try {
-        await fetch('/smart_money/watchlist/clear', {method: 'POST'});
-        loadWatchlist();
-        loadScannerStatus();
-    } catch (e) {
-        alert('Error clearing watchlist');
-    }
-}
-
-// ===== ORDER BLOCKS =====
-async function loadDetectedOBs() {
-    try {
-        const resp = await fetch('/smart_money/detected');
-        if (!resp.ok) return;
-        detectedOBs = await resp.json();
-        renderDetectedOBs();
-    } catch (e) {
-        console.error('Load OBs error:', e);
-    }
-}
-
-function renderDetectedOBs() {
-    const tbody = document.getElementById('obBody');
-    document.getElementById('obCount').textContent = detectedOBs.length;
-    
-    if (detectedOBs.length === 0) {
-        tbody.innerHTML = `
-            <tr>
-                <td colspan="8" class="text-center py-4 text-muted">
-                    <i class="ri-scan-line fs-3 d-block mb-2 opacity-25"></i>
-                    No Order Blocks detected yet
-                </td>
-            </tr>`;
-        return;
-    }
-    
-    let html = '';
-    detectedOBs.forEach(ob => {
-        const typeClass = ob.ob_type === 'Bull' ? 'ob-bull' : 'ob-bear';
-        const statusClass = ob.status === 'Valid' ? 'status-valid' : 
-                           ob.status === 'Waiting Retest' ? 'status-waiting' :
-                           ob.status === 'Triggered' ? 'status-triggered' : 'status-executed';
-        const time = new Date(ob.detected_at).toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'});
-        
-        html += `
-            <tr>
-                <td class="ps-3 fw-bold font-mono">${ob.symbol}</td>
-                <td class="${typeClass}">${ob.ob_type}</td>
-                <td class="font-mono small">$${formatPrice(ob.ob_bottom)} - $${formatPrice(ob.ob_top)}</td>
-                <td class="font-mono">$${formatPrice(ob.entry_price)}</td>
-                <td class="font-mono text-danger">$${formatPrice(ob.sl_price)}</td>
-                <td class="${statusClass}">${ob.status}</td>
-                <td class="small text-muted font-mono">${time}</td>
-                <td class="pe-3 text-end">
-                    <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteOB(${ob.id})">
-                        <i class="ri-close-line"></i>
-                    </button>
-                </td>
-            </tr>`;
-    });
-    
-    tbody.innerHTML = html;
-}
-
-// Видалення OB без підтвердження
-async function deleteOB(id) {
-    try {
-        await fetch(`/smart_money/detected/delete/${id}`, {method: 'POST'});
-        loadDetectedOBs();
-    } catch (e) {
-        console.error('Error deleting OB');
-    }
-}
-
-// ===== SCAN =====
+// ===== ACTIONS =====
 async function manualScan() {
-    const btn = document.getElementById('btnManualScan');
-    const progressCard = document.getElementById('progressCard');
-    const progressBar = document.getElementById('progressBar');
-    const progressText = document.getElementById('progressText');
-    const progressPercent = document.getElementById('progressPercent');
-    
+    const btn = document.getElementById('btnScan');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Scanning...';
-    progressCard.style.display = 'block';
-    
-    // Update status panel
-    document.getElementById('obScannerStatus').className = 'status-indicator status-scanning';
-    document.getElementById('obScannerStatus').textContent = 'SCANNING';
-    
-    // Fake progress
-    let progress = 0;
-    const interval = setInterval(() => {
-        if (progress < 90) {
-            progress += Math.random() * 15;
-            progressBar.style.width = Math.min(progress, 90) + '%';
-            progressPercent.textContent = Math.round(Math.min(progress, 90)) + '%';
-        }
-    }, 300);
     
     try {
-        const resp = await fetch('/smart_money/scan', {method: 'POST'});
-        clearInterval(interval);
+        await fetch('/smart_money/api/scan', {method: 'POST'});
         
-        progressBar.style.width = '100%';
-        progressPercent.textContent = '100%';
-        progressText.textContent = 'Complete!';
+        // Poll for completion
+        const poll = setInterval(async () => {
+            const resp = await fetch('/smart_money/api/status');
+            const status = await resp.json();
+            
+            if (!status.is_scanning) {
+                clearInterval(poll);
+                btn.disabled = false;
+                btn.innerHTML = '<i class="ri-radar-line me-1"></i>Scan Now';
+                loadAll();
+            }
+        }, 1000);
         
-        if (resp.ok) {
-            const data = await resp.json();
-            progressText.textContent = `Found ${data.found || 0} Order Blocks`;
-            loadDetectedOBs();
-            loadWatchlist();
-            loadScannerStatus();
-        }
     } catch (e) {
-        alert('Scan error');
-    } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="ri-radar-line me-1"></i>Scan Now';
-        
-        setTimeout(() => { progressCard.style.display = 'none'; }, 2000);
+        alert('Scan error');
     }
 }
+
+async function toggleTrading() {
+    const current = config.ob_execute_trades || false;
+    
+    if (!current) {
+        if (!confirm('Enable trading? This will execute real orders!')) return;
+    }
+    
+    await fetch('/smart_money/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ob_execute_trades: !current})
+    });
+    
+    loadConfig();
+    loadStatus();
+}
+
+async function togglePaper() {
+    const current = config.ob_paper_trading;
+    
+    await fetch('/smart_money/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ob_paper_trading: !current})
+    });
+    
+    loadConfig();
+    loadStatus();
+}
+
+// Filter change
+document.getElementById('execFilter')?.addEventListener('change', renderExecutionLog);
 
 // ===== HELPERS =====
 function formatPrice(price) {
