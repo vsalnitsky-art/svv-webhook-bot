@@ -36,6 +36,8 @@ from whale_pro import register_routes as register_whale_pro
 from sniper_strategy import sniper_bot
 # ✅ IMPORT WHALE HUNTER PRO v3.0
 from whale_hunter_pro import register_routes as register_whale_hunter_pro
+# ✅ IMPORT SMART MONEY v2.0
+from smart_money_routes import register_smart_money_routes
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -1731,6 +1733,9 @@ register_whale_pro(app)
 
 # === WHALE HUNTER PRO v3.0 ROUTES ===
 register_whale_hunter_pro(app)
+
+# === SMART MONEY v2.0 ROUTES ===
+register_smart_money_routes(app)
 
 # ===== ЗАПУСК =====
 
