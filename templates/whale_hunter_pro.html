@@ -1,0 +1,876 @@
+{% extends "base.html" %}
+
+{% block title %}Whale Hunter PRO{% endblock %}
+
+{% block content %}
+<style>
+/* ===== WHALE HUNTER PRO STYLES ===== */
+.whp-header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #0d1f33 100%);
+    border-radius: 12px;
+    padding: 1.5rem;
+    color: white;
+    margin-bottom: 1.5rem;
+}
+
+.whp-header h3 {
+    margin: 0;
+    font-weight: 700;
+}
+
+.whp-header .subtitle {
+    opacity: 0.8;
+    font-size: 0.85rem;
+}
+
+/* BTC Trend Badge */
+.btc-trend-badge {
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.btc-trend-badge.bullish {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.btc-trend-badge.bearish {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.btc-trend-badge.neutral {
+    background: rgba(156, 163, 175, 0.2);
+    color: #9ca3af;
+    border: 1px solid rgba(156, 163, 175, 0.3);
+}
+
+/* Score Bar */
+.score-bar {
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+    width: 100px;
+}
+
+.score-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.score-bar-fill.weak { background: #f59e0b; }
+.score-bar-fill.moderate { background: #3b82f6; }
+.score-bar-fill.strong { background: #22c55e; }
+.score-bar-fill.premium { background: linear-gradient(90deg, #22c55e, #10b981); }
+
+/* Strength Badge */
+.strength-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.strength-badge.weak { background: #fef3c7; color: #b45309; }
+.strength-badge.moderate { background: #dbeafe; color: #1d4ed8; }
+.strength-badge.strong { background: #dcfce7; color: #15803d; }
+.strength-badge.premium { background: linear-gradient(90deg, #dcfce7, #d1fae5); color: #047857; }
+
+/* Direction Badge */
+.direction-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.direction-badge.long { background: #dcfce7; color: #15803d; }
+.direction-badge.short { background: #fee2e2; color: #b91c1c; }
+
+/* Score Breakdown */
+.score-breakdown {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.score-chip {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background: #f3f4f6;
+    color: #6b7280;
+}
+
+.score-chip.active {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+/* Settings Card */
+.settings-card {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    overflow: hidden;
+}
+
+.settings-header {
+    background: #f9fafb;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e5e7eb;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.settings-header:hover {
+    background: #f3f4f6;
+}
+
+.settings-body {
+    padding: 1.25rem;
+}
+
+/* Filter Toggle */
+.filter-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background: #f9fafb;
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+}
+
+.filter-toggle label {
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+/* Help Button */
+.help-btn {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #6b7280;
+    border: none;
+    font-size: 0.65rem;
+    font-weight: 700;
+    cursor: help;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 4px;
+}
+
+.help-btn:hover {
+    background: #3b82f6;
+    color: white;
+}
+
+/* Progress */
+.scan-progress {
+    height: 4px;
+    background: #e5e7eb;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 0.5rem;
+}
+
+.scan-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    transition: width 0.3s ease;
+}
+
+/* Table Styles */
+#resultsTable th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+#resultsTable th.sortable:hover {
+    background: #f3f4f6;
+}
+
+#resultsTable th.sortable.asc::after { content: ' ↑'; color: #3b82f6; }
+#resultsTable th.sortable.desc::after { content: ' ↓'; color: #3b82f6; }
+
+/* Auto Mode */
+.auto-mode-panel {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 1px solid #bae6fd;
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+/* Visualization */
+.score-visual {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    height: 30px;
+}
+
+.score-bar-mini {
+    width: 12px;
+    border-radius: 2px;
+    transition: height 0.3s ease;
+}
+
+.score-bar-mini.rsi { background: #f59e0b; }
+.score-bar-mini.mfi { background: #8b5cf6; }
+.score-bar-mini.rvol { background: #ec4899; }
+.score-bar-mini.ob { background: #22c55e; }
+.score-bar-mini.btc { background: #3b82f6; }
+.score-bar-mini.adx { background: #14b8a6; }
+.score-bar-mini.squeeze { background: #f97316; }
+.score-bar-mini.div { background: #6366f1; }
+</style>
+
+<div class="container-fluid mt-4">
+    <!-- HEADER -->
+    <div class="whp-header">
+        <div class="row align-items-center">
+            <div class="col-md-6">
+                <h3><i class="ri-focus-3-line me-2"></i>Whale Hunter PRO <span class="badge bg-warning text-dark ms-2">v3.0</span></h3>
+                <p class="subtitle mb-0">Професійна бальна система пошуку торгових можливостей</p>
+            </div>
+            <div class="col-md-6 text-md-end mt-3 mt-md-0">
+                <div class="d-flex align-items-center justify-content-md-end gap-3">
+                    <!-- BTC Trend -->
+                    <div class="btc-trend-badge {{ 'bullish' if status.btc_trend == 'BULLISH' else ('bearish' if status.btc_trend == 'BEARISH' else 'neutral') }}">
+                        {% if status.btc_trend == 'BULLISH' %}
+                            <i class="ri-arrow-up-line"></i> BTC BULLISH
+                        {% elif status.btc_trend == 'BEARISH' %}
+                            <i class="ri-arrow-down-line"></i> BTC BEARISH
+                        {% else %}
+                            <i class="ri-subtract-line"></i> BTC NEUTRAL
+                        {% endif %}
+                    </div>
+                    
+                    <!-- Scan Button -->
+                    <button onclick="startScan()" id="scanBtn" class="btn btn-light fw-bold" {{ 'disabled' if status.is_scanning }}>
+                        {% if status.is_scanning %}
+                            <span class="spinner-border spinner-border-sm me-2"></span> {{ status.progress }}%
+                        {% else %}
+                            <i class="ri-radar-line me-2"></i> SCAN
+                        {% endif %}
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Progress Bar -->
+        {% if status.is_scanning %}
+        <div class="scan-progress mt-3">
+            <div class="scan-progress-bar" style="width: {{ status.progress }}%"></div>
+        </div>
+        <div class="text-center mt-2 small" style="opacity: 0.8">{{ status.status }}</div>
+        {% endif %}
+    </div>
+
+    <div class="row">
+        <!-- LEFT: Settings -->
+        <div class="col-lg-4 mb-4">
+            <!-- Auto Mode -->
+            <div class="auto-mode-panel mb-3">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <div>
+                        <strong><i class="ri-timer-line me-1"></i> Авто-режим</strong>
+                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_auto_mode }}">?</button>
+                    </div>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="autoModeToggle" 
+                               {{ 'checked' if status.auto_running }} onchange="toggleAutoMode()">
+                    </div>
+                </div>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">Інтервал</span>
+                    <select class="form-select" id="autoInterval" onchange="toggleAutoMode()">
+                        <option value="15" {{ 'selected' if status.auto_interval == 15 }}>15 хв</option>
+                        <option value="30" {{ 'selected' if status.auto_interval == 30 }}>30 хв</option>
+                        <option value="60" {{ 'selected' if status.auto_interval == 60 }}>1 година</option>
+                        <option value="120" {{ 'selected' if status.auto_interval == 120 }}>2 години</option>
+                        <option value="240" {{ 'selected' if status.auto_interval == 240 }}>4 години</option>
+                    </select>
+                </div>
+                <small class="text-muted d-block mt-2">
+                    Останній скан: <strong>{{ status.last_scan_time or 'Ніколи' }}</strong>
+                </small>
+            </div>
+
+            <!-- General Settings -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#generalSettings">
+                    <span><i class="ri-settings-3-line me-2"></i>Загальні налаштування</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse show" id="generalSettings">
+                    <div class="settings-body">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">
+                                Мінімальний Score
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_min_score }}">?</button>
+                            </label>
+                            <input type="range" class="form-range" id="minScore" 
+                                   min="30" max="80" value="{{ config.whp_min_score }}"
+                                   oninput="document.getElementById('minScoreVal').textContent = this.value">
+                            <div class="d-flex justify-content-between small text-muted">
+                                <span>30 (Багато сигналів)</span>
+                                <strong id="minScoreVal">{{ config.whp_min_score }}</strong>
+                                <span>80 (Тільки найкращі)</span>
+                            </div>
+                        </div>
+                        
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">
+                                    Min Volume ($)
+                                    <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_min_volume }}">?</button>
+                                </label>
+                                <select class="form-select form-select-sm" id="minVolume">
+                                    <option value="1000000" {{ 'selected' if config.whp_min_volume == 1000000 }}>1M+</option>
+                                    <option value="5000000" {{ 'selected' if config.whp_min_volume == 5000000 }}>5M+</option>
+                                    <option value="10000000" {{ 'selected' if config.whp_min_volume == 10000000 }}>10M+</option>
+                                    <option value="20000000" {{ 'selected' if config.whp_min_volume == 20000000 }}>20M+</option>
+                                    <option value="50000000" {{ 'selected' if config.whp_min_volume == 50000000 }}>50M+</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">
+                                    Скан монет
+                                    <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_scan_limit }}">?</button>
+                                </label>
+                                <select class="form-select form-select-sm" id="scanLimit">
+                                    <option value="30" {{ 'selected' if config.whp_scan_limit == 30 }}>Top 30</option>
+                                    <option value="50" {{ 'selected' if config.whp_scan_limit == 50 }}>Top 50</option>
+                                    <option value="100" {{ 'selected' if config.whp_scan_limit == 100 }}>Top 100</option>
+                                    <option value="150" {{ 'selected' if config.whp_scan_limit == 150 }}>Top 150</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Timeframes -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#tfSettings">
+                    <span><i class="ri-time-line me-2"></i>Таймфрейми</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse show" id="tfSettings">
+                    <div class="settings-body">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">
+                                Основний TF
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_main_tf }}">?</button>
+                            </label>
+                            <select class="form-select form-select-sm" id="mainTf">
+                                <option value="15" {{ 'selected' if config.whp_main_tf == '15' }}>15m</option>
+                                <option value="30" {{ 'selected' if config.whp_main_tf == '30' }}>30m</option>
+                                <option value="60" {{ 'selected' if config.whp_main_tf == '60' }}>1H</option>
+                                <option value="240" {{ 'selected' if config.whp_main_tf == '240' }}>4H</option>
+                                <option value="D" {{ 'selected' if config.whp_main_tf == 'D' }}>1D</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="htfAuto" 
+                                   {{ 'checked' if config.whp_htf_auto }} onchange="toggleHtfAuto()">
+                            <label class="form-check-label small" for="htfAuto">
+                                Авто HTF
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_htf_auto }}">?</button>
+                            </label>
+                        </div>
+                        
+                        <select class="form-select form-select-sm" id="htf" {{ 'disabled' if config.whp_htf_auto }}>
+                            <option value="60" {{ 'selected' if config.whp_htf == '60' }}>1H</option>
+                            <option value="240" {{ 'selected' if config.whp_htf == '240' }}>4H</option>
+                            <option value="D" {{ 'selected' if config.whp_htf == 'D' }}>1D</option>
+                            <option value="W" {{ 'selected' if config.whp_htf == 'W' }}>1W</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters & Weights -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#filterSettings">
+                    <span><i class="ri-filter-3-line me-2"></i>Фільтри та ваги</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse" id="filterSettings">
+                    <div class="settings-body">
+                        <!-- RSI -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>RSI Filter</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_rsi }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="rsiWeight" value="{{ config.whp_rsi_weight }}" min="0" max="30">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useRsi" {{ 'checked' if config.whp_use_rsi }}>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-3 ps-2">
+                            <div class="col-6">
+                                <label class="form-label small">Oversold</label>
+                                <input type="number" class="form-control form-control-sm" id="rsiOversold" 
+                                       value="{{ config.whp_rsi_oversold }}" min="20" max="50">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">Overbought</label>
+                                <input type="number" class="form-control form-control-sm" id="rsiOverbought" 
+                                       value="{{ config.whp_rsi_overbought }}" min="50" max="80">
+                            </div>
+                        </div>
+
+                        <!-- MFI -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>MFI Cloud</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_mfi }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="mfiWeight" value="{{ config.whp_mfi_weight }}" min="0" max="20">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useMfi" {{ 'checked' if config.whp_use_mfi }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- RVOL -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>RVOL</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_rvol }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="rvolWeight" value="{{ config.whp_rvol_weight }}" min="0" max="20">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useRvol" {{ 'checked' if config.whp_use_rvol }}>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3 ps-2">
+                            <label class="form-label small">Threshold (x)</label>
+                            <input type="number" class="form-control form-control-sm" id="rvolThreshold" 
+                                   value="{{ config.whp_rvol_threshold }}" step="0.1" min="1" max="3">
+                        </div>
+
+                        <!-- Order Block -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>Order Block</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_ob }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="obWeight" value="{{ config.whp_ob_weight }}" min="0" max="25">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useOb" {{ 'checked' if config.whp_use_ob }}>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3 ps-2">
+                            <label class="form-label small">Max Distance (%)</label>
+                            <input type="number" class="form-control form-control-sm" id="obDistance" 
+                                   value="{{ config.whp_ob_distance }}" step="0.5" min="1" max="10">
+                        </div>
+
+                        <!-- BTC Trend -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>BTC Trend</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_btc }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="btcWeight" value="{{ config.whp_btc_weight }}" min="0" max="20">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useBtc" {{ 'checked' if config.whp_use_btc }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ADX -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>ADX</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_adx }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="adxWeight" value="{{ config.whp_adx_weight }}" min="0" max="15">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useAdx" {{ 'checked' if config.whp_use_adx }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TTM Squeeze -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>TTM Squeeze</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_squeeze }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="squeezeWeight" value="{{ config.whp_squeeze_weight }}" min="0" max="10">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useSqueeze" {{ 'checked' if config.whp_use_squeeze }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Divergence -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>OBV Divergence</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_divergence }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="divergenceWeight" value="{{ config.whp_divergence_weight }}" min="0" max="15">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useDivergence" {{ 'checked' if config.whp_use_divergence }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr>
+                        <button onclick="saveSettings()" class="btn btn-primary btn-sm w-100">
+                            <i class="ri-save-line me-1"></i> Зберегти налаштування
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Legend -->
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="fw-bold mb-3"><i class="ri-information-line me-2"></i>Легенда балів</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini rsi" style="height: 15px;"></div>
+                            <small>RSI</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini mfi" style="height: 15px;"></div>
+                            <small>MFI</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini rvol" style="height: 15px;"></div>
+                            <small>RVOL</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini ob" style="height: 15px;"></div>
+                            <small>OB</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini btc" style="height: 15px;"></div>
+                            <small>BTC</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini adx" style="height: 15px;"></div>
+                            <small>ADX</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini squeeze" style="height: 15px;"></div>
+                            <small>SQZ</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini div" style="height: 15px;"></div>
+                            <small>DIV</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT: Results -->
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h6 class="fw-bold m-0">
+                        <i class="ri-pulse-line me-2"></i>Результати сканування
+                        <span class="badge bg-primary ms-2">{{ history|length }}</span>
+                    </h6>
+                    <button onclick="clearHistory()" class="btn btn-outline-danger btn-sm">
+                        <i class="ri-delete-bin-line"></i>
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" id="resultsTable">
+                        <thead class="bg-light">
+                            <tr>
+                                <th class="sortable" data-column="0">Час</th>
+                                <th class="sortable" data-column="1">Символ</th>
+                                <th class="sortable" data-column="2">Напрямок</th>
+                                <th class="sortable" data-column="3">Score</th>
+                                <th>Візуалізація</th>
+                                <th class="sortable" data-column="5">RSI</th>
+                                <th class="sortable" data-column="6">RVOL</th>
+                                <th class="text-end">Дія</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in history %}
+                            <tr>
+                                <td class="small text-muted" data-value="{{ row.time }}">{{ row.time }}</td>
+                                <td class="fw-bold" data-value="{{ row.symbol }}">{{ row.symbol }}</td>
+                                <td data-value="{{ row.direction }}">
+                                    <span class="direction-badge {{ 'long' if row.direction == 'LONG' else 'short' }}">
+                                        {% if row.direction == 'LONG' %}
+                                            <i class="ri-arrow-up-line"></i> LONG
+                                        {% else %}
+                                            <i class="ri-arrow-down-line"></i> SHORT
+                                        {% endif %}
+                                    </span>
+                                </td>
+                                <td data-value="{{ row.score }}">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <strong>{{ row.score }}</strong>
+                                        <div class="score-bar">
+                                            <div class="score-bar-fill {{ row.strength|lower }}" 
+                                                 style="width: {{ row.score }}%"></div>
+                                        </div>
+                                        <span class="strength-badge {{ row.strength|lower }}">{{ row.strength }}</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="score-visual" title="RSI:{{ row.rsi }} MFI:{{ row.mfi }} RVOL:{{ row.rvol }} OB:{{ row.ob }} BTC:{{ row.btc }} ADX:{{ row.adx }} SQZ:{{ row.squeeze }} DIV:{{ row.divergence }}">
+                                        <div class="score-bar-mini rsi" style="height: {{ (row.rsi / 20 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini mfi" style="height: {{ (row.mfi / 15 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini rvol" style="height: {{ (row.rvol / 15 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini ob" style="height: {{ (row.ob / 20 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini btc" style="height: {{ (row.btc / 15 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini adx" style="height: {{ (row.adx / 10 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini squeeze" style="height: {{ (row.squeeze / 5 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini div" style="height: {{ (row.divergence / 10 * 30)|int }}px;"></div>
+                                    </div>
+                                </td>
+                                <td class="small font-mono" data-value="{{ row.rsi_value }}">{{ row.rsi_value|round(1) }}</td>
+                                <td class="small font-mono" data-value="{{ row.rvol_value }}">x{{ row.rvol_value }}</td>
+                                <td class="text-end">
+                                    <a href="https://www.bybit.com/trade/usdt/{{ row.symbol }}" target="_blank" 
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="ri-line-chart-line"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center py-5 text-muted">
+                                    <i class="ri-search-eye-line fs-1 opacity-25"></i>
+                                    <p class="mt-2 mb-0">Запустіть сканування для пошуку сигналів</p>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// CSRF Token
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+// Init Tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function(el) {
+        return new bootstrap.Tooltip(el);
+    });
+    
+    initTableSorting();
+});
+
+function startScan() {
+    const btn = document.getElementById('scanBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Starting...';
+    
+    // Збираємо поточні налаштування
+    const config = collectSettings();
+    
+    fetch('/whale_hunter/scan', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(config)
+    }).then(() => {
+        setTimeout(() => location.reload(), 1500);
+    });
+}
+
+function toggleAutoMode() {
+    const enabled = document.getElementById('autoModeToggle').checked;
+    const interval = parseInt(document.getElementById('autoInterval').value);
+    
+    fetch('/whale_hunter/auto', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({ enabled, interval })
+    });
+}
+
+function toggleHtfAuto() {
+    const htfSelect = document.getElementById('htf');
+    htfSelect.disabled = document.getElementById('htfAuto').checked;
+}
+
+function collectSettings() {
+    return {
+        whp_min_score: parseInt(document.getElementById('minScore').value),
+        whp_min_volume: parseInt(document.getElementById('minVolume').value),
+        whp_scan_limit: parseInt(document.getElementById('scanLimit').value),
+        whp_main_tf: document.getElementById('mainTf').value,
+        whp_htf: document.getElementById('htf').value,
+        whp_htf_auto: document.getElementById('htfAuto').checked,
+        
+        whp_use_rsi: document.getElementById('useRsi').checked,
+        whp_rsi_weight: parseInt(document.getElementById('rsiWeight').value),
+        whp_rsi_oversold: parseInt(document.getElementById('rsiOversold').value),
+        whp_rsi_overbought: parseInt(document.getElementById('rsiOverbought').value),
+        
+        whp_use_mfi: document.getElementById('useMfi').checked,
+        whp_mfi_weight: parseInt(document.getElementById('mfiWeight').value),
+        
+        whp_use_rvol: document.getElementById('useRvol').checked,
+        whp_rvol_weight: parseInt(document.getElementById('rvolWeight').value),
+        whp_rvol_threshold: parseFloat(document.getElementById('rvolThreshold').value),
+        
+        whp_use_ob: document.getElementById('useOb').checked,
+        whp_ob_weight: parseInt(document.getElementById('obWeight').value),
+        whp_ob_distance: parseFloat(document.getElementById('obDistance').value),
+        
+        whp_use_btc: document.getElementById('useBtc').checked,
+        whp_btc_weight: parseInt(document.getElementById('btcWeight').value),
+        
+        whp_use_adx: document.getElementById('useAdx').checked,
+        whp_adx_weight: parseInt(document.getElementById('adxWeight').value),
+        
+        whp_use_squeeze: document.getElementById('useSqueeze').checked,
+        whp_squeeze_weight: parseInt(document.getElementById('squeezeWeight').value),
+        
+        whp_use_divergence: document.getElementById('useDivergence').checked,
+        whp_divergence_weight: parseInt(document.getElementById('divergenceWeight').value)
+    };
+}
+
+function saveSettings() {
+    const config = collectSettings();
+    
+    fetch('/whale_hunter/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(config)
+    }).then(r => r.json()).then(d => {
+        alert('Налаштування збережено!');
+    });
+}
+
+function clearHistory() {
+    if (!confirm('Видалити всю історію сигналів?')) return;
+    
+    fetch('/whale_hunter/clear', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(() => location.reload());
+}
+
+// Table Sorting
+function initTableSorting() {
+    const table = document.getElementById('resultsTable');
+    if (!table) return;
+    
+    let sortColumn = null;
+    let sortDirection = 'desc';
+    
+    table.querySelectorAll('th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const colIndex = parseInt(th.getAttribute('data-column'));
+            
+            if (sortColumn === colIndex) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortDirection = 'desc';
+            }
+            sortColumn = colIndex;
+            
+            // Clear classes
+            table.querySelectorAll('th.sortable').forEach(h => h.classList.remove('asc', 'desc'));
+            th.classList.add(sortDirection);
+            
+            // Sort
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            
+            rows.sort((a, b) => {
+                const cellA = a.children[colIndex];
+                const cellB = b.children[colIndex];
+                if (!cellA || !cellB) return 0;
+                
+                let valA = cellA.getAttribute('data-value') || cellA.innerText.trim();
+                let valB = cellB.getAttribute('data-value') || cellB.innerText.trim();
+                
+                const numA = parseFloat(valA);
+                const numB = parseFloat(valB);
+                
+                if (!isNaN(numA) && !isNaN(numB)) {
+                    return sortDirection === 'asc' ? numA - numB : numB - numA;
+                }
+                
+                return sortDirection === 'asc' 
+                    ? valA.localeCompare(valB) 
+                    : valB.localeCompare(valA);
+            });
+            
+            rows.forEach(row => tbody.appendChild(row));
+        });
+    });
+    
+    // Default sort by Score
+    const scoreHeader = table.querySelector('th[data-column="3"]');
+    if (scoreHeader) scoreHeader.click();
+}
+
+// Auto-refresh when scanning
+{% if status.is_scanning %}
+setTimeout(() => location.reload(), 2000);
+{% endif %}
+</script>
+{% endblock %}
