@@ -97,6 +97,50 @@ class WhaleSignal(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(20), default='NEW')
 
+
+# === SMART MONEY EXECUTION LOG ===
+class SmartMoneyExecutionLog(Base):
+    """Лог виконаних угод Smart Money системи"""
+    __tablename__ = 'smart_money_execution_log'
+    id = Column(Integer, primary_key=True)
+    
+    # Основна інформація
+    symbol = Column(String(20), index=True)
+    direction = Column(String(10))  # LONG або SHORT
+    
+    # Entry інформація
+    entry_price = Column(Float)
+    entry_time = Column(DateTime)
+    sl_price = Column(Float)
+    ob_top = Column(Float)
+    ob_bottom = Column(Float)
+    ob_timeframe = Column(String(10))
+    entry_mode = Column(String(20))  # Immediate або Retest
+    
+    # Exit інформація
+    exit_price = Column(Float, nullable=True)
+    exit_time = Column(DateTime, nullable=True)
+    exit_reason = Column(String(50), nullable=True)  # Opposite OB, SL Hit, Manual, Timeout
+    exit_ob_top = Column(Float, nullable=True)  # Exit OB зона (якщо закрито по OB)
+    exit_ob_bottom = Column(Float, nullable=True)
+    
+    # Результат
+    pnl = Column(Float, default=0.0)
+    pnl_percent = Column(Float, default=0.0)
+    is_win = Column(Boolean, nullable=True)
+    
+    # Статус
+    status = Column(String(20), default='OPEN')  # OPEN, CLOSED, CANCELLED
+    paper_trade = Column(Boolean, default=True)  # True = paper, False = real
+    
+    # Bybit order info (для реальних угод)
+    order_id = Column(String(50), nullable=True)
+    qty = Column(Float, nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class DatabaseManager:
     def __init__(self, db_filename='trading_bot_final.db'):
         db_url = os.environ.get('DATABASE_URL')
