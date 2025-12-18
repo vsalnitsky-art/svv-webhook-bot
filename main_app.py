@@ -34,6 +34,8 @@ from whale_core import whale_core
 from whale_pro import register_routes as register_whale_pro
 # ✅ IMPORT WHALE SNIPER (ADDED)
 from sniper_strategy import sniper_bot
+# ✅ IMPORT WHALE HUNTER PRO v3.0
+from whale_hunter_pro import register_routes as register_whale_hunter_pro
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -1726,6 +1728,9 @@ _auto_init_scheduler()
 
 # === WHALE PRO ROUTES ===
 register_whale_pro(app)
+
+# === WHALE HUNTER PRO v3.0 ROUTES ===
+register_whale_hunter_pro(app)
 
 # ===== ЗАПУСК =====
 
