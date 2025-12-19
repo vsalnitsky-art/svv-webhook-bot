@@ -560,6 +560,17 @@
                         </div>
 
                         <hr>
+                        
+                        <!-- Integration -->
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <span class="small text-muted">
+                                <i class="ri-link me-1"></i>Add to SM Watchlist
+                            </span>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="addToWatchlist" {{ 'checked' if config.whp_add_to_watchlist }}>
+                            </div>
+                        </div>
+
                         <button onclick="saveSettings()" class="btn btn-primary btn-sm w-100">
                             <i class="ri-save-line me-1"></i> Зберегти налаштування
                         </button>
@@ -784,7 +795,9 @@ function collectSettings() {
         whp_squeeze_weight: parseInt(document.getElementById('squeezeWeight').value),
         
         whp_use_divergence: document.getElementById('useDivergence').checked,
-        whp_divergence_weight: parseInt(document.getElementById('divergenceWeight').value)
+        whp_divergence_weight: parseInt(document.getElementById('divergenceWeight').value),
+        
+        whp_add_to_watchlist: document.getElementById('addToWatchlist').checked
     };
 }
 
@@ -799,9 +812,29 @@ function saveSettings() {
         },
         body: JSON.stringify(config)
     }).then(r => r.json()).then(d => {
-        alert('Налаштування збережено!');
+        console.log('⚡ Settings saved');
     });
 }
+
+// 🆕 АВТОЗБЕРЕЖЕННЯ при зміні параметрів
+let whpAutoSaveTimeout = null;
+function autoSaveWHP() {
+    if (whpAutoSaveTimeout) clearTimeout(whpAutoSaveTimeout);
+    whpAutoSaveTimeout = setTimeout(() => {
+        saveSettings();
+    }, 500);
+}
+
+// Ініціалізація автозбереження
+document.addEventListener('DOMContentLoaded', function() {
+    // Всі select та input елементи
+    document.querySelectorAll('.settings-panel select, .settings-panel input').forEach(el => {
+        el.addEventListener('change', autoSaveWHP);
+        if (el.tagName === 'INPUT' && el.type !== 'checkbox') {
+            el.addEventListener('blur', autoSaveWHP);
+        }
+    });
+});
 
 function clearHistory() {
     if (!confirm('Видалити всю історію сигналів?')) return;
