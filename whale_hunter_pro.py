@@ -728,13 +728,20 @@ class WhaleHunterPro:
             return MarketMode.NEUTRAL
     
     def determine_direction(self) -> str:
-        """Визначає напрямок на основі BTC тренду"""
+        """Визначає напрямок на основі BTC тренду та налаштувань"""
+        config = self._load_config()
+        
+        # Якщо BTC фільтр вимкнено - шукаємо обидва напрямки
+        if not config.get('whp_use_btc', True):
+            return "BOTH"
+        
+        # BTC фільтр увімкнено - напрямок по тренду
         if self.btc_trend == MarketMode.BULLISH:
             return "LONG"
         elif self.btc_trend == MarketMode.BEARISH:
             return "SHORT"
         else:
-            return "LONG"  # Default to LONG in neutral
+            return "BOTH"  # Neutral = обидва напрямки
     
     def analyze_symbol(self, symbol: str, direction: str) -> Optional[Dict]:
         """Аналізує один символ"""
@@ -914,14 +921,18 @@ class WhaleHunterPro:
         self.clear_history()
         
         try:
-            # 1. Аналіз BTC тренду
+            # 1. Аналіз BTC тренду (завжди, для інформації)
             self.status = "Analyzing BTC Trend..."
             self.progress = 5
             self.analyze_btc_trend()
             
             # 2. Визначаємо напрямок
             direction = self.determine_direction()
-            self.status = f"Mode: {direction} ({self.btc_trend.value})"
+            
+            if direction == "BOTH":
+                self.status = f"Mode: BOTH (BTC Filter OFF)"
+            else:
+                self.status = f"Mode: {direction} ({self.btc_trend.value})"
             self.progress = 10
             
             # 3. Отримуємо список монет
@@ -953,10 +964,25 @@ class WhaleHunterPro:
                 self.status = f"Analyzing {symbol}... ({i+1}/{total})"
                 self.progress = 10 + int((i / total) * 85)
                 
-                result = self.analyze_symbol(symbol, direction)
-                if result:
-                    self.save_signal(result)
-                    self.scan_results.append(result)
+                # Якщо BOTH - скануємо обидва напрямки
+                if direction == "BOTH":
+                    # Спочатку LONG
+                    result_long = self.analyze_symbol(symbol, "LONG")
+                    if result_long:
+                        self.save_signal(result_long)
+                        self.scan_results.append(result_long)
+                    
+                    # Потім SHORT
+                    result_short = self.analyze_symbol(symbol, "SHORT")
+                    if result_short:
+                        self.save_signal(result_short)
+                        self.scan_results.append(result_short)
+                else:
+                    # Один напрямок
+                    result = self.analyze_symbol(symbol, direction)
+                    if result:
+                        self.save_signal(result)
+                        self.scan_results.append(result)
                 
                 time.sleep(0.1)
             
