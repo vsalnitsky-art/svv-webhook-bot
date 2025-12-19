@@ -482,11 +482,6 @@
             </a>
         </li>
         <li class="nav-item">
-            <a class="nav-link" data-bs-toggle="tab" href="#tabDetected">
-                <i class="ri-focus-3-line me-1"></i>Detected OBs <span class="badge bg-primary" id="obBadge">0</span>
-            </a>
-        </li>
-        <li class="nav-item">
             <a class="nav-link" data-bs-toggle="tab" href="#tabExecution">
                 <i class="ri-file-list-3-line me-1"></i>Execution Log <span class="badge bg-success" id="execBadge">0</span>
             </a>
@@ -538,39 +533,6 @@
             </div>
         </div>
         
-        <!-- Detected OBs Tab -->
-        <div class="tab-pane fade" id="tabDetected">
-            <div class="card border-0 shadow-sm">
-                <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
-                    <span class="fw-bold">Detected Order Blocks</span>
-                    <button class="btn btn-sm btn-outline-danger" onclick="clearDetectedOBs()">
-                        <i class="ri-delete-bin-line me-1"></i>Clear All
-                    </button>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-container">
-                        <table class="table table-hover align-middle mb-0">
-                            <thead class="bg-light sticky-top">
-                                <tr>
-                                    <th class="ps-3">Symbol</th>
-                                    <th>Type</th>
-                                    <th>Zone</th>
-                                    <th>Entry</th>
-                                    <th>SL</th>
-                                    <th>Status</th>
-                                    <th>Detected</th>
-                                    <th class="text-end pe-3">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody id="obBody">
-                                <tr><td colspan="8" class="text-center py-4 text-muted">Loading...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
         <!-- Execution Log Tab -->
         <div class="tab-pane fade" id="tabExecution">
             <div class="card border-0 shadow-sm">
@@ -581,9 +543,13 @@
                             <option value="all">All</option>
                             <option value="open">Open</option>
                             <option value="closed">Closed</option>
+                            <option value="skipped">Skipped</option>
                             <option value="paper">Paper</option>
                             <option value="real">Real</option>
                         </select>
+                        <button class="btn btn-outline-danger btn-sm" onclick="clearExecutionLog()">
+                            <i class="ri-delete-bin-line me-1"></i>Clear All
+                        </button>
                     </div>
                 </div>
                 <div class="card-body p-0">
@@ -600,10 +566,11 @@
                                     <th>Exit Reason</th>
                                     <th>Mode</th>
                                     <th>Time</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody id="execBody">
-                                <tr><td colspan="9" class="text-center py-4 text-muted">Loading...</td></tr>
+                                <tr><td colspan="10" class="text-center py-4 text-muted">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -615,7 +582,6 @@
 
 <script>
 let watchlist = [];
-let detectedOBs = [];
 let executionLog = [];
 let config = {};
 
@@ -633,7 +599,6 @@ document.addEventListener('DOMContentLoaded', function() {
 async function loadAll() {
     await Promise.all([
         loadWatchlist(),
-        loadDetectedOBs(),
         loadExecutionLog(),
         loadStatus(),
         loadConfig()
@@ -710,59 +675,6 @@ async function clearWatchlist() {
     loadWatchlist();
 }
 
-// ===== DETECTED OBs =====
-async function loadDetectedOBs() {
-    try {
-        const resp = await fetch('/smart_money/api/detected');
-        detectedOBs = await resp.json();
-        renderDetectedOBs();
-    } catch (e) { console.error('Load OBs error:', e); }
-}
-
-function renderDetectedOBs() {
-    const tbody = document.getElementById('obBody');
-    document.getElementById('obBadge').textContent = detectedOBs.length;
-    
-    if (detectedOBs.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted">
-            <i class="ri-scan-line fs-2 d-block mb-2 opacity-25"></i>No OBs detected</td></tr>`;
-        return;
-    }
-    
-    tbody.innerHTML = detectedOBs.map(ob => {
-        const typeClass = ob.ob_type === 'Bull' ? 'ob-bull' : 'ob-bear';
-        const statusClass = ob.status === 'Valid' ? 'status-valid' : 
-                           ob.status === 'Waiting Retest' ? 'status-waiting' : 'status-triggered';
-        const time = ob.detected_at ? new Date(ob.detected_at).toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'}) : '—';
-        
-        return `<tr>
-            <td class="ps-3 fw-bold font-monospace">${ob.symbol}</td>
-            <td class="${typeClass}">${ob.ob_type}</td>
-            <td class="small font-monospace">$${formatPrice(ob.ob_bottom)} - $${formatPrice(ob.ob_top)}</td>
-            <td class="font-monospace">$${formatPrice(ob.entry_price)}</td>
-            <td class="font-monospace text-danger">$${formatPrice(ob.sl_price)}</td>
-            <td class="${statusClass}">${ob.status}</td>
-            <td class="small text-muted">${time}</td>
-            <td class="text-end pe-3">
-                <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteOB(${ob.id})">
-                    <i class="ri-close-line"></i>
-                </button>
-            </td>
-        </tr>`;
-    }).join('');
-}
-
-async function deleteOB(id) {
-    await fetch(`/smart_money/api/detected/delete/${id}`, {method: 'POST'});
-    loadDetectedOBs();
-}
-
-async function clearDetectedOBs() {
-    if (!confirm('Clear all detected OBs?')) return;
-    await fetch('/smart_money/api/detected/clear', {method: 'POST'});
-    loadDetectedOBs();
-}
-
 // ===== EXECUTION LOG =====
 async function loadExecutionLog() {
     try {
@@ -780,6 +692,7 @@ function renderExecutionLog() {
     let filtered = executionLog;
     if (filter === 'open') filtered = executionLog.filter(e => e.status === 'OPEN');
     else if (filter === 'closed') filtered = executionLog.filter(e => e.status === 'CLOSED');
+    else if (filter === 'skipped') filtered = executionLog.filter(e => e.status === 'SKIPPED');
     else if (filter === 'paper') filtered = executionLog.filter(e => e.paper_trade);
     else if (filter === 'real') filtered = executionLog.filter(e => !e.paper_trade);
     
@@ -787,7 +700,7 @@ function renderExecutionLog() {
     document.getElementById('openPositions').textContent = executionLog.filter(e => e.status === 'OPEN').length;
     
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-muted">
+        tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-muted">
             <i class="ri-file-list-line fs-2 d-block mb-2 opacity-25"></i>No executions</td></tr>`;
         return;
     }
@@ -795,8 +708,16 @@ function renderExecutionLog() {
     tbody.innerHTML = filtered.map(e => {
         const dirClass = e.direction === 'LONG' ? 'dir-long' : 'dir-short';
         const pnlClass = e.pnl_percent > 0 ? 'text-success' : (e.pnl_percent < 0 ? 'text-danger' : '');
-        const statusBadge = e.status === 'OPEN' ? '<span class="badge bg-primary">OPEN</span>' : '<span class="badge bg-secondary">CLOSED</span>';
-        const modeBadge = e.paper_trade ? '<span class="badge bg-warning text-dark">Paper</span>' : '<span class="badge bg-success">Real</span>';
+        
+        // Status badge
+        let statusBadge;
+        if (e.status === 'OPEN') statusBadge = '<span class="badge bg-primary">OPEN</span>';
+        else if (e.status === 'CLOSED') statusBadge = '<span class="badge bg-secondary">CLOSED</span>';
+        else if (e.status === 'SKIPPED') statusBadge = '<span class="badge bg-warning text-dark">SKIPPED</span>';
+        else if (e.status === 'FAILED') statusBadge = '<span class="badge bg-danger">FAILED</span>';
+        else statusBadge = `<span class="badge bg-light text-dark">${e.status}</span>`;
+        
+        const modeBadge = e.paper_trade ? '<span class="badge bg-info text-dark">Paper</span>' : '<span class="badge bg-success">Real</span>';
         
         return `<tr>
             <td class="ps-3 fw-bold font-monospace">${e.symbol}</td>
@@ -808,8 +729,35 @@ function renderExecutionLog() {
             <td class="small text-muted">${e.exit_reason || '—'}</td>
             <td>${modeBadge}</td>
             <td class="small text-muted">${e.entry_time || '—'}</td>
+            <td>
+                <button class="btn btn-outline-danger btn-sm py-0 px-1" onclick="deleteExecutionLog(${e.id})" title="Delete">
+                    <i class="ri-close-line"></i>
+                </button>
+            </td>
         </tr>`;
     }).join('');
+}
+
+// Delete execution log entry
+async function deleteExecutionLog(id) {
+    if (!confirm('Delete this record?')) return;
+    
+    try {
+        await fetch(`/smart_money/api/execution_log/${id}`, { method: 'DELETE' });
+        loadExecutionLog();
+        loadStats();
+    } catch (e) { console.error('Delete error:', e); }
+}
+
+// Clear all execution log
+async function clearExecutionLog() {
+    if (!confirm('Delete ALL execution log records?')) return;
+    
+    try {
+        await fetch('/smart_money/api/execution_log/clear', { method: 'POST' });
+        loadExecutionLog();
+        loadStats();
+    } catch (e) { console.error('Clear error:', e); }
 }
 
 async function loadStats() {
