@@ -71,6 +71,11 @@ class DetectedOrderBlock(Base):
     atr = Column(Float)
     status = Column(String(20), default='Valid')  # Valid, Waiting Retest, Triggered, Executed
     timeframe = Column(String(10))
+    # 🆕 Додаткові OB поля
+    ob_start_time = Column(DateTime, nullable=True)  # Коли OB утворився
+    ob_midline = Column(Float, nullable=True)  # Середня лінія OB
+    ob_size_percent = Column(Float, nullable=True)  # Розмір OB в %
+    # Timestamps
     detected_at = Column(DateTime, default=datetime.utcnow)
     executed_at = Column(DateTime, nullable=True)
     trade_result = Column(String(50), nullable=True)  # Результат угоди якщо виконано
@@ -117,6 +122,12 @@ class SmartMoneyExecutionLog(Base):
     ob_timeframe = Column(String(10))
     entry_mode = Column(String(20))  # Immediate або Retest
     
+    # 🆕 Розширена інформація про Order Block
+    ob_type = Column(String(10), nullable=True)  # Bullish або Bearish
+    ob_start_time = Column(DateTime, nullable=True)  # Коли OB утворився
+    ob_midline = Column(Float, nullable=True)  # Середня лінія OB
+    ob_size_percent = Column(Float, nullable=True)  # Розмір OB в %
+    
     # Exit інформація
     exit_price = Column(Float, nullable=True)
     exit_time = Column(DateTime, nullable=True)
@@ -130,7 +141,7 @@ class SmartMoneyExecutionLog(Base):
     is_win = Column(Boolean, nullable=True)
     
     # Статус
-    status = Column(String(20), default='OPEN')  # OPEN, CLOSED, CANCELLED
+    status = Column(String(20), default='OPEN')  # OPEN, CLOSED, CANCELLED, SKIPPED, FAILED
     paper_trade = Column(Boolean, default=True)  # True = paper, False = real
     
     # Bybit order info (для реальних угод)
