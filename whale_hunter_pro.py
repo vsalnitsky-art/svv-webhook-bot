@@ -602,6 +602,11 @@ class WhaleHunterPro:
             except (ValueError, TypeError):
                 return default
         
+        # 🔍 DEBUG: Логуємо raw значення з settings
+        raw_use_btc = settings.get('whp_use_btc')
+        converted_use_btc = to_bool(raw_use_btc, True)
+        logger.info(f"🔧 _load_config: whp_use_btc raw='{raw_use_btc}' (type={type(raw_use_btc).__name__}) -> converted={converted_use_btc}")
+        
         return {
             # Загальні
             'whp_enabled': to_bool(settings.get('whp_enabled'), True),
@@ -731,16 +736,23 @@ class WhaleHunterPro:
         """Визначає напрямок на основі BTC тренду та налаштувань"""
         config = self._load_config()
         
+        use_btc = config.get('whp_use_btc', True)
+        logger.info(f"🔍 determine_direction: whp_use_btc={use_btc} (type={type(use_btc).__name__}), btc_trend={self.btc_trend.value}")
+        
         # Якщо BTC фільтр вимкнено - шукаємо обидва напрямки
-        if not config.get('whp_use_btc', True):
+        if not use_btc:
+            logger.info("📊 Direction: BOTH (BTC Filter OFF)")
             return "BOTH"
         
         # BTC фільтр увімкнено - напрямок по тренду
         if self.btc_trend == MarketMode.BULLISH:
+            logger.info("📊 Direction: LONG (BTC BULLISH)")
             return "LONG"
         elif self.btc_trend == MarketMode.BEARISH:
+            logger.info("📊 Direction: SHORT (BTC BEARISH)")
             return "SHORT"
         else:
+            logger.info("📊 Direction: BOTH (BTC NEUTRAL)")
             return "BOTH"  # Neutral = обидва напрямки
     
     def analyze_symbol(self, symbol: str, direction: str) -> Optional[Dict]:
