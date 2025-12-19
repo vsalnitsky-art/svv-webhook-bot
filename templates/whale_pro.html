@@ -84,9 +84,9 @@
                         <i class="ri-question-line text-muted" style="cursor: help;" data-bs-toggle="tooltip" title="Таймфрейм аналізу. 4H (240) рекомендовано для пошуку глобальних рухів 'китів'."></i>
                     </div>
                     <select class="form-select form-select-sm" id="tf">
-                        <option value="60">1H</option>
-                        <option value="240" selected>4H (Inst.)</option>
-                        <option value="D">1D</option>
+                        <option value="60" {{ 'selected' if conf.get('whale_pro_tf') == '60' }}>1H</option>
+                        <option value="240" {{ 'selected' if conf.get('whale_pro_tf', '240') == '240' }}>4H (Inst.)</option>
+                        <option value="D" {{ 'selected' if conf.get('whale_pro_tf') == 'D' }}>1D</option>
                     </select>
                 </div>
 
@@ -96,9 +96,9 @@
                         <i class="ri-question-line text-muted" style="cursor: help;" data-bs-toggle="tooltip" title="Фільтр ліквідності. 20М+ відсіює 'сміттєві' монети з низькою ліквідністю."></i>
                     </div>
                     <select class="form-select form-select-sm" id="min_vol">
-                        <option value="10000000">10M+</option>
-                        <option value="20000000" selected>20M+ (Whale)</option>
-                        <option value="50000000">50M+ (Mega)</option>
+                        <option value="10000000" {{ 'selected' if conf.get('whale_pro_min_vol', 20000000)|float == 10000000 }}>10M+</option>
+                        <option value="20000000" {{ 'selected' if conf.get('whale_pro_min_vol', 20000000)|float == 20000000 }}>20M+ (Whale)</option>
+                        <option value="50000000" {{ 'selected' if conf.get('whale_pro_min_vol', 20000000)|float == 50000000 }}>50M+ (Mega)</option>
                     </select>
                 </div>
 
@@ -107,7 +107,7 @@
                         <label class="small fw-bold text-muted text-uppercase me-1">Min RVOL</label>
                         <i class="ri-question-line text-muted" style="cursor: help;" data-bs-toggle="tooltip" title="Поріг аномального об'єму. 1.5 означає, що об'єм має бути в 1.5 рази більшим за середній."></i>
                     </div>
-                    <input type="number" class="form-control form-control-sm" id="min_rvol" value="1.5" step="0.1">
+                    <input type="number" class="form-control form-control-sm" id="min_rvol" value="{{ conf.get('whale_pro_rvol_min', 1.5) }}" step="0.1">
                 </div>
 
                 <div class="col-md-3 border-start ps-4">
@@ -282,7 +282,39 @@ document.addEventListener('DOMContentLoaded', function() {
     var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
         return new bootstrap.Tooltip(tooltipTriggerEl)
     })
+    
+    // Ініціалізація автозбереження
+    document.querySelectorAll('#tf, #min_vol, #min_rvol').forEach(el => {
+        el.addEventListener('change', autoSaveWhalePro);
+        if (el.tagName === 'INPUT') {
+            el.addEventListener('blur', autoSaveWhalePro);
+        }
+    });
 });
+
+// Автозбереження параметрів
+let whaleProAutoSaveTimeout = null;
+function autoSaveWhalePro() {
+    if (whaleProAutoSaveTimeout) clearTimeout(whaleProAutoSaveTimeout);
+    whaleProAutoSaveTimeout = setTimeout(() => {
+        const config = {
+            whale_pro_tf: document.getElementById('tf').value,
+            whale_pro_min_vol: parseInt(document.getElementById('min_vol').value),
+            whale_pro_rvol_min: parseFloat(document.getElementById('min_rvol').value)
+        };
+        
+        fetch('/whale_pro/config', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify(config)
+        }).then(r => r.json()).then(d => {
+            console.log('⚡ Whale PRO settings saved');
+        });
+    }, 500);
+}
 
 // Клієнтський таймер для зворотного відліку (естетичний)
 // В реальному проекті можна синхронізувати з сервером, але це проста емуляція
