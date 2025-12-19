@@ -482,6 +482,11 @@
             </a>
         </li>
         <li class="nav-item">
+            <a class="nav-link" data-bs-toggle="tab" href="#tabDetected">
+                <i class="ri-focus-3-line me-1"></i>Waiting Retest <span class="badge bg-warning text-dark" id="obBadge">0</span>
+            </a>
+        </li>
+        <li class="nav-item">
             <a class="nav-link" data-bs-toggle="tab" href="#tabExecution">
                 <i class="ri-file-list-3-line me-1"></i>Execution Log <span class="badge bg-success" id="execBadge">0</span>
             </a>
@@ -526,6 +531,47 @@
                             </thead>
                             <tbody id="watchlistBody">
                                 <tr><td colspan="5" class="text-center py-4 text-muted">Loading...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Waiting Retest Tab (тільки для Entry Mode = Retest) -->
+        <div class="tab-pane fade" id="tabDetected">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                    <span class="fw-bold">
+                        <i class="ri-time-line me-1 text-warning"></i>
+                        Waiting Retest
+                        <small class="text-muted ms-2">(Entry Mode: Retest)</small>
+                    </span>
+                    <button class="btn btn-sm btn-outline-danger" onclick="clearWaitingRetest()">
+                        <i class="ri-delete-bin-line me-1"></i>Clear All
+                    </button>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-container">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="bg-light sticky-top">
+                                <tr>
+                                    <th class="ps-3">Symbol</th>
+                                    <th>Dir</th>
+                                    <th>OB Zone</th>
+                                    <th>Entry</th>
+                                    <th>SL</th>
+                                    <th>Current</th>
+                                    <th>Status</th>
+                                    <th>Added</th>
+                                    <th class="text-end pe-3">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="retestBody">
+                                <tr><td colspan="9" class="text-center py-4 text-muted">
+                                    <i class="ri-time-line fs-2 d-block mb-2 opacity-25"></i>
+                                    No OBs waiting for retest
+                                </td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -599,6 +645,7 @@ document.addEventListener('DOMContentLoaded', function() {
 async function loadAll() {
     await Promise.all([
         loadWatchlist(),
+        loadWaitingRetest(),
         loadExecutionLog(),
         loadStatus(),
         loadConfig()
@@ -673,6 +720,74 @@ async function clearWatchlist() {
     if (!confirm('Clear entire watchlist?')) return;
     await fetch('/smart_money/api/watchlist/clear', {method: 'POST'});
     loadWatchlist();
+}
+
+// ===== WAITING RETEST (Detected OBs) =====
+async function loadWaitingRetest() {
+    try {
+        const resp = await fetch('/smart_money/api/detected');
+        const data = await resp.json();
+        renderWaitingRetest(data);
+    } catch (e) { console.error('Load waiting retest error:', e); }
+}
+
+function renderWaitingRetest(items) {
+    const tbody = document.getElementById('retestBody');
+    document.getElementById('obBadge').textContent = items.length;
+    
+    if (items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" class="text-center py-4 text-muted">
+            <i class="ri-time-line fs-2 d-block mb-2 opacity-25"></i>
+            No OBs waiting for retest</td></tr>`;
+        return;
+    }
+    
+    tbody.innerHTML = items.map(ob => {
+        const dirClass = ob.direction === 'BUY' ? 'dir-long' : 'dir-short';
+        const dirText = ob.direction === 'BUY' ? 'LONG' : 'SHORT';
+        const statusClass = ob.status === 'Waiting Retest' ? 'text-warning' : 
+                           ob.status === 'Triggered' ? 'text-success' : '';
+        const time = ob.detected_at ? new Date(ob.detected_at).toLocaleString('uk-UA', {
+            day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+        }) : '—';
+        
+        return `<tr>
+            <td class="ps-3 fw-bold font-monospace">${ob.symbol}</td>
+            <td><span class="${dirClass}">${dirText}</span></td>
+            <td class="small font-monospace">$${formatPrice(ob.ob_bottom)} - $${formatPrice(ob.ob_top)}</td>
+            <td class="font-monospace">$${formatPrice(ob.entry_price)}</td>
+            <td class="font-monospace text-danger">$${formatPrice(ob.sl_price)}</td>
+            <td class="font-monospace">${ob.current_price ? '$' + formatPrice(ob.current_price) : '—'}</td>
+            <td class="${statusClass}">${ob.status}</td>
+            <td class="small text-muted">${time}</td>
+            <td class="text-end pe-3">
+                <button class="btn btn-sm btn-outline-success py-0 px-1 me-1" onclick="triggerRetest(${ob.id})" title="Execute Now">
+                    <i class="ri-play-line"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger py-0 px-1" onclick="deleteRetest(${ob.id})" title="Delete">
+                    <i class="ri-close-line"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function deleteRetest(id) {
+    await fetch(`/smart_money/api/detected/delete/${id}`, {method: 'POST'});
+    loadWaitingRetest();
+}
+
+async function triggerRetest(id) {
+    if (!confirm('Execute trade for this OB now?')) return;
+    await fetch(`/smart_money/api/detected/trigger/${id}`, {method: 'POST'});
+    loadWaitingRetest();
+    loadExecutionLog();
+}
+
+async function clearWaitingRetest() {
+    if (!confirm('Clear all waiting retest OBs?')) return;
+    await fetch('/smart_money/api/detected/clear', {method: 'POST'});
+    loadWaitingRetest();
 }
 
 // ===== EXECUTION LOG =====
