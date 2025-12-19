@@ -41,16 +41,21 @@ class WhaleSniper:
         self._stop_event = threading.Event()
         self.found_signals = [] # Локальний кеш для UI
         
+        # Хелпери для конвертації
+        self._to_bool = lambda val, d=True: val if isinstance(val, bool) else (str(val).lower() in ('true', '1', 'yes', 'on') if val else d)
+        self._to_int = lambda val, d=0: int(float(val)) if val else d
+        self._to_float = lambda val, d=0.0: float(val) if val else d
+        
         # Налаштування
         self.CONFIG = {
-            "btc_check": settings.get("sniper_btc_check", True),
-            "min_vol_usdt": float(settings.get("sniper_min_vol", 10_000_000)), 
-            "rvol_min": float(settings.get("sniper_rvol", 2.2)),
-            "adx_min": int(settings.get("sniper_adx", 20)),
+            "btc_check": self._to_bool(settings.get("sniper_btc_check"), True),
+            "min_vol_usdt": self._to_float(settings.get("sniper_min_vol"), 10_000_000), 
+            "rvol_min": self._to_float(settings.get("sniper_rvol"), 2.2),
+            "adx_min": self._to_int(settings.get("sniper_adx"), 20),
             "ob_timeframe": "15",
-            "rsi_trigger": int(settings.get("sniper_rsi", 45)), # Базовий тригер для Long
-            "ob_swing": int(settings.get("sniper_ob_swing", 3)),
-            "ob_atr": float(settings.get("sniper_ob_atr", 2.5)),
+            "rsi_trigger": self._to_int(settings.get("sniper_rsi"), 45), # Базовий тригер для Long
+            "ob_swing": self._to_int(settings.get("sniper_ob_swing"), 3),
+            "ob_atr": self._to_float(settings.get("sniper_ob_atr"), 2.5),
             "scan_interval": 300
         }
         
@@ -72,13 +77,13 @@ class WhaleSniper:
     def update_config(self):
         """Оновлення налаштувань без перезапуску"""
         try:
-            self.CONFIG["btc_check"] = settings.get("sniper_btc_check", True)
-            self.CONFIG["min_vol_usdt"] = float(settings.get("sniper_min_vol", 10_000_000))
-            self.CONFIG["rvol_min"] = float(settings.get("sniper_rvol", 2.2))
-            self.CONFIG["adx_min"] = int(settings.get("sniper_adx", 20))
-            self.CONFIG["rsi_trigger"] = int(settings.get("sniper_rsi", 45))
-            self.CONFIG["ob_swing"] = int(settings.get("sniper_ob_swing", 3))
-            self.CONFIG["ob_atr"] = float(settings.get("sniper_ob_atr", 2.5))
+            self.CONFIG["btc_check"] = self._to_bool(settings.get("sniper_btc_check"), True)
+            self.CONFIG["min_vol_usdt"] = self._to_float(settings.get("sniper_min_vol"), 10_000_000)
+            self.CONFIG["rvol_min"] = self._to_float(settings.get("sniper_rvol"), 2.2)
+            self.CONFIG["adx_min"] = self._to_int(settings.get("sniper_adx"), 20)
+            self.CONFIG["rsi_trigger"] = self._to_int(settings.get("sniper_rsi"), 45)
+            self.CONFIG["ob_swing"] = self._to_int(settings.get("sniper_ob_swing"), 3)
+            self.CONFIG["ob_atr"] = self._to_float(settings.get("sniper_ob_atr"), 2.5)
             
             self._init_scanner()
             logger.info(f"Sniper config updated: {self.CONFIG}")
