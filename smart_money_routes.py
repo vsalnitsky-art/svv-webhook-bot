@@ -207,6 +207,45 @@ def api_stop_exit_monitor():
 
 
 # ============================================================================
+#                       API: COORDINATOR STATUS
+# ============================================================================
+
+@smart_money_bp.route('/api/coordinator/status', methods=['GET'])
+def api_coordinator_status():
+    """Отримати статус координатора сканерів"""
+    try:
+        from scanner_coordinator import scanner_coordinator
+        return jsonify(scanner_coordinator.get_status())
+    except ImportError:
+        return jsonify({'error': 'Coordinator not available'})
+
+
+@smart_money_bp.route('/api/coordinator/trigger/<scanner_type>', methods=['POST'])
+def api_coordinator_trigger(scanner_type):
+    """Примусово запустити сканер через координатор"""
+    try:
+        from scanner_coordinator import scanner_coordinator, ScannerType
+        
+        scanner_map = {
+            'smart_money': ScannerType.SMART_MONEY,
+            'whale_hunter': ScannerType.WHALE_HUNTER,
+            'whale_pro': ScannerType.WHALE_PRO,
+            'whale_sniper': ScannerType.WHALE_SNIPER,
+            'rsi_mfi': ScannerType.RSI_MFI
+        }
+        
+        st = scanner_map.get(scanner_type)
+        if not st:
+            return jsonify({'status': 'error', 'error': 'Unknown scanner type'})
+        
+        result = scanner_coordinator.trigger_scan(st)
+        return jsonify({'status': 'ok' if result else 'busy'})
+        
+    except ImportError:
+        return jsonify({'error': 'Coordinator not available'})
+
+
+# ============================================================================
 #                          REGISTER ROUTES
 # ============================================================================
 
