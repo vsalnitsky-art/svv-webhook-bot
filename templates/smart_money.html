@@ -320,8 +320,17 @@
                                             </select>
                                         </div>
                                         <div class="col-6">
-                                            <label class="form-label small">Swing Len <button class="help-btn" title="Кількість свічок для swing point">?</button></label>
-                                            <input type="number" class="form-control form-control-sm" id="obSwingLength" value="3" min="2" max="10">
+                                            <label class="form-label small">Swing Len <button class="help-btn" title="Кількість свічок для swing point. Менше = менші OB">?</button></label>
+                                            <input type="number" class="form-control form-control-sm" id="obSwingLength" value="10" min="3" max="20">
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small">Zone Count <button class="help-btn" title="Кількість OB зон: High=10, Medium=5, Low=3, One=1">?</button></label>
+                                            <select class="form-select form-select-sm" id="obZoneCount">
+                                                <option value="High">High (10)</option>
+                                                <option value="Medium">Medium (5)</option>
+                                                <option value="Low" selected>Low (3)</option>
+                                                <option value="One">One (1)</option>
+                                            </select>
                                         </div>
                                         <div class="col-6">
                                             <label class="form-label small">Invalidation</label>
@@ -331,8 +340,14 @@
                                             </select>
                                         </div>
                                         <div class="col-6">
-                                            <label class="form-label small">ATR Mult</label>
-                                            <input type="number" class="form-control form-control-sm" id="obAtrMult" value="3.5" step="0.1">
+                                            <label class="form-label small">ATR Mult <button class="help-btn" title="Максимальний розмір OB в ATR. Більше = більші зони">?</button></label>
+                                            <input type="number" class="form-control form-control-sm" id="obAtrMult" value="3.5" step="0.5" min="1" max="10">
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="form-check form-switch mt-4">
+                                                <input class="form-check-input" type="checkbox" id="obCombineObs" checked>
+                                                <label class="form-check-label small" for="obCombineObs">Combine Zones</label>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -888,6 +903,8 @@ async function loadConfig() {
         document.getElementById('obAutoScan').checked = config.ob_auto_scan || false;
         document.getElementById('obScanInterval').value = config.ob_scan_interval || 60;
         document.getElementById('obWatchlistLimit').value = config.ob_watchlist_limit || 50;
+        document.getElementById('obZoneCount').value = config.ob_zone_count || 'Low';
+        document.getElementById('obCombineObs').checked = config.ob_combine_obs !== false;
         
     } catch (e) { console.error('Load config error:', e); }
 }
@@ -896,8 +913,10 @@ async function saveSettings() {
     const newConfig = {
         ob_source_tf: document.getElementById('obSourceTf').value,
         ob_swing_length: parseInt(document.getElementById('obSwingLength').value),
+        ob_zone_count: document.getElementById('obZoneCount').value,
         ob_invalidation_method: document.getElementById('obInvalidation').value,
         ob_max_atr_mult: parseFloat(document.getElementById('obAtrMult').value),
+        ob_combine_obs: document.getElementById('obCombineObs').checked,
         ob_entry_mode: document.getElementById('obEntryMode').value,
         ob_selection: document.getElementById('obSelection').value,
         ob_sl_atr_mult: parseFloat(document.getElementById('obSlAtrMult').value),
@@ -936,7 +955,7 @@ function autoSave() {
 document.addEventListener('DOMContentLoaded', function() {
     // Всі select та input елементи для автозбереження
     const autoSaveElements = [
-        'obSourceTf', 'obSwingLength', 'obInvalidation', 'obAtrMult',
+        'obSourceTf', 'obSwingLength', 'obZoneCount', 'obInvalidation', 'obAtrMult', 'obCombineObs',
         'obEntryMode', 'obSelection', 'obSlAtrMult', 'obTimeout',
         'obExitEnabled', 'obExitTf', 'obExitMode', 'obExitOnlyProfit',
         'obExitMinHold', 'obAutoScan', 'obScanInterval', 'obWatchlistLimit'
