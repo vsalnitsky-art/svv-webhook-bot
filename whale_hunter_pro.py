@@ -579,61 +579,84 @@ class WhaleHunterPro:
     
     def _load_config(self) -> Dict:
         """Завантажує конфігурацію з settings"""
+        
+        def to_bool(val, default=True):
+            """Конвертує значення в boolean"""
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, str):
+                return val.lower() in ('true', '1', 'yes', 'on')
+            return bool(val) if val is not None else default
+        
+        def to_int(val, default=0):
+            """Конвертує значення в int"""
+            try:
+                return int(float(val)) if val is not None else default
+            except (ValueError, TypeError):
+                return default
+        
+        def to_float(val, default=0.0):
+            """Конвертує значення в float"""
+            try:
+                return float(val) if val is not None else default
+            except (ValueError, TypeError):
+                return default
+        
         return {
             # Загальні
-            'whp_enabled': settings.get('whp_enabled', True),
-            'whp_auto_mode': settings.get('whp_auto_mode', False),
-            'whp_auto_interval': int(settings.get('whp_auto_interval', 60)),
-            'whp_min_score': int(settings.get('whp_min_score', 50)),
+            'whp_enabled': to_bool(settings.get('whp_enabled'), True),
+            'whp_auto_mode': to_bool(settings.get('whp_auto_mode'), False),
+            'whp_auto_interval': to_int(settings.get('whp_auto_interval'), 60),
+            'whp_min_score': to_int(settings.get('whp_min_score'), 50),
             
             # Ліквідність
-            'whp_min_volume': float(settings.get('whp_min_volume', 5_000_000)),
-            'whp_scan_limit': int(settings.get('whp_scan_limit', 50)),
+            'whp_min_volume': to_float(settings.get('whp_min_volume'), 5_000_000),
+            'whp_scan_limit': to_int(settings.get('whp_scan_limit'), 50),
             
             # Таймфрейми
-            'whp_main_tf': settings.get('whp_main_tf', '60'),
-            'whp_htf': settings.get('whp_htf', '240'),
-            'whp_htf_auto': settings.get('whp_htf_auto', True),
+            'whp_main_tf': str(settings.get('whp_main_tf', '60')),
+            'whp_htf': str(settings.get('whp_htf', '240')),
+            'whp_htf_auto': to_bool(settings.get('whp_htf_auto'), True),
             
             # RSI
-            'whp_use_rsi': settings.get('whp_use_rsi', True),
-            'whp_rsi_weight': int(settings.get('whp_rsi_weight', 20)),
-            'whp_rsi_oversold': int(settings.get('whp_rsi_oversold', 40)),
-            'whp_rsi_overbought': int(settings.get('whp_rsi_overbought', 60)),
+            'whp_use_rsi': to_bool(settings.get('whp_use_rsi'), True),
+            'whp_rsi_weight': to_int(settings.get('whp_rsi_weight'), 20),
+            'whp_rsi_oversold': to_int(settings.get('whp_rsi_oversold'), 40),
+            'whp_rsi_overbought': to_int(settings.get('whp_rsi_overbought'), 60),
             
             # MFI
-            'whp_use_mfi': settings.get('whp_use_mfi', True),
-            'whp_mfi_weight': int(settings.get('whp_mfi_weight', 15)),
+            'whp_use_mfi': to_bool(settings.get('whp_use_mfi'), True),
+            'whp_mfi_weight': to_int(settings.get('whp_mfi_weight'), 15),
             
             # RVOL
-            'whp_use_rvol': settings.get('whp_use_rvol', True),
-            'whp_rvol_weight': int(settings.get('whp_rvol_weight', 15)),
-            'whp_rvol_threshold': float(settings.get('whp_rvol_threshold', 1.2)),
+            'whp_use_rvol': to_bool(settings.get('whp_use_rvol'), True),
+            'whp_rvol_weight': to_int(settings.get('whp_rvol_weight'), 15),
+            'whp_rvol_threshold': to_float(settings.get('whp_rvol_threshold'), 1.2),
             
             # Order Block
-            'whp_use_ob': settings.get('whp_use_ob', True),
-            'whp_ob_weight': int(settings.get('whp_ob_weight', 20)),
-            'whp_ob_distance': float(settings.get('whp_ob_distance', 3.0)),
+            'whp_use_ob': to_bool(settings.get('whp_use_ob'), True),
+            'whp_ob_weight': to_int(settings.get('whp_ob_weight'), 20),
+            'whp_ob_distance': to_float(settings.get('whp_ob_distance'), 3.0),
             
             # BTC Trend
-            'whp_use_btc': settings.get('whp_use_btc', True),
-            'whp_btc_weight': int(settings.get('whp_btc_weight', 15)),
+            'whp_use_btc': to_bool(settings.get('whp_use_btc'), True),
+            'whp_btc_weight': to_int(settings.get('whp_btc_weight'), 15),
             
             # ADX
-            'whp_use_adx': settings.get('whp_use_adx', True),
-            'whp_adx_weight': int(settings.get('whp_adx_weight', 10)),
-            'whp_adx_threshold': int(settings.get('whp_adx_threshold', 25)),
+            'whp_use_adx': to_bool(settings.get('whp_use_adx'), True),
+            'whp_adx_weight': to_int(settings.get('whp_adx_weight'), 10),
+            'whp_adx_threshold': to_int(settings.get('whp_adx_threshold'), 25),
             
             # TTM Squeeze
-            'whp_use_squeeze': settings.get('whp_use_squeeze', True),
-            'whp_squeeze_weight': int(settings.get('whp_squeeze_weight', 5)),
+            'whp_use_squeeze': to_bool(settings.get('whp_use_squeeze'), True),
+            'whp_squeeze_weight': to_int(settings.get('whp_squeeze_weight'), 5),
             
             # Divergence
-            'whp_use_divergence': settings.get('whp_use_divergence', True),
-            'whp_divergence_weight': int(settings.get('whp_divergence_weight', 10)),
+            'whp_use_divergence': to_bool(settings.get('whp_use_divergence'), True),
+            'whp_divergence_weight': to_int(settings.get('whp_divergence_weight'), 10),
             
             # Integration
-            'whp_add_to_watchlist': settings.get('whp_add_to_watchlist', True),
+            'whp_add_to_watchlist': to_bool(settings.get('whp_add_to_watchlist'), True),
         }
     
     def update_config(self):
@@ -1066,9 +1089,10 @@ def register_routes(app):
     def whale_hunter_config():
         if request.method == 'POST':
             data = request.json or {}
-            for key, value in data.items():
-                settings.save_settings({key: value})
+            # Зберігаємо всі налаштування одразу
+            settings.save_settings(data)
             whale_hunter_pro.update_config()
+            logger.info(f"⚡ Whale Hunter PRO config saved: {len(data)} params")
             return jsonify({'status': 'ok'})
         return jsonify(whale_hunter_pro.get_config())
     
