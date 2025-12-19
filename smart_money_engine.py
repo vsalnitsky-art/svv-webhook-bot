@@ -133,7 +133,7 @@ class SmartMoneyEngine:
         return {
             # Detection
             'ob_source_tf': settings.get('ob_source_tf', '15'),
-            'ob_swing_length': int(settings.get('ob_swing_length', 3)),
+            'ob_swing_length': int(settings.get('ob_swing_length', 10)),
             'ob_zone_count': settings.get('ob_zone_count', 'High'),
             'ob_max_atr_mult': float(settings.get('ob_max_atr_mult', 3.5)),
             'ob_invalidation_method': settings.get('ob_invalidation_method', 'Wick'),
