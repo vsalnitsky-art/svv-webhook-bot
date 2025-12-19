@@ -413,17 +413,31 @@ def register_routes(app):
         """Отримати/зберегти конфігурацію"""
         if request.method == 'POST':
             data = request.json or {}
-            for key, value in data.items():
-                settings.save_settings({key: value})
-            logger.info("Whale PRO config saved")
+            # Зберігаємо всі параметри одразу
+            settings.save_settings(data)
+            logger.info(f"Whale PRO config saved: {len(data)} params")
             return jsonify({'status': 'ok'})
         
+        # Конвертери
+        def to_bool(val, default=True):
+            if isinstance(val, bool): return val
+            if isinstance(val, str): return val.lower() in ('true', '1', 'yes', 'on')
+            return bool(val) if val is not None else default
+        
+        def to_float(val, default=0.0):
+            try: return float(val) if val is not None else default
+            except: return default
+        
+        def to_int(val, default=0):
+            try: return int(float(val)) if val is not None else default
+            except: return default
+        
         return jsonify({
-            'whale_pro_min_vol': settings.get('whale_pro_min_vol', 10_000_000),
-            'whale_pro_rvol_min': settings.get('whale_pro_rvol_min', 1.8),
-            'whale_pro_adx_min': settings.get('whale_pro_adx_min', 20),
-            'whale_pro_score_min': settings.get('whale_pro_score_min', 70),
-            'whale_pro_add_to_watchlist': settings.get('whale_pro_add_to_watchlist', True),
-            'whale_pro_auto_scan': settings.get('whale_pro_auto_scan', False),
-            'whale_pro_scan_interval': settings.get('whale_pro_scan_interval', 300)
+            'whale_pro_min_vol': to_float(settings.get('whale_pro_min_vol'), 10_000_000),
+            'whale_pro_rvol_min': to_float(settings.get('whale_pro_rvol_min'), 1.8),
+            'whale_pro_adx_min': to_int(settings.get('whale_pro_adx_min'), 20),
+            'whale_pro_score_min': to_int(settings.get('whale_pro_score_min'), 70),
+            'whale_pro_add_to_watchlist': to_bool(settings.get('whale_pro_add_to_watchlist'), True),
+            'whale_pro_auto_scan': to_bool(settings.get('whale_pro_auto_scan'), False),
+            'whale_pro_scan_interval': to_int(settings.get('whale_pro_scan_interval'), 300)
         })
