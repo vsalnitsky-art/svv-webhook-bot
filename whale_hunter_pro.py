@@ -631,6 +631,9 @@ class WhaleHunterPro:
             # Divergence
             'whp_use_divergence': settings.get('whp_use_divergence', True),
             'whp_divergence_weight': int(settings.get('whp_divergence_weight', 10)),
+            
+            # Integration
+            'whp_add_to_watchlist': settings.get('whp_add_to_watchlist', True),
         }
     
     def update_config(self):
@@ -784,6 +787,25 @@ class WhaleHunterPro:
             session.add(sig)
             session.commit()
             logger.info(f"✅ Signal saved: {result['symbol']} Score={result['score']} ({result['strength']})")
+            
+            # 🆕 ІНТЕГРАЦІЯ: Додаємо до Smart Money Watchlist
+            if settings.get('whp_add_to_watchlist', True):
+                try:
+                    from scanner_coordinator import add_to_smart_money_watchlist
+                    
+                    direction = 'BUY' if result['direction'] == 'LONG' else 'SELL'
+                    add_result = add_to_smart_money_watchlist(
+                        symbol=result['symbol'],
+                        direction=direction,
+                        source='Whale Hunter PRO'
+                    )
+                    
+                    if add_result.get('status') == 'ok':
+                        logger.info(f"📋 Added to SM Watchlist: {result['symbol']}")
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to add to watchlist: {e}")
+                    
         except Exception as e:
             logger.error(f"Save error: {e}")
             session.rollback()
@@ -975,6 +997,32 @@ class WhaleHunterPro:
 
 # Глобальний екземпляр
 whale_hunter_pro = WhaleHunterPro()
+
+
+# ============================================================================
+#                    COORDINATOR INTEGRATION
+# ============================================================================
+
+def register_with_coordinator():
+    """Реєструє Whale Hunter PRO з координатором сканерів"""
+    try:
+        from scanner_coordinator import scanner_coordinator, ScannerType
+        
+        def scan_wrapper():
+            """Обгортка для сканування"""
+            whale_hunter_pro.start_scan()
+        
+        scanner_coordinator.set_scan_function(ScannerType.WHALE_HUNTER, scan_wrapper)
+        logger.info("✅ Whale Hunter PRO registered with Coordinator")
+        
+    except ImportError:
+        logger.warning("Scanner Coordinator not available")
+    except Exception as e:
+        logger.error(f"Coordinator registration error: {e}")
+
+
+# Автореєстрація при імпорті
+register_with_coordinator()
 
 
 # ============================================================================
