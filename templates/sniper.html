@@ -259,12 +259,33 @@ function saveSettings() {
         body: JSON.stringify(data)
     }).then(res => res.json()).then(res => {
         if(res.status === 'ok') {
-            location.reload();
+            console.log('⚡ Settings saved');
+            // Закриваємо модальне вікно
+            bootstrap.Modal.getInstance(document.getElementById('settingsModal'))?.hide();
         } else {
             alert('Error saving settings');
         }
     });
 }
+
+// 🆕 АВТОЗБЕРЕЖЕННЯ: Зберігати при зміні параметрів в модальному вікні
+let sniperAutoSaveTimeout = null;
+function autoSaveSniper() {
+    if (sniperAutoSaveTimeout) clearTimeout(sniperAutoSaveTimeout);
+    sniperAutoSaveTimeout = setTimeout(() => {
+        saveSettings();
+    }, 500);
+}
+
+// Ініціалізація автозбереження
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('#sniperSettingsForm input, #sniperSettingsForm select').forEach(el => {
+        el.addEventListener('change', autoSaveSniper);
+        if (el.tagName === 'INPUT' && el.type !== 'checkbox') {
+            el.addEventListener('blur', autoSaveSniper);
+        }
+    });
+});
 
 {% if is_running %}
 setTimeout(() => location.reload(), 5000);
