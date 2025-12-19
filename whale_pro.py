@@ -204,6 +204,26 @@ class WhaleProCore:
             )
             session.add(sig)
             session.commit()
+            
+            # 🆕 ІНТЕГРАЦІЯ: Додаємо до Smart Money Watchlist
+            if settings.get('whale_pro_add_to_watchlist', True):
+                try:
+                    from scanner_coordinator import add_to_smart_money_watchlist
+                    
+                    # Визначаємо direction по BTC trend
+                    direction = 'BUY' if self.btc_trend_status == 'BULLISH' else 'SELL'
+                    add_result = add_to_smart_money_watchlist(
+                        symbol=symbol,
+                        direction=direction,
+                        source='Whale PRO'
+                    )
+                    
+                    if add_result.get('status') == 'ok':
+                        logger.info(f"📋 Added to SM Watchlist: {symbol}")
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to add to watchlist: {e}")
+                    
         except Exception as e:
             session.rollback()
         finally:
@@ -331,6 +351,33 @@ class WhaleProCore:
 
 whale_pro = WhaleProCore()
 
+
+# ============================================================================
+#                    COORDINATOR INTEGRATION
+# ============================================================================
+
+def register_with_coordinator():
+    """Реєструє Whale PRO з координатором сканерів"""
+    try:
+        from scanner_coordinator import scanner_coordinator, ScannerType
+        
+        def scan_wrapper():
+            """Обгортка для сканування"""
+            whale_pro.start_scan({})
+        
+        scanner_coordinator.set_scan_function(ScannerType.WHALE_PRO, scan_wrapper)
+        logger.info("✅ Whale PRO registered with Coordinator")
+        
+    except ImportError:
+        logger.warning("Scanner Coordinator not available")
+    except Exception as e:
+        logger.error(f"Coordinator registration error: {e}")
+
+
+# Автореєстрація при імпорті
+register_with_coordinator()
+
+
 # === ROUTES (To be registered in main_app) ===
 def register_routes(app):
     @app.route('/whale_pro')
@@ -360,3 +407,23 @@ def register_routes(app):
         interval = data.get('interval', 60)
         whale_pro.set_automation(enabled, interval)
         return jsonify({'status': 'ok'})
+    
+    @app.route('/whale_pro/config', methods=['GET', 'POST'])
+    def whale_pro_config():
+        """Отримати/зберегти конфігурацію"""
+        if request.method == 'POST':
+            data = request.json or {}
+            for key, value in data.items():
+                settings.save_settings({key: value})
+            logger.info("Whale PRO config saved")
+            return jsonify({'status': 'ok'})
+        
+        return jsonify({
+            'whale_pro_min_vol': settings.get('whale_pro_min_vol', 10_000_000),
+            'whale_pro_rvol_min': settings.get('whale_pro_rvol_min', 1.8),
+            'whale_pro_adx_min': settings.get('whale_pro_adx_min', 20),
+            'whale_pro_score_min': settings.get('whale_pro_score_min', 70),
+            'whale_pro_add_to_watchlist': settings.get('whale_pro_add_to_watchlist', True),
+            'whale_pro_auto_scan': settings.get('whale_pro_auto_scan', False),
+            'whale_pro_scan_interval': settings.get('whale_pro_scan_interval', 300)
+        })
