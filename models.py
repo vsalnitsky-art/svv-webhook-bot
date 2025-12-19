@@ -233,6 +233,49 @@ class DatabaseManager:
                                 pass  # Column might exist
             except Exception as e:
                 pass  # Table might not exist yet
+            
+            # === SMART_MONEY_EXECUTION_LOG TABLE (OB columns) ===
+            try:
+                exec_columns = {col['name'] for col in inspector.get_columns('smart_money_execution_log')}
+                exec_needed = {
+                    'ob_type': "VARCHAR(10)",
+                    'ob_start_time': "DATETIME",
+                    'ob_midline': "REAL",
+                    'ob_size_percent': "REAL"
+                }
+                
+                with self.engine.connect() as conn:
+                    for col_name, col_def in exec_needed.items():
+                        if col_name not in exec_columns:
+                            try:
+                                conn.execute(text(f"ALTER TABLE smart_money_execution_log ADD COLUMN {col_name} {col_def}"))
+                                conn.commit()
+                                logger.info(f"✅ Migration: Added column '{col_name}' to smart_money_execution_log")
+                            except Exception as e:
+                                pass
+            except Exception as e:
+                pass  # Table might not exist yet
+            
+            # === DETECTED_ORDER_BLOCKS TABLE (OB columns) ===
+            try:
+                ob_columns = {col['name'] for col in inspector.get_columns('detected_order_blocks')}
+                ob_needed = {
+                    'ob_start_time': "DATETIME",
+                    'ob_midline': "REAL",
+                    'ob_size_percent': "REAL"
+                }
+                
+                with self.engine.connect() as conn:
+                    for col_name, col_def in ob_needed.items():
+                        if col_name not in ob_columns:
+                            try:
+                                conn.execute(text(f"ALTER TABLE detected_order_blocks ADD COLUMN {col_name} {col_def}"))
+                                conn.commit()
+                                logger.info(f"✅ Migration: Added column '{col_name}' to detected_order_blocks")
+                            except Exception as e:
+                                pass
+            except Exception as e:
+                pass  # Table might not exist yet
                 
         except Exception as e:
             logger.warning(f"⚠️ Migration failed: {e}")
