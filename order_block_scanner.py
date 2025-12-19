@@ -197,12 +197,12 @@ class OrderBlockDetector:
     
     def __init__(
         self,
-        swing_length: int = 3,
+        swing_length: int = 10,
         max_atr_mult: float = 3.5,
         invalidation_method: InvalidationMethod = InvalidationMethod.WICK,
         combine_obs: bool = True,
         max_order_blocks: int = 30,
-        zone_count: str = "High"
+        zone_count: str = "Low"
     ):
         self.swing_length = swing_length
         self.max_atr_mult = max_atr_mult
@@ -424,8 +424,18 @@ class OrderBlockDetector:
                         logger.debug(f"Bearish OB detected: top={box_top:.6f}, bottom={box_btm:.6f}, size={ob_size:.6f}, ATR={current_atr:.6f}")
         
         # Фільтруємо тільки валідні OBs (не breaker)
-        valid_bullish = [ob for ob in bullish_obs if not ob.breaker][:self.max_zones]
-        valid_bearish = [ob for ob in bearish_obs if not ob.breaker][:self.max_zones]
+        valid_bullish = [ob for ob in bullish_obs if not ob.breaker]
+        valid_bearish = [ob for ob in bearish_obs if not ob.breaker]
+        
+        # Combine overlapping OBs якщо увімкнено
+        if self.combine_obs:
+            valid_bullish = self._combine_overlapping_obs(valid_bullish)
+            valid_bearish = self._combine_overlapping_obs(valid_bearish)
+            logger.debug(f"After combine: {len(valid_bullish)} bullish, {len(valid_bearish)} bearish")
+        
+        # Обмежуємо кількість по Zone Count
+        valid_bullish = valid_bullish[:self.max_zones]
+        valid_bearish = valid_bearish[:self.max_zones]
         
         logger.info(f"OB Detection complete: {len(valid_bullish)} bullish, {len(valid_bearish)} bearish")
         
