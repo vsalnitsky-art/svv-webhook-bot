@@ -315,6 +315,80 @@ class SmartMoneyEngine:
         finally:
             session.close()
     
+    def trigger_retest_trade(self, ob_id: int) -> Dict:
+        """
+        Виконати угоду для OB з Waiting Retest
+        Використовується коли користувач натискає Execute Now
+        """
+        config = self.get_config()
+        session = db_manager.get_session()
+        
+        try:
+            ob = session.query(DetectedOrderBlock).filter_by(id=ob_id).first()
+            if not ob:
+                return {'status': 'error', 'error': 'OB not found'}
+            
+            trade_direction = 'LONG' if ob.direction == 'BUY' else 'SHORT'
+            
+            # Створюємо запис в Execution Log
+            log_entry = SmartMoneyExecutionLog(
+                symbol=ob.symbol,
+                direction=trade_direction,
+                entry_price=ob.current_price or ob.entry_price,
+                entry_time=datetime.utcnow(),
+                sl_price=ob.sl_price,
+                ob_top=ob.ob_top,
+                ob_bottom=ob.ob_bottom,
+                ob_timeframe=ob.timeframe,
+                entry_mode='Retest (Manual)',
+                paper_trade=config.get('ob_paper_trading', True)
+            )
+            
+            # Перевіряємо Trading ON/OFF
+            if config.get('ob_execute_trades', False):
+                log_entry.status = 'OPEN'
+                
+                if not config.get('ob_paper_trading', True):
+                    # Реальна угода
+                    try:
+                        action = "Buy" if ob.direction == "BUY" else "Sell"
+                        trade_result = bot_instance.place_order({
+                            "symbol": ob.symbol,
+                            "action": action,
+                            "sl_price": ob.sl_price
+                        })
+                        
+                        if trade_result.get('status') == 'ok':
+                            log_entry.order_id = trade_result.get('order_id')
+                            log_entry.qty = trade_result.get('qty')
+                            logger.info(f"✅ Retest trade opened: {ob.symbol} {trade_direction}")
+                        else:
+                            log_entry.status = 'FAILED'
+                            log_entry.exit_reason = trade_result.get('error', 'Order failed')
+                    except Exception as e:
+                        log_entry.status = 'FAILED'
+                        log_entry.exit_reason = str(e)
+                else:
+                    logger.info(f"📝 Retest paper trade: {ob.symbol} {trade_direction}")
+            else:
+                log_entry.status = 'SKIPPED'
+                log_entry.exit_reason = 'Trading disabled (manual trigger)'
+            
+            session.add(log_entry)
+            
+            # Видаляємо з Waiting Retest
+            session.delete(ob)
+            session.commit()
+            
+            return {'status': 'ok'}
+            
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Trigger retest error: {e}")
+            return {'status': 'error', 'error': str(e)}
+        finally:
+            session.close()
+    
     # ========================================================================
     #                         EXECUTION LOG
     # ========================================================================
@@ -482,6 +556,7 @@ class SmartMoneyEngine:
         session = db_manager.get_session()
         found_count = 0
         executed_count = 0
+        retest_count = 0
         
         try:
             # Отримуємо watchlist
@@ -525,67 +600,99 @@ class SmartMoneyEngine:
                         found_count += 1
                         current_price = result['current_price']
                         trade_direction = 'LONG' if direction == 'BUY' else 'SHORT'
+                        entry_mode = config.get('ob_entry_mode', 'Immediate')
                         
-                        logger.info(f"🎯 NEW OB Found: {symbol} {result['ob_type']} @ {current_price:.6f}")
+                        logger.info(f"🎯 NEW OB Found: {symbol} {result['ob_type']} @ {current_price:.6f} | Mode: {entry_mode}")
                         
-                        # Створюємо запис в Execution Log
-                        log_entry = SmartMoneyExecutionLog(
-                            symbol=symbol,
-                            direction=trade_direction,
-                            entry_price=current_price,
-                            entry_time=datetime.utcnow(),
-                            sl_price=result['sl_price'],
-                            ob_top=result['ob_top'],
-                            ob_bottom=result['ob_bottom'],
-                            ob_timeframe=config['ob_source_tf'],
-                            entry_mode='Immediate',
-                            paper_trade=config['ob_paper_trading']
-                        )
-                        
-                        # Перевіряємо Trading ON/OFF
-                        if config['ob_execute_trades']:
-                            # Trading ON - виконуємо угоду
-                            log_entry.status = 'OPEN'
+                        # ========================================
+                        # ENTRY MODE: IMMEDIATE
+                        # ========================================
+                        if entry_mode == 'Immediate':
+                            # Створюємо запис в Execution Log
+                            log_entry = SmartMoneyExecutionLog(
+                                symbol=symbol,
+                                direction=trade_direction,
+                                entry_price=current_price,
+                                entry_time=datetime.utcnow(),
+                                sl_price=result['sl_price'],
+                                ob_top=result['ob_top'],
+                                ob_bottom=result['ob_bottom'],
+                                ob_timeframe=config['ob_source_tf'],
+                                entry_mode='Immediate',
+                                paper_trade=config.get('ob_paper_trading', True)
+                            )
                             
-                            if not config['ob_paper_trading']:
-                                # Реальна угода через Bybit
-                                try:
-                                    action = "Buy" if direction == "BUY" else "Sell"
-                                    trade_result = bot_instance.place_order({
-                                        "symbol": symbol,
-                                        "action": action,
-                                        "sl_price": result['sl_price']
-                                    })
-                                    
-                                    if trade_result.get('status') == 'ok':
-                                        log_entry.order_id = trade_result.get('order_id')
-                                        log_entry.qty = trade_result.get('qty')
-                                        executed_count += 1
-                                        logger.info(f"✅ Real trade opened: {symbol} {trade_direction}")
-                                    else:
+                            # Перевіряємо Trading ON/OFF
+                            if config.get('ob_execute_trades', False):
+                                # Trading ON - виконуємо угоду
+                                log_entry.status = 'OPEN'
+                                
+                                if not config.get('ob_paper_trading', True):
+                                    # Реальна угода через Bybit
+                                    try:
+                                        action = "Buy" if direction == "BUY" else "Sell"
+                                        trade_result = bot_instance.place_order({
+                                            "symbol": symbol,
+                                            "action": action,
+                                            "sl_price": result['sl_price']
+                                        })
+                                        
+                                        if trade_result.get('status') == 'ok':
+                                            log_entry.order_id = trade_result.get('order_id')
+                                            log_entry.qty = trade_result.get('qty')
+                                            executed_count += 1
+                                            logger.info(f"✅ Real trade opened: {symbol} {trade_direction}")
+                                        else:
+                                            log_entry.status = 'FAILED'
+                                            log_entry.exit_reason = trade_result.get('error', 'Order failed')
+                                            logger.error(f"❌ Trade failed: {symbol}")
+                                    except Exception as e:
                                         log_entry.status = 'FAILED'
-                                        log_entry.exit_reason = trade_result.get('error', 'Order failed')
-                                        logger.error(f"❌ Trade failed: {symbol}")
-                                except Exception as e:
-                                    log_entry.status = 'FAILED'
-                                    log_entry.exit_reason = str(e)
-                                    logger.error(f"❌ Trade error: {symbol} - {e}")
+                                        log_entry.exit_reason = str(e)
+                                        logger.error(f"❌ Trade error: {symbol} - {e}")
+                                else:
+                                    # Paper trade
+                                    executed_count += 1
+                                    logger.info(f"📝 Paper trade opened: {symbol} {trade_direction}")
                             else:
-                                # Paper trade
-                                executed_count += 1
-                                logger.info(f"📝 Paper trade opened: {symbol} {trade_direction}")
-                        else:
-                            # Trading OFF - записуємо як пропущено
-                            log_entry.status = 'SKIPPED'
-                            log_entry.exit_reason = 'Trading disabled'
-                            logger.info(f"⏸️ Trade skipped (Trading OFF): {symbol}")
+                                # Trading OFF - записуємо як пропущено
+                                log_entry.status = 'SKIPPED'
+                                log_entry.exit_reason = 'Trading disabled'
+                                logger.info(f"⏸️ Trade skipped (Trading OFF): {symbol}")
+                            
+                            # Зберігаємо запис в Execution Log
+                            session.add(log_entry)
+                            
+                            # Видаляємо монету з Watchlist
+                            session.delete(item)
+                            logger.info(f"🗑️ Removed from Watchlist: {symbol}")
                         
-                        # Зберігаємо запис
-                        session.add(log_entry)
-                        
-                        # Видаляємо монету з Watchlist (оброблено)
-                        session.delete(item)
-                        logger.info(f"🗑️ Removed from Watchlist: {symbol}")
+                        # ========================================
+                        # ENTRY MODE: RETEST
+                        # ========================================
+                        else:  # Retest mode
+                            # Зберігаємо в DetectedOrderBlock для моніторингу
+                            detected_ob = DetectedOrderBlock(
+                                symbol=symbol,
+                                direction=direction,
+                                ob_type=result['ob_type'],
+                                ob_top=result['ob_top'],
+                                ob_bottom=result['ob_bottom'],
+                                entry_price=result['entry_price'],
+                                sl_price=result['sl_price'],
+                                current_price=current_price,
+                                atr=result['atr'],
+                                status='Waiting Retest',
+                                timeframe=config['ob_source_tf'],
+                                detected_at=datetime.utcnow()
+                            )
+                            session.add(detected_ob)
+                            retest_count += 1
+                            logger.info(f"⏳ Added to Waiting Retest: {symbol}")
+                            
+                            # Видаляємо монету з Watchlist
+                            session.delete(item)
+                            logger.info(f"🗑️ Removed from Watchlist: {symbol}")
                     
                     time.sleep(0.1)  # Rate limiting
                     
@@ -596,16 +703,17 @@ class SmartMoneyEngine:
             session.commit()
             
             self.scan_progress = 100
-            self.scan_status = f"Done! Found {found_count}, Executed {executed_count}"
+            self.scan_status = f"Done! Found {found_count}, Executed {executed_count}, Retest {retest_count}"
             self.last_scan_time = datetime.now()
             self.last_scan_found = found_count
             
-            logger.info(f"✅ Scan complete: {found_count} found, {executed_count} executed")
+            logger.info(f"✅ Scan complete: {found_count} found, {executed_count} executed, {retest_count} waiting retest")
             
             return {
                 'status': 'ok',
                 'found': found_count,
                 'executed': executed_count,
+                'retest': retest_count,
                 'scanned': total
             }
             
