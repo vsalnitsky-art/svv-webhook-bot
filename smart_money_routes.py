@@ -89,6 +89,13 @@ def api_clear_detected():
     return jsonify(result)
 
 
+@smart_money_bp.route('/api/detected/trigger/<int:ob_id>', methods=['POST'])
+def api_trigger_detected(ob_id):
+    """Виконати угоду для OB з Waiting Retest"""
+    result = smart_money_engine.trigger_retest_trade(ob_id)
+    return jsonify(result)
+
+
 # ============================================================================
 #                          API: EXECUTION LOG
 # ============================================================================
