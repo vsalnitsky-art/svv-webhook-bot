@@ -130,38 +130,53 @@ class SmartMoneyEngine:
     
     def get_config(self) -> Dict:
         """Повертає поточну конфігурацію"""
+        
+        # Хелпери для конвертації
+        def to_bool(val, default=True):
+            if isinstance(val, bool): return val
+            if isinstance(val, str): return val.lower() in ('true', '1', 'yes', 'on')
+            return bool(val) if val is not None else default
+        
+        def to_int(val, default=0):
+            try: return int(float(val)) if val is not None else default
+            except: return default
+        
+        def to_float(val, default=0.0):
+            try: return float(val) if val is not None else default
+            except: return default
+        
         return {
             # Detection
-            'ob_source_tf': settings.get('ob_source_tf', '15'),
-            'ob_swing_length': int(settings.get('ob_swing_length', 10)),
-            'ob_zone_count': settings.get('ob_zone_count', 'High'),
-            'ob_max_atr_mult': float(settings.get('ob_max_atr_mult', 3.5)),
-            'ob_invalidation_method': settings.get('ob_invalidation_method', 'Wick'),
-            'ob_combine_obs': settings.get('ob_combine_obs', True),
+            'ob_source_tf': str(settings.get('ob_source_tf', '15')),
+            'ob_swing_length': to_int(settings.get('ob_swing_length'), 10),
+            'ob_zone_count': str(settings.get('ob_zone_count', 'Low')),
+            'ob_max_atr_mult': to_float(settings.get('ob_max_atr_mult'), 3.5),
+            'ob_invalidation_method': str(settings.get('ob_invalidation_method', 'Wick')),
+            'ob_combine_obs': to_bool(settings.get('ob_combine_obs'), True),
             
             # Entry
-            'ob_entry_mode': settings.get('ob_entry_mode', 'Immediate'),
-            'ob_selection': settings.get('ob_selection', 'Newest'),
-            'ob_sl_atr_mult': float(settings.get('ob_sl_atr_mult', 0.3)),
+            'ob_entry_mode': str(settings.get('ob_entry_mode', 'Immediate')),
+            'ob_selection': str(settings.get('ob_selection', 'Newest')),
+            'ob_sl_atr_mult': to_float(settings.get('ob_sl_atr_mult'), 0.3),
             
             # Exit
-            'ob_exit_enabled': settings.get('ob_exit_enabled', False),
-            'ob_exit_tf': settings.get('ob_exit_tf', 'same'),
-            'ob_exit_mode': settings.get('ob_exit_mode', 'Full Close'),
-            'ob_exit_only_profit': settings.get('ob_exit_only_profit', False),
-            'ob_exit_min_hold': int(settings.get('ob_exit_min_hold', 0)),
-            'ob_exit_require_rsi': settings.get('ob_exit_require_rsi', False),
+            'ob_exit_enabled': to_bool(settings.get('ob_exit_enabled'), False),
+            'ob_exit_tf': str(settings.get('ob_exit_tf', 'same')),
+            'ob_exit_mode': str(settings.get('ob_exit_mode', 'Full Close')),
+            'ob_exit_only_profit': to_bool(settings.get('ob_exit_only_profit'), False),
+            'ob_exit_min_hold': to_int(settings.get('ob_exit_min_hold'), 0),
+            'ob_exit_require_rsi': to_bool(settings.get('ob_exit_require_rsi'), False),
             
             # Trading
-            'ob_execute_trades': settings.get('ob_execute_trades', False),
-            'ob_paper_trading': settings.get('ob_paper_trading', True),
-            'ob_auto_scan': settings.get('ob_auto_scan', False),
-            'ob_scan_interval': int(settings.get('ob_scan_interval', 60)),
-            'ob_watchlist_limit': int(settings.get('ob_watchlist_limit', 50)),
-            'ob_timeout': settings.get('ob_timeout', '24h'),
+            'ob_execute_trades': to_bool(settings.get('ob_execute_trades'), False),
+            'ob_paper_trading': to_bool(settings.get('ob_paper_trading'), True),
+            'ob_auto_scan': to_bool(settings.get('ob_auto_scan'), False),
+            'ob_scan_interval': to_int(settings.get('ob_scan_interval'), 60),
+            'ob_watchlist_limit': to_int(settings.get('ob_watchlist_limit'), 50),
+            'ob_timeout': str(settings.get('ob_timeout', '24h')),
             
             # RSI/MFI Integration
-            'ob_auto_add_from_screener': settings.get('ob_auto_add_from_screener', False),
+            'ob_auto_add_from_screener': to_bool(settings.get('ob_auto_add_from_screener'), False),
         }
     
     def save_config(self, config: Dict):
