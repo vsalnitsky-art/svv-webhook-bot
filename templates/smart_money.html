@@ -918,9 +918,41 @@ async function saveSettings() {
         body: JSON.stringify(newConfig)
     });
     
-    alert('Settings saved!');
     loadStatus();
 }
+
+// 🆕 АВТОЗБЕРЕЖЕННЯ: Зберігати при зміні будь-якого параметра
+let autoSaveTimeout = null;
+function autoSave() {
+    // Debounce - чекаємо 500ms після останньої зміни
+    if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(() => {
+        saveSettings();
+        console.log('⚡ Auto-saved settings');
+    }, 500);
+}
+
+// Додаємо слухачі для автозбереження
+document.addEventListener('DOMContentLoaded', function() {
+    // Всі select та input елементи для автозбереження
+    const autoSaveElements = [
+        'obSourceTf', 'obSwingLength', 'obInvalidation', 'obAtrMult',
+        'obEntryMode', 'obSelection', 'obSlAtrMult', 'obTimeout',
+        'obExitEnabled', 'obExitTf', 'obExitMode', 'obExitOnlyProfit',
+        'obExitMinHold', 'obAutoScan', 'obScanInterval', 'obWatchlistLimit'
+    ];
+    
+    autoSaveElements.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', autoSave);
+            // Для input також при втраті фокусу
+            if (el.tagName === 'INPUT') {
+                el.addEventListener('blur', autoSave);
+            }
+        }
+    });
+});
 
 // ===== ACTIONS =====
 async function manualScan() {
