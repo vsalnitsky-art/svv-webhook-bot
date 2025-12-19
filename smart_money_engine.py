@@ -345,6 +345,12 @@ class SmartMoneyEngine:
             
             trade_direction = 'LONG' if ob.direction == 'BUY' else 'SHORT'
             
+            # Розрахунок midline та size_percent якщо не збережено
+            ob_midline = ob.ob_midline if ob.ob_midline else (ob.ob_top + ob.ob_bottom) / 2
+            ob_size_percent = ob.ob_size_percent if ob.ob_size_percent else (
+                abs(ob.ob_top - ob.ob_bottom) / ob.ob_bottom * 100 if ob.ob_bottom else 0
+            )
+            
             # Створюємо запис в Execution Log
             log_entry = SmartMoneyExecutionLog(
                 symbol=ob.symbol,
@@ -356,6 +362,11 @@ class SmartMoneyEngine:
                 ob_bottom=ob.ob_bottom,
                 ob_timeframe=ob.timeframe,
                 entry_mode='Retest (Manual)',
+                # 🆕 Нові OB поля
+                ob_type=ob.ob_type,
+                ob_start_time=ob.ob_start_time,
+                ob_midline=ob_midline,
+                ob_size_percent=ob_size_percent,
                 paper_trade=config.get('ob_paper_trading', True)
             )
             
@@ -427,6 +438,12 @@ class SmartMoneyEngine:
                 'ob_bottom': log.ob_bottom,
                 'ob_timeframe': log.ob_timeframe,
                 'entry_mode': log.entry_mode,
+                # 🆕 Нові OB поля
+                'ob_type': log.ob_type,
+                'ob_start_time': log.ob_start_time.strftime('%d.%m %H:%M') if log.ob_start_time else None,
+                'ob_midline': log.ob_midline,
+                'ob_size_percent': round(log.ob_size_percent, 2) if log.ob_size_percent else None,
+                # Exit
                 'exit_price': log.exit_price,
                 'exit_time': log.exit_time.strftime('%d.%m %H:%M') if log.exit_time else None,
                 'exit_reason': log.exit_reason,
@@ -617,6 +634,14 @@ class SmartMoneyEngine:
                         trade_direction = 'LONG' if direction == 'BUY' else 'SHORT'
                         entry_mode = config.get('ob_entry_mode', 'Immediate')
                         
+                        # Конвертуємо ob_start_time
+                        ob_start_dt = None
+                        if result.get('ob_start_time'):
+                            try:
+                                ob_start_dt = datetime.fromtimestamp(result['ob_start_time'] / 1000)
+                            except:
+                                pass
+                        
                         logger.info(f"🎯 NEW OB Found: {symbol} {result['ob_type']} @ {current_price:.6f} | Mode: {entry_mode}")
                         
                         # ========================================
@@ -634,6 +659,11 @@ class SmartMoneyEngine:
                                 ob_bottom=result['ob_bottom'],
                                 ob_timeframe=config['ob_source_tf'],
                                 entry_mode='Immediate',
+                                # 🆕 Нові OB поля
+                                ob_type=result.get('ob_type'),
+                                ob_start_time=ob_start_dt,
+                                ob_midline=result.get('ob_midline'),
+                                ob_size_percent=result.get('ob_size_percent'),
                                 paper_trade=config.get('ob_paper_trading', True)
                             )
                             
@@ -699,6 +729,10 @@ class SmartMoneyEngine:
                                 atr=result['atr'],
                                 status='Waiting Retest',
                                 timeframe=config['ob_source_tf'],
+                                # 🆕 Нові OB поля
+                                ob_start_time=ob_start_dt,
+                                ob_midline=result.get('ob_midline'),
+                                ob_size_percent=result.get('ob_size_percent'),
                                 detected_at=datetime.utcnow()
                             )
                             session.add(detected_ob)
@@ -827,6 +861,8 @@ class SmartMoneyEngine:
             'ob_type': selected_ob.ob_type.value,
             'ob_top': selected_ob.top,
             'ob_bottom': selected_ob.bottom,
+            'ob_midline': (selected_ob.top + selected_ob.bottom) / 2,
+            'ob_size_percent': abs(selected_ob.top - selected_ob.bottom) / selected_ob.bottom * 100 if selected_ob.bottom else 0,
             'entry_price': entry_price,
             'sl_price': sl_price,
             'current_price': current_price,
@@ -851,6 +887,14 @@ class SmartMoneyEngine:
         try:
             current_price = result['current_price']
             
+            # Конвертуємо ob_start_time з timestamp в datetime
+            ob_start_dt = None
+            if result.get('ob_start_time'):
+                try:
+                    ob_start_dt = datetime.fromtimestamp(result['ob_start_time'] / 1000)
+                except:
+                    pass
+            
             # Створюємо запис в Execution Log
             log_entry = SmartMoneyExecutionLog(
                 symbol=symbol,
@@ -862,6 +906,11 @@ class SmartMoneyEngine:
                 ob_bottom=result['ob_bottom'],
                 ob_timeframe=config['ob_source_tf'],
                 entry_mode=config['ob_entry_mode'],
+                # 🆕 Нові OB поля
+                ob_type=result.get('ob_type'),
+                ob_start_time=ob_start_dt,
+                ob_midline=result.get('ob_midline'),
+                ob_size_percent=result.get('ob_size_percent'),
                 status='OPEN',
                 paper_trade=paper_trade
             )
