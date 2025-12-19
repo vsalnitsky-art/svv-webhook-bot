@@ -605,18 +605,19 @@
                                 <tr>
                                     <th class="ps-3">Symbol</th>
                                     <th>Dir</th>
+                                    <th>OB Zone</th>
                                     <th>Entry</th>
+                                    <th>SL</th>
                                     <th>Exit</th>
                                     <th>P&L</th>
                                     <th>Status</th>
-                                    <th>Exit Reason</th>
                                     <th>Mode</th>
                                     <th>Time</th>
                                     <th></th>
                                 </tr>
                             </thead>
                             <tbody id="execBody">
-                                <tr><td colspan="10" class="text-center py-4 text-muted">Loading...</td></tr>
+                                <tr><td colspan="11" class="text-center py-4 text-muted">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -815,7 +816,7 @@ function renderExecutionLog() {
     document.getElementById('openPositions').textContent = executionLog.filter(e => e.status === 'OPEN').length;
     
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-muted">
+        tbody.innerHTML = `<tr><td colspan="11" class="text-center py-4 text-muted">
             <i class="ri-file-list-line fs-2 d-block mb-2 opacity-25"></i>No executions</td></tr>`;
         return;
     }
@@ -834,16 +835,37 @@ function renderExecutionLog() {
         
         const modeBadge = e.paper_trade ? '<span class="badge bg-info text-dark">Paper</span>' : '<span class="badge bg-success">Real</span>';
         
+        // OB Type badge
+        const obTypeBadge = e.ob_type 
+            ? (e.ob_type === 'Bullish' ? '<span class="badge bg-success-subtle text-success">Bull</span>' : '<span class="badge bg-danger-subtle text-danger">Bear</span>')
+            : '';
+        
+        // OB Zone info
+        const obZone = e.ob_top && e.ob_bottom 
+            ? `<span class="text-danger small">${formatPrice(e.ob_top)}</span><br><span class="text-success small">${formatPrice(e.ob_bottom)}</span>`
+            : '—';
+        
+        // OB Timeframe and size
+        const obInfo = [];
+        if (e.ob_timeframe) obInfo.push(e.ob_timeframe);
+        if (e.ob_size_percent) obInfo.push(`${e.ob_size_percent}%`);
+        const obInfoStr = obInfo.length > 0 ? `<div class="text-muted" style="font-size: 0.7rem">${obInfo.join(' | ')}</div>` : '';
+        
         return `<tr>
             <td class="ps-3 fw-bold font-monospace">${e.symbol}</td>
             <td><span class="${dirClass}">${e.direction}</span></td>
+            <td class="font-monospace" style="line-height: 1.2">
+                ${obTypeBadge}
+                ${obZone}
+                ${obInfoStr}
+            </td>
             <td class="font-monospace small">$${formatPrice(e.entry_price)}</td>
+            <td class="font-monospace small text-danger">${e.sl_price ? '$' + formatPrice(e.sl_price) : '—'}</td>
             <td class="font-monospace small">${e.exit_price ? '$' + formatPrice(e.exit_price) : '—'}</td>
             <td class="fw-bold ${pnlClass}">${e.pnl_percent ? e.pnl_percent.toFixed(2) + '%' : '—'}</td>
             <td>${statusBadge}</td>
-            <td class="small text-muted">${e.exit_reason || '—'}</td>
-            <td>${modeBadge}</td>
-            <td class="small text-muted">${e.entry_time || '—'}</td>
+            <td>${modeBadge}<div class="text-muted" style="font-size: 0.7rem">${e.entry_mode || ''}</div></td>
+            <td class="small text-muted">${e.entry_time || '—'}<br>${e.ob_start_time ? '<span style="font-size: 0.7rem">OB: ' + e.ob_start_time + '</span>' : ''}</td>
             <td>
                 <button class="btn btn-outline-danger btn-sm py-0 px-1" onclick="deleteExecutionLog(${e.id})" title="Delete">
                     <i class="ri-close-line"></i>
