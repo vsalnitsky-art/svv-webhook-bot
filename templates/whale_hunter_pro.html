@@ -827,13 +827,23 @@ function autoSaveWHP() {
 
 // Ініціалізація автозбереження
 document.addEventListener('DOMContentLoaded', function() {
-    // Всі select та input елементи
-    document.querySelectorAll('.settings-panel select, .settings-panel input').forEach(el => {
+    // Всі select та input елементи в settings-card
+    document.querySelectorAll('.settings-card select, .settings-card input').forEach(el => {
         el.addEventListener('change', autoSaveWHP);
-        if (el.tagName === 'INPUT' && el.type !== 'checkbox') {
+        if (el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'range') {
             el.addEventListener('blur', autoSaveWHP);
         }
+        // Для range також при input
+        if (el.type === 'range') {
+            el.addEventListener('input', autoSaveWHP);
+        }
     });
+    
+    // Також для checkbox addToWatchlist якщо він поза settings-card
+    const addToWatchlist = document.getElementById('addToWatchlist');
+    if (addToWatchlist) {
+        addToWatchlist.addEventListener('change', autoSaveWHP);
+    }
 });
 
 function clearHistory() {
