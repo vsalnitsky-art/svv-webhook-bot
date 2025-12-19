@@ -380,6 +380,37 @@ class SmartMoneyEngine:
         finally:
             session.close()
     
+    def delete_execution_log(self, log_id: int) -> Dict:
+        """Видалити запис з Execution Log"""
+        session = db_manager.get_session()
+        try:
+            log = session.query(SmartMoneyExecutionLog).filter_by(id=log_id).first()
+            if log:
+                session.delete(log)
+                session.commit()
+                logger.info(f"🗑️ Deleted execution log: {log_id}")
+                return {'status': 'ok'}
+            return {'status': 'error', 'error': 'Not found'}
+        except Exception as e:
+            session.rollback()
+            return {'status': 'error', 'error': str(e)}
+        finally:
+            session.close()
+    
+    def clear_execution_log(self) -> Dict:
+        """Очистити весь Execution Log"""
+        session = db_manager.get_session()
+        try:
+            count = session.query(SmartMoneyExecutionLog).delete()
+            session.commit()
+            logger.info(f"🗑️ Cleared execution log: {count} records")
+            return {'status': 'ok', 'deleted': count}
+        except Exception as e:
+            session.rollback()
+            return {'status': 'error', 'error': str(e)}
+        finally:
+            session.close()
+    
     # ========================================================================
     #                           SCANNING
     # ========================================================================
@@ -485,40 +516,76 @@ class SmartMoneyEngine:
                     if df is None or len(df) < 50:
                         continue
                     
-                    # Знаходимо OB (передаємо session для перевірки існуючих)
+                    # Знаходимо НОВИЙ OB (утворений після added_at)
                     result = self._scan_symbol_with_timestamp(
-                        df, symbol, direction, added_at, config, scanner, session
+                        df, symbol, direction, added_at, config, scanner
                     )
                     
                     if result:
-                        # Зберігаємо новий OB (перевірка existing вже в _scan_symbol_with_timestamp)
-                        new_ob = DetectedOrderBlock(
+                        found_count += 1
+                        current_price = result['current_price']
+                        trade_direction = 'LONG' if direction == 'BUY' else 'SHORT'
+                        
+                        logger.info(f"🎯 NEW OB Found: {symbol} {result['ob_type']} @ {current_price:.6f}")
+                        
+                        # Створюємо запис в Execution Log
+                        log_entry = SmartMoneyExecutionLog(
                             symbol=symbol,
-                            direction=direction,
-                            ob_type=result['ob_type'],
+                            direction=trade_direction,
+                            entry_price=current_price,
+                            entry_time=datetime.utcnow(),
+                            sl_price=result['sl_price'],
                             ob_top=result['ob_top'],
                             ob_bottom=result['ob_bottom'],
-                            entry_price=result['entry_price'],
-                            sl_price=result['sl_price'],
-                            current_price=result['current_price'],
-                            atr=result['atr'],
-                            status=result['status'],
-                            timeframe=config['ob_source_tf'],
-                            detected_at=datetime.utcnow()
+                            ob_timeframe=config['ob_source_tf'],
+                            entry_mode='Immediate',
+                            paper_trade=config['ob_paper_trading']
                         )
-                        session.add(new_ob)
-                        session.flush()
-                        found_count += 1
                         
-                        logger.info(f"🎯 OB Found: {symbol} {result['ob_type']} Status={result['status']}")
-                        
-                        # Перевіряємо чи виконувати угоду
-                        if config['ob_execute_trades'] and result['status'] in ['Valid', 'Triggered']:
-                            exec_result = self._execute_trade(
-                                session, item, new_ob, result, config
-                            )
-                            if exec_result.get('status') == 'ok':
+                        # Перевіряємо Trading ON/OFF
+                        if config['ob_execute_trades']:
+                            # Trading ON - виконуємо угоду
+                            log_entry.status = 'OPEN'
+                            
+                            if not config['ob_paper_trading']:
+                                # Реальна угода через Bybit
+                                try:
+                                    action = "Buy" if direction == "BUY" else "Sell"
+                                    trade_result = bot_instance.place_order({
+                                        "symbol": symbol,
+                                        "action": action,
+                                        "sl_price": result['sl_price']
+                                    })
+                                    
+                                    if trade_result.get('status') == 'ok':
+                                        log_entry.order_id = trade_result.get('order_id')
+                                        log_entry.qty = trade_result.get('qty')
+                                        executed_count += 1
+                                        logger.info(f"✅ Real trade opened: {symbol} {trade_direction}")
+                                    else:
+                                        log_entry.status = 'FAILED'
+                                        log_entry.exit_reason = trade_result.get('error', 'Order failed')
+                                        logger.error(f"❌ Trade failed: {symbol}")
+                                except Exception as e:
+                                    log_entry.status = 'FAILED'
+                                    log_entry.exit_reason = str(e)
+                                    logger.error(f"❌ Trade error: {symbol} - {e}")
+                            else:
+                                # Paper trade
                                 executed_count += 1
+                                logger.info(f"📝 Paper trade opened: {symbol} {trade_direction}")
+                        else:
+                            # Trading OFF - записуємо як пропущено
+                            log_entry.status = 'SKIPPED'
+                            log_entry.exit_reason = 'Trading disabled'
+                            logger.info(f"⏸️ Trade skipped (Trading OFF): {symbol}")
+                        
+                        # Зберігаємо запис
+                        session.add(log_entry)
+                        
+                        # Видаляємо монету з Watchlist (оброблено)
+                        session.delete(item)
+                        logger.info(f"🗑️ Removed from Watchlist: {symbol}")
                     
                     time.sleep(0.1)  # Rate limiting
                     
@@ -558,58 +625,57 @@ class SmartMoneyEngine:
         direction: str,
         added_at: datetime,
         config: Dict,
-        scanner: OrderBlockScanner,
-        session  # Додаємо session для перевірки існуючих OB
+        scanner: OrderBlockScanner
     ) -> Optional[Dict]:
         """
-        Сканує символ і повертає НОВИЙ OB
+        Шукає НОВИЙ OB утворений ПІСЛЯ added_at
         
         КРИТИЧНА ЛОГІКА:
         1. Знаходимо всі валідні OB
-        2. Перевіряємо чи такий OB вже є в DetectedOrderBlock
-        3. Повертаємо тільки якщо це НОВИЙ OB (не в базі)
+        2. Фільтруємо по timestamp: ob.start_time >= added_at
+        3. Повертаємо ОДИН найновіший/найближчий OB
+        
+        Якщо немає нових OB - повертаємо None
         """
+        # Конвертуємо added_at в timestamp мілісекунди
+        if added_at:
+            added_ts = int(added_at.timestamp() * 1000)
+        else:
+            # Якщо немає added_at - поточний час (нічого не знайдемо)
+            added_ts = int(datetime.utcnow().timestamp() * 1000)
+        
+        logger.debug(f"🔍 Scanning {symbol}: looking for OB after ts={added_ts}")
+        
         # Детекція OB
         bullish_obs, bearish_obs = scanner.detector.detect_order_blocks(df, direction)
         
-        # Вибираємо потрібні OB
+        # Вибираємо потрібні OB по напрямку
         obs = bullish_obs if direction == "BUY" else bearish_obs
         
-        # Фільтруємо тільки валідні
-        valid_obs = [ob for ob in obs if ob.is_valid()]
+        logger.debug(f"   Found {len(obs)} total OBs for {symbol}")
         
-        if not valid_obs:
-            return None
-        
-        # Отримуємо існуючі OB з бази для цього символу
-        existing_obs = session.query(DetectedOrderBlock).filter(
-            DetectedOrderBlock.symbol == symbol
-        ).all()
-        
-        # Створюємо set існуючих OB для швидкої перевірки (по top+bottom)
-        existing_zones = set()
-        for ex in existing_obs:
-            # Округляємо для порівняння (щоб уникнути floating point проблем)
-            zone_key = (round(ex.ob_top, 6), round(ex.ob_bottom, 6))
-            existing_zones.add(zone_key)
-        
-        # Знаходимо НОВІ OB (яких немає в базі)
+        # КРИТИЧНА ФІЛЬТРАЦІЯ:
+        # 1. Тільки валідні (is_valid() - не breaker, не disabled)
+        # 2. Утворені ПІСЛЯ added_at (start_time >= added_ts)
         new_obs = []
-        for ob in valid_obs:
-            zone_key = (round(ob.top, 6), round(ob.bottom, 6))
-            if zone_key not in existing_zones:
-                new_obs.append(ob)
-                logger.debug(f"   NEW OB: {symbol} top={ob.top:.6f} bottom={ob.bottom:.6f}")
-            else:
-                logger.debug(f"   Existing OB: {symbol} top={ob.top:.6f} bottom={ob.bottom:.6f}")
+        for ob in obs:
+            if not ob.is_valid():
+                logger.debug(f"   Skip invalid OB: breaker={ob.breaker}, disabled={ob.disabled}")
+                continue
+            
+            if ob.start_time < added_ts:
+                logger.debug(f"   Skip OLD OB: start_time={ob.start_time} < added_ts={added_ts}")
+                continue
+            
+            new_obs.append(ob)
+            logger.debug(f"   ✅ NEW OB: start_time={ob.start_time}, top={ob.top:.6f}, bottom={ob.bottom:.6f}")
+        
+        logger.debug(f"   After timestamp filter: {len(new_obs)} NEW OBs")
         
         if not new_obs:
-            logger.debug(f"   No new OBs for {symbol} (all {len(valid_obs)} already in DB)")
-            return None
+            return None  # Немає нових OB
         
-        logger.info(f"🆕 Found {len(new_obs)} NEW OBs for {symbol} (filtered from {len(valid_obs)} valid)")
-        
-        # Вибираємо OB за налаштуванням
+        # Вибираємо ОДИН OB за налаштуванням
         current_price = df['close'].iloc[-1]
         
         if config['ob_selection'] == 'Newest':
@@ -630,31 +696,7 @@ class SmartMoneyEngine:
             entry_price = selected_ob.bottom
             sl_price = selected_ob.top + (atr * sl_mult)
         
-        # Визначаємо статус
-        entry_mode = config['ob_entry_mode']
-        
-        if entry_mode == 'Retest':
-            # Перевіряємо retest
-            high = df['high'].iloc[-1]
-            low = df['low'].iloc[-1]
-            
-            price_in_zone = selected_ob.contains_price(current_price) or \
-                           selected_ob.contains_price(high) or \
-                           selected_ob.contains_price(low)
-            
-            if not price_in_zone:
-                status = 'Waiting Retest'
-            else:
-                # Ціна в зоні або вийшла - перевіряємо touched
-                if selected_ob.touched:
-                    status = 'Triggered'
-                else:
-                    selected_ob.touched = True
-                    status = 'Waiting Retest'
-        else:
-            status = 'Valid'
-        
-        logger.info(f"🎯 Selected NEW OB for {symbol}: {selected_ob.ob_type.value} top={selected_ob.top:.4f} bottom={selected_ob.bottom:.4f} status={status}")
+        logger.info(f"🎯 NEW OB for {symbol}: {selected_ob.ob_type.value} top={selected_ob.top:.6f} bottom={selected_ob.bottom:.6f}")
         
         return {
             'symbol': symbol,
@@ -666,7 +708,7 @@ class SmartMoneyEngine:
             'sl_price': sl_price,
             'current_price': current_price,
             'atr': atr,
-            'status': status,
+            'status': 'Valid',  # Завжди Valid для нових OB
             'ob_start_time': selected_ob.start_time
         }
     
