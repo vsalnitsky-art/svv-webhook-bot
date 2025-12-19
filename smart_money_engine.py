@@ -485,47 +485,40 @@ class SmartMoneyEngine:
                     if df is None or len(df) < 50:
                         continue
                     
-                    # Знаходимо OB
+                    # Знаходимо OB (передаємо session для перевірки існуючих)
                     result = self._scan_symbol_with_timestamp(
-                        df, symbol, direction, added_at, config, scanner
+                        df, symbol, direction, added_at, config, scanner, session
                     )
                     
                     if result:
-                        # Перевіряємо чи вже є такий OB
-                        existing = session.query(DetectedOrderBlock).filter_by(
+                        # Зберігаємо новий OB (перевірка existing вже в _scan_symbol_with_timestamp)
+                        new_ob = DetectedOrderBlock(
                             symbol=symbol,
-                            status__in=['Valid', 'Waiting Retest']
-                        ).first()
+                            direction=direction,
+                            ob_type=result['ob_type'],
+                            ob_top=result['ob_top'],
+                            ob_bottom=result['ob_bottom'],
+                            entry_price=result['entry_price'],
+                            sl_price=result['sl_price'],
+                            current_price=result['current_price'],
+                            atr=result['atr'],
+                            status=result['status'],
+                            timeframe=config['ob_source_tf'],
+                            detected_at=datetime.utcnow()
+                        )
+                        session.add(new_ob)
+                        session.flush()
+                        found_count += 1
                         
-                        if not existing:
-                            # Зберігаємо новий OB
-                            new_ob = DetectedOrderBlock(
-                                symbol=symbol,
-                                direction=direction,
-                                ob_type=result['ob_type'],
-                                ob_top=result['ob_top'],
-                                ob_bottom=result['ob_bottom'],
-                                entry_price=result['entry_price'],
-                                sl_price=result['sl_price'],
-                                current_price=result['current_price'],
-                                atr=result['atr'],
-                                status=result['status'],
-                                timeframe=config['ob_source_tf'],
-                                detected_at=datetime.utcnow()
+                        logger.info(f"🎯 OB Found: {symbol} {result['ob_type']} Status={result['status']}")
+                        
+                        # Перевіряємо чи виконувати угоду
+                        if config['ob_execute_trades'] and result['status'] in ['Valid', 'Triggered']:
+                            exec_result = self._execute_trade(
+                                session, item, new_ob, result, config
                             )
-                            session.add(new_ob)
-                            session.flush()
-                            found_count += 1
-                            
-                            logger.info(f"🎯 OB Found: {symbol} {result['ob_type']} Status={result['status']}")
-                            
-                            # Перевіряємо чи виконувати угоду
-                            if config['ob_execute_trades'] and result['status'] in ['Valid', 'Triggered']:
-                                exec_result = self._execute_trade(
-                                    session, item, new_ob, result, config
-                                )
-                                if exec_result.get('status') == 'ok':
-                                    executed_count += 1
+                            if exec_result.get('status') == 'ok':
+                                executed_count += 1
                     
                     time.sleep(0.1)  # Rate limiting
                     
@@ -565,40 +558,65 @@ class SmartMoneyEngine:
         direction: str,
         added_at: datetime,
         config: Dict,
-        scanner: OrderBlockScanner
+        scanner: OrderBlockScanner,
+        session  # Додаємо session для перевірки існуючих OB
     ) -> Optional[Dict]:
         """
-        Сканує символ з фільтрацією по timestamp
+        Сканує символ і повертає НОВИЙ OB
         
-        Повертає тільки OB створені ПІСЛЯ added_at
+        КРИТИЧНА ЛОГІКА:
+        1. Знаходимо всі валідні OB
+        2. Перевіряємо чи такий OB вже є в DetectedOrderBlock
+        3. Повертаємо тільки якщо це НОВИЙ OB (не в базі)
         """
-        # Конвертуємо added_at в timestamp (мілісекунди)
-        added_ts = int(added_at.timestamp() * 1000) if added_at else 0
-        
         # Детекція OB
         bullish_obs, bearish_obs = scanner.detector.detect_order_blocks(df, direction)
         
         # Вибираємо потрібні OB
         obs = bullish_obs if direction == "BUY" else bearish_obs
         
-        # Фільтруємо:
-        # 1. Тільки валідні
-        # 2. Створені після added_at
-        valid_obs = [
-            ob for ob in obs 
-            if ob.is_valid() and ob.start_time >= added_ts
-        ]
+        # Фільтруємо тільки валідні
+        valid_obs = [ob for ob in obs if ob.is_valid()]
         
         if not valid_obs:
             return None
+        
+        # Отримуємо існуючі OB з бази для цього символу
+        existing_obs = session.query(DetectedOrderBlock).filter(
+            DetectedOrderBlock.symbol == symbol
+        ).all()
+        
+        # Створюємо set існуючих OB для швидкої перевірки (по top+bottom)
+        existing_zones = set()
+        for ex in existing_obs:
+            # Округляємо для порівняння (щоб уникнути floating point проблем)
+            zone_key = (round(ex.ob_top, 6), round(ex.ob_bottom, 6))
+            existing_zones.add(zone_key)
+        
+        # Знаходимо НОВІ OB (яких немає в базі)
+        new_obs = []
+        for ob in valid_obs:
+            zone_key = (round(ob.top, 6), round(ob.bottom, 6))
+            if zone_key not in existing_zones:
+                new_obs.append(ob)
+                logger.debug(f"   NEW OB: {symbol} top={ob.top:.6f} bottom={ob.bottom:.6f}")
+            else:
+                logger.debug(f"   Existing OB: {symbol} top={ob.top:.6f} bottom={ob.bottom:.6f}")
+        
+        if not new_obs:
+            logger.debug(f"   No new OBs for {symbol} (all {len(valid_obs)} already in DB)")
+            return None
+        
+        logger.info(f"🆕 Found {len(new_obs)} NEW OBs for {symbol} (filtered from {len(valid_obs)} valid)")
         
         # Вибираємо OB за налаштуванням
         current_price = df['close'].iloc[-1]
         
         if config['ob_selection'] == 'Newest':
-            selected_ob = valid_obs[0]
+            # Newest = найбільший start_time
+            selected_ob = max(new_obs, key=lambda ob: ob.start_time)
         else:  # Closest
-            selected_ob = min(valid_obs, key=lambda ob: abs((ob.top + ob.bottom) / 2 - current_price))
+            selected_ob = min(new_obs, key=lambda ob: abs((ob.top + ob.bottom) / 2 - current_price))
         
         # ATR для SL
         atr = scanner.detector.calculate_atr(df, 10).iloc[-1]
@@ -635,6 +653,8 @@ class SmartMoneyEngine:
                     status = 'Waiting Retest'
         else:
             status = 'Valid'
+        
+        logger.info(f"🎯 Selected NEW OB for {symbol}: {selected_ob.ob_type.value} top={selected_ob.top:.4f} bottom={selected_ob.bottom:.4f} status={status}")
         
         return {
             'symbol': symbol,
@@ -970,3 +990,29 @@ class SmartMoneyEngine:
 
 # Глобальний екземпляр
 smart_money_engine = SmartMoneyEngine()
+
+
+# ============================================================================
+#                    COORDINATOR INTEGRATION
+# ============================================================================
+
+def register_with_coordinator():
+    """Реєструє Smart Money Engine з координатором сканерів"""
+    try:
+        from scanner_coordinator import scanner_coordinator, ScannerType
+        
+        def scan_wrapper():
+            """Обгортка для сканування"""
+            smart_money_engine.scan_watchlist()
+        
+        scanner_coordinator.set_scan_function(ScannerType.SMART_MONEY, scan_wrapper)
+        logger.info("✅ Smart Money registered with Coordinator")
+        
+    except ImportError:
+        logger.warning("Scanner Coordinator not available")
+    except Exception as e:
+        logger.error(f"Coordinator registration error: {e}")
+
+
+# Автореєстрація при імпорті
+register_with_coordinator()
