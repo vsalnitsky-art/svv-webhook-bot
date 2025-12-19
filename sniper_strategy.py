@@ -230,6 +230,24 @@ class WhaleSniper:
             })
             self.found_signals = self.found_signals[:20]
             
+            # 🆕 ІНТЕГРАЦІЯ: Додаємо до Smart Money Watchlist
+            if settings.get('sniper_add_to_watchlist', True):
+                try:
+                    from scanner_coordinator import add_to_smart_money_watchlist
+                    
+                    direction = 'BUY' if mode == 'LONG' else 'SELL'
+                    add_result = add_to_smart_money_watchlist(
+                        symbol=symbol,
+                        direction=direction,
+                        source='Whale SNIPER'
+                    )
+                    
+                    if add_result.get('status') == 'ok':
+                        logger.info(f"📋 Added to SM Watchlist: {symbol}")
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to add to watchlist: {e}")
+            
         except Exception as e:
             logger.error(f"Save sniper error: {e}")
         finally:
@@ -280,3 +298,32 @@ class WhaleSniper:
                 time.sleep(60)
 
 sniper_bot = WhaleSniper()
+
+
+# ============================================================================
+#                    COORDINATOR INTEGRATION
+# ============================================================================
+
+def register_with_coordinator():
+    """Реєструє Whale SNIPER з координатором сканерів"""
+    try:
+        from scanner_coordinator import scanner_coordinator, ScannerType
+        
+        def scan_wrapper():
+            """Обгортка для сканування - один цикл"""
+            if sniper_bot.check_market_conditions():
+                candidates = sniper_bot.find_whale_tracks()
+                if candidates:
+                    sniper_bot.hunt_targets(candidates)
+        
+        scanner_coordinator.set_scan_function(ScannerType.WHALE_SNIPER, scan_wrapper)
+        logger.info("✅ Whale SNIPER registered with Coordinator")
+        
+    except ImportError:
+        logger.warning("Scanner Coordinator not available")
+    except Exception as e:
+        logger.error(f"Coordinator registration error: {e}")
+
+
+# Автореєстрація при імпорті
+register_with_coordinator()
