@@ -1249,8 +1249,17 @@ def settings_general_page():
     """Загальні налаштування"""
     if request.method == 'POST':
         form_data = request.form.to_dict()
-        form_data['telegram_enabled'] = request.form.get('telegram_enabled') == 'on'
-        form_data['exit_enableStrategy'] = request.form.get('exit_enableStrategy') == 'on'
+        
+        # Обробка всіх checkbox полів
+        checkbox_fields = [
+            'telegram_enabled', 
+            'exit_enableStrategy', 
+            'use_tp', 
+            'trailing_enabled'
+        ]
+        for field in checkbox_fields:
+            form_data[field] = request.form.get(field) == 'on'
+        
         settings.save_settings(form_data)
         logger.info("settings_saved", user_agent=request.user_agent)
         return redirect(url_for('settings_general_page'))
