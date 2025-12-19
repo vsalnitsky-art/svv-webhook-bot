@@ -38,6 +38,8 @@ from sniper_strategy import sniper_bot
 from whale_hunter_pro import register_routes as register_whale_hunter_pro
 # ✅ IMPORT SMART MONEY v2.0
 from smart_money_routes import register_smart_money_routes
+# ✅ IMPORT SCANNER COORDINATOR
+from scanner_coordinator import scanner_coordinator, ScannerType, add_to_smart_money_watchlist
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -1736,6 +1738,27 @@ register_whale_hunter_pro(app)
 
 # === SMART MONEY v2.0 ROUTES ===
 register_smart_money_routes(app)
+
+# === SCANNER COORDINATOR SETUP ===
+def setup_scanner_coordinator():
+    """Налаштовує координатор сканерів"""
+    try:
+        # Реєструємо RSI/MFI Screener
+        def rsi_scan_wrapper():
+            """Обгортка для RSI/MFI сканування"""
+            scheduled_rsi_mfi_scan()
+        
+        scanner_coordinator.set_scan_function(ScannerType.RSI_MFI, rsi_scan_wrapper)
+        
+        # Запускаємо координатор
+        scanner_coordinator.start()
+        logger.info("✅ Scanner Coordinator started")
+        
+    except Exception as e:
+        logger.error(f"Scanner Coordinator setup error: {e}")
+
+# Запускаємо координатор
+setup_scanner_coordinator()
 
 # ===== ЗАПУСК =====
 
