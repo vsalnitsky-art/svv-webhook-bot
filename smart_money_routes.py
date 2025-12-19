@@ -106,6 +106,18 @@ def api_get_stats():
     return jsonify(smart_money_engine.get_execution_stats())
 
 
+@smart_money_bp.route('/api/execution_log/<int:log_id>', methods=['DELETE'])
+def api_delete_execution_log(log_id):
+    """Видалити запис з Execution Log"""
+    return jsonify(smart_money_engine.delete_execution_log(log_id))
+
+
+@smart_money_bp.route('/api/execution_log/clear', methods=['POST'])
+def api_clear_execution_log():
+    """Очистити весь Execution Log"""
+    return jsonify(smart_money_engine.clear_execution_log())
+
+
 # ============================================================================
 #                            API: CONFIG
 # ============================================================================
