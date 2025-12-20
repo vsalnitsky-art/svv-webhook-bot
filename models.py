@@ -188,31 +188,40 @@ class DatabaseManager:
     
     # ✨ МІГРАЦІЯ: Додавання колонок для комісій
     def _migrate_add_fee_columns(self):
-        """Додає колонки opening_fee, closing_fee, funding_fee до trades якщо вони ще не існують"""
+        """Додає нові колонки до таблиць якщо вони ще не існують"""
         try:
             from sqlalchemy import inspect, text
             
             inspector = inspect(self.engine)
             
+            # Визначаємо тип БД для правильних типів даних
+            is_postgres = 'postgresql' in str(self.engine.url)
+            logger.info(f"🔄 Running migrations (PostgreSQL: {is_postgres})")
+            
+            # Типи даних для різних БД
+            FLOAT_TYPE = 'DOUBLE PRECISION' if is_postgres else 'REAL'
+            DATETIME_TYPE = 'TIMESTAMP' if is_postgres else 'DATETIME'
+            
             # === TRADES TABLE ===
-            columns = {col['name'] for col in inspector.get_columns('trades')}
-            
-            # Колонки які потрібно додати
-            needed_columns = {
-                'opening_fee': 'REAL DEFAULT 0.0',
-                'closing_fee': 'REAL DEFAULT 0.0',
-                'funding_fee': 'REAL DEFAULT 0.0'
-            }
-            
-            with self.engine.connect() as conn:
-                for col_name, col_def in needed_columns.items():
-                    if col_name not in columns:
-                        try:
-                            conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col_name} {col_def}"))
-                            conn.commit()
-                            logger.info(f"✅ Migration: Added column '{col_name}' to trades")
-                        except Exception as e:
-                            logger.warning(f"⚠️ Migration: Column '{col_name}' already exists or error: {e}")
+            try:
+                columns = {col['name'] for col in inspector.get_columns('trades')}
+                needed_columns = {
+                    'opening_fee': f'{FLOAT_TYPE} DEFAULT 0.0',
+                    'closing_fee': f'{FLOAT_TYPE} DEFAULT 0.0',
+                    'funding_fee': f'{FLOAT_TYPE} DEFAULT 0.0'
+                }
+                
+                with self.engine.connect() as conn:
+                    for col_name, col_def in needed_columns.items():
+                        if col_name not in columns:
+                            try:
+                                conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col_name} {col_def}"))
+                                conn.commit()
+                                logger.info(f"✅ Migration: Added column '{col_name}' to trades")
+                            except Exception as e:
+                                logger.debug(f"Migration: Column '{col_name}' - {e}")
+            except Exception as e:
+                logger.debug(f"Migration trades: {e}")
             
             # === SMART_MONEY_WATCHLIST TABLE ===
             try:
@@ -230,39 +239,45 @@ class DatabaseManager:
                                 conn.commit()
                                 logger.info(f"✅ Migration: Added column '{col_name}' to smart_money_watchlist")
                             except Exception as e:
-                                pass  # Column might exist
+                                pass
             except Exception as e:
                 pass  # Table might not exist yet
             
             # === SMART_MONEY_EXECUTION_LOG TABLE (OB columns) ===
             try:
                 exec_columns = {col['name'] for col in inspector.get_columns('smart_money_execution_log')}
+                logger.info(f"📋 smart_money_execution_log existing columns: {exec_columns}")
+                
                 exec_needed = {
                     'ob_type': "VARCHAR(10)",
-                    'ob_start_time': "DATETIME",
-                    'ob_midline': "REAL",
-                    'ob_size_percent': "REAL"
+                    'ob_start_time': DATETIME_TYPE,
+                    'ob_midline': FLOAT_TYPE,
+                    'ob_size_percent': FLOAT_TYPE
                 }
                 
                 with self.engine.connect() as conn:
                     for col_name, col_def in exec_needed.items():
                         if col_name not in exec_columns:
                             try:
-                                conn.execute(text(f"ALTER TABLE smart_money_execution_log ADD COLUMN {col_name} {col_def}"))
+                                sql = f"ALTER TABLE smart_money_execution_log ADD COLUMN {col_name} {col_def}"
+                                logger.info(f"🔧 Executing: {sql}")
+                                conn.execute(text(sql))
                                 conn.commit()
                                 logger.info(f"✅ Migration: Added column '{col_name}' to smart_money_execution_log")
                             except Exception as e:
-                                pass
+                                logger.warning(f"⚠️ Migration exec_log '{col_name}': {e}")
+                        else:
+                            logger.debug(f"Column '{col_name}' already exists in smart_money_execution_log")
             except Exception as e:
-                pass  # Table might not exist yet
+                logger.warning(f"⚠️ Migration smart_money_execution_log failed: {e}")
             
             # === DETECTED_ORDER_BLOCKS TABLE (OB columns) ===
             try:
                 ob_columns = {col['name'] for col in inspector.get_columns('detected_order_blocks')}
                 ob_needed = {
-                    'ob_start_time': "DATETIME",
-                    'ob_midline': "REAL",
-                    'ob_size_percent': "REAL"
+                    'ob_start_time': DATETIME_TYPE,
+                    'ob_midline': FLOAT_TYPE,
+                    'ob_size_percent': FLOAT_TYPE
                 }
                 
                 with self.engine.connect() as conn:
@@ -273,9 +288,11 @@ class DatabaseManager:
                                 conn.commit()
                                 logger.info(f"✅ Migration: Added column '{col_name}' to detected_order_blocks")
                             except Exception as e:
-                                pass
+                                logger.warning(f"⚠️ Migration detected_ob '{col_name}': {e}")
             except Exception as e:
                 pass  # Table might not exist yet
+            
+            logger.info("✅ Migrations completed")
                 
         except Exception as e:
             logger.warning(f"⚠️ Migration failed: {e}")
