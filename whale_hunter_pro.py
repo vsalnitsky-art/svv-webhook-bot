@@ -937,8 +937,11 @@ class WhaleHunterPro:
             # 2. Визначаємо напрямок
             direction = self.determine_direction()
             
-            # Логуємо один раз при старті
-            logger.info(f"🎯 Whale Hunter PRO: Direction={direction}, BTC={self.btc_trend.value}, use_btc={config.get('whp_use_btc')}")
+            # Логуємо один раз при старті з детальною інформацією
+            raw_use_btc = settings.get('whp_use_btc')
+            config_use_btc = config.get('whp_use_btc')
+            logger.info(f"🎯 Whale Hunter PRO: Direction={direction}, BTC={self.btc_trend.value}")
+            logger.info(f"   whp_use_btc: settings.get()='{raw_use_btc}' (type={type(raw_use_btc).__name__}), config={config_use_btc}")
             
             # Очищаємо лічильник відхилень для діагностики
             self._rejected_count = {'LONG': 0, 'SHORT': 0}
@@ -1138,6 +1141,11 @@ def register_routes(app):
     def whale_hunter_config():
         if request.method == 'POST':
             data = request.json or {}
+            
+            # 🔧 Логуємо whp_use_btc для діагностики
+            if 'whp_use_btc' in data:
+                logger.info(f"💾 Saving settings: whp_use_btc={data['whp_use_btc']} (type={type(data['whp_use_btc']).__name__})")
+            
             # Зберігаємо всі налаштування одразу
             settings.save_settings(data)
             whale_hunter_pro.update_config()
