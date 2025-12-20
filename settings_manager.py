@@ -147,25 +147,41 @@ class SettingsManager:
         self.reload_settings()
 
     def _cast_value(self, key, value_str):
-        if key not in DEFAULT_SETTINGS: 
-            return value_str
-        default_val = DEFAULT_SETTINGS[key]
-        
-        # Обробка порожніх рядків - повертаємо default
+        # Обробка порожніх рядків - повертаємо default або None
         if value_str is None or value_str == '':
-            return default_val
-            
-        try:
-            if isinstance(default_val, bool): 
-                return str(value_str).lower() in ['true', 'on', '1']
-            elif isinstance(default_val, int): 
-                return int(float(value_str))
-            elif isinstance(default_val, float): 
-                return float(value_str)
-            else: 
-                return str(value_str)
-        except: 
-            return default_val
+            return DEFAULT_SETTINGS.get(key, None)
+        
+        # Якщо ключ в DEFAULT_SETTINGS - конвертуємо по типу default
+        if key in DEFAULT_SETTINGS:
+            default_val = DEFAULT_SETTINGS[key]
+            try:
+                if isinstance(default_val, bool): 
+                    return str(value_str).lower() in ['true', 'on', '1']
+                elif isinstance(default_val, int): 
+                    return int(float(value_str))
+                elif isinstance(default_val, float): 
+                    return float(value_str)
+                else: 
+                    return str(value_str)
+            except: 
+                return default_val
+        
+        # Для ключів НЕ в DEFAULT_SETTINGS - намагаємось вгадати тип
+        # Конвертуємо "true"/"false" строки в boolean
+        if isinstance(value_str, str):
+            if value_str.lower() == 'true':
+                return True
+            elif value_str.lower() == 'false':
+                return False
+            # Спробувати конвертувати в число
+            try:
+                if '.' in value_str:
+                    return float(value_str)
+                return int(value_str)
+            except ValueError:
+                pass
+        
+        return value_str
 
     def reload_settings(self):
         session = self.db.get_session()
@@ -182,8 +198,12 @@ class SettingsManager:
                 loaded = {}
                 db_keys = set()
                 for s in db_settings: 
-                    loaded[s.key] = self._cast_value(s.key, s.value)
+                    casted = self._cast_value(s.key, s.value)
+                    loaded[s.key] = casted
                     db_keys.add(s.key)
+                    # Логуємо whp_use_btc
+                    if s.key == 'whp_use_btc':
+                        logger.info(f"🔧 reload_settings: whp_use_btc db='{s.value}' -> cache={casted} (type={type(casted).__name__})")
                 
                 # Log important settings
                 auto_scan = loaded.get('ob_auto_scan', False)
@@ -215,16 +235,31 @@ class SettingsManager:
             
             for k, v in new_settings_dict.items():
                 val_to_store = str(v)
+                
+                # Визначаємо чи це boolean значення
+                is_bool_value = False
+                
+                # Перевіряємо по DEFAULT_SETTINGS
                 if k in DEFAULT_SETTINGS:
                     default_type = type(DEFAULT_SETTINGS[k])
                     if default_type == bool:
-                        is_true = (v == 'on' or v == 'true' or v is True or str(v).lower() == 'true')
-                        val_to_store = "true" if is_true else "false"
-                        self._cache[k] = is_true
-                        logger.info(f"  {k} = {is_true} (bool, stored: {val_to_store})")
-                    else:
-                        self._cache[k] = self._cast_value(k, v)
-                        val_to_store = str(v)
+                        is_bool_value = True
+                
+                # Також перевіряємо якщо значення вже boolean (з JSON)
+                if isinstance(v, bool):
+                    is_bool_value = True
+                
+                # Конвертуємо boolean
+                if is_bool_value:
+                    is_true = (v == 'on' or v == 'true' or v is True or str(v).lower() == 'true')
+                    val_to_store = "true" if is_true else "false"
+                    self._cache[k] = is_true
+                    # Логуємо whp_use_btc для діагностики
+                    if k == 'whp_use_btc':
+                        logger.info(f"  🔧 {k}: input={v} (type={type(v).__name__}) -> cache={is_true}, db={val_to_store}")
+                elif k in DEFAULT_SETTINGS:
+                    self._cache[k] = self._cast_value(k, v)
+                    val_to_store = str(v)
                 else:
                     self._cache[k] = v
                 
