@@ -137,7 +137,49 @@ DEFAULT_SETTINGS = {
     "ob_execute_trades": False,         # Відкривати угоди (за замовчуванням вимкнено!)
     "ob_scan_interval": 60,             # Інтервал сканування OB в секундах
     "ob_watchlist_timeout": "24h",      # No, 12h, 24h, 48h, 72h
-    "ob_watchlist_limit": 50            # Макс. монет в watchlist
+    "ob_watchlist_limit": 50,           # Макс. монет в watchlist
+    
+    # === WHALE HUNTER PRO ===
+    "whp_enabled": True,
+    "whp_auto_mode": False,
+    "whp_auto_interval": 60,
+    "whp_min_score": 50,
+    "whp_min_volume": 5000000,
+    "whp_scan_limit": 50,
+    "whp_main_tf": "60",
+    "whp_htf": "240",
+    
+    # WHP Scoring Weights
+    "whp_use_rsi": True,
+    "whp_rsi_weight": 20,
+    "whp_rsi_oversold": 40,
+    "whp_rsi_overbought": 60,
+    
+    "whp_use_mfi": True,
+    "whp_mfi_weight": 15,
+    
+    "whp_use_rvol": True,
+    "whp_rvol_weight": 15,
+    "whp_rvol_threshold": 1.5,
+    
+    "whp_use_ob": True,
+    "whp_ob_weight": 20,
+    "whp_ob_distance": 3.0,
+    
+    "whp_use_btc": True,                # BTC Trend Filter - за замовчуванням увімкнено
+    "whp_btc_weight": 15,
+    
+    "whp_use_adx": True,
+    "whp_adx_weight": 10,
+    "whp_adx_threshold": 25,
+    
+    "whp_use_squeeze": True,
+    "whp_squeeze_weight": 5,
+    
+    "whp_use_divergence": True,
+    "whp_divergence_weight": 10,
+    
+    "whp_add_to_watchlist": True
 }
 
 class SettingsManager:
