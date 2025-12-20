@@ -602,11 +602,6 @@ class WhaleHunterPro:
             except (ValueError, TypeError):
                 return default
         
-        # 🔍 DEBUG: Логуємо raw значення з settings
-        raw_use_btc = settings.get('whp_use_btc')
-        converted_use_btc = to_bool(raw_use_btc, True)
-        logger.info(f"🔧 _load_config: whp_use_btc raw='{raw_use_btc}' (type={type(raw_use_btc).__name__}) -> converted={converted_use_btc}")
-        
         return {
             # Загальні
             'whp_enabled': to_bool(settings.get('whp_enabled'), True),
@@ -737,22 +732,17 @@ class WhaleHunterPro:
         config = self._load_config()
         
         use_btc = config.get('whp_use_btc', True)
-        logger.info(f"🔍 determine_direction: whp_use_btc={use_btc} (type={type(use_btc).__name__}), btc_trend={self.btc_trend.value}")
         
         # Якщо BTC фільтр вимкнено - шукаємо обидва напрямки
         if not use_btc:
-            logger.info("📊 Direction: BOTH (BTC Filter OFF)")
             return "BOTH"
         
         # BTC фільтр увімкнено - напрямок по тренду
         if self.btc_trend == MarketMode.BULLISH:
-            logger.info("📊 Direction: LONG (BTC BULLISH)")
             return "LONG"
         elif self.btc_trend == MarketMode.BEARISH:
-            logger.info("📊 Direction: SHORT (BTC BEARISH)")
             return "SHORT"
         else:
-            logger.info("📊 Direction: BOTH (BTC NEUTRAL)")
             return "BOTH"  # Neutral = обидва напрямки
     
     def analyze_symbol(self, symbol: str, direction: str) -> Optional[Dict]:
@@ -782,6 +772,12 @@ class WhaleHunterPro:
         # Перевіряємо мінімальний поріг
         min_score = config.get('whp_min_score', 50)
         if score.total < min_score:
+            # Логуємо тільки перші 5 відхилень для діагностики
+            if not hasattr(self, '_rejected_count'):
+                self._rejected_count = {'LONG': 0, 'SHORT': 0}
+            if self._rejected_count.get(direction, 0) < 3:
+                logger.info(f"⏭️ {symbol} {direction}: score={score.total} < min={min_score} | RSI={score.rsi} MFI={score.mfi} RVOL={score.rvol} OB={score.ob} BTC={score.btc}")
+                self._rejected_count[direction] = self._rejected_count.get(direction, 0) + 1
             return None
         
         return {
@@ -941,6 +937,12 @@ class WhaleHunterPro:
             # 2. Визначаємо напрямок
             direction = self.determine_direction()
             
+            # Логуємо один раз при старті
+            logger.info(f"🎯 Whale Hunter PRO: Direction={direction}, BTC={self.btc_trend.value}, use_btc={config.get('whp_use_btc')}")
+            
+            # Очищаємо лічильник відхилень для діагностики
+            self._rejected_count = {'LONG': 0, 'SHORT': 0}
+            
             if direction == "BOTH":
                 self.status = f"Mode: BOTH (BTC Filter OFF)"
             else:
@@ -981,18 +983,21 @@ class WhaleHunterPro:
                     # Спочатку LONG
                     result_long = self.analyze_symbol(symbol, "LONG")
                     if result_long:
+                        logger.info(f"✅ Found LONG: {symbol} score={result_long['score']}")
                         self.save_signal(result_long)
                         self.scan_results.append(result_long)
                     
                     # Потім SHORT
                     result_short = self.analyze_symbol(symbol, "SHORT")
                     if result_short:
+                        logger.info(f"✅ Found SHORT: {symbol} score={result_short['score']}")
                         self.save_signal(result_short)
                         self.scan_results.append(result_short)
                 else:
                     # Один напрямок
                     result = self.analyze_symbol(symbol, direction)
                     if result:
+                        logger.info(f"✅ Found {direction}: {symbol} score={result['score']}")
                         self.save_signal(result)
                         self.scan_results.append(result)
                 
@@ -1000,6 +1005,12 @@ class WhaleHunterPro:
             
             # 5. Завершення
             self.progress = 100
+            
+            # Підсумок по напрямках
+            long_count = len([r for r in self.scan_results if r['direction'] == 'LONG'])
+            short_count = len([r for r in self.scan_results if r['direction'] == 'SHORT'])
+            logger.info(f"📊 Scan complete: {len(self.scan_results)} signals (LONG: {long_count}, SHORT: {short_count})")
+            
             self.status = f"Done! Found {len(self.scan_results)} signals"
             self.last_scan_time = datetime.now().strftime("%H:%M:%S")
             
