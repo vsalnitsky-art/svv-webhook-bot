@@ -804,6 +804,9 @@ function collectSettings() {
 function saveSettings() {
     const config = collectSettings();
     
+    // 🔍 DEBUG: Логуємо whp_use_btc
+    console.log('💾 Saving whp_use_btc:', config.whp_use_btc, 'checkbox:', document.getElementById('useBtc').checked);
+    
     fetch('/whale_hunter/config', {
         method: 'POST',
         headers: {
