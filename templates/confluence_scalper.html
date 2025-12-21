@@ -727,6 +727,40 @@
                 </div>
             </div>
             
+            <!-- Open Positions -->
+            {% if open_positions %}
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="ri-pulse-line me-2"></i>Open Positions</h5>
+                    <span class="badge bg-success">{{ open_positions|length }}</span>
+                </div>
+                <div class="card-body p-0">
+                    {% for p in open_positions %}
+                    <div class="signal-card {{ p.direction|lower }} mx-2 my-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="signal-symbol">{{ p.symbol }}</span>
+                                <span class="signal-direction {{ p.direction|lower }} ms-2">{{ p.direction }}</span>
+                                {% if p.tp1_hit %}<span class="badge bg-warning text-dark ms-1">TP1</span>{% endif %}
+                            </div>
+                            <div class="text-end">
+                                <div class="fw-bold {{ 'text-success' if p.pnl_percent > 0 else 'text-danger' }}">
+                                    {{ '+' if p.pnl_percent > 0 else '' }}{{ p.pnl_percent }}%
+                                </div>
+                                <small class="opacity-60">{{ p.entry_time }}</small>
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between mt-2 small">
+                            <span>Entry: {{ p.entry_price|round(6) }}</span>
+                            <span>Current: {{ p.current_price|round(6) if p.current_price else '-' }}</span>
+                            <button onclick="closePosition({{ p.id }})" class="btn btn-sm btn-outline-danger">Close</button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            
             <!-- Scan Results -->
             <div class="card mb-4">
                 <div class="card-header d-flex justify-content-between align-items-center">
@@ -741,6 +775,9 @@
                                 <div>
                                     <span class="signal-symbol">{{ s.symbol }}</span>
                                     <span class="signal-direction {{ s.direction|lower }} ms-2">{{ s.direction }}</span>
+                                    {% if s.problem_type %}
+                                    <span class="badge bg-danger ms-1" style="font-size: 0.6rem;">{{ s.problem_type }}</span>
+                                    {% endif %}
                                 </div>
                                 <div class="text-end">
                                     <div class="fw-bold" style="color: {{ '#22c55e' if s.confluence_score >= 80 else ('#3b82f6' if s.confluence_score >= 70 else '#f59e0b') }}">
@@ -748,17 +785,6 @@
                                     </div>
                                     <small class="opacity-60">{{ s.strength }}</small>
                                 </div>
-                            </div>
-                            
-                            <div class="score-breakdown">
-                                <div class="score-segment whale" style="width: {{ s.whale_score }}%" 
-                                     data-bs-toggle="tooltip" title="Whale: {{ s.whale_score|round(1) }}"></div>
-                                <div class="score-segment ob" style="width: {{ s.ob_score }}%"
-                                     data-bs-toggle="tooltip" title="OB: {{ s.ob_score|round(1) }}"></div>
-                                <div class="score-segment volume" style="width: {{ s.volume_score }}%"
-                                     data-bs-toggle="tooltip" title="Volume: {{ s.volume_score|round(1) }}"></div>
-                                <div class="score-segment trend" style="width: {{ s.trend_score }}%"
-                                     data-bs-toggle="tooltip" title="Trend: {{ s.trend_score|round(1) }}"></div>
                             </div>
                             
                             <div class="d-flex justify-content-between mt-2 small opacity-70">
@@ -957,6 +983,22 @@ document.getElementById('autoMode')?.addEventListener('change', function() {
         })
     });
 });
+
+// ===== Close Position =====
+function closePosition(id) {
+    if (!confirm('Close this position?')) return;
+    
+    fetch(`/confluence_scalper/close/${id}`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        if (d.status === 'ok') {
+            location.reload();
+        } else {
+            alert('Error: ' + d.error);
+        }
+    });
+}
 
 // ===== Clear History =====
 function clearHistory() {
