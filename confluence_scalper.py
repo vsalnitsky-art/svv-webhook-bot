@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, func
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, Text, func, case
 
 from models import db_manager, Base
 from settings_manager import settings
@@ -770,7 +770,7 @@ class AnalyticsEngine:
             stats = session.query(
                 ConfluenceSignal.symbol,
                 func.count(ConfluenceSignal.id).label('total'),
-                func.sum(func.case((ConfluenceSignal.pnl_percent < 0, 1), else_=0)).label('losses'),
+                func.sum(case([(ConfluenceSignal.pnl_percent < 0, 1)], else_=0)).label('losses'),
                 func.sum(ConfluenceSignal.pnl_percent).label('total_pnl')
             ).filter(
                 ConfluenceSignal.status == 'Closed',
@@ -1266,8 +1266,9 @@ class ConfluenceScalper:
                         if result.is_valid:
                             found.append(result)
                             logger.info(f"✅ {symbol} {direction}: {result.confluence_score:.1f}")
-                    time.sleep(0.05)
-                except:
+                    time.sleep(0.1)  # Rate limit: 10 requests/sec max
+                except Exception as e:
+                    logger.debug(f"Scan {symbol}: {e}")
                     continue
             
             found.sort(key=lambda x: x.confluence_score, reverse=True)
