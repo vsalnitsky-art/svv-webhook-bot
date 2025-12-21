@@ -5,6 +5,76 @@
 {% block extra_css %}
 <style>
 /* ===== CONFLUENCE SCALPER THEME ===== */
+
+/* Live Status Bar */
+.live-status-bar {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    background: rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    backdrop-filter: blur(10px);
+}
+
+.live-status-bar .status-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(255,255,255,0.1);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    transition: all 0.3s ease;
+}
+
+.live-status-bar .status-item i {
+    font-size: 1.1rem;
+    opacity: 0.7;
+}
+
+.live-status-bar .status-label {
+    opacity: 0.6;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.live-status-bar .status-value {
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.live-status-bar .status-item.active {
+    background: rgba(16, 185, 129, 0.3);
+    animation: pulse-glow 2s infinite;
+}
+
+.live-status-bar .status-item.scanning {
+    background: rgba(59, 130, 246, 0.3);
+    animation: pulse-glow 1s infinite;
+}
+
+.live-status-bar .status-item.warning {
+    background: rgba(245, 158, 11, 0.3);
+}
+
+.live-status-bar .status-item.danger {
+    background: rgba(239, 68, 68, 0.3);
+}
+
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+}
+
+/* Scan Progress Container */
+.scan-progress-container {
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+    padding: 0.75rem;
+}
+
 .confluence-header {
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
     border-radius: 16px;
@@ -319,7 +389,7 @@
                     <h2 class="mb-2">
                         <i class="ri-focus-3-line me-2"></i>
                         Confluence Scalper
-                        <span class="badge bg-primary ms-2">v1.0</span>
+                        <span class="badge bg-primary ms-2">v2.0</span>
                     </h2>
                     <p class="opacity-75 mb-0">
                         Професійна стратегія для швидких угод з високою ймовірністю успіху.<br>
@@ -351,13 +421,13 @@
                         <!-- Daily Counter -->
                         <div class="status-badge neutral">
                             <i class="ri-calendar-check-line"></i>
-                            {{ status.today_trades }}/{{ status.max_daily_trades }} today
+                            <span id="todayTradesCount">{{ status.today_trades }}</span>/{{ status.max_daily_trades }} today
                         </div>
                         
                         <!-- Scan Button -->
                         <button onclick="startScan()" id="scanBtn" class="btn btn-primary btn-lg" {{ 'disabled' if status.is_scanning or not status.can_trade }}>
                             {% if status.is_scanning %}
-                                <span class="spinner-border spinner-border-sm me-2"></span> {{ status.progress }}%
+                                <span class="spinner-border spinner-border-sm me-2"></span> <span id="scanProgress">{{ status.progress }}</span>%
                             {% else %}
                                 <i class="ri-radar-line me-2"></i> SCAN
                             {% endif %}
@@ -366,13 +436,52 @@
                 </div>
             </div>
             
-            <!-- Progress Bar -->
-            {% if status.is_scanning %}
-            <div class="scan-progress mt-3">
-                <div class="scan-progress-bar" style="width: {{ status.progress }}%"></div>
+            <!-- Live Status Bar -->
+            <div class="live-status-bar mt-3" id="liveStatusBar">
+                <div class="status-item" id="statusScanning">
+                    <i class="ri-radar-line"></i>
+                    <span class="status-label">Scanner</span>
+                    <span class="status-value" id="scannerStatus">Idle</span>
+                </div>
+                <div class="status-item" id="statusMonitor">
+                    <i class="ri-eye-line"></i>
+                    <span class="status-label">Monitor</span>
+                    <span class="status-value" id="monitorStatus">{{ 'Active' if status.monitor_running else 'Stopped' }}</span>
+                </div>
+                <div class="status-item" id="statusPositions">
+                    <i class="ri-funds-line"></i>
+                    <span class="status-label">Positions</span>
+                    <span class="status-value" id="positionsCount">{{ status.open_positions }}</span>
+                </div>
+                <div class="status-item" id="statusPnL">
+                    <i class="ri-money-dollar-circle-line"></i>
+                    <span class="status-label">Today P&L</span>
+                    <span class="status-value {{ 'text-success' if status.today_pnl > 0 else 'text-danger' if status.today_pnl < 0 else '' }}" id="todayPnL">
+                        {{ '+' if status.today_pnl > 0 else '' }}{{ status.today_pnl }}%
+                    </span>
+                </div>
+                <div class="status-item" id="statusAuto">
+                    <i class="ri-robot-line"></i>
+                    <span class="status-label">Auto Mode</span>
+                    <span class="status-value" id="autoStatus">{{ 'ON' if status.auto_running else 'OFF' }}</span>
+                </div>
+                <div class="status-item" id="statusNextScan">
+                    <i class="ri-time-line"></i>
+                    <span class="status-label">Next Scan</span>
+                    <span class="status-value" id="nextScanTime">--</span>
+                </div>
             </div>
-            <div class="text-center mt-2 small opacity-75">{{ status.status }}</div>
-            {% endif %}
+            
+            <!-- Progress Bar (коли сканування активне) -->
+            <div class="scan-progress-container mt-3" id="progressContainer" style="{{ 'display: none;' if not status.is_scanning else '' }}">
+                <div class="scan-progress">
+                    <div class="scan-progress-bar" id="progressBar" style="width: {{ status.progress }}%"></div>
+                </div>
+                <div class="d-flex justify-content-between mt-1">
+                    <span class="small opacity-75" id="scanStatusText">{{ status.status }}</span>
+                    <span class="small opacity-75" id="scanProgressPercent">{{ status.progress }}%</span>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -970,7 +1079,14 @@ function startScan() {
 }
 
 // ===== Auto Mode =====
+let autoModeInterval = null;
+let nextScanCountdown = 0;
+let scanIntervalSec = 30;
+
 document.getElementById('autoMode')?.addEventListener('change', function() {
+    const enabled = this.checked;
+    scanIntervalSec = parseInt(document.getElementById('scanInterval').value) || 30;
+    
     fetch('/confluence_scalper/auto', {
         method: 'POST',
         headers: {
@@ -978,11 +1094,158 @@ document.getElementById('autoMode')?.addEventListener('change', function() {
             'X-CSRFToken': csrfToken
         },
         body: JSON.stringify({
-            enabled: this.checked,
-            interval: parseInt(document.getElementById('scanInterval').value)
+            enabled: enabled,
+            interval: scanIntervalSec
         })
+    }).then(r => r.json()).then(d => {
+        updateAutoModeUI(enabled);
+        if (enabled) {
+            nextScanCountdown = scanIntervalSec;
+            startCountdown();
+        } else {
+            stopCountdown();
+        }
     });
 });
+
+function updateAutoModeUI(enabled) {
+    const statusItem = document.getElementById('statusAuto');
+    const autoStatus = document.getElementById('autoStatus');
+    
+    if (enabled) {
+        statusItem.classList.add('active');
+        autoStatus.textContent = 'ON';
+        autoStatus.classList.add('text-success');
+    } else {
+        statusItem.classList.remove('active');
+        autoStatus.textContent = 'OFF';
+        autoStatus.classList.remove('text-success');
+    }
+}
+
+function startCountdown() {
+    stopCountdown();
+    autoModeInterval = setInterval(() => {
+        nextScanCountdown--;
+        if (nextScanCountdown <= 0) {
+            nextScanCountdown = scanIntervalSec;
+        }
+        document.getElementById('nextScanTime').textContent = nextScanCountdown + 's';
+    }, 1000);
+}
+
+function stopCountdown() {
+    if (autoModeInterval) {
+        clearInterval(autoModeInterval);
+        autoModeInterval = null;
+    }
+    document.getElementById('nextScanTime').textContent = '--';
+}
+
+// ===== Live Status Update =====
+let statusUpdateInterval = null;
+
+function updateLiveStatus() {
+    fetch('/confluence_scalper/status')
+        .then(r => r.json())
+        .then(status => {
+            // Update scanner status
+            const scannerItem = document.getElementById('statusScanning');
+            const scannerStatus = document.getElementById('scannerStatus');
+            
+            if (status.is_scanning) {
+                scannerItem.classList.add('scanning');
+                scannerStatus.textContent = status.progress + '%';
+                
+                // Show progress bar
+                document.getElementById('progressContainer').style.display = '';
+                document.getElementById('progressBar').style.width = status.progress + '%';
+                document.getElementById('scanStatusText').textContent = status.status;
+                document.getElementById('scanProgressPercent').textContent = status.progress + '%';
+                
+                // Update scan button
+                document.getElementById('scanBtn').innerHTML = 
+                    '<span class="spinner-border spinner-border-sm me-2"></span> ' + status.progress + '%';
+                document.getElementById('scanBtn').disabled = true;
+            } else {
+                scannerItem.classList.remove('scanning');
+                scannerStatus.textContent = 'Idle';
+                document.getElementById('progressContainer').style.display = 'none';
+                document.getElementById('scanBtn').innerHTML = '<i class="ri-radar-line me-2"></i> SCAN';
+                document.getElementById('scanBtn').disabled = !status.can_trade;
+            }
+            
+            // Update monitor status
+            const monitorItem = document.getElementById('statusMonitor');
+            const monitorStatus = document.getElementById('monitorStatus');
+            if (status.monitor_running) {
+                monitorItem.classList.add('active');
+                monitorStatus.textContent = 'Active';
+            } else {
+                monitorItem.classList.remove('active');
+                monitorStatus.textContent = 'Stopped';
+            }
+            
+            // Update positions count
+            const posItem = document.getElementById('statusPositions');
+            document.getElementById('positionsCount').textContent = status.open_positions || 0;
+            if (status.open_positions > 0) {
+                posItem.classList.add('active');
+            } else {
+                posItem.classList.remove('active');
+            }
+            
+            // Update P&L
+            const pnlValue = document.getElementById('todayPnL');
+            pnlValue.textContent = (status.today_pnl > 0 ? '+' : '') + status.today_pnl.toFixed(2) + '%';
+            pnlValue.className = 'status-value ' + (status.today_pnl > 0 ? 'text-success' : status.today_pnl < 0 ? 'text-danger' : '');
+            
+            // Update today trades
+            document.getElementById('todayTradesCount').textContent = status.today_trades;
+            
+            // Update auto mode
+            updateAutoModeUI(status.auto_running);
+            if (status.auto_running && !autoModeInterval) {
+                document.getElementById('autoMode').checked = true;
+                nextScanCountdown = scanIntervalSec;
+                startCountdown();
+            } else if (!status.auto_running && autoModeInterval) {
+                document.getElementById('autoMode').checked = false;
+                stopCountdown();
+            }
+            
+            // Update BTC badge
+            const btcBadge = document.getElementById('btcBadge');
+            btcBadge.className = 'status-badge ' + 
+                (status.btc_trend === 'BULLISH' ? 'bullish' : 
+                 status.btc_trend === 'BEARISH' ? 'bearish' : 'neutral');
+            btcBadge.innerHTML = status.btc_trend === 'BULLISH' 
+                ? '<i class="ri-arrow-up-line"></i> BTC BULLISH'
+                : status.btc_trend === 'BEARISH' 
+                    ? '<i class="ri-arrow-down-line"></i> BTC BEARISH'
+                    : '<i class="ri-subtract-line"></i> BTC NEUTRAL';
+            
+            // Update results count
+            document.getElementById('resultsCount').textContent = status.results_count;
+        })
+        .catch(e => console.log('Status update error:', e));
+}
+
+function startStatusUpdates() {
+    updateLiveStatus();
+    statusUpdateInterval = setInterval(updateLiveStatus, 3000);
+}
+
+function loadOpenPositions() {
+    fetch('/confluence_scalper/positions')
+        .then(r => r.json())
+        .then(positions => {
+            // Update positions in UI if needed
+            if (positions.length > 0) {
+                // Refresh page part with positions (or update dynamically)
+            }
+        });
+}
 
 // ===== Close Position =====
 function closePosition(id) {
@@ -1027,6 +1290,21 @@ document.addEventListener('DOMContentLoaded', function() {
         el.addEventListener('input', updateWeightTotal);
     });
     updateWeightTotal();
+    
+    // Start live status updates
+    startStatusUpdates();
+    
+    // Check if auto mode is already running
+    fetch('/confluence_scalper/status')
+        .then(r => r.json())
+        .then(status => {
+            if (status.auto_running) {
+                document.getElementById('autoMode').checked = true;
+                scanIntervalSec = parseInt(document.getElementById('scanInterval').value) || 30;
+                nextScanCountdown = scanIntervalSec;
+                startCountdown();
+            }
+        });
 });
 </script>
 {% endblock %}
