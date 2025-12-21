@@ -1,211 +1,216 @@
 {% extends "base.html" %}
 
-{% block title %}Confluence Scalper{% endblock %}
+{% block title %}Confluence Scalper - AlgoBot{% endblock %}
 
 {% block extra_css %}
 <style>
-/* ===== CONFLUENCE SCALPER THEME ===== */
+/* ===== LIGHT THEME ===== */
+:root {
+    --cs-bg: #f8fafc;
+    --cs-card: #ffffff;
+    --cs-border: #e2e8f0;
+    --cs-text: #1e293b;
+    --cs-text-muted: #64748b;
+    --cs-primary: #3b82f6;
+    --cs-success: #10b981;
+    --cs-danger: #ef4444;
+    --cs-warning: #f59e0b;
+    --cs-accent: #6366f1;
+}
 
-/* Live Status Bar */
-.live-status-bar {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    background: rgba(255,255,255,0.1);
+.cs-page {
+    background: var(--cs-bg);
+    min-height: 100vh;
+}
+
+/* Page Title */
+.page-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--cs-text);
+    margin-bottom: 0.5rem;
+}
+
+.page-subtitle {
+    color: var(--cs-text-muted);
+    font-size: 0.9rem;
+}
+
+/* Status Header */
+.status-header {
+    background: var(--cs-card);
+    border: 1px solid var(--cs-border);
     border-radius: 12px;
-    padding: 0.75rem 1rem;
-    backdrop-filter: blur(10px);
-}
-
-.live-status-bar .status-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    background: rgba(255,255,255,0.1);
-    border-radius: 8px;
-    font-size: 0.85rem;
-    transition: all 0.3s ease;
-}
-
-.live-status-bar .status-item i {
-    font-size: 1.1rem;
-    opacity: 0.7;
-}
-
-.live-status-bar .status-label {
-    opacity: 0.6;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.live-status-bar .status-value {
-    font-weight: 600;
-    font-family: 'JetBrains Mono', monospace;
-}
-
-.live-status-bar .status-item.active {
-    background: rgba(16, 185, 129, 0.3);
-    animation: pulse-glow 2s infinite;
-}
-
-.live-status-bar .status-item.scanning {
-    background: rgba(59, 130, 246, 0.3);
-    animation: pulse-glow 1s infinite;
-}
-
-.live-status-bar .status-item.warning {
-    background: rgba(245, 158, 11, 0.3);
-}
-
-.live-status-bar .status-item.danger {
-    background: rgba(239, 68, 68, 0.3);
-}
-
-@keyframes pulse-glow {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-    50% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-}
-
-/* Scan Progress Container */
-.scan-progress-container {
-    background: rgba(255,255,255,0.05);
-    border-radius: 8px;
-    padding: 0.75rem;
-}
-
-.confluence-header {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    border-radius: 16px;
-    padding: 2rem;
+    padding: 1.25rem;
     margin-bottom: 1.5rem;
-    position: relative;
-    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 
-.confluence-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-    opacity: 0.5;
-}
-
-.confluence-header .content {
-    position: relative;
-    z-index: 1;
-}
-
-/* Score Circle */
-.score-circle {
-    width: 120px;
-    height: 120px;
-    border-radius: 50%;
+.status-pills {
     display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    font-weight: bold;
-    position: relative;
 }
 
-.score-circle.excellent {
-    background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.1));
-    border: 3px solid #10b981;
-    color: #10b981;
-}
-
-.score-circle.good {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1));
-    border: 3px solid #3b82f6;
-    color: #3b82f6;
-}
-
-.score-circle.moderate {
-    background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(245, 158, 11, 0.1));
-    border: 3px solid #f59e0b;
-    color: #f59e0b;
-}
-
-.score-circle .score-value {
-    font-size: 2rem;
-}
-
-.score-circle .score-label {
-    font-size: 0.75rem;
-    opacity: 0.8;
-}
-
-/* Status Badges */
-.status-badge {
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    font-weight: 600;
+.status-pill {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    background: #f1f5f9;
+    color: var(--cs-text-muted);
+    transition: all 0.2s;
 }
 
-.status-badge.bullish {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
-    border: 1px solid rgba(34, 197, 94, 0.3);
+.status-pill.active {
+    background: #dcfce7;
+    color: #166534;
 }
 
-.status-badge.bearish {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
-    border: 1px solid rgba(239, 68, 68, 0.3);
+.status-pill.scanning {
+    background: #dbeafe;
+    color: #1e40af;
+    animation: pulse-bg 1.5s infinite;
 }
 
-.status-badge.neutral {
-    background: rgba(156, 163, 175, 0.15);
-    color: #9ca3af;
-    border: 1px solid rgba(156, 163, 175, 0.3);
+.status-pill.warning {
+    background: #fef3c7;
+    color: #92400e;
 }
 
-.status-badge.paper {
-    background: rgba(147, 51, 234, 0.15);
-    color: #9333ea;
-    border: 1px solid rgba(147, 51, 234, 0.3);
+.status-pill i {
+    font-size: 1rem;
 }
 
-.status-badge.live {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
-    border: 1px solid rgba(239, 68, 68, 0.3);
+@keyframes pulse-bg {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
 }
 
-/* Settings Cards */
-.settings-group {
-    background: var(--card-bg);
-    border-radius: 12px;
-    padding: 1rem;
-    margin-bottom: 1rem;
+/* Stats Row */
+.stats-row {
+    display: flex;
+    gap: 1.5rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--cs-border);
 }
 
-.settings-group-title {
-    font-weight: 600;
-    font-size: 0.85rem;
+.stat-item {
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--cs-text);
+}
+
+.stat-value.positive { color: var(--cs-success); }
+.stat-value.negative { color: var(--cs-danger); }
+
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--cs-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    opacity: 0.7;
+}
+
+/* Card */
+.cs-card {
+    background: var(--cs-card);
+    border: 1px solid var(--cs-border);
+    border-radius: 12px;
     margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.cs-card-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--cs-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.cs-card-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--cs-text);
     display: flex;
     align-items: center;
     gap: 0.5rem;
 }
 
+.cs-card-body {
+    padding: 1.25rem;
+}
+
+/* Accordion */
+.cs-accordion {
+    border: 1px solid var(--cs-border);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+}
+
+.cs-accordion-header {
+    padding: 0.875rem 1rem;
+    background: #f8fafc;
+    cursor: pointer;
+    display: flex;
+    justify-content: between;
+    align-items: center;
+    transition: background 0.2s;
+    user-select: none;
+}
+
+.cs-accordion-header:hover {
+    background: #f1f5f9;
+}
+
+.cs-accordion-title {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--cs-text);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+}
+
+.cs-accordion-icon {
+    color: var(--cs-text-muted);
+    transition: transform 0.2s;
+}
+
+.cs-accordion.open .cs-accordion-icon {
+    transform: rotate(180deg);
+}
+
+.cs-accordion-body {
+    display: none;
+    padding: 1rem;
+    border-top: 1px solid var(--cs-border);
+    background: #fff;
+}
+
+.cs-accordion.open .cs-accordion-body {
+    display: block;
+}
+
+/* Form Controls */
 .param-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    padding: 0.625rem 0;
+    border-bottom: 1px solid #f1f5f9;
 }
 
 .param-row:last-child {
@@ -213,274 +218,359 @@
 }
 
 .param-label {
+    font-size: 0.85rem;
+    color: var(--cs-text);
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.9rem;
 }
 
-.help-btn {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: rgba(255,255,255,0.1);
-    border: none;
-    color: rgba(255,255,255,0.5);
-    font-size: 10px;
-    cursor: help;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.help-btn:hover {
-    background: rgba(255,255,255,0.2);
-    color: white;
-}
-
-/* Signal Cards */
-.signal-card {
-    background: var(--card-bg);
-    border-radius: 12px;
-    padding: 1rem;
-    margin-bottom: 0.75rem;
-    border-left: 4px solid;
-    transition: transform 0.2s;
-}
-
-.signal-card:hover {
-    transform: translateX(5px);
-}
-
-.signal-card.long {
-    border-color: #22c55e;
-}
-
-.signal-card.short {
-    border-color: #ef4444;
-}
-
-.signal-symbol {
-    font-weight: 700;
-    font-size: 1.1rem;
-}
-
-.signal-direction {
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-
-.signal-direction.long {
-    background: rgba(34, 197, 94, 0.2);
-    color: #22c55e;
-}
-
-.signal-direction.short {
-    background: rgba(239, 68, 68, 0.2);
-    color: #ef4444;
-}
-
-/* Score Breakdown Bar */
-.score-breakdown {
-    display: flex;
-    gap: 4px;
-    margin-top: 0.5rem;
-}
-
-.score-segment {
-    height: 6px;
-    border-radius: 3px;
-    flex-grow: 1;
-    position: relative;
-}
-
-.score-segment.whale { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
-.score-segment.ob { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
-.score-segment.volume { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
-.score-segment.trend { background: linear-gradient(90deg, #10b981, #34d399); }
-
-/* Stats Grid */
-.stat-card {
-    background: var(--card-bg);
-    border-radius: 12px;
-    padding: 1.25rem;
-    text-align: center;
-}
-
-.stat-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-}
-
-.stat-label {
-    font-size: 0.8rem;
-    opacity: 0.6;
-    margin-top: 0.25rem;
-}
-
-.stat-value.positive { color: #22c55e; }
-.stat-value.negative { color: #ef4444; }
-
-/* Preset Button */
-.preset-btn {
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: transparent;
-    color: white;
+.param-input {
+    width: 80px;
+    padding: 0.375rem 0.5rem;
+    border: 1px solid var(--cs-border);
+    border-radius: 6px;
     font-size: 0.85rem;
+    text-align: center;
+    transition: border-color 0.2s;
+}
+
+.param-input:focus {
+    outline: none;
+    border-color: var(--cs-primary);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Toggle Switch */
+.toggle-switch {
+    position: relative;
+    width: 44px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #cbd5e1;
+    border-radius: 24px;
+    transition: 0.3s;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: 0.3s;
+}
+
+input:checked + .toggle-slider {
+    background: var(--cs-primary);
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+}
+
+/* Timeframe Buttons */
+.tf-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.tf-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--cs-border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--cs-text-muted);
+    font-size: 0.8rem;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
 }
 
-.preset-btn:hover {
-    background: rgba(255,255,255,0.1);
+.tf-btn:hover {
+    border-color: var(--cs-primary);
+    color: var(--cs-primary);
 }
 
-.preset-btn.active {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: #3b82f6;
-    color: #3b82f6;
+.tf-btn.active {
+    background: var(--cs-primary);
+    border-color: var(--cs-primary);
+    color: white;
+}
+
+/* Scan Button */
+.scan-btn {
+    padding: 0.75rem 2rem;
+    background: linear-gradient(135deg, var(--cs-primary), var(--cs-accent));
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.scan-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.scan-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Signal Card */
+.signal-card {
+    background: #f8fafc;
+    border: 1px solid var(--cs-border);
+    border-radius: 8px;
+    padding: 0.875rem;
+    margin-bottom: 0.75rem;
+    transition: all 0.2s;
+}
+
+.signal-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.signal-card.long {
+    border-left: 3px solid var(--cs-success);
+}
+
+.signal-card.short {
+    border-left: 3px solid var(--cs-danger);
+}
+
+.signal-symbol {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--cs-text);
+}
+
+.signal-dir {
+    font-size: 0.7rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+.signal-dir.long {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.signal-dir.short {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.signal-score {
+    font-size: 1.25rem;
+    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
 }
 
 /* Progress Bar */
-.scan-progress {
+.progress-bar-container {
+    background: #e2e8f0;
+    border-radius: 4px;
     height: 6px;
-    background: rgba(255,255,255,0.1);
-    border-radius: 3px;
     overflow: hidden;
+    margin-top: 0.75rem;
 }
 
-.scan-progress-bar {
+.progress-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
-    border-radius: 3px;
+    background: linear-gradient(90deg, var(--cs-primary), var(--cs-accent));
+    border-radius: 4px;
     transition: width 0.3s;
+}
+
+/* Saving Indicator */
+.save-indicator {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 0.75rem 1.25rem;
+    background: var(--cs-text);
+    color: white;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.save-indicator.show {
+    display: flex;
+    animation: fadeInUp 0.3s;
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Empty State */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--cs-text-muted);
+}
+
+.empty-state i {
+    font-size: 3rem;
+    opacity: 0.3;
+    margin-bottom: 1rem;
+}
+
+/* Help Icon */
+.help-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    color: var(--cs-text-muted);
+    font-size: 0.65rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
 }
 
 /* Responsive */
 @media (max-width: 768px) {
-    .confluence-header {
-        padding: 1rem;
-    }
-    
-    .score-circle {
-        width: 80px;
-        height: 80px;
-    }
-    
-    .score-circle .score-value {
-        font-size: 1.5rem;
-    }
+    .stats-row { flex-wrap: wrap; }
+    .stat-item { flex: 1 1 30%; }
 }
 </style>
 {% endblock %}
 
 {% block content %}
+<div class="cs-page">
 <div class="container-fluid py-4">
     
-    <!-- ===== HEADER ===== -->
-    <div class="confluence-header">
-        <div class="content">
-            <div class="row align-items-center">
-                <div class="col-lg-6">
-                    <h2 class="mb-2">
-                        <i class="ri-focus-3-line me-2"></i>
-                        Confluence Scalper
-                        <span class="badge bg-primary ms-2">v2.0</span>
-                    </h2>
-                    <p class="opacity-75 mb-0">
-                        Професійна стратегія для швидких угод з високою ймовірністю успіху.<br>
-                        Об'єднує Order Blocks + RSI/MFI + Volume + BTC Trend
-                    </p>
-                </div>
-                <div class="col-lg-6">
-                    <div class="d-flex align-items-center justify-content-lg-end gap-3 mt-3 mt-lg-0 flex-wrap">
-                        <!-- BTC Trend Badge -->
-                        <div id="btcBadge" class="status-badge {{ 'bullish' if status.btc_trend == 'BULLISH' else ('bearish' if status.btc_trend == 'BEARISH' else 'neutral') }}">
-                            {% if status.btc_trend == 'BULLISH' %}
-                                <i class="ri-arrow-up-line"></i> BTC BULLISH
-                            {% elif status.btc_trend == 'BEARISH' %}
-                                <i class="ri-arrow-down-line"></i> BTC BEARISH
-                            {% else %}
-                                <i class="ri-subtract-line"></i> BTC NEUTRAL
-                            {% endif %}
-                        </div>
-                        
-                        <!-- Trading Mode Badge -->
-                        <div class="status-badge {{ 'paper' if config.cs_paper_trading else 'live' }}">
-                            {% if config.cs_paper_trading %}
-                                <i class="ri-file-paper-line"></i> PAPER
-                            {% else %}
-                                <i class="ri-pulse-line"></i> LIVE
-                            {% endif %}
-                        </div>
-                        
-                        <!-- Daily Counter -->
-                        <div class="status-badge neutral">
-                            <i class="ri-calendar-check-line"></i>
-                            <span id="todayTradesCount">{{ status.today_trades }}</span>/{{ status.max_daily_trades }} today
-                        </div>
-                        
-                        <!-- Scan Button -->
-                        <button onclick="startScan()" id="scanBtn" class="btn btn-primary btn-lg" {{ 'disabled' if status.is_scanning or not status.can_trade }}>
-                            {% if status.is_scanning %}
-                                <span class="spinner-border spinner-border-sm me-2"></span> <span id="scanProgress">{{ status.progress }}</span>%
-                            {% else %}
-                                <i class="ri-radar-line me-2"></i> SCAN
-                            {% endif %}
-                        </button>
-                    </div>
-                </div>
+    <!-- ===== PAGE TITLE ===== -->
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+            <h1 class="page-title">
+                <i class="ri-scales-3-line me-2" style="color: var(--cs-primary);"></i>
+                Confluence Scalper
+            </h1>
+            <p class="page-subtitle">
+                Професійна стратегія для швидких угод • Order Blocks + RSI/MFI + Volume + BTC Trend
+            </p>
+        </div>
+        <div class="d-flex align-items-center gap-3">
+            <span class="badge bg-primary">v2.0</span>
+            <button onclick="startScan()" id="scanBtn" class="scan-btn" {{ 'disabled' if status.is_scanning or not status.can_trade }}>
+                {% if status.is_scanning %}
+                    <span class="spinner-border spinner-border-sm"></span>
+                    <span id="scanProgress">{{ status.progress }}%</span>
+                {% else %}
+                    <i class="ri-radar-line"></i> SCAN
+                {% endif %}
+            </button>
+        </div>
+    </div>
+    
+    <!-- ===== STATUS HEADER ===== -->
+    <div class="status-header">
+        <div class="status-pills">
+            <div class="status-pill {{ 'scanning' if status.is_scanning else '' }}" id="statusScanner">
+                <i class="ri-radar-line"></i>
+                <span id="scannerStatus">{{ 'Scanning...' if status.is_scanning else 'Idle' }}</span>
             </div>
-            
-            <!-- Live Status Bar -->
-            <div class="live-status-bar mt-3" id="liveStatusBar">
-                <div class="status-item" id="statusScanning">
-                    <i class="ri-radar-line"></i>
-                    <span class="status-label">Scanner</span>
-                    <span class="status-value" id="scannerStatus">Idle</span>
-                </div>
-                <div class="status-item" id="statusMonitor">
-                    <i class="ri-eye-line"></i>
-                    <span class="status-label">Monitor</span>
-                    <span class="status-value" id="monitorStatus">{{ 'Active' if status.monitor_running else 'Stopped' }}</span>
-                </div>
-                <div class="status-item" id="statusPositions">
-                    <i class="ri-funds-line"></i>
-                    <span class="status-label">Positions</span>
-                    <span class="status-value" id="positionsCount">{{ status.open_positions }}</span>
-                </div>
-                <div class="status-item" id="statusPnL">
-                    <i class="ri-money-dollar-circle-line"></i>
-                    <span class="status-label">Today P&L</span>
-                    <span class="status-value {{ 'text-success' if status.today_pnl > 0 else 'text-danger' if status.today_pnl < 0 else '' }}" id="todayPnL">
-                        {{ '+' if status.today_pnl > 0 else '' }}{{ status.today_pnl }}%
-                    </span>
-                </div>
-                <div class="status-item" id="statusAuto">
-                    <i class="ri-robot-line"></i>
-                    <span class="status-label">Auto Mode</span>
-                    <span class="status-value" id="autoStatus">{{ 'ON' if status.auto_running else 'OFF' }}</span>
-                </div>
-                <div class="status-item" id="statusNextScan">
-                    <i class="ri-time-line"></i>
-                    <span class="status-label">Next Scan</span>
-                    <span class="status-value" id="nextScanTime">--</span>
-                </div>
+            <div class="status-pill {{ 'active' if status.monitor_running else '' }}" id="statusMonitor">
+                <i class="ri-eye-line"></i>
+                Monitor: <span id="monitorStatus">{{ 'Active' if status.monitor_running else 'Off' }}</span>
             </div>
-            
-            <!-- Progress Bar (коли сканування активне) -->
-            <div class="scan-progress-container mt-3" id="progressContainer" style="{{ 'display: none;' if not status.is_scanning else '' }}">
-                <div class="scan-progress">
-                    <div class="scan-progress-bar" id="progressBar" style="width: {{ status.progress }}%"></div>
+            <div class="status-pill {{ 'active' if status.open_positions > 0 else '' }}">
+                <i class="ri-funds-line"></i>
+                Positions: <span id="positionsCount">{{ status.open_positions }}</span>
+            </div>
+            <div class="status-pill">
+                <i class="ri-bit-coin-line"></i>
+                BTC: <span id="btcTrend" class="{{ 'text-success' if status.btc_trend == 'BULLISH' else 'text-danger' if status.btc_trend == 'BEARISH' else '' }}">{{ status.btc_trend }}</span>
+            </div>
+            <div class="status-pill {{ 'active' if status.auto_running else '' }}" id="statusAuto">
+                <i class="ri-robot-line"></i>
+                Auto: <span id="autoStatus">{{ 'ON' if status.auto_running else 'OFF' }}</span>
+            </div>
+            <div class="status-pill" id="statusNextScan">
+                <i class="ri-time-line"></i>
+                Next: <span id="nextScanTime">--</span>
+            </div>
+            <div class="status-pill {{ 'warning' if not config.cs_paper_trading else '' }}">
+                <i class="ri-{{ 'file-paper' if config.cs_paper_trading else 'pulse' }}-line"></i>
+                {{ 'PAPER' if config.cs_paper_trading else 'LIVE' }}
+            </div>
+            <div class="status-pill">
+                <i class="ri-calendar-check-line"></i>
+                <span id="todayTradesCount">{{ status.today_trades }}</span>/{{ status.max_daily_trades }} today
+            </div>
+        </div>
+        
+        <!-- Stats Row -->
+        <div class="stats-row">
+            <div class="stat-item">
+                <div class="stat-value {{ 'positive' if stats.win_rate >= 60 else '' }}">{{ stats.win_rate }}%</div>
+                <div class="stat-label">Win Rate</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value {{ 'positive' if stats.total_pnl > 0 else 'negative' if stats.total_pnl < 0 else '' }}" id="todayPnL">
+                    {{ '+' if stats.total_pnl > 0 else '' }}{{ stats.total_pnl }}%
                 </div>
-                <div class="d-flex justify-content-between mt-1">
-                    <span class="small opacity-75" id="scanStatusText">{{ status.status }}</span>
-                    <span class="small opacity-75" id="scanProgressPercent">{{ status.progress }}%</span>
-                </div>
+                <div class="stat-label">Total P&L</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">{{ stats.profit_factor }}</div>
+                <div class="stat-label">Profit Factor</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">{{ stats.total_trades }}</div>
+                <div class="stat-label">Total Trades</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value positive">{{ stats.wins }}</div>
+                <div class="stat-label">Wins</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value negative">{{ stats.losses }}</div>
+                <div class="stat-label">Losses</div>
+            </div>
+        </div>
+        
+        <!-- Progress Bar -->
+        <div id="progressContainer" style="{{ 'display: none;' if not status.is_scanning else '' }}">
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="progressBar" style="width: {{ status.progress }}%"></div>
+            </div>
+            <div class="d-flex justify-content-between mt-1">
+                <small class="text-muted" id="scanStatusText">{{ status.status }}</small>
+                <small class="text-muted" id="scanProgressPercent">{{ status.progress }}%</small>
             </div>
         </div>
     </div>
@@ -489,380 +579,270 @@
         <!-- ===== LEFT: SETTINGS ===== -->
         <div class="col-lg-4 mb-4">
             
-            <!-- Timeframe Selection -->
-            <div class="settings-group">
-                <div class="settings-group-title">
-                    <i class="ri-time-line"></i> Timeframe
+            <!-- Timeframe -->
+            <div class="cs-card">
+                <div class="cs-card-header">
+                    <span class="cs-card-title"><i class="ri-time-line"></i> Timeframe</span>
                 </div>
-                <div class="d-flex gap-2 flex-wrap">
-                    {% for tf, preset in presets.items() %}
-                    <button class="preset-btn {{ 'active' if config.cs_timeframe == tf }}" 
-                            onclick="selectTimeframe('{{ tf }}')" data-tf="{{ tf }}">
-                        {{ preset.name }}
-                    </button>
-                    {% endfor %}
-                </div>
-                <div class="mt-2 small opacity-60" id="presetDescription">
-                    {{ presets[config.cs_timeframe].description }}
-                </div>
-                
-                <div class="param-row mt-3">
-                    <span class="param-label">
-                        Auto Preset
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_auto_preset }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="autoPreset" {{ 'checked' if config.cs_auto_preset }}>
+                <div class="cs-card-body">
+                    <div class="tf-buttons mb-3">
+                        {% for tf, preset in presets.items() %}
+                        <button class="tf-btn {{ 'active' if config.cs_timeframe == tf }}" 
+                                onclick="selectTimeframe('{{ tf }}')" data-tf="{{ tf }}">
+                            {{ preset.name }}
+                        </button>
+                        {% endfor %}
+                    </div>
+                    <small class="text-muted" id="presetDescription">{{ presets[config.cs_timeframe].description }}</small>
+                    
+                    <div class="param-row mt-3">
+                        <span class="param-label">Auto Preset</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="autoPreset" {{ 'checked' if config.cs_auto_preset }}>
+                            <span class="toggle-slider"></span>
+                        </label>
                     </div>
                 </div>
             </div>
             
-            <!-- Confluence Score -->
-            <div class="settings-group">
-                <div class="settings-group-title">
-                    <i class="ri-scales-3-line"></i> Confluence Score
+            <!-- Accordion: Confluence Score -->
+            <div class="cs-accordion open" id="accScore">
+                <div class="cs-accordion-header" onclick="toggleAccordion('accScore')">
+                    <span class="cs-accordion-title"><i class="ri-dashboard-3-line"></i> Confluence Score</span>
+                    <i class="ri-arrow-down-s-line cs-accordion-icon"></i>
                 </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Min Score
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_min_confluence }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 70px" 
-                           id="minConfluence" value="{{ config.cs_min_confluence }}" min="50" max="95">
-                </div>
-                
-                <div class="mt-3 mb-2 small opacity-60">Score Weights (must sum to 100%)</div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        <span class="badge" style="background: linear-gradient(90deg, #3b82f6, #60a5fa)">Whale</span>
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_weight_whale }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm weight-input" style="width: 60px" 
-                           id="weightWhale" value="{{ config.cs_weight_whale }}" min="0" max="100">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        <span class="badge" style="background: linear-gradient(90deg, #8b5cf6, #a78bfa)">OB</span>
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_weight_ob }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm weight-input" style="width: 60px" 
-                           id="weightOb" value="{{ config.cs_weight_ob }}" min="0" max="100">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        <span class="badge" style="background: linear-gradient(90deg, #f59e0b, #fbbf24)">Volume</span>
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_weight_volume }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm weight-input" style="width: 60px" 
-                           id="weightVolume" value="{{ config.cs_weight_volume }}" min="0" max="100">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        <span class="badge" style="background: linear-gradient(90deg, #10b981, #34d399)">Trend</span>
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_weight_trend }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm weight-input" style="width: 60px" 
-                           id="weightTrend" value="{{ config.cs_weight_trend }}" min="0" max="100">
-                </div>
-                
-                <div class="text-end small mt-2">
-                    Total: <span id="weightTotal">{{ config.cs_weight_whale + config.cs_weight_ob + config.cs_weight_volume + config.cs_weight_trend }}</span>%
-                </div>
-            </div>
-            
-            <!-- Filters -->
-            <div class="settings-group">
-                <div class="settings-group-title">
-                    <i class="ri-filter-3-line"></i> Filters
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        BTC Trend Filter
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_use_btc_filter }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="useBtcFilter" {{ 'checked' if config.cs_use_btc_filter }}>
+                <div class="cs-accordion-body">
+                    <div class="param-row">
+                        <span class="param-label">Min Score <span class="help-icon" title="Мінімальний score для входу">?</span></span>
+                        <input type="number" class="param-input" id="minConfluence" value="{{ config.cs_min_confluence }}" min="50" max="100">
                     </div>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Volume Filter
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_use_volume_filter }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="useVolumeFilter" {{ 'checked' if config.cs_use_volume_filter }}>
+                    <div class="mt-3 mb-2 small text-muted">Score Weights (must sum to 100%)</div>
+                    <div class="param-row">
+                        <span class="param-label"><span class="badge bg-primary">Whale</span></span>
+                        <input type="number" class="param-input weight-input" id="weightWhale" value="{{ config.cs_weight_whale }}" min="0" max="100">
                     </div>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Volatility Filter
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_use_volatility_filter }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="useVolatilityFilter" {{ 'checked' if config.cs_use_volatility_filter }}>
+                    <div class="param-row">
+                        <span class="param-label"><span class="badge bg-purple" style="background:#8b5cf6">OB</span></span>
+                        <input type="number" class="param-input weight-input" id="weightOb" value="{{ config.cs_weight_ob }}" min="0" max="100">
                     </div>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Time Filter (08-20 UTC)
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_use_time_filter }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="useTimeFilter" {{ 'checked' if config.cs_use_time_filter }}>
+                    <div class="param-row">
+                        <span class="param-label"><span class="badge bg-warning">Volume</span></span>
+                        <input type="number" class="param-input weight-input" id="weightVolume" value="{{ config.cs_weight_volume }}" min="0" max="100">
                     </div>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Correlation Filter
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_use_correlation_filter }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="useCorrelationFilter" {{ 'checked' if config.cs_use_correlation_filter }}>
+                    <div class="param-row">
+                        <span class="param-label"><span class="badge bg-success">Trend</span></span>
+                        <input type="number" class="param-input weight-input" id="weightTrend" value="{{ config.cs_weight_trend }}" min="0" max="100">
+                    </div>
+                    <div class="text-end small mt-2">
+                        Total: <span id="weightTotal" class="{{ 'text-success' if (config.cs_weight_whale + config.cs_weight_ob + config.cs_weight_volume + config.cs_weight_trend) == 100 else 'text-danger' }}">
+                            {{ config.cs_weight_whale + config.cs_weight_ob + config.cs_weight_volume + config.cs_weight_trend }}%
+                        </span>
                     </div>
                 </div>
             </div>
             
-            <!-- Take Profit & Stop Loss -->
-            <div class="settings-group">
-                <div class="settings-group-title">
-                    <i class="ri-exchange-dollar-line"></i> Take Profit & Stop Loss
+            <!-- Accordion: Filters -->
+            <div class="cs-accordion" id="accFilters">
+                <div class="cs-accordion-header" onclick="toggleAccordion('accFilters')">
+                    <span class="cs-accordion-title"><i class="ri-filter-3-line"></i> Filters</span>
+                    <i class="ri-arrow-down-s-line cs-accordion-icon"></i>
                 </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        TP1 %
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_tp1_percent }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 70px" 
-                           id="tp1Percent" value="{{ config.cs_tp1_percent }}" min="0.1" max="10" step="0.1">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        TP2 %
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_tp2_percent }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 70px" 
-                           id="tp2Percent" value="{{ config.cs_tp2_percent }}" min="0.1" max="20" step="0.1">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        SL Mode
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_sl_mode }}">?</button>
-                    </span>
-                    <select class="form-select form-select-sm" style="width: 110px" id="slMode">
-                        <option value="OB_Edge" {{ 'selected' if config.cs_sl_mode == 'OB_Edge' }}>OB Edge</option>
-                        <option value="Fixed" {{ 'selected' if config.cs_sl_mode == 'Fixed' }}>Fixed %</option>
-                        <option value="ATR" {{ 'selected' if config.cs_sl_mode == 'ATR' }}>ATR</option>
-                    </select>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        SL Buffer %
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_sl_buffer }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 70px" 
-                           id="slBuffer" value="{{ config.cs_sl_buffer }}" min="0" max="1" step="0.05">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Trailing Stop
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_use_trailing }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="useTrailing" {{ 'checked' if config.cs_use_trailing }}>
+                <div class="cs-accordion-body">
+                    <div class="param-row">
+                        <span class="param-label">BTC Trend Filter</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="useBtcFilter" {{ 'checked' if config.cs_use_btc_filter }}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Volume Filter</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="useVolumeFilter" {{ 'checked' if config.cs_use_volume_filter }}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Volatility Filter</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="useVolatilityFilter" {{ 'checked' if config.cs_use_volatility_filter }}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Time Filter (08-20 UTC)</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="useTimeFilter" {{ 'checked' if config.cs_use_time_filter }}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Correlation Filter</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="useCorrelationFilter" {{ 'checked' if config.cs_use_correlation_filter }}>
+                            <span class="toggle-slider"></span>
+                        </label>
                     </div>
                 </div>
             </div>
             
-            <!-- Risk Management -->
-            <div class="settings-group">
-                <div class="settings-group-title">
-                    <i class="ri-shield-check-line"></i> Risk Management
+            <!-- Accordion: Take Profit & Stop Loss -->
+            <div class="cs-accordion" id="accTPSL">
+                <div class="cs-accordion-header" onclick="toggleAccordion('accTPSL')">
+                    <span class="cs-accordion-title"><i class="ri-focus-3-line"></i> Take Profit & Stop Loss</span>
+                    <i class="ri-arrow-down-s-line cs-accordion-icon"></i>
                 </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Max Daily Trades
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_max_daily_trades }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 60px" 
-                           id="maxDailyTrades" value="{{ config.cs_max_daily_trades }}" min="1" max="10">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Max Open Positions
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_max_open_positions }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 60px" 
-                           id="maxOpenPositions" value="{{ config.cs_max_open_positions }}" min="1" max="5">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Position Size %
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_position_size_percent }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 70px" 
-                           id="positionSize" value="{{ config.cs_position_size_percent }}" min="1" max="25" step="0.5">
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Max Daily Loss %
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_max_daily_loss }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 70px" 
-                           id="maxDailyLoss" value="{{ config.cs_max_daily_loss }}" min="1" max="10" step="0.5">
+                <div class="cs-accordion-body">
+                    <div class="param-row">
+                        <span class="param-label">TP1 %</span>
+                        <input type="number" class="param-input" id="tp1Percent" value="{{ config.cs_tp1_percent }}" step="0.1" min="0.1">
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">TP2 %</span>
+                        <input type="number" class="param-input" id="tp2Percent" value="{{ config.cs_tp2_percent }}" step="0.1" min="0.1">
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">SL Mode</span>
+                        <select class="param-input" id="slMode" style="width: 100px;">
+                            <option value="OB_Edge" {{ 'selected' if config.cs_sl_mode == 'OB_Edge' }}>OB Edge</option>
+                            <option value="Fixed" {{ 'selected' if config.cs_sl_mode == 'Fixed' }}>Fixed</option>
+                            <option value="ATR" {{ 'selected' if config.cs_sl_mode == 'ATR' }}>ATR</option>
+                        </select>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">SL Buffer %</span>
+                        <input type="number" class="param-input" id="slBuffer" value="{{ config.cs_sl_buffer }}" step="0.05" min="0">
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Trailing Stop</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="useTrailing" {{ 'checked' if config.cs_use_trailing }}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                 </div>
             </div>
             
-            <!-- Execution -->
-            <div class="settings-group">
-                <div class="settings-group-title">
-                    <i class="ri-settings-4-line"></i> Execution
+            <!-- Accordion: Risk Management -->
+            <div class="cs-accordion" id="accRisk">
+                <div class="cs-accordion-header" onclick="toggleAccordion('accRisk')">
+                    <span class="cs-accordion-title"><i class="ri-shield-check-line"></i> Risk Management</span>
+                    <i class="ri-arrow-down-s-line cs-accordion-icon"></i>
                 </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Paper Trading
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_paper_trading }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="paperTrading" {{ 'checked' if config.cs_paper_trading }}>
+                <div class="cs-accordion-body">
+                    <div class="param-row">
+                        <span class="param-label">Max Daily Trades</span>
+                        <input type="number" class="param-input" id="maxDailyTrades" value="{{ config.cs_max_daily_trades }}" min="1" max="20">
                     </div>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Auto Execute
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_auto_execute }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="autoExecute" {{ 'checked' if config.cs_auto_execute }}>
+                    <div class="param-row">
+                        <span class="param-label">Max Open Positions</span>
+                        <input type="number" class="param-input" id="maxOpenPositions" value="{{ config.cs_max_open_positions }}" min="1" max="10">
                     </div>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Telegram Signals
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_telegram_signals }}">?</button>
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="telegramSignals" {{ 'checked' if config.cs_telegram_signals }}>
+                    <div class="param-row">
+                        <span class="param-label">Position Size %</span>
+                        <input type="number" class="param-input" id="positionSize" value="{{ config.cs_position_size_percent }}" step="0.5" min="0.5" max="100">
                     </div>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Entry Mode
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_entry_mode }}">?</button>
-                    </span>
-                    <select class="form-select form-select-sm" style="width: 110px" id="entryMode">
-                        <option value="Retest" {{ 'selected' if config.cs_entry_mode == 'Retest' }}>Retest</option>
-                        <option value="Immediate" {{ 'selected' if config.cs_entry_mode == 'Immediate' }}>Immediate</option>
-                    </select>
+                    <div class="param-row">
+                        <span class="param-label">Max Daily Loss %</span>
+                        <input type="number" class="param-input" id="maxDailyLoss" value="{{ config.cs_max_daily_loss }}" step="0.5" min="0">
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Leverage</span>
+                        <input type="number" class="param-input" id="leverage" value="{{ config.cs_leverage }}" min="1" max="100">
+                    </div>
                 </div>
             </div>
             
-            <!-- Auto Mode -->
-            <div class="settings-group">
-                <div class="settings-group-title">
-                    <i class="ri-robot-line"></i> Auto Mode
+            <!-- Accordion: Execution -->
+            <div class="cs-accordion" id="accExecution">
+                <div class="cs-accordion-header" onclick="toggleAccordion('accExecution')">
+                    <span class="cs-accordion-title"><i class="ri-play-circle-line"></i> Execution</span>
+                    <i class="ri-arrow-down-s-line cs-accordion-icon"></i>
                 </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Auto Scan
-                    </span>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="autoMode" {{ 'checked' if status.auto_running }}>
+                <div class="cs-accordion-body">
+                    <div class="param-row">
+                        <span class="param-label">Paper Trading</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="paperTrading" {{ 'checked' if config.cs_paper_trading }}>
+                            <span class="toggle-slider"></span>
+                        </label>
                     </div>
-                </div>
-                
-                <div class="param-row">
-                    <span class="param-label">
-                        Scan Interval (sec)
-                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.cs_scan_interval }}">?</button>
-                    </span>
-                    <input type="number" class="form-control form-control-sm" style="width: 70px" 
-                           id="scanInterval" value="{{ config.cs_scan_interval }}" min="15" max="300">
+                    <div class="param-row">
+                        <span class="param-label">Auto Execute</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="autoExecute" {{ 'checked' if config.cs_auto_execute }}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Telegram Signals</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="telegramSignals" {{ 'checked' if config.cs_telegram_signals }}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Entry Mode</span>
+                        <select class="param-input" id="entryMode" style="width: 100px;">
+                            <option value="Retest" {{ 'selected' if config.cs_entry_mode == 'Retest' }}>Retest</option>
+                            <option value="Immediate" {{ 'selected' if config.cs_entry_mode == 'Immediate' }}>Immediate</option>
+                        </select>
+                    </div>
                 </div>
             </div>
             
-            <!-- Save Button -->
-            <button onclick="saveSettings()" class="btn btn-primary w-100 mb-3">
-                <i class="ri-save-line me-2"></i> Save Settings
-            </button>
+            <!-- Accordion: Auto Mode -->
+            <div class="cs-accordion" id="accAuto">
+                <div class="cs-accordion-header" onclick="toggleAccordion('accAuto')">
+                    <span class="cs-accordion-title"><i class="ri-robot-line"></i> Auto Mode</span>
+                    <i class="ri-arrow-down-s-line cs-accordion-icon"></i>
+                </div>
+                <div class="cs-accordion-body">
+                    <div class="param-row">
+                        <span class="param-label">Auto Scan</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="autoMode" {{ 'checked' if status.auto_running }}>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="param-row">
+                        <span class="param-label">Scan Interval (sec)</span>
+                        <input type="number" class="param-input" id="scanInterval" value="{{ config.cs_scan_interval }}" min="10" max="300">
+                    </div>
+                </div>
+            </div>
             
         </div>
         
         <!-- ===== CENTER: RESULTS ===== -->
         <div class="col-lg-5 mb-4">
             
-            <!-- Stats Cards -->
-            <div class="row g-3 mb-4">
-                <div class="col-4">
-                    <div class="stat-card">
-                        <div class="stat-value {{ 'positive' if stats.win_rate >= 60 else '' }}">{{ stats.win_rate }}%</div>
-                        <div class="stat-label">Win Rate</div>
-                    </div>
-                </div>
-                <div class="col-4">
-                    <div class="stat-card">
-                        <div class="stat-value {{ 'positive' if stats.total_pnl > 0 else 'negative' }}">{{ stats.total_pnl }}%</div>
-                        <div class="stat-label">Total P&L</div>
-                    </div>
-                </div>
-                <div class="col-4">
-                    <div class="stat-card">
-                        <div class="stat-value">{{ stats.profit_factor }}</div>
-                        <div class="stat-label">Profit Factor</div>
-                    </div>
-                </div>
-            </div>
-            
             <!-- Open Positions -->
             {% if open_positions %}
-            <div class="card mb-4">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="ri-pulse-line me-2"></i>Open Positions</h5>
+            <div class="cs-card">
+                <div class="cs-card-header">
+                    <span class="cs-card-title"><i class="ri-pulse-line"></i> Open Positions</span>
                     <span class="badge bg-success">{{ open_positions|length }}</span>
                 </div>
-                <div class="card-body p-0">
+                <div class="cs-card-body" style="max-height: 200px; overflow-y: auto;">
                     {% for p in open_positions %}
-                    <div class="signal-card {{ p.direction|lower }} mx-2 my-2">
+                    <div class="signal-card {{ p.direction|lower }}">
                         <div class="d-flex justify-content-between align-items-center">
                             <div>
                                 <span class="signal-symbol">{{ p.symbol }}</span>
-                                <span class="signal-direction {{ p.direction|lower }} ms-2">{{ p.direction }}</span>
+                                <span class="signal-dir {{ p.direction|lower }} ms-2">{{ p.direction }}</span>
                                 {% if p.tp1_hit %}<span class="badge bg-warning text-dark ms-1">TP1</span>{% endif %}
                             </div>
                             <div class="text-end">
                                 <div class="fw-bold {{ 'text-success' if p.pnl_percent > 0 else 'text-danger' }}">
                                     {{ '+' if p.pnl_percent > 0 else '' }}{{ p.pnl_percent }}%
                                 </div>
-                                <small class="opacity-60">{{ p.entry_time }}</small>
+                                <small class="text-muted">{{ p.entry_time }}</small>
                             </div>
                         </div>
-                        <div class="d-flex justify-content-between mt-2 small">
-                            <span>Entry: {{ p.entry_price|round(6) }}</span>
-                            <span>Current: {{ p.current_price|round(6) if p.current_price else '-' }}</span>
-                            <button onclick="closePosition({{ p.id }})" class="btn btn-sm btn-outline-danger">Close</button>
+                        <div class="d-flex justify-content-between align-items-center mt-2">
+                            <small class="text-muted">Entry: {{ p.entry_price|round(6) }}</small>
+                            <button onclick="closePosition({{ p.id }})" class="btn btn-sm btn-outline-danger py-0">Close</button>
                         </div>
                     </div>
                     {% endfor %}
@@ -871,32 +851,31 @@
             {% endif %}
             
             <!-- Scan Results -->
-            <div class="card mb-4">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="ri-focus-2-line me-2"></i>Scan Results</h5>
+            <div class="cs-card">
+                <div class="cs-card-header">
+                    <span class="cs-card-title"><i class="ri-focus-2-line"></i> Scan Results</span>
                     <span class="badge bg-primary" id="resultsCount">{{ status.results_count }}</span>
                 </div>
-                <div class="card-body" style="max-height: 400px; overflow-y: auto;" id="resultsContainer">
+                <div class="cs-card-body" id="resultsContainer" style="max-height: 500px; overflow-y: auto;">
                     {% if signals %}
-                        {% for s in signals[:10] %}
+                        {% for s in signals[:15] %}
                         <div class="signal-card {{ s.direction|lower }}">
                             <div class="d-flex justify-content-between align-items-center">
                                 <div>
                                     <span class="signal-symbol">{{ s.symbol }}</span>
-                                    <span class="signal-direction {{ s.direction|lower }} ms-2">{{ s.direction }}</span>
+                                    <span class="signal-dir {{ s.direction|lower }} ms-2">{{ s.direction }}</span>
                                     {% if s.problem_type %}
                                     <span class="badge bg-danger ms-1" style="font-size: 0.6rem;">{{ s.problem_type }}</span>
                                     {% endif %}
                                 </div>
                                 <div class="text-end">
-                                    <div class="fw-bold" style="color: {{ '#22c55e' if s.confluence_score >= 80 else ('#3b82f6' if s.confluence_score >= 70 else '#f59e0b') }}">
-                                        {{ s.confluence_score|round(1) }}
+                                    <div class="signal-score {{ 'text-success' if s.confluence_score >= 80 else 'text-primary' if s.confluence_score >= 70 else 'text-warning' }}">
+                                        {{ s.confluence_score|round(0) }}
                                     </div>
-                                    <small class="opacity-60">{{ s.strength }}</small>
+                                    <small class="text-muted">{{ s.strength }}</small>
                                 </div>
                             </div>
-                            
-                            <div class="d-flex justify-content-between mt-2 small opacity-70">
+                            <div class="d-flex justify-content-between mt-2 small text-muted">
                                 <span>Entry: {{ s.entry_price|round(6) if s.entry_price else '-' }}</span>
                                 <span>SL: {{ s.sl_price|round(6) if s.sl_price else '-' }}</span>
                                 <span>TP1: {{ s.tp1_price|round(6) if s.tp1_price else '-' }}</span>
@@ -904,23 +883,11 @@
                         </div>
                         {% endfor %}
                     {% else %}
-                        <div class="text-center py-5 opacity-50">
-                            <i class="ri-radar-line" style="font-size: 3rem;"></i>
-                            <p class="mt-2">No signals yet. Click SCAN to start.</p>
+                        <div class="empty-state">
+                            <i class="ri-radar-line"></i>
+                            <p>No signals yet.<br>Click SCAN to start.</p>
                         </div>
                     {% endif %}
-                </div>
-            </div>
-            
-            <!-- Legend -->
-            <div class="card">
-                <div class="card-body py-2">
-                    <div class="d-flex justify-content-center gap-4 small">
-                        <span><span class="badge" style="background: linear-gradient(90deg, #3b82f6, #60a5fa)">●</span> Whale (RSI/MFI/Vol)</span>
-                        <span><span class="badge" style="background: linear-gradient(90deg, #8b5cf6, #a78bfa)">●</span> Order Block</span>
-                        <span><span class="badge" style="background: linear-gradient(90deg, #f59e0b, #fbbf24)">●</span> Volume</span>
-                        <span><span class="badge" style="background: linear-gradient(90deg, #10b981, #34d399)">●</span> BTC Trend</span>
-                    </div>
                 </div>
             </div>
             
@@ -929,15 +896,14 @@
         <!-- ===== RIGHT: HISTORY ===== -->
         <div class="col-lg-3 mb-4">
             
-            <!-- Trade History -->
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="ri-history-line me-2"></i>History</h5>
-                    <button onclick="clearHistory()" class="btn btn-sm btn-outline-danger">
+            <div class="cs-card">
+                <div class="cs-card-header">
+                    <span class="cs-card-title"><i class="ri-history-line"></i> Trade History</span>
+                    <button onclick="clearHistory()" class="btn btn-sm btn-outline-danger py-0">
                         <i class="ri-delete-bin-line"></i>
                     </button>
                 </div>
-                <div class="card-body p-0" style="max-height: 600px; overflow-y: auto;">
+                <div class="cs-card-body p-0" style="max-height: 600px; overflow-y: auto;">
                     <table class="table table-sm mb-0">
                         <thead>
                             <tr>
@@ -950,14 +916,14 @@
                         <tbody id="historyTable">
                             {% for s in signals %}
                             <tr>
-                                <td>{{ s.symbol[:8] }}</td>
+                                <td class="small">{{ s.symbol[:8] }}</td>
                                 <td>
-                                    <span class="badge {{ 'bg-success' if s.direction == 'LONG' else 'bg-danger' }}" style="font-size: 0.7rem;">
+                                    <span class="signal-dir {{ s.direction|lower }}" style="font-size: 0.65rem;">
                                         {{ s.direction[:1] }}
                                     </span>
                                 </td>
-                                <td>{{ s.confluence_score|round(0) }}</td>
-                                <td class="{{ 'text-success' if s.pnl_percent and s.pnl_percent > 0 else 'text-danger' if s.pnl_percent else '' }}">
+                                <td class="small">{{ s.confluence_score|round(0) }}</td>
+                                <td class="small {{ 'text-success' if s.pnl_percent and s.pnl_percent > 0 else 'text-danger' if s.pnl_percent else '' }}">
                                     {{ ('+' if s.pnl_percent and s.pnl_percent > 0 else '') }}{{ s.pnl_percent|round(2) if s.pnl_percent else '-' }}%
                                 </td>
                             </tr>
@@ -971,6 +937,12 @@
         
     </div>
 </div>
+</div>
+
+<!-- Save Indicator -->
+<div class="save-indicator" id="saveIndicator">
+    <i class="ri-check-line"></i> Saved
+</div>
 
 {% endblock %}
 
@@ -978,14 +950,19 @@
 <script>
 const csrfToken = '{{ csrf_token() }}' || '';
 
+// ===== Accordion Toggle =====
+function toggleAccordion(id) {
+    const acc = document.getElementById(id);
+    acc.classList.toggle('open');
+}
+
 // ===== Timeframe Selection =====
 function selectTimeframe(tf) {
-    document.querySelectorAll('.preset-btn').forEach(btn => {
+    document.querySelectorAll('.tf-btn').forEach(btn => {
         btn.classList.remove('active');
         if (btn.dataset.tf === tf) btn.classList.add('active');
     });
     
-    // Load preset
     if (document.getElementById('autoPreset').checked) {
         fetch(`/confluence_scalper/preset/${tf}`)
             .then(r => r.json())
@@ -1000,10 +977,30 @@ function selectTimeframe(tf) {
     autoSave();
 }
 
-// ===== Save Settings =====
+// ===== Auto Save =====
+let saveTimeout = null;
+
+function autoSave() {
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => {
+        const settings = collectSettings();
+        
+        fetch('/confluence_scalper/config', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify(settings)
+        }).then(r => r.json()).then(d => {
+            showSaveIndicator();
+        });
+    }, 500);
+}
+
 function collectSettings() {
     return {
-        cs_timeframe: document.querySelector('.preset-btn.active')?.dataset.tf || '15',
+        cs_timeframe: document.querySelector('.tf-btn.active')?.dataset.tf || '15',
         cs_auto_preset: document.getElementById('autoPreset').checked,
         cs_min_confluence: parseInt(document.getElementById('minConfluence').value),
         cs_weight_whale: parseInt(document.getElementById('weightWhale').value),
@@ -1024,6 +1021,7 @@ function collectSettings() {
         cs_max_open_positions: parseInt(document.getElementById('maxOpenPositions').value),
         cs_position_size_percent: parseFloat(document.getElementById('positionSize').value),
         cs_max_daily_loss: parseFloat(document.getElementById('maxDailyLoss').value),
+        cs_leverage: parseInt(document.getElementById('leverage').value),
         cs_paper_trading: document.getElementById('paperTrading').checked,
         cs_auto_execute: document.getElementById('autoExecute').checked,
         cs_telegram_signals: document.getElementById('telegramSignals').checked,
@@ -1032,56 +1030,39 @@ function collectSettings() {
     };
 }
 
-function saveSettings() {
-    const config = collectSettings();
-    
-    fetch('/confluence_scalper/config', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken
-        },
-        body: JSON.stringify(config)
-    }).then(r => r.json()).then(d => {
-        console.log('⚡ Settings saved');
-    });
-}
-
-let autoSaveTimeout = null;
-function autoSave() {
-    if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
-    autoSaveTimeout = setTimeout(saveSettings, 500);
+function showSaveIndicator() {
+    const indicator = document.getElementById('saveIndicator');
+    indicator.classList.add('show');
+    setTimeout(() => indicator.classList.remove('show'), 2000);
 }
 
 // ===== Weight Total =====
 function updateWeightTotal() {
-    const total = parseInt(document.getElementById('weightWhale').value) +
-                  parseInt(document.getElementById('weightOb').value) +
-                  parseInt(document.getElementById('weightVolume').value) +
-                  parseInt(document.getElementById('weightTrend').value);
-    
-    document.getElementById('weightTotal').textContent = total;
-    document.getElementById('weightTotal').style.color = total === 100 ? '#22c55e' : '#ef4444';
+    const weights = ['weightWhale', 'weightOb', 'weightVolume', 'weightTrend'];
+    const total = weights.reduce((sum, id) => sum + (parseInt(document.getElementById(id).value) || 0), 0);
+    const el = document.getElementById('weightTotal');
+    el.textContent = total + '%';
+    el.className = total === 100 ? 'text-success' : 'text-danger';
 }
 
 // ===== Scan =====
 function startScan() {
-    const btn = document.getElementById('scanBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Starting...';
-    
     fetch('/confluence_scalper/scan', {
         method: 'POST',
         headers: { 'X-CSRFToken': csrfToken }
-    }).then(() => {
-        setTimeout(() => location.reload(), 2000);
+    }).then(r => r.json()).then(d => {
+        if (d.status === 'started') {
+            document.getElementById('scanBtn').disabled = true;
+            document.getElementById('scanBtn').innerHTML = '<span class="spinner-border spinner-border-sm"></span> 0%';
+            document.getElementById('progressContainer').style.display = '';
+        }
     });
 }
 
 // ===== Auto Mode =====
 let autoModeInterval = null;
 let nextScanCountdown = 0;
-let scanIntervalSec = 30;
+let scanIntervalSec = parseInt(document.getElementById('scanInterval')?.value) || 30;
 
 document.getElementById('autoMode')?.addEventListener('change', function() {
     const enabled = this.checked;
@@ -1089,16 +1070,10 @@ document.getElementById('autoMode')?.addEventListener('change', function() {
     
     fetch('/confluence_scalper/auto', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken
-        },
-        body: JSON.stringify({
-            enabled: enabled,
-            interval: scanIntervalSec
-        })
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+        body: JSON.stringify({ enabled: enabled, interval: scanIntervalSec })
     }).then(r => r.json()).then(d => {
-        updateAutoModeUI(enabled);
+        updateAutoUI(enabled);
         if (enabled) {
             nextScanCountdown = scanIntervalSec;
             startCountdown();
@@ -1108,28 +1083,18 @@ document.getElementById('autoMode')?.addEventListener('change', function() {
     });
 });
 
-function updateAutoModeUI(enabled) {
-    const statusItem = document.getElementById('statusAuto');
+function updateAutoUI(enabled) {
+    const statusAuto = document.getElementById('statusAuto');
     const autoStatus = document.getElementById('autoStatus');
-    
-    if (enabled) {
-        statusItem.classList.add('active');
-        autoStatus.textContent = 'ON';
-        autoStatus.classList.add('text-success');
-    } else {
-        statusItem.classList.remove('active');
-        autoStatus.textContent = 'OFF';
-        autoStatus.classList.remove('text-success');
-    }
+    statusAuto.classList.toggle('active', enabled);
+    autoStatus.textContent = enabled ? 'ON' : 'OFF';
 }
 
 function startCountdown() {
     stopCountdown();
     autoModeInterval = setInterval(() => {
         nextScanCountdown--;
-        if (nextScanCountdown <= 0) {
-            nextScanCountdown = scanIntervalSec;
-        }
+        if (nextScanCountdown <= 0) nextScanCountdown = scanIntervalSec;
         document.getElementById('nextScanTime').textContent = nextScanCountdown + 's';
     }, 1000);
 }
@@ -1142,131 +1107,73 @@ function stopCountdown() {
     document.getElementById('nextScanTime').textContent = '--';
 }
 
-// ===== Live Status Update =====
-let statusUpdateInterval = null;
-
-function updateLiveStatus() {
+// ===== Live Status Updates =====
+function updateStatus() {
     fetch('/confluence_scalper/status')
         .then(r => r.json())
         .then(status => {
-            // Update scanner status
-            const scannerItem = document.getElementById('statusScanning');
+            // Scanner
+            const scannerPill = document.getElementById('statusScanner');
             const scannerStatus = document.getElementById('scannerStatus');
-            
             if (status.is_scanning) {
-                scannerItem.classList.add('scanning');
+                scannerPill.classList.add('scanning');
                 scannerStatus.textContent = status.progress + '%';
-                
-                // Show progress bar
                 document.getElementById('progressContainer').style.display = '';
                 document.getElementById('progressBar').style.width = status.progress + '%';
                 document.getElementById('scanStatusText').textContent = status.status;
                 document.getElementById('scanProgressPercent').textContent = status.progress + '%';
-                
-                // Update scan button
-                document.getElementById('scanBtn').innerHTML = 
-                    '<span class="spinner-border spinner-border-sm me-2"></span> ' + status.progress + '%';
+                document.getElementById('scanBtn').innerHTML = '<span class="spinner-border spinner-border-sm"></span> ' + status.progress + '%';
                 document.getElementById('scanBtn').disabled = true;
             } else {
-                scannerItem.classList.remove('scanning');
+                scannerPill.classList.remove('scanning');
                 scannerStatus.textContent = 'Idle';
                 document.getElementById('progressContainer').style.display = 'none';
-                document.getElementById('scanBtn').innerHTML = '<i class="ri-radar-line me-2"></i> SCAN';
+                document.getElementById('scanBtn').innerHTML = '<i class="ri-radar-line"></i> SCAN';
                 document.getElementById('scanBtn').disabled = !status.can_trade;
             }
             
-            // Update monitor status
-            const monitorItem = document.getElementById('statusMonitor');
-            const monitorStatus = document.getElementById('monitorStatus');
-            if (status.monitor_running) {
-                monitorItem.classList.add('active');
-                monitorStatus.textContent = 'Active';
-            } else {
-                monitorItem.classList.remove('active');
-                monitorStatus.textContent = 'Stopped';
-            }
+            // Monitor
+            const monitorPill = document.getElementById('statusMonitor');
+            monitorPill.classList.toggle('active', status.monitor_running);
+            document.getElementById('monitorStatus').textContent = status.monitor_running ? 'Active' : 'Off';
             
-            // Update positions count
-            const posItem = document.getElementById('statusPositions');
+            // Positions
             document.getElementById('positionsCount').textContent = status.open_positions || 0;
-            if (status.open_positions > 0) {
-                posItem.classList.add('active');
-            } else {
-                posItem.classList.remove('active');
-            }
             
-            // Update P&L
-            const pnlValue = document.getElementById('todayPnL');
-            pnlValue.textContent = (status.today_pnl > 0 ? '+' : '') + status.today_pnl.toFixed(2) + '%';
-            pnlValue.className = 'status-value ' + (status.today_pnl > 0 ? 'text-success' : status.today_pnl < 0 ? 'text-danger' : '');
+            // BTC
+            const btcEl = document.getElementById('btcTrend');
+            btcEl.textContent = status.btc_trend;
+            btcEl.className = status.btc_trend === 'BULLISH' ? 'text-success' : status.btc_trend === 'BEARISH' ? 'text-danger' : '';
             
-            // Update today trades
-            document.getElementById('todayTradesCount').textContent = status.today_trades;
-            
-            // Update auto mode
-            updateAutoModeUI(status.auto_running);
+            // Auto
+            updateAutoUI(status.auto_running);
             if (status.auto_running && !autoModeInterval) {
                 document.getElementById('autoMode').checked = true;
                 nextScanCountdown = scanIntervalSec;
                 startCountdown();
-            } else if (!status.auto_running && autoModeInterval) {
-                document.getElementById('autoMode').checked = false;
-                stopCountdown();
             }
             
-            // Update BTC badge
-            const btcBadge = document.getElementById('btcBadge');
-            btcBadge.className = 'status-badge ' + 
-                (status.btc_trend === 'BULLISH' ? 'bullish' : 
-                 status.btc_trend === 'BEARISH' ? 'bearish' : 'neutral');
-            btcBadge.innerHTML = status.btc_trend === 'BULLISH' 
-                ? '<i class="ri-arrow-up-line"></i> BTC BULLISH'
-                : status.btc_trend === 'BEARISH' 
-                    ? '<i class="ri-arrow-down-line"></i> BTC BEARISH'
-                    : '<i class="ri-subtract-line"></i> BTC NEUTRAL';
-            
-            // Update results count
+            // Trades
+            document.getElementById('todayTradesCount').textContent = status.today_trades;
             document.getElementById('resultsCount').textContent = status.results_count;
-        })
-        .catch(e => console.log('Status update error:', e));
-}
-
-function startStatusUpdates() {
-    updateLiveStatus();
-    statusUpdateInterval = setInterval(updateLiveStatus, 3000);
-}
-
-function loadOpenPositions() {
-    fetch('/confluence_scalper/positions')
-        .then(r => r.json())
-        .then(positions => {
-            // Update positions in UI if needed
-            if (positions.length > 0) {
-                // Refresh page part with positions (or update dynamically)
-            }
         });
 }
 
 // ===== Close Position =====
 function closePosition(id) {
     if (!confirm('Close this position?')) return;
-    
     fetch(`/confluence_scalper/close/${id}`, {
         method: 'POST',
         headers: { 'X-CSRFToken': csrfToken }
     }).then(r => r.json()).then(d => {
-        if (d.status === 'ok') {
-            location.reload();
-        } else {
-            alert('Error: ' + d.error);
-        }
+        if (d.status === 'ok') location.reload();
+        else alert('Error: ' + d.error);
     });
 }
 
 // ===== Clear History =====
 function clearHistory() {
     if (!confirm('Clear all history?')) return;
-    
     fetch('/confluence_scalper/clear', {
         method: 'POST',
         headers: { 'X-CSRFToken': csrfToken }
@@ -1276,31 +1183,30 @@ function clearHistory() {
 // ===== Init =====
 document.addEventListener('DOMContentLoaded', function() {
     // Tooltips
-    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+    document.querySelectorAll('[title]').forEach(el => {
+        el.setAttribute('data-bs-toggle', 'tooltip');
         new bootstrap.Tooltip(el);
     });
     
-    // Auto save
-    document.querySelectorAll('.settings-group input, .settings-group select').forEach(el => {
+    // Auto save on any input change
+    document.querySelectorAll('input, select').forEach(el => {
         el.addEventListener('change', autoSave);
+        el.addEventListener('input', () => {
+            if (el.classList.contains('weight-input')) updateWeightTotal();
+        });
     });
     
-    // Weight total
-    document.querySelectorAll('.weight-input').forEach(el => {
-        el.addEventListener('input', updateWeightTotal);
-    });
     updateWeightTotal();
     
-    // Start live status updates
-    startStatusUpdates();
+    // Live status updates
+    setInterval(updateStatus, 3000);
     
-    // Check if auto mode is already running
+    // Check auto mode on load
     fetch('/confluence_scalper/status')
         .then(r => r.json())
         .then(status => {
             if (status.auto_running) {
                 document.getElementById('autoMode').checked = true;
-                scanIntervalSec = parseInt(document.getElementById('scanInterval').value) || 30;
                 nextScanCountdown = scanIntervalSec;
                 startCountdown();
             }
