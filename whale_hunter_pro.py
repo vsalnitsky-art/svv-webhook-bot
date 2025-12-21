@@ -1,1167 +1,966 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-🐋 WHALE HUNTER PRO v3.0
-========================
-Професійна бальна система пошуку торгових можливостей.
-Замість жорстких AND-фільтрів — гнучкий scoring engine.
+{% extends "base.html" %}
 
-Особливості:
-- Бальна система (0-100 очок)
-- Multi-Timeframe Analysis
-- Адаптивні режими (BULL/BEAR/NEUTRAL)
-- 7 незалежних фільтрів з вагами
-- Авто та ручний режими
-- Повна кастомізація параметрів
+{% block title %}Whale Hunter PRO{% endblock %}
 
-Автор: SVV Webhook Bot Team
-Версія: 3.0.0
-"""
-
-import threading
-import time
-import logging
-import pandas as pd
-import numpy as np
-from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
-from dataclasses import dataclass, field, asdict
-from enum import Enum
-
-# Імпорти з проекту
-from bot import bot_instance
-from settings_manager import settings
-from models import db_manager, Base
-from sqlalchemy import Column, Integer, Float, String, DateTime, Boolean, Text
-
-# Індикатори
-from indicators import (
-    simple_rsi, calculate_rsi_series,
-    simple_atr, calculate_atr_series,
-    calculate_ema, calculate_obv, calculate_slope,
-    calculate_bollinger_bands
-)
-from indicators_pro import calculate_rvol, check_ttm_squeeze, calculate_adx
-from rsi_screener import calculate_mfi_series
-
-logger = logging.getLogger("WhaleHunterPro")
-
-
-# ============================================================================
-#                              ENUMS & CONSTANTS
-# ============================================================================
-
-class MarketMode(Enum):
-    BULLISH = "BULLISH"
-    BEARISH = "BEARISH"
-    NEUTRAL = "NEUTRAL"
-
-
-class SignalStrength(Enum):
-    WEAK = "WEAK"           # 40-54
-    MODERATE = "MODERATE"   # 55-69
-    STRONG = "STRONG"       # 70-84
-    PREMIUM = "PREMIUM"     # 85-100
-
-
-# Пояснення параметрів (для UI)
-PARAM_HELP = {
-    # Загальні
-    "whp_enabled": "Увімкнути/вимкнути модуль Whale Hunter PRO",
-    "whp_auto_mode": "Автоматичне сканування за розкладом",
-    "whp_auto_interval": "Інтервал авто-сканування (хвилини)",
-    "whp_min_score": "Мінімальний бал для сигналу (0-100). Рекомендовано 50+",
-    
-    # Ліквідність
-    "whp_min_volume": "Мінімальний 24h об'єм торгів в USDT. Фільтрує неліквідні монети",
-    "whp_scan_limit": "Кількість топ-монет для сканування (по об'єму)",
-    
-    # Таймфрейми
-    "whp_main_tf": "Основний таймфрейм аналізу. 15m-1H для скальпінгу, 4H для свінгу",
-    "whp_htf": "Старший таймфрейм для підтвердження тренду. Зазвичай 4x від основного",
-    "whp_htf_auto": "Автоматичний вибір HTF на основі основного TF",
-    
-    # Фільтри та ваги
-    "whp_use_rsi": "RSI фільтр: виявляє перекупленість/перепроданість",
-    "whp_rsi_weight": "Вага RSI у загальному балі (0-30)",
-    "whp_rsi_oversold": "Рівень перепроданості RSI (buy zone)",
-    "whp_rsi_overbought": "Рівень перекупленості RSI (sell zone)",
-    
-    "whp_use_mfi": "MFI Cloud: аналіз грошового потоку з об'ємом",
-    "whp_mfi_weight": "Вага MFI у загальному балі (0-20)",
-    
-    "whp_use_rvol": "RVOL: відносний об'єм порівняно із середнім",
-    "whp_rvol_weight": "Вага RVOL у загальному балі (0-20)",
-    "whp_rvol_threshold": "Поріг RVOL (1.2 = на 20% вище середнього)",
-    
-    "whp_use_ob": "Order Block: пошук інституційних зон",
-    "whp_ob_weight": "Вага OB у загальному балі (0-25)",
-    "whp_ob_distance": "Максимальна відстань до OB у % від ціни",
-    
-    "whp_use_btc": "BTC Trend: фільтр загального стану ринку",
-    "whp_btc_weight": "Вага BTC тренду у загальному балі (0-20)",
-    
-    "whp_use_adx": "ADX: індикатор сили тренду",
-    "whp_adx_weight": "Вага ADX у загальному балі (0-15)",
-    "whp_adx_threshold": "Поріг ADX для визначення тренду (зазвичай 25)",
-    
-    "whp_use_squeeze": "TTM Squeeze: стиснення волатильності перед рухом",
-    "whp_squeeze_weight": "Вага Squeeze у загальному балі (0-10)",
-    
-    # Додаткові
-    "whp_use_divergence": "OBV Divergence: розходження ціни та об'єму",
-    "whp_divergence_weight": "Вага дивергенції у загальному балі (0-15)",
+{% block content %}
+<style>
+/* ===== WHALE HUNTER PRO STYLES ===== */
+.whp-header {
+    background: linear-gradient(135deg, #1e3a5f 0%, #0d1f33 100%);
+    border-radius: 12px;
+    padding: 1.5rem;
+    color: white;
+    margin-bottom: 1.5rem;
 }
 
-# HTF Auto Mapping
-HTF_MAPPING = {
-    "5": "60", "15": "60", "30": "240",
-    "60": "240", "120": "240", "240": "D",
-    "D": "W"
+.whp-header h3 {
+    margin: 0;
+    font-weight: 700;
 }
 
+.whp-header .subtitle {
+    opacity: 0.8;
+    font-size: 0.85rem;
+}
 
-# ============================================================================
-#                              DATABASE MODEL
-# ============================================================================
+/* BTC Trend Badge */
+.btc-trend-badge {
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
 
-class WhaleHunterSignal(Base):
-    """Модель для збереження сигналів"""
-    __tablename__ = 'whale_hunter_signals'
-    
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), index=True)
-    price = Column(Float)
-    direction = Column(String(10))  # LONG / SHORT
-    score = Column(Integer)
-    strength = Column(String(20))   # WEAK/MODERATE/STRONG/PREMIUM
-    
-    # Деталі скорингу
-    rsi_score = Column(Integer, default=0)
-    mfi_score = Column(Integer, default=0)
-    rvol_score = Column(Integer, default=0)
-    ob_score = Column(Integer, default=0)
-    btc_score = Column(Integer, default=0)
-    adx_score = Column(Integer, default=0)
-    squeeze_score = Column(Integer, default=0)
-    divergence_score = Column(Integer, default=0)
-    
-    # Значення індикаторів
-    rsi_value = Column(Float, default=0)
-    mfi_value = Column(Float, default=0)
-    rvol_value = Column(Float, default=0)
-    adx_value = Column(Float, default=0)
-    
-    # OB Info
-    ob_distance = Column(Float, default=0)
-    ob_type = Column(String(10), default="")
-    
-    # Meta
-    btc_trend = Column(String(20), default="")
-    market_mode = Column(String(20), default="")
-    timeframe = Column(String(10), default="")
-    details = Column(Text, default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
+.btc-trend-badge.bullish {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
 
+.btc-trend-badge.bearish {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
 
-# ============================================================================
-#                              SCORING ENGINE
-# ============================================================================
+.btc-trend-badge.neutral {
+    background: rgba(156, 163, 175, 0.2);
+    color: #9ca3af;
+    border: 1px solid rgba(156, 163, 175, 0.3);
+}
 
-@dataclass
-class ScoreBreakdown:
-    """Деталізація балів"""
-    rsi: int = 0
-    mfi: int = 0
-    rvol: int = 0
-    ob: int = 0
-    btc: int = 0
-    adx: int = 0
-    squeeze: int = 0
-    divergence: int = 0
-    
-    # Значення індикаторів
-    rsi_value: float = 0
-    mfi_value: float = 0
-    rvol_value: float = 0
-    adx_value: float = 0
-    
-    # OB
-    ob_distance: float = 0
-    ob_type: str = ""
-    
-    @property
-    def total(self) -> int:
-        return self.rsi + self.mfi + self.rvol + self.ob + self.btc + self.adx + self.squeeze + self.divergence
-    
-    @property
-    def strength(self) -> SignalStrength:
-        t = self.total
-        if t >= 85:
-            return SignalStrength.PREMIUM
-        elif t >= 70:
-            return SignalStrength.STRONG
-        elif t >= 55:
-            return SignalStrength.MODERATE
-        else:
-            return SignalStrength.WEAK
-    
-    def to_dict(self) -> Dict:
-        return {
-            'rsi': self.rsi, 'mfi': self.mfi, 'rvol': self.rvol,
-            'ob': self.ob, 'btc': self.btc, 'adx': self.adx,
-            'squeeze': self.squeeze, 'divergence': self.divergence,
-            'total': self.total, 'strength': self.strength.value,
-            'rsi_value': self.rsi_value, 'mfi_value': self.mfi_value,
-            'rvol_value': self.rvol_value, 'adx_value': self.adx_value,
-            'ob_distance': self.ob_distance, 'ob_type': self.ob_type
-        }
+.btc-trend-badge.disabled {
+    background: rgba(100, 100, 100, 0.2);
+    color: #888;
+    border: 1px solid rgba(100, 100, 100, 0.3);
+    text-decoration: line-through;
+}
 
+/* Score Bar */
+.score-bar {
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+    width: 100px;
+}
 
-class ScoringEngine:
-    """
-    🎯 Двигун скорингу - серце Whale Hunter PRO
-    
-    Кожен фільтр має:
-    - enabled: bool - увімкнений чи ні
-    - weight: int - максимальна кількість балів
-    - threshold: float - поріг спрацювання
-    """
-    
-    def __init__(self, config: Dict):
-        self.config = config
-    
-    def update_config(self, config: Dict):
-        self.config = config
-    
-    def _get(self, key: str, default: Any = None) -> Any:
-        """Отримати значення з конфігу"""
-        return self.config.get(key, default)
-    
-    def calculate_score(
-        self,
-        df: pd.DataFrame,
-        direction: str,  # "LONG" or "SHORT"
-        btc_trend: MarketMode,
-        ob_info: Optional[Dict] = None
-    ) -> ScoreBreakdown:
-        """
-        Розраховує загальний бал для монети
-        
-        Args:
-            df: DataFrame з OHLCV даними
-            direction: Напрямок сигналу
-            btc_trend: Поточний тренд BTC
-            ob_info: Інформація про найближчий Order Block
-        
-        Returns:
-            ScoreBreakdown з деталізацією балів
-        """
-        score = ScoreBreakdown()
-        
-        if df is None or len(df) < 50:
-            return score
-        
-        close = df['close']
-        high = df['high']
-        low = df['low']
-        volume = df['volume']
-        current_price = close.iloc[-1]
-        
-        # ========== 1. RSI SCORE ==========
-        if self._get('whp_use_rsi', True):
-            try:
-                rsi = simple_rsi(close, 14)
-                score.rsi_value = rsi
-                
-                weight = self._get('whp_rsi_weight', 20)
-                oversold = self._get('whp_rsi_oversold', 40)
-                overbought = self._get('whp_rsi_overbought', 60)
-                
-                if direction == "LONG" and rsi <= oversold:
-                    # Чим нижче RSI, тим більше балів
-                    intensity = (oversold - rsi) / oversold
-                    score.rsi = int(weight * min(1.0, 0.5 + intensity))
-                elif direction == "SHORT" and rsi >= overbought:
-                    intensity = (rsi - overbought) / (100 - overbought)
-                    score.rsi = int(weight * min(1.0, 0.5 + intensity))
-                elif direction == "LONG" and rsi < 50:
-                    score.rsi = int(weight * 0.3)  # Частковий бал
-                elif direction == "SHORT" and rsi > 50:
-                    score.rsi = int(weight * 0.3)
-            except Exception as e:
-                logger.debug(f"RSI calc error: {e}")
-        
-        # ========== 2. MFI SCORE ==========
-        if self._get('whp_use_mfi', True):
-            try:
-                mfi_series = calculate_mfi_series(high, low, close, volume, 20)
-                mfi = float(mfi_series.iloc[-1])
-                score.mfi_value = mfi
-                
-                # MFI Cloud: Fast vs Slow
-                fast_mfi = calculate_ema(mfi_series, 5).iloc[-1]
-                slow_mfi = calculate_ema(mfi_series, 13).iloc[-1]
-                
-                weight = self._get('whp_mfi_weight', 15)
-                
-                if direction == "LONG" and fast_mfi > slow_mfi:
-                    score.mfi = weight
-                elif direction == "SHORT" and fast_mfi < slow_mfi:
-                    score.mfi = weight
-                elif direction == "LONG" and mfi < 40:
-                    score.mfi = int(weight * 0.5)
-                elif direction == "SHORT" and mfi > 60:
-                    score.mfi = int(weight * 0.5)
-            except Exception as e:
-                logger.debug(f"MFI calc error: {e}")
-        
-        # ========== 3. RVOL SCORE ==========
-        if self._get('whp_use_rvol', True):
-            try:
-                rvol_series = calculate_rvol(volume, 20)
-                rvol = float(rvol_series.iloc[-1])
-                score.rvol_value = round(rvol, 2)
-                
-                weight = self._get('whp_rvol_weight', 15)
-                threshold = self._get('whp_rvol_threshold', 1.2)
-                
-                if rvol >= threshold:
-                    # Більший об'єм = більше балів (до 2x threshold)
-                    intensity = min(1.0, (rvol - 1) / (threshold - 1 + 0.5))
-                    score.rvol = int(weight * intensity)
-            except Exception as e:
-                logger.debug(f"RVOL calc error: {e}")
-        
-        # ========== 4. ORDER BLOCK SCORE ==========
-        if self._get('whp_use_ob', True) and ob_info:
-            try:
-                weight = self._get('whp_ob_weight', 20)
-                max_distance = self._get('whp_ob_distance', 3.0)
-                
-                ob_mid = (ob_info['top'] + ob_info['bottom']) / 2
-                distance_pct = abs(current_price - ob_mid) / current_price * 100
-                score.ob_distance = round(distance_pct, 2)
-                score.ob_type = ob_info.get('type', '')
-                
-                if distance_pct <= max_distance:
-                    # Чим ближче до OB, тим більше балів
-                    proximity = 1 - (distance_pct / max_distance)
-                    score.ob = int(weight * proximity)
-            except Exception as e:
-                logger.debug(f"OB calc error: {e}")
-        
-        # ========== 5. BTC TREND SCORE ==========
-        if self._get('whp_use_btc', True):
-            weight = self._get('whp_btc_weight', 15)
-            
-            if direction == "LONG" and btc_trend == MarketMode.BULLISH:
-                score.btc = weight
-            elif direction == "SHORT" and btc_trend == MarketMode.BEARISH:
-                score.btc = weight
-            elif btc_trend == MarketMode.NEUTRAL:
-                score.btc = int(weight * 0.5)
-        
-        # ========== 6. ADX SCORE ==========
-        if self._get('whp_use_adx', True):
-            try:
-                adx_series, plus_di, minus_di = calculate_adx(high, low, close, 14)
-                adx = float(adx_series.iloc[-1])
-                score.adx_value = round(adx, 1)
-                
-                weight = self._get('whp_adx_weight', 10)
-                threshold = self._get('whp_adx_threshold', 25)
-                
-                # ADX < threshold = consolidation (good for entry)
-                # ADX > threshold and rising = trend starting
-                if adx < threshold:
-                    score.adx = int(weight * 0.7)  # Консолідація
-                elif adx > threshold:
-                    # Перевіряємо напрямок DI
-                    if direction == "LONG" and plus_di.iloc[-1] > minus_di.iloc[-1]:
-                        score.adx = weight
-                    elif direction == "SHORT" and minus_di.iloc[-1] > plus_di.iloc[-1]:
-                        score.adx = weight
-            except Exception as e:
-                logger.debug(f"ADX calc error: {e}")
-        
-        # ========== 7. TTM SQUEEZE SCORE ==========
-        if self._get('whp_use_squeeze', True):
-            try:
-                squeeze_series = check_ttm_squeeze(df)
-                is_squeeze = bool(squeeze_series.iloc[-1])
-                
-                weight = self._get('whp_squeeze_weight', 5)
-                
-                if is_squeeze:
-                    score.squeeze = weight
-            except Exception as e:
-                logger.debug(f"Squeeze calc error: {e}")
-        
-        # ========== 8. OBV DIVERGENCE SCORE ==========
-        if self._get('whp_use_divergence', True):
-            try:
-                obv = calculate_obv(close, volume)
-                price_slope = calculate_slope(close, 15)
-                obv_slope = calculate_slope(obv, 15)
-                
-                # Нормалізація
-                norm_price_slope = (price_slope / current_price) * 100 if current_price > 0 else 0
-                
-                weight = self._get('whp_divergence_weight', 10)
-                
-                # Bullish divergence: price down/flat, OBV up
-                if direction == "LONG" and norm_price_slope < 0.5 and obv_slope > 0:
-                    score.divergence = weight
-                # Bearish divergence: price up/flat, OBV down
-                elif direction == "SHORT" and norm_price_slope > -0.5 and obv_slope < 0:
-                    score.divergence = weight
-            except Exception as e:
-                logger.debug(f"Divergence calc error: {e}")
-        
-        return score
+.score-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
 
+.score-bar-fill.weak { background: #f59e0b; }
+.score-bar-fill.moderate { background: #3b82f6; }
+.score-bar-fill.strong { background: #22c55e; }
+.score-bar-fill.premium { background: linear-gradient(90deg, #22c55e, #10b981); }
 
-# ============================================================================
-#                           ORDER BLOCK FINDER (Simplified)
-# ============================================================================
+/* Strength Badge */
+.strength-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
 
-class SimpleOBFinder:
-    """Спрощений пошук Order Blocks для скорингу"""
-    
-    def __init__(self, swing_length: int = 3):
-        self.swing_length = swing_length
-    
-    def find_nearest_ob(
-        self,
-        df: pd.DataFrame,
-        direction: str,
-        max_distance_pct: float = 5.0
-    ) -> Optional[Dict]:
-        """
-        Знаходить найближчий валідний Order Block
-        
-        Args:
-            df: OHLCV DataFrame
-            direction: "LONG" (шукаємо Bull OB) або "SHORT" (Bear OB)
-            max_distance_pct: Максимальна відстань у %
-        
-        Returns:
-            Dict з top, bottom, type або None
-        """
-        if df is None or len(df) < 50:
-            return None
-        
-        current_price = df['close'].iloc[-1]
-        obs = []
-        
-        # Аналізуємо останні 200 свічок
-        subset = df.tail(200).reset_index(drop=True)
-        n = len(subset)
-        
-        for i in range(self.swing_length, n - self.swing_length):
-            # Перевірка Swing Low (для Bull OB)
-            if direction == "LONG":
-                is_swing = True
-                for j in range(1, self.swing_length + 1):
-                    if subset['low'].iloc[i] >= subset['low'].iloc[i - j] or \
-                       subset['low'].iloc[i] >= subset['low'].iloc[i + j]:
-                        is_swing = False
-                        break
-                
-                if is_swing:
-                    # Перевіряємо чи був BOS (Break of Structure) вгору
-                    swing_high = subset['high'].iloc[i]
-                    for k in range(i + 1, min(i + 30, n)):
-                        if subset['close'].iloc[k] > swing_high:
-                            # Bull OB знайдено
-                            obs.append({
-                                'top': subset['high'].iloc[i],
-                                'bottom': subset['low'].iloc[i],
-                                'type': 'Bull',
-                                'idx': i
-                            })
-                            break
-            
-            # Перевірка Swing High (для Bear OB)
-            else:
-                is_swing = True
-                for j in range(1, self.swing_length + 1):
-                    if subset['high'].iloc[i] <= subset['high'].iloc[i - j] or \
-                       subset['high'].iloc[i] <= subset['high'].iloc[i + j]:
-                        is_swing = False
-                        break
-                
-                if is_swing:
-                    swing_low = subset['low'].iloc[i]
-                    for k in range(i + 1, min(i + 30, n)):
-                        if subset['close'].iloc[k] < swing_low:
-                            obs.append({
-                                'top': subset['high'].iloc[i],
-                                'bottom': subset['low'].iloc[i],
-                                'type': 'Bear',
-                                'idx': i
-                            })
-                            break
-        
-        if not obs:
-            return None
-        
-        # Фільтруємо валідні (не пробиті) та в межах відстані
-        valid_obs = []
-        for ob in obs:
-            ob_mid = (ob['top'] + ob['bottom']) / 2
-            distance = abs(current_price - ob_mid) / current_price * 100
-            
-            # Перевірка інвалідації
-            is_valid = True
-            if direction == "LONG" and current_price < ob['bottom']:
-                is_valid = False
-            elif direction == "SHORT" and current_price > ob['top']:
-                is_valid = False
-            
-            if is_valid and distance <= max_distance_pct:
-                ob['distance'] = distance
-                valid_obs.append(ob)
-        
-        if not valid_obs:
-            return None
-        
-        # Повертаємо найближчий
-        return min(valid_obs, key=lambda x: x['distance'])
+.strength-badge.weak { background: #fef3c7; color: #b45309; }
+.strength-badge.moderate { background: #dbeafe; color: #1d4ed8; }
+.strength-badge.strong { background: #dcfce7; color: #15803d; }
+.strength-badge.premium { background: linear-gradient(90deg, #dcfce7, #d1fae5); color: #047857; }
 
+/* Direction Badge */
+.direction-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
 
-# ============================================================================
-#                           WHALE HUNTER PRO CORE
-# ============================================================================
+.direction-badge.long { background: #dcfce7; color: #15803d; }
+.direction-badge.short { background: #fee2e2; color: #b91c1c; }
 
-class WhaleHunterPro:
-    """
-    🐋 Головний клас Whale Hunter PRO
-    
-    Функціонал:
-    - Визначення режиму ринку (BTC Trend)
-    - Сканування топ-монет
-    - Бальна система оцінки
-    - Авто та ручний режими
-    - Збереження сигналів у БД
-    """
-    
-    def __init__(self):
-        self.is_scanning = False
-        self.progress = 0
-        self.status = "Ready"
-        self.last_scan_time = None
-        self.btc_trend = MarketMode.NEUTRAL
-        self.scan_results = []
-        
-        # Автоматизація
-        self.auto_running = False
-        self.auto_interval = 60  # хвилини
-        self._stop_event = threading.Event()
-        
-        # Компоненти
-        self.scoring_engine = ScoringEngine(self._load_config())
-        self.ob_finder = SimpleOBFinder()
-        
-        # Запуск планувальника
-        threading.Thread(target=self._scheduler_loop, daemon=True).start()
-        
-        # Ініціалізація таблиці
-        self._ensure_table()
-    
-    def _ensure_table(self):
-        """Створює таблицю якщо не існує"""
-        try:
-            WhaleHunterSignal.__table__.create(db_manager.engine, checkfirst=True)
-        except Exception as e:
-            logger.error(f"Table creation error: {e}")
-    
-    def _load_config(self) -> Dict:
-        """Завантажує конфігурацію з settings"""
-        
-        def to_bool(val, default=True):
-            """Конвертує значення в boolean"""
-            if isinstance(val, bool):
-                return val
-            if isinstance(val, str):
-                return val.lower() in ('true', '1', 'yes', 'on')
-            return bool(val) if val is not None else default
-        
-        def to_int(val, default=0):
-            """Конвертує значення в int"""
-            try:
-                return int(float(val)) if val is not None else default
-            except (ValueError, TypeError):
-                return default
-        
-        def to_float(val, default=0.0):
-            """Конвертує значення в float"""
-            try:
-                return float(val) if val is not None else default
-            except (ValueError, TypeError):
-                return default
-        
-        return {
-            # Загальні
-            'whp_enabled': to_bool(settings.get('whp_enabled'), True),
-            'whp_auto_mode': to_bool(settings.get('whp_auto_mode'), False),
-            'whp_auto_interval': to_int(settings.get('whp_auto_interval'), 60),
-            'whp_min_score': to_int(settings.get('whp_min_score'), 50),
-            
-            # Ліквідність
-            'whp_min_volume': to_float(settings.get('whp_min_volume'), 5_000_000),
-            'whp_scan_limit': to_int(settings.get('whp_scan_limit'), 50),
-            
-            # Таймфрейми
-            'whp_main_tf': str(settings.get('whp_main_tf', '60')),
-            'whp_htf': str(settings.get('whp_htf', '240')),
-            'whp_htf_auto': to_bool(settings.get('whp_htf_auto'), True),
-            
-            # RSI
-            'whp_use_rsi': to_bool(settings.get('whp_use_rsi'), True),
-            'whp_rsi_weight': to_int(settings.get('whp_rsi_weight'), 20),
-            'whp_rsi_oversold': to_int(settings.get('whp_rsi_oversold'), 40),
-            'whp_rsi_overbought': to_int(settings.get('whp_rsi_overbought'), 60),
-            
-            # MFI
-            'whp_use_mfi': to_bool(settings.get('whp_use_mfi'), True),
-            'whp_mfi_weight': to_int(settings.get('whp_mfi_weight'), 15),
-            
-            # RVOL
-            'whp_use_rvol': to_bool(settings.get('whp_use_rvol'), True),
-            'whp_rvol_weight': to_int(settings.get('whp_rvol_weight'), 15),
-            'whp_rvol_threshold': to_float(settings.get('whp_rvol_threshold'), 1.2),
-            
-            # Order Block
-            'whp_use_ob': to_bool(settings.get('whp_use_ob'), True),
-            'whp_ob_weight': to_int(settings.get('whp_ob_weight'), 20),
-            'whp_ob_distance': to_float(settings.get('whp_ob_distance'), 3.0),
-            
-            # BTC Trend
-            'whp_use_btc': to_bool(settings.get('whp_use_btc'), True),
-            'whp_btc_weight': to_int(settings.get('whp_btc_weight'), 15),
-            
-            # ADX
-            'whp_use_adx': to_bool(settings.get('whp_use_adx'), True),
-            'whp_adx_weight': to_int(settings.get('whp_adx_weight'), 10),
-            'whp_adx_threshold': to_int(settings.get('whp_adx_threshold'), 25),
-            
-            # TTM Squeeze
-            'whp_use_squeeze': to_bool(settings.get('whp_use_squeeze'), True),
-            'whp_squeeze_weight': to_int(settings.get('whp_squeeze_weight'), 5),
-            
-            # Divergence
-            'whp_use_divergence': to_bool(settings.get('whp_use_divergence'), True),
-            'whp_divergence_weight': to_int(settings.get('whp_divergence_weight'), 10),
-            
-            # Integration
-            'whp_add_to_watchlist': to_bool(settings.get('whp_add_to_watchlist'), True),
-        }
-    
-    def update_config(self):
-        """Оновлює конфігурацію"""
-        config = self._load_config()
-        self.scoring_engine.update_config(config)
-        self.auto_interval = config.get('whp_auto_interval', 60)
-        logger.info("WhaleHunterPro config updated")
-    
-    def _get_htf(self, main_tf: str) -> str:
-        """Отримує HTF на основі налаштувань"""
-        config = self._load_config()
-        if config.get('whp_htf_auto', True):
-            return HTF_MAPPING.get(main_tf, '240')
-        return config.get('whp_htf', '240')
-    
-    def fetch_data(self, symbol: str, timeframe: str, limit: int = 500) -> Optional[pd.DataFrame]:
-        """Завантажує OHLCV дані"""
-        try:
-            tf_map = {'5': '5', '15': '15', '30': '30', '60': '60', 
-                      '120': '120', '240': '240', 'D': 'D', 'W': 'W'}
-            interval = tf_map.get(str(timeframe), '60')
-            
-            res = bot_instance.session.get_kline(
-                category="linear", symbol=symbol, interval=interval, limit=limit
-            )
-            
-            if res['retCode'] == 0 and res['result']['list']:
-                data = res['result']['list'][::-1]  # Oldest -> Newest
-                df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
-                df = df.astype({'open': float, 'high': float, 'low': float, 
-                               'close': float, 'volume': float})
-                
-                # Виключаємо останню незакриту свічку
-                if len(df) > 1:
-                    df = df.iloc[:-1].reset_index(drop=True)
-                
-                return df
-        except Exception as e:
-            logger.error(f"Fetch error {symbol}: {e}")
-        return None
-    
-    def analyze_btc_trend(self) -> MarketMode:
-        """Аналізує тренд BTC"""
-        try:
-            df = self.fetch_data("BTCUSDT", "240", 250)
-            if df is None:
-                return MarketMode.NEUTRAL
-            
-            close = df['close']
-            ema200 = calculate_ema(close, 200).iloc[-1]
-            ema50 = calculate_ema(close, 50).iloc[-1]
-            price = close.iloc[-1]
-            
-            # Bullish: Price > EMA200 AND EMA50 > EMA200
-            if price > ema200 and ema50 > ema200:
-                self.btc_trend = MarketMode.BULLISH
-            # Bearish: Price < EMA200 AND EMA50 < EMA200
-            elif price < ema200 and ema50 < ema200:
-                self.btc_trend = MarketMode.BEARISH
-            else:
-                self.btc_trend = MarketMode.NEUTRAL
-            
-            logger.info(f"BTC Trend: {self.btc_trend.value} (Price: {price:.0f}, EMA200: {ema200:.0f})")
-            return self.btc_trend
-            
-        except Exception as e:
-            logger.error(f"BTC trend error: {e}")
-            return MarketMode.NEUTRAL
-    
-    def determine_direction(self) -> str:
-        """Визначає напрямок на основі BTC тренду та налаштувань"""
-        config = self._load_config()
-        
-        use_btc = config.get('whp_use_btc', True)
-        
-        # Якщо BTC фільтр вимкнено - шукаємо обидва напрямки
-        if not use_btc:
-            return "BOTH"
-        
-        # BTC фільтр увімкнено - напрямок по тренду
-        if self.btc_trend == MarketMode.BULLISH:
-            return "LONG"
-        elif self.btc_trend == MarketMode.BEARISH:
-            return "SHORT"
-        else:
-            return "BOTH"  # Neutral = обидва напрямки
-    
-    def analyze_symbol(self, symbol: str, direction: str) -> Optional[Dict]:
-        """Аналізує один символ"""
-        config = self._load_config()
-        main_tf = config.get('whp_main_tf', '60')
-        
-        # Завантажуємо дані
-        df = self.fetch_data(symbol, main_tf, 500)
-        if df is None or len(df) < 100:
-            return None
-        
-        current_price = df['close'].iloc[-1]
-        
-        # Шукаємо Order Block
-        ob_info = None
-        if config.get('whp_use_ob', True):
-            ob_direction = "LONG" if direction == "LONG" else "SHORT"
-            ob_info = self.ob_finder.find_nearest_ob(
-                df, ob_direction, 
-                config.get('whp_ob_distance', 3.0)
-            )
-        
-        # Розраховуємо бали
-        score = self.scoring_engine.calculate_score(df, direction, self.btc_trend, ob_info)
-        
-        # Перевіряємо мінімальний поріг
-        min_score = config.get('whp_min_score', 50)
-        if score.total < min_score:
-            # Логуємо тільки перші 5 відхилень для діагностики
-            if not hasattr(self, '_rejected_count'):
-                self._rejected_count = {'LONG': 0, 'SHORT': 0}
-            if self._rejected_count.get(direction, 0) < 3:
-                logger.info(f"⏭️ {symbol} {direction}: score={score.total} < min={min_score} | RSI={score.rsi} MFI={score.mfi} RVOL={score.rvol} OB={score.ob} BTC={score.btc}")
-                self._rejected_count[direction] = self._rejected_count.get(direction, 0) + 1
-            return None
-        
-        return {
-            'symbol': symbol,
-            'price': current_price,
-            'direction': direction,
-            'score': score.total,
-            'strength': score.strength.value,
-            'breakdown': score.to_dict(),
-            'btc_trend': self.btc_trend.value,
-            'timeframe': main_tf
-        }
-    
-    def save_signal(self, result: Dict):
-        """Зберігає сигнал у БД"""
-        session = db_manager.get_session()
-        try:
-            breakdown = result['breakdown']
-            
-            sig = WhaleHunterSignal(
-                symbol=result['symbol'],
-                price=result['price'],
-                direction=result['direction'],
-                score=result['score'],
-                strength=result['strength'],
-                rsi_score=breakdown.get('rsi', 0),
-                mfi_score=breakdown.get('mfi', 0),
-                rvol_score=breakdown.get('rvol', 0),
-                ob_score=breakdown.get('ob', 0),
-                btc_score=breakdown.get('btc', 0),
-                adx_score=breakdown.get('adx', 0),
-                squeeze_score=breakdown.get('squeeze', 0),
-                divergence_score=breakdown.get('divergence', 0),
-                rsi_value=breakdown.get('rsi_value', 0),
-                mfi_value=breakdown.get('mfi_value', 0),
-                rvol_value=breakdown.get('rvol_value', 0),
-                adx_value=breakdown.get('adx_value', 0),
-                ob_distance=breakdown.get('ob_distance', 0),
-                ob_type=breakdown.get('ob_type', ''),
-                btc_trend=result['btc_trend'],
-                market_mode=self.btc_trend.value,
-                timeframe=result['timeframe'],
-                created_at=datetime.utcnow()
-            )
-            session.add(sig)
-            session.commit()
-            logger.info(f"✅ Signal saved: {result['symbol']} Score={result['score']} ({result['strength']})")
-            
-            # 🆕 ІНТЕГРАЦІЯ: Додаємо до Smart Money Watchlist
-            if settings.get('whp_add_to_watchlist', True):
-                try:
-                    from scanner_coordinator import add_to_smart_money_watchlist
+/* Score Breakdown */
+.score-breakdown {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.score-chip {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    background: #f3f4f6;
+    color: #6b7280;
+}
+
+.score-chip.active {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+/* Settings Card */
+.settings-card {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    overflow: hidden;
+}
+
+.settings-header {
+    background: #f9fafb;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e5e7eb;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.settings-header:hover {
+    background: #f3f4f6;
+}
+
+.settings-body {
+    padding: 1.25rem;
+}
+
+/* Filter Toggle */
+.filter-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    background: #f9fafb;
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+}
+
+.filter-toggle label {
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+/* Help Button */
+.help-btn {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #6b7280;
+    border: none;
+    font-size: 0.65rem;
+    font-weight: 700;
+    cursor: help;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 4px;
+}
+
+.help-btn:hover {
+    background: #3b82f6;
+    color: white;
+}
+
+/* Progress */
+.scan-progress {
+    height: 4px;
+    background: #e5e7eb;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 0.5rem;
+}
+
+.scan-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    transition: width 0.3s ease;
+}
+
+/* Table Styles */
+#resultsTable th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+#resultsTable th.sortable:hover {
+    background: #f3f4f6;
+}
+
+#resultsTable th.sortable.asc::after { content: ' ↑'; color: #3b82f6; }
+#resultsTable th.sortable.desc::after { content: ' ↓'; color: #3b82f6; }
+
+/* Auto Mode */
+.auto-mode-panel {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 1px solid #bae6fd;
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+/* Visualization */
+.score-visual {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    height: 30px;
+}
+
+.score-bar-mini {
+    width: 12px;
+    border-radius: 2px;
+    transition: height 0.3s ease;
+}
+
+.score-bar-mini.rsi { background: #f59e0b; }
+.score-bar-mini.mfi { background: #8b5cf6; }
+.score-bar-mini.rvol { background: #ec4899; }
+.score-bar-mini.ob { background: #22c55e; }
+.score-bar-mini.btc { background: #3b82f6; }
+.score-bar-mini.adx { background: #14b8a6; }
+.score-bar-mini.squeeze { background: #f97316; }
+.score-bar-mini.div { background: #6366f1; }
+</style>
+
+<div class="container-fluid mt-4">
+    <!-- HEADER -->
+    <div class="whp-header">
+        <div class="row align-items-center">
+            <div class="col-md-6">
+                <h3><i class="ri-focus-3-line me-2"></i>Whale Hunter PRO <span class="badge bg-warning text-dark ms-2">v3.0</span></h3>
+                <p class="subtitle mb-0">Професійна бальна система пошуку торгових можливостей</p>
+            </div>
+            <div class="col-md-6 text-md-end mt-3 mt-md-0">
+                <div class="d-flex align-items-center justify-content-md-end gap-3">
+                    <!-- BTC Trend -->
+                    <div id="btcTrendBadge" class="btc-trend-badge {{ 'disabled' if not config.whp_use_btc else ('bullish' if status.btc_trend == 'BULLISH' else ('bearish' if status.btc_trend == 'BEARISH' else 'neutral')) }}" 
+                         data-trend="{{ status.btc_trend }}">
+                        {% if not config.whp_use_btc %}
+                            <i class="ri-close-line"></i> BTC OFF
+                        {% elif status.btc_trend == 'BULLISH' %}
+                            <i class="ri-arrow-up-line"></i> BTC BULLISH
+                        {% elif status.btc_trend == 'BEARISH' %}
+                            <i class="ri-arrow-down-line"></i> BTC BEARISH
+                        {% else %}
+                            <i class="ri-subtract-line"></i> BTC NEUTRAL
+                        {% endif %}
+                    </div>
                     
-                    direction = 'BUY' if result['direction'] == 'LONG' else 'SELL'
-                    add_result = add_to_smart_money_watchlist(
-                        symbol=result['symbol'],
-                        direction=direction,
-                        source='Whale Hunter PRO'
-                    )
-                    
-                    if add_result.get('status') == 'ok':
-                        logger.info(f"📋 Added to SM Watchlist: {result['symbol']}")
+                    <!-- Scan Button -->
+                    <button onclick="startScan()" id="scanBtn" class="btn btn-light fw-bold" {{ 'disabled' if status.is_scanning }}>
+                        {% if status.is_scanning %}
+                            <span class="spinner-border spinner-border-sm me-2"></span> {{ status.progress }}%
+                        {% else %}
+                            <i class="ri-radar-line me-2"></i> SCAN
+                        {% endif %}
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Progress Bar -->
+        {% if status.is_scanning %}
+        <div class="scan-progress mt-3">
+            <div class="scan-progress-bar" style="width: {{ status.progress }}%"></div>
+        </div>
+        <div class="text-center mt-2 small" style="opacity: 0.8">{{ status.status }}</div>
+        {% endif %}
+    </div>
+
+    <div class="row">
+        <!-- LEFT: Settings -->
+        <div class="col-lg-4 mb-4">
+            <!-- Auto Mode -->
+            <div class="auto-mode-panel mb-3">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <div>
+                        <strong><i class="ri-timer-line me-1"></i> Авто-режим</strong>
+                        <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_auto_mode }}">?</button>
+                    </div>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="autoModeToggle" 
+                               {{ 'checked' if status.auto_running }} onchange="toggleAutoMode()">
+                    </div>
+                </div>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">Інтервал</span>
+                    <select class="form-select" id="autoInterval" onchange="toggleAutoMode()">
+                        <option value="15" {{ 'selected' if status.auto_interval == 15 }}>15 хв</option>
+                        <option value="30" {{ 'selected' if status.auto_interval == 30 }}>30 хв</option>
+                        <option value="60" {{ 'selected' if status.auto_interval == 60 }}>1 година</option>
+                        <option value="120" {{ 'selected' if status.auto_interval == 120 }}>2 години</option>
+                        <option value="240" {{ 'selected' if status.auto_interval == 240 }}>4 години</option>
+                    </select>
+                </div>
+                <small class="text-muted d-block mt-2">
+                    Останній скан: <strong>{{ status.last_scan_time or 'Ніколи' }}</strong>
+                </small>
+            </div>
+
+            <!-- General Settings -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#generalSettings">
+                    <span><i class="ri-settings-3-line me-2"></i>Загальні налаштування</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse show" id="generalSettings">
+                    <div class="settings-body">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">
+                                Мінімальний Score
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_min_score }}">?</button>
+                            </label>
+                            <input type="range" class="form-range" id="minScore" 
+                                   min="30" max="80" value="{{ config.whp_min_score }}"
+                                   oninput="document.getElementById('minScoreVal').textContent = this.value">
+                            <div class="d-flex justify-content-between small text-muted">
+                                <span>30 (Багато сигналів)</span>
+                                <strong id="minScoreVal">{{ config.whp_min_score }}</strong>
+                                <span>80 (Тільки найкращі)</span>
+                            </div>
+                        </div>
                         
-                except Exception as e:
-                    logger.warning(f"Failed to add to watchlist: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Save error: {e}")
-            session.rollback()
-        finally:
-            session.close()
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">
+                                    Min Volume ($)
+                                    <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_min_volume }}">?</button>
+                                </label>
+                                <select class="form-select form-select-sm" id="minVolume">
+                                    <option value="1000000" {{ 'selected' if config.whp_min_volume == 1000000 }}>1M+</option>
+                                    <option value="5000000" {{ 'selected' if config.whp_min_volume == 5000000 }}>5M+</option>
+                                    <option value="10000000" {{ 'selected' if config.whp_min_volume == 10000000 }}>10M+</option>
+                                    <option value="20000000" {{ 'selected' if config.whp_min_volume == 20000000 }}>20M+</option>
+                                    <option value="50000000" {{ 'selected' if config.whp_min_volume == 50000000 }}>50M+</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">
+                                    Скан монет
+                                    <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_scan_limit }}">?</button>
+                                </label>
+                                <select class="form-select form-select-sm" id="scanLimit">
+                                    <option value="30" {{ 'selected' if config.whp_scan_limit == 30 }}>Top 30</option>
+                                    <option value="50" {{ 'selected' if config.whp_scan_limit == 50 }}>Top 50</option>
+                                    <option value="100" {{ 'selected' if config.whp_scan_limit == 100 }}>Top 100</option>
+                                    <option value="150" {{ 'selected' if config.whp_scan_limit == 150 }}>Top 150</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Timeframes -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#tfSettings">
+                    <span><i class="ri-time-line me-2"></i>Таймфрейми</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse show" id="tfSettings">
+                    <div class="settings-body">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">
+                                Основний TF
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_main_tf }}">?</button>
+                            </label>
+                            <select class="form-select form-select-sm" id="mainTf">
+                                <option value="15" {{ 'selected' if config.whp_main_tf == '15' }}>15m</option>
+                                <option value="30" {{ 'selected' if config.whp_main_tf == '30' }}>30m</option>
+                                <option value="60" {{ 'selected' if config.whp_main_tf == '60' }}>1H</option>
+                                <option value="240" {{ 'selected' if config.whp_main_tf == '240' }}>4H</option>
+                                <option value="D" {{ 'selected' if config.whp_main_tf == 'D' }}>1D</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="htfAuto" 
+                                   {{ 'checked' if config.whp_htf_auto }} onchange="toggleHtfAuto()">
+                            <label class="form-check-label small" for="htfAuto">
+                                Авто HTF
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_htf_auto }}">?</button>
+                            </label>
+                        </div>
+                        
+                        <select class="form-select form-select-sm" id="htf" {{ 'disabled' if config.whp_htf_auto }}>
+                            <option value="60" {{ 'selected' if config.whp_htf == '60' }}>1H</option>
+                            <option value="240" {{ 'selected' if config.whp_htf == '240' }}>4H</option>
+                            <option value="D" {{ 'selected' if config.whp_htf == 'D' }}>1D</option>
+                            <option value="W" {{ 'selected' if config.whp_htf == 'W' }}>1W</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters & Weights -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#filterSettings">
+                    <span><i class="ri-filter-3-line me-2"></i>Фільтри та ваги</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse" id="filterSettings">
+                    <div class="settings-body">
+                        <!-- RSI -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>RSI Filter</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_rsi }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="rsiWeight" value="{{ config.whp_rsi_weight }}" min="0" max="30">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useRsi" {{ 'checked' if config.whp_use_rsi }}>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-3 ps-2">
+                            <div class="col-6">
+                                <label class="form-label small">Oversold</label>
+                                <input type="number" class="form-control form-control-sm" id="rsiOversold" 
+                                       value="{{ config.whp_rsi_oversold }}" min="20" max="50">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">Overbought</label>
+                                <input type="number" class="form-control form-control-sm" id="rsiOverbought" 
+                                       value="{{ config.whp_rsi_overbought }}" min="50" max="80">
+                            </div>
+                        </div>
+
+                        <!-- MFI -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>MFI Cloud</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_mfi }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="mfiWeight" value="{{ config.whp_mfi_weight }}" min="0" max="20">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useMfi" {{ 'checked' if config.whp_use_mfi }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- RVOL -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>RVOL</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_rvol }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="rvolWeight" value="{{ config.whp_rvol_weight }}" min="0" max="20">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useRvol" {{ 'checked' if config.whp_use_rvol }}>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3 ps-2">
+                            <label class="form-label small">Threshold (x)</label>
+                            <input type="number" class="form-control form-control-sm" id="rvolThreshold" 
+                                   value="{{ config.whp_rvol_threshold }}" step="0.1" min="1" max="3">
+                        </div>
+
+                        <!-- Order Block -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>Order Block</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_ob }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="obWeight" value="{{ config.whp_ob_weight }}" min="0" max="25">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useOb" {{ 'checked' if config.whp_use_ob }}>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3 ps-2">
+                            <label class="form-label small">Max Distance (%)</label>
+                            <input type="number" class="form-control form-control-sm" id="obDistance" 
+                                   value="{{ config.whp_ob_distance }}" step="0.5" min="1" max="10">
+                        </div>
+
+                        <!-- BTC Trend -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>BTC Trend</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_btc }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="btcWeight" value="{{ config.whp_btc_weight }}" min="0" max="20">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useBtc" {{ 'checked' if config.whp_use_btc }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ADX -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>ADX</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_adx }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="adxWeight" value="{{ config.whp_adx_weight }}" min="0" max="15">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useAdx" {{ 'checked' if config.whp_use_adx }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TTM Squeeze -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>TTM Squeeze</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_squeeze }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="squeezeWeight" value="{{ config.whp_squeeze_weight }}" min="0" max="10">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useSqueeze" {{ 'checked' if config.whp_use_squeeze }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Divergence -->
+                        <div class="filter-toggle">
+                            <div>
+                                <label>OBV Divergence</label>
+                                <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_use_divergence }}">?</button>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <input type="number" class="form-control form-control-sm" style="width: 50px" 
+                                       id="divergenceWeight" value="{{ config.whp_divergence_weight }}" min="0" max="15">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" id="useDivergence" {{ 'checked' if config.whp_use_divergence }}>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr>
+                        
+                        <!-- Integration -->
+                        <div class="d-flex align-items-center justify-content-between mb-3">
+                            <span class="small text-muted">
+                                <i class="ri-link me-1"></i>Add to SM Watchlist
+                            </span>
+                            <div class="form-check form-switch mb-0">
+                                <input class="form-check-input" type="checkbox" id="addToWatchlist" {{ 'checked' if config.whp_add_to_watchlist }}>
+                            </div>
+                        </div>
+
+                        <button onclick="saveSettings()" class="btn btn-primary btn-sm w-100">
+                            <i class="ri-save-line me-1"></i> Зберегти налаштування
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Legend -->
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="fw-bold mb-3"><i class="ri-information-line me-2"></i>Легенда балів</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini rsi" style="height: 15px;"></div>
+                            <small>RSI</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini mfi" style="height: 15px;"></div>
+                            <small>MFI</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini rvol" style="height: 15px;"></div>
+                            <small>RVOL</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini ob" style="height: 15px;"></div>
+                            <small>OB</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini btc" style="height: 15px;"></div>
+                            <small>BTC</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini adx" style="height: 15px;"></div>
+                            <small>ADX</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini squeeze" style="height: 15px;"></div>
+                            <small>SQZ</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <div class="score-bar-mini div" style="height: 15px;"></div>
+                            <small>DIV</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT: Results -->
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                    <h6 class="fw-bold m-0">
+                        <i class="ri-pulse-line me-2"></i>Результати сканування
+                        <span class="badge bg-primary ms-2">{{ history|length }}</span>
+                    </h6>
+                    <button onclick="clearHistory()" class="btn btn-outline-danger btn-sm">
+                        <i class="ri-delete-bin-line"></i>
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0" id="resultsTable">
+                        <thead class="bg-light">
+                            <tr>
+                                <th class="sortable" data-column="0">Час</th>
+                                <th class="sortable" data-column="1">Символ</th>
+                                <th class="sortable" data-column="2">Напрямок</th>
+                                <th class="sortable" data-column="3">Score</th>
+                                <th>Візуалізація</th>
+                                <th class="sortable" data-column="5">RSI</th>
+                                <th class="sortable" data-column="6">RVOL</th>
+                                <th class="text-end">Дія</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in history %}
+                            <tr>
+                                <td class="small text-muted" data-value="{{ row.time }}">{{ row.time }}</td>
+                                <td class="fw-bold" data-value="{{ row.symbol }}">{{ row.symbol }}</td>
+                                <td data-value="{{ row.direction }}">
+                                    <span class="direction-badge {{ 'long' if row.direction == 'LONG' else 'short' }}">
+                                        {% if row.direction == 'LONG' %}
+                                            <i class="ri-arrow-up-line"></i> LONG
+                                        {% else %}
+                                            <i class="ri-arrow-down-line"></i> SHORT
+                                        {% endif %}
+                                    </span>
+                                </td>
+                                <td data-value="{{ row.score }}">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <strong>{{ row.score }}</strong>
+                                        <div class="score-bar">
+                                            <div class="score-bar-fill {{ row.strength|lower }}" 
+                                                 style="width: {{ row.score }}%"></div>
+                                        </div>
+                                        <span class="strength-badge {{ row.strength|lower }}">{{ row.strength }}</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div class="score-visual" title="RSI:{{ row.rsi }} MFI:{{ row.mfi }} RVOL:{{ row.rvol }} OB:{{ row.ob }} BTC:{{ row.btc }} ADX:{{ row.adx }} SQZ:{{ row.squeeze }} DIV:{{ row.divergence }}">
+                                        <div class="score-bar-mini rsi" style="height: {{ (row.rsi / 20 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini mfi" style="height: {{ (row.mfi / 15 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini rvol" style="height: {{ (row.rvol / 15 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini ob" style="height: {{ (row.ob / 20 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini btc" style="height: {{ (row.btc / 15 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini adx" style="height: {{ (row.adx / 10 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini squeeze" style="height: {{ (row.squeeze / 5 * 30)|int }}px;"></div>
+                                        <div class="score-bar-mini div" style="height: {{ (row.divergence / 10 * 30)|int }}px;"></div>
+                                    </div>
+                                </td>
+                                <td class="small font-mono" data-value="{{ row.rsi_value }}">{{ row.rsi_value|round(1) }}</td>
+                                <td class="small font-mono" data-value="{{ row.rvol_value }}">x{{ row.rvol_value }}</td>
+                                <td class="text-end">
+                                    <a href="https://www.bybit.com/trade/usdt/{{ row.symbol }}" target="_blank" 
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="ri-line-chart-line"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center py-5 text-muted">
+                                    <i class="ri-search-eye-line fs-1 opacity-25"></i>
+                                    <p class="mt-2 mb-0">Запустіть сканування для пошуку сигналів</p>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// CSRF Token
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+// Init Tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    tooltipTriggerList.map(function(el) {
+        return new bootstrap.Tooltip(el);
+    });
     
-    def get_history(self, limit: int = 100) -> List[Dict]:
-        """Отримує історію сигналів"""
-        self._ensure_table()
-        session = db_manager.get_session()
-        try:
-            results = session.query(WhaleHunterSignal)\
-                .order_by(WhaleHunterSignal.created_at.desc())\
-                .limit(limit).all()
-            
-            return [{
-                'id': r.id,
-                'symbol': r.symbol,
-                'price': r.price,
-                'direction': r.direction,
-                'score': r.score,
-                'strength': r.strength,
-                'rsi': r.rsi_score,
-                'mfi': r.mfi_score,
-                'rvol': r.rvol_score,
-                'ob': r.ob_score,
-                'btc': r.btc_score,
-                'adx': r.adx_score,
-                'squeeze': r.squeeze_score,
-                'divergence': r.divergence_score,
-                'rsi_value': r.rsi_value,
-                'mfi_value': r.mfi_value,
-                'rvol_value': r.rvol_value,
-                'adx_value': r.adx_value,
-                'ob_distance': r.ob_distance,
-                'btc_trend': r.btc_trend,
-                'timeframe': r.timeframe,
-                'time': r.created_at.strftime('%d.%m %H:%M')
-            } for r in results]
-        except Exception as e:
-            logger.error(f"Get history error: {e}")
-            return []
-        finally:
-            session.close()
+    initTableSorting();
+});
+
+function startScan() {
+    const btn = document.getElementById('scanBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Starting...';
     
-    def clear_history(self):
-        """Очищає історію сигналів"""
-        session = db_manager.get_session()
-        try:
-            session.query(WhaleHunterSignal).delete()
-            session.commit()
-            logger.info("History cleared")
-        except Exception as e:
-            logger.error(f"Clear error: {e}")
-            session.rollback()
-        finally:
-            session.close()
+    // Збираємо поточні налаштування
+    const config = collectSettings();
     
-    def start_scan(self, custom_config: Optional[Dict] = None):
-        """Запускає сканування"""
-        if self.is_scanning:
-            return False
+    fetch('/whale_hunter/scan', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(config)
+    }).then(() => {
+        setTimeout(() => location.reload(), 1500);
+    });
+}
+
+function toggleAutoMode() {
+    const enabled = document.getElementById('autoModeToggle').checked;
+    const interval = parseInt(document.getElementById('autoInterval').value);
+    
+    fetch('/whale_hunter/auto', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({ enabled, interval })
+    });
+}
+
+function toggleHtfAuto() {
+    const htfSelect = document.getElementById('htf');
+    htfSelect.disabled = document.getElementById('htfAuto').checked;
+}
+
+function collectSettings() {
+    return {
+        whp_min_score: parseInt(document.getElementById('minScore').value),
+        whp_min_volume: parseInt(document.getElementById('minVolume').value),
+        whp_scan_limit: parseInt(document.getElementById('scanLimit').value),
+        whp_main_tf: document.getElementById('mainTf').value,
+        whp_htf: document.getElementById('htf').value,
+        whp_htf_auto: document.getElementById('htfAuto').checked,
         
-        # Оновлюємо конфіг якщо передано
-        if custom_config:
-            for key, value in custom_config.items():
-                settings.save_settings({key: value})
+        whp_use_rsi: document.getElementById('useRsi').checked,
+        whp_rsi_weight: parseInt(document.getElementById('rsiWeight').value),
+        whp_rsi_oversold: parseInt(document.getElementById('rsiOversold').value),
+        whp_rsi_overbought: parseInt(document.getElementById('rsiOverbought').value),
         
-        self.update_config()
-        threading.Thread(target=self._scan_thread).start()
-        return True
-    
-    def _scan_thread(self):
-        """Потік сканування"""
-        self.is_scanning = True
-        self.progress = 0
-        self.status = "Initializing..."
-        self.scan_results = []
+        whp_use_mfi: document.getElementById('useMfi').checked,
+        whp_mfi_weight: parseInt(document.getElementById('mfiWeight').value),
         
-        config = self._load_config()
+        whp_use_rvol: document.getElementById('useRvol').checked,
+        whp_rvol_weight: parseInt(document.getElementById('rvolWeight').value),
+        whp_rvol_threshold: parseFloat(document.getElementById('rvolThreshold').value),
         
-        # Очищаємо старі результати
-        self.clear_history()
+        whp_use_ob: document.getElementById('useOb').checked,
+        whp_ob_weight: parseInt(document.getElementById('obWeight').value),
+        whp_ob_distance: parseFloat(document.getElementById('obDistance').value),
         
-        try:
-            # 1. Аналіз BTC тренду (завжди, для інформації)
-            self.status = "Analyzing BTC Trend..."
-            self.progress = 5
-            self.analyze_btc_trend()
-            
-            # 2. Визначаємо напрямок
-            direction = self.determine_direction()
-            
-            # Логуємо один раз при старті з детальною інформацією
-            raw_use_btc = settings.get('whp_use_btc')
-            config_use_btc = config.get('whp_use_btc')
-            logger.info(f"🎯 Whale Hunter PRO: Direction={direction}, BTC={self.btc_trend.value}")
-            logger.info(f"   whp_use_btc: settings.get()='{raw_use_btc}' (type={type(raw_use_btc).__name__}), config={config_use_btc}")
-            
-            # Очищаємо лічильник відхилень для діагностики
-            self._rejected_count = {'LONG': 0, 'SHORT': 0}
-            
-            if direction == "BOTH":
-                self.status = f"Mode: BOTH (BTC Filter OFF)"
-            else:
-                self.status = f"Mode: {direction} ({self.btc_trend.value})"
-            self.progress = 10
-            
-            # 3. Отримуємо список монет
-            self.status = "Fetching markets..."
-            tickers = bot_instance.get_all_tickers()
-            
-            # Фільтруємо по об'єму
-            min_vol = config.get('whp_min_volume', 5_000_000)
-            targets = [
-                t for t in tickers 
-                if t['symbol'].endswith('USDT') 
-                and float(t.get('turnover24h', 0)) > min_vol
-            ]
-            
-            # Сортуємо та обмежуємо
-            targets.sort(key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
-            scan_limit = config.get('whp_scan_limit', 50)
-            targets = targets[:scan_limit]
-            
-            total = len(targets)
-            self.status = f"Scanning {total} coins..."
-            
-            # 4. Сканування
-            for i, t in enumerate(targets):
-                if not self.is_scanning:
-                    break
-                
-                symbol = t['symbol']
-                self.status = f"Analyzing {symbol}... ({i+1}/{total})"
-                self.progress = 10 + int((i / total) * 85)
-                
-                # Якщо BOTH - скануємо обидва напрямки
-                if direction == "BOTH":
-                    # Спочатку LONG
-                    result_long = self.analyze_symbol(symbol, "LONG")
-                    if result_long:
-                        logger.info(f"✅ Found LONG: {symbol} score={result_long['score']}")
-                        self.save_signal(result_long)
-                        self.scan_results.append(result_long)
-                    
-                    # Потім SHORT
-                    result_short = self.analyze_symbol(symbol, "SHORT")
-                    if result_short:
-                        logger.info(f"✅ Found SHORT: {symbol} score={result_short['score']}")
-                        self.save_signal(result_short)
-                        self.scan_results.append(result_short)
-                else:
-                    # Один напрямок
-                    result = self.analyze_symbol(symbol, direction)
-                    if result:
-                        logger.info(f"✅ Found {direction}: {symbol} score={result['score']}")
-                        self.save_signal(result)
-                        self.scan_results.append(result)
-                
-                time.sleep(0.1)
-            
-            # 5. Завершення
-            self.progress = 100
-            
-            # Підсумок по напрямках
-            long_count = len([r for r in self.scan_results if r['direction'] == 'LONG'])
-            short_count = len([r for r in self.scan_results if r['direction'] == 'SHORT'])
-            logger.info(f"📊 Scan complete: {len(self.scan_results)} signals (LONG: {long_count}, SHORT: {short_count})")
-            
-            self.status = f"Done! Found {len(self.scan_results)} signals"
-            self.last_scan_time = datetime.now().strftime("%H:%M:%S")
-            
-        except Exception as e:
-            logger.error(f"Scan error: {e}")
-            self.status = f"Error: {str(e)}"
-        finally:
-            self.is_scanning = False
+        whp_use_btc: document.getElementById('useBtc').checked,
+        whp_btc_weight: parseInt(document.getElementById('btcWeight').value),
+        
+        whp_use_adx: document.getElementById('useAdx').checked,
+        whp_adx_weight: parseInt(document.getElementById('adxWeight').value),
+        
+        whp_use_squeeze: document.getElementById('useSqueeze').checked,
+        whp_squeeze_weight: parseInt(document.getElementById('squeezeWeight').value),
+        
+        whp_use_divergence: document.getElementById('useDivergence').checked,
+        whp_divergence_weight: parseInt(document.getElementById('divergenceWeight').value),
+        
+        whp_add_to_watchlist: document.getElementById('addToWatchlist').checked
+    };
+}
+
+function saveSettings() {
+    const config = collectSettings();
     
-    def set_auto_mode(self, enabled: bool, interval: int = 60):
-        """Встановлює авто-режим"""
-        self.auto_running = enabled
-        self.auto_interval = interval
-        settings.save_settings({
-            'whp_auto_mode': enabled,
-            'whp_auto_interval': interval
-        })
-        logger.info(f"Auto mode: {enabled}, interval: {interval}m")
+    // 🔍 DEBUG: Логуємо whp_use_btc
+    console.log('💾 Saving whp_use_btc:', config.whp_use_btc, 'checkbox:', document.getElementById('useBtc').checked);
     
-    def _scheduler_loop(self):
-        """Цикл планувальника для авто-режиму"""
-        while not self._stop_event.is_set():
-            if self.auto_running and not self.is_scanning:
-                logger.info("⏰ Auto-scan triggered")
-                self.start_scan()
-                
-                # Чекаємо інтервал
-                for _ in range(self.auto_interval * 60):
-                    if not self.auto_running:
-                        break
-                    time.sleep(1)
-            else:
-                time.sleep(5)
+    fetch('/whale_hunter/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(config)
+    }).then(r => r.json()).then(d => {
+        console.log('⚡ Settings saved');
+    });
+}
+
+// 🆕 АВТОЗБЕРЕЖЕННЯ при зміні параметрів
+let whpAutoSaveTimeout = null;
+function autoSaveWHP() {
+    if (whpAutoSaveTimeout) clearTimeout(whpAutoSaveTimeout);
+    whpAutoSaveTimeout = setTimeout(() => {
+        saveSettings();
+    }, 500);
+}
+
+// 🆕 Оновлення BTC Badge при зміні checkbox
+function updateBtcBadge() {
+    const badge = document.getElementById('btcTrendBadge');
+    const checkbox = document.getElementById('useBtc');
+    const trend = badge.dataset.trend; // BULLISH, BEARISH, NEUTRAL
     
-    def get_status(self) -> Dict:
-        """Повертає поточний статус"""
-        return {
-            'is_scanning': self.is_scanning,
-            'progress': self.progress,
-            'status': self.status,
-            'last_scan_time': self.last_scan_time,
-            'btc_trend': self.btc_trend.value,
-            'auto_running': self.auto_running,
-            'auto_interval': self.auto_interval,
-            'results_count': len(self.scan_results)
+    // Видаляємо всі класи станів
+    badge.classList.remove('bullish', 'bearish', 'neutral', 'disabled');
+    
+    if (!checkbox.checked) {
+        // Фільтр вимкнено
+        badge.classList.add('disabled');
+        badge.innerHTML = '<i class="ri-close-line"></i> BTC OFF';
+    } else {
+        // Фільтр увімкнено - показуємо тренд
+        if (trend === 'BULLISH') {
+            badge.classList.add('bullish');
+            badge.innerHTML = '<i class="ri-arrow-up-line"></i> BTC BULLISH';
+        } else if (trend === 'BEARISH') {
+            badge.classList.add('bearish');
+            badge.innerHTML = '<i class="ri-arrow-down-line"></i> BTC BEARISH';
+        } else {
+            badge.classList.add('neutral');
+            badge.innerHTML = '<i class="ri-subtract-line"></i> BTC NEUTRAL';
         }
+    }
+}
+
+// Ініціалізація автозбереження
+document.addEventListener('DOMContentLoaded', function() {
+    // Всі select та input елементи в settings-card
+    document.querySelectorAll('.settings-card select, .settings-card input').forEach(el => {
+        el.addEventListener('change', autoSaveWHP);
+        if (el.tagName === 'INPUT' && el.type !== 'checkbox' && el.type !== 'range') {
+            el.addEventListener('blur', autoSaveWHP);
+        }
+        // Для range також при input
+        if (el.type === 'range') {
+            el.addEventListener('input', autoSaveWHP);
+        }
+    });
     
-    def get_config(self) -> Dict:
-        """Повертає поточну конфігурацію"""
-        return self._load_config()
+    // Також для checkbox addToWatchlist якщо він поза settings-card
+    const addToWatchlist = document.getElementById('addToWatchlist');
+    if (addToWatchlist) {
+        addToWatchlist.addEventListener('change', autoSaveWHP);
+    }
     
-    def get_param_help(self) -> Dict:
-        """Повертає довідку по параметрах"""
-        return PARAM_HELP
+    // 🆕 Оновлення BTC Badge при зміні checkbox
+    const useBtcCheckbox = document.getElementById('useBtc');
+    if (useBtcCheckbox) {
+        useBtcCheckbox.addEventListener('change', updateBtcBadge);
+    }
+});
 
-
-# Глобальний екземпляр
-whale_hunter_pro = WhaleHunterPro()
-
-
-# ============================================================================
-#                    COORDINATOR INTEGRATION
-# ============================================================================
-
-def register_with_coordinator():
-    """Реєструє Whale Hunter PRO з координатором сканерів"""
-    try:
-        from scanner_coordinator import scanner_coordinator, ScannerType
-        
-        def scan_wrapper():
-            """Обгортка для сканування"""
-            whale_hunter_pro.start_scan()
-        
-        scanner_coordinator.set_scan_function(ScannerType.WHALE_HUNTER, scan_wrapper)
-        logger.info("✅ Whale Hunter PRO registered with Coordinator")
-        
-    except ImportError:
-        logger.warning("Scanner Coordinator not available")
-    except Exception as e:
-        logger.error(f"Coordinator registration error: {e}")
-
-
-# Автореєстрація при імпорті
-register_with_coordinator()
-
-
-# ============================================================================
-#                              FLASK ROUTES
-# ============================================================================
-
-def register_routes(app):
-    """Реєстрація маршрутів Flask"""
-    from flask import render_template, request, jsonify
+function clearHistory() {
+    if (!confirm('Видалити всю історію сигналів?')) return;
     
-    @app.route('/whale_hunter')
-    def whale_hunter_page():
-        return render_template(
-            'whale_hunter_pro.html',
-            history=whale_hunter_pro.get_history(),
-            status=whale_hunter_pro.get_status(),
-            config=whale_hunter_pro.get_config(),
-            help=PARAM_HELP
-        )
+    fetch('/whale_hunter/clear', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(() => location.reload());
+}
+
+// Table Sorting
+function initTableSorting() {
+    const table = document.getElementById('resultsTable');
+    if (!table) return;
     
-    @app.route('/whale_hunter/scan', methods=['POST'])
-    def whale_hunter_scan():
-        data = request.json or {}
-        whale_hunter_pro.start_scan(data)
-        return jsonify({'status': 'started'})
+    let sortColumn = null;
+    let sortDirection = 'desc';
     
-    @app.route('/whale_hunter/stop', methods=['POST'])
-    def whale_hunter_stop():
-        whale_hunter_pro.is_scanning = False
-        return jsonify({'status': 'stopped'})
-    
-    @app.route('/whale_hunter/status')
-    def whale_hunter_status():
-        return jsonify(whale_hunter_pro.get_status())
-    
-    @app.route('/whale_hunter/history')
-    def whale_hunter_history():
-        return jsonify(whale_hunter_pro.get_history())
-    
-    @app.route('/whale_hunter/config', methods=['GET', 'POST'])
-    def whale_hunter_config():
-        if request.method == 'POST':
-            data = request.json or {}
+    table.querySelectorAll('th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+            const colIndex = parseInt(th.getAttribute('data-column'));
             
-            # 🔧 Логуємо whp_use_btc для діагностики
-            if 'whp_use_btc' in data:
-                logger.info(f"💾 Saving settings: whp_use_btc={data['whp_use_btc']} (type={type(data['whp_use_btc']).__name__})")
+            if (sortColumn === colIndex) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortDirection = 'desc';
+            }
+            sortColumn = colIndex;
             
-            # Зберігаємо всі налаштування одразу
-            settings.save_settings(data)
-            whale_hunter_pro.update_config()
-            logger.info(f"⚡ Whale Hunter PRO config saved: {len(data)} params")
-            return jsonify({'status': 'ok'})
-        return jsonify(whale_hunter_pro.get_config())
+            // Clear classes
+            table.querySelectorAll('th.sortable').forEach(h => h.classList.remove('asc', 'desc'));
+            th.classList.add(sortDirection);
+            
+            // Sort
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            
+            rows.sort((a, b) => {
+                const cellA = a.children[colIndex];
+                const cellB = b.children[colIndex];
+                if (!cellA || !cellB) return 0;
+                
+                let valA = cellA.getAttribute('data-value') || cellA.innerText.trim();
+                let valB = cellB.getAttribute('data-value') || cellB.innerText.trim();
+                
+                const numA = parseFloat(valA);
+                const numB = parseFloat(valB);
+                
+                if (!isNaN(numA) && !isNaN(numB)) {
+                    return sortDirection === 'asc' ? numA - numB : numB - numA;
+                }
+                
+                return sortDirection === 'asc' 
+                    ? valA.localeCompare(valB) 
+                    : valB.localeCompare(valA);
+            });
+            
+            rows.forEach(row => tbody.appendChild(row));
+        });
+    });
     
-    @app.route('/whale_hunter/auto', methods=['POST'])
-    def whale_hunter_auto():
-        data = request.json or {}
-        enabled = data.get('enabled', False)
-        interval = int(data.get('interval', 60))
-        whale_hunter_pro.set_auto_mode(enabled, interval)
-        return jsonify({'status': 'ok'})
-    
-    @app.route('/whale_hunter/clear', methods=['POST'])
-    def whale_hunter_clear():
-        whale_hunter_pro.clear_history()
-        return jsonify({'status': 'cleared'})
+    // Default sort by Score
+    const scoreHeader = table.querySelector('th[data-column="3"]');
+    if (scoreHeader) scoreHeader.click();
+}
+
+// Auto-refresh when scanning
+{% if status.is_scanning %}
+setTimeout(() => location.reload(), 2000);
+{% endif %}
+</script>
+{% endblock %}
