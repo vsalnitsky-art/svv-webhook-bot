@@ -875,6 +875,38 @@ class ConfluenceScalper:
         try:
             ConfluenceSignal.__table__.create(db_manager.engine, checkfirst=True)
             SymbolBlacklist.__table__.create(db_manager.engine, checkfirst=True)
+            
+            # Migrate: add new columns to existing table
+            from sqlalchemy import text
+            new_columns = [
+                ("current_price", "FLOAT"),
+                ("highest_price", "FLOAT"),
+                ("lowest_price", "FLOAT"),
+                ("btc_trend", "VARCHAR(10)"),
+                ("pnl_usdt", "FLOAT"),
+                ("tp1_hit", "BOOLEAN DEFAULT FALSE"),
+                ("tp1_exit_price", "FLOAT"),
+                ("tp1_pnl", "FLOAT"),
+                ("leverage", "INTEGER DEFAULT 10"),
+                ("hold_time_minutes", "FLOAT"),
+                ("max_drawdown", "FLOAT"),
+                ("max_profit", "FLOAT"),
+                ("problem_type", "VARCHAR(50)"),
+                ("rsi_at_entry", "FLOAT"),
+                ("mfi_at_entry", "FLOAT"),
+                ("volume_ratio_at_entry", "FLOAT"),
+                ("atr_at_entry", "FLOAT"),
+            ]
+            
+            with db_manager.engine.connect() as conn:
+                for col_name, col_type in new_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE confluence_signals ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                        logger.info(f"✅ Added column: {col_name}")
+                    except Exception:
+                        pass  # Column already exists
+                        
         except Exception as e:
             logger.warning(f"Table creation: {e}")
     
