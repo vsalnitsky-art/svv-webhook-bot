@@ -247,6 +247,16 @@
 .score-bar-mini.adx { background: #14b8a6; }
 .score-bar-mini.squeeze { background: #f97316; }
 .score-bar-mini.div { background: #6366f1; }
+
+/* Pulse Badge Animation */
+.pulse-badge {
+    animation: pulse-glow 2s infinite;
+}
+
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
+}
 </style>
 
 <div class="container-fluid mt-4">
@@ -303,6 +313,11 @@
                     <div>
                         <strong><i class="ri-timer-line me-1"></i> Авто-режим</strong>
                         <button class="help-btn" data-bs-toggle="tooltip" title="{{ help.whp_auto_mode }}">?</button>
+                        <span id="autoModeStatus">
+                            {% if status.auto_running %}
+                            <span class="badge bg-success pulse-badge ms-2">AUTO ON</span>
+                            {% endif %}
+                        </span>
                     </div>
                     <div class="form-check form-switch mb-0">
                         <input class="form-check-input" type="checkbox" id="autoModeToggle" 
@@ -958,9 +973,68 @@ function initTableSorting() {
     if (scoreHeader) scoreHeader.click();
 }
 
-// Auto-refresh when scanning
+// ===== LIVE STATUS UPDATES =====
+function updateLiveStatus() {
+    fetch('/whale_hunter/status')
+        .then(r => r.json())
+        .then(status => {
+            // Update scan button
+            const scanBtn = document.getElementById('scanBtn');
+            if (status.is_scanning) {
+                scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>' + status.progress + '%';
+                scanBtn.disabled = true;
+                
+                // Update progress bar if exists
+                const progressBar = document.getElementById('scanProgressBar');
+                if (progressBar) {
+                    progressBar.style.width = status.progress + '%';
+                }
+                const statusText = document.getElementById('scanStatusText');
+                if (statusText) statusText.textContent = status.status;
+            } else {
+                scanBtn.innerHTML = '<i class="ri-radar-line me-2"></i>SCAN';
+                scanBtn.disabled = false;
+            }
+            
+            // Update auto mode indicator
+            const autoToggle = document.getElementById('autoModeToggle');
+            if (autoToggle && autoToggle.checked !== status.auto_running) {
+                autoToggle.checked = status.auto_running;
+            }
+            
+            // Update BTC trend badge
+            const btcBadge = document.getElementById('btcTrendBadge');
+            if (btcBadge) {
+                btcBadge.className = 'btc-trend-badge ' + 
+                    (status.btc_trend === 'BULLISH' ? 'bullish' : 
+                     status.btc_trend === 'BEARISH' ? 'bearish' : 'neutral');
+                btcBadge.innerHTML = status.btc_trend === 'BULLISH' 
+                    ? '<i class="ri-arrow-up-line"></i> BTC BULLISH'
+                    : status.btc_trend === 'BEARISH' 
+                        ? '<i class="ri-arrow-down-line"></i> BTC BEARISH'
+                        : '<i class="ri-subtract-line"></i> BTC NEUTRAL';
+            }
+            
+            // Show auto mode status
+            const autoStatusEl = document.getElementById('autoModeStatus');
+            if (autoStatusEl) {
+                if (status.auto_running) {
+                    autoStatusEl.innerHTML = '<span class="badge bg-success pulse-badge">AUTO ON</span>';
+                } else {
+                    autoStatusEl.innerHTML = '';
+                }
+            }
+        })
+        .catch(e => console.log('Status update error:', e));
+}
+
+// Start live updates
+setInterval(updateLiveStatus, 3000);
+updateLiveStatus();
+
+// Auto-refresh when scanning (fallback)
 {% if status.is_scanning %}
-setTimeout(() => location.reload(), 2000);
+setTimeout(() => location.reload(), 5000);
 {% endif %}
 </script>
 {% endblock %}
