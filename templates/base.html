@@ -59,6 +59,7 @@
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     </style>
     {% block head %}{% endblock %}
+    {% block extra_css %}{% endblock %}
 </head>
 <body>
 
@@ -164,5 +165,6 @@
         );
     });
 </script>
+{% block extra_js %}{% endblock %}
 </body>
 </html>
