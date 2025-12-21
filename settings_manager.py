@@ -233,7 +233,13 @@ DEFAULT_SETTINGS = {
     "cs_paper_trading": True,
     "cs_auto_execute": False,
     "cs_telegram_signals": False,
-    "cs_telegram_trades": False
+    "cs_telegram_trades": False,
+    
+    # Analytics
+    "cs_use_analytics": True,
+    "cs_avoid_problem_symbols": True,
+    "cs_adjust_on_losses": True,
+    "cs_leverage": 10
 }
 
 class SettingsManager:
