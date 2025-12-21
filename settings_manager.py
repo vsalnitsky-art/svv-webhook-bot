@@ -179,7 +179,61 @@ DEFAULT_SETTINGS = {
     "whp_use_divergence": True,
     "whp_divergence_weight": 10,
     
-    "whp_add_to_watchlist": True
+    "whp_add_to_watchlist": True,
+    
+    # === CONFLUENCE SCALPER ===
+    "cs_enabled": True,
+    "cs_timeframe": "15",
+    "cs_auto_preset": True,
+    
+    # Confluence Weights
+    "cs_min_confluence": 72,
+    "cs_weight_whale": 30,
+    "cs_weight_ob": 30,
+    "cs_weight_volume": 20,
+    "cs_weight_trend": 20,
+    
+    # Filters
+    "cs_use_btc_filter": True,
+    "cs_use_volume_filter": True,
+    "cs_use_volatility_filter": True,
+    "cs_use_time_filter": False,
+    "cs_use_correlation_filter": True,
+    
+    # Order Block
+    "cs_ob_distance_max": 1.2,
+    "cs_ob_swing_length": 3,
+    "cs_entry_mode": "Retest",
+    
+    # Take Profit
+    "cs_tp1_percent": 0.5,
+    "cs_tp2_percent": 1.0,
+    "cs_use_trailing": True,
+    "cs_trailing_offset": 0.3,
+    
+    # Stop Loss
+    "cs_sl_mode": "OB_Edge",
+    "cs_sl_fixed_percent": 0.5,
+    "cs_sl_atr_mult": 0.4,
+    "cs_sl_buffer": 0.1,
+    
+    # Risk Management
+    "cs_max_daily_trades": 3,
+    "cs_max_open_positions": 2,
+    "cs_max_same_direction": 2,
+    "cs_position_size_percent": 5.0,
+    "cs_max_daily_loss": 3.0,
+    
+    # Timing
+    "cs_signal_expiry": 10,
+    "cs_max_hold_time": 60,
+    "cs_scan_interval": 30,
+    
+    # Execution
+    "cs_paper_trading": True,
+    "cs_auto_execute": False,
+    "cs_telegram_signals": False,
+    "cs_telegram_trades": False
 }
 
 class SettingsManager:
