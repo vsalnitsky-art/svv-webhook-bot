@@ -321,6 +321,28 @@ class ScannerCoordinator:
 coordinator = ScannerCoordinator()
 
 
+# ============================================================================
+#                    SMART MONEY INTEGRATION
+# ============================================================================
+
+def add_to_smart_money_watchlist(symbol: str, direction: str, source: str = 'External') -> Dict:
+    """
+    Додає символ до Smart Money watchlist.
+    Використовується Whale Hunter PRO та іншими модулями.
+    """
+    try:
+        from smart_money_engine import smart_money_engine
+        result = smart_money_engine.add_to_watchlist(symbol, direction, source)
+        logger.info(f"📋 Added to SM Watchlist: {symbol} {direction} from {source}")
+        return result
+    except ImportError:
+        logger.warning("Smart Money Engine not available")
+        return {'status': 'error', 'error': 'Smart Money Engine not available'}
+    except Exception as e:
+        logger.error(f"Add to watchlist error: {e}")
+        return {'status': 'error', 'error': str(e)}
+
+
 def register_routes(app):
     from flask import jsonify, request
     
