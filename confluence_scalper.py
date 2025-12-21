@@ -770,7 +770,7 @@ class AnalyticsEngine:
             stats = session.query(
                 ConfluenceSignal.symbol,
                 func.count(ConfluenceSignal.id).label('total'),
-                func.sum(case([(ConfluenceSignal.pnl_percent < 0, 1)], else_=0)).label('losses'),
+                func.sum(case((ConfluenceSignal.pnl_percent < 0, 1), else_=0)).label('losses'),
                 func.sum(ConfluenceSignal.pnl_percent).label('total_pnl')
             ).filter(
                 ConfluenceSignal.status == 'Closed',
