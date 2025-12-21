@@ -41,7 +41,7 @@ from smart_money_routes import register_smart_money_routes
 
 from confluence_scalper import register_routes as register_confluence_scalper
 # ✅ IMPORT SCANNER COORDINATOR
-from scanner_coordinator import scanner_coordinator, ScannerType, add_to_smart_money_watchlist
+from scanner_coordinator import coordinator as scanner_coordinator, register_routes as register_coordinator_routes
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -1750,29 +1750,18 @@ register_whale_hunter_pro(app)
 # === SMART MONEY v2.0 ROUTES ===
 register_smart_money_routes(app)
 
-# === CONFLUENCE SCALPER v1.0 ROUTES ===
+# === CONFLUENCE SCALPER v2.0 ROUTES ===
 register_confluence_scalper(app)
 
-# === SCANNER COORDINATOR SETUP ===
-def setup_scanner_coordinator():
-    """Налаштовує координатор сканерів"""
-    try:
-        # Реєструємо RSI/MFI Screener
-        def rsi_scan_wrapper():
-            """Обгортка для RSI/MFI сканування"""
-            scheduled_rsi_mfi_scan()
-        
-        scanner_coordinator.set_scan_function(ScannerType.RSI_MFI, rsi_scan_wrapper)
-        
-        # Запускаємо координатор
-        scanner_coordinator.start()
-        logger.info("✅ Scanner Coordinator started")
-        
-    except Exception as e:
-        logger.error(f"Scanner Coordinator setup error: {e}")
+# === SCANNER COORDINATOR v1.0 ROUTES ===
+register_coordinator_routes(app)
 
 # Запускаємо координатор
-setup_scanner_coordinator()
+try:
+    scanner_coordinator.start()
+    logger.info("✅ Scanner Coordinator started")
+except Exception as e:
+    logger.error(f"Scanner Coordinator start error: {e}")
 
 # ===== ЗАПУСК =====
 
