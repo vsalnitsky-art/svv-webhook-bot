@@ -38,6 +38,8 @@ from sniper_strategy import sniper_bot
 from whale_hunter_pro import register_routes as register_whale_hunter_pro
 # ✅ IMPORT SMART MONEY v2.0
 from smart_money_routes import register_smart_money_routes
+
+from confluence_scalper import register_routes as register_confluence_scalper
 # ✅ IMPORT SCANNER COORDINATOR
 from scanner_coordinator import scanner_coordinator, ScannerType, add_to_smart_money_watchlist
 
@@ -1747,6 +1749,9 @@ register_whale_hunter_pro(app)
 
 # === SMART MONEY v2.0 ROUTES ===
 register_smart_money_routes(app)
+
+# === CONFLUENCE SCALPER v1.0 ROUTES ===
+register_confluence_scalper(app)
 
 # === SCANNER COORDINATOR SETUP ===
 def setup_scanner_coordinator():
