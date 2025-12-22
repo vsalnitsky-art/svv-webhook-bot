@@ -455,10 +455,10 @@ class FilterEngine:
     def _check_rsi_zone(self, data: Dict, direction: str) -> Tuple[bool, str]:
         """RSI має бути в екстремальній зоні"""
         rsi = data.get('rsi', 50)
-        preset = TIMEFRAME_PRESETS.get(self.config.get('sfs_timeframe', '15'), {})
         
-        oversold = preset.get('rsi_oversold', 40)
-        overbought = preset.get('rsi_overbought', 60)
+        # Use config parameters instead of preset
+        oversold = self.config.get('sfs_rsi_oversold', 40)
+        overbought = self.config.get('sfs_rsi_overbought', 60)
         
         if direction == 'LONG':
             if rsi > oversold:
@@ -473,22 +473,25 @@ class FilterEngine:
         """MFI підтверджує напрямок"""
         mfi = data.get('mfi', 50)
         
+        # Use config parameters
+        mfi_long = self.config.get('sfs_mfi_long', 45)
+        mfi_short = self.config.get('sfs_mfi_short', 55)
+        
         if direction == 'LONG':
-            # MFI < 50 або зростає
-            if mfi > 55:
-                return False, f"MFI {mfi:.1f} > 55 (no buy pressure)"
+            if mfi > mfi_long:
+                return False, f"MFI {mfi:.1f} > {mfi_long} (no buy pressure)"
         else:  # SHORT
-            # MFI > 50 або падає
-            if mfi < 45:
-                return False, f"MFI {mfi:.1f} < 45 (no sell pressure)"
+            if mfi < mfi_short:
+                return False, f"MFI {mfi:.1f} < {mfi_short} (no sell pressure)"
         
         return True, ""
     
     def _check_volume(self, data: Dict) -> Tuple[bool, str]:
         """Volume має бути вище середнього"""
         volume_ratio = data.get('volume_ratio', 1.0)
-        preset = TIMEFRAME_PRESETS.get(self.config.get('sfs_timeframe', '15'), {})
-        min_mult = preset.get('min_volume_mult', 1.5)
+        
+        # Use config parameter
+        min_mult = self.config.get('sfs_volume_min', 1.5)
         
         if volume_ratio < min_mult:
             return False, f"Volume ratio {volume_ratio:.2f}x < {min_mult}x"
@@ -520,10 +523,10 @@ class FilterEngine:
     def _check_atr(self, data: Dict) -> Tuple[bool, str]:
         """ATR в допустимому діапазоні"""
         atr_percent = data.get('atr_percent', 1.0)
-        preset = TIMEFRAME_PRESETS.get(self.config.get('sfs_timeframe', '15'), {})
         
-        atr_min = preset.get('atr_min', 0.2)
-        atr_max = preset.get('atr_max', 3.0)
+        # Use config parameters
+        atr_min = self.config.get('sfs_atr_min', 0.2)
+        atr_max = self.config.get('sfs_atr_max', 3.0)
         
         if atr_percent < atr_min:
             return False, f"ATR {atr_percent:.2f}% < {atr_min}% (too low volatility)"
@@ -533,11 +536,15 @@ class FilterEngine:
         return True, ""
     
     def _check_time(self) -> Tuple[bool, str]:
-        """Торгівля тільки в активні години (08:00-20:00 UTC)"""
+        """Торгівля тільки в активні години"""
         hour = datetime.utcnow().hour
         
-        if hour < 8 or hour >= 20:
-            return False, f"Outside trading hours (current: {hour}:00 UTC)"
+        # Use config parameters
+        time_from = self.config.get('sfs_time_from', 8)
+        time_to = self.config.get('sfs_time_to', 20)
+        
+        if hour < time_from or hour >= time_to:
+            return False, f"Outside trading hours ({time_from}:00-{time_to}:00 UTC, current: {hour}:00)"
         
         return True, ""
     
@@ -1012,6 +1019,17 @@ class SignalFlipScalper:
             'sfs_use_atr_filter': to_bool(settings.get('sfs_use_atr_filter'), True),
             'sfs_use_time_filter': to_bool(settings.get('sfs_use_time_filter'), False),
             'sfs_use_momentum_filter': to_bool(settings.get('sfs_use_momentum_filter'), True),
+            
+            # Filter Parameters
+            'sfs_rsi_oversold': to_int(settings.get('sfs_rsi_oversold'), 40),
+            'sfs_rsi_overbought': to_int(settings.get('sfs_rsi_overbought'), 60),
+            'sfs_mfi_long': to_int(settings.get('sfs_mfi_long'), 45),
+            'sfs_mfi_short': to_int(settings.get('sfs_mfi_short'), 55),
+            'sfs_volume_min': to_float(settings.get('sfs_volume_min'), 1.5),
+            'sfs_atr_min': to_float(settings.get('sfs_atr_min'), 0.2),
+            'sfs_atr_max': to_float(settings.get('sfs_atr_max'), 3.0),
+            'sfs_time_from': to_int(settings.get('sfs_time_from'), 8),
+            'sfs_time_to': to_int(settings.get('sfs_time_to'), 20),
             
             # Take Profit / Stop Loss
             'sfs_tp1_percent': to_float(settings.get('sfs_tp1_percent'), preset['tp1_percent']) if use_preset else to_float(settings.get('sfs_tp1_percent'), 0.4),
@@ -1576,7 +1594,8 @@ class SignalFlipScalper:
             'today_trades': today_trades,
             'open_positions': open_positions,
             'paper_mode': config.get('sfs_paper_trading', True),
-            'timeframe': config.get('sfs_timeframe', '15')
+            'timeframe': config.get('sfs_timeframe', '15'),
+            'tracked_symbols': len(self.signal_tracker._signals)
         }
     
     def get_history(self, limit: int = 100) -> List[Dict]:
