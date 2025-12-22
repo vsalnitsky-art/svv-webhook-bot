@@ -4,7 +4,7 @@
 
 {% block head %}
 <style>
-/* ===== Light Theme ===== */
+/* ===== Light Theme Variables ===== */
 :root {
     --bg-primary: #f8fafc;
     --bg-card: #ffffff;
@@ -15,11 +15,23 @@
     --success: #10b981;
     --danger: #ef4444;
     --warning: #f59e0b;
+    --purple: #8b5cf6;
 }
 
 body { background: var(--bg-primary); }
 
-/* Cards */
+/* ===== Page Header ===== */
+.page-header {
+    background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%);
+    color: white;
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin-bottom: 1.5rem;
+}
+.page-header h1 { font-size: 1.75rem; font-weight: 700; margin: 0; }
+.page-header .subtitle { opacity: 0.9; font-size: 0.9rem; margin-top: 0.25rem; }
+
+/* ===== Cards ===== */
 .sfs-card {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
@@ -28,29 +40,15 @@ body { background: var(--bg-primary); }
     margin-bottom: 1rem;
     box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
-
-/* Page Header */
-.page-header {
-    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
-    color: white;
-    padding: 1.5rem;
-    border-radius: 12px;
-    margin-bottom: 1.5rem;
+.sfs-card h6 { 
+    font-weight: 600; 
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
 }
 
-.page-header h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin: 0;
-}
-
-.page-header .subtitle {
-    opacity: 0.9;
-    font-size: 0.9rem;
-    margin-top: 0.25rem;
-}
-
-/* Status Bar */
+/* ===== Status Bar ===== */
 .status-bar {
     display: flex;
     gap: 1rem;
@@ -60,144 +58,184 @@ body { background: var(--bg-primary); }
     border-radius: 8px;
     margin-bottom: 1rem;
 }
-
 .status-item {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     font-size: 0.85rem;
 }
-
 .status-pill {
     padding: 0.25rem 0.75rem;
     border-radius: 20px;
     font-size: 0.75rem;
     font-weight: 600;
 }
-
 .status-idle { background: #e2e8f0; color: #64748b; }
 .status-scanning { background: #dbeafe; color: #1d4ed8; }
-.status-active { background: #d1fae5; color: #065f46; }
-.status-error { background: #fee2e2; color: #991b1b; }
 
-/* BTC Badge */
+/* ===== BTC Badge ===== */
 .btc-badge {
     padding: 0.25rem 0.75rem;
     border-radius: 6px;
     font-weight: 600;
     font-size: 0.8rem;
 }
-
 .btc-bullish { background: #d1fae5; color: #065f46; }
 .btc-bearish { background: #fee2e2; color: #991b1b; }
 .btc-neutral { background: #e2e8f0; color: #64748b; }
 
-/* Accordions */
-.sfs-accordion {
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    margin-bottom: 0.75rem;
-    overflow: hidden;
+/* ===== Timeframe Buttons ===== */
+.tf-btn {
+    padding: 0.5rem 1rem;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
     background: white;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.tf-btn:hover { border-color: var(--purple); color: var(--purple); }
+.tf-btn.active { 
+    background: var(--purple); 
+    color: white; 
+    border-color: var(--purple); 
 }
 
-.sfs-accordion-header {
-    padding: 0.875rem 1rem;
-    background: #f8fafc;
+/* ===== Filter Badges ===== */
+.filter-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+}
+.filter-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 8px;
+    background: #f1f5f9;
+    border: 2px solid #e2e8f0;
+    font-size: 0.8rem;
+    font-weight: 500;
     cursor: pointer;
+    transition: all 0.2s;
+}
+.filter-badge:hover { border-color: #cbd5e1; }
+.filter-badge.active {
+    background: #dbeafe;
+    border-color: #3b82f6;
+    color: #1d4ed8;
+}
+.filter-badge .check-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 2px solid #cbd5e1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: white;
+}
+.filter-badge.active .check-icon {
+    background: #3b82f6;
+    border-color: #3b82f6;
+}
+
+/* ===== Parameter Groups ===== */
+.param-group {
+    background: #f8fafc;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+}
+.param-group-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+}
+.param-row {
+    display: flex;
+    gap: 0.75rem;
+}
+.param-item {
+    flex: 1;
+}
+.param-item label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.25rem;
+}
+.param-item input, .param-item select {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    text-align: center;
+}
+.param-item input:focus, .param-item select:focus {
+    outline: none;
+    border-color: var(--purple);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+/* ===== Toggle Switch ===== */
+.toggle-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-weight: 600;
-    color: var(--text-primary);
-    border-bottom: 1px solid transparent;
-    transition: all 0.2s;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f1f5f9;
 }
-
-.sfs-accordion-header:hover {
-    background: #f1f5f9;
+.toggle-row:last-child { border-bottom: none; }
+.toggle-label { font-size: 0.85rem; }
+.toggle-switch {
+    position: relative;
+    width: 44px;
+    height: 24px;
 }
-
-.sfs-accordion-header.active {
-    border-bottom-color: var(--border-color);
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
 }
-
-.sfs-accordion-header i {
-    transition: transform 0.3s;
-}
-
-.sfs-accordion-header.active i {
-    transform: rotate(180deg);
-}
-
-.sfs-accordion-body {
-    padding: 1rem;
-    display: none;
-}
-
-.sfs-accordion-body.show {
-    display: block;
-}
-
-/* Filter Badges */
-.filter-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-}
-
-.filter-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.375rem 0.75rem;
-    border-radius: 6px;
-    background: #f1f5f9;
-    border: 1px solid #e2e8f0;
-    font-size: 0.8rem;
+.toggle-slider {
+    position: absolute;
     cursor: pointer;
-    transition: all 0.2s;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #e2e8f0;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+.toggle-switch input:checked + .toggle-slider {
+    background-color: var(--purple);
+}
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(20px);
 }
 
-.filter-badge:has(input:checked) {
-    background: #dbeafe;
-    border-color: #93c5fd;
-    color: #1d4ed8;
-}
-
-.filter-badge .form-check-input {
-    margin-right: 0.5rem;
-    margin-top: 0;
-}
-
-/* Presets */
-.preset-btn {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    background: white;
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.preset-btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.preset-btn.active {
-    background: var(--accent);
-    color: white;
-    border-color: var(--accent);
-}
-
-/* Results Table */
+/* ===== Results Table ===== */
 .results-table {
     width: 100%;
     font-size: 0.85rem;
 }
-
 .results-table th {
     background: #f8fafc;
     padding: 0.75rem;
@@ -205,90 +243,43 @@ body { background: var(--bg-primary); }
     font-weight: 600;
     border-bottom: 2px solid var(--border-color);
 }
-
 .results-table td {
     padding: 0.75rem;
     border-bottom: 1px solid var(--border-color);
 }
+.results-table tbody tr:hover { background: #f8fafc; }
 
-.results-table tbody tr:hover {
-    background: #f8fafc;
-}
-
-/* Direction badges */
+/* ===== Direction Badges ===== */
 .badge-long {
     background: linear-gradient(135deg, #059669, #10b981);
     color: white;
     padding: 0.25rem 0.75rem;
     border-radius: 4px;
     font-weight: 600;
+    font-size: 0.75rem;
 }
-
 .badge-short {
     background: linear-gradient(135deg, #dc2626, #ef4444);
     color: white;
     padding: 0.25rem 0.75rem;
     border-radius: 4px;
     font-weight: 600;
+    font-size: 0.75rem;
 }
 
-/* Status badges */
-.status-open { background: #dbeafe; color: #1d4ed8; }
-.status-tp1 { background: #d1fae5; color: #065f46; }
-.status-closed { background: #e2e8f0; color: #64748b; }
-
-/* Stats Cards */
+/* ===== Stats Cards ===== */
 .stat-card {
     text-align: center;
     padding: 1rem;
     border-radius: 8px;
     background: #f8fafc;
 }
+.stat-value { font-size: 1.5rem; font-weight: 700; color: var(--text-primary); }
+.stat-label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; }
 
-.stat-value {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--text-primary);
-}
-
-.stat-label {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-}
-
-/* Auto Save Indicator */
-.auto-save-indicator {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    padding: 0.5rem 1rem;
-    background: var(--success);
-    color: white;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    opacity: 0;
-    transition: opacity 0.3s;
-    z-index: 1000;
-}
-
-.auto-save-indicator.show {
-    opacity: 1;
-}
-
-/* Pulse animation */
-.pulse {
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-/* Scan button */
+/* ===== Scan Button ===== */
 .scan-btn {
-    background: linear-gradient(135deg, #1e40af, #3b82f6);
+    background: linear-gradient(135deg, #5b21b6, #8b5cf6);
     color: white;
     border: none;
     padding: 0.75rem 2rem;
@@ -297,12 +288,10 @@ body { background: var(--bg-primary); }
     cursor: pointer;
     transition: all 0.2s;
 }
-
 .scan-btn:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
 }
-
 .scan-btn:disabled {
     background: #94a3b8;
     cursor: not-allowed;
@@ -310,20 +299,53 @@ body { background: var(--bg-primary); }
     box-shadow: none;
 }
 
-/* Progress bar */
-.progress-bar-container {
-    height: 4px;
+/* ===== Progress Bar ===== */
+.progress-container {
+    height: 6px;
     background: #e2e8f0;
-    border-radius: 2px;
+    border-radius: 3px;
     overflow: hidden;
     margin-top: 0.5rem;
 }
-
-.progress-bar-fill {
+.progress-fill {
     height: 100%;
-    background: var(--accent);
+    background: linear-gradient(90deg, #8b5cf6, #a78bfa);
     transition: width 0.3s;
 }
+
+/* ===== Auto Save Toast ===== */
+.save-toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 0.75rem 1.5rem;
+    background: var(--success);
+    color: white;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.3s;
+    z-index: 1000;
+}
+.save-toast.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* ===== Auto Mode Card ===== */
+.auto-mode-card {
+    background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+    border: 2px solid #c4b5fd;
+}
+
+/* ===== Pulse Animation ===== */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+.pulse { animation: pulse 2s infinite; }
 </style>
 {% endblock %}
 
@@ -335,11 +357,13 @@ body { background: var(--bg-primary); }
         <div class="d-flex justify-content-between align-items-center">
             <div>
                 <h1><i class="ri-refresh-line me-2"></i>Signal Flip Scalper</h1>
-                <div class="subtitle">Стратегія швидких угод на зміні сигналу RSI/MFI • Paper Trading Mode</div>
+                <div class="subtitle">Стратегія швидких угод на зміні сигналу RSI/MFI • 
+                    <span id="headerMode">{{ 'Paper Trading' if config.sfs_paper_trading else 'LIVE Trading' }}</span>
+                </div>
             </div>
-            <div>
+            <div class="d-flex align-items-center gap-3">
                 <span class="badge bg-light text-dark">v1.0</span>
-                <button class="scan-btn ms-3" id="scanBtn" onclick="startScan()">
+                <button class="scan-btn" id="scanBtn" onclick="startScan()">
                     <i class="ri-radar-line me-2"></i>SCAN
                 </button>
             </div>
@@ -347,7 +371,7 @@ body { background: var(--bg-primary); }
     </div>
     
     <!-- Status Bar -->
-    <div class="status-bar" id="statusBar">
+    <div class="status-bar">
         <div class="status-item">
             <span class="text-muted">Scanner:</span>
             <span class="status-pill status-idle" id="scannerStatus">IDLE</span>
@@ -366,8 +390,8 @@ body { background: var(--bg-primary); }
         </div>
         <div class="status-item">
             <span class="text-muted">Mode:</span>
-            <span class="badge {{ 'bg-warning' if status.paper_mode else 'bg-danger' }}" id="modeLabel">
-                {{ 'PAPER' if status.paper_mode else 'LIVE' }}
+            <span class="badge {{ 'bg-warning text-dark' if config.sfs_paper_trading else 'bg-danger' }}" id="modeLabel">
+                {{ 'PAPER' if config.sfs_paper_trading else 'LIVE' }}
             </span>
         </div>
         <div class="status-item">
@@ -378,227 +402,217 @@ body { background: var(--bg-primary); }
         </div>
     </div>
     
+    <!-- Scan Progress (hidden by default) -->
+    <div class="sfs-card" id="progressCard" style="display: none;">
+        <div class="d-flex justify-content-between align-items-center">
+            <span id="progressText">Scanning...</span>
+            <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-container">
+            <div class="progress-fill" id="progressBar" style="width: 0%"></div>
+        </div>
+    </div>
+    
     <div class="row">
-        <!-- LEFT: Settings -->
+        <!-- LEFT COLUMN: Settings -->
         <div class="col-lg-4">
             
-            <!-- Timeframe -->
+            <!-- Timeframe Selection -->
             <div class="sfs-card">
-                <h6 class="fw-bold mb-3"><i class="ri-time-line me-2 text-primary"></i>Таймфрейм</h6>
+                <h6><i class="ri-time-line me-2 text-primary"></i>Таймфрейм</h6>
                 <div class="d-flex gap-2 flex-wrap mb-3">
-                    {% for tf, preset in presets.items() %}
-                    <button class="preset-btn {{ 'active' if config.sfs_timeframe == tf }}" 
-                            onclick="selectTimeframe('{{ tf }}')" data-tf="{{ tf }}">
-                        {{ preset.name.split('(')[1].replace(')', '') }}
-                    </button>
-                    {% endfor %}
+                    <button class="tf-btn {{ 'active' if config.sfs_timeframe == '1' }}" data-tf="1" onclick="selectTF(this)">1m</button>
+                    <button class="tf-btn {{ 'active' if config.sfs_timeframe == '5' }}" data-tf="5" onclick="selectTF(this)">5m</button>
+                    <button class="tf-btn {{ 'active' if config.sfs_timeframe == '15' }}" data-tf="15" onclick="selectTF(this)">15m</button>
+                    <button class="tf-btn {{ 'active' if config.sfs_timeframe == '30' }}" data-tf="30" onclick="selectTF(this)">30m</button>
+                    <button class="tf-btn {{ 'active' if config.sfs_timeframe == '60' }}" data-tf="60" onclick="selectTF(this)">1h</button>
                 </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="autoPreset" 
-                           {{ 'checked' if config.sfs_auto_preset }} onchange="autoSave()">
-                    <label class="form-check-label small" for="autoPreset">
-                        Авто-пресет при зміні TF
+                <div class="toggle-row">
+                    <span class="toggle-label">Авто-пресет при зміні TF</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autoPreset" {{ 'checked' if config.sfs_auto_preset }} onchange="saveConfig()">
+                        <span class="toggle-slider"></span>
                     </label>
                 </div>
             </div>
             
             <!-- Filters -->
-            <div class="sfs-accordion">
-                <div class="sfs-accordion-header active" onclick="toggleAccordion(this)">
-                    <span><i class="ri-filter-3-line me-2"></i>Фільтри (всі опціональні)</span>
-                    <i class="ri-arrow-down-s-line"></i>
-                </div>
-                <div class="sfs-accordion-body show">
-                    <div class="filter-row">
-                        <label class="filter-badge">
-                            <input class="form-check-input" type="checkbox" id="useRsiFilter" 
-                                   {{ 'checked' if config.sfs_use_rsi_filter }} onchange="autoSave()">
-                            <span>RSI Zone</span>
-                        </label>
-                        <label class="filter-badge">
-                            <input class="form-check-input" type="checkbox" id="useMfiFilter" 
-                                   {{ 'checked' if config.sfs_use_mfi_filter }} onchange="autoSave()">
-                            <span>MFI</span>
-                        </label>
-                        <label class="filter-badge">
-                            <input class="form-check-input" type="checkbox" id="useVolumeFilter" 
-                                   {{ 'checked' if config.sfs_use_volume_filter }} onchange="autoSave()">
-                            <span>Volume</span>
-                        </label>
-                        <label class="filter-badge">
-                            <input class="form-check-input" type="checkbox" id="useBtcFilter" 
-                                   {{ 'checked' if config.sfs_use_btc_filter }} onchange="autoSave()">
-                            <span>BTC Trend</span>
-                        </label>
+            <div class="sfs-card">
+                <h6><i class="ri-filter-3-line me-2 text-primary"></i>Фільтри (опціональні)</h6>
+                <div class="filter-grid">
+                    <div class="filter-badge {{ 'active' if config.sfs_use_rsi_filter }}" data-filter="rsi" onclick="toggleFilter(this)">
+                        <span class="check-icon">✓</span>
+                        <span>RSI Zone</span>
                     </div>
-                    <div class="filter-row">
-                        <label class="filter-badge">
-                            <input class="form-check-input" type="checkbox" id="useHtfFilter" 
-                                   {{ 'checked' if config.sfs_use_htf_filter }} onchange="autoSave()">
-                            <span>HTF Signal</span>
-                        </label>
-                        <label class="filter-badge">
-                            <input class="form-check-input" type="checkbox" id="useAtrFilter" 
-                                   {{ 'checked' if config.sfs_use_atr_filter }} onchange="autoSave()">
-                            <span>ATR Range</span>
-                        </label>
-                        <label class="filter-badge">
-                            <input class="form-check-input" type="checkbox" id="useTimeFilter" 
-                                   {{ 'checked' if config.sfs_use_time_filter }} onchange="autoSave()">
-                            <span>Time</span>
-                        </label>
-                        <label class="filter-badge">
-                            <input class="form-check-input" type="checkbox" id="useMomentumFilter" 
-                                   {{ 'checked' if config.sfs_use_momentum_filter }} onchange="autoSave()">
-                            <span>Momentum</span>
-                        </label>
+                    <div class="filter-badge {{ 'active' if config.sfs_use_mfi_filter }}" data-filter="mfi" onclick="toggleFilter(this)">
+                        <span class="check-icon">✓</span>
+                        <span>MFI</span>
                     </div>
-                    <small class="text-muted">
-                        <i class="ri-information-line"></i> Вимкнені фільтри не впливають на результат
-                    </small>
+                    <div class="filter-badge {{ 'active' if config.sfs_use_volume_filter }}" data-filter="volume" onclick="toggleFilter(this)">
+                        <span class="check-icon">✓</span>
+                        <span>Volume</span>
+                    </div>
+                    <div class="filter-badge {{ 'active' if config.sfs_use_btc_filter }}" data-filter="btc" onclick="toggleFilter(this)">
+                        <span class="check-icon">✓</span>
+                        <span>BTC Trend</span>
+                    </div>
+                    <div class="filter-badge {{ 'active' if config.sfs_use_htf_filter }}" data-filter="htf" onclick="toggleFilter(this)">
+                        <span class="check-icon">✓</span>
+                        <span>HTF Signal</span>
+                    </div>
+                    <div class="filter-badge {{ 'active' if config.sfs_use_atr_filter }}" data-filter="atr" onclick="toggleFilter(this)">
+                        <span class="check-icon">✓</span>
+                        <span>ATR Range</span>
+                    </div>
+                    <div class="filter-badge {{ 'active' if config.sfs_use_time_filter }}" data-filter="time" onclick="toggleFilter(this)">
+                        <span class="check-icon">✓</span>
+                        <span>Time</span>
+                    </div>
+                    <div class="filter-badge {{ 'active' if config.sfs_use_momentum_filter }}" data-filter="momentum" onclick="toggleFilter(this)">
+                        <span class="check-icon">✓</span>
+                        <span>Momentum</span>
+                    </div>
                 </div>
+                <small class="text-muted d-block mt-2">
+                    <i class="ri-information-line"></i> Вимкнені фільтри НЕ впливають на результат
+                </small>
             </div>
             
             <!-- Take Profit & Stop Loss -->
-            <div class="sfs-accordion">
-                <div class="sfs-accordion-header" onclick="toggleAccordion(this)">
-                    <span><i class="ri-crosshair-2-line me-2"></i>Take Profit & Stop Loss</span>
-                    <i class="ri-arrow-down-s-line"></i>
+            <div class="sfs-card">
+                <h6><i class="ri-crosshair-2-line me-2 text-success"></i>Take Profit & Stop Loss</h6>
+                
+                <div class="param-group">
+                    <div class="param-group-title">Targets</div>
+                    <div class="param-row">
+                        <div class="param-item">
+                            <label>TP1 %</label>
+                            <input type="number" id="tp1Percent" value="{{ config.sfs_tp1_percent }}" step="0.1" onchange="saveConfig()">
+                        </div>
+                        <div class="param-item">
+                            <label>TP2 %</label>
+                            <input type="number" id="tp2Percent" value="{{ config.sfs_tp2_percent }}" step="0.1" onchange="saveConfig()">
+                        </div>
+                        <div class="param-item">
+                            <label>SL %</label>
+                            <input type="number" id="slPercent" value="{{ config.sfs_sl_percent }}" step="0.1" onchange="saveConfig()">
+                        </div>
+                    </div>
                 </div>
-                <div class="sfs-accordion-body">
-                    <div class="row g-2 mb-3">
-                        <div class="col-4">
-                            <label class="form-label small">TP1 %</label>
-                            <input type="number" class="form-control form-control-sm" id="tp1Percent" 
-                                   value="{{ config.sfs_tp1_percent }}" step="0.1" onchange="autoSave()">
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label small">TP2 %</label>
-                            <input type="number" class="form-control form-control-sm" id="tp2Percent" 
-                                   value="{{ config.sfs_tp2_percent }}" step="0.1" onchange="autoSave()">
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label small">SL %</label>
-                            <input type="number" class="form-control form-control-sm" id="slPercent" 
-                                   value="{{ config.sfs_sl_percent }}" step="0.1" onchange="autoSave()">
-                        </div>
+                
+                <div class="param-group">
+                    <div class="param-group-title">Trailing & Hold</div>
+                    <div class="toggle-row mb-2">
+                        <span class="toggle-label">Trailing Stop після TP1</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="useTrailing" {{ 'checked' if config.sfs_use_trailing }} onchange="saveConfig()">
+                            <span class="toggle-slider"></span>
+                        </label>
                     </div>
-                    <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="useTrailing" 
-                               {{ 'checked' if config.sfs_use_trailing }} onchange="autoSave()">
-                        <label class="form-check-label small" for="useTrailing">Trailing Stop після TP1</label>
-                    </div>
-                    <div class="row g-2">
-                        <div class="col-6">
-                            <label class="form-label small">Trailing Offset %</label>
-                            <input type="number" class="form-control form-control-sm" id="trailingOffset" 
-                                   value="{{ config.sfs_trailing_offset }}" step="0.05" onchange="autoSave()">
+                    <div class="param-row">
+                        <div class="param-item">
+                            <label>Trailing Offset %</label>
+                            <input type="number" id="trailingOffset" value="{{ config.sfs_trailing_offset }}" step="0.05" onchange="saveConfig()">
                         </div>
-                        <div class="col-6">
-                            <label class="form-label small">Max Hold (хв)</label>
-                            <input type="number" class="form-control form-control-sm" id="maxHold" 
-                                   value="{{ config.sfs_max_hold_minutes }}" onchange="autoSave()">
+                        <div class="param-item">
+                            <label>Max Hold (хв)</label>
+                            <input type="number" id="maxHold" value="{{ config.sfs_max_hold_minutes }}" onchange="saveConfig()">
                         </div>
                     </div>
                 </div>
             </div>
             
             <!-- Risk Management -->
-            <div class="sfs-accordion">
-                <div class="sfs-accordion-header" onclick="toggleAccordion(this)">
-                    <span><i class="ri-shield-line me-2"></i>Risk Management</span>
-                    <i class="ri-arrow-down-s-line"></i>
+            <div class="sfs-card">
+                <h6><i class="ri-shield-line me-2 text-warning"></i>Risk Management</h6>
+                
+                <div class="param-group">
+                    <div class="param-group-title">Limits</div>
+                    <div class="param-row">
+                        <div class="param-item">
+                            <label>Max Trades/Day</label>
+                            <input type="number" id="maxDailyTrades" value="{{ config.sfs_max_daily_trades }}" onchange="saveConfig()">
+                        </div>
+                        <div class="param-item">
+                            <label>Max Open</label>
+                            <input type="number" id="maxOpenPositions" value="{{ config.sfs_max_open_positions }}" onchange="saveConfig()">
+                        </div>
+                    </div>
                 </div>
-                <div class="sfs-accordion-body">
-                    <div class="row g-2 mb-2">
-                        <div class="col-6">
-                            <label class="form-label small">Max Trades/Day</label>
-                            <input type="number" class="form-control form-control-sm" id="maxDailyTrades" 
-                                   value="{{ config.sfs_max_daily_trades }}" onchange="autoSave()">
+                
+                <div class="param-group">
+                    <div class="param-group-title">Position</div>
+                    <div class="param-row">
+                        <div class="param-item">
+                            <label>Position Size %</label>
+                            <input type="number" id="positionSize" value="{{ config.sfs_position_size_percent }}" step="0.5" onchange="saveConfig()">
                         </div>
-                        <div class="col-6">
-                            <label class="form-label small">Max Open</label>
-                            <input type="number" class="form-control form-control-sm" id="maxOpenPositions" 
-                                   value="{{ config.sfs_max_open_positions }}" onchange="autoSave()">
+                        <div class="param-item">
+                            <label>Leverage</label>
+                            <input type="number" id="leverage" value="{{ config.sfs_leverage }}" onchange="saveConfig()">
                         </div>
-                    </div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-6">
-                            <label class="form-label small">Position Size %</label>
-                            <input type="number" class="form-control form-control-sm" id="positionSize" 
-                                   value="{{ config.sfs_position_size_percent }}" step="0.5" onchange="autoSave()">
-                        </div>
-                        <div class="col-6">
-                            <label class="form-label small">Leverage</label>
-                            <input type="number" class="form-control form-control-sm" id="leverage" 
-                                   value="{{ config.sfs_leverage }}" onchange="autoSave()">
-                        </div>
-                    </div>
-                    <div class="row g-2">
-                        <div class="col-12">
-                            <label class="form-label small">Max Daily Loss %</label>
-                            <input type="number" class="form-control form-control-sm" id="maxDailyLoss" 
-                                   value="{{ config.sfs_max_daily_loss }}" step="0.5" onchange="autoSave()">
+                        <div class="param-item">
+                            <label>Max Loss/Day %</label>
+                            <input type="number" id="maxDailyLoss" value="{{ config.sfs_max_daily_loss }}" step="0.5" onchange="saveConfig()">
                         </div>
                     </div>
                 </div>
             </div>
             
-            <!-- Execution -->
-            <div class="sfs-accordion">
-                <div class="sfs-accordion-header" onclick="toggleAccordion(this)">
-                    <span><i class="ri-play-circle-line me-2"></i>Execution</span>
-                    <i class="ri-arrow-down-s-line"></i>
+            <!-- Execution Mode -->
+            <div class="sfs-card">
+                <h6><i class="ri-play-circle-line me-2 text-danger"></i>Execution</h6>
+                <div class="toggle-row">
+                    <span class="toggle-label"><strong>Paper Trading</strong> <small class="text-muted">(рекомендовано)</small></span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="paperTrading" {{ 'checked' if config.sfs_paper_trading }} onchange="saveConfig()">
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
-                <div class="sfs-accordion-body">
-                    <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="paperTrading" 
-                               {{ 'checked' if config.sfs_paper_trading }} onchange="autoSave()">
-                        <label class="form-check-label" for="paperTrading">
-                            <strong>Paper Trading</strong> <small class="text-muted">(рекомендовано)</small>
-                        </label>
-                    </div>
-                    <div class="form-check mb-2">
-                        <input class="form-check-input" type="checkbox" id="autoExecute" 
-                               {{ 'checked' if config.sfs_auto_execute }} onchange="autoSave()">
-                        <label class="form-check-label" for="autoExecute">Auto Execute</label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="telegramSignals" 
-                               {{ 'checked' if config.sfs_telegram_signals }} onchange="autoSave()">
-                        <label class="form-check-label" for="telegramSignals">Telegram Signals</label>
-                    </div>
+                <div class="toggle-row">
+                    <span class="toggle-label">Auto Execute</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autoExecute" {{ 'checked' if config.sfs_auto_execute }} onchange="saveConfig()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="toggle-row">
+                    <span class="toggle-label">Telegram Signals</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="telegramSignals" {{ 'checked' if config.sfs_telegram_signals }} onchange="saveConfig()">
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
             </div>
             
             <!-- Auto Mode -->
-            <div class="sfs-card" style="background: linear-gradient(135deg, #f0f9ff, #e0f2fe); border-color: #bae6fd;">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="fw-bold mb-0"><i class="ri-robot-line me-2"></i>Auto Mode</h6>
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="autoModeToggle" 
-                               {{ 'checked' if status.auto_running }} onchange="toggleAutoMode()">
-                    </div>
+            <div class="sfs-card auto-mode-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0"><i class="ri-robot-line me-2"></i>Auto Mode</h6>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autoModeToggle" {{ 'checked' if status.auto_running }} onchange="toggleAutoMode()">
+                        <span class="toggle-slider"></span>
+                    </label>
                 </div>
-                <div class="input-group input-group-sm">
-                    <span class="input-group-text">Інтервал</span>
-                    <select class="form-select" id="scanInterval" onchange="autoSave()">
-                        <option value="30" {{ 'selected' if config.sfs_scan_interval == 30 }}>30 сек</option>
-                        <option value="60" {{ 'selected' if config.sfs_scan_interval == 60 }}>1 хв</option>
-                        <option value="120" {{ 'selected' if config.sfs_scan_interval == 120 }}>2 хв</option>
-                        <option value="300" {{ 'selected' if config.sfs_scan_interval == 300 }}>5 хв</option>
+                <div class="param-item">
+                    <label>Інтервал сканування</label>
+                    <select class="form-select form-select-sm" id="scanInterval" onchange="saveConfig()">
+                        <option value="30" {{ 'selected' if config.sfs_scan_interval == 30 }}>30 секунд</option>
+                        <option value="60" {{ 'selected' if config.sfs_scan_interval == 60 }}>1 хвилина</option>
+                        <option value="120" {{ 'selected' if config.sfs_scan_interval == 120 }}>2 хвилини</option>
+                        <option value="300" {{ 'selected' if config.sfs_scan_interval == 300 }}>5 хвилин</option>
                     </select>
                 </div>
             </div>
             
         </div>
         
-        <!-- RIGHT: Results & History -->
+        <!-- RIGHT COLUMN: Results & History -->
         <div class="col-lg-8">
             
             <!-- Statistics -->
             <div class="sfs-card">
-                <h6 class="fw-bold mb-3"><i class="ri-bar-chart-line me-2 text-primary"></i>Статистика</h6>
+                <h6><i class="ri-bar-chart-line me-2 text-primary"></i>Статистика</h6>
                 <div class="row g-3">
                     <div class="col-3">
                         <div class="stat-card">
@@ -631,25 +645,14 @@ body { background: var(--bg-primary); }
                 </div>
             </div>
             
-            <!-- Scan Progress -->
-            <div class="sfs-card" id="scanProgressCard" style="display: none;">
-                <div class="d-flex justify-content-between align-items-center">
-                    <span id="scanStatusText">Scanning...</span>
-                    <span id="scanProgressPercent">0%</span>
-                </div>
-                <div class="progress-bar-container">
-                    <div class="progress-bar-fill" id="scanProgressBar" style="width: 0%"></div>
-                </div>
-            </div>
-            
-            <!-- Scan Results -->
+            <!-- Signal Flips Results -->
             <div class="sfs-card">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h6 class="fw-bold mb-0"><i class="ri-flashlight-line me-2 text-warning"></i>Signal Flips</h6>
-                    <span class="badge bg-primary" id="resultsCount">{{ status.scan_results }}</span>
+                    <h6 class="mb-0"><i class="ri-flashlight-line me-2 text-warning"></i>Signal Flips</h6>
+                    <span class="badge bg-primary" id="resultsCount">0</span>
                 </div>
                 <div class="table-responsive">
-                    <table class="results-table" id="resultsTable">
+                    <table class="results-table">
                         <thead>
                             <tr>
                                 <th>Symbol</th>
@@ -663,7 +666,9 @@ body { background: var(--bg-primary); }
                             </tr>
                         </thead>
                         <tbody id="resultsBody">
-                            <tr><td colspan="8" class="text-center text-muted py-4">Run scan to find signals</td></tr>
+                            <tr><td colspan="8" class="text-center text-muted py-4">
+                                <i class="ri-radar-line me-2"></i>Run scan to find signals
+                            </td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -672,12 +677,12 @@ body { background: var(--bg-primary); }
             <!-- Trade History -->
             <div class="sfs-card">
                 <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h6 class="fw-bold mb-0"><i class="ri-history-line me-2 text-info"></i>Trade History</h6>
-                    <button class="btn btn-sm btn-outline-danger" onclick="clearHistory()">
+                    <h6 class="mb-0"><i class="ri-history-line me-2 text-info"></i>Trade History</h6>
+                    <button class="btn btn-sm btn-outline-danger" onclick="clearHistory()" title="Clear history">
                         <i class="ri-delete-bin-line"></i>
                     </button>
                 </div>
-                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                <div class="table-responsive" style="max-height: 350px; overflow-y: auto;">
                     <table class="results-table">
                         <thead>
                             <tr>
@@ -705,11 +710,7 @@ body { background: var(--bg-primary); }
                                 <td class="{{ 'text-success' if trade.pnl_percent and trade.pnl_percent > 0 else 'text-danger' }}">
                                     {{ "%+.2f%%"|format(trade.pnl_percent) if trade.pnl_percent else '-' }}
                                 </td>
-                                <td>
-                                    <span class="badge status-{{ trade.status|lower|replace(' ', '') }}">
-                                        {{ trade.status }}
-                                    </span>
-                                </td>
+                                <td><span class="badge bg-secondary">{{ trade.status }}</span></td>
                             </tr>
                             {% else %}
                             <tr><td colspan="7" class="text-center text-muted py-4">No trades yet</td></tr>
@@ -723,84 +724,92 @@ body { background: var(--bg-primary); }
     </div>
 </div>
 
-<!-- Auto Save Indicator -->
-<div class="auto-save-indicator" id="saveIndicator">
-    <i class="ri-check-line me-1"></i> Saved
+<!-- Save Toast -->
+<div class="save-toast" id="saveToast">
+    <i class="ri-check-line me-2"></i>Saved
 </div>
 
 <script>
-const csrfToken = '{{ csrf_token() if csrf_token is defined else "" }}';
-let autoSaveTimeout = null;
+// ===== CONFIG STATE =====
+const presets = {
+    "1":  { tp1: 0.15, tp2: 0.30, sl: 0.20, trailing: 0.10, hold: 5 },
+    "5":  { tp1: 0.25, tp2: 0.50, sl: 0.30, trailing: 0.15, hold: 15 },
+    "15": { tp1: 0.40, tp2: 0.80, sl: 0.50, trailing: 0.20, hold: 45 },
+    "30": { tp1: 0.60, tp2: 1.20, sl: 0.70, trailing: 0.30, hold: 90 },
+    "60": { tp1: 1.00, tp2: 2.00, sl: 1.00, trailing: 0.50, hold: 240 }
+};
 
-// ===== Accordion =====
-function toggleAccordion(header) {
-    header.classList.toggle('active');
-    const body = header.nextElementSibling;
-    body.classList.toggle('show');
-}
+let saveTimeout = null;
 
-// ===== Timeframe Selection =====
-function selectTimeframe(tf) {
-    document.querySelectorAll('.preset-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tf === tf);
-    });
+// ===== TIMEFRAME SELECTION =====
+function selectTF(btn) {
+    document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
     
     // Apply preset if enabled
     if (document.getElementById('autoPreset').checked) {
-        applyPreset(tf);
+        const tf = btn.dataset.tf;
+        const p = presets[tf];
+        if (p) {
+            document.getElementById('tp1Percent').value = p.tp1;
+            document.getElementById('tp2Percent').value = p.tp2;
+            document.getElementById('slPercent').value = p.sl;
+            document.getElementById('trailingOffset').value = p.trailing;
+            document.getElementById('maxHold').value = p.hold;
+        }
     }
     
-    autoSave();
+    saveConfig();
 }
 
-function applyPreset(tf) {
-    const presets = {{ presets | tojson }};
-    const preset = presets[tf];
-    if (!preset) return;
+// ===== FILTER TOGGLE =====
+function toggleFilter(badge) {
+    badge.classList.toggle('active');
+    saveConfig();
+}
+
+function getFilterState(filterName) {
+    const badge = document.querySelector(`.filter-badge[data-filter="${filterName}"]`);
+    return badge ? badge.classList.contains('active') : false;
+}
+
+// ===== SAVE CONFIG =====
+function saveConfig() {
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(doSaveConfig, 300);
+}
+
+function doSaveConfig() {
+    const activeBtn = document.querySelector('.tf-btn.active');
     
-    document.getElementById('tp1Percent').value = preset.tp1_percent;
-    document.getElementById('tp2Percent').value = preset.tp2_percent;
-    document.getElementById('slPercent').value = preset.sl_percent;
-    document.getElementById('trailingOffset').value = preset.trailing_offset;
-    document.getElementById('maxHold').value = preset.max_hold_minutes;
-}
-
-// ===== Auto Save =====
-function autoSave() {
-    clearTimeout(autoSaveTimeout);
-    autoSaveTimeout = setTimeout(saveSettings, 500);
-}
-
-function saveSettings() {
-    const activeBtn = document.querySelector('.preset-btn.active');
     const config = {
         sfs_timeframe: activeBtn ? activeBtn.dataset.tf : '15',
         sfs_auto_preset: document.getElementById('autoPreset').checked,
         
         // Filters
-        sfs_use_rsi_filter: document.getElementById('useRsiFilter').checked,
-        sfs_use_mfi_filter: document.getElementById('useMfiFilter').checked,
-        sfs_use_volume_filter: document.getElementById('useVolumeFilter').checked,
-        sfs_use_btc_filter: document.getElementById('useBtcFilter').checked,
-        sfs_use_htf_filter: document.getElementById('useHtfFilter').checked,
-        sfs_use_atr_filter: document.getElementById('useAtrFilter').checked,
-        sfs_use_time_filter: document.getElementById('useTimeFilter').checked,
-        sfs_use_momentum_filter: document.getElementById('useMomentumFilter').checked,
+        sfs_use_rsi_filter: getFilterState('rsi'),
+        sfs_use_mfi_filter: getFilterState('mfi'),
+        sfs_use_volume_filter: getFilterState('volume'),
+        sfs_use_btc_filter: getFilterState('btc'),
+        sfs_use_htf_filter: getFilterState('htf'),
+        sfs_use_atr_filter: getFilterState('atr'),
+        sfs_use_time_filter: getFilterState('time'),
+        sfs_use_momentum_filter: getFilterState('momentum'),
         
         // TP/SL
-        sfs_tp1_percent: parseFloat(document.getElementById('tp1Percent').value),
-        sfs_tp2_percent: parseFloat(document.getElementById('tp2Percent').value),
-        sfs_sl_percent: parseFloat(document.getElementById('slPercent').value),
+        sfs_tp1_percent: parseFloat(document.getElementById('tp1Percent').value) || 0.4,
+        sfs_tp2_percent: parseFloat(document.getElementById('tp2Percent').value) || 0.8,
+        sfs_sl_percent: parseFloat(document.getElementById('slPercent').value) || 0.5,
         sfs_use_trailing: document.getElementById('useTrailing').checked,
-        sfs_trailing_offset: parseFloat(document.getElementById('trailingOffset').value),
-        sfs_max_hold_minutes: parseInt(document.getElementById('maxHold').value),
+        sfs_trailing_offset: parseFloat(document.getElementById('trailingOffset').value) || 0.2,
+        sfs_max_hold_minutes: parseInt(document.getElementById('maxHold').value) || 45,
         
         // Risk
-        sfs_max_daily_trades: parseInt(document.getElementById('maxDailyTrades').value),
-        sfs_max_open_positions: parseInt(document.getElementById('maxOpenPositions').value),
-        sfs_position_size_percent: parseFloat(document.getElementById('positionSize').value),
-        sfs_leverage: parseInt(document.getElementById('leverage').value),
-        sfs_max_daily_loss: parseFloat(document.getElementById('maxDailyLoss').value),
+        sfs_max_daily_trades: parseInt(document.getElementById('maxDailyTrades').value) || 5,
+        sfs_max_open_positions: parseInt(document.getElementById('maxOpenPositions').value) || 2,
+        sfs_position_size_percent: parseFloat(document.getElementById('positionSize').value) || 5,
+        sfs_leverage: parseInt(document.getElementById('leverage').value) || 10,
+        sfs_max_daily_loss: parseFloat(document.getElementById('maxDailyLoss').value) || 3,
         
         // Execution
         sfs_paper_trading: document.getElementById('paperTrading').checked,
@@ -808,43 +817,39 @@ function saveSettings() {
         sfs_telegram_signals: document.getElementById('telegramSignals').checked,
         
         // Scan
-        sfs_scan_interval: parseInt(document.getElementById('scanInterval').value)
+        sfs_scan_interval: parseInt(document.getElementById('scanInterval').value) || 60
     };
+    
+    console.log('Saving config:', config);
     
     fetch('/signal_flip/config', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
-    }).then(() => {
-        showSaveIndicator();
-    });
+    })
+    .then(r => r.json())
+    .then(() => showSaveToast())
+    .catch(e => console.error('Save error:', e));
 }
 
-function showSaveIndicator() {
-    const indicator = document.getElementById('saveIndicator');
-    indicator.classList.add('show');
-    setTimeout(() => indicator.classList.remove('show'), 2000);
+function showSaveToast() {
+    const toast = document.getElementById('saveToast');
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
 }
 
-// ===== Scanning =====
+// ===== SCANNING =====
 function startScan() {
-    fetch('/signal_flip/scan', {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrfToken }
-    });
+    fetch('/signal_flip/scan', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'started') {
+                console.log('Scan started');
+            }
+        });
 }
 
-function stopScan() {
-    fetch('/signal_flip/stop', {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrfToken }
-    });
-}
-
-// ===== Status Updates =====
+// ===== STATUS UPDATES =====
 function updateStatus() {
     fetch('/signal_flip/status')
         .then(r => r.json())
@@ -852,7 +857,7 @@ function updateStatus() {
             // Scanner status
             const scannerEl = document.getElementById('scannerStatus');
             const scanBtn = document.getElementById('scanBtn');
-            const progressCard = document.getElementById('scanProgressCard');
+            const progressCard = document.getElementById('progressCard');
             
             if (status.is_scanning) {
                 scannerEl.textContent = status.progress + '%';
@@ -861,9 +866,9 @@ function updateStatus() {
                 scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scanning...';
                 
                 progressCard.style.display = 'block';
-                document.getElementById('scanStatusText').textContent = status.status;
-                document.getElementById('scanProgressPercent').textContent = status.progress + '%';
-                document.getElementById('scanProgressBar').style.width = status.progress + '%';
+                document.getElementById('progressText').textContent = status.status;
+                document.getElementById('progressPercent').textContent = status.progress + '%';
+                document.getElementById('progressBar').style.width = status.progress + '%';
             } else {
                 scannerEl.textContent = 'IDLE';
                 scannerEl.className = 'status-pill status-idle';
@@ -884,27 +889,27 @@ function updateStatus() {
             // Mode
             const modeLabel = document.getElementById('modeLabel');
             modeLabel.textContent = status.paper_mode ? 'PAPER' : 'LIVE';
-            modeLabel.className = 'badge ' + (status.paper_mode ? 'bg-warning' : 'bg-danger');
+            modeLabel.className = 'badge ' + (status.paper_mode ? 'bg-warning text-dark' : 'bg-danger');
             
             // Auto
             const autoLabel = document.getElementById('autoLabel');
             autoLabel.textContent = status.auto_running ? 'ON' : 'OFF';
             autoLabel.className = 'badge ' + (status.auto_running ? 'bg-success' : 'bg-secondary');
-            
-            // Results count
-            document.getElementById('resultsCount').textContent = status.scan_results;
-        });
+            document.getElementById('autoModeToggle').checked = status.auto_running;
+        })
+        .catch(e => console.error('Status error:', e));
 }
 
-// ===== Load Results =====
+// ===== LOAD RESULTS =====
 function loadResults() {
     fetch('/signal_flip/results')
         .then(r => r.json())
         .then(results => {
+            document.getElementById('resultsCount').textContent = results.length;
             const tbody = document.getElementById('resultsBody');
             
             if (!results || results.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No signals found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4"><i class="ri-radar-line me-2"></i>No signals found</td></tr>';
                 return;
             }
             
@@ -913,10 +918,10 @@ function loadResults() {
                     <td><strong>${r.symbol}</strong></td>
                     <td><span class="badge-${r.direction.toLowerCase()}">${r.direction}</span></td>
                     <td><small>${r.prev_signal} → ${r.new_signal}</small></td>
-                    <td>${r.price.toFixed(4)}</td>
-                    <td>${r.rsi.toFixed(1)}</td>
-                    <td>${r.mfi.toFixed(1)}</td>
-                    <td>${r.volume_ratio.toFixed(2)}x</td>
+                    <td>${parseFloat(r.price).toFixed(4)}</td>
+                    <td>${parseFloat(r.rsi).toFixed(1)}</td>
+                    <td>${parseFloat(r.mfi).toFixed(1)}</td>
+                    <td>${parseFloat(r.volume_ratio).toFixed(2)}x</td>
                     <td>
                         <button class="btn btn-sm btn-success" onclick="executeSignal('${r.symbol}', '${r.direction}', ${r.price})">
                             <i class="ri-play-fill"></i>
@@ -924,7 +929,8 @@ function loadResults() {
                     </td>
                 </tr>
             `).join('');
-        });
+        })
+        .catch(e => console.error('Results error:', e));
 }
 
 function executeSignal(symbol, direction, price) {
@@ -932,16 +938,13 @@ function executeSignal(symbol, direction, price) {
     
     fetch('/signal_flip/execute', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, direction, price })
     })
     .then(r => r.json())
     .then(result => {
         if (result.status === 'ok') {
-            alert('Trade opened!');
+            alert('Trade opened successfully!');
             location.reload();
         } else {
             alert('Error: ' + result.error);
@@ -949,37 +952,37 @@ function executeSignal(symbol, direction, price) {
     });
 }
 
-// ===== Auto Mode =====
+// ===== AUTO MODE =====
 function toggleAutoMode() {
     const enabled = document.getElementById('autoModeToggle').checked;
     const interval = parseInt(document.getElementById('scanInterval').value);
     
     fetch('/signal_flip/auto', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled, interval })
+    })
+    .then(r => r.json())
+    .then(data => {
+        console.log('Auto mode:', data.auto_running ? 'ON' : 'OFF');
     });
 }
 
-// ===== Clear History =====
+// ===== CLEAR HISTORY =====
 function clearHistory() {
     if (!confirm('Clear all trade history?')) return;
     
-    fetch('/signal_flip/clear', {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrfToken }
-    }).then(() => location.reload());
+    fetch('/signal_flip/clear', { method: 'POST' })
+        .then(() => location.reload());
 }
 
-// ===== Init =====
+// ===== INIT =====
 document.addEventListener('DOMContentLoaded', function() {
-    setInterval(updateStatus, 3000);
-    setInterval(loadResults, 5000);
     updateStatus();
     loadResults();
+    
+    setInterval(updateStatus, 3000);
+    setInterval(loadResults, 5000);
 });
 </script>
 {% endblock %}
