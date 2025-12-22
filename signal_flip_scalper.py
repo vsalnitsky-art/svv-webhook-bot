@@ -363,12 +363,24 @@ class FilterEngine:
         reasons = []
         filter_results = {}
         
+        # Log current filter states for debugging
+        logger.debug(f"Filter states: RSI={self.config.get('sfs_use_rsi_filter')}, "
+                    f"MFI={self.config.get('sfs_use_mfi_filter')}, "
+                    f"Volume={self.config.get('sfs_use_volume_filter')}, "
+                    f"BTC={self.config.get('sfs_use_btc_filter')}, "
+                    f"HTF={self.config.get('sfs_use_htf_filter')}, "
+                    f"ATR={self.config.get('sfs_use_atr_filter')}, "
+                    f"Time={self.config.get('sfs_use_time_filter')}, "
+                    f"Momentum={self.config.get('sfs_use_momentum_filter')}")
+        
         # 1. RSI Zone Filter
         if self.config.get('sfs_use_rsi_filter', True):
             passed, reason = self._check_rsi_zone(data, direction)
             filter_results['rsi_zone'] = passed
             if not passed:
                 reasons.append(reason)
+        else:
+            filter_results['rsi_zone'] = 'skipped'
         
         # 2. MFI Filter
         if self.config.get('sfs_use_mfi_filter', True):
@@ -376,6 +388,8 @@ class FilterEngine:
             filter_results['mfi'] = passed
             if not passed:
                 reasons.append(reason)
+        else:
+            filter_results['mfi'] = 'skipped'
         
         # 3. Volume Filter
         if self.config.get('sfs_use_volume_filter', True):
@@ -383,6 +397,8 @@ class FilterEngine:
             filter_results['volume'] = passed
             if not passed:
                 reasons.append(reason)
+        else:
+            filter_results['volume'] = 'skipped'
         
         # 4. BTC Trend Filter
         if self.config.get('sfs_use_btc_filter', True):
@@ -390,6 +406,8 @@ class FilterEngine:
             filter_results['btc_trend'] = passed
             if not passed:
                 reasons.append(reason)
+        else:
+            filter_results['btc_trend'] = 'skipped'
         
         # 5. HTF Filter
         if self.config.get('sfs_use_htf_filter', True):
@@ -397,6 +415,8 @@ class FilterEngine:
             filter_results['htf'] = passed
             if not passed:
                 reasons.append(reason)
+        else:
+            filter_results['htf'] = 'skipped'
         
         # 6. ATR Filter
         if self.config.get('sfs_use_atr_filter', True):
@@ -404,6 +424,8 @@ class FilterEngine:
             filter_results['atr'] = passed
             if not passed:
                 reasons.append(reason)
+        else:
+            filter_results['atr'] = 'skipped'
         
         # 7. Time Filter
         if self.config.get('sfs_use_time_filter', True):
@@ -411,6 +433,8 @@ class FilterEngine:
             filter_results['time'] = passed
             if not passed:
                 reasons.append(reason)
+        else:
+            filter_results['time'] = 'skipped'
         
         # 8. Momentum Filter
         if self.config.get('sfs_use_momentum_filter', True):
@@ -418,9 +442,13 @@ class FilterEngine:
             filter_results['momentum'] = passed
             if not passed:
                 reasons.append(reason)
+        else:
+            filter_results['momentum'] = 'skipped'
         
         # Результат: passed якщо немає причин відмови
         all_passed = len(reasons) == 0
+        
+        logger.debug(f"Filter results: {filter_results}, passed={all_passed}, reasons={reasons}")
         
         return all_passed, reasons, filter_results
     
@@ -1017,9 +1045,13 @@ class SignalFlipScalper:
     
     def save_config(self, data: Dict):
         """Зберігає конфігурацію"""
+        logger.info(f"Saving config: filters - RSI={data.get('sfs_use_rsi_filter')}, "
+                   f"BTC={data.get('sfs_use_btc_filter')}, "
+                   f"MFI={data.get('sfs_use_mfi_filter')}")
         settings.save_settings(data)
+        # Reload config in filter engine
         self.filter_engine.update_config(self._load_config())
-        logger.info("Config saved")
+        logger.info("Config saved and filter engine updated")
     
     # ========================================================================
     #                           BTC TREND ANALYSIS
@@ -1223,6 +1255,19 @@ class SignalFlipScalper:
         self.scan_results = []
         
         config = self._load_config()
+        
+        # Log filter configuration
+        logger.info(f"🔍 Scan started with filters: RSI={config.get('sfs_use_rsi_filter')}, "
+                   f"MFI={config.get('sfs_use_mfi_filter')}, "
+                   f"Volume={config.get('sfs_use_volume_filter')}, "
+                   f"BTC={config.get('sfs_use_btc_filter')}, "
+                   f"HTF={config.get('sfs_use_htf_filter')}, "
+                   f"ATR={config.get('sfs_use_atr_filter')}, "
+                   f"Time={config.get('sfs_use_time_filter')}, "
+                   f"Momentum={config.get('sfs_use_momentum_filter')}")
+        
+        # CRITICAL: Update filter engine with fresh config!
+        self.filter_engine.update_config(config)
         
         try:
             # Analyze BTC
