@@ -1,0 +1,985 @@
+{% extends "base.html" %}
+
+{% block title %}Signal Flip Scalper{% endblock %}
+
+{% block head %}
+<style>
+/* ===== Light Theme ===== */
+:root {
+    --bg-primary: #f8fafc;
+    --bg-card: #ffffff;
+    --border-color: #e2e8f0;
+    --text-primary: #1e293b;
+    --text-secondary: #64748b;
+    --accent: #3b82f6;
+    --success: #10b981;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+}
+
+body { background: var(--bg-primary); }
+
+/* Cards */
+.sfs-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+/* Page Header */
+.page-header {
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+    color: white;
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin-bottom: 1.5rem;
+}
+
+.page-header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+.page-header .subtitle {
+    opacity: 0.9;
+    font-size: 0.9rem;
+    margin-top: 0.25rem;
+}
+
+/* Status Bar */
+.status-bar {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 1rem;
+    background: #f1f5f9;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.status-pill {
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.status-idle { background: #e2e8f0; color: #64748b; }
+.status-scanning { background: #dbeafe; color: #1d4ed8; }
+.status-active { background: #d1fae5; color: #065f46; }
+.status-error { background: #fee2e2; color: #991b1b; }
+
+/* BTC Badge */
+.btc-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.8rem;
+}
+
+.btc-bullish { background: #d1fae5; color: #065f46; }
+.btc-bearish { background: #fee2e2; color: #991b1b; }
+.btc-neutral { background: #e2e8f0; color: #64748b; }
+
+/* Accordions */
+.sfs-accordion {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+    background: white;
+}
+
+.sfs-accordion-header {
+    padding: 0.875rem 1rem;
+    background: #f8fafc;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-bottom: 1px solid transparent;
+    transition: all 0.2s;
+}
+
+.sfs-accordion-header:hover {
+    background: #f1f5f9;
+}
+
+.sfs-accordion-header.active {
+    border-bottom-color: var(--border-color);
+}
+
+.sfs-accordion-header i {
+    transition: transform 0.3s;
+}
+
+.sfs-accordion-header.active i {
+    transform: rotate(180deg);
+}
+
+.sfs-accordion-body {
+    padding: 1rem;
+    display: none;
+}
+
+.sfs-accordion-body.show {
+    display: block;
+}
+
+/* Filter Badges */
+.filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.filter-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.375rem 0.75rem;
+    border-radius: 6px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.filter-badge:has(input:checked) {
+    background: #dbeafe;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+}
+
+.filter-badge .form-check-input {
+    margin-right: 0.5rem;
+    margin-top: 0;
+}
+
+/* Presets */
+.preset-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: white;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.preset-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.preset-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+/* Results Table */
+.results-table {
+    width: 100%;
+    font-size: 0.85rem;
+}
+
+.results-table th {
+    background: #f8fafc;
+    padding: 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.results-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.results-table tbody tr:hover {
+    background: #f8fafc;
+}
+
+/* Direction badges */
+.badge-long {
+    background: linear-gradient(135deg, #059669, #10b981);
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+.badge-short {
+    background: linear-gradient(135deg, #dc2626, #ef4444);
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+/* Status badges */
+.status-open { background: #dbeafe; color: #1d4ed8; }
+.status-tp1 { background: #d1fae5; color: #065f46; }
+.status-closed { background: #e2e8f0; color: #64748b; }
+
+/* Stats Cards */
+.stat-card {
+    text-align: center;
+    padding: 1rem;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+/* Auto Save Indicator */
+.auto-save-indicator {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 0.5rem 1rem;
+    background: var(--success);
+    color: white;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 1000;
+}
+
+.auto-save-indicator.show {
+    opacity: 1;
+}
+
+/* Pulse animation */
+.pulse {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Scan button */
+.scan-btn {
+    background: linear-gradient(135deg, #1e40af, #3b82f6);
+    color: white;
+    border: none;
+    padding: 0.75rem 2rem;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.scan-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.scan-btn:disabled {
+    background: #94a3b8;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Progress bar */
+.progress-bar-container {
+    height: 4px;
+    background: #e2e8f0;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 0.5rem;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    
+    <!-- Page Header -->
+    <div class="page-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1><i class="ri-refresh-line me-2"></i>Signal Flip Scalper</h1>
+                <div class="subtitle">Стратегія швидких угод на зміні сигналу RSI/MFI • Paper Trading Mode</div>
+            </div>
+            <div>
+                <span class="badge bg-light text-dark">v1.0</span>
+                <button class="scan-btn ms-3" id="scanBtn" onclick="startScan()">
+                    <i class="ri-radar-line me-2"></i>SCAN
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Status Bar -->
+    <div class="status-bar" id="statusBar">
+        <div class="status-item">
+            <span class="text-muted">Scanner:</span>
+            <span class="status-pill status-idle" id="scannerStatus">IDLE</span>
+        </div>
+        <div class="status-item">
+            <span class="text-muted">BTC:</span>
+            <span class="btc-badge btc-{{ status.btc_trend|lower }}" id="btcBadge">{{ status.btc_trend }}</span>
+        </div>
+        <div class="status-item">
+            <span class="text-muted">Open:</span>
+            <strong id="openCount">{{ status.open_positions }}</strong>
+        </div>
+        <div class="status-item">
+            <span class="text-muted">Today:</span>
+            <strong id="todayCount">{{ status.today_trades }}</strong>
+        </div>
+        <div class="status-item">
+            <span class="text-muted">Mode:</span>
+            <span class="badge {{ 'bg-warning' if status.paper_mode else 'bg-danger' }}" id="modeLabel">
+                {{ 'PAPER' if status.paper_mode else 'LIVE' }}
+            </span>
+        </div>
+        <div class="status-item">
+            <span class="text-muted">Auto:</span>
+            <span class="badge {{ 'bg-success' if status.auto_running else 'bg-secondary' }}" id="autoLabel">
+                {{ 'ON' if status.auto_running else 'OFF' }}
+            </span>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- LEFT: Settings -->
+        <div class="col-lg-4">
+            
+            <!-- Timeframe -->
+            <div class="sfs-card">
+                <h6 class="fw-bold mb-3"><i class="ri-time-line me-2 text-primary"></i>Таймфрейм</h6>
+                <div class="d-flex gap-2 flex-wrap mb-3">
+                    {% for tf, preset in presets.items() %}
+                    <button class="preset-btn {{ 'active' if config.sfs_timeframe == tf }}" 
+                            onclick="selectTimeframe('{{ tf }}')" data-tf="{{ tf }}">
+                        {{ preset.name.split('(')[1].replace(')', '') }}
+                    </button>
+                    {% endfor %}
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="autoPreset" 
+                           {{ 'checked' if config.sfs_auto_preset }} onchange="autoSave()">
+                    <label class="form-check-label small" for="autoPreset">
+                        Авто-пресет при зміні TF
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Filters -->
+            <div class="sfs-accordion">
+                <div class="sfs-accordion-header active" onclick="toggleAccordion(this)">
+                    <span><i class="ri-filter-3-line me-2"></i>Фільтри (всі опціональні)</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="sfs-accordion-body show">
+                    <div class="filter-row">
+                        <label class="filter-badge">
+                            <input class="form-check-input" type="checkbox" id="useRsiFilter" 
+                                   {{ 'checked' if config.sfs_use_rsi_filter }} onchange="autoSave()">
+                            <span>RSI Zone</span>
+                        </label>
+                        <label class="filter-badge">
+                            <input class="form-check-input" type="checkbox" id="useMfiFilter" 
+                                   {{ 'checked' if config.sfs_use_mfi_filter }} onchange="autoSave()">
+                            <span>MFI</span>
+                        </label>
+                        <label class="filter-badge">
+                            <input class="form-check-input" type="checkbox" id="useVolumeFilter" 
+                                   {{ 'checked' if config.sfs_use_volume_filter }} onchange="autoSave()">
+                            <span>Volume</span>
+                        </label>
+                        <label class="filter-badge">
+                            <input class="form-check-input" type="checkbox" id="useBtcFilter" 
+                                   {{ 'checked' if config.sfs_use_btc_filter }} onchange="autoSave()">
+                            <span>BTC Trend</span>
+                        </label>
+                    </div>
+                    <div class="filter-row">
+                        <label class="filter-badge">
+                            <input class="form-check-input" type="checkbox" id="useHtfFilter" 
+                                   {{ 'checked' if config.sfs_use_htf_filter }} onchange="autoSave()">
+                            <span>HTF Signal</span>
+                        </label>
+                        <label class="filter-badge">
+                            <input class="form-check-input" type="checkbox" id="useAtrFilter" 
+                                   {{ 'checked' if config.sfs_use_atr_filter }} onchange="autoSave()">
+                            <span>ATR Range</span>
+                        </label>
+                        <label class="filter-badge">
+                            <input class="form-check-input" type="checkbox" id="useTimeFilter" 
+                                   {{ 'checked' if config.sfs_use_time_filter }} onchange="autoSave()">
+                            <span>Time</span>
+                        </label>
+                        <label class="filter-badge">
+                            <input class="form-check-input" type="checkbox" id="useMomentumFilter" 
+                                   {{ 'checked' if config.sfs_use_momentum_filter }} onchange="autoSave()">
+                            <span>Momentum</span>
+                        </label>
+                    </div>
+                    <small class="text-muted">
+                        <i class="ri-information-line"></i> Вимкнені фільтри не впливають на результат
+                    </small>
+                </div>
+            </div>
+            
+            <!-- Take Profit & Stop Loss -->
+            <div class="sfs-accordion">
+                <div class="sfs-accordion-header" onclick="toggleAccordion(this)">
+                    <span><i class="ri-crosshair-2-line me-2"></i>Take Profit & Stop Loss</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="sfs-accordion-body">
+                    <div class="row g-2 mb-3">
+                        <div class="col-4">
+                            <label class="form-label small">TP1 %</label>
+                            <input type="number" class="form-control form-control-sm" id="tp1Percent" 
+                                   value="{{ config.sfs_tp1_percent }}" step="0.1" onchange="autoSave()">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small">TP2 %</label>
+                            <input type="number" class="form-control form-control-sm" id="tp2Percent" 
+                                   value="{{ config.sfs_tp2_percent }}" step="0.1" onchange="autoSave()">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small">SL %</label>
+                            <input type="number" class="form-control form-control-sm" id="slPercent" 
+                                   value="{{ config.sfs_sl_percent }}" step="0.1" onchange="autoSave()">
+                        </div>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="useTrailing" 
+                               {{ 'checked' if config.sfs_use_trailing }} onchange="autoSave()">
+                        <label class="form-check-label small" for="useTrailing">Trailing Stop після TP1</label>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small">Trailing Offset %</label>
+                            <input type="number" class="form-control form-control-sm" id="trailingOffset" 
+                                   value="{{ config.sfs_trailing_offset }}" step="0.05" onchange="autoSave()">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Max Hold (хв)</label>
+                            <input type="number" class="form-control form-control-sm" id="maxHold" 
+                                   value="{{ config.sfs_max_hold_minutes }}" onchange="autoSave()">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Risk Management -->
+            <div class="sfs-accordion">
+                <div class="sfs-accordion-header" onclick="toggleAccordion(this)">
+                    <span><i class="ri-shield-line me-2"></i>Risk Management</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="sfs-accordion-body">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small">Max Trades/Day</label>
+                            <input type="number" class="form-control form-control-sm" id="maxDailyTrades" 
+                                   value="{{ config.sfs_max_daily_trades }}" onchange="autoSave()">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Max Open</label>
+                            <input type="number" class="form-control form-control-sm" id="maxOpenPositions" 
+                                   value="{{ config.sfs_max_open_positions }}" onchange="autoSave()">
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small">Position Size %</label>
+                            <input type="number" class="form-control form-control-sm" id="positionSize" 
+                                   value="{{ config.sfs_position_size_percent }}" step="0.5" onchange="autoSave()">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Leverage</label>
+                            <input type="number" class="form-control form-control-sm" id="leverage" 
+                                   value="{{ config.sfs_leverage }}" onchange="autoSave()">
+                        </div>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-12">
+                            <label class="form-label small">Max Daily Loss %</label>
+                            <input type="number" class="form-control form-control-sm" id="maxDailyLoss" 
+                                   value="{{ config.sfs_max_daily_loss }}" step="0.5" onchange="autoSave()">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Execution -->
+            <div class="sfs-accordion">
+                <div class="sfs-accordion-header" onclick="toggleAccordion(this)">
+                    <span><i class="ri-play-circle-line me-2"></i>Execution</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="sfs-accordion-body">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="paperTrading" 
+                               {{ 'checked' if config.sfs_paper_trading }} onchange="autoSave()">
+                        <label class="form-check-label" for="paperTrading">
+                            <strong>Paper Trading</strong> <small class="text-muted">(рекомендовано)</small>
+                        </label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="autoExecute" 
+                               {{ 'checked' if config.sfs_auto_execute }} onchange="autoSave()">
+                        <label class="form-check-label" for="autoExecute">Auto Execute</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="telegramSignals" 
+                               {{ 'checked' if config.sfs_telegram_signals }} onchange="autoSave()">
+                        <label class="form-check-label" for="telegramSignals">Telegram Signals</label>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Auto Mode -->
+            <div class="sfs-card" style="background: linear-gradient(135deg, #f0f9ff, #e0f2fe); border-color: #bae6fd;">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold mb-0"><i class="ri-robot-line me-2"></i>Auto Mode</h6>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="autoModeToggle" 
+                               {{ 'checked' if status.auto_running }} onchange="toggleAutoMode()">
+                    </div>
+                </div>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">Інтервал</span>
+                    <select class="form-select" id="scanInterval" onchange="autoSave()">
+                        <option value="30" {{ 'selected' if config.sfs_scan_interval == 30 }}>30 сек</option>
+                        <option value="60" {{ 'selected' if config.sfs_scan_interval == 60 }}>1 хв</option>
+                        <option value="120" {{ 'selected' if config.sfs_scan_interval == 120 }}>2 хв</option>
+                        <option value="300" {{ 'selected' if config.sfs_scan_interval == 300 }}>5 хв</option>
+                    </select>
+                </div>
+            </div>
+            
+        </div>
+        
+        <!-- RIGHT: Results & History -->
+        <div class="col-lg-8">
+            
+            <!-- Statistics -->
+            <div class="sfs-card">
+                <h6 class="fw-bold mb-3"><i class="ri-bar-chart-line me-2 text-primary"></i>Статистика</h6>
+                <div class="row g-3">
+                    <div class="col-3">
+                        <div class="stat-card">
+                            <div class="stat-value" id="statTrades">{{ stats.total_trades }}</div>
+                            <div class="stat-label">Trades</div>
+                        </div>
+                    </div>
+                    <div class="col-3">
+                        <div class="stat-card">
+                            <div class="stat-value {{ 'text-success' if stats.win_rate >= 50 else 'text-danger' }}" id="statWinRate">
+                                {{ "%.1f"|format(stats.win_rate) }}%
+                            </div>
+                            <div class="stat-label">Win Rate</div>
+                        </div>
+                    </div>
+                    <div class="col-3">
+                        <div class="stat-card">
+                            <div class="stat-value {{ 'text-success' if stats.total_pnl >= 0 else 'text-danger' }}" id="statPnl">
+                                {{ "%+.2f"|format(stats.total_pnl) }}%
+                            </div>
+                            <div class="stat-label">Total P&L</div>
+                        </div>
+                    </div>
+                    <div class="col-3">
+                        <div class="stat-card">
+                            <div class="stat-value" id="statPF">{{ "%.2f"|format(stats.profit_factor) }}</div>
+                            <div class="stat-label">Profit Factor</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Scan Progress -->
+            <div class="sfs-card" id="scanProgressCard" style="display: none;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span id="scanStatusText">Scanning...</span>
+                    <span id="scanProgressPercent">0%</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar-fill" id="scanProgressBar" style="width: 0%"></div>
+                </div>
+            </div>
+            
+            <!-- Scan Results -->
+            <div class="sfs-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="fw-bold mb-0"><i class="ri-flashlight-line me-2 text-warning"></i>Signal Flips</h6>
+                    <span class="badge bg-primary" id="resultsCount">{{ status.scan_results }}</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="results-table" id="resultsTable">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Direction</th>
+                                <th>Flip</th>
+                                <th>Price</th>
+                                <th>RSI</th>
+                                <th>MFI</th>
+                                <th>Vol</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultsBody">
+                            <tr><td colspan="8" class="text-center text-muted py-4">Run scan to find signals</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Trade History -->
+            <div class="sfs-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="fw-bold mb-0"><i class="ri-history-line me-2 text-info"></i>Trade History</h6>
+                    <button class="btn btn-sm btn-outline-danger" onclick="clearHistory()">
+                        <i class="ri-delete-bin-line"></i>
+                    </button>
+                </div>
+                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                    <table class="results-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>Dir</th>
+                                <th>Entry</th>
+                                <th>Exit</th>
+                                <th>P&L</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyBody">
+                            {% for trade in history %}
+                            <tr>
+                                <td>{{ trade.created_at[:16] if trade.created_at else '-' }}</td>
+                                <td><strong>{{ trade.symbol }}</strong></td>
+                                <td>
+                                    <span class="badge-{{ 'long' if trade.direction == 'LONG' else 'short' }}">
+                                        {{ trade.direction }}
+                                    </span>
+                                </td>
+                                <td>{{ "%.4f"|format(trade.entry_price) if trade.entry_price else '-' }}</td>
+                                <td>{{ "%.4f"|format(trade.exit_price) if trade.exit_price else '-' }}</td>
+                                <td class="{{ 'text-success' if trade.pnl_percent and trade.pnl_percent > 0 else 'text-danger' }}">
+                                    {{ "%+.2f%%"|format(trade.pnl_percent) if trade.pnl_percent else '-' }}
+                                </td>
+                                <td>
+                                    <span class="badge status-{{ trade.status|lower|replace(' ', '') }}">
+                                        {{ trade.status }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="7" class="text-center text-muted py-4">No trades yet</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</div>
+
+<!-- Auto Save Indicator -->
+<div class="auto-save-indicator" id="saveIndicator">
+    <i class="ri-check-line me-1"></i> Saved
+</div>
+
+<script>
+const csrfToken = '{{ csrf_token() if csrf_token is defined else "" }}';
+let autoSaveTimeout = null;
+
+// ===== Accordion =====
+function toggleAccordion(header) {
+    header.classList.toggle('active');
+    const body = header.nextElementSibling;
+    body.classList.toggle('show');
+}
+
+// ===== Timeframe Selection =====
+function selectTimeframe(tf) {
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tf === tf);
+    });
+    
+    // Apply preset if enabled
+    if (document.getElementById('autoPreset').checked) {
+        applyPreset(tf);
+    }
+    
+    autoSave();
+}
+
+function applyPreset(tf) {
+    const presets = {{ presets | tojson }};
+    const preset = presets[tf];
+    if (!preset) return;
+    
+    document.getElementById('tp1Percent').value = preset.tp1_percent;
+    document.getElementById('tp2Percent').value = preset.tp2_percent;
+    document.getElementById('slPercent').value = preset.sl_percent;
+    document.getElementById('trailingOffset').value = preset.trailing_offset;
+    document.getElementById('maxHold').value = preset.max_hold_minutes;
+}
+
+// ===== Auto Save =====
+function autoSave() {
+    clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(saveSettings, 500);
+}
+
+function saveSettings() {
+    const activeBtn = document.querySelector('.preset-btn.active');
+    const config = {
+        sfs_timeframe: activeBtn ? activeBtn.dataset.tf : '15',
+        sfs_auto_preset: document.getElementById('autoPreset').checked,
+        
+        // Filters
+        sfs_use_rsi_filter: document.getElementById('useRsiFilter').checked,
+        sfs_use_mfi_filter: document.getElementById('useMfiFilter').checked,
+        sfs_use_volume_filter: document.getElementById('useVolumeFilter').checked,
+        sfs_use_btc_filter: document.getElementById('useBtcFilter').checked,
+        sfs_use_htf_filter: document.getElementById('useHtfFilter').checked,
+        sfs_use_atr_filter: document.getElementById('useAtrFilter').checked,
+        sfs_use_time_filter: document.getElementById('useTimeFilter').checked,
+        sfs_use_momentum_filter: document.getElementById('useMomentumFilter').checked,
+        
+        // TP/SL
+        sfs_tp1_percent: parseFloat(document.getElementById('tp1Percent').value),
+        sfs_tp2_percent: parseFloat(document.getElementById('tp2Percent').value),
+        sfs_sl_percent: parseFloat(document.getElementById('slPercent').value),
+        sfs_use_trailing: document.getElementById('useTrailing').checked,
+        sfs_trailing_offset: parseFloat(document.getElementById('trailingOffset').value),
+        sfs_max_hold_minutes: parseInt(document.getElementById('maxHold').value),
+        
+        // Risk
+        sfs_max_daily_trades: parseInt(document.getElementById('maxDailyTrades').value),
+        sfs_max_open_positions: parseInt(document.getElementById('maxOpenPositions').value),
+        sfs_position_size_percent: parseFloat(document.getElementById('positionSize').value),
+        sfs_leverage: parseInt(document.getElementById('leverage').value),
+        sfs_max_daily_loss: parseFloat(document.getElementById('maxDailyLoss').value),
+        
+        // Execution
+        sfs_paper_trading: document.getElementById('paperTrading').checked,
+        sfs_auto_execute: document.getElementById('autoExecute').checked,
+        sfs_telegram_signals: document.getElementById('telegramSignals').checked,
+        
+        // Scan
+        sfs_scan_interval: parseInt(document.getElementById('scanInterval').value)
+    };
+    
+    fetch('/signal_flip/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(config)
+    }).then(() => {
+        showSaveIndicator();
+    });
+}
+
+function showSaveIndicator() {
+    const indicator = document.getElementById('saveIndicator');
+    indicator.classList.add('show');
+    setTimeout(() => indicator.classList.remove('show'), 2000);
+}
+
+// ===== Scanning =====
+function startScan() {
+    fetch('/signal_flip/scan', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    });
+}
+
+function stopScan() {
+    fetch('/signal_flip/stop', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    });
+}
+
+// ===== Status Updates =====
+function updateStatus() {
+    fetch('/signal_flip/status')
+        .then(r => r.json())
+        .then(status => {
+            // Scanner status
+            const scannerEl = document.getElementById('scannerStatus');
+            const scanBtn = document.getElementById('scanBtn');
+            const progressCard = document.getElementById('scanProgressCard');
+            
+            if (status.is_scanning) {
+                scannerEl.textContent = status.progress + '%';
+                scannerEl.className = 'status-pill status-scanning pulse';
+                scanBtn.disabled = true;
+                scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Scanning...';
+                
+                progressCard.style.display = 'block';
+                document.getElementById('scanStatusText').textContent = status.status;
+                document.getElementById('scanProgressPercent').textContent = status.progress + '%';
+                document.getElementById('scanProgressBar').style.width = status.progress + '%';
+            } else {
+                scannerEl.textContent = 'IDLE';
+                scannerEl.className = 'status-pill status-idle';
+                scanBtn.disabled = false;
+                scanBtn.innerHTML = '<i class="ri-radar-line me-2"></i>SCAN';
+                progressCard.style.display = 'none';
+            }
+            
+            // BTC Badge
+            const btcBadge = document.getElementById('btcBadge');
+            btcBadge.textContent = status.btc_trend;
+            btcBadge.className = 'btc-badge btc-' + status.btc_trend.toLowerCase();
+            
+            // Counts
+            document.getElementById('openCount').textContent = status.open_positions;
+            document.getElementById('todayCount').textContent = status.today_trades;
+            
+            // Mode
+            const modeLabel = document.getElementById('modeLabel');
+            modeLabel.textContent = status.paper_mode ? 'PAPER' : 'LIVE';
+            modeLabel.className = 'badge ' + (status.paper_mode ? 'bg-warning' : 'bg-danger');
+            
+            // Auto
+            const autoLabel = document.getElementById('autoLabel');
+            autoLabel.textContent = status.auto_running ? 'ON' : 'OFF';
+            autoLabel.className = 'badge ' + (status.auto_running ? 'bg-success' : 'bg-secondary');
+            
+            // Results count
+            document.getElementById('resultsCount').textContent = status.scan_results;
+        });
+}
+
+// ===== Load Results =====
+function loadResults() {
+    fetch('/signal_flip/results')
+        .then(r => r.json())
+        .then(results => {
+            const tbody = document.getElementById('resultsBody');
+            
+            if (!results || results.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No signals found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = results.map(r => `
+                <tr>
+                    <td><strong>${r.symbol}</strong></td>
+                    <td><span class="badge-${r.direction.toLowerCase()}">${r.direction}</span></td>
+                    <td><small>${r.prev_signal} → ${r.new_signal}</small></td>
+                    <td>${r.price.toFixed(4)}</td>
+                    <td>${r.rsi.toFixed(1)}</td>
+                    <td>${r.mfi.toFixed(1)}</td>
+                    <td>${r.volume_ratio.toFixed(2)}x</td>
+                    <td>
+                        <button class="btn btn-sm btn-success" onclick="executeSignal('${r.symbol}', '${r.direction}', ${r.price})">
+                            <i class="ri-play-fill"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        });
+}
+
+function executeSignal(symbol, direction, price) {
+    if (!confirm(`Execute ${direction} on ${symbol}?`)) return;
+    
+    fetch('/signal_flip/execute', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({ symbol, direction, price })
+    })
+    .then(r => r.json())
+    .then(result => {
+        if (result.status === 'ok') {
+            alert('Trade opened!');
+            location.reload();
+        } else {
+            alert('Error: ' + result.error);
+        }
+    });
+}
+
+// ===== Auto Mode =====
+function toggleAutoMode() {
+    const enabled = document.getElementById('autoModeToggle').checked;
+    const interval = parseInt(document.getElementById('scanInterval').value);
+    
+    fetch('/signal_flip/auto', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({ enabled, interval })
+    });
+}
+
+// ===== Clear History =====
+function clearHistory() {
+    if (!confirm('Clear all trade history?')) return;
+    
+    fetch('/signal_flip/clear', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(() => location.reload());
+}
+
+// ===== Init =====
+document.addEventListener('DOMContentLoaded', function() {
+    setInterval(updateStatus, 3000);
+    setInterval(loadResults, 5000);
+    updateStatus();
+    loadResults();
+});
+</script>
+{% endblock %}
