@@ -40,6 +40,7 @@ from whale_hunter_pro import register_routes as register_whale_hunter_pro
 from smart_money_routes import register_smart_money_routes
 
 from confluence_scalper import register_routes as register_confluence_scalper
+from signal_flip_scalper import register_routes as register_signal_flip_scalper
 # ✅ IMPORT SCANNER COORDINATOR
 from scanner_coordinator import coordinator as scanner_coordinator, register_routes as register_coordinator_routes
 
@@ -1752,6 +1753,9 @@ register_smart_money_routes(app)
 
 # === CONFLUENCE SCALPER v2.0 ROUTES ===
 register_confluence_scalper(app)
+
+# === SIGNAL FLIP SCALPER v1.0 ROUTES ===
+register_signal_flip_scalper(app)
 
 # === SCANNER COORDINATOR v1.0 ROUTES ===
 register_coordinator_routes(app)
