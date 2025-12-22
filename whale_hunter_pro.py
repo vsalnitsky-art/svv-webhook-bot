@@ -278,17 +278,25 @@ class ScoringEngine:
                 oversold = self._get('whp_rsi_oversold', 40)
                 overbought = self._get('whp_rsi_overbought', 60)
                 
-                if direction == "LONG" and rsi <= oversold:
-                    # Чим нижче RSI, тим більше балів
-                    intensity = (oversold - rsi) / oversold
-                    score.rsi = int(weight * min(1.0, 0.5 + intensity))
-                elif direction == "SHORT" and rsi >= overbought:
-                    intensity = (rsi - overbought) / (100 - overbought)
-                    score.rsi = int(weight * min(1.0, 0.5 + intensity))
-                elif direction == "LONG" and rsi < 50:
-                    score.rsi = int(weight * 0.3)  # Частковий бал
-                elif direction == "SHORT" and rsi > 50:
-                    score.rsi = int(weight * 0.3)
+                if direction == "LONG":
+                    if rsi <= oversold:
+                        # Перепроданість - максимум балів
+                        intensity = (oversold - rsi) / oversold
+                        score.rsi = int(weight * min(1.0, 0.6 + intensity * 0.4))
+                    elif rsi <= 50:
+                        # RSI < 50 - часткові бали пропорційно
+                        score.rsi = int(weight * (0.3 + 0.3 * (50 - rsi) / (50 - oversold)))
+                    else:
+                        # RSI > 50 - мінімум балів
+                        score.rsi = int(weight * 0.1)
+                else:  # SHORT
+                    if rsi >= overbought:
+                        intensity = (rsi - overbought) / (100 - overbought)
+                        score.rsi = int(weight * min(1.0, 0.6 + intensity * 0.4))
+                    elif rsi >= 50:
+                        score.rsi = int(weight * (0.3 + 0.3 * (rsi - 50) / (overbought - 50)))
+                    else:
+                        score.rsi = int(weight * 0.1)
             except Exception as e:
                 logger.debug(f"RSI calc error: {e}")
         
@@ -305,14 +313,26 @@ class ScoringEngine:
                 
                 weight = self._get('whp_mfi_weight', 15)
                 
-                if direction == "LONG" and fast_mfi > slow_mfi:
-                    score.mfi = weight
-                elif direction == "SHORT" and fast_mfi < slow_mfi:
-                    score.mfi = weight
-                elif direction == "LONG" and mfi < 40:
-                    score.mfi = int(weight * 0.5)
-                elif direction == "SHORT" and mfi > 60:
-                    score.mfi = int(weight * 0.5)
+                if direction == "LONG":
+                    if fast_mfi > slow_mfi:
+                        # Cloud bullish crossover - максимум
+                        score.mfi = weight
+                    elif mfi < 40:
+                        # MFI oversold - часткові бали
+                        score.mfi = int(weight * 0.7)
+                    elif mfi < 50:
+                        score.mfi = int(weight * 0.4)
+                    else:
+                        score.mfi = int(weight * 0.1)
+                else:  # SHORT
+                    if fast_mfi < slow_mfi:
+                        score.mfi = weight
+                    elif mfi > 60:
+                        score.mfi = int(weight * 0.7)
+                    elif mfi > 50:
+                        score.mfi = int(weight * 0.4)
+                    else:
+                        score.mfi = int(weight * 0.1)
             except Exception as e:
                 logger.debug(f"MFI calc error: {e}")
         
@@ -327,9 +347,15 @@ class ScoringEngine:
                 threshold = self._get('whp_rvol_threshold', 1.2)
                 
                 if rvol >= threshold:
-                    # Більший об'єм = більше балів (до 2x threshold)
+                    # Об'єм вище порогу - пропорційні бали
                     intensity = min(1.0, (rvol - 1) / (threshold - 1 + 0.5))
-                    score.rvol = int(weight * intensity)
+                    score.rvol = int(weight * (0.5 + 0.5 * intensity))
+                elif rvol >= 1.0:
+                    # Об'єм нормальний - часткові бали
+                    score.rvol = int(weight * 0.3)
+                elif rvol >= 0.8:
+                    # Низький об'єм - мінімум
+                    score.rvol = int(weight * 0.1)
             except Exception as e:
                 logger.debug(f"RVOL calc error: {e}")
         
@@ -607,7 +633,7 @@ class WhaleHunterPro:
             'whp_enabled': to_bool(settings.get('whp_enabled'), True),
             'whp_auto_mode': to_bool(settings.get('whp_auto_mode'), False),
             'whp_auto_interval': to_int(settings.get('whp_auto_interval'), 60),
-            'whp_min_score': to_int(settings.get('whp_min_score'), 50),
+            'whp_min_score': to_int(settings.get('whp_min_score'), 40),
             
             # Ліквідність
             'whp_min_volume': to_float(settings.get('whp_min_volume'), 5_000_000),
@@ -772,11 +798,15 @@ class WhaleHunterPro:
         # Перевіряємо мінімальний поріг
         min_score = config.get('whp_min_score', 50)
         if score.total < min_score:
-            # Логуємо тільки перші 5 відхилень для діагностики
+            # Логуємо перші 10 відхилень для діагностики
             if not hasattr(self, '_rejected_count'):
                 self._rejected_count = {'LONG': 0, 'SHORT': 0}
-            if self._rejected_count.get(direction, 0) < 3:
-                logger.info(f"⏭️ {symbol} {direction}: score={score.total} < min={min_score} | RSI={score.rsi} MFI={score.mfi} RVOL={score.rvol} OB={score.ob} BTC={score.btc}")
+            if self._rejected_count.get(direction, 0) < 10:
+                logger.info(f"⏭️ {symbol} {direction}: score={score.total}/{min_score} | "
+                           f"RSI={score.rsi}({score.rsi_value:.1f}) "
+                           f"MFI={score.mfi}({score.mfi_value:.1f}) "
+                           f"RVOL={score.rvol}({score.rvol_value:.2f}x) "
+                           f"OB={score.ob} BTC={score.btc} ADX={score.adx}")
                 self._rejected_count[direction] = self._rejected_count.get(direction, 0) + 1
             return None
         
