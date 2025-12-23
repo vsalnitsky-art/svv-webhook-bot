@@ -1033,8 +1033,6 @@ class RSISniperPro:
                 signal_price=signal.price,
                 entry_price=signal.price,
                 current_price=signal.price,
-                highest_price=signal.price,
-                lowest_price=signal.price,
                 sl_price=signal.sl_price,
                 tp1_price=signal.tp1_price,
                 tp2_price=signal.tp2_price,
@@ -1064,7 +1062,7 @@ class RSISniperPro:
                 'signal_type': signal.signal_type.value
             }
             
-            logger.info(f"📈 TRADE: {signal.symbol} {signal.direction.value} @ {signal.price:.4f}")
+            logger.info(f"📈 TRADE OPENED: {signal.symbol} {signal.direction.value} @ {signal.price:.6f} | SL: {signal.sl_price:.6f} | TP1: {signal.tp1_price:.6f}")
             
             return {'success': True, 'paper': config.get('rsp_paper_trading', True)}
             
