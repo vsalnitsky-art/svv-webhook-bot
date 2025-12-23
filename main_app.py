@@ -43,6 +43,8 @@ from confluence_scalper import register_routes as register_confluence_scalper
 from signal_flip_scalper import register_routes as register_signal_flip_scalper
 # ✅ IMPORT SCANNER COORDINATOR
 from scanner_coordinator import coordinator as scanner_coordinator, register_routes as register_coordinator_routes
+# ✅ IMPORT RSI SNIPER PRO
+from rsi_sniper_pro import register_rsi_sniper_routes
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -1759,6 +1761,9 @@ register_signal_flip_scalper(app)
 
 # === SCANNER COORDINATOR v1.0 ROUTES ===
 register_coordinator_routes(app)
+
+# === RSI SNIPER PRO v1.0 ROUTES ===
+register_rsi_sniper_routes(app)
 
 # Запускаємо координатор
 try:
