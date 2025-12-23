@@ -969,7 +969,14 @@ class SignalFlipScalper:
         # Start position monitor
         self.position_monitor.start()
         
-        logger.info("🔄 Signal Flip Scalper initialized")
+        # 🆕 Автозапуск auto mode якщо увімкнений в налаштуваннях
+        config = self._load_config()
+        if config.get('sfs_auto_mode', True):
+            interval = config.get('sfs_scan_interval', 1)
+            self.start_auto_mode(interval)
+            logger.info(f"🔄 Signal Flip Scalper auto mode enabled (interval: {interval} min)")
+        else:
+            logger.info("🔄 Signal Flip Scalper initialized")
     
     def _ensure_table(self):
         """Створює таблицю якщо не існує"""
@@ -1054,7 +1061,8 @@ class SignalFlipScalper:
             # Scan
             'sfs_min_volume_24h': to_float(settings.get('sfs_min_volume_24h'), 5_000_000),
             'sfs_scan_limit': to_int(settings.get('sfs_scan_limit'), 50),
-            'sfs_scan_interval': to_int(settings.get('sfs_scan_interval'), 60),
+            'sfs_scan_interval': to_int(settings.get('sfs_scan_interval'), 1),
+            'sfs_auto_mode': to_bool(settings.get('sfs_auto_mode'), True),
         }
     
     def get_config(self) -> Dict:
