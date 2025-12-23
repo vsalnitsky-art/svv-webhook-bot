@@ -280,7 +280,7 @@ input:checked + .toggle-slider:before {
 <div class="rsp-header">
     <div class="d-flex justify-content-between align-items-center">
         <div>
-            <h3><i class="ri-crosshair-2-line me-2"></i>RSI Sniper PRO <span class="badge bg-white text-primary">v1.0</span></h3>
+            <h3><i class="ri-crosshair-2-line me-2"></i>RSI Sniper PRO <span class="badge bg-white text-primary">v2.0</span></h3>
             <div class="subtitle">Професійна стратегія • SNIPER + DIVERGENCE + FLOW</div>
         </div>
         <div class="d-flex gap-2 align-items-center">
@@ -993,6 +993,43 @@ function toggleCard(name) {
 
 // ===== AUTO SAVE =====
 let autoSaveTimeout = null;
+let saveIndicator = null;
+
+function showSaveIndicator(success = true) {
+    // Remove existing indicator
+    if (saveIndicator) {
+        saveIndicator.remove();
+    }
+    
+    // Create indicator
+    saveIndicator = document.createElement('div');
+    saveIndicator.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 10px 20px;
+        background: ${success ? '#10b981' : '#ef4444'};
+        color: white;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 9999;
+        animation: fadeIn 0.3s ease;
+    `;
+    saveIndicator.innerHTML = success ? '✓ Settings saved' : '✗ Save failed';
+    document.body.appendChild(saveIndicator);
+    
+    // Remove after 2 seconds
+    setTimeout(() => {
+        if (saveIndicator) {
+            saveIndicator.style.opacity = '0';
+            saveIndicator.style.transition = 'opacity 0.3s ease';
+            setTimeout(() => saveIndicator.remove(), 300);
+        }
+    }, 2000);
+}
+
 function autoSave() {
     if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
     autoSaveTimeout = setTimeout(() => {
@@ -1006,6 +1043,10 @@ function autoSave() {
             body: JSON.stringify(config)
         }).then(r => r.json()).then(d => {
             console.log('✅ Config auto-saved');
+            showSaveIndicator(true);
+        }).catch(err => {
+            console.error('❌ Config save failed:', err);
+            showSaveIndicator(false);
         });
     }, 500);
 }
@@ -1082,9 +1123,14 @@ function updateStatus() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Auto save on change for ALL inputs
-    document.querySelectorAll('.settings-card input, .settings-card select').forEach(el => {
+    // Auto save on change for ALL inputs (checkboxes, selects)
+    document.querySelectorAll('.settings-card input[type="checkbox"], .settings-card select').forEach(el => {
         el.addEventListener('change', autoSave);
+    });
+    
+    // Auto save on input for number/text fields (with debounce)
+    document.querySelectorAll('.settings-card input[type="number"], .settings-card input[type="text"]').forEach(el => {
+        el.addEventListener('input', autoSave);
     });
     
     // HTF Auto toggle
@@ -1100,6 +1146,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Refresh positions every 30 seconds
     setInterval(loadPositions, 30000);
+    
+    console.log('✅ RSI Sniper PRO initialized with auto-save');
 });
 
 function clearHistory() {
