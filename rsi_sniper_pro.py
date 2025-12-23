@@ -877,7 +877,7 @@ class RSISniperPro:
                 self.progress = 5 + int((i / total) * 90)
                 
                 try:
-                    df = self._fetch_klines(symbol, tf, 200)
+                    df = self._fetch_klines(symbol, tf, 1000)
                     if df is None or len(df) < 50:
                         continue
                     
@@ -924,7 +924,7 @@ class RSISniperPro:
         finally:
             self.is_scanning = False
     
-    def _fetch_klines(self, symbol: str, tf: str, limit: int = 200):
+    def _fetch_klines(self, symbol: str, tf: str, limit: int = 1000):
         """Завантажує свічки"""
         if not HAS_BOT or bot_instance is None or pd is None:
             return None
