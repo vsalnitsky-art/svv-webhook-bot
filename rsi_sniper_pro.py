@@ -663,7 +663,7 @@ class RSISniperPro:
                 self._check_positions()
             except Exception as e:
                 logger.error(f"Monitor error: {e}")
-            time.sleep(15)
+            time.sleep(30)  # Check every 30 seconds
     
     def _check_positions(self):
         """Перевіряє відкриті позиції"""
@@ -676,6 +676,11 @@ class RSISniperPro:
             open_trades = session.query(RSISniperTrade).filter(
                 RSISniperTrade.status.in_(['Open', 'TP1 Hit'])
             ).all()
+            
+            if not open_trades:
+                return  # No open positions, skip silently
+            
+            logger.debug(f"Checking {len(open_trades)} open positions...")
             
             for trade in open_trades:
                 try:
