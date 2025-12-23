@@ -1,0 +1,975 @@
+{% extends "base.html" %}
+
+{% block title %}RSI Sniper PRO{% endblock %}
+
+{% block content %}
+<style>
+/* ===== RSI SNIPER PRO STYLES ===== */
+.rsp-header {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    border-radius: 12px;
+    padding: 1.5rem;
+    color: white;
+    margin-bottom: 1.5rem;
+}
+
+.rsp-header h3 {
+    margin: 0;
+    font-weight: 700;
+}
+
+.rsp-header .subtitle {
+    opacity: 0.8;
+    font-size: 0.85rem;
+}
+
+/* Signal Type Badges */
+.signal-badge {
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.signal-badge.royal {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    color: #1f2937;
+}
+
+.signal-badge.sniper {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white;
+}
+
+.signal-badge.divergence {
+    background: linear-gradient(135deg, #eab308, #ca8a04);
+    color: #1f2937;
+}
+
+.signal-badge.flow {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+}
+
+/* Direction Badge */
+.direction-badge {
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.direction-badge.long {
+    background: rgba(34, 197, 94, 0.15);
+    color: #16a34a;
+}
+
+.direction-badge.short {
+    background: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+}
+
+/* MFI Cloud Badge */
+.cloud-badge {
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+}
+
+.cloud-badge.bullish {
+    background: rgba(34, 197, 94, 0.2);
+    color: #16a34a;
+}
+
+.cloud-badge.bearish {
+    background: rgba(239, 68, 68, 0.2);
+    color: #dc2626;
+}
+
+/* Settings Card */
+.settings-card {
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.settings-header {
+    background: #f8fafc;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.settings-body {
+    padding: 1rem;
+}
+
+/* Signal Table */
+.signal-table {
+    font-size: 0.8rem;
+}
+
+.signal-table th {
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 2px solid var(--border-color);
+    padding: 0.6rem 0.5rem;
+}
+
+.signal-table td {
+    padding: 0.6rem 0.5rem;
+    vertical-align: middle;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.signal-table tr:hover {
+    background: #f8fafc;
+}
+
+/* Status Cards */
+.status-card {
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    text-align: center;
+}
+
+.status-card .value {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.status-card .label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* Action Buttons */
+.action-btn {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.7rem;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+}
+
+.action-btn.execute {
+    background: #22c55e;
+    color: white;
+}
+
+.action-btn.execute:hover {
+    background: #16a34a;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .3s;
+    border-radius: 22px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+    background-color: #6366f1;
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(18px);
+}
+
+/* Signal Enable Cards */
+.signal-enable-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.signal-enable-card.active {
+    border-color: #6366f1;
+    background: #eef2ff;
+}
+
+.signal-enable-card .title {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.signal-enable-card .desc {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+
+/* Help Button */
+.help-btn {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    border: none;
+    font-size: 0.65rem;
+    color: #64748b;
+    cursor: help;
+    margin-left: 4px;
+}
+
+/* Paper Mode Badge */
+.paper-badge {
+    background: #fef3c7;
+    color: #b45309;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.live-badge {
+    background: #dcfce7;
+    color: #15803d;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+</style>
+
+<!-- Header -->
+<div class="rsp-header">
+    <div class="d-flex justify-content-between align-items-center">
+        <div>
+            <h3><i class="ri-crosshair-2-line me-2"></i>RSI Sniper PRO <span class="badge bg-white text-primary">v1.0</span></h3>
+            <div class="subtitle">Професійна стратегія • SNIPER + DIVERGENCE + FLOW</div>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+            <span class="{% if config.rsp_paper_trading %}paper-badge{% else %}live-badge{% endif %}">
+                {{ 'PAPER' if config.rsp_paper_trading else 'LIVE' }}
+            </span>
+            <button class="btn btn-light" id="scanBtn" onclick="startScan()">
+                <i class="ri-radar-line me-1"></i>SCAN
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Left Column: Settings -->
+    <div class="col-lg-4">
+        <!-- Status -->
+        <div class="row g-2 mb-3">
+            <div class="col-6">
+                <div class="status-card">
+                    <div class="value text-primary" id="signalsCount">0</div>
+                    <div class="label">Signals</div>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="status-card">
+                    <div class="value" id="todayTrades">{{ config.get('today_trades', 0) }}</div>
+                    <div class="label">Today Trades</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Auto Mode -->
+        <div class="settings-card mb-3">
+            <div class="settings-header">
+                <span><i class="ri-timer-line me-2"></i>Auto Mode</span>
+                <label class="toggle-switch mb-0">
+                    <input type="checkbox" id="autoMode" {{ 'checked' if config.rsp_auto_mode }} onchange="toggleAutoMode()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-body">
+                <div class="d-flex align-items-center gap-2">
+                    <label class="small fw-bold mb-0">Interval:</label>
+                    <select class="form-select form-select-sm" id="scanInterval" style="width: 100px;">
+                        <option value="1" {{ 'selected' if config.rsp_scan_interval == 1 }}>1 min</option>
+                        <option value="5" {{ 'selected' if config.rsp_scan_interval == 5 }}>5 min</option>
+                        <option value="15" {{ 'selected' if config.rsp_scan_interval == 15 }}>15 min</option>
+                        <option value="30" {{ 'selected' if config.rsp_scan_interval == 30 }}>30 min</option>
+                    </select>
+                </div>
+                <div class="mt-2">
+                    <small class="text-muted">Status: <span id="statusText">{{ 'Running' if config.rsp_auto_mode else 'Stopped' }}</span></small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Signal Types -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#signalTypes">
+                <span><i class="ri-stack-line me-2"></i>Signal Types</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse show" id="signalTypes">
+                <div class="settings-body">
+                    <div class="signal-enable-card mb-2 {{ 'active' if config.rsp_enable_royal }}" id="cardRoyal">
+                        <div>
+                            <div class="title">👑 ROYAL</div>
+                            <div class="desc">Sniper + Divergence + Structure</div>
+                        </div>
+                        <label class="toggle-switch mb-0">
+                            <input type="checkbox" id="enableRoyal" {{ 'checked' if config.rsp_enable_royal }} onchange="toggleCard('Royal')">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="signal-enable-card mb-2 {{ 'active' if config.rsp_enable_sniper }}" id="cardSniper">
+                        <div>
+                            <div class="title">🎯 SNIPER</div>
+                            <div class="desc">BB Extreme + RSI Zone</div>
+                        </div>
+                        <label class="toggle-switch mb-0">
+                            <input type="checkbox" id="enableSniper" {{ 'checked' if config.rsp_enable_sniper }} onchange="toggleCard('Sniper')">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="signal-enable-card mb-2 {{ 'active' if config.rsp_enable_divergence }}" id="cardDivergence">
+                        <div>
+                            <div class="title">🔄 DIVERGENCE</div>
+                            <div class="desc">Price/RSI Divergence</div>
+                        </div>
+                        <label class="toggle-switch mb-0">
+                            <input type="checkbox" id="enableDivergence" {{ 'checked' if config.rsp_enable_divergence }} onchange="toggleCard('Divergence')">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="signal-enable-card {{ 'active' if config.rsp_enable_flow }}" id="cardFlow">
+                        <div>
+                            <div class="title">📈 FLOW</div>
+                            <div class="desc">Trend Continuation</div>
+                        </div>
+                        <label class="toggle-switch mb-0">
+                            <input type="checkbox" id="enableFlow" {{ 'checked' if config.rsp_enable_flow }} onchange="toggleCard('Flow')">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RSI Settings -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#rsiSettings">
+                <span><i class="ri-line-chart-line me-2"></i>RSI Settings</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="rsiSettings">
+                <div class="settings-body">
+                    <div class="row g-2 mb-2">
+                        <div class="col-4">
+                            <label class="form-label small">Length</label>
+                            <input type="number" class="form-control form-control-sm" id="rsiLength" value="{{ config.rsp_rsi_length }}">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small">Oversold</label>
+                            <input type="number" class="form-control form-control-sm" id="oversold" value="{{ config.rsp_oversold }}">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small">Overbought</label>
+                            <input type="number" class="form-control form-control-sm" id="overbought" value="{{ config.rsp_overbought }}">
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small">Min Peak Strength</label>
+                        <input type="number" class="form-control form-control-sm" id="minPeakStrength" value="{{ config.rsp_min_peak_strength }}" min="1" max="5">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MFI Cloud Settings -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#mfiSettings">
+                <span><i class="ri-cloud-line me-2"></i>MFI Cloud Settings</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="mfiSettings">
+                <div class="settings-body">
+                    <div class="row g-2">
+                        <div class="col-4">
+                            <label class="form-label small">MFI Length</label>
+                            <input type="number" class="form-control form-control-sm" id="mfiLength" value="{{ config.rsp_mfi_length }}">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small">Fast EMA</label>
+                            <input type="number" class="form-control form-control-sm" id="fastMfiEma" value="{{ config.rsp_fast_mfi_ema }}">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label small">Slow EMA</label>
+                            <input type="number" class="form-control form-control-sm" id="slowMfiEma" value="{{ config.rsp_slow_mfi_ema }}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bollinger Bands Settings -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#bbSettings">
+                <span><i class="ri-contrast-2-line me-2"></i>Bollinger Bands</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="bbSettings">
+                <div class="settings-body">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="useBb" {{ 'checked' if config.rsp_use_bb }}>
+                        <label class="form-check-label small" for="useBb">Use BB for SNIPER signals</label>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small">Length</label>
+                            <input type="number" class="form-control form-control-sm" id="bbLength" value="{{ config.rsp_bb_length }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Multiplier</label>
+                            <input type="number" class="form-control form-control-sm" id="bbMult" value="{{ config.rsp_bb_mult }}" step="0.1">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Structure Settings -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#structureSettings">
+                <span><i class="ri-git-branch-line me-2"></i>Structure & Divergence</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="structureSettings">
+                <div class="settings-body">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="showStructure" {{ 'checked' if config.rsp_show_structure }}>
+                        <label class="form-check-label small" for="showStructure">Show Structure (HH/HL/LH/LL)</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="showDivergence" {{ 'checked' if config.rsp_show_divergence }}>
+                        <label class="form-check-label small" for="showDivergence">Show Divergences</label>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small">Pivot Left</label>
+                            <input type="number" class="form-control form-control-sm" id="pivotLeft" value="{{ config.rsp_pivot_left }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Pivot Right</label>
+                            <input type="number" class="form-control form-control-sm" id="pivotRight" value="{{ config.rsp_pivot_right }}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#filterSettings">
+                <span><i class="ri-filter-3-line me-2"></i>Filters</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="filterSettings">
+                <div class="settings-body">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="requireVolume" {{ 'checked' if config.rsp_require_volume }}>
+                        <label class="form-check-label small" for="requireVolume">Require Volume Confirmation</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="trendConfirmation" {{ 'checked' if config.rsp_trend_confirmation }}>
+                        <label class="form-check-label small" for="trendConfirmation">Require Trend Confirmation (EMA 20)</label>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small">Min Volume 24h ($M)</label>
+                        <select class="form-select form-select-sm" id="minVolume">
+                            <option value="5000000" {{ 'selected' if config.rsp_min_volume_24h == 5000000 }}>5M+</option>
+                            <option value="10000000" {{ 'selected' if config.rsp_min_volume_24h == 10000000 }}>10M+</option>
+                            <option value="20000000" {{ 'selected' if config.rsp_min_volume_24h == 20000000 }}>20M+</option>
+                            <option value="50000000" {{ 'selected' if config.rsp_min_volume_24h == 50000000 }}>50M+</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small">Scan Limit</label>
+                        <input type="number" class="form-control form-control-sm" id="scanLimit" value="{{ config.rsp_scan_limit }}" min="10" max="200">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Timeframes -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#tfSettings">
+                <span><i class="ri-time-line me-2"></i>Timeframes</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="tfSettings">
+                <div class="settings-body">
+                    <div class="mb-2">
+                        <label class="form-label small">Main Timeframe</label>
+                        <select class="form-select form-select-sm" id="mainTf">
+                            <option value="1" {{ 'selected' if config.rsp_main_tf == '1' }}>1m</option>
+                            <option value="5" {{ 'selected' if config.rsp_main_tf == '5' }}>5m</option>
+                            <option value="15" {{ 'selected' if config.rsp_main_tf == '15' }}>15m</option>
+                            <option value="30" {{ 'selected' if config.rsp_main_tf == '30' }}>30m</option>
+                            <option value="60" {{ 'selected' if config.rsp_main_tf == '60' }}>1H</option>
+                            <option value="240" {{ 'selected' if config.rsp_main_tf == '240' }}>4H</option>
+                        </select>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="htfAuto" {{ 'checked' if config.rsp_htf_auto }}>
+                        <label class="form-check-label small" for="htfAuto">Auto HTF</label>
+                    </div>
+                    <div>
+                        <label class="form-label small">HTF</label>
+                        <select class="form-select form-select-sm" id="htf" {{ 'disabled' if config.rsp_htf_auto }}>
+                            <option value="15" {{ 'selected' if config.rsp_htf == '15' }}>15m</option>
+                            <option value="60" {{ 'selected' if config.rsp_htf == '60' }}>1H</option>
+                            <option value="240" {{ 'selected' if config.rsp_htf == '240' }}>4H</option>
+                            <option value="D" {{ 'selected' if config.rsp_htf == 'D' }}>1D</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Risk Management -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#riskSettings">
+                <span><i class="ri-shield-line me-2"></i>Risk Management</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="riskSettings">
+                <div class="settings-body">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small">Max Daily Trades</label>
+                            <input type="number" class="form-control form-control-sm" id="maxDailyTrades" value="{{ config.rsp_max_daily_trades }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Max Open Positions</label>
+                            <input type="number" class="form-control form-control-sm" id="maxOpenPositions" value="{{ config.rsp_max_open_positions }}">
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small">Position Size %</label>
+                            <input type="number" class="form-control form-control-sm" id="positionSize" value="{{ config.rsp_position_size_percent }}" step="0.5">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Leverage</label>
+                            <input type="number" class="form-control form-control-sm" id="leverage" value="{{ config.rsp_leverage }}">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="form-label small">Max Daily Loss %</label>
+                        <input type="number" class="form-control form-control-sm" id="maxDailyLoss" value="{{ config.rsp_max_daily_loss }}" step="0.5">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Execution -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#execSettings">
+                <span><i class="ri-flashlight-line me-2"></i>Execution</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="execSettings">
+                <div class="settings-body">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="paperTrading" {{ 'checked' if config.rsp_paper_trading }}>
+                        <label class="form-check-label small" for="paperTrading">Paper Trading</label>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="autoExecute" {{ 'checked' if config.rsp_auto_execute }}>
+                        <label class="form-check-label small" for="autoExecute">Auto Execute Trades</label>
+                    </div>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="telegramSignals" {{ 'checked' if config.rsp_telegram_signals }}>
+                        <label class="form-check-label small" for="telegramSignals">Telegram Signals</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <button class="btn btn-primary w-100 mb-3" onclick="saveConfig()">
+            <i class="ri-save-line me-1"></i>Save Settings
+        </button>
+    </div>
+
+    <!-- Right Column: Results -->
+    <div class="col-lg-8">
+        <!-- Scan Progress -->
+        <div class="alert alert-info mb-3" id="scanProgress" style="display: none;">
+            <div class="d-flex align-items-center">
+                <div class="spinner-border spinner-border-sm me-2"></div>
+                <span id="scanStatus">Scanning...</span>
+            </div>
+            <div class="progress mt-2" style="height: 6px;">
+                <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Signals -->
+        <div class="settings-card mb-3">
+            <div class="settings-header">
+                <span><i class="ri-signal-tower-line me-2"></i>Signals</span>
+                <span class="badge bg-primary" id="signalsBadge">0</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table signal-table mb-0" id="signalsTable">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Type</th>
+                            <th>Dir</th>
+                            <th>Price</th>
+                            <th>RSI</th>
+                            <th>MFI</th>
+                            <th>Structure</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="signalsBody">
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-4">
+                                <i class="ri-radar-line" style="font-size: 2rem; opacity: 0.3;"></i>
+                                <div class="mt-2">No signals yet. Click SCAN to start.</div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Trade History -->
+        <div class="settings-card">
+            <div class="settings-header">
+                <span><i class="ri-history-line me-2"></i>Trade History</span>
+                <button class="btn btn-sm btn-outline-danger" onclick="clearHistory()">
+                    <i class="ri-delete-bin-line"></i>
+                </button>
+            </div>
+            <div class="table-responsive">
+                <table class="table signal-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Symbol</th>
+                            <th>Type</th>
+                            <th>Dir</th>
+                            <th>Entry</th>
+                            <th>Status</th>
+                            <th>P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody">
+                        {% for t in trades %}
+                        <tr>
+                            <td>{{ t.time }}</td>
+                            <td><strong>{{ t.symbol }}</strong></td>
+                            <td><span class="signal-badge {{ t.signal_type|lower }}">{{ t.signal_type }}</span></td>
+                            <td><span class="direction-badge {{ t.direction|lower }}">{{ t.direction }}</span></td>
+                            <td>{{ "%.4f"|format(t.entry_price) if t.entry_price else '-' }}</td>
+                            <td>{{ t.status }}</td>
+                            <td class="{{ 'text-success' if t.pnl_percent and t.pnl_percent > 0 else 'text-danger' if t.pnl_percent else '' }}">
+                                {{ "%.2f%%"|format(t.pnl_percent) if t.pnl_percent else '-' }}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center text-muted py-3">No trades yet</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const csrfToken = '{{ csrf_token() if csrf_token is defined else "" }}';
+let statusInterval = null;
+
+// ===== SCAN =====
+function startScan() {
+    fetch('/rsi_sniper/scan', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        if (d.status === 'started') {
+            document.getElementById('scanProgress').style.display = 'block';
+            startStatusPolling();
+        }
+    });
+}
+
+function startStatusPolling() {
+    if (statusInterval) clearInterval(statusInterval);
+    statusInterval = setInterval(updateStatus, 1000);
+}
+
+function updateStatus() {
+    fetch('/rsi_sniper/status')
+        .then(r => r.json())
+        .then(status => {
+            // Update progress
+            document.getElementById('scanStatus').textContent = status.status;
+            document.getElementById('progressBar').style.width = status.progress + '%';
+            document.getElementById('signalsCount').textContent = status.results_count;
+            document.getElementById('signalsBadge').textContent = status.results_count;
+            
+            // Update scan button
+            const scanBtn = document.getElementById('scanBtn');
+            if (status.is_scanning) {
+                scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' + status.progress + '%';
+                scanBtn.disabled = true;
+            } else {
+                scanBtn.innerHTML = '<i class="ri-radar-line me-1"></i>SCAN';
+                scanBtn.disabled = false;
+                document.getElementById('scanProgress').style.display = 'none';
+                
+                // Update signals table
+                if (status.results && status.results.length > 0) {
+                    renderSignals(status.results);
+                }
+                
+                if (statusInterval && !status.auto_running) {
+                    clearInterval(statusInterval);
+                    statusInterval = null;
+                }
+            }
+            
+            // Update status text
+            document.getElementById('statusText').textContent = status.auto_running ? 'Running' : 'Stopped';
+        });
+}
+
+function renderSignals(signals) {
+    const tbody = document.getElementById('signalsBody');
+    
+    if (!signals || signals.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-muted py-4">
+                    <i class="ri-radar-line" style="font-size: 2rem; opacity: 0.3;"></i>
+                    <div class="mt-2">No signals found</div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    tbody.innerHTML = signals.map(s => `
+        <tr>
+            <td><strong>${s.symbol}</strong></td>
+            <td><span class="signal-badge ${s.signal_type.toLowerCase()}">${s.signal_type}</span></td>
+            <td><span class="direction-badge ${s.direction.toLowerCase()}">${s.direction}</span></td>
+            <td>${parseFloat(s.price).toFixed(4)}</td>
+            <td>${parseFloat(s.rsi).toFixed(1)}</td>
+            <td><span class="cloud-badge ${s.mfi_cloud.toLowerCase()}">${s.mfi_cloud}</span></td>
+            <td>${s.structure || '-'}</td>
+            <td>
+                <button class="action-btn execute" onclick="executeSignal('${s.symbol}', '${s.direction}', '${s.signal_type}', ${s.price}, ${s.sl_price}, ${s.tp1_price}, ${s.tp2_price})">
+                    Execute
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// ===== EXECUTE =====
+function executeSignal(symbol, direction, signalType, price, sl, tp1, tp2) {
+    if (!confirm(`Execute ${direction} on ${symbol}?`)) return;
+    
+    fetch('/rsi_sniper/execute', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({
+            symbol: symbol,
+            direction: direction,
+            signal_type: signalType,
+            price: price,
+            sl_price: sl,
+            tp1_price: tp1,
+            tp2_price: tp2
+        })
+    }).then(r => r.json()).then(d => {
+        if (d.success) {
+            alert('Trade executed successfully!');
+            location.reload();
+        } else {
+            alert('Error: ' + (d.error || 'Unknown error'));
+        }
+    });
+}
+
+// ===== AUTO MODE =====
+function toggleAutoMode() {
+    const enabled = document.getElementById('autoMode').checked;
+    const interval = parseInt(document.getElementById('scanInterval').value);
+    
+    fetch('/rsi_sniper/auto', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({ enabled: enabled, interval: interval })
+    }).then(r => r.json()).then(d => {
+        document.getElementById('statusText').textContent = d.auto_running ? 'Running' : 'Stopped';
+        if (d.auto_running) {
+            startStatusPolling();
+        }
+    });
+}
+
+// ===== CONFIG =====
+function collectConfig() {
+    return {
+        rsp_rsi_length: parseInt(document.getElementById('rsiLength').value),
+        rsp_oversold: parseInt(document.getElementById('oversold').value),
+        rsp_overbought: parseInt(document.getElementById('overbought').value),
+        rsp_min_peak_strength: parseInt(document.getElementById('minPeakStrength').value),
+        
+        rsp_mfi_length: parseInt(document.getElementById('mfiLength').value),
+        rsp_fast_mfi_ema: parseInt(document.getElementById('fastMfiEma').value),
+        rsp_slow_mfi_ema: parseInt(document.getElementById('slowMfiEma').value),
+        
+        rsp_use_bb: document.getElementById('useBb').checked,
+        rsp_bb_length: parseInt(document.getElementById('bbLength').value),
+        rsp_bb_mult: parseFloat(document.getElementById('bbMult').value),
+        
+        rsp_show_structure: document.getElementById('showStructure').checked,
+        rsp_show_divergence: document.getElementById('showDivergence').checked,
+        rsp_pivot_left: parseInt(document.getElementById('pivotLeft').value),
+        rsp_pivot_right: parseInt(document.getElementById('pivotRight').value),
+        
+        rsp_require_volume: document.getElementById('requireVolume').checked,
+        rsp_trend_confirmation: document.getElementById('trendConfirmation').checked,
+        rsp_min_volume_24h: parseInt(document.getElementById('minVolume').value),
+        rsp_scan_limit: parseInt(document.getElementById('scanLimit').value),
+        
+        rsp_main_tf: document.getElementById('mainTf').value,
+        rsp_htf_auto: document.getElementById('htfAuto').checked,
+        rsp_htf: document.getElementById('htf').value,
+        
+        rsp_enable_royal: document.getElementById('enableRoyal').checked,
+        rsp_enable_sniper: document.getElementById('enableSniper').checked,
+        rsp_enable_divergence: document.getElementById('enableDivergence').checked,
+        rsp_enable_flow: document.getElementById('enableFlow').checked,
+        
+        rsp_max_daily_trades: parseInt(document.getElementById('maxDailyTrades').value),
+        rsp_max_open_positions: parseInt(document.getElementById('maxOpenPositions').value),
+        rsp_position_size_percent: parseFloat(document.getElementById('positionSize').value),
+        rsp_leverage: parseInt(document.getElementById('leverage').value),
+        rsp_max_daily_loss: parseFloat(document.getElementById('maxDailyLoss').value),
+        
+        rsp_paper_trading: document.getElementById('paperTrading').checked,
+        rsp_auto_execute: document.getElementById('autoExecute').checked,
+        rsp_telegram_signals: document.getElementById('telegramSignals').checked,
+        
+        rsp_auto_mode: document.getElementById('autoMode').checked,
+        rsp_scan_interval: parseInt(document.getElementById('scanInterval').value),
+    };
+}
+
+function saveConfig() {
+    const config = collectConfig();
+    
+    fetch('/rsi_sniper/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(config)
+    }).then(r => r.json()).then(d => {
+        console.log('Config saved');
+    });
+}
+
+function toggleCard(name) {
+    const card = document.getElementById('card' + name);
+    const checkbox = document.getElementById('enable' + name);
+    if (checkbox.checked) {
+        card.classList.add('active');
+    } else {
+        card.classList.remove('active');
+    }
+    saveConfig();
+}
+
+// ===== AUTO SAVE =====
+let autoSaveTimeout = null;
+function autoSave() {
+    if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(saveConfig, 500);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto save on change
+    document.querySelectorAll('.settings-card input, .settings-card select').forEach(el => {
+        el.addEventListener('change', autoSave);
+    });
+    
+    // HTF Auto toggle
+    document.getElementById('htfAuto').addEventListener('change', function() {
+        document.getElementById('htf').disabled = this.checked;
+    });
+    
+    // Start status polling if auto mode is on
+    if (document.getElementById('autoMode').checked) {
+        startStatusPolling();
+    }
+});
+
+function clearHistory() {
+    if (!confirm('Clear all trade history?')) return;
+    // Implement clear history endpoint
+}
+</script>
+{% endblock %}
