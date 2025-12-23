@@ -819,7 +819,7 @@ function startScan() {
 
 function startStatusPolling() {
     if (statusInterval) clearInterval(statusInterval);
-    statusInterval = setInterval(updateStatus, 1000);
+    statusInterval = setInterval(updateStatus, 5000);  // Poll every 5 seconds
 }
 
 function renderSignals(signals) {
