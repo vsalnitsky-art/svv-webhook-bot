@@ -583,7 +583,7 @@ class WhaleHunterPro:
         
         # Автоматизація
         self.auto_running = False
-        self.auto_interval = 60  # хвилини
+        self.auto_interval = 5  # хвилини (default)
         self._stop_event = threading.Event()
         
         # Компоненти
@@ -595,6 +595,13 @@ class WhaleHunterPro:
         
         # Ініціалізація таблиці
         self._ensure_table()
+        
+        # 🆕 Автозапуск auto mode якщо увімкнений в налаштуваннях
+        config = self._load_config()
+        if config.get('whp_auto_mode', True):
+            self.auto_running = True
+            self.auto_interval = config.get('whp_auto_interval', 5)
+            logger.info(f"🐋 Whale Hunter PRO auto mode enabled (interval: {self.auto_interval} min)")
     
     def _ensure_table(self):
         """Створює таблицю якщо не існує"""
@@ -631,8 +638,8 @@ class WhaleHunterPro:
         return {
             # Загальні
             'whp_enabled': to_bool(settings.get('whp_enabled'), True),
-            'whp_auto_mode': to_bool(settings.get('whp_auto_mode'), False),
-            'whp_auto_interval': to_int(settings.get('whp_auto_interval'), 60),
+            'whp_auto_mode': to_bool(settings.get('whp_auto_mode'), True),
+            'whp_auto_interval': to_int(settings.get('whp_auto_interval'), 5),
             'whp_min_score': to_int(settings.get('whp_min_score'), 40),
             
             # Ліквідність
