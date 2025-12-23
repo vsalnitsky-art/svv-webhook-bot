@@ -120,7 +120,7 @@ DEFAULT_CONFIG = {
     'rsp_slow_mfi_ema': 13,
     
     # Signal Configuration
-    'rsp_require_volume': True,
+    'rsp_require_volume': False,
     'rsp_trend_confirmation': False,
     'rsp_min_peak_strength': 2,
     
@@ -164,8 +164,8 @@ DEFAULT_CONFIG = {
     'rsp_close_on_opposite': True,
     
     # Auto Mode
-    'rsp_auto_mode': False,
-    'rsp_scan_interval': 5,
+    'rsp_auto_mode': True,
+    'rsp_scan_interval': 1,
 }
 
 
@@ -437,7 +437,7 @@ class SignalGenerator:
             
             # Volume check
             volume_sma = float(volume.rolling(20).mean().iloc[-1])
-            volume_ok = not self.config.get('rsp_require_volume', True) or float(volume.iloc[-1]) > volume_sma
+            volume_ok = not self.config.get('rsp_require_volume', False) or float(volume.iloc[-1]) > volume_sma
             
             # Trend check
             trend_ok_buy = not self.config.get('rsp_trend_confirmation', False) or current_price > current_ema20
@@ -451,24 +451,22 @@ class SignalGenerator:
             oversold = self.config.get('rsp_oversold', 30)
             overbought = self.config.get('rsp_overbought', 70)
             
-            # RSI changes
-            rsi_rising = rsi.iloc[-1] > rsi.iloc[-2] > rsi.iloc[-3]
-            rsi_falling = rsi.iloc[-1] < rsi.iloc[-2] < rsi.iloc[-3]
+            # RSI changes (for FLOW signals)
+            rsi_rising = rsi.iloc[-1] > rsi.iloc[-2]
+            rsi_falling = rsi.iloc[-1] < rsi.iloc[-2]
             
-            # Base signals
+            # Base conditions
             is_oversold = current_rsi <= oversold
             is_overbought = current_rsi >= overbought
             
-            base_buy = is_oversold and volume_ok and trend_ok_buy and rsi_rising
-            base_sell = is_overbought and volume_ok and trend_ok_sell and rsi_falling
-            
             # ===============================================================
-            # SNIPER SIGNALS
+            # SNIPER SIGNALS (BB Extreme + RSI Zone)
+            # Trade Book: Entry immediately, SL behind candle wick or BB edge
             # ===============================================================
             if self.config.get('rsp_enable_sniper', True) and self.config.get('rsp_use_bb', True):
                 
-                # SNIPER LONG
-                if base_buy and is_extreme_low:
+                # SNIPER LONG: RSI oversold + BB lower touch
+                if is_oversold and is_extreme_low and volume_ok:
                     sl_price = min(float(low.iloc[-1]), current_bb_lower) - (current_atr * 0.2)
                     tp1_price = current_bb_middle
                     tp2_price = current_bb_upper
@@ -492,8 +490,8 @@ class SignalGenerator:
                     )
                     signals.append(signal)
                 
-                # SNIPER SHORT
-                if base_sell and is_extreme_high:
+                # SNIPER SHORT: RSI overbought + BB upper touch
+                if is_overbought and is_extreme_high and volume_ok:
                     sl_price = max(float(high.iloc[-1]), current_bb_upper) + (current_atr * 0.2)
                     tp1_price = current_bb_middle
                     tp2_price = current_bb_lower
@@ -518,12 +516,13 @@ class SignalGenerator:
                     signals.append(signal)
             
             # ===============================================================
-            # FLOW SIGNALS (за трендом)
+            # FLOW SIGNALS (Trend Continuation)
+            # Trade Book: MFI Cloud color must match signal direction
             # ===============================================================
             if self.config.get('rsp_enable_flow', True):
                 
-                # FLOW LONG
-                if base_buy and mfi_cloud == "BULLISH" and not is_extreme_low:
+                # FLOW LONG: RSI oversold + MFI Cloud BULLISH + NOT at BB extreme
+                if is_oversold and mfi_cloud == "BULLISH" and not is_extreme_low and volume_ok and rsi_rising:
                     sl_price = current_price - (current_atr * 1.5)
                     tp1_price = current_price * 1.01
                     tp2_price = current_bb_upper
@@ -545,8 +544,8 @@ class SignalGenerator:
                     )
                     signals.append(signal)
                 
-                # FLOW SHORT
-                if base_sell and mfi_cloud == "BEARISH" and not is_extreme_high:
+                # FLOW SHORT: RSI overbought + MFI Cloud BEARISH + NOT at BB extreme
+                if is_overbought and mfi_cloud == "BEARISH" and not is_extreme_high and volume_ok and rsi_falling:
                     sl_price = current_price + (current_atr * 1.5)
                     tp1_price = current_price * 0.99
                     tp2_price = current_bb_lower
@@ -607,15 +606,46 @@ class RSISniperPro:
         self._load_open_positions()
         self._start_monitor()
         
-        logger.info("🎯 RSI Sniper PRO v2.0 initialized")
+        # Auto start if enabled
+        config = self._load_config()
+        if config.get('rsp_auto_mode', True):
+            interval = config.get('rsp_scan_interval', 1)
+            self.start_auto_mode(interval)
+            logger.info(f"🎯 RSI Sniper PRO v2.0 auto mode enabled (interval: {interval} min)")
+        else:
+            logger.info("🎯 RSI Sniper PRO v2.0 initialized")
     
     def _ensure_table(self):
-        """Створює таблицю в БД"""
+        """Створює таблицю в БД та додає відсутні колонки"""
         if not HAS_DB or db_manager is None:
             return
         
         try:
+            # Create table if not exists
             RSISniperTrade.__table__.create(db_manager.engine, checkfirst=True)
+            
+            # Add missing columns (migration)
+            from sqlalchemy import text
+            missing_columns = [
+                ("highest_price", "FLOAT"),
+                ("lowest_price", "FLOAT"),
+                ("tp2_hit", "BOOLEAN DEFAULT FALSE"),
+                ("max_profit_percent", "FLOAT"),
+                ("max_drawdown_percent", "FLOAT"),
+                ("hold_time_minutes", "FLOAT"),
+                ("tags", "VARCHAR(200)"),
+            ]
+            
+            with db_manager.engine.connect() as conn:
+                for col_name, col_type in missing_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE rsi_sniper_trades ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                        logger.info(f"✅ Added column: {col_name}")
+                    except Exception:
+                        # Column already exists
+                        pass
+            
             logger.info("✅ RSI Sniper trades table ready")
         except Exception as e:
             logger.debug(f"Table creation: {e}")
@@ -815,7 +845,7 @@ class RSISniperPro:
             'last_scan_time': self.last_scan_time.strftime('%H:%M:%S') if self.last_scan_time else None,
             'results_count': len(self.scan_results),
             'auto_running': self.auto_running,
-            'scan_interval': config.get('rsp_scan_interval', 5),
+            'scan_interval': config.get('rsp_scan_interval', 1),
             'today_trades': self.today_trades,
             'paper_mode': config.get('rsp_paper_trading', True),
             'open_positions': len(self._open_positions),
@@ -945,8 +975,15 @@ class RSISniperPro:
             return None
         
         try:
+            # Convert timeframe format (1m -> 1, 5m -> 5, etc.)
+            tf_clean = tf.replace('m', '').replace('h', '').replace('d', 'D').replace('w', 'W')
+            if tf_clean == '1h':
+                tf_clean = '60'
+            elif tf_clean == '4h':
+                tf_clean = '240'
+            
             klines = bot_instance.session.get_kline(
-                category="linear", symbol=symbol, interval=tf, limit=limit
+                category="linear", symbol=symbol, interval=tf_clean, limit=limit
             )
             if not klines or 'result' not in klines:
                 return None
@@ -961,7 +998,8 @@ class RSISniperPro:
                 'close': 'float64', 'volume': 'float64'
             })
             return df.iloc[::-1].reset_index(drop=True)
-        except:
+        except Exception as e:
+            logger.debug(f"Klines fetch error for {symbol}: {e}")
             return None
     
     def _auto_execute_signals(self, signals: List[Signal], config: Dict):
@@ -1222,7 +1260,7 @@ class RSISniperPro:
             if session:
                 session.close()
     
-    def start_auto_mode(self, interval: int = 5):
+    def start_auto_mode(self, interval: int = 1):
         """Запускає авто-режим"""
         if self.auto_running:
             return
@@ -1312,7 +1350,7 @@ def register_rsi_sniper_routes(app):
         rsp = get_rsi_sniper_pro()
         data = request.json or {}
         enabled = data.get('enabled', False)
-        interval = int(data.get('interval', 5))
+        interval = int(data.get('interval', 1))
         
         if enabled:
             rsp.start_auto_mode(interval)
@@ -1357,3 +1395,6 @@ def register_rsi_sniper_routes(app):
         })
     
     logger.info("🎯 RSI Sniper PRO routes registered")
+    
+    # Initialize singleton when routes are registered
+    get_rsi_sniper_pro()
