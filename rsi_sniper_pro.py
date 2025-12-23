@@ -175,7 +175,7 @@ DEFAULT_CONFIG = {
 
 if HAS_DB:
     class RSISniperTrade(Base):
-        """Модель для збереження угод"""
+        """Модель для збереження угод - сумісна з існуючою БД"""
         __tablename__ = 'rsi_sniper_trades'
         __table_args__ = {'extend_existing': True}
         
@@ -189,8 +189,6 @@ if HAS_DB:
         signal_price = Column(Float)
         entry_price = Column(Float)
         current_price = Column(Float)
-        highest_price = Column(Float)
-        lowest_price = Column(Float)
         sl_price = Column(Float)
         tp1_price = Column(Float)
         tp2_price = Column(Float)
@@ -209,13 +207,10 @@ if HAS_DB:
         
         # Trade Management
         tp1_hit = Column(Boolean, default=False)
-        tp2_hit = Column(Boolean, default=False)
         moved_to_be = Column(Boolean, default=False)
         
         # P&L
         pnl_percent = Column(Float)
-        max_profit_percent = Column(Float)
-        max_drawdown_percent = Column(Float)
         
         # Exit Info
         exit_reason = Column(String(50))
@@ -225,7 +220,6 @@ if HAS_DB:
         paper_trade = Column(Boolean, default=True)
         leverage = Column(Integer, default=10)
         position_size = Column(Float)
-        hold_time_minutes = Column(Float)
         
         # Timestamps
         signal_time = Column(DateTime)
@@ -233,9 +227,8 @@ if HAS_DB:
         exit_time = Column(DateTime)
         created_at = Column(DateTime, default=datetime.utcnow)
         
-        # Notes & Tags
+        # Notes
         notes = Column(Text)
-        tags = Column(String(200))
 else:
     RSISniperTrade = None
 
@@ -616,36 +609,12 @@ class RSISniperPro:
             logger.info("🎯 RSI Sniper PRO v2.0 initialized")
     
     def _ensure_table(self):
-        """Створює таблицю в БД та додає відсутні колонки"""
+        """Створює таблицю в БД"""
         if not HAS_DB or db_manager is None:
             return
         
         try:
-            # Create table if not exists
             RSISniperTrade.__table__.create(db_manager.engine, checkfirst=True)
-            
-            # Add missing columns (migration)
-            from sqlalchemy import text
-            missing_columns = [
-                ("highest_price", "FLOAT"),
-                ("lowest_price", "FLOAT"),
-                ("tp2_hit", "BOOLEAN DEFAULT FALSE"),
-                ("max_profit_percent", "FLOAT"),
-                ("max_drawdown_percent", "FLOAT"),
-                ("hold_time_minutes", "FLOAT"),
-                ("tags", "VARCHAR(200)"),
-            ]
-            
-            with db_manager.engine.connect() as conn:
-                for col_name, col_type in missing_columns:
-                    try:
-                        conn.execute(text(f"ALTER TABLE rsi_sniper_trades ADD COLUMN {col_name} {col_type}"))
-                        conn.commit()
-                        logger.info(f"✅ Added column: {col_name}")
-                    except Exception:
-                        # Column already exists
-                        pass
-            
             logger.info("✅ RSI Sniper trades table ready")
         except Exception as e:
             logger.debug(f"Table creation: {e}")
@@ -720,12 +689,6 @@ class RSISniperPro:
                     current_price = float(ticker['result']['list'][0]['lastPrice'])
                     trade.current_price = current_price
                     
-                    # Update highest/lowest
-                    if trade.highest_price is None or current_price > trade.highest_price:
-                        trade.highest_price = current_price
-                    if trade.lowest_price is None or current_price < trade.lowest_price:
-                        trade.lowest_price = current_price
-                    
                     # Check TP1
                     if not trade.tp1_hit and trade.tp1_price:
                         tp1_hit = (trade.direction == 'LONG' and current_price >= trade.tp1_price) or \
@@ -781,19 +744,6 @@ class RSISniperPro:
             pnl = ((trade.entry_price - exit_price) / trade.entry_price) * 100 * trade.leverage
         
         trade.pnl_percent = pnl
-        
-        # Hold time
-        if trade.entry_time:
-            delta = trade.exit_time - trade.entry_time
-            trade.hold_time_minutes = delta.total_seconds() / 60
-        
-        # Tags
-        tags = [trade.signal_type, reason]
-        if pnl > 0:
-            tags.append('win')
-        else:
-            tags.append('loss')
-        trade.tags = ','.join(tags)
         
         # Remove from cache
         self._open_positions.pop(trade.symbol, None)
