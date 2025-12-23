@@ -239,7 +239,64 @@ DEFAULT_SETTINGS = {
     "cs_use_analytics": True,
     "cs_avoid_problem_symbols": True,
     "cs_adjust_on_losses": True,
-    "cs_leverage": 10
+    "cs_leverage": 10,
+    
+    # === RSI SNIPER PRO ===
+    # RSI Settings
+    "rsp_rsi_length": 14,
+    "rsp_oversold": 30,
+    "rsp_overbought": 70,
+    "rsp_min_peak_strength": 2,
+    
+    # MFI Cloud Settings
+    "rsp_mfi_length": 20,
+    "rsp_fast_mfi_ema": 5,
+    "rsp_slow_mfi_ema": 13,
+    
+    # Bollinger Bands
+    "rsp_use_bb": True,
+    "rsp_bb_length": 20,
+    "rsp_bb_mult": 2.0,
+    
+    # Structure & Divergence
+    "rsp_show_structure": True,
+    "rsp_show_divergence": True,
+    "rsp_pivot_left": 5,
+    "rsp_pivot_right": 2,
+    
+    # Signal Types
+    "rsp_enable_royal": True,
+    "rsp_enable_sniper": True,
+    "rsp_enable_divergence": True,
+    "rsp_enable_flow": True,
+    
+    # Filters
+    "rsp_require_volume": False,
+    "rsp_trend_confirmation": False,
+    "rsp_min_volume_24h": 10000000,
+    "rsp_scan_limit": 50,
+    
+    # Timeframes
+    "rsp_main_tf": "15",
+    "rsp_htf": "60",
+    "rsp_htf_auto": True,
+    
+    # Risk Management
+    "rsp_max_daily_trades": 5,
+    "rsp_max_open_positions": 2,
+    "rsp_position_size_percent": 5.0,
+    "rsp_leverage": 10,
+    "rsp_max_daily_loss": 3.0,
+    
+    # Execution
+    "rsp_paper_trading": True,
+    "rsp_auto_execute": True,
+    "rsp_close_on_opposite": True,
+    "rsp_telegram_signals": False,
+    
+    # Auto Mode
+    "rsp_auto_mode": True,
+    "rsp_scan_interval": 1,
 }
 
 class SettingsManager:
