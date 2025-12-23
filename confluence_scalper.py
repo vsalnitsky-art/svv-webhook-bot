@@ -869,7 +869,15 @@ class ConfluenceScalper:
         
         self._ensure_tables()
         self._load_daily_stats()
-        logger.info("✅ Confluence Scalper v2.0 initialized")
+        
+        # 🆕 Автозапуск auto mode якщо увімкнений в налаштуваннях
+        config = self.get_config()
+        if config.get('cs_auto_mode', True):
+            interval = config.get('cs_scan_interval', 30)
+            self.start_auto_mode(interval)
+            logger.info(f"✅ Confluence Scalper v2.0 initialized (auto mode: {interval}s)")
+        else:
+            logger.info("✅ Confluence Scalper v2.0 initialized")
     
     def _ensure_tables(self):
         try:
@@ -952,7 +960,7 @@ class ConfluenceScalper:
             'cs_enabled': to_bool(settings.get('cs_enabled'), True),
             'cs_timeframe': tf,
             'cs_auto_preset': use_preset,
-            'cs_min_confluence': to_int(settings.get('cs_min_confluence'), preset['min_confluence'] if use_preset else 72),
+            'cs_min_confluence': to_int(settings.get('cs_min_confluence'), preset['min_confluence'] if use_preset else 50),
             'cs_weight_whale': to_int(settings.get('cs_weight_whale'), 30),
             'cs_weight_ob': to_int(settings.get('cs_weight_ob'), 30),
             'cs_weight_volume': to_int(settings.get('cs_weight_volume'), 20),
@@ -992,6 +1000,7 @@ class ConfluenceScalper:
             'cs_use_analytics': to_bool(settings.get('cs_use_analytics'), True),
             'cs_avoid_problem_symbols': to_bool(settings.get('cs_avoid_problem_symbols'), True),
             'cs_adjust_on_losses': to_bool(settings.get('cs_adjust_on_losses'), True),
+            'cs_auto_mode': to_bool(settings.get('cs_auto_mode'), True),
         }
     
     def get_status(self) -> Dict:
@@ -1117,12 +1126,20 @@ class ConfluenceScalper:
                         result.sl_price = nearest_ob.top + (atr * config['cs_sl_atr_mult']) + (current_price * config['cs_sl_buffer'] / 100)
                         result.tp1_price = current_price * (1 - config['cs_tp1_percent'] / 100)
                         result.tp2_price = current_price * (1 - config['cs_tp2_percent'] / 100)
+                elif dist_pct <= max_dist * 2:
+                    # OB знайдено, але далекувато - часткові бали
+                    ob_score = 30 * (1 - (dist_pct - max_dist) / max_dist)
+                    result.reject_reasons.append(f"OB moderate: {dist_pct:.2f}%")
                 else:
+                    ob_score = 10  # Мінімальні бали за наявність OB
                     result.reject_reasons.append(f"OB too far: {dist_pct:.2f}%")
             else:
-                result.reject_reasons.append("No valid OB")
+                # Немає OB - часткові бали якщо інші показники хороші
+                ob_score = 20 if result.whale_score >= 50 else 0
+                result.reject_reasons.append("No valid OB (partial score given)")
         except Exception as e:
-            result.reject_reasons.append("OB detection failed")
+            ob_score = 10  # Помилка детекції - мінімальні бали
+            result.reject_reasons.append("OB detection issue")
         result.ob_score = ob_score
         
         # 3. VOLUME SCORE
@@ -1169,6 +1186,24 @@ class ConfluenceScalper:
         elif s >= 65: result.strength = SignalStrength.MODERATE
         else: result.strength = SignalStrength.WEAK
         
+        # Якщо немає ATR (не знайдено OB), обчислюємо його для фільтрів
+        if result.atr == 0:
+            result.atr = calculate_atr(df, 10)
+        
+        # Якщо немає SL/TP (не знайдено близький OB), встановлюємо базові
+        if result.sl_price == 0 and result.atr > 0:
+            atr_mult = config.get('cs_sl_atr_mult', 0.4)
+            if direction == "LONG":
+                result.entry_price = current_price
+                result.sl_price = current_price - (result.atr * atr_mult * 2)
+                result.tp1_price = current_price * (1 + config['cs_tp1_percent'] / 100)
+                result.tp2_price = current_price * (1 + config['cs_tp2_percent'] / 100)
+            else:
+                result.entry_price = current_price
+                result.sl_price = current_price + (result.atr * atr_mult * 2)
+                result.tp1_price = current_price * (1 - config['cs_tp1_percent'] / 100)
+                result.tp2_price = current_price * (1 - config['cs_tp2_percent'] / 100)
+        
         # Additional filters
         if config['cs_use_volatility_filter'] and result.atr > 0:
             atr_pct = (result.atr / current_price) * 100
@@ -1187,10 +1222,21 @@ class ConfluenceScalper:
             if symbol in blacklist:
                 result.reject_reasons.append("Symbol blacklisted")
         
+        # Check for critical rejections only (not informational)
+        critical_rejections = [r for r in result.reject_reasons if any(
+            x in r.lower() for x in ['blacklist', 'against btc', 'outside hours']
+        )]
+        
         result.is_valid = (
             result.confluence_score >= config['cs_min_confluence'] and
-            len(result.reject_reasons) == 0 and result.ob_score > 0
+            len(critical_rejections) == 0 and
+            result.ob_score >= 0  # OB не обов'язковий, якщо confluence достатній
         )
+        
+        # Логування для діагностики
+        if not result.is_valid and result.confluence_score > 40:
+            logger.debug(f"⏭️ {symbol} {direction}: score={result.confluence_score:.1f}, "
+                        f"rejections={result.reject_reasons}, ob={result.ob_score:.1f}")
         return result
     
     def start_scan(self) -> bool:
@@ -1250,6 +1296,7 @@ class ConfluenceScalper:
                 directions = ["LONG", "SHORT"]
             
             found = []
+            rejected_count = 0
             for i, t in enumerate(targets):
                 if self._stop_scan.is_set():
                     break
@@ -1265,7 +1312,14 @@ class ConfluenceScalper:
                         result = self.calculate_confluence(df, symbol, direction, config)
                         if result.is_valid:
                             found.append(result)
-                            logger.info(f"✅ {symbol} {direction}: {result.confluence_score:.1f}")
+                            logger.info(f"✅ {symbol} {direction}: {result.confluence_score:.1f} "
+                                       f"(W:{result.whale_score:.0f} OB:{result.ob_score:.0f} "
+                                       f"V:{result.volume_score:.0f} T:{result.trend_score:.0f})")
+                        elif result.confluence_score >= 40 and rejected_count < 10:
+                            # Логуємо перші 10 близьких до порогу для діагностики
+                            logger.debug(f"⏭️ {symbol} {direction}: {result.confluence_score:.1f} "
+                                        f"reasons={result.reject_reasons[:2]}")
+                            rejected_count += 1
                     time.sleep(0.1)  # Rate limit: 10 requests/sec max
                 except Exception as e:
                     logger.debug(f"Scan {symbol}: {e}")
