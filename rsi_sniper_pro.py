@@ -84,7 +84,7 @@ DEFAULT_CONFIG = {
     'rsp_slow_mfi_ema': 13,
     
     # Signal Configuration
-    'rsp_require_volume': False,
+    'rsp_require_volume': True,  # ✅ Увімкнено за замовчуванням
     'rsp_trend_confirmation': False,
     'rsp_min_peak_strength': 2,
     
@@ -115,16 +115,17 @@ DEFAULT_CONFIG = {
     'rsp_enable_royal': True,
     
     # Risk Management
-    'rsp_max_daily_trades': 5,
-    'rsp_max_open_positions': 2,
+    'rsp_max_daily_trades': 10,
+    'rsp_max_open_positions': 5,
     'rsp_position_size_percent': 5.0,
     'rsp_max_daily_loss': 3.0,
     'rsp_leverage': 10,
     
     # Execution
     'rsp_paper_trading': True,
-    'rsp_auto_execute': False,
+    'rsp_auto_execute': True,  # ✅ Автовиконання для імітації
     'rsp_telegram_signals': False,
+    'rsp_close_on_opposite': True,  # ✅ Закривати при протилежному сигналі
     
     # Auto Mode
     'rsp_auto_mode': True,
@@ -161,7 +162,7 @@ PARAM_HELP = {
 # ============================================================================
 
 class RSISniperTrade(Base):
-    """Модель для збереження угод"""
+    """Модель для збереження угод з повною аналітикою"""
     __tablename__ = 'rsi_sniper_trades'
     
     id = Column(Integer, primary_key=True)
@@ -171,9 +172,11 @@ class RSISniperTrade(Base):
     status = Column(String(20), default='Open')
     
     # Prices
-    signal_price = Column(Float)
-    entry_price = Column(Float)
-    current_price = Column(Float)
+    signal_price = Column(Float)             # Ціна на момент сигналу
+    entry_price = Column(Float)              # Ціна входу
+    current_price = Column(Float)            # Поточна ціна
+    highest_price = Column(Float)            # Найвища ціна за час угоди
+    lowest_price = Column(Float)             # Найнижча ціна за час угоди
     sl_price = Column(Float)
     tp1_price = Column(Float)
     tp2_price = Column(Float)
@@ -189,16 +192,24 @@ class RSISniperTrade(Base):
     mfi_value = Column(Float)
     mfi_cloud = Column(String(10))           # BULLISH / BEARISH
     structure = Column(String(10))           # HH / HL / LH / LL
+    volume_ratio = Column(Float)             # Volume / SMA(20)
+    atr_value = Column(Float)
     
     # Trade Management
     tp1_hit = Column(Boolean, default=False)
     tp1_exit_price = Column(Float)
     tp1_pnl = Column(Float)
+    tp2_hit = Column(Boolean, default=False)
     moved_to_be = Column(Boolean, default=False)  # SL moved to breakeven
     
     # P&L
     pnl_percent = Column(Float)
     pnl_usdt = Column(Float)
+    max_profit_percent = Column(Float)       # Максимальний прибуток (для аналізу)
+    max_drawdown_percent = Column(Float)     # Максимальна просадка
+    
+    # Exit Info
+    exit_reason = Column(String(50))         # TP1, TP2, SL, OPPOSITE_SIGNAL, MANUAL, EXPIRED
     
     # Meta
     timeframe = Column(String(10))
@@ -209,11 +220,14 @@ class RSISniperTrade(Base):
     # Timestamps
     signal_time = Column(DateTime)
     entry_time = Column(DateTime)
+    tp1_time = Column(DateTime)
     exit_time = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
+    hold_time_minutes = Column(Float)        # Час утримання позиції
     
-    # Notes
+    # Analysis tags
     notes = Column(Text)
+    tags = Column(String(200))               # Для аналізу: "reversal,high_volume,divergence"
 
 
 # ============================================================================
@@ -954,12 +968,13 @@ class TradeExecutor:
 # ============================================================================
 
 class PositionMonitor:
-    """Моніторинг відкритих позицій"""
+    """Моніторинг відкритих позицій з повним відстеженням через біржу"""
     
     def __init__(self, scalper):
         self.scalper = scalper
         self.running = False
         self._thread = None
+        self._check_interval = 10  # секунд
     
     def start(self):
         if self.running:
@@ -967,7 +982,7 @@ class PositionMonitor:
         self.running = True
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._thread.start()
-        logger.info("Position monitor started")
+        logger.info("📊 Position monitor started")
     
     def stop(self):
         self.running = False
@@ -978,74 +993,145 @@ class PositionMonitor:
                 self._check_positions()
             except Exception as e:
                 logger.error(f"Monitor error: {e}")
-            time.sleep(10)
+            time.sleep(self._check_interval)
     
     def _check_positions(self):
-        """Перевіряє та оновлює позиції"""
+        """Перевіряє та оновлює всі відкриті позиції"""
         session = db_manager.get_session()
         try:
             open_trades = session.query(RSISniperTrade).filter(
-                RSISniperTrade.status.in_(['Open', 'TP1 Hit', 'Pending'])
+                RSISniperTrade.status.in_(['Open', 'TP1 Hit'])
             ).all()
             
             for trade in open_trades:
                 try:
-                    # Get current price
-                    ticker = bot_instance.session.get_tickers(
-                        category="linear", symbol=trade.symbol
-                    )
-                    current_price = float(ticker['result']['list'][0]['lastPrice'])
-                    trade.current_price = current_price
-                    
-                    # Check TP1
-                    if not trade.tp1_hit and trade.tp1_price:
-                        if (trade.direction == 'LONG' and current_price >= trade.tp1_price) or \
-                           (trade.direction == 'SHORT' and current_price <= trade.tp1_price):
-                            trade.tp1_hit = True
-                            trade.tp1_exit_price = current_price
-                            trade.status = 'TP1 Hit'
-                            
-                            # Move SL to breakeven
-                            trade.sl_price = trade.entry_price
-                            trade.moved_to_be = True
-                            logger.info(f"✅ TP1 hit for {trade.symbol}, SL moved to BE")
-                    
-                    # Check TP2
-                    if trade.tp1_hit and trade.tp2_price:
-                        if (trade.direction == 'LONG' and current_price >= trade.tp2_price) or \
-                           (trade.direction == 'SHORT' and current_price <= trade.tp2_price):
-                            self._close_trade(trade, current_price, 'TP2')
-                    
-                    # Check SL
-                    if trade.sl_price:
-                        if (trade.direction == 'LONG' and current_price <= trade.sl_price) or \
-                           (trade.direction == 'SHORT' and current_price >= trade.sl_price):
-                            self._close_trade(trade, current_price, 'SL')
-                    
-                    session.commit()
-                    
+                    self._update_trade(trade, session)
                 except Exception as e:
                     logger.debug(f"Check {trade.symbol}: {e}")
+            
+            session.commit()
                     
         except Exception as e:
             logger.error(f"Position check error: {e}")
         finally:
             session.close()
     
+    def _update_trade(self, trade: RSISniperTrade, session):
+        """Оновлює одну угоду"""
+        # Отримуємо поточну ціну з біржі
+        try:
+            ticker = bot_instance.session.get_tickers(
+                category="linear", symbol=trade.symbol
+            )
+            current_price = float(ticker['result']['list'][0]['lastPrice'])
+        except:
+            return
+        
+        trade.current_price = current_price
+        
+        # Оновлюємо найвищу/найнижчу ціну
+        if trade.highest_price is None or current_price > trade.highest_price:
+            trade.highest_price = current_price
+        if trade.lowest_price is None or current_price < trade.lowest_price:
+            trade.lowest_price = current_price
+        
+        # Розраховуємо поточний P&L
+        if trade.direction == 'LONG':
+            current_pnl = ((current_price - trade.entry_price) / trade.entry_price) * 100 * trade.leverage
+            max_profit = ((trade.highest_price - trade.entry_price) / trade.entry_price) * 100 * trade.leverage
+            max_dd = ((trade.lowest_price - trade.entry_price) / trade.entry_price) * 100 * trade.leverage
+        else:
+            current_pnl = ((trade.entry_price - current_price) / trade.entry_price) * 100 * trade.leverage
+            max_profit = ((trade.entry_price - trade.lowest_price) / trade.entry_price) * 100 * trade.leverage
+            max_dd = ((trade.entry_price - trade.highest_price) / trade.entry_price) * 100 * trade.leverage
+        
+        trade.max_profit_percent = max_profit
+        trade.max_drawdown_percent = min(max_dd, 0)  # Drawdown завжди негативний
+        
+        # Перевіряємо TP1
+        if not trade.tp1_hit and trade.tp1_price:
+            tp1_hit = (trade.direction == 'LONG' and current_price >= trade.tp1_price) or \
+                      (trade.direction == 'SHORT' and current_price <= trade.tp1_price)
+            
+            if tp1_hit:
+                trade.tp1_hit = True
+                trade.tp1_exit_price = current_price
+                trade.tp1_time = datetime.utcnow()
+                trade.status = 'TP1 Hit'
+                
+                # Розраховуємо P&L для TP1 (50% позиції)
+                if trade.direction == 'LONG':
+                    trade.tp1_pnl = ((current_price - trade.entry_price) / trade.entry_price) * 100 * trade.leverage * 0.5
+                else:
+                    trade.tp1_pnl = ((trade.entry_price - current_price) / trade.entry_price) * 100 * trade.leverage * 0.5
+                
+                # Переносимо SL в беззбиток
+                trade.sl_price = trade.entry_price
+                trade.moved_to_be = True
+                logger.info(f"✅ {trade.symbol} TP1 hit! P&L: {trade.tp1_pnl:.2f}%, SL moved to BE")
+        
+        # Перевіряємо TP2
+        if trade.tp1_hit and trade.tp2_price:
+            tp2_hit = (trade.direction == 'LONG' and current_price >= trade.tp2_price) or \
+                      (trade.direction == 'SHORT' and current_price <= trade.tp2_price)
+            
+            if tp2_hit:
+                trade.tp2_hit = True
+                self._close_trade(trade, current_price, 'TP2')
+                return
+        
+        # Перевіряємо SL
+        if trade.sl_price:
+            sl_hit = (trade.direction == 'LONG' and current_price <= trade.sl_price) or \
+                     (trade.direction == 'SHORT' and current_price >= trade.sl_price)
+            
+            if sl_hit:
+                reason = 'SL_BE' if trade.moved_to_be else 'SL'
+                self._close_trade(trade, current_price, reason)
+                return
+    
     def _close_trade(self, trade: RSISniperTrade, exit_price: float, reason: str):
-        """Закриває угоду"""
+        """Закриває угоду з повним розрахунком P&L"""
         trade.exit_price = exit_price
         trade.exit_time = datetime.utcnow()
         trade.status = 'Closed'
+        trade.exit_reason = reason
         
-        # Calculate P&L
+        # Час утримання позиції
+        if trade.entry_time:
+            delta = trade.exit_time - trade.entry_time
+            trade.hold_time_minutes = delta.total_seconds() / 60
+        
+        # Розрахунок фінального P&L
         if trade.direction == 'LONG':
-            trade.pnl_percent = ((exit_price - trade.entry_price) / trade.entry_price) * 100 * trade.leverage
+            base_pnl = ((exit_price - trade.entry_price) / trade.entry_price) * 100
         else:
-            trade.pnl_percent = ((trade.entry_price - exit_price) / trade.entry_price) * 100 * trade.leverage
+            base_pnl = ((trade.entry_price - exit_price) / trade.entry_price) * 100
         
-        trade.notes = f"{trade.notes or ''} | Closed by {reason}"
-        logger.info(f"📊 {trade.symbol} closed: {reason}, P&L: {trade.pnl_percent:.2f}%")
+        # Якщо TP1 був досягнутий, враховуємо часткове закриття
+        if trade.tp1_hit and trade.tp1_pnl:
+            # 50% закрито по TP1 + 50% по exit_price
+            remaining_pnl = base_pnl * trade.leverage * 0.5
+            trade.pnl_percent = trade.tp1_pnl + remaining_pnl
+        else:
+            trade.pnl_percent = base_pnl * trade.leverage
+        
+        # Генеруємо теги для аналізу
+        tags = [trade.signal_type]
+        if trade.tp1_hit:
+            tags.append('tp1_hit')
+        if trade.tp2_hit:
+            tags.append('tp2_hit')
+        if trade.pnl_percent > 0:
+            tags.append('win')
+        else:
+            tags.append('loss')
+        if trade.hold_time_minutes and trade.hold_time_minutes < 30:
+            tags.append('quick_trade')
+        trade.tags = ','.join(tags)
+        
+        logger.info(f"📊 {trade.symbol} CLOSED by {reason}: P&L {trade.pnl_percent:.2f}%, "
+                   f"Hold: {trade.hold_time_minutes:.1f}m, Max Profit: {trade.max_profit_percent:.2f}%")
 
 
 # ============================================================================
@@ -1055,6 +1141,12 @@ class PositionMonitor:
 class RSISniperPro:
     """
     🎯 RSI Sniper PRO - Головний клас
+    
+    Особливості:
+    - Одна позиція на символ (без спаму)
+    - Закриття протилежної позиції при новому сигналі
+    - Автоматичне відстеження через біржу
+    - Повна аналітика для оптимізації
     """
     
     def __init__(self):
@@ -1075,8 +1167,12 @@ class RSISniperPro:
         self._stop_scan = threading.Event()
         self._auto_thread = None
         
+        # Cache для відкритих позицій
+        self._open_positions: Dict[str, RSISniperTrade] = {}
+        
         # Init
         self._ensure_table()
+        self._load_open_positions()
         self.position_monitor.start()
         
         # Auto start
@@ -1092,8 +1188,49 @@ class RSISniperPro:
         """Створює таблицю"""
         try:
             RSISniperTrade.__table__.create(db_manager.engine, checkfirst=True)
+            
+            # Migrate existing table
+            from sqlalchemy import text
+            new_columns = [
+                ("highest_price", "FLOAT"),
+                ("lowest_price", "FLOAT"),
+                ("volume_ratio", "FLOAT"),
+                ("atr_value", "FLOAT"),
+                ("tp2_hit", "BOOLEAN DEFAULT FALSE"),
+                ("max_profit_percent", "FLOAT"),
+                ("max_drawdown_percent", "FLOAT"),
+                ("exit_reason", "VARCHAR(50)"),
+                ("tp1_time", "DATETIME"),
+                ("hold_time_minutes", "FLOAT"),
+                ("tags", "VARCHAR(200)"),
+            ]
+            
+            with db_manager.engine.connect() as conn:
+                for col_name, col_type in new_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE rsi_sniper_trades ADD COLUMN {col_name} {col_type}"))
+                        conn.commit()
+                    except:
+                        pass
         except Exception as e:
             logger.debug(f"Table: {e}")
+    
+    def _load_open_positions(self):
+        """Завантажує відкриті позиції в кеш"""
+        session = db_manager.get_session()
+        try:
+            open_trades = session.query(RSISniperTrade).filter(
+                RSISniperTrade.status.in_(['Open', 'TP1 Hit'])
+            ).all()
+            
+            for trade in open_trades:
+                self._open_positions[trade.symbol] = trade
+            
+            logger.info(f"📋 Loaded {len(self._open_positions)} open positions")
+        except Exception as e:
+            logger.error(f"Load positions error: {e}")
+        finally:
+            session.close()
     
     def _load_config(self) -> Dict:
         """Завантажує конфігурацію"""
@@ -1138,7 +1275,7 @@ class RSISniperPro:
         """Зберігає конфігурацію"""
         settings.save_settings(data)
         self.signal_generator.update_config(self._load_config())
-        logger.info("Config saved")
+        logger.info("✅ Config saved")
     
     def get_status(self) -> Dict:
         """Повертає статус"""
@@ -1153,7 +1290,74 @@ class RSISniperPro:
             'scan_interval': config.get('rsp_scan_interval', 1),
             'today_trades': self.today_trades,
             'paper_mode': config.get('rsp_paper_trading', True),
+            'open_positions': len(self._open_positions),
         }
+    
+    def has_open_position(self, symbol: str) -> bool:
+        """Перевіряє чи є відкрита позиція по символу"""
+        return symbol in self._open_positions
+    
+    def get_open_position(self, symbol: str) -> Optional[RSISniperTrade]:
+        """Повертає відкриту позицію по символу"""
+        return self._open_positions.get(symbol)
+    
+    def close_position_by_opposite(self, symbol: str, new_direction: str, current_price: float) -> bool:
+        """Закриває позицію через протилежний сигнал"""
+        if symbol not in self._open_positions:
+            return False
+        
+        session = db_manager.get_session()
+        try:
+            trade = session.query(RSISniperTrade).filter(
+                RSISniperTrade.symbol == symbol,
+                RSISniperTrade.status.in_(['Open', 'TP1 Hit'])
+            ).first()
+            
+            if trade and trade.direction != new_direction:
+                # Закриваємо протилежну позицію
+                trade.exit_price = current_price
+                trade.exit_time = datetime.utcnow()
+                trade.status = 'Closed'
+                trade.exit_reason = 'OPPOSITE_SIGNAL'
+                
+                if trade.entry_time:
+                    delta = trade.exit_time - trade.entry_time
+                    trade.hold_time_minutes = delta.total_seconds() / 60
+                
+                if trade.direction == 'LONG':
+                    base_pnl = ((current_price - trade.entry_price) / trade.entry_price) * 100
+                else:
+                    base_pnl = ((trade.entry_price - current_price) / trade.entry_price) * 100
+                
+                if trade.tp1_hit and trade.tp1_pnl:
+                    trade.pnl_percent = trade.tp1_pnl + (base_pnl * trade.leverage * 0.5)
+                else:
+                    trade.pnl_percent = base_pnl * trade.leverage
+                
+                # Теги
+                tags = [trade.signal_type, 'opposite_close']
+                if trade.pnl_percent > 0:
+                    tags.append('win')
+                else:
+                    tags.append('loss')
+                trade.tags = ','.join(tags)
+                
+                session.commit()
+                
+                # Видаляємо з кешу
+                self._open_positions.pop(symbol, None)
+                
+                logger.info(f"🔄 {symbol} CLOSED by opposite signal: P&L {trade.pnl_percent:.2f}%")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Close opposite error: {e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
     
     def start_scan(self) -> Dict:
         """Запускає сканування"""
@@ -1222,6 +1426,16 @@ class RSISniperPro:
                     
                     for signal in signals:
                         if signal.is_valid:
+                            # Фільтруємо сигнали по увімкненим типам
+                            if signal.signal_type == SignalType.SNIPER and not config.get('rsp_enable_sniper', True):
+                                continue
+                            if signal.signal_type == SignalType.DIVERGENCE and not config.get('rsp_enable_divergence', True):
+                                continue
+                            if signal.signal_type == SignalType.FLOW and not config.get('rsp_enable_flow', True):
+                                continue
+                            if signal.signal_type == SignalType.ROYAL and not config.get('rsp_enable_royal', True):
+                                continue
+                            
                             found_signals.append(signal)
                             logger.info(f"✅ {signal.symbol} {signal.signal_type.value} {signal.direction.value}: "
                                        f"RSI={signal.rsi:.1f}, MFI={signal.mfi_cloud}")
@@ -1247,8 +1461,8 @@ class RSISniperPro:
                        f"DIV: {sum(1 for s in found_signals if s.signal_type == SignalType.DIVERGENCE)}, "
                        f"FLOW: {sum(1 for s in found_signals if s.signal_type == SignalType.FLOW)})")
             
-            # Auto execute
-            if config.get('rsp_auto_execute', False) and found_signals:
+            # Auto execute (для імітації)
+            if config.get('rsp_auto_execute', True) and found_signals:
                 self._auto_execute_signals(found_signals, config)
                 
         except Exception as e:
@@ -1280,42 +1494,53 @@ class RSISniperPro:
             return None
     
     def _auto_execute_signals(self, signals: List[Signal], config: Dict):
-        """Автоматичне виконання сигналів"""
-        max_trades = config.get('rsp_max_daily_trades', 5)
-        max_positions = config.get('rsp_max_open_positions', 2)
+        """Автоматичне виконання сигналів (імітація)"""
+        max_trades = config.get('rsp_max_daily_trades', 10)
+        max_positions = config.get('rsp_max_open_positions', 5)
+        close_on_opposite = config.get('rsp_close_on_opposite', True)
         
-        if self.today_trades >= max_trades:
-            logger.info(f"Daily limit reached: {self.today_trades}/{max_trades}")
-            return
+        executed_count = 0
         
-        # Count open positions
-        session = db_manager.get_session()
-        try:
-            open_count = session.query(RSISniperTrade).filter(
-                RSISniperTrade.status.in_(['Open', 'TP1 Hit'])
-            ).count()
-        except:
-            open_count = 0
-        finally:
-            session.close()
-        
-        if open_count >= max_positions:
-            logger.info(f"Max positions reached: {open_count}/{max_positions}")
-            return
-        
-        # Execute best signal (first after sorting)
         for signal in signals:
+            # Перевіряємо ліміти
+            if self.today_trades >= max_trades:
+                logger.debug(f"Daily limit reached: {self.today_trades}/{max_trades}")
+                break
+            
+            if len(self._open_positions) >= max_positions:
+                # Перевіряємо чи можна закрити протилежну
+                if not (close_on_opposite and self.has_open_position(signal.symbol)):
+                    logger.debug(f"Max positions reached: {len(self._open_positions)}/{max_positions}")
+                    continue
+            
+            # Divergence потребує підтвердження - пропускаємо автовиконання
             if signal.requires_confirmation:
-                # Divergence потребує підтвердження - пропускаємо автовиконання
                 continue
             
+            # Перевіряємо чи є вже позиція по цьому символу
+            if self.has_open_position(signal.symbol):
+                existing = self.get_open_position(signal.symbol)
+                
+                # Якщо той же напрямок - пропускаємо (не спамимо)
+                if existing and existing.direction == signal.direction.value:
+                    logger.debug(f"Skip {signal.symbol}: already have {existing.direction} position")
+                    continue
+                
+                # Якщо протилежний напрямок - закриваємо стару
+                if close_on_opposite:
+                    self.close_position_by_opposite(signal.symbol, signal.direction.value, signal.price)
+            
+            # Виконуємо сигнал
             result = self._execute_signal(signal, config)
             if result and result.get('success'):
                 self.today_trades += 1
-                break
+                executed_count += 1
+        
+        if executed_count > 0:
+            logger.info(f"⚡ Auto-executed {executed_count} trades")
     
     def _execute_signal(self, signal: Signal, config: Dict) -> Optional[Dict]:
-        """Виконує сигнал"""
+        """Виконує сигнал та зберігає в БД"""
         # Execute trade
         result = self.executor.execute_trade(signal, config)
         
@@ -1331,6 +1556,8 @@ class RSISniperPro:
                     signal_price=signal.price,
                     entry_price=result.get('entry_price', signal.price),
                     current_price=signal.price,
+                    highest_price=signal.price,
+                    lowest_price=signal.price,
                     sl_price=signal.sl_price,
                     tp1_price=signal.tp1_price,
                     tp2_price=signal.tp2_price,
@@ -1351,7 +1578,12 @@ class RSISniperPro:
                 )
                 session.add(trade)
                 session.commit()
-                logger.info(f"📈 Trade opened: {signal.symbol} {signal.direction.value} ({signal.signal_type.value})")
+                
+                # Додаємо в кеш
+                self._open_positions[signal.symbol] = trade
+                
+                logger.info(f"📈 TRADE OPENED: {signal.symbol} {signal.direction.value} ({signal.signal_type.value}) "
+                           f"@ {signal.price:.4f} | SL: {signal.sl_price:.4f} | TP1: {signal.tp1_price:.4f}")
             except Exception as e:
                 logger.error(f"Save trade error: {e}")
                 session.rollback()
@@ -1378,16 +1610,29 @@ class RSISniperPro:
             mfi_cloud=signal_data.get('mfi_cloud', 'NEUTRAL'),
         )
         
+        # Перевіряємо чи є вже позиція
+        if self.has_open_position(signal.symbol):
+            existing = self.get_open_position(signal.symbol)
+            if existing and existing.direction == signal.direction.value:
+                return {'success': False, 'error': f'Already have {existing.direction} position on {signal.symbol}'}
+            
+            # Закриваємо протилежну
+            if config.get('rsp_close_on_opposite', True):
+                self.close_position_by_opposite(signal.symbol, signal.direction.value, signal.price)
+        
         result = self._execute_signal(signal, config)
         return result or {'success': False, 'error': 'Execution failed'}
     
-    def get_trades(self, limit: int = 50) -> List[Dict]:
+    def get_trades(self, limit: int = 50, status: str = None) -> List[Dict]:
         """Отримує історію угод"""
         session = db_manager.get_session()
         try:
-            trades = session.query(RSISniperTrade).order_by(
-                RSISniperTrade.created_at.desc()
-            ).limit(limit).all()
+            query = session.query(RSISniperTrade)
+            
+            if status:
+                query = query.filter(RSISniperTrade.status == status)
+            
+            trades = query.order_by(RSISniperTrade.created_at.desc()).limit(limit).all()
             
             return [{
                 'id': t.id,
@@ -1397,21 +1642,91 @@ class RSISniperPro:
                 'status': t.status,
                 'entry_price': t.entry_price,
                 'current_price': t.current_price,
+                'exit_price': t.exit_price,
                 'sl_price': t.sl_price,
                 'tp1_price': t.tp1_price,
                 'tp2_price': t.tp2_price,
                 'tp1_hit': t.tp1_hit,
+                'tp2_hit': t.tp2_hit,
                 'pnl_percent': t.pnl_percent,
+                'max_profit': t.max_profit_percent,
+                'max_drawdown': t.max_drawdown_percent,
+                'exit_reason': t.exit_reason,
                 'rsi': t.rsi_value,
                 'mfi_cloud': t.mfi_cloud,
                 'structure': t.structure,
                 'timeframe': t.timeframe,
                 'paper': t.paper_trade,
+                'hold_time': t.hold_time_minutes,
+                'tags': t.tags,
                 'time': t.created_at.strftime('%d.%m %H:%M') if t.created_at else '',
             } for t in trades]
         except Exception as e:
             logger.error(f"Get trades error: {e}")
             return []
+        finally:
+            session.close()
+    
+    def get_analytics(self) -> Dict:
+        """Отримує аналітику по угодам"""
+        session = db_manager.get_session()
+        try:
+            from sqlalchemy import func
+            
+            # Загальна статистика
+            total = session.query(RSISniperTrade).filter(RSISniperTrade.status == 'Closed').count()
+            wins = session.query(RSISniperTrade).filter(
+                RSISniperTrade.status == 'Closed',
+                RSISniperTrade.pnl_percent > 0
+            ).count()
+            
+            total_pnl = session.query(func.sum(RSISniperTrade.pnl_percent)).filter(
+                RSISniperTrade.status == 'Closed'
+            ).scalar() or 0
+            
+            # По типам сигналів
+            by_type = {}
+            for signal_type in ['SNIPER', 'DIVERGENCE', 'FLOW', 'ROYAL']:
+                type_trades = session.query(RSISniperTrade).filter(
+                    RSISniperTrade.status == 'Closed',
+                    RSISniperTrade.signal_type == signal_type
+                ).all()
+                
+                type_total = len(type_trades)
+                type_wins = sum(1 for t in type_trades if t.pnl_percent and t.pnl_percent > 0)
+                type_pnl = sum(t.pnl_percent or 0 for t in type_trades)
+                
+                by_type[signal_type] = {
+                    'total': type_total,
+                    'wins': type_wins,
+                    'win_rate': (type_wins / type_total * 100) if type_total > 0 else 0,
+                    'total_pnl': type_pnl,
+                    'avg_pnl': type_pnl / type_total if type_total > 0 else 0,
+                }
+            
+            # По причинам закриття
+            by_exit = {}
+            for reason in ['TP1', 'TP2', 'SL', 'SL_BE', 'OPPOSITE_SIGNAL']:
+                count = session.query(RSISniperTrade).filter(
+                    RSISniperTrade.status == 'Closed',
+                    RSISniperTrade.exit_reason == reason
+                ).count()
+                by_exit[reason] = count
+            
+            return {
+                'total_trades': total,
+                'wins': wins,
+                'losses': total - wins,
+                'win_rate': (wins / total * 100) if total > 0 else 0,
+                'total_pnl': total_pnl,
+                'avg_pnl': total_pnl / total if total > 0 else 0,
+                'by_signal_type': by_type,
+                'by_exit_reason': by_exit,
+                'open_positions': len(self._open_positions),
+            }
+        except Exception as e:
+            logger.error(f"Analytics error: {e}")
+            return {}
         finally:
             session.close()
     
@@ -1422,7 +1737,7 @@ class RSISniperPro:
         self.auto_running = True
         self._auto_thread = threading.Thread(target=self._auto_loop, args=(interval,), daemon=True)
         self._auto_thread.start()
-        logger.info(f"Auto mode started (interval: {interval} min)")
+        logger.info(f"⏰ Auto mode started (interval: {interval} min)")
     
     def stop_auto_mode(self):
         """Зупиняє авто-режим"""
@@ -1456,9 +1771,13 @@ def register_rsi_sniper_routes(app):
     def rsi_sniper_page():
         config = rsi_sniper_pro.get_config()
         trades = rsi_sniper_pro.get_trades(30)
+        open_positions = rsi_sniper_pro.get_trades(10, status='Open')
+        analytics = rsi_sniper_pro.get_analytics()
         return render_template('rsi_sniper_pro.html',
                               config=config,
                               trades=trades,
+                              open_positions=open_positions,
+                              analytics=analytics,
                               help=PARAM_HELP)
     
     @app.route('/rsi_sniper/status')
@@ -1494,6 +1813,12 @@ def register_rsi_sniper_routes(app):
         else:
             rsi_sniper_pro.stop_auto_mode()
         
+        # Save to config
+        rsi_sniper_pro.save_config({
+            'rsp_auto_mode': enabled,
+            'rsp_scan_interval': interval
+        })
+        
         return jsonify({'status': 'ok', 'auto_running': rsi_sniper_pro.auto_running})
     
     @app.route('/rsi_sniper/execute', methods=['POST'])
@@ -1505,6 +1830,22 @@ def register_rsi_sniper_routes(app):
     @app.route('/rsi_sniper/trades')
     def rsi_sniper_trades():
         limit = request.args.get('limit', 50, type=int)
-        return jsonify(rsi_sniper_pro.get_trades(limit))
+        status = request.args.get('status', None)
+        return jsonify(rsi_sniper_pro.get_trades(limit, status))
     
-    logger.info("RSI Sniper PRO routes registered")
+    @app.route('/rsi_sniper/analytics')
+    def rsi_sniper_analytics():
+        return jsonify(rsi_sniper_pro.get_analytics())
+    
+    @app.route('/rsi_sniper/positions')
+    def rsi_sniper_positions():
+        """Повертає відкриті позиції"""
+        positions = rsi_sniper_pro.get_trades(50, status='Open')
+        tp1_positions = rsi_sniper_pro.get_trades(50, status='TP1 Hit')
+        return jsonify({
+            'open': positions,
+            'tp1_hit': tp1_positions,
+            'total': len(positions) + len(tp1_positions)
+        })
+    
+    logger.info("🎯 RSI Sniper PRO routes registered")
