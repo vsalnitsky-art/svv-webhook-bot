@@ -274,6 +274,50 @@ input:checked + .toggle-slider:before {
     font-size: 0.7rem;
     font-weight: 600;
 }
+
+/* Fixed height tables */
+.fixed-table-container {
+    min-height: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.fixed-table-container table {
+    margin-bottom: 0;
+}
+
+.fixed-table-container thead {
+    position: sticky;
+    top: 0;
+    background: #f8fafc;
+    z-index: 1;
+}
+
+/* Compact table for more data */
+.compact-table th,
+.compact-table td {
+    padding: 0.4rem 0.3rem !important;
+    font-size: 0.72rem !important;
+    white-space: nowrap;
+}
+
+.compact-table .price-cell {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.7rem;
+}
+
+/* Empty state styling */
+.empty-state {
+    padding: 2rem;
+    text-align: center;
+    color: #94a3b8;
+}
+
+.empty-state i {
+    font-size: 2rem;
+    opacity: 0.3;
+    margin-bottom: 0.5rem;
+}
 </style>
 
 <!-- Header -->
@@ -674,33 +718,39 @@ input:checked + .toggle-slider:before {
         </div>
 
         <!-- Open Positions -->
-        {% if open_positions %}
         <div class="settings-card mb-3">
             <div class="settings-header">
                 <span><i class="ri-stock-line me-2"></i>Open Positions</span>
-                <span class="badge bg-success">{{ open_positions|length }}</span>
+                <span class="badge bg-success" id="positionsBadge">{{ open_positions|length if open_positions else 0 }}</span>
             </div>
-            <div class="table-responsive">
-                <table class="table signal-table mb-0">
+            <div class="fixed-table-container">
+                <table class="table signal-table compact-table mb-0">
                     <thead>
                         <tr>
                             <th>Symbol</th>
                             <th>Type</th>
                             <th>Dir</th>
                             <th>Entry</th>
+                            <th>SL</th>
+                            <th>TP1</th>
+                            <th>TP2</th>
                             <th>Current</th>
                             <th>P&L</th>
-                            <th>TP1</th>
+                            <th>Status</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="positionsBody">
+                        {% if open_positions %}
                         {% for p in open_positions %}
                         <tr>
                             <td><strong>{{ p.symbol }}</strong></td>
                             <td><span class="signal-badge {{ p.signal_type|lower }}">{{ p.signal_type }}</span></td>
                             <td><span class="direction-badge {{ p.direction|lower }}">{{ p.direction }}</span></td>
-                            <td>{{ "%.4f"|format(p.entry_price) if p.entry_price else '-' }}</td>
-                            <td>{{ "%.4f"|format(p.current_price) if p.current_price else '-' }}</td>
+                            <td class="price-cell">{{ "%.4f"|format(p.entry_price) if p.entry_price else '-' }}</td>
+                            <td class="price-cell text-danger">{{ "%.4f"|format(p.sl_price) if p.sl_price else '-' }}</td>
+                            <td class="price-cell text-success">{{ "%.4f"|format(p.tp1_price) if p.tp1_price else '-' }}</td>
+                            <td class="price-cell text-success">{{ "%.4f"|format(p.tp2_price) if p.tp2_price else '-' }}</td>
+                            <td class="price-cell fw-bold">{{ "%.4f"|format(p.current_price) if p.current_price else '-' }}</td>
                             <td class="{{ 'text-success' if p.pnl_percent and p.pnl_percent > 0 else 'text-danger' if p.pnl_percent else '' }}">
                                 {% if p.current_price and p.entry_price %}
                                     {% set pnl = ((p.current_price - p.entry_price) / p.entry_price * 100 * 10) if p.direction == 'LONG' else ((p.entry_price - p.current_price) / p.entry_price * 100 * 10) %}
@@ -709,14 +759,27 @@ input:checked + .toggle-slider:before {
                                     -
                                 {% endif %}
                             </td>
-                            <td>{{ '✅' if p.tp1_hit else '⏳' }}</td>
+                            <td>
+                                {% if p.tp1_hit %}
+                                    <span class="badge bg-success">TP1 ✓</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Open</span>
+                                {% endif %}
+                            </td>
                         </tr>
                         {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="10" class="empty-state">
+                                <i class="ri-stock-line d-block"></i>
+                                <div>No open positions</div>
+                            </td>
+                        </tr>
+                        {% endif %}
                     </tbody>
                 </table>
             </div>
         </div>
-        {% endif %}
 
         <!-- Signals -->
         <div class="settings-card mb-3">
@@ -724,25 +787,26 @@ input:checked + .toggle-slider:before {
                 <span><i class="ri-signal-tower-line me-2"></i>New Signals</span>
                 <span class="badge bg-primary" id="signalsBadge">0</span>
             </div>
-            <div class="table-responsive">
-                <table class="table signal-table mb-0" id="signalsTable">
+            <div class="fixed-table-container">
+                <table class="table signal-table compact-table mb-0" id="signalsTable">
                     <thead>
                         <tr>
                             <th>Symbol</th>
                             <th>Type</th>
                             <th>Dir</th>
-                            <th>Price</th>
+                            <th>Entry</th>
+                            <th>SL</th>
+                            <th>TP1</th>
+                            <th>TP2</th>
                             <th>RSI</th>
-                            <th>MFI</th>
-                            <th>Structure</th>
                             <th>Action</th>
                         </tr>
                     </thead>
                     <tbody id="signalsBody">
                         <tr>
-                            <td colspan="8" class="text-center text-muted py-4">
-                                <i class="ri-radar-line" style="font-size: 2rem; opacity: 0.3;"></i>
-                                <div class="mt-2">No signals yet. Click SCAN to start.</div>
+                            <td colspan="9" class="empty-state">
+                                <i class="ri-radar-line d-block"></i>
+                                <div>No signals yet. Click SCAN to start.</div>
                             </td>
                         </tr>
                     </tbody>
@@ -758,8 +822,8 @@ input:checked + .toggle-slider:before {
                     <i class="ri-refresh-line"></i>
                 </button>
             </div>
-            <div class="table-responsive">
-                <table class="table signal-table mb-0">
+            <div class="fixed-table-container">
+                <table class="table signal-table compact-table mb-0">
                     <thead>
                         <tr>
                             <th>Time</th>
@@ -780,17 +844,20 @@ input:checked + .toggle-slider:before {
                             <td><strong>{{ t.symbol }}</strong></td>
                             <td><span class="signal-badge {{ t.signal_type|lower }}">{{ t.signal_type }}</span></td>
                             <td><span class="direction-badge {{ t.direction|lower }}">{{ t.direction }}</span></td>
-                            <td>{{ "%.4f"|format(t.entry_price) if t.entry_price else '-' }}</td>
-                            <td>{{ "%.4f"|format(t.exit_price) if t.exit_price else '-' }}</td>
-                            <td class="{{ 'text-success' if t.pnl_percent and t.pnl_percent > 0 else 'text-danger' if t.pnl_percent else '' }}">
+                            <td class="price-cell">{{ "%.4f"|format(t.entry_price) if t.entry_price else '-' }}</td>
+                            <td class="price-cell">{{ "%.4f"|format(t.exit_price) if t.exit_price else '-' }}</td>
+                            <td class="{{ 'text-success fw-bold' if t.pnl_percent and t.pnl_percent > 0 else 'text-danger fw-bold' if t.pnl_percent else '' }}">
                                 {{ "%.2f%%"|format(t.pnl_percent) if t.pnl_percent else '-' }}
                             </td>
-                            <td><small class="text-muted">{{ t.exit_reason or '-' }}</small></td>
+                            <td><span class="badge bg-{{ 'success' if 'TP' in (t.exit_reason or '') else 'danger' if 'SL' in (t.exit_reason or '') else 'secondary' }}">{{ t.exit_reason or '-' }}</span></td>
                         </tr>
                         {% endif %}
                         {% else %}
                         <tr>
-                            <td colspan="8" class="text-center text-muted py-3">No closed trades yet</td>
+                            <td colspan="8" class="empty-state">
+                                <i class="ri-history-line d-block"></i>
+                                <div>No closed trades yet</div>
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -828,9 +895,9 @@ function renderSignals(signals) {
     if (!signals || signals.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="8" class="text-center text-muted py-4">
-                    <i class="ri-radar-line" style="font-size: 2rem; opacity: 0.3;"></i>
-                    <div class="mt-2">No signals found</div>
+                <td colspan="9" class="empty-state">
+                    <i class="ri-radar-line d-block"></i>
+                    <div>No signals found</div>
                 </td>
             </tr>
         `;
@@ -842,10 +909,11 @@ function renderSignals(signals) {
             <td><strong>${s.symbol}</strong></td>
             <td><span class="signal-badge ${s.signal_type.toLowerCase()}">${s.signal_type}</span></td>
             <td><span class="direction-badge ${s.direction.toLowerCase()}">${s.direction}</span></td>
-            <td>${parseFloat(s.price).toFixed(4)}</td>
+            <td class="price-cell">${parseFloat(s.price).toFixed(4)}</td>
+            <td class="price-cell text-danger">${parseFloat(s.sl_price).toFixed(4)}</td>
+            <td class="price-cell text-success">${parseFloat(s.tp1_price).toFixed(4)}</td>
+            <td class="price-cell text-success">${parseFloat(s.tp2_price).toFixed(4)}</td>
             <td>${parseFloat(s.rsi).toFixed(1)}</td>
-            <td><span class="cloud-badge ${s.mfi_cloud.toLowerCase()}">${s.mfi_cloud}</span></td>
-            <td>${s.structure || '-'}</td>
             <td>
                 <button class="action-btn execute" onclick="executeSignal('${s.symbol}', '${s.direction}', '${s.signal_type}', ${s.price}, ${s.sl_price}, ${s.tp1_price}, ${s.tp2_price})">
                     Execute
@@ -1060,22 +1128,28 @@ function loadTrades() {
             const closedTrades = trades.filter(t => t.status === 'Closed');
             
             if (closedTrades.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No closed trades yet</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="8" class="empty-state">
+                    <i class="ri-history-line d-block"></i>
+                    <div>No closed trades yet</div>
+                </td></tr>`;
                 return;
             }
             
-            tbody.innerHTML = closedTrades.map(t => `
+            tbody.innerHTML = closedTrades.map(t => {
+                const reasonClass = (t.exit_reason || '').includes('TP') ? 'success' : 
+                                   (t.exit_reason || '').includes('SL') ? 'danger' : 'secondary';
+                return `
                 <tr>
                     <td>${t.time}</td>
                     <td><strong>${t.symbol}</strong></td>
                     <td><span class="signal-badge ${t.signal_type.toLowerCase()}">${t.signal_type}</span></td>
                     <td><span class="direction-badge ${t.direction.toLowerCase()}">${t.direction}</span></td>
-                    <td>${t.entry_price ? t.entry_price.toFixed(4) : '-'}</td>
-                    <td>${t.exit_price ? t.exit_price.toFixed(4) : '-'}</td>
-                    <td class="${t.pnl_percent > 0 ? 'text-success' : 'text-danger'}">${t.pnl_percent ? t.pnl_percent.toFixed(2) + '%' : '-'}</td>
-                    <td><small class="text-muted">${t.exit_reason || '-'}</small></td>
+                    <td class="price-cell">${t.entry_price ? t.entry_price.toFixed(4) : '-'}</td>
+                    <td class="price-cell">${t.exit_price ? t.exit_price.toFixed(4) : '-'}</td>
+                    <td class="${t.pnl_percent > 0 ? 'text-success fw-bold' : 'text-danger fw-bold'}">${t.pnl_percent ? t.pnl_percent.toFixed(2) + '%' : '-'}</td>
+                    <td><span class="badge bg-${reasonClass}">${t.exit_reason || '-'}</span></td>
                 </tr>
-            `).join('');
+            `}).join('');
         });
 }
 
@@ -1085,6 +1159,46 @@ function loadPositions() {
         .then(r => r.json())
         .then(data => {
             document.getElementById('openPositions').textContent = data.total;
+            
+            // Update badge
+            const badge = document.getElementById('positionsBadge');
+            if (badge) badge.textContent = data.total;
+            
+            // Update positions table
+            const tbody = document.getElementById('positionsBody');
+            if (tbody) {
+                const allPositions = [...(data.open || []), ...(data.tp1_hit || [])];
+                
+                if (allPositions.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="10" class="empty-state">
+                        <i class="ri-stock-line d-block"></i>
+                        <div>No open positions</div>
+                    </td></tr>`;
+                    return;
+                }
+                
+                tbody.innerHTML = allPositions.map(p => {
+                    const pnl = p.current_price && p.entry_price ? 
+                        (p.direction === 'LONG' ? 
+                            ((p.current_price - p.entry_price) / p.entry_price * 100 * 10) : 
+                            ((p.entry_price - p.current_price) / p.entry_price * 100 * 10)
+                        ) : 0;
+                    
+                    return `
+                    <tr>
+                        <td><strong>${p.symbol}</strong></td>
+                        <td><span class="signal-badge ${p.signal_type.toLowerCase()}">${p.signal_type}</span></td>
+                        <td><span class="direction-badge ${p.direction.toLowerCase()}">${p.direction}</span></td>
+                        <td class="price-cell">${p.entry_price ? p.entry_price.toFixed(4) : '-'}</td>
+                        <td class="price-cell text-danger">${p.sl_price ? p.sl_price.toFixed(4) : '-'}</td>
+                        <td class="price-cell text-success">${p.tp1_price ? p.tp1_price.toFixed(4) : '-'}</td>
+                        <td class="price-cell text-success">${p.tp2_price ? p.tp2_price.toFixed(4) : '-'}</td>
+                        <td class="price-cell fw-bold">${p.current_price ? p.current_price.toFixed(4) : '-'}</td>
+                        <td class="${pnl > 0 ? 'text-success' : 'text-danger'}">${pnl.toFixed(2)}%</td>
+                        <td>${p.tp1_hit ? '<span class="badge bg-success">TP1 ✓</span>' : '<span class="badge bg-secondary">Open</span>'}</td>
+                    </tr>
+                `}).join('');
+            }
         });
 }
 
@@ -1144,8 +1258,9 @@ document.addEventListener('DOMContentLoaded', function() {
         startStatusPolling();
     }
     
-    // Refresh positions every 30 seconds
-    setInterval(loadPositions, 30000);
+    // Load positions immediately and refresh every 15 seconds
+    loadPositions();
+    setInterval(loadPositions, 15000);
     
     console.log('✅ RSI Sniper PRO initialized with auto-save');
 });
