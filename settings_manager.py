@@ -374,6 +374,10 @@ DEFAULT_SETTINGS = {
     "rsp_royal_sl_atr": 0.5,
     "rsp_royal_tp1": 2.0,
     "rsp_royal_tp2": 4.0,
+    
+    # SL Protection
+    "rsp_sl_cooldown_minutes": 30,
+    "rsp_max_sl_per_symbol": 2,
 }
 
 class SettingsManager:
