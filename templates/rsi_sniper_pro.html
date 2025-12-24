@@ -774,20 +774,12 @@ input:checked + .toggle-slider:before {
                                 <input type="number" class="form-control form-control-sm" id="sniperSlAtr" value="{{ config.rsp_sniper_sl_atr|default(0.2) }}" step="0.1" min="0.1">
                             </div>
                             <div class="col-4">
-                                <label class="form-label small">TP1 Target</label>
-                                <select class="form-select form-select-sm" id="sniperTp1">
-                                    <option value="BB_Middle" {{ 'selected' if config.rsp_sniper_tp1|default('BB_Middle') == 'BB_Middle' }}>BB Middle</option>
-                                    <option value="Fixed_1" {{ 'selected' if config.rsp_sniper_tp1 == 'Fixed_1' }}>+1%</option>
-                                    <option value="Fixed_2" {{ 'selected' if config.rsp_sniper_tp1 == 'Fixed_2' }}>+2%</option>
-                                </select>
+                                <label class="form-label small">TP1 %</label>
+                                <input type="number" class="form-control form-control-sm" id="sniperTp1" value="{{ config.rsp_sniper_tp1|default(1.0) }}" step="0.1" min="0.1">
                             </div>
                             <div class="col-4">
-                                <label class="form-label small">TP2 Target</label>
-                                <select class="form-select form-select-sm" id="sniperTp2">
-                                    <option value="BB_Opposite" {{ 'selected' if config.rsp_sniper_tp2|default('BB_Opposite') == 'BB_Opposite' }}>BB Opposite</option>
-                                    <option value="Fixed_2" {{ 'selected' if config.rsp_sniper_tp2 == 'Fixed_2' }}>+2%</option>
-                                    <option value="Fixed_3" {{ 'selected' if config.rsp_sniper_tp2 == 'Fixed_3' }}>+3%</option>
-                                </select>
+                                <label class="form-label small">TP2 %</label>
+                                <input type="number" class="form-control form-control-sm" id="sniperTp2" value="{{ config.rsp_sniper_tp2|default(2.0) }}" step="0.1" min="0.1">
                             </div>
                         </div>
                     </div>
@@ -808,12 +800,8 @@ input:checked + .toggle-slider:before {
                                 <input type="number" class="form-control form-control-sm" id="flowTp1" value="{{ config.rsp_flow_tp1|default(1.0) }}" step="0.1" min="0.1">
                             </div>
                             <div class="col-4">
-                                <label class="form-label small">TP2 Target</label>
-                                <select class="form-select form-select-sm" id="flowTp2">
-                                    <option value="BB_Opposite" {{ 'selected' if config.rsp_flow_tp2|default('BB_Opposite') == 'BB_Opposite' }}>BB Opposite</option>
-                                    <option value="Fixed_2" {{ 'selected' if config.rsp_flow_tp2 == 'Fixed_2' }}>+2%</option>
-                                    <option value="Fixed_3" {{ 'selected' if config.rsp_flow_tp2 == 'Fixed_3' }}>+3%</option>
-                                </select>
+                                <label class="form-label small">TP2 %</label>
+                                <input type="number" class="form-control form-control-sm" id="flowTp2" value="{{ config.rsp_flow_tp2|default(2.0) }}" step="0.1" min="0.1">
                             </div>
                         </div>
                     </div>
@@ -1330,13 +1318,13 @@ function collectConfig() {
         
         // Trade Management - SNIPER
         rsp_sniper_sl_atr: parseFloat(document.getElementById('sniperSlAtr').value),
-        rsp_sniper_tp1: document.getElementById('sniperTp1').value,
-        rsp_sniper_tp2: document.getElementById('sniperTp2').value,
+        rsp_sniper_tp1: parseFloat(document.getElementById('sniperTp1').value),
+        rsp_sniper_tp2: parseFloat(document.getElementById('sniperTp2').value),
         
         // Trade Management - FLOW
         rsp_flow_sl_atr: parseFloat(document.getElementById('flowSlAtr').value),
         rsp_flow_tp1: parseFloat(document.getElementById('flowTp1').value),
-        rsp_flow_tp2: document.getElementById('flowTp2').value,
+        rsp_flow_tp2: parseFloat(document.getElementById('flowTp2').value),
         
         // Trade Management - DIVERGENCE
         rsp_div_sl_atr: parseFloat(document.getElementById('divSlAtr').value),
