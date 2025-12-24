@@ -1345,6 +1345,117 @@ def register_rsi_sniper_routes(app):
             'total': len(positions) + len(tp1_positions)
         })
     
+    @app.route('/rsi_sniper/defaults', methods=['POST'])
+    def rsi_sniper_defaults():
+        """Завантажити налаштування за замовчуванням"""
+        rsp = get_rsi_sniper_pro()
+        try:
+            # Зберігаємо default конфіг
+            default_config = {k: v for k, v in DEFAULT_CONFIG.items()}
+            rsp.save_config(default_config)
+            return jsonify({'success': True})
+        except Exception as e:
+            logger.error(f"Load defaults error: {e}")
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/rsi_sniper/trades/clear', methods=['POST'])
+    def rsi_sniper_clear_trades():
+        """Очистити всю історію угод"""
+        rsp = get_rsi_sniper_pro()
+        try:
+            if HAS_DB and db_manager:
+                session = db_manager.get_session()
+                try:
+                    deleted = session.query(RSISniperTrade).filter(
+                        RSISniperTrade.status == 'Closed'
+                    ).delete()
+                    session.commit()
+                    logger.info(f"🗑️ Cleared {deleted} closed trades")
+                    return jsonify({'success': True, 'deleted': deleted})
+                finally:
+                    session.close()
+            return jsonify({'success': False, 'error': 'Database not available'})
+        except Exception as e:
+            logger.error(f"Clear trades error: {e}")
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/rsi_sniper/trades/<int:trade_id>', methods=['DELETE'])
+    def rsi_sniper_delete_trade(trade_id):
+        """Видалити одну угоду"""
+        try:
+            if HAS_DB and db_manager:
+                session = db_manager.get_session()
+                try:
+                    trade = session.query(RSISniperTrade).filter(
+                        RSISniperTrade.id == trade_id
+                    ).first()
+                    if trade:
+                        session.delete(trade)
+                        session.commit()
+                        logger.info(f"🗑️ Deleted trade #{trade_id}")
+                        return jsonify({'success': True})
+                    return jsonify({'success': False, 'error': 'Trade not found'})
+                finally:
+                    session.close()
+            return jsonify({'success': False, 'error': 'Database not available'})
+        except Exception as e:
+            logger.error(f"Delete trade error: {e}")
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/rsi_sniper/positions/<int:trade_id>/close', methods=['POST'])
+    def rsi_sniper_close_position(trade_id):
+        """Закрити позицію вручну"""
+        rsp = get_rsi_sniper_pro()
+        try:
+            if HAS_DB and db_manager:
+                session = db_manager.get_session()
+                try:
+                    trade = session.query(RSISniperTrade).filter(
+                        RSISniperTrade.id == trade_id,
+                        RSISniperTrade.status.in_(['Open', 'TP1 Hit'])
+                    ).first()
+                    if trade:
+                        rsp._close_trade(session, trade, trade.current_price or trade.entry_price, 'MANUAL')
+                        session.commit()
+                        # Remove from cache
+                        if trade.symbol in rsp._open_positions:
+                            del rsp._open_positions[trade.symbol]
+                        logger.info(f"✋ Manually closed position #{trade_id}")
+                        return jsonify({'success': True})
+                    return jsonify({'success': False, 'error': 'Position not found'})
+                finally:
+                    session.close()
+            return jsonify({'success': False, 'error': 'Database not available'})
+        except Exception as e:
+            logger.error(f"Close position error: {e}")
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/rsi_sniper/positions/close-all', methods=['POST'])
+    def rsi_sniper_close_all():
+        """Закрити всі позиції"""
+        rsp = get_rsi_sniper_pro()
+        try:
+            if HAS_DB and db_manager:
+                session = db_manager.get_session()
+                try:
+                    trades = session.query(RSISniperTrade).filter(
+                        RSISniperTrade.status.in_(['Open', 'TP1 Hit'])
+                    ).all()
+                    closed = 0
+                    for trade in trades:
+                        rsp._close_trade(session, trade, trade.current_price or trade.entry_price, 'MANUAL')
+                        closed += 1
+                    session.commit()
+                    rsp._open_positions.clear()
+                    logger.info(f"✋ Manually closed {closed} positions")
+                    return jsonify({'success': True, 'closed': closed})
+                finally:
+                    session.close()
+            return jsonify({'success': False, 'error': 'Database not available'})
+        except Exception as e:
+            logger.error(f"Close all error: {e}")
+            return jsonify({'success': False, 'error': str(e)})
+    
     logger.info("🎯 RSI Sniper PRO routes registered")
     
     # Initialize singleton when routes are registered
