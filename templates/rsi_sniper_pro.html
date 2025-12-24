@@ -875,6 +875,31 @@ input:checked + .toggle-slider:before {
             </div>
         </div>
 
+        <!-- SL Protection -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#slProtection">
+                <span><i class="ri-alarm-warning-line me-2"></i>SL Protection</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="slProtection">
+                <div class="settings-body">
+                    <div class="alert alert-warning py-2 mb-3" style="font-size: 0.75rem;">
+                        <strong>⚠️ Захист від серійних SL:</strong> Після SL монета блокується на вказаний час
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small">Cooldown після SL (хв)</label>
+                            <input type="number" class="form-control form-control-sm" id="slCooldown" value="{{ config.rsp_sl_cooldown_minutes|default(30) }}" min="0" max="120">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Max SL per symbol/day</label>
+                            <input type="number" class="form-control form-control-sm" id="maxSlPerSymbol" value="{{ config.rsp_max_sl_per_symbol|default(2) }}" min="1" max="10">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Execution -->
         <div class="settings-card mb-3">
             <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#execSettings">
@@ -951,10 +976,10 @@ input:checked + .toggle-slider:before {
                             <th>Symbol</th>
                             <th>Type</th>
                             <th>Dir</th>
+                            <th>Hold</th>
                             <th>Entry</th>
                             <th>SL</th>
                             <th>TP1</th>
-                            <th>TP2</th>
                             <th>Current</th>
                             <th>P&L</th>
                             <th>Status</th>
@@ -968,10 +993,10 @@ input:checked + .toggle-slider:before {
                             <td><strong>{{ p.symbol }}</strong></td>
                             <td><span class="signal-badge {{ p.signal_type|lower }}">{{ p.signal_type }}</span></td>
                             <td><span class="direction-badge {{ p.direction|lower }}">{{ p.direction }}</span></td>
+                            <td class="small text-muted">{{ p.hold_time or '-' }}</td>
                             <td class="price-cell">{{ "%.4f"|format(p.entry_price) if p.entry_price else '-' }}</td>
                             <td class="price-cell text-danger">{{ "%.4f"|format(p.sl_price) if p.sl_price else '-' }}</td>
                             <td class="price-cell text-success">{{ "%.4f"|format(p.tp1_price) if p.tp1_price else '-' }}</td>
-                            <td class="price-cell text-success">{{ "%.4f"|format(p.tp2_price) if p.tp2_price else '-' }}</td>
                             <td class="price-cell fw-bold">{{ "%.4f"|format(p.current_price) if p.current_price else '-' }}</td>
                             <td class="{{ 'text-success' if p.pnl_percent and p.pnl_percent > 0 else 'text-danger' if p.pnl_percent else '' }}">
                                 {% if p.current_price and p.entry_price %}
@@ -1054,7 +1079,7 @@ input:checked + .toggle-slider:before {
                     </button>
                 </div>
             </div>
-            <div class="fixed-table-container">
+            <div class="fixed-table-container" style="max-height: 400px;">
                 <table class="table signal-table compact-table mb-0">
                     <thead>
                         <tr>
@@ -1062,28 +1087,37 @@ input:checked + .toggle-slider:before {
                             <th>Symbol</th>
                             <th>Type</th>
                             <th>Dir</th>
+                            <th>Hold</th>
                             <th>Entry</th>
                             <th>Exit</th>
                             <th>P&L</th>
+                            <th title="Max Profit Reached">📈 Max</th>
+                            <th title="Max Drawdown">📉 DD</th>
                             <th>Reason</th>
-                            <th>Del</th>
+                            <th>Info</th>
                         </tr>
                     </thead>
                     <tbody id="historyBody">
                         {% for t in trades %}
                         {% if t.status == 'Closed' %}
-                        <tr data-id="{{ t.id }}">
-                            <td>{{ t.time }}</td>
+                        <tr data-id="{{ t.id }}" style="cursor: pointer;" onclick="showTradeDetails({{ t.id }})">
+                            <td class="small text-muted">{{ t.entry_time or t.time }}</td>
                             <td><strong>{{ t.symbol }}</strong></td>
                             <td><span class="signal-badge {{ t.signal_type|lower }}">{{ t.signal_type }}</span></td>
                             <td><span class="direction-badge {{ t.direction|lower }}">{{ t.direction }}</span></td>
+                            <td class="small">{{ t.hold_time or '-' }}</td>
                             <td class="price-cell">{{ "%.4f"|format(t.entry_price) if t.entry_price else '-' }}</td>
                             <td class="price-cell">{{ "%.4f"|format(t.exit_price) if t.exit_price else '-' }}</td>
                             <td class="{{ 'text-success fw-bold' if t.pnl_percent and t.pnl_percent > 0 else 'text-danger fw-bold' if t.pnl_percent else '' }}">
                                 {{ "%.2f%%"|format(t.pnl_percent) if t.pnl_percent else '-' }}
                             </td>
+                            <td class="text-success small">{{ "+%.1f%%"|format(t.max_favorable_pnl) if t.max_favorable_pnl and t.max_favorable_pnl > 0 else '-' }}</td>
+                            <td class="text-danger small">{{ "%.1f%%"|format(t.max_adverse_pnl) if t.max_adverse_pnl and t.max_adverse_pnl < 0 else '-' }}</td>
                             <td><span class="badge bg-{{ 'success' if 'TP' in (t.exit_reason or '') else 'danger' if 'SL' in (t.exit_reason or '') else 'secondary' }}">{{ t.exit_reason or '-' }}</span></td>
-                            <td>
+                            <td onclick="event.stopPropagation();">
+                                <button class="table-action-btn" onclick="showTradeDetails({{ t.id }})" title="View Details" style="background:#e0e7ff;color:#4f46e5;">
+                                    <i class="ri-line-chart-line"></i>
+                                </button>
                                 <button class="table-action-btn delete-btn" onclick="deleteTrade({{ t.id }})" title="Delete">
                                     ✕
                                 </button>
@@ -1092,7 +1126,7 @@ input:checked + .toggle-slider:before {
                         {% endif %}
                         {% else %}
                         <tr>
-                            <td colspan="9" class="empty-state">
+                            <td colspan="12" class="empty-state">
                                 <i class="ri-history-line d-block"></i>
                                 <div>No closed trades yet</div>
                             </td>
@@ -1251,6 +1285,10 @@ function collectConfig() {
         rsp_leverage: parseInt(document.getElementById('leverage').value),
         rsp_max_daily_loss: parseFloat(document.getElementById('maxDailyLoss').value),
         
+        // SL Protection
+        rsp_sl_cooldown_minutes: parseInt(document.getElementById('slCooldown').value),
+        rsp_max_sl_per_symbol: parseInt(document.getElementById('maxSlPerSymbol').value),
+        
         rsp_paper_trading: document.getElementById('paperTrading').checked,
         rsp_auto_execute: document.getElementById('autoExecute').checked,
         rsp_close_on_opposite: document.getElementById('closeOnOpposite').checked,
@@ -1386,7 +1424,7 @@ function loadTrades() {
             const closedTrades = trades.filter(t => t.status === 'Closed');
             
             if (closedTrades.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="9" class="empty-state">
+                tbody.innerHTML = `<tr><td colspan="12" class="empty-state">
                     <i class="ri-history-line d-block"></i>
                     <div>No closed trades yet</div>
                 </td></tr>`;
@@ -1396,17 +1434,28 @@ function loadTrades() {
             tbody.innerHTML = closedTrades.map(t => {
                 const reasonClass = (t.exit_reason || '').includes('TP') ? 'success' : 
                                    (t.exit_reason || '').includes('SL') ? 'danger' : 'secondary';
+                const maxFav = t.max_favorable_pnl > 0 ? `+${t.max_favorable_pnl.toFixed(1)}%` : '-';
+                const maxAdv = t.max_adverse_pnl < 0 ? `${t.max_adverse_pnl.toFixed(1)}%` : '-';
+                
                 return `
-                <tr data-id="${t.id}">
-                    <td>${t.time}</td>
+                <tr data-id="${t.id}" style="cursor:pointer;" onclick="showTradeDetails(${t.id})">
+                    <td class="small text-muted">${t.entry_time || t.time}</td>
                     <td><strong>${t.symbol}</strong></td>
                     <td><span class="signal-badge ${t.signal_type.toLowerCase()}">${t.signal_type}</span></td>
                     <td><span class="direction-badge ${t.direction.toLowerCase()}">${t.direction}</span></td>
+                    <td class="small">${t.hold_time || '-'}</td>
                     <td class="price-cell">${t.entry_price ? t.entry_price.toFixed(4) : '-'}</td>
                     <td class="price-cell">${t.exit_price ? t.exit_price.toFixed(4) : '-'}</td>
                     <td class="${t.pnl_percent > 0 ? 'text-success fw-bold' : 'text-danger fw-bold'}">${t.pnl_percent ? t.pnl_percent.toFixed(2) + '%' : '-'}</td>
+                    <td class="text-success small">${maxFav}</td>
+                    <td class="text-danger small">${maxAdv}</td>
                     <td><span class="badge bg-${reasonClass}">${t.exit_reason || '-'}</span></td>
-                    <td><button class="table-action-btn delete-btn" onclick="deleteTrade(${t.id})" title="Delete">✕</button></td>
+                    <td onclick="event.stopPropagation();">
+                        <button class="table-action-btn" onclick="showTradeDetails(${t.id})" title="View Details" style="background:#e0e7ff;color:#4f46e5;">
+                            <i class="ri-line-chart-line"></i>
+                        </button>
+                        <button class="table-action-btn delete-btn" onclick="deleteTrade(${t.id})" title="Delete">✕</button>
+                    </td>
                 </tr>
             `}).join('');
         });
@@ -1448,10 +1497,10 @@ function loadPositions() {
                         <td><strong>${p.symbol}</strong></td>
                         <td><span class="signal-badge ${p.signal_type.toLowerCase()}">${p.signal_type}</span></td>
                         <td><span class="direction-badge ${p.direction.toLowerCase()}">${p.direction}</span></td>
+                        <td class="small text-muted">${p.hold_time || '-'}</td>
                         <td class="price-cell">${p.entry_price ? p.entry_price.toFixed(4) : '-'}</td>
                         <td class="price-cell text-danger">${p.sl_price ? p.sl_price.toFixed(4) : '-'}</td>
                         <td class="price-cell text-success">${p.tp1_price ? p.tp1_price.toFixed(4) : '-'}</td>
-                        <td class="price-cell text-success">${p.tp2_price ? p.tp2_price.toFixed(4) : '-'}</td>
                         <td class="price-cell fw-bold">${p.current_price ? p.current_price.toFixed(4) : '-'}</td>
                         <td class="${pnl > 0 ? 'text-success' : 'text-danger'}">${pnl.toFixed(2)}%</td>
                         <td>${p.tp1_hit ? '<span class="badge bg-success">TP1 ✓</span>' : '<span class="badge bg-secondary">Open</span>'}</td>
@@ -1642,5 +1691,260 @@ function closeAllPositions() {
         }
     });
 }
+
+// ===== TRADE JOURNEY - Sparkline & Details =====
+function drawSparkline(canvasId, priceHistory, entryPrice, slPrice, tp1Price, direction) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas || !priceHistory || priceHistory.length < 2) return;
+    
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    // Clear
+    ctx.clearRect(0, 0, width, height);
+    
+    // Get prices
+    const prices = priceHistory.map(p => p.p);
+    const minP = Math.min(...prices, slPrice || Infinity);
+    const maxP = Math.max(...prices, tp1Price || -Infinity);
+    const range = maxP - minP || 1;
+    
+    const scaleY = (p) => height - ((p - minP) / range) * (height - 10) - 5;
+    const scaleX = (i) => (i / (prices.length - 1)) * (width - 10) + 5;
+    
+    // Draw SL line (red dashed)
+    if (slPrice) {
+        ctx.strokeStyle = '#ef4444';
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(0, scaleY(slPrice));
+        ctx.lineTo(width, scaleY(slPrice));
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+    
+    // Draw TP1 line (green dashed)
+    if (tp1Price) {
+        ctx.strokeStyle = '#22c55e';
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(0, scaleY(tp1Price));
+        ctx.lineTo(width, scaleY(tp1Price));
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+    
+    // Draw Entry line (blue dashed)
+    if (entryPrice) {
+        ctx.strokeStyle = '#3b82f6';
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(0, scaleY(entryPrice));
+        ctx.lineTo(width, scaleY(entryPrice));
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
+    
+    // Draw price line
+    ctx.strokeStyle = direction === 'LONG' ? '#22c55e' : '#ef4444';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    prices.forEach((p, i) => {
+        const x = scaleX(i);
+        const y = scaleY(p);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    
+    // Draw end point
+    const lastPrice = prices[prices.length - 1];
+    ctx.fillStyle = lastPrice > entryPrice ? '#22c55e' : '#ef4444';
+    ctx.beginPath();
+    ctx.arc(scaleX(prices.length - 1), scaleY(lastPrice), 3, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function showTradeDetails(tradeId) {
+    fetch(`/rsi_sniper/trades/${tradeId}`)
+        .then(r => r.json())
+        .then(trade => {
+            if (!trade) return;
+            
+            const modal = document.getElementById('tradeDetailsModal');
+            if (!modal) return;
+            
+            // Fill modal content
+            document.getElementById('detailSymbol').textContent = trade.symbol;
+            document.getElementById('detailType').textContent = trade.signal_type;
+            document.getElementById('detailDir').textContent = trade.direction;
+            document.getElementById('detailEntry').textContent = trade.entry_price?.toFixed(6) || '-';
+            document.getElementById('detailExit').textContent = trade.exit_price?.toFixed(6) || '-';
+            document.getElementById('detailSL').textContent = trade.sl_price?.toFixed(6) || '-';
+            document.getElementById('detailTP1').textContent = trade.tp1_price?.toFixed(6) || '-';
+            document.getElementById('detailPnL').textContent = trade.pnl_percent?.toFixed(2) + '%' || '-';
+            document.getElementById('detailPnL').className = trade.pnl_percent > 0 ? 'text-success fw-bold' : 'text-danger fw-bold';
+            document.getElementById('detailHold').textContent = trade.hold_time || '-';
+            document.getElementById('detailReason').textContent = trade.exit_reason || '-';
+            
+            // Journey stats
+            const maxFav = trade.max_favorable_pnl || 0;
+            const maxAdv = trade.max_adverse_pnl || 0;
+            document.getElementById('detailMaxProfit').textContent = maxFav > 0 ? '+' + maxFav.toFixed(2) + '%' : '-';
+            document.getElementById('detailMaxProfit').className = maxFav > 0 ? 'text-success' : '';
+            document.getElementById('detailMaxDD').textContent = maxAdv < 0 ? maxAdv.toFixed(2) + '%' : '-';
+            document.getElementById('detailMaxDD').className = maxAdv < 0 ? 'text-danger' : '';
+            
+            // Distance to TP1
+            const distTP1 = trade.distance_to_tp1;
+            if (distTP1 !== null && distTP1 !== undefined) {
+                document.getElementById('detailTP1Progress').style.width = Math.min(100, distTP1) + '%';
+                document.getElementById('detailTP1Percent').textContent = distTP1.toFixed(0) + '%';
+            } else {
+                document.getElementById('detailTP1Progress').style.width = '0%';
+                document.getElementById('detailTP1Percent').textContent = '-';
+            }
+            
+            // Draw sparkline
+            setTimeout(() => {
+                drawSparkline('journeyChart', trade.price_history, trade.entry_price, trade.sl_price, trade.tp1_price, trade.direction);
+            }, 100);
+            
+            // Show modal
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+        });
+}
+
+// Mini sparkline for table
+function drawMiniSparkline(canvas, history, direction) {
+    if (!canvas || !history || history.length < 2) return;
+    
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+    
+    ctx.clearRect(0, 0, w, h);
+    
+    const prices = history.map(p => p.p);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const range = max - min || 1;
+    
+    ctx.strokeStyle = direction === 'LONG' ? '#22c55e' : '#ef4444';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    
+    prices.forEach((p, i) => {
+        const x = (i / (prices.length - 1)) * w;
+        const y = h - ((p - min) / range) * (h - 4) - 2;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+    
+    ctx.stroke();
+}
 </script>
+
+<!-- Trade Details Modal -->
+<div class="modal fade" id="tradeDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="ri-line-chart-line me-2"></i>Trade Journey
+                    <span id="detailSymbol" class="badge bg-primary ms-2"></span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Chart -->
+                <div class="mb-4 p-3 bg-light rounded">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <small class="text-muted">Price Journey (Entry → Exit)</small>
+                        <div class="d-flex gap-3">
+                            <small><span style="color:#3b82f6">━━</span> Entry</small>
+                            <small><span style="color:#22c55e">- -</span> TP1</small>
+                            <small><span style="color:#ef4444">- -</span> SL</small>
+                        </div>
+                    </div>
+                    <canvas id="journeyChart" width="600" height="150" style="width:100%; max-width:600px;"></canvas>
+                </div>
+                
+                <!-- Trade Info -->
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-3 text-muted">Trade Info</h6>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">Type:</span>
+                                    <span id="detailType" class="fw-bold"></span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">Direction:</span>
+                                    <span id="detailDir" class="fw-bold"></span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">Entry:</span>
+                                    <span id="detailEntry" class="font-monospace"></span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">Exit:</span>
+                                    <span id="detailExit" class="font-monospace"></span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">SL:</span>
+                                    <span id="detailSL" class="font-monospace text-danger"></span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">TP1:</span>
+                                    <span id="detailTP1" class="font-monospace text-success"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-3 text-muted">Journey Stats</h6>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">Final P&L:</span>
+                                    <span id="detailPnL"></span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">Hold Time:</span>
+                                    <span id="detailHold"></span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">Exit Reason:</span>
+                                    <span id="detailReason"></span>
+                                </div>
+                                <hr>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">📈 Max Profit:</span>
+                                    <span id="detailMaxProfit"></span>
+                                </div>
+                                <div class="d-flex justify-content-between mb-2">
+                                    <span class="text-muted">📉 Max Drawdown:</span>
+                                    <span id="detailMaxDD"></span>
+                                </div>
+                                <div class="mt-3">
+                                    <small class="text-muted d-block mb-1">Progress to TP1:</small>
+                                    <div class="progress" style="height: 20px;">
+                                        <div id="detailTP1Progress" class="progress-bar bg-success" style="width: 0%"></div>
+                                    </div>
+                                    <div class="text-center mt-1">
+                                        <small id="detailTP1Percent" class="text-muted"></small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
