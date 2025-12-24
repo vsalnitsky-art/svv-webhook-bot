@@ -1141,8 +1141,6 @@ class RSISniperPro:
                 'mfi_cloud': t.mfi_cloud,
                 'timeframe': t.timeframe,
                 'paper': t.paper_trade,
-                'hold_time': t.hold_time_minutes,
-                'tags': t.tags,
                 'time': t.created_at.strftime('%d.%m %H:%M') if t.created_at else '',
             } for t in trades]
         except Exception as e:
