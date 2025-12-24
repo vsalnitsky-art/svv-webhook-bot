@@ -124,6 +124,11 @@ DEFAULT_CONFIG = {
     'rsp_trend_confirmation': False,
     'rsp_min_peak_strength': 2,
     
+    # MFI Confirmation Filters (NEW)
+    'rsp_require_mfi_cloud': True,      # SNIPER: вимагати MFI Cloud підтвердження
+    'rsp_require_mfi_rising': True,     # SNIPER LONG: MFI має зростати
+    'rsp_mfi_rising_bars': 2,           # Скільки барів MFI має рости
+    
     # Bollinger Bands
     'rsp_use_bb': True,
     'rsp_bb_length': 20,
@@ -479,18 +484,39 @@ class SignalGenerator:
             rsi_rising = rsi.iloc[-1] > rsi.iloc[-2]
             rsi_falling = rsi.iloc[-1] < rsi.iloc[-2]
             
+            # MFI Trend (for confirmation)
+            mfi_rising_bars = self.config.get('rsp_mfi_rising_bars', 2)
+            mfi_rising = all(mfi.iloc[-i] > mfi.iloc[-i-1] for i in range(1, min(mfi_rising_bars + 1, len(mfi))))
+            mfi_falling = all(mfi.iloc[-i] < mfi.iloc[-i-1] for i in range(1, min(mfi_rising_bars + 1, len(mfi))))
+            
             # Base conditions
             is_oversold = current_rsi <= oversold
             is_overbought = current_rsi >= overbought
             
+            # MFI Confirmation Filters
+            require_mfi_cloud = self.config.get('rsp_require_mfi_cloud', True)
+            require_mfi_rising = self.config.get('rsp_require_mfi_rising', True)
+            
             # ===============================================================
-            # SNIPER SIGNALS (BB Extreme + RSI Zone)
+            # SNIPER SIGNALS (BB Extreme + RSI Zone + MFI Confirmation)
             # Trade Book: Entry immediately, SL behind candle wick or BB edge
+            # NOW WITH MFI CONFIRMATION TO AVOID "CATCHING FALLING KNIVES"
             # ===============================================================
             if self.config.get('rsp_enable_sniper', True) and self.config.get('rsp_use_bb', True):
                 
-                # SNIPER LONG: RSI oversold + BB lower touch
-                if is_oversold and is_extreme_low and volume_ok:
+                # SNIPER LONG: RSI oversold + BB lower touch + MFI Confirmation
+                mfi_ok_long = True
+                rejection_reason = None
+                
+                if require_mfi_cloud and mfi_cloud != "BULLISH":
+                    mfi_ok_long = False
+                    rejection_reason = f"MFI Cloud BEARISH (need BULLISH)"
+                
+                if require_mfi_rising and not mfi_rising:
+                    mfi_ok_long = False
+                    rejection_reason = f"MFI not rising (need rising {mfi_rising_bars} bars)"
+                
+                if is_oversold and is_extreme_low and volume_ok and mfi_ok_long:
                     sl_price = min(float(low.iloc[-1]), current_bb_lower) - (current_atr * 0.2)
                     tp1_price = current_bb_middle
                     tp2_price = current_bb_upper
@@ -510,12 +536,25 @@ class SignalGenerator:
                         mfi=current_mfi,
                         mfi_cloud=mfi_cloud,
                         timeframe=self.config.get('rsp_main_tf', '15'),
-                        notes=f"SNIPER LONG: RSI={current_rsi:.1f}, BB Low Touch"
+                        notes=f"SNIPER LONG: RSI={current_rsi:.1f}, MFI Cloud={mfi_cloud}, BB Low"
                     )
                     signals.append(signal)
+                elif is_oversold and is_extreme_low and volume_ok and rejection_reason:
+                    logger.debug(f"⚠️ {symbol} SNIPER LONG rejected: {rejection_reason}")
                 
-                # SNIPER SHORT: RSI overbought + BB upper touch
-                if is_overbought and is_extreme_high and volume_ok:
+                # SNIPER SHORT: RSI overbought + BB upper touch + MFI Confirmation
+                mfi_ok_short = True
+                rejection_reason = None
+                
+                if require_mfi_cloud and mfi_cloud != "BEARISH":
+                    mfi_ok_short = False
+                    rejection_reason = f"MFI Cloud BULLISH (need BEARISH)"
+                
+                if require_mfi_rising and not mfi_falling:
+                    mfi_ok_short = False
+                    rejection_reason = f"MFI not falling (need falling {mfi_rising_bars} bars)"
+                
+                if is_overbought and is_extreme_high and volume_ok and mfi_ok_short:
                     sl_price = max(float(high.iloc[-1]), current_bb_upper) + (current_atr * 0.2)
                     tp1_price = current_bb_middle
                     tp2_price = current_bb_lower
@@ -535,9 +574,11 @@ class SignalGenerator:
                         mfi=current_mfi,
                         mfi_cloud=mfi_cloud,
                         timeframe=self.config.get('rsp_main_tf', '15'),
-                        notes=f"SNIPER SHORT: RSI={current_rsi:.1f}, BB High Touch"
+                        notes=f"SNIPER SHORT: RSI={current_rsi:.1f}, MFI Cloud={mfi_cloud}, BB High"
                     )
                     signals.append(signal)
+                elif is_overbought and is_extreme_high and volume_ok and rejection_reason:
+                    logger.debug(f"⚠️ {symbol} SNIPER SHORT rejected: {rejection_reason}")
             
             # ===============================================================
             # FLOW SIGNALS (Trend Continuation)
