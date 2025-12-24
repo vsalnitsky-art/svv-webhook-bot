@@ -581,7 +581,7 @@ input:checked + .toggle-slider:before {
             </div>
             <div class="collapse" id="mfiSettings">
                 <div class="settings-body">
-                    <div class="row g-2">
+                    <div class="row g-2 mb-3">
                         <div class="col-4">
                             <label class="form-label small">MFI Length</label>
                             <input type="number" class="form-control form-control-sm" id="mfiLength" value="{{ config.rsp_mfi_length }}">
@@ -593,6 +593,32 @@ input:checked + .toggle-slider:before {
                         <div class="col-4">
                             <label class="form-label small">Slow EMA</label>
                             <input type="number" class="form-control form-control-sm" id="slowMfiEma" value="{{ config.rsp_slow_mfi_ema }}">
+                        </div>
+                    </div>
+                    
+                    <!-- MFI Confirmation Filters -->
+                    <div class="alert alert-info py-2 mb-3" style="font-size: 0.75rem;">
+                        <strong>🎯 MFI Confirmation:</strong> Фільтрує сигнали SNIPER, щоб не входити проти тренду
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="requireMfiCloud" {{ 'checked' if config.rsp_require_mfi_cloud }}>
+                        <label class="form-check-label small" for="requireMfiCloud">
+                            Require MFI Cloud Confirmation
+                            <small class="text-muted d-block">LONG: BULLISH cloud, SHORT: BEARISH cloud</small>
+                        </label>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="requireMfiRising" {{ 'checked' if config.rsp_require_mfi_rising }}>
+                        <label class="form-check-label small" for="requireMfiRising">
+                            Require MFI Trend Confirmation
+                            <small class="text-muted d-block">LONG: MFI rising, SHORT: MFI falling</small>
+                        </label>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small">MFI Rising Bars</label>
+                            <input type="number" class="form-control form-control-sm" id="mfiRisingBars" value="{{ config.rsp_mfi_rising_bars|default(2) }}" min="1" max="5">
+                            <small class="text-muted">Скільки барів MFI має рости/падати</small>
                         </div>
                     </div>
                 </div>
@@ -1255,6 +1281,11 @@ function collectConfig() {
         rsp_mfi_length: parseInt(document.getElementById('mfiLength').value),
         rsp_fast_mfi_ema: parseInt(document.getElementById('fastMfiEma').value),
         rsp_slow_mfi_ema: parseInt(document.getElementById('slowMfiEma').value),
+        
+        // MFI Confirmation Filters
+        rsp_require_mfi_cloud: document.getElementById('requireMfiCloud').checked,
+        rsp_require_mfi_rising: document.getElementById('requireMfiRising').checked,
+        rsp_mfi_rising_bars: parseInt(document.getElementById('mfiRisingBars').value),
         
         rsp_use_bb: document.getElementById('useBb').checked,
         rsp_bb_length: parseInt(document.getElementById('bbLength').value),
