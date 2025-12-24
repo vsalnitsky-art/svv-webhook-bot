@@ -182,76 +182,61 @@ DEFAULT_SETTINGS = {
     "whp_add_to_watchlist": True,
     
     # === SIGNAL FLIP SCALPER ===
-    # General
-    "sf_enabled": True,
-    "sf_timeframe": "15",
-    "sf_scan_limit": 50,
-    "sf_min_volume_24h": 10000000,
+    # Базові
+    "sfs_enabled": True,
+    "sfs_timeframe": "15",
+    "sfs_scan_limit": 50,
+    "sfs_scan_interval": 1,
+    "sfs_auto_mode": False,
+    "sfs_auto_preset": True,
     
-    # Signal Detection
-    "sf_use_rsi": True,
-    "sf_rsi_length": 14,
-    "sf_rsi_oversold": 30,
-    "sf_rsi_overbought": 70,
+    # RSI Filter
+    "sfs_use_rsi_filter": True,
+    "sfs_rsi_oversold": 40,
+    "sfs_rsi_overbought": 60,
     
-    "sf_use_mfi": True,
-    "sf_mfi_length": 20,
-    "sf_mfi_fast_ema": 5,
-    "sf_mfi_slow_ema": 13,
+    # MFI Filter
+    "sfs_use_mfi_filter": True,
+    "sfs_mfi_long": 45,
+    "sfs_mfi_short": 55,
     
-    "sf_use_bb": True,
-    "sf_bb_length": 20,
-    "sf_bb_mult": 2.0,
+    # Volume Filter
+    "sfs_use_volume_filter": True,
+    "sfs_volume_min": 10000000,
     
-    "sf_use_macd": True,
-    "sf_macd_fast": 12,
-    "sf_macd_slow": 26,
-    "sf_macd_signal": 9,
+    # ATR Filter
+    "sfs_use_atr_filter": True,
+    "sfs_atr_min": 0.5,
+    "sfs_atr_max": 5.0,
     
-    # Flip Detection
-    "sf_flip_sensitivity": "Medium",    # Low, Medium, High
-    "sf_confirm_candles": 1,            # Кількість свічок для підтвердження
-    "sf_min_flip_strength": 2,          # Мінімальна сила фліпу
+    # Other Filters
+    "sfs_use_btc_filter": True,
+    "sfs_use_htf_filter": False,
+    "sfs_use_momentum_filter": True,
+    "sfs_use_time_filter": False,
+    "sfs_time_from": "09:00",
+    "sfs_time_to": "21:00",
     
-    # Filters
-    "sf_use_volume_filter": True,
-    "sf_use_trend_filter": True,
-    "sf_use_volatility_filter": True,
-    "sf_use_btc_filter": True,
-    "sf_min_atr_percent": 0.5,
-    "sf_max_atr_percent": 5.0,
-    
-    # Take Profit
-    "sf_tp_mode": "Dynamic",            # Fixed, Dynamic, BB_Based
-    "sf_tp1_percent": 0.5,
-    "sf_tp2_percent": 1.0,
-    "sf_tp3_percent": 1.5,
-    "sf_use_trailing": True,
-    "sf_trailing_activation": 0.5,
-    "sf_trailing_offset": 0.2,
-    
-    # Stop Loss
-    "sf_sl_mode": "ATR",                # Fixed, ATR, Swing
-    "sf_sl_fixed_percent": 0.5,
-    "sf_sl_atr_mult": 1.5,
-    "sf_sl_buffer": 0.1,
+    # Take Profit / Stop Loss
+    "sfs_tp": 1.0,
+    "sfs_tp1_percent": 0.5,
+    "sfs_tp2_percent": 1.0,
+    "sfs_sl_percent": 0.5,
+    "sfs_use_trailing": True,
+    "sfs_trailing_offset": 0.2,
     
     # Risk Management
-    "sf_max_daily_trades": 5,
-    "sf_max_open_positions": 2,
-    "sf_position_size_percent": 5.0,
-    "sf_leverage": 10,
-    "sf_max_daily_loss": 3.0,
+    "sfs_max_daily_trades": 5,
+    "sfs_max_open_positions": 2,
+    "sfs_position_size_percent": 5.0,
+    "sfs_leverage": 10,
+    "sfs_max_daily_loss": 3.0,
+    "sfs_max_hold_minutes": 60,
     
     # Execution
-    "sf_paper_trading": True,
-    "sf_auto_execute": False,
-    "sf_close_on_opposite": True,
-    "sf_telegram_signals": False,
-    
-    # Auto Mode
-    "sf_auto_mode": False,
-    "sf_scan_interval": 1,
+    "sfs_paper_trading": True,
+    "sfs_auto_execute": False,
+    "sfs_telegram_signals": False,
     
     # === CONFLUENCE SCALPER ===
     "cs_enabled": True,
