@@ -172,22 +172,22 @@ DEFAULT_CONFIG = {
     'rsp_auto_mode': True,
     'rsp_scan_interval': 1,
     
-    # Trade Management - SNIPER
+    # Trade Management - SNIPER (% values)
     'rsp_sniper_sl_atr': 0.2,
-    'rsp_sniper_tp1': 'BB_Middle',
-    'rsp_sniper_tp2': 'BB_Opposite',
+    'rsp_sniper_tp1': 1.0,          # TP1 target в %
+    'rsp_sniper_tp2': 2.0,          # TP2 target в %
     
-    # Trade Management - FLOW
+    # Trade Management - FLOW (% values)
     'rsp_flow_sl_atr': 1.5,
-    'rsp_flow_tp1': 1.0,
-    'rsp_flow_tp2': 'BB_Opposite',
+    'rsp_flow_tp1': 1.0,            # TP1 target в %
+    'rsp_flow_tp2': 2.0,            # TP2 target в %
     
-    # Trade Management - DIVERGENCE
+    # Trade Management - DIVERGENCE (% values)
     'rsp_div_sl_atr': 1.0,
     'rsp_div_tp1': 1.5,
     'rsp_div_tp2': 3.0,
     
-    # Trade Management - ROYAL
+    # Trade Management - ROYAL (% values)
     'rsp_royal_sl_atr': 0.5,
     'rsp_royal_tp1': 2.0,
     'rsp_royal_tp2': 4.0,
@@ -418,6 +418,17 @@ class SignalGenerator:
     def update_config(self, config: Dict):
         self.config = config
     
+    def _get_numeric_config(self, key: str, default: float) -> float:
+        """Безпечно отримує числове значення з config"""
+        value = self.config.get(key, default)
+        if isinstance(value, (int, float)):
+            return float(value)
+        # Якщо рядок (старі налаштування типу "BB_Middle"), повертаємо default
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+    
     def analyze(self, df, symbol: str) -> List[Signal]:
         """Аналізує символ та генерує сигнали"""
         signals = []
@@ -517,9 +528,14 @@ class SignalGenerator:
                     rejection_reason = f"MFI not rising (need rising {mfi_rising_bars} bars)"
                 
                 if is_oversold and is_extreme_low and volume_ok and mfi_ok_long:
-                    sl_price = min(float(low.iloc[-1]), current_bb_lower) - (current_atr * 0.2)
-                    tp1_price = current_bb_middle
-                    tp2_price = current_bb_upper
+                    # Get TP/SL settings from config (with safe numeric conversion)
+                    sniper_sl_atr = self._get_numeric_config('rsp_sniper_sl_atr', 0.2)
+                    sniper_tp1 = self._get_numeric_config('rsp_sniper_tp1', 1.0)
+                    sniper_tp2 = self._get_numeric_config('rsp_sniper_tp2', 2.0)
+                    
+                    sl_price = min(float(low.iloc[-1]), current_bb_lower) - (current_atr * sniper_sl_atr)
+                    tp1_price = current_price * (1 + sniper_tp1 / 100)
+                    tp2_price = current_price * (1 + sniper_tp2 / 100)
                     
                     signal = Signal(
                         symbol=symbol,
@@ -555,9 +571,14 @@ class SignalGenerator:
                     rejection_reason = f"MFI not falling (need falling {mfi_rising_bars} bars)"
                 
                 if is_overbought and is_extreme_high and volume_ok and mfi_ok_short:
-                    sl_price = max(float(high.iloc[-1]), current_bb_upper) + (current_atr * 0.2)
-                    tp1_price = current_bb_middle
-                    tp2_price = current_bb_lower
+                    # Get TP/SL settings from config (with safe numeric conversion)
+                    sniper_sl_atr = self._get_numeric_config('rsp_sniper_sl_atr', 0.2)
+                    sniper_tp1 = self._get_numeric_config('rsp_sniper_tp1', 1.0)
+                    sniper_tp2 = self._get_numeric_config('rsp_sniper_tp2', 2.0)
+                    
+                    sl_price = max(float(high.iloc[-1]), current_bb_upper) + (current_atr * sniper_sl_atr)
+                    tp1_price = current_price * (1 - sniper_tp1 / 100)
+                    tp2_price = current_price * (1 - sniper_tp2 / 100)
                     
                     signal = Signal(
                         symbol=symbol,
@@ -585,12 +606,16 @@ class SignalGenerator:
             # Trade Book: MFI Cloud color must match signal direction
             # ===============================================================
             if self.config.get('rsp_enable_flow', True):
+                # Get FLOW settings from config (with safe numeric conversion)
+                flow_sl_atr = self._get_numeric_config('rsp_flow_sl_atr', 1.5)
+                flow_tp1 = self._get_numeric_config('rsp_flow_tp1', 1.0)
+                flow_tp2 = self._get_numeric_config('rsp_flow_tp2', 2.0)
                 
                 # FLOW LONG: RSI oversold + MFI Cloud BULLISH + NOT at BB extreme
                 if is_oversold and mfi_cloud == "BULLISH" and not is_extreme_low and volume_ok and rsi_rising:
-                    sl_price = current_price - (current_atr * 1.5)
-                    tp1_price = current_price * 1.01
-                    tp2_price = current_bb_upper
+                    sl_price = current_price - (current_atr * flow_sl_atr)
+                    tp1_price = current_price * (1 + flow_tp1 / 100)
+                    tp2_price = current_price * (1 + flow_tp2 / 100)
                     
                     signal = Signal(
                         symbol=symbol,
@@ -611,9 +636,9 @@ class SignalGenerator:
                 
                 # FLOW SHORT: RSI overbought + MFI Cloud BEARISH + NOT at BB extreme
                 if is_overbought and mfi_cloud == "BEARISH" and not is_extreme_high and volume_ok and rsi_falling:
-                    sl_price = current_price + (current_atr * 1.5)
-                    tp1_price = current_price * 0.99
-                    tp2_price = current_bb_lower
+                    sl_price = current_price + (current_atr * flow_sl_atr)
+                    tp1_price = current_price * (1 - flow_tp1 / 100)
+                    tp2_price = current_price * (1 - flow_tp2 / 100)
                     
                     signal = Signal(
                         symbol=symbol,
