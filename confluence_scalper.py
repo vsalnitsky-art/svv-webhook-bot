@@ -872,7 +872,7 @@ class ConfluenceScalper:
         
         # 🆕 Автозапуск auto mode якщо увімкнений в налаштуваннях
         config = self.get_config()
-        if config.get('cs_auto_mode', True):
+        if config.get('cs_auto_mode', False):
             interval = config.get('cs_scan_interval', 30)
             self.start_auto_mode(interval)
             logger.info(f"✅ Confluence Scalper v2.0 initialized (auto mode: {interval}s)")
@@ -1000,7 +1000,7 @@ class ConfluenceScalper:
             'cs_use_analytics': to_bool(settings.get('cs_use_analytics'), True),
             'cs_avoid_problem_symbols': to_bool(settings.get('cs_avoid_problem_symbols'), True),
             'cs_adjust_on_losses': to_bool(settings.get('cs_adjust_on_losses'), True),
-            'cs_auto_mode': to_bool(settings.get('cs_auto_mode'), True),
+            'cs_auto_mode': to_bool(settings.get('cs_auto_mode'), False),
         }
     
     def get_status(self) -> Dict:
@@ -1662,6 +1662,15 @@ def register_routes(app):
         if request.method == 'POST':
             data = request.json or {}
             settings.save_settings(data)
+            
+            # Handle auto_mode change
+            if 'cs_auto_mode' in data:
+                if data['cs_auto_mode']:
+                    interval = data.get('cs_scan_interval', 30)
+                    confluence_scalper.start_auto_mode(interval)
+                else:
+                    confluence_scalper.stop_auto_mode()
+            
             return jsonify({'status': 'ok'})
         return jsonify(confluence_scalper.get_config())
     
