@@ -318,6 +318,45 @@ input:checked + .toggle-slider:before {
     opacity: 0.3;
     margin-bottom: 0.5rem;
 }
+
+/* Scan Progress - Fixed position */
+.scan-progress-fixed {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%);
+    border: 1px solid #93c5fd;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    min-height: 70px;
+    transition: all 0.3s ease;
+}
+
+.scan-progress-fixed.scanning {
+    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+    border-color: #fbbf24;
+}
+
+.scan-progress-fixed .scan-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.scan-progress-fixed .scan-text {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.scan-progress-fixed .scan-symbol {
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 0.8rem;
+    background: rgba(0,0,0,0.1);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+}
 </style>
 
 <!-- Header -->
@@ -706,14 +745,21 @@ input:checked + .toggle-slider:before {
 
     <!-- Right Column: Results -->
     <div class="col-lg-8">
-        <!-- Scan Progress -->
-        <div class="alert alert-info mb-3" id="scanProgress" style="display: none;">
-            <div class="d-flex align-items-center">
-                <div class="spinner-border spinner-border-sm me-2"></div>
-                <span id="scanStatus">Scanning...</span>
+        <!-- Scan Progress - Always visible, fixed -->
+        <div class="scan-progress-fixed" id="scanProgress">
+            <div class="scan-status">
+                <div class="scan-text">
+                    <span id="scanIcon">🔍</span>
+                    <span id="scanStatus">Ready to scan</span>
+                    <span class="scan-symbol" id="currentSymbol" style="display: none;"></span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-primary" id="progressPercent">0%</span>
+                    <span class="badge bg-success" id="foundSignals">0 signals</span>
+                </div>
             </div>
-            <div class="progress mt-2" style="height: 6px;">
-                <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+            <div class="progress mt-2" style="height: 4px;">
+                <div class="progress-bar bg-primary" id="progressBar" style="width: 0%; transition: width 0.3s ease;"></div>
             </div>
         </div>
 
@@ -1207,23 +1253,48 @@ function updateStatus() {
     fetch('/rsi_sniper/status')
         .then(r => r.json())
         .then(status => {
-            // Update progress
-            document.getElementById('scanStatus').textContent = status.status;
-            document.getElementById('progressBar').style.width = status.progress + '%';
+            const scanProgress = document.getElementById('scanProgress');
+            const scanIcon = document.getElementById('scanIcon');
+            const scanStatus = document.getElementById('scanStatus');
+            const progressBar = document.getElementById('progressBar');
+            const progressPercent = document.getElementById('progressPercent');
+            const foundSignals = document.getElementById('foundSignals');
+            const currentSymbol = document.getElementById('currentSymbol');
+            
+            // Update progress bar
+            progressBar.style.width = status.progress + '%';
+            progressPercent.textContent = status.progress + '%';
+            foundSignals.textContent = status.results_count + ' signals';
+            
+            // Update counts
             document.getElementById('signalsCount').textContent = status.results_count;
             document.getElementById('signalsBadge').textContent = status.results_count;
             document.getElementById('openPositions').textContent = status.open_positions;
             
-            // Update scan button
+            // Update scan button and progress display
             const scanBtn = document.getElementById('scanBtn');
             if (status.is_scanning) {
+                scanProgress.classList.add('scanning');
+                scanIcon.textContent = '⏳';
+                scanStatus.textContent = status.status || 'Scanning...';
                 scanBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>' + status.progress + '%';
                 scanBtn.disabled = true;
-                document.getElementById('scanProgress').style.display = 'block';
+                
+                // Show current symbol if available
+                if (status.status && status.status.includes('...')) {
+                    const match = status.status.match(/Analyzing\s+(\w+)/);
+                    if (match) {
+                        currentSymbol.textContent = match[1];
+                        currentSymbol.style.display = 'inline';
+                    }
+                }
             } else {
+                scanProgress.classList.remove('scanning');
+                scanIcon.textContent = status.auto_running ? '🔄' : '✅';
+                scanStatus.textContent = status.auto_running ? 'Auto mode running' : (status.status || 'Ready');
                 scanBtn.innerHTML = '<i class="ri-radar-line me-1"></i>SCAN';
                 scanBtn.disabled = false;
-                document.getElementById('scanProgress').style.display = 'none';
+                currentSymbol.style.display = 'none';
                 
                 // Update signals table
                 if (status.results && status.results.length > 0) {
