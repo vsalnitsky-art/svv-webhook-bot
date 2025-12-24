@@ -369,6 +369,26 @@ DEFAULT_SETTINGS = {
     # Auto Mode
     "rsp_auto_mode": True,
     "rsp_scan_interval": 1,
+    
+    # Trade Management - SNIPER
+    "rsp_sniper_sl_atr": 0.2,
+    "rsp_sniper_tp1": "BB_Middle",
+    "rsp_sniper_tp2": "BB_Opposite",
+    
+    # Trade Management - FLOW
+    "rsp_flow_sl_atr": 1.5,
+    "rsp_flow_tp1": 1.0,
+    "rsp_flow_tp2": "BB_Opposite",
+    
+    # Trade Management - DIVERGENCE
+    "rsp_div_sl_atr": 1.0,
+    "rsp_div_tp1": 1.5,
+    "rsp_div_tp2": 3.0,
+    
+    # Trade Management - ROYAL
+    "rsp_royal_sl_atr": 0.5,
+    "rsp_royal_tp1": 2.0,
+    "rsp_royal_tp2": 4.0,
 }
 
 class SettingsManager:
