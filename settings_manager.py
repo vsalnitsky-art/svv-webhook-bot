@@ -379,6 +379,11 @@ DEFAULT_SETTINGS = {
     # SL Protection
     "rsp_sl_cooldown_minutes": 30,
     "rsp_max_sl_per_symbol": 2,
+    
+    # MFI Confirmation Filters
+    "rsp_require_mfi_cloud": True,
+    "rsp_require_mfi_rising": True,
+    "rsp_mfi_rising_bars": 2,
 }
 
 class SettingsManager:
