@@ -285,6 +285,7 @@ DEFAULT_SETTINGS = {
     "cs_signal_expiry": 10,
     "cs_max_hold_time": 60,
     "cs_scan_interval": 30,
+    "cs_auto_mode": False,              # Автоматичний режим сканування
     
     # Execution
     "cs_paper_trading": True,
