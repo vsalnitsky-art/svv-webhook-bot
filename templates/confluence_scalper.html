@@ -801,7 +801,7 @@ input:checked + .toggle-slider:before {
                     <div class="param-row">
                         <span class="param-label">Auto Scan</span>
                         <label class="toggle-switch">
-                            <input type="checkbox" id="autoMode" {{ 'checked' if status.auto_running }}>
+                            <input type="checkbox" id="autoMode" {{ 'checked' if config.cs_auto_mode }}>
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
@@ -1027,6 +1027,7 @@ function collectSettings() {
         cs_telegram_signals: document.getElementById('telegramSignals').checked,
         cs_entry_mode: document.getElementById('entryMode').value,
         cs_scan_interval: parseInt(document.getElementById('scanInterval').value),
+        cs_auto_mode: document.getElementById('autoMode').checked,
     };
 }
 
