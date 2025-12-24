@@ -356,15 +356,16 @@ DEFAULT_SETTINGS = {
     "rsp_auto_mode": True,
     "rsp_scan_interval": 1,
     
-    # Trade Management - SNIPER
+    # Trade Management - SNIPER (відсотки від ціни входу)
     "rsp_sniper_sl_atr": 0.2,
-    "rsp_sniper_tp1": "BB_Middle",
-    "rsp_sniper_tp2": "BB_Opposite",
+    "rsp_sniper_tp1": 1.0,              # TP1 = entry + 1%
+    "rsp_sniper_tp2": 2.0,              # TP2 = entry + 2%
+    "rsp_sniper_use_bb_tp": True,       # Використовувати BB для TP замість %
     
     # Trade Management - FLOW
     "rsp_flow_sl_atr": 1.5,
     "rsp_flow_tp1": 1.0,
-    "rsp_flow_tp2": "BB_Opposite",
+    "rsp_flow_tp2": 2.0,
     
     # Trade Management - DIVERGENCE
     "rsp_div_sl_atr": 1.0,
