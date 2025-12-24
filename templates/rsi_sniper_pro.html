@@ -357,6 +357,56 @@ input:checked + .toggle-slider:before {
     padding: 0.2rem 0.5rem;
     border-radius: 4px;
 }
+
+/* Signal Config Cards */
+.signal-config-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.75rem;
+}
+
+.signal-config-card:hover {
+    border-color: #cbd5e1;
+}
+
+/* Action buttons in tables */
+.table-action-btn {
+    padding: 0.15rem 0.4rem;
+    font-size: 0.65rem;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.table-action-btn.close-btn {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.table-action-btn.close-btn:hover {
+    background: #fecaca;
+}
+
+.table-action-btn.delete-btn {
+    background: #fef3c7;
+    color: #d97706;
+}
+
+.table-action-btn.delete-btn:hover {
+    background: #fde68a;
+}
+
+/* Button group for save/reset */
+.btn-group-settings {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-group-settings .btn {
+    flex: 1;
+}
 </style>
 
 <!-- Header -->
@@ -674,6 +724,121 @@ input:checked + .toggle-slider:before {
             </div>
         </div>
 
+        <!-- Trade Management (TP/SL Settings) -->
+        <div class="settings-card mb-3">
+            <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#tradeManagement">
+                <span><i class="ri-exchange-funds-line me-2"></i>Trade Management</span>
+                <i class="ri-arrow-down-s-line"></i>
+            </div>
+            <div class="collapse" id="tradeManagement">
+                <div class="settings-body">
+                    <div class="alert alert-info py-2 mb-3" style="font-size: 0.75rem;">
+                        <strong>TP/SL Strategy:</strong> TP1 → 50% close, SL → BE. TP2 → close remaining.
+                    </div>
+                    
+                    <!-- SNIPER Signal Settings -->
+                    <div class="signal-config-card mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="signal-badge sniper">🎯 SNIPER</span>
+                            <small class="text-muted">BB Extreme + RSI Zone</small>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <label class="form-label small">SL (ATR×)</label>
+                                <input type="number" class="form-control form-control-sm" id="sniperSlAtr" value="{{ config.rsp_sniper_sl_atr|default(0.2) }}" step="0.1" min="0.1">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">TP1 Target</label>
+                                <select class="form-select form-select-sm" id="sniperTp1">
+                                    <option value="BB_Middle" {{ 'selected' if config.rsp_sniper_tp1|default('BB_Middle') == 'BB_Middle' }}>BB Middle</option>
+                                    <option value="Fixed_1" {{ 'selected' if config.rsp_sniper_tp1 == 'Fixed_1' }}>+1%</option>
+                                    <option value="Fixed_2" {{ 'selected' if config.rsp_sniper_tp1 == 'Fixed_2' }}>+2%</option>
+                                </select>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">TP2 Target</label>
+                                <select class="form-select form-select-sm" id="sniperTp2">
+                                    <option value="BB_Opposite" {{ 'selected' if config.rsp_sniper_tp2|default('BB_Opposite') == 'BB_Opposite' }}>BB Opposite</option>
+                                    <option value="Fixed_2" {{ 'selected' if config.rsp_sniper_tp2 == 'Fixed_2' }}>+2%</option>
+                                    <option value="Fixed_3" {{ 'selected' if config.rsp_sniper_tp2 == 'Fixed_3' }}>+3%</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- FLOW Signal Settings -->
+                    <div class="signal-config-card mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="signal-badge flow">📊 FLOW</span>
+                            <small class="text-muted">MFI Cloud + RSI Momentum</small>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <label class="form-label small">SL (ATR×)</label>
+                                <input type="number" class="form-control form-control-sm" id="flowSlAtr" value="{{ config.rsp_flow_sl_atr|default(1.5) }}" step="0.1" min="0.1">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">TP1 %</label>
+                                <input type="number" class="form-control form-control-sm" id="flowTp1" value="{{ config.rsp_flow_tp1|default(1.0) }}" step="0.1" min="0.1">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">TP2 Target</label>
+                                <select class="form-select form-select-sm" id="flowTp2">
+                                    <option value="BB_Opposite" {{ 'selected' if config.rsp_flow_tp2|default('BB_Opposite') == 'BB_Opposite' }}>BB Opposite</option>
+                                    <option value="Fixed_2" {{ 'selected' if config.rsp_flow_tp2 == 'Fixed_2' }}>+2%</option>
+                                    <option value="Fixed_3" {{ 'selected' if config.rsp_flow_tp2 == 'Fixed_3' }}>+3%</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- DIVERGENCE Signal Settings -->
+                    <div class="signal-config-card mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="signal-badge divergence">🔄 DIVERGENCE</span>
+                            <small class="text-muted">Price/RSI Divergence</small>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <label class="form-label small">SL (ATR×)</label>
+                                <input type="number" class="form-control form-control-sm" id="divSlAtr" value="{{ config.rsp_div_sl_atr|default(1.0) }}" step="0.1" min="0.1">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">TP1 %</label>
+                                <input type="number" class="form-control form-control-sm" id="divTp1" value="{{ config.rsp_div_tp1|default(1.5) }}" step="0.1" min="0.1">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">TP2 %</label>
+                                <input type="number" class="form-control form-control-sm" id="divTp2" value="{{ config.rsp_div_tp2|default(3.0) }}" step="0.1" min="0.1">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ROYAL Signal Settings -->
+                    <div class="signal-config-card">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="signal-badge royal">👑 ROYAL</span>
+                            <small class="text-muted">All conditions met</small>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <label class="form-label small">SL (ATR×)</label>
+                                <input type="number" class="form-control form-control-sm" id="royalSlAtr" value="{{ config.rsp_royal_sl_atr|default(0.5) }}" step="0.1" min="0.1">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">TP1 %</label>
+                                <input type="number" class="form-control form-control-sm" id="royalTp1" value="{{ config.rsp_royal_tp1|default(2.0) }}" step="0.1" min="0.1">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">TP2 %</label>
+                                <input type="number" class="form-control form-control-sm" id="royalTp2" value="{{ config.rsp_royal_tp2|default(4.0) }}" step="0.1" min="0.1">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Risk Management -->
         <div class="settings-card mb-3">
             <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#riskSettings">
@@ -738,9 +903,14 @@ input:checked + .toggle-slider:before {
             </div>
         </div>
 
-        <button class="btn btn-primary w-100 mb-3" onclick="saveConfig()">
-            <i class="ri-save-line me-1"></i>Save Settings
-        </button>
+        <div class="btn-group-settings mb-3">
+            <button class="btn btn-primary" onclick="saveConfig()">
+                <i class="ri-save-line me-1"></i>Save
+            </button>
+            <button class="btn btn-outline-secondary" onclick="loadDefaults()">
+                <i class="ri-refresh-line me-1"></i>Defaults
+            </button>
+        </div>
     </div>
 
     <!-- Right Column: Results -->
@@ -767,7 +937,12 @@ input:checked + .toggle-slider:before {
         <div class="settings-card mb-3">
             <div class="settings-header">
                 <span><i class="ri-stock-line me-2"></i>Open Positions</span>
-                <span class="badge bg-success" id="positionsBadge">{{ open_positions|length if open_positions else 0 }}</span>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-success" id="positionsBadge">{{ open_positions|length if open_positions else 0 }}</span>
+                    <button class="btn btn-sm btn-outline-danger" onclick="closeAllPositions()" title="Close All">
+                        <i class="ri-close-circle-line"></i>
+                    </button>
+                </div>
             </div>
             <div class="fixed-table-container">
                 <table class="table signal-table compact-table mb-0">
@@ -783,6 +958,7 @@ input:checked + .toggle-slider:before {
                             <th>Current</th>
                             <th>P&L</th>
                             <th>Status</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody id="positionsBody">
@@ -812,11 +988,16 @@ input:checked + .toggle-slider:before {
                                     <span class="badge bg-secondary">Open</span>
                                 {% endif %}
                             </td>
+                            <td>
+                                <button class="table-action-btn close-btn" onclick="closePosition({{ p.id }})" title="Close">
+                                    ✕
+                                </button>
+                            </td>
                         </tr>
                         {% endfor %}
                         {% else %}
                         <tr>
-                            <td colspan="10" class="empty-state">
+                            <td colspan="11" class="empty-state">
                                 <i class="ri-stock-line d-block"></i>
                                 <div>No open positions</div>
                             </td>
@@ -864,9 +1045,14 @@ input:checked + .toggle-slider:before {
         <div class="settings-card">
             <div class="settings-header">
                 <span><i class="ri-history-line me-2"></i>Trade History</span>
-                <button class="btn btn-sm btn-outline-secondary" onclick="loadTrades()">
-                    <i class="ri-refresh-line"></i>
-                </button>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="loadTrades()" title="Refresh">
+                        <i class="ri-refresh-line"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="clearHistory()" title="Clear All">
+                        <i class="ri-delete-bin-line"></i>
+                    </button>
+                </div>
             </div>
             <div class="fixed-table-container">
                 <table class="table signal-table compact-table mb-0">
@@ -880,12 +1066,13 @@ input:checked + .toggle-slider:before {
                             <th>Exit</th>
                             <th>P&L</th>
                             <th>Reason</th>
+                            <th>Del</th>
                         </tr>
                     </thead>
                     <tbody id="historyBody">
                         {% for t in trades %}
                         {% if t.status == 'Closed' %}
-                        <tr>
+                        <tr data-id="{{ t.id }}">
                             <td>{{ t.time }}</td>
                             <td><strong>{{ t.symbol }}</strong></td>
                             <td><span class="signal-badge {{ t.signal_type|lower }}">{{ t.signal_type }}</span></td>
@@ -896,11 +1083,16 @@ input:checked + .toggle-slider:before {
                                 {{ "%.2f%%"|format(t.pnl_percent) if t.pnl_percent else '-' }}
                             </td>
                             <td><span class="badge bg-{{ 'success' if 'TP' in (t.exit_reason or '') else 'danger' if 'SL' in (t.exit_reason or '') else 'secondary' }}">{{ t.exit_reason or '-' }}</span></td>
+                            <td>
+                                <button class="table-action-btn delete-btn" onclick="deleteTrade({{ t.id }})" title="Delete">
+                                    ✕
+                                </button>
+                            </td>
                         </tr>
                         {% endif %}
                         {% else %}
                         <tr>
-                            <td colspan="8" class="empty-state">
+                            <td colspan="9" class="empty-state">
                                 <i class="ri-history-line d-block"></i>
                                 <div>No closed trades yet</div>
                             </td>
@@ -1066,6 +1258,26 @@ function collectConfig() {
         
         rsp_auto_mode: document.getElementById('autoMode').checked,
         rsp_scan_interval: parseInt(document.getElementById('scanInterval').value),
+        
+        // Trade Management - SNIPER
+        rsp_sniper_sl_atr: parseFloat(document.getElementById('sniperSlAtr').value),
+        rsp_sniper_tp1: document.getElementById('sniperTp1').value,
+        rsp_sniper_tp2: document.getElementById('sniperTp2').value,
+        
+        // Trade Management - FLOW
+        rsp_flow_sl_atr: parseFloat(document.getElementById('flowSlAtr').value),
+        rsp_flow_tp1: parseFloat(document.getElementById('flowTp1').value),
+        rsp_flow_tp2: document.getElementById('flowTp2').value,
+        
+        // Trade Management - DIVERGENCE
+        rsp_div_sl_atr: parseFloat(document.getElementById('divSlAtr').value),
+        rsp_div_tp1: parseFloat(document.getElementById('divTp1').value),
+        rsp_div_tp2: parseFloat(document.getElementById('divTp2').value),
+        
+        // Trade Management - ROYAL
+        rsp_royal_sl_atr: parseFloat(document.getElementById('royalSlAtr').value),
+        rsp_royal_tp1: parseFloat(document.getElementById('royalTp1').value),
+        rsp_royal_tp2: parseFloat(document.getElementById('royalTp2').value),
     };
 }
 
@@ -1174,7 +1386,7 @@ function loadTrades() {
             const closedTrades = trades.filter(t => t.status === 'Closed');
             
             if (closedTrades.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="8" class="empty-state">
+                tbody.innerHTML = `<tr><td colspan="9" class="empty-state">
                     <i class="ri-history-line d-block"></i>
                     <div>No closed trades yet</div>
                 </td></tr>`;
@@ -1185,7 +1397,7 @@ function loadTrades() {
                 const reasonClass = (t.exit_reason || '').includes('TP') ? 'success' : 
                                    (t.exit_reason || '').includes('SL') ? 'danger' : 'secondary';
                 return `
-                <tr>
+                <tr data-id="${t.id}">
                     <td>${t.time}</td>
                     <td><strong>${t.symbol}</strong></td>
                     <td><span class="signal-badge ${t.signal_type.toLowerCase()}">${t.signal_type}</span></td>
@@ -1194,6 +1406,7 @@ function loadTrades() {
                     <td class="price-cell">${t.exit_price ? t.exit_price.toFixed(4) : '-'}</td>
                     <td class="${t.pnl_percent > 0 ? 'text-success fw-bold' : 'text-danger fw-bold'}">${t.pnl_percent ? t.pnl_percent.toFixed(2) + '%' : '-'}</td>
                     <td><span class="badge bg-${reasonClass}">${t.exit_reason || '-'}</span></td>
+                    <td><button class="table-action-btn delete-btn" onclick="deleteTrade(${t.id})" title="Delete">✕</button></td>
                 </tr>
             `}).join('');
         });
@@ -1216,7 +1429,7 @@ function loadPositions() {
                 const allPositions = [...(data.open || []), ...(data.tp1_hit || [])];
                 
                 if (allPositions.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="10" class="empty-state">
+                    tbody.innerHTML = `<tr><td colspan="11" class="empty-state">
                         <i class="ri-stock-line d-block"></i>
                         <div>No open positions</div>
                     </td></tr>`;
@@ -1242,6 +1455,7 @@ function loadPositions() {
                         <td class="price-cell fw-bold">${p.current_price ? p.current_price.toFixed(4) : '-'}</td>
                         <td class="${pnl > 0 ? 'text-success' : 'text-danger'}">${pnl.toFixed(2)}%</td>
                         <td>${p.tp1_hit ? '<span class="badge bg-success">TP1 ✓</span>' : '<span class="badge bg-secondary">Open</span>'}</td>
+                        <td><button class="table-action-btn close-btn" onclick="closePosition(${p.id})" title="Close">✕</button></td>
                     </tr>
                 `}).join('');
             }
@@ -1336,9 +1550,97 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('✅ RSI Sniper PRO initialized with auto-save');
 });
 
+// ===== LOAD DEFAULTS =====
+function loadDefaults() {
+    if (!confirm('Reset all settings to defaults? This cannot be undone.')) return;
+    
+    fetch('/rsi_sniper/defaults', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        if (d.success) {
+            showSaveIndicator(true);
+            setTimeout(() => location.reload(), 500);
+        } else {
+            showSaveIndicator(false);
+            alert('Error: ' + (d.error || 'Unknown error'));
+        }
+    });
+}
+
+// ===== CLEAR HISTORY =====
 function clearHistory() {
-    if (!confirm('Clear all trade history?')) return;
-    // Implement clear history endpoint
+    if (!confirm('Delete ALL closed trades from history? This cannot be undone.')) return;
+    
+    fetch('/rsi_sniper/trades/clear', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        if (d.success) {
+            document.getElementById('historyBody').innerHTML = `
+                <tr><td colspan="9" class="empty-state">
+                    <i class="ri-history-line d-block"></i>
+                    <div>No closed trades yet</div>
+                </td></tr>`;
+            showSaveIndicator(true);
+        } else {
+            alert('Error: ' + (d.error || 'Unknown error'));
+        }
+    });
+}
+
+// ===== DELETE SINGLE TRADE =====
+function deleteTrade(tradeId) {
+    if (!confirm('Delete this trade from history?')) return;
+    
+    fetch('/rsi_sniper/trades/' + tradeId, {
+        method: 'DELETE',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        if (d.success) {
+            const row = document.querySelector(`tr[data-id="${tradeId}"]`);
+            if (row) row.remove();
+            showSaveIndicator(true);
+        } else {
+            alert('Error: ' + (d.error || 'Unknown error'));
+        }
+    });
+}
+
+// ===== CLOSE POSITION =====
+function closePosition(tradeId) {
+    if (!confirm('Close this position manually?')) return;
+    
+    fetch('/rsi_sniper/positions/' + tradeId + '/close', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        if (d.success) {
+            loadPositions();
+            loadTrades();
+            showSaveIndicator(true);
+        } else {
+            alert('Error: ' + (d.error || 'Unknown error'));
+        }
+    });
+}
+
+// ===== CLOSE ALL POSITIONS =====
+function closeAllPositions() {
+    if (!confirm('Close ALL open positions? This cannot be undone.')) return;
+    
+    fetch('/rsi_sniper/positions/close-all', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        if (d.success) {
+            loadPositions();
+            loadTrades();
+            showSaveIndicator(true);
+        } else {
+            alert('Error: ' + (d.error || 'Unknown error'));
+        }
+    });
 }
 </script>
 {% endblock %}
