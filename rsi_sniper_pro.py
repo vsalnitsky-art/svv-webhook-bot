@@ -186,6 +186,10 @@ DEFAULT_CONFIG = {
     'rsp_royal_sl_atr': 0.5,
     'rsp_royal_tp1': 2.0,
     'rsp_royal_tp2': 4.0,
+    
+    # SL Protection
+    'rsp_sl_cooldown_minutes': 30,      # Cooldown після SL
+    'rsp_max_sl_per_symbol': 2,         # Max SL по одному символу за день
 }
 
 
@@ -228,6 +232,13 @@ if HAS_DB:
         # Trade Management
         tp1_hit = Column(Boolean, default=False)
         moved_to_be = Column(Boolean, default=False)
+        
+        # Trade Journey - динаміка угоди
+        max_price = Column(Float)           # Максимальна ціна під час угоди
+        min_price = Column(Float)           # Мінімальна ціна під час угоди
+        max_favorable_pnl = Column(Float)   # Макс прибуток що був (%)
+        max_adverse_pnl = Column(Float)     # Макс drawdown що був (%)
+        price_history = Column(Text)        # JSON з історією цін для sparkline
         
         # P&L
         pnl_percent = Column(Float)
@@ -613,6 +624,8 @@ class RSISniperPro:
         
         # Cache
         self._open_positions: Dict[str, Any] = {}
+        self._sl_cooldowns: Dict[str, datetime] = {}  # Symbol -> cooldown until
+        self._sl_counts: Dict[str, int] = {}  # Symbol -> SL count today
         
         # Init
         self._ensure_table()
@@ -714,6 +727,46 @@ class RSISniperPro:
                     current_price = float(ticker['result']['list'][0]['lastPrice'])
                     trade.current_price = current_price
                     
+                    # === TRADE JOURNEY TRACKING ===
+                    # Update max/min prices
+                    if trade.max_price is None or current_price > trade.max_price:
+                        trade.max_price = current_price
+                    if trade.min_price is None or current_price < trade.min_price:
+                        trade.min_price = current_price
+                    
+                    # Calculate current PnL
+                    if trade.direction == 'LONG':
+                        current_pnl = ((current_price - trade.entry_price) / trade.entry_price) * 100 * trade.leverage
+                    else:
+                        current_pnl = ((trade.entry_price - current_price) / trade.entry_price) * 100 * trade.leverage
+                    
+                    # Update max favorable (profit) and max adverse (drawdown)
+                    if current_pnl > 0:
+                        if trade.max_favorable_pnl is None or current_pnl > trade.max_favorable_pnl:
+                            trade.max_favorable_pnl = current_pnl
+                    else:
+                        if trade.max_adverse_pnl is None or current_pnl < trade.max_adverse_pnl:
+                            trade.max_adverse_pnl = current_pnl
+                    
+                    # Update price history (keep last 30 points for sparkline)
+                    import json
+                    try:
+                        history = json.loads(trade.price_history) if trade.price_history else []
+                    except:
+                        history = []
+                    
+                    history.append({
+                        'p': round(current_price, 6),
+                        't': datetime.utcnow().strftime('%H:%M')
+                    })
+                    
+                    # Keep only last 30 points
+                    if len(history) > 30:
+                        history = history[-30:]
+                    
+                    trade.price_history = json.dumps(history)
+                    # === END TRADE JOURNEY ===
+                    
                     # Check TP1
                     if not trade.tp1_hit and trade.tp1_price:
                         tp1_hit = (trade.direction == 'LONG' and current_price >= trade.tp1_price) or \
@@ -772,6 +825,14 @@ class RSISniperPro:
         
         # Remove from cache
         self._open_positions.pop(trade.symbol, None)
+        
+        # Add SL cooldown
+        if reason == 'SL':
+            config = self._load_config()
+            cooldown_minutes = config.get('rsp_sl_cooldown_minutes', 30)
+            self._sl_cooldowns[trade.symbol] = datetime.utcnow() + timedelta(minutes=cooldown_minutes)
+            self._sl_counts[trade.symbol] = self._sl_counts.get(trade.symbol, 0) + 1
+            logger.warning(f"⚠️ {trade.symbol} SL HIT #{self._sl_counts[trade.symbol]} - cooldown {cooldown_minutes}min")
         
         logger.info(f"📊 {trade.symbol} CLOSED by {reason}: P&L {pnl:.2f}%")
     
@@ -982,12 +1043,31 @@ class RSISniperPro:
         max_trades = config.get('rsp_max_daily_trades', 10)
         max_positions = config.get('rsp_max_open_positions', 5)
         close_on_opposite = config.get('rsp_close_on_opposite', True)
+        max_sl_per_symbol = config.get('rsp_max_sl_per_symbol', 2)
         
         executed = 0
+        now = datetime.utcnow()
         
         for signal in signals:
             if self.today_trades >= max_trades:
                 break
+            
+            # Check SL cooldown
+            if signal.symbol in self._sl_cooldowns:
+                cooldown_until = self._sl_cooldowns[signal.symbol]
+                if now < cooldown_until:
+                    remaining = (cooldown_until - now).seconds // 60
+                    logger.debug(f"⏳ {signal.symbol} in cooldown ({remaining}min remaining)")
+                    continue
+                else:
+                    # Cooldown expired
+                    del self._sl_cooldowns[signal.symbol]
+            
+            # Check max SL per symbol
+            sl_count = self._sl_counts.get(signal.symbol, 0)
+            if sl_count >= max_sl_per_symbol:
+                logger.debug(f"🚫 {signal.symbol} max SL reached ({sl_count}/{max_sl_per_symbol})")
+                continue
             
             if len(self._open_positions) >= max_positions:
                 if not (close_on_opposite and self.has_open_position(signal.symbol)):
@@ -1045,6 +1125,13 @@ class RSISniperPro:
         try:
             session = db_manager.get_session()
             
+            # Initialize price history with entry point
+            import json
+            initial_history = json.dumps([{
+                'p': round(signal.price, 6),
+                't': datetime.utcnow().strftime('%H:%M')
+            }])
+            
             trade = RSISniperTrade(
                 symbol=signal.symbol,
                 direction=signal.direction.value,
@@ -1070,6 +1157,12 @@ class RSISniperPro:
                 signal_time=signal.timestamp,
                 entry_time=datetime.utcnow(),
                 notes=signal.notes,
+                # Journey initialization
+                max_price=signal.price,
+                min_price=signal.price,
+                max_favorable_pnl=0.0,
+                max_adverse_pnl=0.0,
+                price_history=initial_history,
             )
             session.add(trade)
             session.commit()
@@ -1142,27 +1235,80 @@ class RSISniperPro:
             
             trades = query.order_by(RSISniperTrade.created_at.desc()).limit(limit).all()
             
-            return [{
-                'id': t.id,
-                'symbol': t.symbol,
-                'direction': t.direction,
-                'signal_type': t.signal_type,
-                'status': t.status,
-                'entry_price': t.entry_price,
-                'current_price': t.current_price,
-                'exit_price': t.exit_price,
-                'sl_price': t.sl_price,
-                'tp1_price': t.tp1_price,
-                'tp2_price': t.tp2_price,
-                'tp1_hit': t.tp1_hit,
-                'pnl_percent': t.pnl_percent,
-                'exit_reason': t.exit_reason,
-                'rsi': t.rsi_value,
-                'mfi_cloud': t.mfi_cloud,
-                'timeframe': t.timeframe,
-                'paper': t.paper_trade,
-                'time': t.created_at.strftime('%d.%m %H:%M') if t.created_at else '',
-            } for t in trades]
+            result = []
+            for t in trades:
+                # Calculate hold time
+                hold_time = ''
+                if t.entry_time and t.exit_time:
+                    delta = t.exit_time - t.entry_time
+                    hours = delta.seconds // 3600
+                    minutes = (delta.seconds % 3600) // 60
+                    if hours > 0:
+                        hold_time = f"{hours}h {minutes}m"
+                    else:
+                        hold_time = f"{minutes}m"
+                elif t.entry_time:
+                    delta = datetime.utcnow() - t.entry_time
+                    hours = delta.seconds // 3600
+                    minutes = (delta.seconds % 3600) // 60
+                    if hours > 0:
+                        hold_time = f"{hours}h {minutes}m"
+                    else:
+                        hold_time = f"{minutes}m"
+                
+                # Parse price history for sparkline
+                import json
+                try:
+                    price_history = json.loads(t.price_history) if t.price_history else []
+                except:
+                    price_history = []
+                
+                # Calculate distance to TP1 at close
+                distance_to_tp1 = None
+                if t.exit_price and t.tp1_price and t.entry_price:
+                    if t.direction == 'LONG':
+                        total_distance = t.tp1_price - t.entry_price
+                        reached = t.max_price - t.entry_price if t.max_price else t.exit_price - t.entry_price
+                    else:
+                        total_distance = t.entry_price - t.tp1_price
+                        reached = t.entry_price - t.min_price if t.min_price else t.entry_price - t.exit_price
+                    
+                    if total_distance > 0:
+                        distance_to_tp1 = min(100, (reached / total_distance) * 100)
+                
+                result.append({
+                    'id': t.id,
+                    'symbol': t.symbol,
+                    'direction': t.direction,
+                    'signal_type': t.signal_type,
+                    'status': t.status,
+                    'entry_price': t.entry_price,
+                    'current_price': t.current_price,
+                    'exit_price': t.exit_price,
+                    'sl_price': t.sl_price,
+                    'tp1_price': t.tp1_price,
+                    'tp2_price': t.tp2_price,
+                    'tp1_hit': t.tp1_hit,
+                    'pnl_percent': t.pnl_percent,
+                    'exit_reason': t.exit_reason,
+                    'rsi': t.rsi_value,
+                    'mfi_cloud': t.mfi_cloud,
+                    'timeframe': t.timeframe,
+                    'paper': t.paper_trade,
+                    'time': t.created_at.strftime('%d.%m %H:%M') if t.created_at else '',
+                    'entry_time': t.entry_time.strftime('%d.%m %H:%M') if t.entry_time else '',
+                    'exit_time': t.exit_time.strftime('%d.%m %H:%M') if t.exit_time else '',
+                    'hold_time': hold_time,
+                    # Journey data
+                    'max_price': t.max_price,
+                    'min_price': t.min_price,
+                    'max_favorable_pnl': t.max_favorable_pnl,
+                    'max_adverse_pnl': t.max_adverse_pnl,
+                    'price_history': price_history,
+                    'distance_to_tp1': distance_to_tp1,
+                })
+            
+            return result
         except Exception as e:
             logger.error(f"Get trades error: {e}")
             return []
@@ -1398,6 +1544,20 @@ def register_rsi_sniper_routes(app):
         except Exception as e:
             logger.error(f"Clear trades error: {e}")
             return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/rsi_sniper/trades/<int:trade_id>', methods=['GET'])
+    def rsi_sniper_get_trade(trade_id):
+        """Отримати деталі однієї угоди"""
+        rsp = get_rsi_sniper_pro()
+        try:
+            trades = rsp.get_trades(limit=100)
+            trade = next((t for t in trades if t['id'] == trade_id), None)
+            if trade:
+                return jsonify(trade)
+            return jsonify({'error': 'Trade not found'}), 404
+        except Exception as e:
+            logger.error(f"Get trade error: {e}")
+            return jsonify({'error': str(e)}), 500
     
     @app.route('/rsi_sniper/trades/<int:trade_id>', methods=['DELETE'])
     def rsi_sniper_delete_trade(trade_id):
