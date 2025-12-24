@@ -385,6 +385,42 @@ DEFAULT_SETTINGS = {
     "rsp_require_mfi_cloud": True,
     "rsp_require_mfi_rising": True,
     "rsp_mfi_rising_bars": 2,
+    
+    # === COILING SPRING SCANNER ===
+    "css_enabled": True,
+    "css_scan_interval": 300,
+    "css_min_volume_24h": 10000000,
+    "css_max_spread_percent": 0.3,
+    "css_scan_limit": 100,
+    
+    # Open Interest
+    "css_use_oi": True,
+    "css_oi_change_threshold": 5.0,
+    "css_oi_weight": 25,
+    
+    # Funding Rate
+    "css_use_funding": True,
+    "css_funding_extreme_pos": 0.03,
+    "css_funding_extreme_neg": -0.03,
+    "css_funding_weight": 15,
+    
+    # CVD
+    "css_use_cvd": True,
+    "css_cvd_weight": 20,
+    
+    # Volatility
+    "css_use_volatility": True,
+    "css_bb_width_percentile": 20,
+    "css_volatility_weight": 15,
+    
+    # Ichimoku
+    "css_use_ichimoku": True,
+    "css_ichimoku_weight": 15,
+    
+    # Scoring
+    "css_min_score": 60,
+    "css_main_tf": "15",
+    "css_auto_mode": False,
 }
 
 class SettingsManager:
