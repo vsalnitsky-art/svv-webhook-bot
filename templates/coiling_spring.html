@@ -1,0 +1,835 @@
+{% extends "base.html" %}
+{% block title %}Coiling Spring Scanner{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ===== HEADER ===== */
+.spring-header {
+    background: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+    border-radius: 16px;
+    padding: 20px 24px;
+    color: white;
+    margin-bottom: 20px;
+}
+
+.spring-header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.spring-header .version {
+    background: rgba(255,255,255,0.2);
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+}
+
+/* ===== METRIC CARDS ===== */
+.metric-card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.metric-card .value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #7c3aed;
+}
+
+.metric-card .label {
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 4px;
+}
+
+/* ===== SETTINGS CARDS ===== */
+.settings-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    overflow: hidden;
+}
+
+.settings-header {
+    background: #f8fafc;
+    padding: 12px 16px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.settings-body {
+    padding: 16px;
+}
+
+/* ===== SIGNAL TYPES ===== */
+.signal-badge {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.signal-badge.coiling {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.signal-badge.ready_pump {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.signal-badge.ready_dump {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.signal-badge.breakout_up {
+    background: #22c55e;
+    color: white;
+}
+
+.signal-badge.breakout_down {
+    background: #ef4444;
+    color: white;
+}
+
+/* ===== TREND BIAS ===== */
+.bias-badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.65rem;
+    font-weight: 600;
+}
+
+.bias-badge.bullish {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.bias-badge.bearish {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.bias-badge.neutral {
+    background: #f3f4f6;
+    color: #4b5563;
+}
+
+/* ===== PROGRESS BAR ===== */
+.scan-progress {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.progress-bar-custom {
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #7c3aed, #a855f7);
+    transition: width 0.3s ease;
+}
+
+/* ===== SCORE BARS ===== */
+.score-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.score-bar .label {
+    width: 80px;
+    font-size: 0.7rem;
+    color: #6b7280;
+}
+
+.score-bar .bar {
+    flex: 1;
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.score-bar .fill {
+    height: 100%;
+    border-radius: 3px;
+}
+
+.score-bar .fill.oi { background: #8b5cf6; }
+.score-bar .fill.funding { background: #f59e0b; }
+.score-bar .fill.cvd { background: #10b981; }
+.score-bar .fill.volatility { background: #3b82f6; }
+.score-bar .fill.ichimoku { background: #ec4899; }
+
+.score-bar .value {
+    width: 30px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-align: right;
+}
+
+/* ===== TABLE ===== */
+.signal-table {
+    font-size: 0.8rem;
+}
+
+.signal-table th {
+    background: #f8fafc;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.signal-table td {
+    vertical-align: middle;
+}
+
+.fixed-table-container {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+/* ===== EMPTY STATE ===== */
+.empty-state {
+    text-align: center;
+    padding: 40px;
+    color: #9ca3af;
+}
+
+.empty-state i {
+    font-size: 3rem;
+    margin-bottom: 10px;
+}
+
+/* ===== TOGGLE SWITCH ===== */
+.toggle-switch {
+    position: relative;
+    width: 48px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #e5e7eb;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(24px);
+}
+
+/* ===== PARAM GROUPS ===== */
+.param-group {
+    background: #f8fafc;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.param-group-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #7c3aed;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ===== SCAN BUTTON ===== */
+.scan-btn {
+    background: linear-gradient(135deg, #7c3aed, #a855f7);
+    border: none;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.scan-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.4);
+    color: white;
+}
+
+.scan-btn:disabled {
+    opacity: 0.7;
+    transform: none;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-3">
+    
+    <!-- Header -->
+    <div class="spring-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h1>
+                    🌀 Coiling Spring Scanner
+                    <span class="version">v1.0</span>
+                </h1>
+                <small class="opacity-75">Пошук монет у консолідації перед вибуховим рухом</small>
+            </div>
+            <div class="d-flex gap-2">
+                <span class="badge {{ 'bg-warning' if status.is_scanning else 'bg-light text-dark' }}">
+                    {{ 'SCANNING...' if status.is_scanning else 'READY' }}
+                </span>
+                <button class="scan-btn" onclick="startScan()" {{ 'disabled' if status.is_scanning }}>
+                    <i class="ri-radar-line me-1"></i> SCAN
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Left Column - Settings -->
+        <div class="col-md-4 col-lg-3">
+            
+            <!-- Metrics -->
+            <div class="row g-2 mb-3">
+                <div class="col-4">
+                    <div class="metric-card">
+                        <div class="value" id="signalsCount">{{ signals|length }}</div>
+                        <div class="label">Signals</div>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="metric-card">
+                        <div class="value text-success" id="pumpCount">{{ signals|selectattr('trend_bias', 'equalto', 'BULLISH')|list|length }}</div>
+                        <div class="label">Bullish</div>
+                    </div>
+                </div>
+                <div class="col-4">
+                    <div class="metric-card">
+                        <div class="value text-danger" id="dumpCount">{{ signals|selectattr('trend_bias', 'equalto', 'BEARISH')|list|length }}</div>
+                        <div class="label">Bearish</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Progress -->
+            <div class="scan-progress mb-3" id="progressCard" style="{{ 'display:none' if not status.is_scanning }}">
+                <div class="d-flex justify-content-between mb-2">
+                    <small class="fw-bold">Scanning...</small>
+                    <small id="progressText">{{ status.progress }}%</small>
+                </div>
+                <div class="progress-bar-custom">
+                    <div class="progress-bar-fill" id="progressBar" style="width: {{ status.progress }}%"></div>
+                </div>
+                <small class="text-muted" id="statusText">{{ status.status }}</small>
+            </div>
+            
+            <!-- Auto Mode -->
+            <div class="settings-card mb-3">
+                <div class="settings-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <span class="fw-bold">⚡ Auto Mode</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="autoMode" {{ 'checked' if config.css_auto_mode }} onchange="toggleAutoMode()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small">Interval</label>
+                            <select class="form-select form-select-sm" id="scanInterval">
+                                <option value="180" {{ 'selected' if config.css_scan_interval == 180 }}>3 min</option>
+                                <option value="300" {{ 'selected' if config.css_scan_interval == 300 }}>5 min</option>
+                                <option value="600" {{ 'selected' if config.css_scan_interval == 600 }}>10 min</option>
+                                <option value="900" {{ 'selected' if config.css_scan_interval == 900 }}>15 min</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Status</label>
+                            <div class="form-control form-control-sm bg-light" id="autoStatus">
+                                {{ 'Running' if status.auto_running else 'Stopped' }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Filters -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">
+                    <span><i class="ri-filter-3-line me-2"></i>Filters</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse show" id="filtersCollapse">
+                    <div class="settings-body">
+                        <div class="mb-3">
+                            <label class="form-label small">Min Volume 24h ($)</label>
+                            <select class="form-select form-select-sm" id="minVolume">
+                                <option value="5000000" {{ 'selected' if config.css_min_volume_24h == 5000000 }}>$5M</option>
+                                <option value="10000000" {{ 'selected' if config.css_min_volume_24h == 10000000 }}>$10M</option>
+                                <option value="25000000" {{ 'selected' if config.css_min_volume_24h == 25000000 }}>$25M</option>
+                                <option value="50000000" {{ 'selected' if config.css_min_volume_24h == 50000000 }}>$50M</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">Timeframe</label>
+                            <select class="form-select form-select-sm" id="mainTf">
+                                <option value="5" {{ 'selected' if config.css_main_tf == '5' }}>5m</option>
+                                <option value="15" {{ 'selected' if config.css_main_tf == '15' }}>15m</option>
+                                <option value="30" {{ 'selected' if config.css_main_tf == '30' }}>30m</option>
+                                <option value="60" {{ 'selected' if config.css_main_tf == '60' }}>1h</option>
+                            </select>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small">Min Score</label>
+                                <input type="number" class="form-control form-control-sm" id="minScore" value="{{ config.css_min_score }}" min="30" max="90">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">Scan Limit</label>
+                                <input type="number" class="form-control form-control-sm" id="scanLimit" value="{{ config.css_scan_limit }}" min="20" max="200">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Score Weights -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#weightsCollapse">
+                    <span><i class="ri-scales-3-line me-2"></i>Score Weights</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse" id="weightsCollapse">
+                    <div class="settings-body">
+                        <!-- Open Interest -->
+                        <div class="param-group">
+                            <div class="param-group-title">
+                                <i class="ri-funds-line"></i> Open Interest
+                                <label class="toggle-switch ms-auto" style="transform: scale(0.8);">
+                                    <input type="checkbox" id="useOi" {{ 'checked' if config.css_use_oi }}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label small">Threshold %</label>
+                                    <input type="number" class="form-control form-control-sm" id="oiThreshold" value="{{ config.css_oi_change_threshold }}" step="0.5">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small">Weight</label>
+                                    <input type="number" class="form-control form-control-sm" id="oiWeight" value="{{ config.css_oi_weight }}" min="0" max="30">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Funding Rate -->
+                        <div class="param-group">
+                            <div class="param-group-title">
+                                <i class="ri-percent-line"></i> Funding Rate
+                                <label class="toggle-switch ms-auto" style="transform: scale(0.8);">
+                                    <input type="checkbox" id="useFunding" {{ 'checked' if config.css_use_funding }}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label small">Extreme %</label>
+                                    <input type="number" class="form-control form-control-sm" id="fundingExtreme" value="{{ (config.css_funding_extreme_pos * 100)|round(2) }}" step="0.01">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small">Weight</label>
+                                    <input type="number" class="form-control form-control-sm" id="fundingWeight" value="{{ config.css_funding_weight }}" min="0" max="30">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- CVD -->
+                        <div class="param-group">
+                            <div class="param-group-title">
+                                <i class="ri-line-chart-line"></i> Volume Delta (CVD)
+                                <label class="toggle-switch ms-auto" style="transform: scale(0.8);">
+                                    <input type="checkbox" id="useCvd" {{ 'checked' if config.css_use_cvd }}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-12">
+                                    <label class="form-label small">Weight</label>
+                                    <input type="number" class="form-control form-control-sm" id="cvdWeight" value="{{ config.css_cvd_weight }}" min="0" max="30">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Volatility -->
+                        <div class="param-group">
+                            <div class="param-group-title">
+                                <i class="ri-pulse-line"></i> Volatility
+                                <label class="toggle-switch ms-auto" style="transform: scale(0.8);">
+                                    <input type="checkbox" id="useVolatility" {{ 'checked' if config.css_use_volatility }}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label class="form-label small">BB Width %ile</label>
+                                    <input type="number" class="form-control form-control-sm" id="bbPercentile" value="{{ config.css_bb_width_percentile }}" min="5" max="50">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small">Weight</label>
+                                    <input type="number" class="form-control form-control-sm" id="volatilityWeight" value="{{ config.css_volatility_weight }}" min="0" max="30">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Ichimoku -->
+                        <div class="param-group">
+                            <div class="param-group-title">
+                                <i class="ri-cloud-line"></i> Ichimoku Cloud
+                                <label class="toggle-switch ms-auto" style="transform: scale(0.8);">
+                                    <input type="checkbox" id="useIchimoku" {{ 'checked' if config.css_use_ichimoku }}>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-12">
+                                    <label class="form-label small">Weight</label>
+                                    <input type="number" class="form-control form-control-sm" id="ichimokuWeight" value="{{ config.css_ichimoku_weight }}" min="0" max="30">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Save Button -->
+            <div class="d-grid gap-2 mb-3">
+                <button class="btn btn-primary" onclick="saveConfig()">
+                    <i class="ri-save-line me-1"></i> Save Settings
+                </button>
+                <button class="btn btn-outline-danger btn-sm" onclick="clearHistory()">
+                    <i class="ri-delete-bin-line me-1"></i> Clear History
+                </button>
+            </div>
+        </div>
+        
+        <!-- Right Column - Signals -->
+        <div class="col-md-8 col-lg-9">
+            
+            <!-- Signals Table -->
+            <div class="settings-card">
+                <div class="settings-header">
+                    <span><i class="ri-radar-line me-2"></i>Detected Signals</span>
+                    <div class="d-flex gap-2">
+                        <span class="badge bg-secondary" id="signalsBadge">{{ signals|length }}</span>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="loadSignals()">
+                            <i class="ri-refresh-line"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="fixed-table-container">
+                    <table class="table signal-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>Signal</th>
+                                <th>Bias</th>
+                                <th>Score</th>
+                                <th>OI</th>
+                                <th>Fund</th>
+                                <th>CVD</th>
+                                <th>Vol</th>
+                                <th>Ichi</th>
+                                <th>Price</th>
+                            </tr>
+                        </thead>
+                        <tbody id="signalsBody">
+                            {% for s in signals %}
+                            <tr>
+                                <td class="text-muted small">{{ s.time }}</td>
+                                <td><strong>{{ s.symbol }}</strong></td>
+                                <td><span class="signal-badge {{ s.signal_type|lower }}">{{ s.signal_type }}</span></td>
+                                <td><span class="bias-badge {{ s.trend_bias|lower }}">{{ s.trend_bias }}</span></td>
+                                <td><strong class="text-primary">{{ s.total_score }}</strong></td>
+                                <td>{{ s.oi_score }}</td>
+                                <td>{{ s.funding_score }}</td>
+                                <td>{{ s.cvd_score }}</td>
+                                <td>{{ s.volatility_score }}</td>
+                                <td>{{ s.ichimoku_score }}</td>
+                                <td class="font-monospace small">{{ "%.4f"|format(s.current_price) if s.current_price else '-' }}</td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="11" class="empty-state">
+                                    <i class="ri-radar-line d-block"></i>
+                                    <div>No signals detected yet</div>
+                                    <small class="text-muted">Click SCAN to start</small>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Info Card -->
+            <div class="settings-card mt-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#infoCollapse">
+                    <span><i class="ri-information-line me-2"></i>How It Works</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse" id="infoCollapse">
+                    <div class="settings-body">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <h6 class="fw-bold">🎯 Стратегія "Coiling Spring"</h6>
+                                <p class="small text-muted">
+                                    Шукаємо монети, які знаходяться в стані "стиснутої пружини" - 
+                                    низька волатильність, але зростаючий Open Interest та аномалії 
+                                    в Funding Rate. Це сигнал про накопичення позицій перед 
+                                    вибуховим рухом.
+                                </p>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="fw-bold">📊 Ключові метрики</h6>
+                                <ul class="small text-muted mb-0">
+                                    <li><strong>OI Change:</strong> Приріст відкритого інтересу при флеті</li>
+                                    <li><strong>Funding:</strong> Екстремальні значення = Squeeze</li>
+                                    <li><strong>CVD:</strong> Дивергенція ціни та об'єму</li>
+                                    <li><strong>Volatility:</strong> BB Width у нижніх перцентилях</li>
+                                    <li><strong>Ichimoku:</strong> Ціна всередині хмари = консолідація</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</div>
+
+<script>
+const csrfToken = '{{ csrf_token() if csrf_token is defined else "" }}';
+let statusInterval = null;
+
+// ===== SCAN =====
+function startScan() {
+    fetch('/coiling_spring/scan', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        if (d.status === 'started') {
+            document.getElementById('progressCard').style.display = 'block';
+            startStatusPolling();
+        }
+    });
+}
+
+// ===== STATUS POLLING =====
+function startStatusPolling() {
+    if (statusInterval) clearInterval(statusInterval);
+    
+    statusInterval = setInterval(() => {
+        fetch('/coiling_spring/status')
+            .then(r => r.json())
+            .then(status => {
+                document.getElementById('progressBar').style.width = status.progress + '%';
+                document.getElementById('progressText').textContent = status.progress + '%';
+                document.getElementById('statusText').textContent = status.status;
+                
+                if (!status.is_scanning) {
+                    clearInterval(statusInterval);
+                    statusInterval = null;
+                    
+                    setTimeout(() => {
+                        document.getElementById('progressCard').style.display = 'none';
+                        loadSignals();
+                    }, 1000);
+                }
+            });
+    }, 1000);
+}
+
+// ===== LOAD SIGNALS =====
+function loadSignals() {
+    fetch('/coiling_spring/signals?limit=50')
+        .then(r => r.json())
+        .then(signals => {
+            const tbody = document.getElementById('signalsBody');
+            document.getElementById('signalsBadge').textContent = signals.length;
+            document.getElementById('signalsCount').textContent = signals.length;
+            
+            const bullish = signals.filter(s => s.trend_bias === 'BULLISH').length;
+            const bearish = signals.filter(s => s.trend_bias === 'BEARISH').length;
+            document.getElementById('pumpCount').textContent = bullish;
+            document.getElementById('dumpCount').textContent = bearish;
+            
+            if (signals.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="11" class="empty-state">
+                    <i class="ri-radar-line d-block"></i>
+                    <div>No signals detected yet</div>
+                </td></tr>`;
+                return;
+            }
+            
+            tbody.innerHTML = signals.map(s => `
+                <tr>
+                    <td class="text-muted small">${s.time}</td>
+                    <td><strong>${s.symbol}</strong></td>
+                    <td><span class="signal-badge ${s.signal_type.toLowerCase()}">${s.signal_type}</span></td>
+                    <td><span class="bias-badge ${s.trend_bias.toLowerCase()}">${s.trend_bias}</span></td>
+                    <td><strong class="text-primary">${s.total_score}</strong></td>
+                    <td>${s.oi_score}</td>
+                    <td>${s.funding_score}</td>
+                    <td>${s.cvd_score}</td>
+                    <td>${s.volatility_score}</td>
+                    <td>${s.ichimoku_score}</td>
+                    <td class="font-monospace small">${s.current_price ? s.current_price.toFixed(4) : '-'}</td>
+                </tr>
+            `).join('');
+        });
+}
+
+// ===== AUTO MODE =====
+function toggleAutoMode() {
+    const enabled = document.getElementById('autoMode').checked;
+    const interval = parseInt(document.getElementById('scanInterval').value);
+    
+    fetch('/coiling_spring/auto', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({ enabled: enabled, interval: interval })
+    }).then(r => r.json()).then(d => {
+        document.getElementById('autoStatus').textContent = d.auto_running ? 'Running' : 'Stopped';
+    });
+}
+
+// ===== SAVE CONFIG =====
+function saveConfig() {
+    const config = {
+        css_min_volume_24h: parseInt(document.getElementById('minVolume').value),
+        css_main_tf: document.getElementById('mainTf').value,
+        css_min_score: parseInt(document.getElementById('minScore').value),
+        css_scan_limit: parseInt(document.getElementById('scanLimit').value),
+        css_scan_interval: parseInt(document.getElementById('scanInterval').value),
+        
+        css_use_oi: document.getElementById('useOi').checked,
+        css_oi_change_threshold: parseFloat(document.getElementById('oiThreshold').value),
+        css_oi_weight: parseInt(document.getElementById('oiWeight').value),
+        
+        css_use_funding: document.getElementById('useFunding').checked,
+        css_funding_extreme_pos: parseFloat(document.getElementById('fundingExtreme').value) / 100,
+        css_funding_extreme_neg: -parseFloat(document.getElementById('fundingExtreme').value) / 100,
+        css_funding_weight: parseInt(document.getElementById('fundingWeight').value),
+        
+        css_use_cvd: document.getElementById('useCvd').checked,
+        css_cvd_weight: parseInt(document.getElementById('cvdWeight').value),
+        
+        css_use_volatility: document.getElementById('useVolatility').checked,
+        css_bb_width_percentile: parseInt(document.getElementById('bbPercentile').value),
+        css_volatility_weight: parseInt(document.getElementById('volatilityWeight').value),
+        
+        css_use_ichimoku: document.getElementById('useIchimoku').checked,
+        css_ichimoku_weight: parseInt(document.getElementById('ichimokuWeight').value),
+    };
+    
+    fetch('/coiling_spring/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify(config)
+    }).then(r => r.json()).then(d => {
+        // Show confirmation
+        const btn = document.querySelector('.btn-primary');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="ri-check-line me-1"></i> Saved!';
+        btn.classList.add('btn-success');
+        btn.classList.remove('btn-primary');
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-primary');
+        }, 2000);
+    });
+}
+
+// ===== CLEAR HISTORY =====
+function clearHistory() {
+    if (!confirm('Clear all signal history?')) return;
+    
+    fetch('/coiling_spring/clear', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken }
+    }).then(r => r.json()).then(d => {
+        loadSignals();
+    });
+}
+
+// ===== INIT =====
+document.addEventListener('DOMContentLoaded', function() {
+    // Check if scanning
+    fetch('/coiling_spring/status')
+        .then(r => r.json())
+        .then(status => {
+            if (status.is_scanning) {
+                document.getElementById('progressCard').style.display = 'block';
+                startStatusPolling();
+            }
+            document.getElementById('autoStatus').textContent = status.auto_running ? 'Running' : 'Stopped';
+        });
+});
+</script>
+{% endblock %}
