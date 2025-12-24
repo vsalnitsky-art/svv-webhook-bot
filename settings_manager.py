@@ -181,6 +181,78 @@ DEFAULT_SETTINGS = {
     
     "whp_add_to_watchlist": True,
     
+    # === SIGNAL FLIP SCALPER ===
+    # General
+    "sf_enabled": True,
+    "sf_timeframe": "15",
+    "sf_scan_limit": 50,
+    "sf_min_volume_24h": 10000000,
+    
+    # Signal Detection
+    "sf_use_rsi": True,
+    "sf_rsi_length": 14,
+    "sf_rsi_oversold": 30,
+    "sf_rsi_overbought": 70,
+    
+    "sf_use_mfi": True,
+    "sf_mfi_length": 20,
+    "sf_mfi_fast_ema": 5,
+    "sf_mfi_slow_ema": 13,
+    
+    "sf_use_bb": True,
+    "sf_bb_length": 20,
+    "sf_bb_mult": 2.0,
+    
+    "sf_use_macd": True,
+    "sf_macd_fast": 12,
+    "sf_macd_slow": 26,
+    "sf_macd_signal": 9,
+    
+    # Flip Detection
+    "sf_flip_sensitivity": "Medium",    # Low, Medium, High
+    "sf_confirm_candles": 1,            # Кількість свічок для підтвердження
+    "sf_min_flip_strength": 2,          # Мінімальна сила фліпу
+    
+    # Filters
+    "sf_use_volume_filter": True,
+    "sf_use_trend_filter": True,
+    "sf_use_volatility_filter": True,
+    "sf_use_btc_filter": True,
+    "sf_min_atr_percent": 0.5,
+    "sf_max_atr_percent": 5.0,
+    
+    # Take Profit
+    "sf_tp_mode": "Dynamic",            # Fixed, Dynamic, BB_Based
+    "sf_tp1_percent": 0.5,
+    "sf_tp2_percent": 1.0,
+    "sf_tp3_percent": 1.5,
+    "sf_use_trailing": True,
+    "sf_trailing_activation": 0.5,
+    "sf_trailing_offset": 0.2,
+    
+    # Stop Loss
+    "sf_sl_mode": "ATR",                # Fixed, ATR, Swing
+    "sf_sl_fixed_percent": 0.5,
+    "sf_sl_atr_mult": 1.5,
+    "sf_sl_buffer": 0.1,
+    
+    # Risk Management
+    "sf_max_daily_trades": 5,
+    "sf_max_open_positions": 2,
+    "sf_position_size_percent": 5.0,
+    "sf_leverage": 10,
+    "sf_max_daily_loss": 3.0,
+    
+    # Execution
+    "sf_paper_trading": True,
+    "sf_auto_execute": False,
+    "sf_close_on_opposite": True,
+    "sf_telegram_signals": False,
+    
+    # Auto Mode
+    "sf_auto_mode": False,
+    "sf_scan_interval": 1,
+    
     # === CONFLUENCE SCALPER ===
     "cs_enabled": True,
     "cs_timeframe": "15",
@@ -371,6 +443,7 @@ class SettingsManager:
                 
                 missing_keys = set(DEFAULT_SETTINGS.keys()) - db_keys
                 if missing_keys:
+                    logger.info(f"📋 Adding {len(missing_keys)} missing keys to DB")
                     for k in missing_keys:
                         v = DEFAULT_SETTINGS[k]
                         val_str = "true" if v is True else "false" if v is False else str(v)
