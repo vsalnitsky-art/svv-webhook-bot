@@ -642,15 +642,58 @@ class RSISniperPro:
             logger.info("🎯 RSI Sniper PRO v2.0 initialized")
     
     def _ensure_table(self):
-        """Створює таблицю в БД"""
+        """Створює таблицю в БД та виконує міграції"""
         if not HAS_DB or db_manager is None:
             return
         
         try:
+            # Create table if not exists
             RSISniperTrade.__table__.create(db_manager.engine, checkfirst=True)
             logger.info("✅ RSI Sniper trades table ready")
+            
+            # Run migrations for new columns
+            self._run_migrations()
+            
         except Exception as e:
             logger.debug(f"Table creation: {e}")
+    
+    def _run_migrations(self):
+        """Додає нові колонки якщо їх немає (Trade Journey)"""
+        if not HAS_DB or db_manager is None:
+            return
+        
+        from sqlalchemy import text, inspect
+        
+        try:
+            inspector = inspect(db_manager.engine)
+            existing_columns = {col['name'] for col in inspector.get_columns('rsi_sniper_trades')}
+            
+            # New columns to add
+            new_columns = {
+                'max_price': 'FLOAT',
+                'min_price': 'FLOAT', 
+                'max_favorable_pnl': 'FLOAT',
+                'max_adverse_pnl': 'FLOAT',
+                'price_history': 'TEXT',
+            }
+            
+            added = []
+            with db_manager.engine.connect() as conn:
+                for col_name, col_type in new_columns.items():
+                    if col_name not in existing_columns:
+                        try:
+                            conn.execute(text(f"ALTER TABLE rsi_sniper_trades ADD COLUMN {col_name} {col_type}"))
+                            added.append(col_name)
+                        except Exception as e:
+                            if 'already exists' not in str(e).lower() and 'duplicate' not in str(e).lower():
+                                logger.warning(f"Migration warning for {col_name}: {e}")
+                
+                if added:
+                    conn.commit()
+                    logger.info(f"📦 Migration: added columns {added}")
+                    
+        except Exception as e:
+            logger.debug(f"Migration check: {e}")
     
     def _load_open_positions(self):
         """Завантажує відкриті позиції в кеш"""
