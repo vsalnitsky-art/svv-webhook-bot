@@ -212,6 +212,33 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
     background: linear-gradient(90deg, #dc2626, #991b1b);
     transition: width 0.3s;
 }
+
+/* === PRESET BUTTONS === */
+.preset-btn {
+    flex: 1;
+    min-width: 80px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+.preset-btn.active {
+    transform: scale(1.05);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.preset-btn.active.btn-outline-success {
+    background: #22c55e;
+    color: white;
+    border-color: #22c55e;
+}
+.preset-btn.active.btn-outline-warning {
+    background: #f59e0b;
+    color: white;
+    border-color: #f59e0b;
+}
+.preset-btn.active.btn-outline-danger {
+    background: #dc2626;
+    color: white;
+    border-color: #dc2626;
+}
 </style>
 {% endblock %}
 
@@ -280,6 +307,29 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                 </div>
             </div>
             
+            <!-- Preset Selector -->
+            <div class="settings-card mb-3">
+                <div class="settings-header">
+                    <span><i class="ri-dashboard-line me-2"></i>Mode Preset</span>
+                </div>
+                <div class="settings-body">
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button class="btn btn-sm btn-outline-success preset-btn" onclick="applyPreset('safe')" id="presetSafe">
+                            🛡️ Safe
+                        </button>
+                        <button class="btn btn-sm btn-outline-warning preset-btn" onclick="applyPreset('balanced')" id="presetBalanced">
+                            ⚖️ Balanced
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger preset-btn active" onclick="applyPreset('aggressive')" id="presetAggressive">
+                            🚀 Aggressive
+                        </button>
+                    </div>
+                    <small class="text-muted d-block mt-2" id="presetDescription">
+                        400 coins • 1min scan • $1M volume
+                    </small>
+                </div>
+            </div>
+            
             <!-- Filters -->
             <div class="settings-card mb-3">
                 <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">
@@ -292,30 +342,142 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                             <label class="form-label small">Top Coins</label>
                             <select class="form-select form-select-sm" id="topCoins">
                                 <option value="50">Top 50</option>
-                                <option value="100" selected>Top 100</option>
+                                <option value="100">Top 100</option>
                                 <option value="150">Top 150</option>
+                                <option value="200">Top 200</option>
+                                <option value="300">Top 300</option>
+                                <option value="400">All Market (400)</option>
                             </select>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small">Min Volume 24h</label>
                             <select class="form-select form-select-sm" id="minVolume">
-                                <option value="1000000">$1M</option>
-                                <option value="5000000" selected>$5M</option>
-                                <option value="10000000">$10M</option>
+                                <option value="1000000">$1M (Aggressive)</option>
+                                <option value="3000000">$3M (Balanced)</option>
+                                <option value="5000000">$5M (Safe)</option>
+                                <option value="10000000">$10M (Conservative)</option>
                             </select>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small">K Threshold</label>
-                            <input type="number" class="form-control form-control-sm" id="kThreshold" value="{{ config.sd_k_coefficient_threshold|default(3) }}" step="0.5" min="1">
+                            <input type="number" class="form-control form-control-sm" id="kThreshold" value="3" step="0.5" min="1">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small">Price Flat % (4h)</label>
-                            <input type="number" class="form-control form-control-sm" id="priceThreshold" value="{{ config.sd_price_change_threshold|default(2) }}" step="0.5" min="0.5">
+                            <label class="form-label small">Price Flat % (max)</label>
+                            <input type="number" class="form-control form-control-sm" id="priceThreshold" value="2" step="0.5" min="0.5">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small">OI Change % (4h)</label>
-                            <input type="number" class="form-control form-control-sm" id="oiThreshold" value="{{ config.sd_oi_change_threshold|default(5) }}" step="0.5" min="1">
+                            <label class="form-label small">OI Change % (min)</label>
+                            <input type="number" class="form-control form-control-sm" id="oiThreshold" value="5" step="0.5" min="1">
                         </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Intervals -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#intervalsCollapse">
+                    <span><i class="ri-time-line me-2"></i>Intervals</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse" id="intervalsCollapse">
+                    <div class="settings-body">
+                        <div class="mb-3">
+                            <label class="form-label small">Snapshot Interval</label>
+                            <select class="form-select form-select-sm" id="snapshotInterval">
+                                <option value="60">1 min (Fast)</option>
+                                <option value="120">2 min</option>
+                                <option value="300">5 min (Default)</option>
+                                <option value="600">10 min (Slow)</option>
+                            </select>
+                            <small class="text-muted">Як часто збирати дані з біржі</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">Analysis Interval</label>
+                            <select class="form-select form-select-sm" id="analysisInterval">
+                                <option value="60">1 min (Fast)</option>
+                                <option value="120">2 min</option>
+                                <option value="300">5 min (Default)</option>
+                                <option value="600">10 min (Slow)</option>
+                            </select>
+                            <small class="text-muted">Як часто аналізувати K</small>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small mb-1">Lookback Periods</label>
+                            <div class="d-flex gap-2">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="lookback4h" checked>
+                                    <label class="form-check-label small" for="lookback4h">4h</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="lookback8h" checked>
+                                    <label class="form-check-label small" for="lookback8h">8h</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="lookback24h" checked>
+                                    <label class="form-check-label small" for="lookback24h">24h</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Telegram Alerts -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#telegramCollapse">
+                    <span><i class="ri-telegram-line me-2"></i>Telegram</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse" id="telegramCollapse">
+                    <div class="settings-body">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label small mb-0">Send Alerts</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="telegramAlerts">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <small class="text-muted">Налаштуй Telegram Bot в основних Settings</small>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Auto-Trade (Future) -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#autotradeCollapse">
+                    <span><i class="ri-robot-line me-2"></i>Auto-Trade</span>
+                    <span class="badge bg-secondary ms-2">Soon</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse" id="autotradeCollapse">
+                    <div class="settings-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <label class="form-label small mb-0">Enable Auto-Trade</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="autoTradeEnabled" disabled>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small">Position Size (USDT)</label>
+                            <input type="number" class="form-control form-control-sm" id="autoTradeSize" value="100" disabled>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small">Leverage</label>
+                            <input type="number" class="form-control form-control-sm" id="autoTradeLeverage" value="5" min="1" max="20" disabled>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small">TP %</label>
+                                <input type="number" class="form-control form-control-sm" id="autoTradeTp" value="10" disabled>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">SL %</label>
+                                <input type="number" class="form-control form-control-sm" id="autoTradeSl" value="3" disabled>
+                            </div>
+                        </div>
+                        <small class="text-muted d-block mt-2">⚠️ В розробці. Буде доступно після тестування.</small>
                     </div>
                 </div>
             </div>
@@ -373,6 +535,37 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                 </div>
             </div>
             
+            <!-- Watchlist (MOVED TO TOP) -->
+            <div class="settings-card mb-3">
+                <div class="settings-header">
+                    <span><i class="ri-eye-line me-2"></i>Active Watchlist</span>
+                    <span class="badge bg-warning" id="watchlistBadge">0</span>
+                </div>
+                <div class="heatmap-container" style="max-height: 300px;">
+                    <table class="table heatmap-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Phase</th>
+                                <th>Signals</th>
+                                <th>Current K</th>
+                                <th>OI Δ Total</th>
+                                <th>Price Δ Total</th>
+                                <th>Direction</th>
+                                <th>Added</th>
+                            </tr>
+                        </thead>
+                        <tbody id="watchlistBody">
+                            <tr>
+                                <td colspan="8" class="empty-state">
+                                    <div>No items in watchlist</div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
             <!-- Heatmap Table -->
             <div class="settings-card">
                 <div class="settings-header">
@@ -407,37 +600,6 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                     </table>
                 </div>
             </div>
-            
-            <!-- Watchlist -->
-            <div class="settings-card mt-3">
-                <div class="settings-header">
-                    <span><i class="ri-eye-line me-2"></i>Active Watchlist</span>
-                    <span class="badge bg-warning" id="watchlistBadge">0</span>
-                </div>
-                <div class="heatmap-container" style="max-height: 300px;">
-                    <table class="table heatmap-table mb-0">
-                        <thead>
-                            <tr>
-                                <th>Symbol</th>
-                                <th>Phase</th>
-                                <th>Signals</th>
-                                <th>Current K</th>
-                                <th>OI Δ Total</th>
-                                <th>Price Δ Total</th>
-                                <th>Direction</th>
-                                <th>Added</th>
-                            </tr>
-                        </thead>
-                        <tbody id="watchlistBody">
-                            <tr>
-                                <td colspan="8" class="empty-state">
-                                    <div>No items in watchlist</div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
         </div>
     </div>
 </div>
@@ -445,6 +607,94 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
 <script>
 const csrfToken = '{{ csrf_token() if csrf_token is defined else "" }}';
 let pollInterval = null;
+
+// === PRESETS ===
+const PRESETS = {
+    safe: {
+        name: 'Safe',
+        description: '100 coins • 5min scan • $5M volume',
+        sd_top_coins: 100,
+        sd_min_volume_24h: 5000000,
+        sd_snapshot_interval: 300,
+        sd_analysis_interval: 300,
+        sd_k_coefficient_threshold: 3.0,
+        sd_price_change_threshold: 2.0,
+        sd_oi_change_threshold: 5.0,
+    },
+    balanced: {
+        name: 'Balanced',
+        description: '200 coins • 2min scan • $3M volume',
+        sd_top_coins: 200,
+        sd_min_volume_24h: 3000000,
+        sd_snapshot_interval: 120,
+        sd_analysis_interval: 120,
+        sd_k_coefficient_threshold: 3.0,
+        sd_price_change_threshold: 2.0,
+        sd_oi_change_threshold: 5.0,
+    },
+    aggressive: {
+        name: 'Aggressive',
+        description: '400 coins • 1min scan • $1M volume',
+        sd_top_coins: 400,
+        sd_min_volume_24h: 1000000,
+        sd_snapshot_interval: 60,
+        sd_analysis_interval: 60,
+        sd_k_coefficient_threshold: 2.5,
+        sd_price_change_threshold: 2.5,
+        sd_oi_change_threshold: 4.0,
+    }
+};
+
+function applyPreset(presetName) {
+    const preset = PRESETS[presetName];
+    if (!preset) return;
+    
+    // Update UI fields
+    document.getElementById('topCoins').value = preset.sd_top_coins;
+    document.getElementById('minVolume').value = preset.sd_min_volume_24h;
+    document.getElementById('snapshotInterval').value = preset.sd_snapshot_interval;
+    document.getElementById('analysisInterval').value = preset.sd_analysis_interval;
+    document.getElementById('kThreshold').value = preset.sd_k_coefficient_threshold;
+    document.getElementById('priceThreshold').value = preset.sd_price_change_threshold;
+    document.getElementById('oiThreshold').value = preset.sd_oi_change_threshold;
+    
+    // Update preset buttons
+    document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('active'));
+    document.getElementById(`preset${presetName.charAt(0).toUpperCase() + presetName.slice(1)}`).classList.add('active');
+    
+    // Update description
+    document.getElementById('presetDescription').textContent = preset.description;
+    
+    addLog(`⚙️ Applied ${preset.name} preset: ${preset.description}`);
+}
+
+function detectCurrentPreset() {
+    const topCoins = parseInt(document.getElementById('topCoins').value);
+    const minVolume = parseInt(document.getElementById('minVolume').value);
+    const interval = parseInt(document.getElementById('snapshotInterval').value);
+    
+    let currentPreset = 'custom';
+    
+    for (const [name, preset] of Object.entries(PRESETS)) {
+        if (topCoins === preset.sd_top_coins && 
+            minVolume === preset.sd_min_volume_24h &&
+            interval === preset.sd_snapshot_interval) {
+            currentPreset = name;
+            break;
+        }
+    }
+    
+    // Update buttons
+    document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('active'));
+    if (currentPreset !== 'custom') {
+        const btnId = `preset${currentPreset.charAt(0).toUpperCase() + currentPreset.slice(1)}`;
+        const btn = document.getElementById(btnId);
+        if (btn) btn.classList.add('active');
+        document.getElementById('presetDescription').textContent = PRESETS[currentPreset].description;
+    } else {
+        document.getElementById('presetDescription').textContent = 'Custom settings';
+    }
+}
 
 // === API CALLS ===
 
@@ -509,20 +759,100 @@ async function toggleAnalyzing() {
 
 async function saveConfig() {
     const config = {
+        // Filters
         sd_top_coins: parseInt(document.getElementById('topCoins').value),
         sd_min_volume_24h: parseInt(document.getElementById('minVolume').value),
         sd_k_coefficient_threshold: parseFloat(document.getElementById('kThreshold').value),
         sd_price_change_threshold: parseFloat(document.getElementById('priceThreshold').value),
         sd_oi_change_threshold: parseFloat(document.getElementById('oiThreshold').value),
+        // Intervals
+        sd_snapshot_interval: parseInt(document.getElementById('snapshotInterval').value),
+        sd_analysis_interval: parseInt(document.getElementById('analysisInterval').value),
+        sd_lookback_4h: document.getElementById('lookback4h').checked,
+        sd_lookback_8h: document.getElementById('lookback8h').checked,
+        sd_lookback_24h: document.getElementById('lookback24h').checked,
+        // Telegram
+        sd_telegram_alerts: document.getElementById('telegramAlerts').checked,
+        // Auto-trade (зберігаємо навіть якщо disabled)
+        sd_auto_trade_enabled: document.getElementById('autoTradeEnabled').checked,
+        sd_auto_trade_size_usdt: parseInt(document.getElementById('autoTradeSize').value) || 100,
+        sd_auto_trade_leverage: parseInt(document.getElementById('autoTradeLeverage').value) || 5,
+        sd_auto_trade_tp_percent: parseFloat(document.getElementById('autoTradeTp').value) || 10,
+        sd_auto_trade_sl_percent: parseFloat(document.getElementById('autoTradeSl').value) || 3,
     };
     
-    await apiCall('config', 'POST', config);
-    addLog('💾 Settings saved');
-    
-    // Button feedback
-    const btn = document.querySelector('.control-btn.success');
-    btn.innerHTML = '<i class="ri-check-line me-1"></i> Saved!';
-    setTimeout(() => btn.innerHTML = '<i class="ri-save-line me-1"></i> Save Settings', 2000);
+    try {
+        await apiCall('config', 'POST', config);
+        addLog('💾 Settings saved successfully');
+        
+        // Button feedback
+        const btn = document.querySelector('.control-btn.success');
+        btn.innerHTML = '<i class="ri-check-line me-1"></i> Saved!';
+        setTimeout(() => btn.innerHTML = '<i class="ri-save-line me-1"></i> Save Settings', 2000);
+    } catch (e) {
+        addLog(`❌ Save error: ${e.message}`, 'error');
+    }
+}
+
+async function loadConfig() {
+    try {
+        const config = await apiCall('config');
+        
+        // Filters
+        if (config.sd_top_coins) {
+            document.getElementById('topCoins').value = config.sd_top_coins;
+        }
+        if (config.sd_min_volume_24h) {
+            document.getElementById('minVolume').value = config.sd_min_volume_24h;
+        }
+        if (config.sd_k_coefficient_threshold !== undefined) {
+            document.getElementById('kThreshold').value = config.sd_k_coefficient_threshold;
+        }
+        if (config.sd_price_change_threshold !== undefined) {
+            document.getElementById('priceThreshold').value = config.sd_price_change_threshold;
+        }
+        if (config.sd_oi_change_threshold !== undefined) {
+            document.getElementById('oiThreshold').value = config.sd_oi_change_threshold;
+        }
+        
+        // Intervals
+        if (config.sd_snapshot_interval) {
+            document.getElementById('snapshotInterval').value = config.sd_snapshot_interval;
+        }
+        if (config.sd_analysis_interval) {
+            document.getElementById('analysisInterval').value = config.sd_analysis_interval;
+        }
+        
+        // Lookback
+        document.getElementById('lookback4h').checked = config.sd_lookback_4h !== false;
+        document.getElementById('lookback8h').checked = config.sd_lookback_8h !== false;
+        document.getElementById('lookback24h').checked = config.sd_lookback_24h !== false;
+        
+        // Telegram
+        document.getElementById('telegramAlerts').checked = config.sd_telegram_alerts === true;
+        
+        // Auto-trade
+        document.getElementById('autoTradeEnabled').checked = config.sd_auto_trade_enabled === true;
+        if (config.sd_auto_trade_size_usdt) {
+            document.getElementById('autoTradeSize').value = config.sd_auto_trade_size_usdt;
+        }
+        if (config.sd_auto_trade_leverage) {
+            document.getElementById('autoTradeLeverage').value = config.sd_auto_trade_leverage;
+        }
+        if (config.sd_auto_trade_tp_percent) {
+            document.getElementById('autoTradeTp').value = config.sd_auto_trade_tp_percent;
+        }
+        if (config.sd_auto_trade_sl_percent) {
+            document.getElementById('autoTradeSl').value = config.sd_auto_trade_sl_percent;
+        }
+        
+        // Detect which preset matches current config
+        detectCurrentPreset();
+        
+        console.log('✅ Config loaded:', config);
+    } catch (e) {
+        console.error('Config load error:', e);
+    }
 }
 
 async function refreshSymbols() {
@@ -651,6 +981,10 @@ function addLog(message, type = 'info') {
 // === INIT ===
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Завантажуємо конфігурацію з бази
+    loadConfig();
+    
+    // Завантажуємо статус та дані
     loadStatus();
     loadHeatmap();
     loadWatchlist();
@@ -662,6 +996,8 @@ document.addEventListener('DOMContentLoaded', function() {
             loadWatchlist();
         }
     }, 30000);
+    
+    addLog('✅ Squeeze Detector initialized');
 });
 </script>
 {% endblock %}
