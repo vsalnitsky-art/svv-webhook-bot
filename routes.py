@@ -13,6 +13,7 @@
 
 import logging
 import json
+import traceback
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -22,6 +23,34 @@ logger = logging.getLogger(__name__)
 
 # Singleton instances
 _detector_instance: Optional['SqueezeDetectorManager'] = None
+
+# === SAFE IMPORTS ===
+# Спробуємо відносні імпорти, якщо не працює - абсолютні
+
+try:
+    from .analyzer import DEFAULT_CONFIG
+except ImportError:
+    try:
+        from squeeze_detector.analyzer import DEFAULT_CONFIG
+    except ImportError:
+        DEFAULT_CONFIG = {
+            'sd_price_change_threshold': 2.0,
+            'sd_oi_change_threshold': 5.0,
+            'sd_k_coefficient_threshold': 3.0,
+            'sd_lookback_4h': True,
+            'sd_lookback_8h': True,
+            'sd_lookback_24h': True,
+            'sd_funding_extreme_positive': 0.0003,
+            'sd_funding_extreme_negative': -0.0003,
+            'sd_min_consecutive_signals': 2,
+            'sd_ready_consecutive_signals': 4,
+            'sd_watchlist_timeout_hours': 48,
+            'sd_breakout_threshold': 3.0,
+            'sd_base_confidence': 50,
+            'sd_k_confidence_multiplier': 5,
+            'sd_funding_confidence_bonus': 15,
+        }
+        logger.warning("Using fallback DEFAULT_CONFIG")
 
 
 class SqueezeDetectorManager:
@@ -64,8 +93,7 @@ class SqueezeDetectorManager:
     
     def _load_config(self) -> Dict[str, Any]:
         """Завантажує конфігурацію"""
-        from .analyzer import DEFAULT_CONFIG
-        
+        # Використовуємо глобальний DEFAULT_CONFIG (вже імпортований)
         config = DEFAULT_CONFIG.copy()
         
         # Додаткові налаштування
@@ -100,8 +128,11 @@ class SqueezeDetectorManager:
             return
         
         try:
-            # Створюємо таблиці
-            from .models import create_squeeze_tables, run_migrations
+            # Створюємо таблиці - безпечний імпорт
+            try:
+                from .models import create_squeeze_tables, run_migrations
+            except ImportError:
+                from squeeze_detector.models import create_squeeze_tables, run_migrations
             
             # Отримуємо engine з db_manager
             engine = None
@@ -124,8 +155,12 @@ class SqueezeDetectorManager:
                 api_key = getattr(self.bot_instance, 'api_key', None)
                 api_secret = getattr(self.bot_instance, 'api_secret', None)
             
-            # Ініціалізуємо Recorder
-            from .recorder import DataRecorder
+            # Ініціалізуємо Recorder - безпечний імпорт
+            try:
+                from .recorder import DataRecorder
+            except ImportError:
+                from squeeze_detector.recorder import DataRecorder
+                
             self.recorder = DataRecorder(
                 self.db_session_factory,
                 api_key=api_key,
@@ -133,8 +168,12 @@ class SqueezeDetectorManager:
                 use_websocket=False,  # Поки без WebSocket
             )
             
-            # Ініціалізуємо Analyzer
-            from .analyzer import SqueezeAnalyzer
+            # Ініціалізуємо Analyzer - безпечний імпорт
+            try:
+                from .analyzer import SqueezeAnalyzer
+            except ImportError:
+                from squeeze_detector.analyzer import SqueezeAnalyzer
+                
             self.analyzer = SqueezeAnalyzer(
                 self.db_session_factory,
                 config=self.config,
