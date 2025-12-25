@@ -386,40 +386,67 @@ DEFAULT_SETTINGS = {
     "rsp_require_mfi_rising": True,
     "rsp_mfi_rising_bars": 2,
     
-    # === COILING SPRING SCANNER ===
+    # === COILING SPRING SCANNER v2.0 ===
     "css_enabled": True,
     "css_scan_interval": 300,
-    "css_min_volume_24h": 10000000,
-    "css_max_spread_percent": 0.3,
+    "css_min_volume_24h": 5000000,
+    "css_max_spread_percent": 0.5,
     "css_scan_limit": 100,
+    "css_kline_limit": 500,
+    "css_oi_history_hours": 24,
+    "css_funding_history": 48,
     
     # Open Interest
     "css_use_oi": True,
-    "css_oi_change_threshold": 5.0,
+    "css_oi_change_threshold": 3.0,
+    "css_oi_lookback_hours": 1,
     "css_oi_weight": 25,
     
     # Funding Rate
     "css_use_funding": True,
-    "css_funding_extreme_pos": 0.03,
-    "css_funding_extreme_neg": -0.03,
+    "css_funding_extreme_pos": 0.02,
+    "css_funding_extreme_neg": -0.02,
     "css_funding_weight": 15,
+    
+    # Long/Short Ratio
+    "css_use_ls_ratio": True,
+    "css_ls_extreme_long": 1.5,
+    "css_ls_extreme_short": 0.7,
+    "css_ls_weight": 10,
     
     # CVD
     "css_use_cvd": True,
+    "css_cvd_divergence_threshold": 0.5,
+    "css_cvd_lookback": 20,
     "css_cvd_weight": 20,
     
     # Volatility
     "css_use_volatility": True,
-    "css_bb_width_percentile": 20,
+    "css_bb_width_percentile": 30,
+    "css_atr_contraction": 0.8,
+    "css_volatility_lookback": 100,
     "css_volatility_weight": 15,
     
     # Ichimoku
     "css_use_ichimoku": True,
+    "css_ichimoku_tenkan": 9,
+    "css_ichimoku_kijun": 26,
+    "css_ichimoku_senkou_b": 52,
     "css_ichimoku_weight": 15,
     
+    # Price Action
+    "css_price_change_max": 2.0,
+    "css_price_lookback_hours": 4,
+    
     # Scoring
-    "css_min_score": 60,
+    "css_min_score": 40,
+    "css_strong_signal_score": 70,
     "css_main_tf": "15",
+    "css_htf": "60",
+    
+    # Execution
+    "css_paper_trading": True,
+    "css_telegram_alerts": True,
     "css_auto_mode": False,
 }
 
