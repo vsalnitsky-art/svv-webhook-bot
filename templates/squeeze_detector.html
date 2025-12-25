@@ -645,7 +645,7 @@ const PRESETS = {
     }
 };
 
-function applyPreset(presetName) {
+async function applyPreset(presetName) {
     const preset = PRESETS[presetName];
     if (!preset) return;
     
@@ -666,9 +666,13 @@ function applyPreset(presetName) {
     document.getElementById('presetDescription').textContent = preset.description;
     
     addLog(`⚙️ Applied ${preset.name} preset: ${preset.description}`);
+    
+    // AUTO-SAVE: Автоматично зберігаємо налаштування на сервер
+    await saveConfig();
+    addLog(`💾 ${preset.name} settings saved and applied!`);
 }
 
-function detectCurrentPreset() {
+async function detectCurrentPreset() {
     const topCoins = parseInt(document.getElementById('topCoins').value);
     const minVolume = parseInt(document.getElementById('minVolume').value);
     const interval = parseInt(document.getElementById('snapshotInterval').value);
