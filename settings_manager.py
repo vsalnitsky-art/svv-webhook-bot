@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import logging
-from database_manager import db_manager
-from models import BotSetting
+from models import db_manager, BotSetting
 
 logger = logging.getLogger(__name__)
 
