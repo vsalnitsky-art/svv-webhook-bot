@@ -93,31 +93,31 @@ BYBIT_FUNDING_LIMIT = 200
 DEFAULT_CONFIG = {
     'css_enabled': True,
     'css_scan_interval': 300,
-    'css_min_volume_24h': 10_000_000,
-    'css_max_spread_percent': 0.3,
+    'css_min_volume_24h': 5_000_000,      # Знижено з 10M до 5M
+    'css_max_spread_percent': 0.5,         # Збільшено з 0.3 до 0.5
     'css_scan_limit': 100,
     'css_kline_limit': 500,
     'css_oi_history_hours': 24,
     'css_funding_history': 48,
     'css_use_oi': True,
-    'css_oi_change_threshold': 5.0,
+    'css_oi_change_threshold': 2.0,        # Знижено з 5.0 до 2.0
     'css_oi_lookback_hours': 1,
     'css_oi_weight': 25,
     'css_use_funding': True,
-    'css_funding_extreme_pos': 0.03,
-    'css_funding_extreme_neg': -0.03,
+    'css_funding_extreme_pos': 0.015,      # Знижено з 0.03 до 0.015
+    'css_funding_extreme_neg': -0.015,
     'css_funding_weight': 15,
     'css_use_ls_ratio': True,
-    'css_ls_extreme_long': 2.0,
-    'css_ls_extreme_short': 0.5,
+    'css_ls_extreme_long': 1.5,            # Знижено з 2.0 до 1.5
+    'css_ls_extreme_short': 0.7,           # Збільшено з 0.5 до 0.7
     'css_ls_weight': 10,
     'css_use_cvd': True,
     'css_cvd_divergence_threshold': 0.5,
     'css_cvd_lookback': 20,
     'css_cvd_weight': 20,
     'css_use_volatility': True,
-    'css_bb_width_percentile': 20,
-    'css_atr_contraction': 0.7,
+    'css_bb_width_percentile': 35,         # Збільшено з 20 до 35
+    'css_atr_contraction': 0.85,           # Збільшено з 0.7 до 0.85
     'css_volatility_lookback': 100,
     'css_volatility_weight': 15,
     'css_use_ichimoku': True,
@@ -125,10 +125,10 @@ DEFAULT_CONFIG = {
     'css_ichimoku_kijun': 26,
     'css_ichimoku_senkou_b': 52,
     'css_ichimoku_weight': 15,
-    'css_price_change_max': 1.0,
+    'css_price_change_max': 3.0,           # Збільшено з 1.0 до 3.0
     'css_price_lookback_hours': 4,
-    'css_min_score': 60,
-    'css_strong_signal_score': 80,
+    'css_min_score': 35,                   # Знижено з 60 до 35
+    'css_strong_signal_score': 60,         # Знижено з 80 до 60
     'css_main_tf': '15',
     'css_htf': '60',
     'css_paper_trading': True,
@@ -620,59 +620,81 @@ class SpringScoringEngine:
         if df is None or len(df) < 100:
             return score, TrendBias.NEUTRAL
         
-        # 1. OPEN INTEREST
+        # 1. OPEN INTEREST - більш м'які умови
         if self._get('css_use_oi', True) and oi_data:
             oi_change = oi_data.get('change_1h', 0)
             score.oi_change = oi_change
             score.oi_trend = oi_data.get('trend', 'UNKNOWN')
             
-            threshold = self._get('css_oi_change_threshold', 5.0)
+            threshold = self._get('css_oi_change_threshold', 2.0)
             weight = self._get('css_oi_weight', 25)
             price_change = self.indicators.calculate_price_change(df, 12)
             score.price_change = price_change or 0
+            price_max = self._get('css_price_change_max', 3.0)
             
-            if oi_change >= threshold and abs(price_change or 0) < self._get('css_price_change_max', 1.0):
+            # Повний скор: OI зростає при флеті
+            if oi_change >= threshold and abs(price_change or 0) < price_max:
                 intensity = min(1.0, oi_change / (threshold * 2))
                 score.oi = int(weight * (0.7 + 0.3 * intensity))
+            # Частковий скор: OI просто зростає
             elif oi_change >= threshold * 0.5:
-                score.oi = int(weight * 0.4)
+                score.oi = int(weight * 0.5)
+            # Мінімальний скор: OI позитивний
+            elif oi_change > 0:
+                score.oi = int(weight * 0.2)
         
-        # 2. FUNDING RATE
+        # 2. FUNDING RATE - більш м'які умови
         if self._get('css_use_funding', True) and funding_data:
             funding = funding_data.get('current', 0)
             score.funding_rate = funding * 100
             score.funding_trend = funding_data.get('trend', 'UNKNOWN')
             
             weight = self._get('css_funding_weight', 15)
-            extreme_pos = self._get('css_funding_extreme_pos', 0.03) / 100
-            extreme_neg = self._get('css_funding_extreme_neg', -0.03) / 100
+            # Конвертуємо з відсотків (0.015 = 0.015%) в raw (0.00015)
+            extreme_pos = self._get('css_funding_extreme_pos', 0.015) / 100
+            extreme_neg = self._get('css_funding_extreme_neg', -0.015) / 100
             
-            if funding >= extreme_pos or funding_data.get('is_anomaly'):
+            # Екстремальний funding = повний скор
+            if funding >= extreme_pos:
                 score.funding = weight
-                bearish_signals += 1
-            elif funding <= extreme_neg or funding_data.get('is_anomaly'):
+                bearish_signals += 1  # Готовність до Long Squeeze
+            elif funding <= extreme_neg:
                 score.funding = weight
-                bullish_signals += 1
-            elif abs(funding) > abs(extreme_pos) * 0.5:
+                bullish_signals += 1  # Готовність до Short Squeeze
+            # Аномалія = повний скор
+            elif funding_data.get('is_anomaly'):
+                score.funding = weight
+            # Помірно високий/низький = частковий скор
+            elif abs(funding) > abs(extreme_pos) * 0.3:
                 score.funding = int(weight * 0.5)
+            # Будь-який нейтральний funding = мінімальний скор
+            elif abs(funding) < abs(extreme_pos) * 0.5:
+                score.funding = int(weight * 0.3)
         
-        # 3. LONG/SHORT RATIO
+        # 3. LONG/SHORT RATIO - більш м'які умови
         if self._get('css_use_ls_ratio', True) and ls_ratio_data:
             ls_ratio = ls_ratio_data.get('ratio', 1.0)
             score.long_short_ratio = ls_ratio
             score.crowd_position = ls_ratio_data.get('crowd_position', 'NEUTRAL')
             
             weight = self._get('css_ls_weight', 10)
-            if ls_ratio >= self._get('css_ls_extreme_long', 2.0):
+            extreme_long = self._get('css_ls_extreme_long', 1.5)
+            extreme_short = self._get('css_ls_extreme_short', 0.7)
+            
+            if ls_ratio >= extreme_long:
                 score.ls_ratio = weight
                 bearish_signals += 1
-            elif ls_ratio <= self._get('css_ls_extreme_short', 0.5):
+            elif ls_ratio <= extreme_short:
                 score.ls_ratio = weight
                 bullish_signals += 1
-            elif ls_ratio > 1.3 or ls_ratio < 0.7:
-                score.ls_ratio = int(weight * 0.5)
+            # Помірний дисбаланс
+            elif ls_ratio > 1.2 or ls_ratio < 0.8:
+                score.ls_ratio = int(weight * 0.6)
+            # Легкий дисбаланс
+            elif ls_ratio > 1.1 or ls_ratio < 0.9:
+                score.ls_ratio = int(weight * 0.3)
         
-        # 4. CVD DIVERGENCE
+        # 4. CVD DIVERGENCE - більш м'які умови
         if self._get('css_use_cvd', True):
             lookback = self._get('css_cvd_lookback', 20)
             cvd_change, price_change, divergence_score = self.indicators.calculate_cvd(df, lookback)
@@ -682,16 +704,21 @@ class SpringScoringEngine:
                 score.cvd_divergence = divergence_score
                 weight = self._get('css_cvd_weight', 20)
                 
-                if divergence_score > 20:
+                # Сильна дивергенція
+                if divergence_score > 15:
                     score.cvd = weight
                     bullish_signals += 1
-                elif divergence_score < -20:
+                elif divergence_score < -15:
                     score.cvd = weight
                     bearish_signals += 1
-                elif abs(divergence_score) > 10:
-                    score.cvd = int(weight * 0.5)
+                # Помірна дивергенція
+                elif abs(divergence_score) > 8:
+                    score.cvd = int(weight * 0.6)
+                # Слабка дивергенція
+                elif abs(divergence_score) > 3:
+                    score.cvd = int(weight * 0.3)
         
-        # 5. VOLATILITY CONTRACTION
+        # 5. VOLATILITY CONTRACTION - більш м'які умови
         if self._get('css_use_volatility', True):
             lookback = self._get('css_volatility_lookback', 100)
             bb_width, bb_percentile, squeeze_intensity = self.indicators.calculate_bb_width(df, lookback=lookback)
@@ -704,17 +731,31 @@ class SpringScoringEngine:
                 score.atr_ratio = atr_ratio
             
             weight = self._get('css_volatility_weight', 15)
-            target_percentile = self._get('css_bb_width_percentile', 20)
-            target_atr = self._get('css_atr_contraction', 0.7)
+            target_percentile = self._get('css_bb_width_percentile', 35)
+            target_atr = self._get('css_atr_contraction', 0.85)
             
-            vol_score = 0
-            if bb_percentile is not None and bb_percentile <= target_percentile:
-                vol_score += 0.5
-            if atr_ratio is not None and atr_ratio <= target_atr:
-                vol_score += 0.5
-            score.volatility = int(weight * vol_score)
+            vol_score = 0.0
+            # BB Width в нижніх перцентилях = стиснення
+            if bb_percentile is not None:
+                if bb_percentile <= target_percentile:
+                    vol_score += 0.5
+                elif bb_percentile <= target_percentile * 1.5:  # До 52.5%
+                    vol_score += 0.3
+                elif bb_percentile <= 60:
+                    vol_score += 0.15
+            
+            # ATR нижче середнього = низька волатильність
+            if atr_ratio is not None:
+                if atr_ratio <= target_atr:
+                    vol_score += 0.5
+                elif atr_ratio <= 1.0:
+                    vol_score += 0.3
+                elif atr_ratio <= 1.2:
+                    vol_score += 0.15
+            
+            score.volatility = int(weight * min(1.0, vol_score))
         
-        # 6. ICHIMOKU CLOUD
+        # 6. ICHIMOKU CLOUD - більш м'які умови
         if self._get('css_use_ichimoku', True):
             ichimoku = self.indicators.calculate_ichimoku(
                 df, tenkan=self._get('css_ichimoku_tenkan', 9),
@@ -730,24 +771,37 @@ class SpringScoringEngine:
                 score.kumo_twist = ichimoku.get('kumo_twist', False)
                 
                 weight = self._get('css_ichimoku_weight', 15)
+                ichi_score = 0.0
                 
+                # Ціна всередині хмари = найкраще для coiling
                 if ichimoku['price_vs_cloud'] == "INSIDE":
-                    score.ichimoku = int(weight * 0.8)
+                    ichi_score = 0.9
                     if ichimoku['tk_cross'] == "BULLISH":
                         bullish_signals += 1
                     elif ichimoku['tk_cross'] == "BEARISH":
                         bearish_signals += 1
+                # Ціна біля хмари (ABOVE/BELOW) теж цікаво
+                else:
+                    ichi_score = 0.4
+                    if ichimoku['tk_cross'] == "BULLISH":
+                        bullish_signals += 0.5
+                    elif ichimoku['tk_cross'] == "BEARISH":
+                        bearish_signals += 0.5
                 
+                # Flat TK = сильна консолідація
                 if ichimoku['is_flat']:
-                    score.ichimoku = weight
+                    ichi_score = max(ichi_score, 1.0)
                 
+                # Kumo twist = зміна напрямку
                 if ichimoku['kumo_twist']:
-                    score.ichimoku = max(score.ichimoku, int(weight * 0.9))
+                    ichi_score = max(ichi_score, 0.95)
+                
+                score.ichimoku = int(weight * ichi_score)
         
         # DETERMINE TREND BIAS
-        if bullish_signals > bearish_signals + 0.5:
+        if bullish_signals > bearish_signals + 0.3:
             trend_bias = TrendBias.BULLISH
-        elif bearish_signals > bullish_signals + 0.5:
+        elif bearish_signals > bullish_signals + 0.3:
             trend_bias = TrendBias.BEARISH
         else:
             trend_bias = TrendBias.NEUTRAL
@@ -851,12 +905,13 @@ class CoilingSpringScanner:
             config = custom_config or self._load_config()
             self.scoring_engine.update_config(config)
             
-            min_volume = config.get('css_min_volume_24h', 10_000_000)
-            min_score = config.get('css_min_score', 60)
+            # Використовуємо нові default значення
+            min_volume = config.get('css_min_volume_24h', 5_000_000)
+            min_score = config.get('css_min_score', 35)
             main_tf = config.get('css_main_tf', '15')
             kline_limit = config.get('css_kline_limit', 500)
             scan_limit = config.get('css_scan_limit', 100)
-            max_spread = config.get('css_max_spread_percent', 0.3)
+            max_spread = config.get('css_max_spread_percent', 0.5)
             
             self.status = "Fetching market data..."
             self._log_activity("📡 Fetching USDT perpetuals...")
@@ -871,8 +926,9 @@ class CoilingSpringScanner:
                 return
             
             total = len(symbols_data)
-            self._log_activity(f"🎯 Found {total} symbols to scan")
+            self._log_activity(f"🎯 Found {total} symbols to scan (min_score={min_score})")
             results = []
+            all_scores = []  # Для логування топ монет
             
             for i, sym_data in enumerate(symbols_data):
                 symbol = sym_data['symbol']
@@ -883,6 +939,7 @@ class CoilingSpringScanner:
                     
                     df = self.data_fetcher.get_klines(symbol, main_tf, kline_limit)
                     if df is None or len(df) < 100:
+                        logger.debug(f"{symbol}: недостатньо даних ({len(df) if df else 0} свічок)")
                         continue
                     
                     oi_data = self.data_fetcher.get_open_interest(symbol, "1h", 48)
@@ -891,6 +948,19 @@ class CoilingSpringScanner:
                     ticker_data = self.data_fetcher.get_ticker_info(symbol)
                     
                     score, trend_bias = self.scoring_engine.calculate_score(df, oi_data, funding_data, ls_ratio_data, ticker_data)
+                    
+                    # Зберігаємо всі скори для аналізу
+                    all_scores.append({
+                        'symbol': symbol,
+                        'total': score.total,
+                        'oi': score.oi,
+                        'funding': score.funding,
+                        'ls': score.ls_ratio,
+                        'cvd': score.cvd,
+                        'vol': score.volatility,
+                        'ichi': score.ichimoku,
+                        'bias': trend_bias.value
+                    })
                     
                     if score.total >= min_score:
                         signal_type = self._determine_signal_type(score, trend_bias)
@@ -909,6 +979,15 @@ class CoilingSpringScanner:
             
             results.sort(key=lambda x: x['total_score'], reverse=True)
             self.scan_results = results
+            
+            # Логуємо топ-10 монет за скором для дебагу
+            if all_scores:
+                all_scores.sort(key=lambda x: x['total'], reverse=True)
+                top_10 = all_scores[:10]
+                self._log_activity(f"📊 Top 10 scores (min={min_score}):", "info")
+                for s in top_10:
+                    details = f"OI:{s['oi']} F:{s['funding']} LS:{s['ls']} CVD:{s['cvd']} V:{s['vol']} I:{s['ichi']}"
+                    self._log_activity(f"   {s['symbol']}: {s['total']} ({details})", "info")
             
             scan_duration = time.time() - scan_start
             self.stats['total_scans'] += 1
