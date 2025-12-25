@@ -574,6 +574,30 @@ class SqueezeAnalyzer:
                         if wl.phase != old_phase:
                             stats['phase_upgraded'] += 1
                             logger.info(f"📈 {result.symbol}: {old_phase} → {wl.phase}")
+                            
+                            # === TELEGRAM ALERT ===
+                            try:
+                                from .routes import get_detector_manager
+                                mgr = get_detector_manager()
+                                
+                                if mgr and mgr.config.get('sd_telegram_alerts') and hasattr(mgr, 'bot_instance') and mgr.bot_instance:
+                                    emoji = "👀"
+                                    if wl.phase == "ACCUMULATING": emoji = "🔋"
+                                    if wl.phase == "SQUEEZE_READY": emoji = "🔥"
+                                    if wl.phase == "TRIGGERED": emoji = "🚀"
+                                    
+                                    msg = (
+                                        f"{emoji} <b>SQUEEZE ALERT: {result.symbol}</b>\n"
+                                        f"Phase: {old_phase} ➡️ <b>{wl.phase}</b>\n"
+                                        f"K-Coeff: <code>{result.k_coefficient:.2f}</code>\n"
+                                        f"OI Δ: <code>{result.oi_change_pct:+.2f}%</code>\n"
+                                        f"Price Δ: <code>{result.price_change_pct:+.2f}%</code>\n"
+                                        f"Direction: {result.direction}"
+                                    )
+                                    mgr.bot_instance.send_message(msg)
+                                    logger.debug(f"📱 Telegram sent for {result.symbol}")
+                            except Exception as te:
+                                logger.debug(f"Telegram send skip: {te}")
                         
                         stats['updated'] += 1
                         
