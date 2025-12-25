@@ -1,0 +1,461 @@
+#!/usr/bin/env python3
+"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                     SQUEEZE DETECTOR v1.0 - ROUTES                           ║
+║                                                                              ║
+║  Flask routes для UI та API:                                                 ║
+║  • /squeeze - головна сторінка з heatmap                                     ║
+║  • /squeeze/api/* - JSON API endpoints                                       ║
+║                                                                              ║
+║  Автор: SVV Webhook Bot                                                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+import logging
+import json
+from datetime import datetime
+from typing import Dict, Any, Optional
+
+from flask import Blueprint, render_template, jsonify, request
+
+logger = logging.getLogger(__name__)
+
+# Singleton instances
+_detector_instance: Optional['SqueezeDetectorManager'] = None
+
+
+class SqueezeDetectorManager:
+    """
+    Головний менеджер Squeeze Detector.
+    Координує Recorder та Analyzer.
+    """
+    
+    _instance = None
+    
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self, db_session_factory=None, bot_instance=None):
+        if self._initialized:
+            return
+        
+        self.db_session_factory = db_session_factory
+        self.bot_instance = bot_instance
+        
+        self.recorder = None
+        self.analyzer = None
+        
+        self.config = self._load_config()
+        self.monitored_symbols = []
+        
+        # Status
+        self.status = {
+            'initialized': False,
+            'recording': False,
+            'analyzing': False,
+            'last_error': None,
+        }
+        
+        self._initialize()
+        self._initialized = True
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """Завантажує конфігурацію"""
+        from .analyzer import DEFAULT_CONFIG
+        
+        config = DEFAULT_CONFIG.copy()
+        
+        # Додаткові налаштування
+        config.update({
+            'sd_enabled': True,
+            'sd_top_coins': 100,
+            'sd_snapshot_interval': 300,
+            'sd_analysis_interval': 300,
+            'sd_min_volume_24h': 5_000_000,
+            'sd_auto_trade_enabled': False,
+            'sd_telegram_alerts': False,
+            'sd_ui_alerts': True,
+        })
+        
+        # Завантажуємо з settings_manager якщо є
+        try:
+            from settings_manager import settings
+            if settings:
+                saved = settings.get_all()
+                for key in config.keys():
+                    if key in saved:
+                        config[key] = saved[key]
+        except ImportError:
+            pass
+        
+        return config
+    
+    def _initialize(self):
+        """Ініціалізує компоненти"""
+        if not self.db_session_factory:
+            logger.warning("No DB session factory provided")
+            return
+        
+        try:
+            # Створюємо таблиці
+            from .models import create_squeeze_tables, run_migrations
+            
+            # Отримуємо engine з db_manager
+            engine = None
+            try:
+                from database_manager import db_manager
+                if db_manager:
+                    engine = db_manager.engine
+            except ImportError:
+                logger.warning("database_manager not available for table creation")
+            
+            if engine:
+                create_squeeze_tables(engine)
+                run_migrations(engine)
+            
+            # API credentials
+            api_key = None
+            api_secret = None
+            
+            if self.bot_instance:
+                api_key = getattr(self.bot_instance, 'api_key', None)
+                api_secret = getattr(self.bot_instance, 'api_secret', None)
+            
+            # Ініціалізуємо Recorder
+            from .recorder import DataRecorder
+            self.recorder = DataRecorder(
+                self.db_session_factory,
+                api_key=api_key,
+                api_secret=api_secret,
+                use_websocket=False,  # Поки без WebSocket
+            )
+            
+            # Ініціалізуємо Analyzer
+            from .analyzer import SqueezeAnalyzer
+            self.analyzer = SqueezeAnalyzer(
+                self.db_session_factory,
+                config=self.config,
+            )
+            
+            self.status['initialized'] = True
+            logger.info("✅ SqueezeDetectorManager initialized")
+            
+        except Exception as e:
+            logger.error(f"❌ Initialize error: {e}")
+            import traceback
+            traceback.print_exc()
+            self.status['last_error'] = str(e)
+    
+    def update_config(self, new_config: Dict):
+        """Оновлює конфігурацію"""
+        self.config.update(new_config)
+        
+        if self.analyzer:
+            self.analyzer.update_config(new_config)
+        
+        # Зберігаємо в settings_manager
+        try:
+            from settings_manager import settings
+            if settings:
+                settings.save_settings(new_config)
+        except ImportError:
+            pass
+        
+        logger.info("🔧 Config updated")
+    
+    def update_symbols(self):
+        """Оновлює список монет з API"""
+        if not self.recorder:
+            return []
+        
+        min_volume = self.config.get('sd_min_volume_24h', 5_000_000)
+        limit = self.config.get('sd_top_coins', 100)
+        
+        self.monitored_symbols = self.recorder.update_symbols_from_api(min_volume, limit)
+        
+        logger.info(f"📋 Updated symbols: {len(self.monitored_symbols)}")
+        return self.monitored_symbols
+    
+    def start_recording(self):
+        """Запускає запис даних"""
+        if not self.recorder:
+            return False
+        
+        if not self.monitored_symbols:
+            self.update_symbols()
+        
+        interval = self.config.get('sd_snapshot_interval', 300)
+        self.recorder.start_periodic_recording(interval)
+        self.status['recording'] = True
+        
+        return True
+    
+    def stop_recording(self):
+        """Зупиняє запис"""
+        if self.recorder:
+            self.recorder.stop_periodic_recording()
+        self.status['recording'] = False
+    
+    def start_analyzing(self):
+        """Запускає аналіз"""
+        if not self.analyzer:
+            return False
+        
+        if not self.monitored_symbols:
+            self.update_symbols()
+        
+        interval = self.config.get('sd_analysis_interval', 300)
+        self.analyzer.start_periodic_analysis(self.monitored_symbols, interval)
+        self.status['analyzing'] = True
+        
+        return True
+    
+    def stop_analyzing(self):
+        """Зупиняє аналіз"""
+        if self.analyzer:
+            self.analyzer.stop_periodic_analysis()
+        self.status['analyzing'] = False
+    
+    def run_single_scan(self) -> Dict:
+        """Запускає один цикл сканування"""
+        if not self.recorder or not self.analyzer:
+            return {'error': 'Not initialized'}
+        
+        if not self.monitored_symbols:
+            self.update_symbols()
+        
+        # Записуємо snapshot
+        recorded = self.recorder.record_snapshot()
+        
+        # Аналізуємо
+        results = self.analyzer.run_full_analysis(self.monitored_symbols)
+        results['snapshots_recorded'] = recorded
+        
+        return results
+    
+    def get_heatmap(self) -> list:
+        """Повертає теплову карту"""
+        if not self.analyzer:
+            return []
+        
+        if not self.monitored_symbols:
+            self.update_symbols()
+        
+        return [e.to_dict() for e in self.analyzer.generate_heatmap(self.monitored_symbols)]
+    
+    def get_watchlist(self) -> list:
+        """Повертає watchlist"""
+        if not self.analyzer:
+            return []
+        return self.analyzer.get_watchlist()
+    
+    def get_signals(self, limit: int = 50) -> list:
+        """Повертає сигнали"""
+        if not self.analyzer:
+            return []
+        return self.analyzer.get_recent_signals(limit)
+    
+    def get_status(self) -> Dict:
+        """Повертає статус системи"""
+        status = {
+            **self.status,
+            'monitored_symbols': len(self.monitored_symbols),
+            'config': {k: v for k, v in self.config.items() if k.startswith('sd_')},
+        }
+        
+        if self.recorder:
+            status['recorder'] = self.recorder.get_stats()
+        
+        if self.analyzer:
+            status['analyzer'] = self.analyzer.get_stats()
+        
+        return status
+    
+    def clear_watchlist(self):
+        """Очищає watchlist"""
+        if self.analyzer:
+            self.analyzer.clear_watchlist()
+    
+    def shutdown(self):
+        """Завершує роботу"""
+        self.stop_recording()
+        self.stop_analyzing()
+        
+        if self.recorder:
+            self.recorder.shutdown()
+        
+        logger.info("📊 SqueezeDetectorManager shutdown")
+
+
+def get_detector_manager() -> SqueezeDetectorManager:
+    """Отримує singleton instance"""
+    global _detector_instance
+    
+    if _detector_instance is None:
+        # Спроба отримати залежності
+        db_session_factory = None
+        bot_instance = None
+        
+        try:
+            from database_manager import db_manager
+            if db_manager:
+                db_session_factory = db_manager.get_session
+        except ImportError as e:
+            logger.warning(f"database_manager not available: {e}")
+        
+        # НЕ імпортуємо main_app щоб уникнути circular import
+        # bot_instance буде встановлено через set_bot_instance()
+        
+        _detector_instance = SqueezeDetectorManager(
+            db_session_factory=db_session_factory,
+            bot_instance=bot_instance,
+        )
+    
+    return _detector_instance
+
+
+def set_bot_instance(bot):
+    """Встановлює bot instance (викликається з main_app після ініціалізації)"""
+    global _detector_instance
+    
+    if _detector_instance:
+        _detector_instance.bot_instance = bot
+        # Реініціалізуємо recorder з новими credentials
+        if bot and _detector_instance.recorder:
+            api_key = getattr(bot, 'api_key', None)
+            api_secret = getattr(bot, 'api_secret', None)
+            if api_key and api_secret:
+                _detector_instance.recorder.rest_client.api_key = api_key
+                _detector_instance.recorder.rest_client.api_secret = api_secret
+                logger.info("✅ Squeeze Detector: bot instance set")
+
+
+# ============================================================================
+#                              FLASK ROUTES
+# ============================================================================
+
+def register_squeeze_detector_routes(app):
+    """Реєструє Flask routes"""
+    
+    @app.route('/squeeze')
+    def squeeze_detector_page():
+        """Головна сторінка Squeeze Detector"""
+        manager = get_detector_manager()
+        
+        return render_template(
+            'squeeze_detector.html',
+            status=manager.get_status(),
+            config=manager.config,
+        )
+    
+    # === API ENDPOINTS ===
+    
+    @app.route('/squeeze/api/status')
+    def squeeze_api_status():
+        """Статус системи"""
+        manager = get_detector_manager()
+        return jsonify(manager.get_status())
+    
+    @app.route('/squeeze/api/scan', methods=['POST'])
+    def squeeze_api_scan():
+        """Запускає один скан"""
+        manager = get_detector_manager()
+        results = manager.run_single_scan()
+        return jsonify(results)
+    
+    @app.route('/squeeze/api/heatmap')
+    def squeeze_api_heatmap():
+        """Теплова карта"""
+        manager = get_detector_manager()
+        return jsonify(manager.get_heatmap())
+    
+    @app.route('/squeeze/api/watchlist')
+    def squeeze_api_watchlist():
+        """Watchlist"""
+        manager = get_detector_manager()
+        return jsonify(manager.get_watchlist())
+    
+    @app.route('/squeeze/api/signals')
+    def squeeze_api_signals():
+        """Сигнали"""
+        manager = get_detector_manager()
+        limit = request.args.get('limit', 50, type=int)
+        return jsonify(manager.get_signals(limit))
+    
+    @app.route('/squeeze/api/symbols')
+    def squeeze_api_symbols():
+        """Список монет"""
+        manager = get_detector_manager()
+        symbols = manager.update_symbols()
+        return jsonify({
+            'count': len(symbols),
+            'symbols': symbols,
+        })
+    
+    @app.route('/squeeze/api/config', methods=['GET', 'POST'])
+    def squeeze_api_config():
+        """Конфігурація"""
+        manager = get_detector_manager()
+        
+        if request.method == 'POST':
+            data = request.json or {}
+            manager.update_config(data)
+            return jsonify({'status': 'ok'})
+        
+        return jsonify(manager.config)
+    
+    @app.route('/squeeze/api/recording', methods=['POST'])
+    def squeeze_api_recording():
+        """Керування записом"""
+        manager = get_detector_manager()
+        data = request.json or {}
+        
+        if data.get('start'):
+            manager.start_recording()
+        elif data.get('stop'):
+            manager.stop_recording()
+        
+        return jsonify({'recording': manager.status['recording']})
+    
+    @app.route('/squeeze/api/analyzing', methods=['POST'])
+    def squeeze_api_analyzing():
+        """Керування аналізом"""
+        manager = get_detector_manager()
+        data = request.json or {}
+        
+        if data.get('start'):
+            manager.start_analyzing()
+        elif data.get('stop'):
+            manager.stop_analyzing()
+        
+        return jsonify({'analyzing': manager.status['analyzing']})
+    
+    @app.route('/squeeze/api/clear', methods=['POST'])
+    def squeeze_api_clear():
+        """Очищення watchlist"""
+        manager = get_detector_manager()
+        manager.clear_watchlist()
+        return jsonify({'status': 'cleared'})
+    
+    @app.route('/squeeze/api/load_history', methods=['POST'])
+    def squeeze_api_load_history():
+        """Завантажує історичні дані"""
+        manager = get_detector_manager()
+        data = request.json or {}
+        
+        symbol = data.get('symbol')
+        hours = data.get('hours', 24)
+        
+        if not symbol:
+            return jsonify({'error': 'Symbol required'}), 400
+        
+        if manager.recorder:
+            success = manager.recorder.load_historical_data(symbol, hours)
+            return jsonify({'success': success})
+        
+        return jsonify({'error': 'Recorder not initialized'}), 500
+    
+    logger.info("✅ Squeeze Detector routes registered")
