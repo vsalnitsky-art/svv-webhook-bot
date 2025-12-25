@@ -28,6 +28,18 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 import traceback
 
+logger = logging.getLogger(__name__)
+
+# === SAFE MODEL IMPORTS ===
+try:
+    from .models import MarketSnapshot
+except ImportError:
+    try:
+        from squeeze_detector.models import MarketSnapshot
+    except ImportError:
+        logger.error("Failed to import MarketSnapshot")
+        MarketSnapshot = None
+
 # WebSocket
 try:
     import websocket
@@ -51,8 +63,6 @@ try:
 except ImportError:
     HAS_PYBIT = False
     HTTP = None
-
-logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -831,7 +841,7 @@ class DataRecorder:
         Returns:
             Кількість записаних snapshots
         """
-        from .models import MarketSnapshot
+        # MarketSnapshot вже імпортований глобально
         
         if symbol:
             symbols = [symbol]
@@ -954,7 +964,7 @@ class DataRecorder:
         Returns:
             True якщо успішно
         """
-        from .models import MarketSnapshot
+        # MarketSnapshot вже імпортований глобально
         
         session = self.db_session_factory()
         
