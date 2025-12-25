@@ -264,7 +264,8 @@ class BybitRestClient:
         Returns:
             List[Dict] з інформацією про монети
         """
-        result = self._request("/v5/market/tickers", {"category": "linear"})
+        # limit=1000 щоб отримати ВСІ тікери (Bybit за замовчуванням може повертати менше)
+        result = self._request("/v5/market/tickers", {"category": "linear", "limit": 1000})
         
         if not result:
             return []
@@ -356,7 +357,8 @@ class BybitRestClient:
     
     def get_all_tickers(self) -> Dict[str, TickerData]:
         """Отримує всі тікери за один запит"""
-        result = self._request("/v5/market/tickers", {"category": "linear"})
+        # limit=1000 щоб отримати ВСІ тікери
+        result = self._request("/v5/market/tickers", {"category": "linear", "limit": 1000})
         
         if not result:
             return {}
@@ -939,9 +941,29 @@ class DataRecorder:
     
     def _record_loop(self):
         """Цикл періодичного запису"""
+        last_cleanup = time.time()
+        cleanup_interval = 3600  # Раз на годину
+        
         while self._recording:
             try:
                 self.record_snapshot()
+                
+                # === АВТООЧИСТКА БД (раз на годину) ===
+                if time.time() - last_cleanup > cleanup_interval:
+                    try:
+                        from .models import cleanup_old_snapshots
+                        session = self.db_session_factory()
+                        try:
+                            # Зберігаємо тільки 3 дні історії
+                            deleted = cleanup_old_snapshots(session, days=3)
+                            if deleted > 0:
+                                logger.info(f"🧹 Cleanup: deleted {deleted} old snapshots")
+                            last_cleanup = time.time()
+                        finally:
+                            session.close()
+                    except Exception as ce:
+                        logger.error(f"Cleanup error: {ce}")
+                
             except Exception as e:
                 logger.error(f"Record loop error: {e}")
                 self.stats['errors'] += 1
