@@ -93,32 +93,37 @@ class SqueezeDetectorManager:
     
     def _load_config(self) -> Dict[str, Any]:
         """Завантажує конфігурацію"""
-        # Використовуємо глобальний DEFAULT_CONFIG (вже імпортований)
-        config = DEFAULT_CONFIG.copy()
-        
-        # Додаткові налаштування
-        config.update({
+        # Базові дефолти (Aggressive mode)
+        config = {
             'sd_enabled': True,
-            'sd_top_coins': 100,
-            'sd_snapshot_interval': 300,
-            'sd_analysis_interval': 300,
-            'sd_min_volume_24h': 5_000_000,
+            'sd_top_coins': 400,              # Aggressive default
+            'sd_snapshot_interval': 60,       # 1 min
+            'sd_analysis_interval': 60,       # 1 min
+            'sd_min_volume_24h': 1_000_000,   # $1M
+            'sd_price_change_threshold': 2.5,
+            'sd_oi_change_threshold': 4.0,
+            'sd_k_coefficient_threshold': 2.5,
+            'sd_lookback_4h': True,
+            'sd_lookback_8h': True,
+            'sd_lookback_24h': True,
             'sd_auto_trade_enabled': False,
             'sd_telegram_alerts': False,
             'sd_ui_alerts': True,
-        })
+        }
         
-        # Завантажуємо з settings_manager якщо є
+        # Завантажуємо з settings_manager - ПЕРЕЗАПИСУЄ дефолти
         try:
             from settings_manager import settings
             if settings:
                 saved = settings.get_all()
-                for key in config.keys():
-                    if key in saved:
+                for key in list(config.keys()):
+                    if key in saved and saved[key] is not None:
                         config[key] = saved[key]
+                        logger.debug(f"Config loaded from DB: {key}={saved[key]}")
         except ImportError:
-            pass
+            logger.warning("settings_manager not available")
         
+        logger.info(f"📋 Config loaded: top_coins={config.get('sd_top_coins')}, interval={config.get('sd_snapshot_interval')}, min_vol={config.get('sd_min_volume_24h')}")
         return config
     
     def _initialize(self):
@@ -190,6 +195,11 @@ class SqueezeDetectorManager:
     
     def update_config(self, new_config: Dict):
         """Оновлює конфігурацію"""
+        old_top_coins = self.config.get('sd_top_coins')
+        old_min_volume = self.config.get('sd_min_volume_24h')
+        old_snapshot_interval = self.config.get('sd_snapshot_interval')
+        old_analysis_interval = self.config.get('sd_analysis_interval')
+        
         self.config.update(new_config)
         
         if self.analyzer:
@@ -200,10 +210,41 @@ class SqueezeDetectorManager:
             from settings_manager import settings
             if settings:
                 settings.save_settings(new_config)
+                logger.info(f"💾 Settings saved to DB: {list(new_config.keys())}")
         except ImportError:
             pass
         
-        logger.info("🔧 Config updated")
+        # Якщо змінились параметри фільтрації - оновлюємо список символів
+        new_top_coins = new_config.get('sd_top_coins', old_top_coins)
+        new_min_volume = new_config.get('sd_min_volume_24h', old_min_volume)
+        
+        if new_top_coins != old_top_coins or new_min_volume != old_min_volume:
+            logger.info(f"🔄 Updating symbols: top_coins {old_top_coins} -> {new_top_coins}, min_vol {old_min_volume} -> {new_min_volume}")
+            self.update_symbols()
+            
+            # Якщо recording/analyzing активні - перезапускаємо з новим списком
+            if self.status.get('recording'):
+                self.stop_recording()
+                self.start_recording()
+            if self.status.get('analyzing'):
+                self.stop_analyzing()
+                self.start_analyzing()
+        
+        # Якщо змінились інтервали - перезапускаємо
+        new_snapshot = new_config.get('sd_snapshot_interval', old_snapshot_interval)
+        new_analysis = new_config.get('sd_analysis_interval', old_analysis_interval)
+        
+        if new_snapshot != old_snapshot_interval and self.status.get('recording'):
+            logger.info(f"🔄 Restarting recording with new interval: {new_snapshot}s")
+            self.stop_recording()
+            self.start_recording()
+            
+        if new_analysis != old_analysis_interval and self.status.get('analyzing'):
+            logger.info(f"🔄 Restarting analyzing with new interval: {new_analysis}s")
+            self.stop_analyzing()
+            self.start_analyzing()
+        
+        logger.info(f"🔧 Config updated: top_coins={self.config.get('sd_top_coins')}, min_vol={self.config.get('sd_min_volume_24h')}, interval={self.config.get('sd_snapshot_interval')}")
     
     def update_symbols(self):
         """Оновлює список монет з API"""
