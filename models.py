@@ -1,308 +1,473 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from datetime import datetime
-import os
+"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                     SQUEEZE DETECTOR v1.0 - MODELS                           ║
+║                                                                              ║
+║  SQLAlchemy моделі для зберігання:                                           ║
+║  • market_snapshots - історичні дані ринку                                   ║
+║  • squeeze_signals - знайдені сигнали                                        ║
+║  • squeeze_watchlist - активні спостереження                                 ║
+║                                                                              ║
+║  Автор: SVV Webhook Bot                                                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+
 import logging
+from datetime import datetime
+from typing import Optional, Dict, Any, List
+
+from sqlalchemy import (
+    Column, Integer, Float, String, Boolean, DateTime, Text,
+    Index, UniqueConstraint, create_engine, event
+)
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
 
 logger = logging.getLogger(__name__)
+
+# Base для моделей
 Base = declarative_base()
 
-class Trade(Base):
-    __tablename__ = 'trades'
-    id = Column(Integer, primary_key=True)
-    order_id = Column(String(50), unique=True, index=True)
+
+class MarketSnapshot(Base):
+    """
+    Знімок ринкових даних для монети.
+    Записується кожні 1-5 хвилин для топ-100 монет.
+    
+    Це основа для розрахунку K = ΔOI / ΔPrice
+    """
+    __tablename__ = 'market_snapshots'
+    __table_args__ = (
+        # Композитний індекс для швидкого пошуку по symbol + timestamp
+        Index('idx_snapshots_symbol_time', 'symbol', 'timestamp'),
+        # Індекс для очистки старих даних
+        Index('idx_snapshots_timestamp', 'timestamp'),
+        # Унікальність: одна монета - один timestamp
+        UniqueConstraint('symbol', 'timestamp', name='uq_snapshot_symbol_time'),
+        {'extend_existing': True}
+    )
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Ідентифікація
     symbol = Column(String(20), nullable=False, index=True)
-    side = Column(String(10)) 
-    qty = Column(Float); entry_price = Column(Float); exit_price = Column(Float); pnl = Column(Float)
-    is_win = Column(Boolean); exit_time = Column(DateTime, default=datetime.utcnow); exit_reason = Column(String(100))
-    # ✨ НОВІ ПОЛЯ для комісій
-    opening_fee = Column(Float, default=0.0); closing_fee = Column(Float, default=0.0); funding_fee = Column(Float, default=0.0)
-
-class TradeMonitorLog(Base):
-    __tablename__ = 'trade_monitor_logs'
-    id = Column(Integer, primary_key=True); symbol = Column(String(20), index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow); current_price = Column(Float); current_pnl = Column(Float)
-    rsi = Column(Float); pressure = Column(Float)
-
-class BotSetting(Base):
-    __tablename__ = 'bot_settings'
-    key = Column(String(50), primary_key=True); value = Column(String(255))
-
-class AnalysisResult(Base):
-    __tablename__ = 'analysis_results'
-    id = Column(Integer, primary_key=True); symbol = Column(String(20), index=True)
-    signal_type = Column(String(10)); status = Column(String(50)); score = Column(Integer)
-    price = Column(Float); htf_rsi = Column(Float); ltf_rsi = Column(Float)
-    found_at = Column(DateTime, default=datetime.utcnow); details = Column(Text)
-    volume_24h = Column(Float, default=0.0)
-
-class OrderBlock(Base):
-    __tablename__ = 'order_blocks'
-    id = Column(Integer, primary_key=True); symbol = Column(String(20), index=True)
-    timeframe = Column(String(10)); ob_type = Column(String(10))
-    top = Column(Float); bottom = Column(Float); entry_price = Column(Float); sl_price = Column(Float)
-    created_at = Column(DateTime, default=datetime.utcnow); status = Column(String(20), default='PENDING'); volume_score = Column(Float, default=0.0)
-
-class SmartMoneyTicker(Base):
-    """Watchlist для Smart Money сканера"""
-    __tablename__ = 'smart_money_watchlist'
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), unique=True, index=True)
-    direction = Column(String(10))  # BUY або SELL
-    source = Column(String(20), default='Manual')  # Manual або Screener
-    added_at = Column(DateTime, default=datetime.utcnow)
-
-
-class DetectedOrderBlock(Base):
-    """Знайдені Order Blocks (для тестування перед реальними угодами)"""
-    __tablename__ = 'detected_order_blocks'
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), index=True)
-    direction = Column(String(10))  # BUY або SELL
-    ob_type = Column(String(10))    # Bull або Bear
-    ob_top = Column(Float)
-    ob_bottom = Column(Float)
-    entry_price = Column(Float)
-    sl_price = Column(Float)
-    current_price = Column(Float)
-    atr = Column(Float)
-    status = Column(String(20), default='Valid')  # Valid, Waiting Retest, Triggered, Executed
-    timeframe = Column(String(10))
-    # 🆕 Додаткові OB поля
-    ob_start_time = Column(DateTime, nullable=True)  # Коли OB утворився
-    ob_midline = Column(Float, nullable=True)  # Середня лінія OB
-    ob_size_percent = Column(Float, nullable=True)  # Розмір OB в %
-    # Timestamps
-    detected_at = Column(DateTime, default=datetime.utcnow)
-    executed_at = Column(DateTime, nullable=True)
-    trade_result = Column(String(50), nullable=True)  # Результат угоди якщо виконано
-
-class PaperTrade(Base):
-    __tablename__ = 'paper_trades'
-    id = Column(Integer, primary_key=True); symbol = Column(String(20), index=True)
-    direction = Column(String(10)); entry_mode = Column(String(20)); status = Column(String(20))
-    entry_price = Column(Float); sl_price = Column(Float); tp_price = Column(Float, nullable=True); exit_price = Column(Float, nullable=True)
-    pnl = Column(Float, default=0.0); pnl_percent = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=datetime.utcnow); closed_at = Column(DateTime, nullable=True); details = Column(String(255))
-
-# === НОВА МОДЕЛЬ: WHALE STRATEGY ===
-class WhaleSignal(Base):
-    __tablename__ = 'whale_signals'
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), index=True)
-    price = Column(Float)
-    score = Column(Integer)
-    squeeze_val = Column(Float)
-    obv_slope = Column(Float)
-    rsi = Column(Float, nullable=True, default=0)  # RSI значення (nullable для міграції)
-    details = Column(String(255))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    status = Column(String(20), default='NEW')
-
-
-# === SMART MONEY EXECUTION LOG ===
-class SmartMoneyExecutionLog(Base):
-    """Лог виконаних угод Smart Money системи"""
-    __tablename__ = 'smart_money_execution_log'
-    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
     
-    # Основна інформація
-    symbol = Column(String(20), index=True)
-    direction = Column(String(10))  # LONG або SHORT
+    # Open Interest - КЛЮЧОВА метрика
+    open_interest = Column(Float, nullable=True)       # В USD
+    open_interest_qty = Column(Float, nullable=True)   # В монетах
     
-    # Entry інформація
-    entry_price = Column(Float)
-    entry_time = Column(DateTime)
-    sl_price = Column(Float)
-    ob_top = Column(Float)
-    ob_bottom = Column(Float)
-    ob_timeframe = Column(String(10))
-    entry_mode = Column(String(20))  # Immediate або Retest
+    # Ціни
+    mark_price = Column(Float, nullable=True)
+    index_price = Column(Float, nullable=True)
+    last_price = Column(Float, nullable=True)
     
-    # 🆕 Розширена інформація про Order Block
-    ob_type = Column(String(10), nullable=True)  # Bullish або Bearish
-    ob_start_time = Column(DateTime, nullable=True)  # Коли OB утворився
-    ob_midline = Column(Float, nullable=True)  # Середня лінія OB
-    ob_size_percent = Column(Float, nullable=True)  # Розмір OB в %
+    # Funding - для визначення напрямку squeeze
+    funding_rate = Column(Float, nullable=True)        # Поточний funding
+    next_funding_time = Column(DateTime, nullable=True)
     
-    # Exit інформація
-    exit_price = Column(Float, nullable=True)
-    exit_time = Column(DateTime, nullable=True)
-    exit_reason = Column(String(50), nullable=True)  # Opposite OB, SL Hit, Manual, Timeout
-    exit_ob_top = Column(Float, nullable=True)  # Exit OB зона (якщо закрито по OB)
-    exit_ob_bottom = Column(Float, nullable=True)
+    # Об'єми
+    volume_24h = Column(Float, nullable=True)          # Volume в монетах
+    turnover_24h = Column(Float, nullable=True)        # Turnover в USD
     
-    # Результат
-    pnl = Column(Float, default=0.0)
-    pnl_percent = Column(Float, default=0.0)
-    is_win = Column(Boolean, nullable=True)
+    # Order book (для Order Book Imbalance)
+    bid1_price = Column(Float, nullable=True)
+    bid1_size = Column(Float, nullable=True)
+    ask1_price = Column(Float, nullable=True)
+    ask1_size = Column(Float, nullable=True)
+    
+    # Spread
+    spread_percent = Column(Float, nullable=True)
+    
+    # 24h статистика
+    high_24h = Column(Float, nullable=True)
+    low_24h = Column(Float, nullable=True)
+    price_change_24h = Column(Float, nullable=True)    # В %
+    
+    def __repr__(self):
+        return f"<MarketSnapshot {self.symbol} @ {self.timestamp}>"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Конвертує в словник для JSON"""
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'open_interest': self.open_interest,
+            'open_interest_qty': self.open_interest_qty,
+            'mark_price': self.mark_price,
+            'last_price': self.last_price,
+            'funding_rate': self.funding_rate,
+            'volume_24h': self.volume_24h,
+            'turnover_24h': self.turnover_24h,
+            'bid1_price': self.bid1_price,
+            'ask1_price': self.ask1_price,
+            'spread_percent': self.spread_percent,
+            'price_change_24h': self.price_change_24h,
+        }
+
+
+class SqueezeSignal(Base):
+    """
+    Знайдений сигнал накопичення/squeeze.
+    
+    Генерується коли:
+    - K = ΔOI / ΔPrice > threshold
+    - Ціна у флеті (< 2% за 4h)
+    - OI росте (> 5% за 4h)
+    """
+    __tablename__ = 'squeeze_signals'
+    __table_args__ = (
+        Index('idx_signals_symbol_created', 'symbol', 'created_at'),
+        Index('idx_signals_type', 'signal_type'),
+        Index('idx_signals_direction', 'direction'),
+        {'extend_existing': True}
+    )
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Ідентифікація
+    symbol = Column(String(20), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    
+    # Тип сигналу
+    signal_type = Column(String(30), nullable=False)
+    # Можливі значення:
+    # - ACCUMULATION_START: Початок накопичення
+    # - ACCUMULATION_CONTINUE: Продовження накопичення
+    # - SQUEEZE_READY: Пружина стиснута, готовність до вибуху
+    # - BREAKOUT_UP: Пробій вгору
+    # - BREAKOUT_DOWN: Пробій вниз
+    
+    # Напрямок (на основі funding та інших факторів)
+    direction = Column(String(10), nullable=False, default='UNKNOWN')
+    # LONG - очікується памп (Short Squeeze)
+    # SHORT - очікується дамп (Long Squeeze)
+    # UNKNOWN - напрямок невизначений
+    
+    # Ключові метрики
+    k_coefficient = Column(Float, nullable=True)       # K = ΔOI / ΔPrice
+    
+    # Зміни за період аналізу
+    price_change_pct = Column(Float, nullable=True)    # % зміни ціни
+    oi_change_pct = Column(Float, nullable=True)       # % зміни OI
+    volume_change_pct = Column(Float, nullable=True)   # % зміни об'єму
+    
+    # Funding інформація
+    funding_rate = Column(Float, nullable=True)
+    funding_bias = Column(String(10), nullable=True)   # LONG, SHORT, NEUTRAL
+    
+    # Ціни на момент сигналу
+    price_at_signal = Column(Float, nullable=True)
+    oi_at_signal = Column(Float, nullable=True)
+    
+    # Lookback період (в годинах)
+    lookback_hours = Column(Integer, nullable=True, default=4)
+    
+    # Confidence score (0-100)
+    confidence = Column(Integer, nullable=True, default=50)
     
     # Статус
-    status = Column(String(20), default='OPEN')  # OPEN, CLOSED, CANCELLED, SKIPPED, FAILED
-    paper_trade = Column(Boolean, default=True)  # True = paper, False = real
+    notified = Column(Boolean, nullable=False, default=False)   # Відправлено в Telegram
+    executed = Column(Boolean, nullable=False, default=False)   # Відкрито позицію
     
-    # Bybit order info (для реальних угод)
-    order_id = Column(String(50), nullable=True)
-    qty = Column(Float, nullable=True)
+    # Результат (заповнюється пізніше)
+    result_price = Column(Float, nullable=True)        # Ціна після X часу
+    result_pnl_pct = Column(Float, nullable=True)      # P&L в %
+    result_status = Column(String(20), nullable=True)  # WIN, LOSS, PENDING
     
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Додаткові дані
+    notes = Column(Text, nullable=True)
+    raw_data = Column(Text, nullable=True)             # JSON з додатковими даними
+    
+    def __repr__(self):
+        return f"<SqueezeSignal {self.symbol} {self.signal_type} K={self.k_coefficient}>"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Конвертує в словник для JSON"""
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'signal_type': self.signal_type,
+            'direction': self.direction,
+            'k_coefficient': round(self.k_coefficient, 2) if self.k_coefficient else None,
+            'price_change_pct': round(self.price_change_pct, 2) if self.price_change_pct else None,
+            'oi_change_pct': round(self.oi_change_pct, 2) if self.oi_change_pct else None,
+            'funding_rate': self.funding_rate,
+            'funding_bias': self.funding_bias,
+            'price_at_signal': self.price_at_signal,
+            'lookback_hours': self.lookback_hours,
+            'confidence': self.confidence,
+            'notified': self.notified,
+            'executed': self.executed,
+            'result_status': self.result_status,
+        }
 
-class DatabaseManager:
-    def __init__(self, db_filename='trading_bot_final.db'):
-        db_url = os.environ.get('DATABASE_URL')
+
+class SqueezeWatchlist(Base):
+    """
+    Активний watchlist монет під спостереженням.
+    
+    Монета додається коли виявлено початок накопичення.
+    Оновлюється кожен скан.
+    Видаляється після breakout або timeout.
+    """
+    __tablename__ = 'squeeze_watchlist'
+    __table_args__ = (
+        Index('idx_watchlist_symbol', 'symbol'),
+        Index('idx_watchlist_phase', 'phase'),
+        UniqueConstraint('symbol', name='uq_watchlist_symbol'),
+        {'extend_existing': True}
+    )
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Ідентифікація
+    symbol = Column(String(20), nullable=False, unique=True, index=True)
+    
+    # Часові мітки
+    added_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_update = Column(DateTime, nullable=False, default=datetime.utcnow)
+    
+    # Фаза спостереження
+    phase = Column(String(20), nullable=False, default='WATCHING')
+    # Можливі значення:
+    # - WATCHING: Початкове спостереження
+    # - ACCUMULATING: Підтверджене накопичення (K > threshold кілька разів)
+    # - SQUEEZE_READY: Пружина стиснута, очікуємо breakout
+    # - TRIGGERED: Breakout стався
+    # - EXPIRED: Timeout без breakout
+    
+    # Лічильники
+    consecutive_signals = Column(Integer, nullable=False, default=0)  # Скільки сканів підряд K > threshold
+    total_signals = Column(Integer, nullable=False, default=0)        # Загальна кількість сигналів
+    
+    # Метрики при додаванні
+    entry_price = Column(Float, nullable=True)         # Ціна при додаванні
+    entry_oi = Column(Float, nullable=True)            # OI при додаванні
+    
+    # Поточні метрики
+    current_price = Column(Float, nullable=True)
+    current_oi = Column(Float, nullable=True)
+    current_k = Column(Float, nullable=True)           # Поточний K coefficient
+    
+    # Накопичені зміни
+    total_oi_change_pct = Column(Float, nullable=True) # Загальна зміна OI з моменту додавання
+    total_price_change_pct = Column(Float, nullable=True)
+    
+    # Напрямок
+    direction = Column(String(10), nullable=True)      # LONG, SHORT, UNKNOWN
+    direction_confidence = Column(Integer, nullable=True)  # 0-100
+    
+    # Funding історія
+    avg_funding_rate = Column(Float, nullable=True)
+    funding_bias = Column(String(10), nullable=True)
+    
+    # Торгові параметри (для auto-trade)
+    target_price = Column(Float, nullable=True)        # TP
+    stop_loss = Column(Float, nullable=True)           # SL
+    position_size_usdt = Column(Float, nullable=True)
+    leverage = Column(Integer, nullable=True)
+    
+    # Auto-trade
+    auto_trade_enabled = Column(Boolean, nullable=False, default=False)
+    position_opened = Column(Boolean, nullable=False, default=False)
+    position_side = Column(String(10), nullable=True)  # LONG, SHORT
+    
+    # Результат
+    result_status = Column(String(20), nullable=True)  # WIN, LOSS, PENDING, EXPIRED
+    result_pnl_pct = Column(Float, nullable=True)
+    
+    # Примітки
+    notes = Column(Text, nullable=True)
+    
+    def __repr__(self):
+        return f"<SqueezeWatchlist {self.symbol} phase={self.phase} K={self.current_k}>"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Конвертує в словник для JSON"""
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'added_at': self.added_at.isoformat() if self.added_at else None,
+            'last_update': self.last_update.isoformat() if self.last_update else None,
+            'phase': self.phase,
+            'consecutive_signals': self.consecutive_signals,
+            'total_signals': self.total_signals,
+            'entry_price': self.entry_price,
+            'current_price': self.current_price,
+            'current_k': round(self.current_k, 2) if self.current_k else None,
+            'total_oi_change_pct': round(self.total_oi_change_pct, 2) if self.total_oi_change_pct else None,
+            'total_price_change_pct': round(self.total_price_change_pct, 2) if self.total_price_change_pct else None,
+            'direction': self.direction,
+            'direction_confidence': self.direction_confidence,
+            'funding_bias': self.funding_bias,
+            'target_price': self.target_price,
+            'stop_loss': self.stop_loss,
+            'auto_trade_enabled': self.auto_trade_enabled,
+            'position_opened': self.position_opened,
+            'result_status': self.result_status,
+        }
+    
+    def update_phase(self, new_phase: str):
+        """Оновлює фазу з валідацією"""
+        valid_phases = ['WATCHING', 'ACCUMULATING', 'SQUEEZE_READY', 'TRIGGERED', 'EXPIRED']
+        if new_phase not in valid_phases:
+            raise ValueError(f"Invalid phase: {new_phase}. Must be one of {valid_phases}")
+        self.phase = new_phase
+        self.last_update = datetime.utcnow()
+
+
+class SqueezeConfig(Base):
+    """
+    Конфігурація Squeeze Detector.
+    Зберігається в БД для персистентності.
+    """
+    __tablename__ = 'squeeze_config'
+    __table_args__ = {'extend_existing': True}
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(50), nullable=False, unique=True, index=True)
+    value = Column(String(500), nullable=True)
+    description = Column(String(200), nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f"<SqueezeConfig {self.key}={self.value}>"
+
+
+# ============================================================================
+#                              HELPER FUNCTIONS
+# ============================================================================
+
+def create_squeeze_tables(engine):
+    """
+    Створює всі таблиці Squeeze Detector.
+    Викликається при ініціалізації.
+    """
+    try:
+        Base.metadata.create_all(engine, checkfirst=True)
+        logger.info("✅ Squeeze Detector tables created/verified")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to create Squeeze Detector tables: {e}")
+        return False
+
+
+def run_migrations(engine):
+    """
+    Виконує міграції для додавання нових колонок.
+    Безпечно ігнорує якщо колонка вже існує.
+    """
+    from sqlalchemy import inspect, text
+    
+    try:
+        inspector = inspect(engine)
         
-        if db_url:
-            print(f"\n🔌 DATABASE: FOUND DATABASE_URL.")
-            if db_url.startswith("postgres://"): db_url = db_url.replace("postgres://", "postgresql://", 1)
-        else:
-            print(f"\n⚠️ WARNING: DATABASE_URL NOT FOUND. USING LOCAL SQLITE.")
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            base_folder = os.path.join(current_dir, 'BASE')
-            try: os.makedirs(base_folder, exist_ok=True); db_path = os.path.join(base_folder, db_filename)
-            except OSError: db_path = os.path.join(current_dir, db_filename)
-            db_url = f'sqlite:///{db_path}'
+        migrations = [
+            # (table_name, column_name, column_type)
+            ('market_snapshots', 'spread_percent', 'FLOAT'),
+            ('market_snapshots', 'bid1_size', 'FLOAT'),
+            ('market_snapshots', 'ask1_size', 'FLOAT'),
+            ('squeeze_signals', 'volume_change_pct', 'FLOAT'),
+            ('squeeze_signals', 'raw_data', 'TEXT'),
+            ('squeeze_watchlist', 'total_signals', 'INTEGER DEFAULT 0'),
+            ('squeeze_watchlist', 'direction_confidence', 'INTEGER'),
+        ]
+        
+        with engine.connect() as conn:
+            for table_name, col_name, col_type in migrations:
+                # Перевіряємо чи таблиця існує
+                if table_name not in inspector.get_table_names():
+                    continue
+                
+                # Перевіряємо чи колонка існує
+                existing_columns = {col['name'] for col in inspector.get_columns(table_name)}
+                if col_name not in existing_columns:
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
+                        logger.info(f"📦 Migration: added {table_name}.{col_name}")
+                    except Exception as e:
+                        # Ігноруємо якщо колонка вже існує (race condition)
+                        logger.debug(f"Migration skip {table_name}.{col_name}: {e}")
             
-        try:
-            self.engine = create_engine(db_url, echo=False)
-            with self.engine.connect() as conn:
-                logger.info(f"✅ Database connected: {db_url[:50]}...")
-            
-            # Створюємо таблиці
-            Base.metadata.create_all(self.engine)
-            logger.info("✅ Database tables created/verified")
-            
-            # ✨ МІГРАЦІЯ: Додавання нових колонок для комісій
-            self._migrate_add_fee_columns()
-            
-        except Exception as e:
-            logger.error(f"❌ CRITICAL: Database error: {e}")
-            raise  # Передаємо помилку далі
-        self.Session = sessionmaker(bind=self.engine)
+            conn.commit()
+        
+        logger.info("✅ Squeeze Detector migrations complete")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Migration error: {e}")
+        return False
 
-    def get_session(self): return self.Session()
-    
-    # ✨ МІГРАЦІЯ: Додавання колонок для комісій
-    def _migrate_add_fee_columns(self):
-        """Додає нові колонки до таблиць якщо вони ще не існують"""
-        try:
-            from sqlalchemy import inspect, text
-            
-            inspector = inspect(self.engine)
-            
-            # Визначаємо тип БД для правильних типів даних
-            is_postgres = 'postgresql' in str(self.engine.url)
-            logger.info(f"🔄 Running migrations (PostgreSQL: {is_postgres})")
-            
-            # Типи даних для різних БД
-            FLOAT_TYPE = 'DOUBLE PRECISION' if is_postgres else 'REAL'
-            DATETIME_TYPE = 'TIMESTAMP' if is_postgres else 'DATETIME'
-            
-            # === TRADES TABLE ===
-            try:
-                columns = {col['name'] for col in inspector.get_columns('trades')}
-                needed_columns = {
-                    'opening_fee': f'{FLOAT_TYPE} DEFAULT 0.0',
-                    'closing_fee': f'{FLOAT_TYPE} DEFAULT 0.0',
-                    'funding_fee': f'{FLOAT_TYPE} DEFAULT 0.0'
-                }
-                
-                with self.engine.connect() as conn:
-                    for col_name, col_def in needed_columns.items():
-                        if col_name not in columns:
-                            try:
-                                conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col_name} {col_def}"))
-                                conn.commit()
-                                logger.info(f"✅ Migration: Added column '{col_name}' to trades")
-                            except Exception as e:
-                                logger.debug(f"Migration: Column '{col_name}' - {e}")
-            except Exception as e:
-                logger.debug(f"Migration trades: {e}")
-            
-            # === SMART_MONEY_WATCHLIST TABLE ===
-            try:
-                sm_columns = {col['name'] for col in inspector.get_columns('smart_money_watchlist')}
-                sm_needed = {
-                    'direction': "VARCHAR(10) DEFAULT 'BUY'",
-                    'source': "VARCHAR(20) DEFAULT 'Manual'"
-                }
-                
-                with self.engine.connect() as conn:
-                    for col_name, col_def in sm_needed.items():
-                        if col_name not in sm_columns:
-                            try:
-                                conn.execute(text(f"ALTER TABLE smart_money_watchlist ADD COLUMN {col_name} {col_def}"))
-                                conn.commit()
-                                logger.info(f"✅ Migration: Added column '{col_name}' to smart_money_watchlist")
-                            except Exception as e:
-                                pass
-            except Exception as e:
-                pass  # Table might not exist yet
-            
-            # === SMART_MONEY_EXECUTION_LOG TABLE (OB columns) ===
-            try:
-                exec_columns = {col['name'] for col in inspector.get_columns('smart_money_execution_log')}
-                logger.info(f"📋 smart_money_execution_log existing columns: {exec_columns}")
-                
-                exec_needed = {
-                    'ob_type': "VARCHAR(10)",
-                    'ob_start_time': DATETIME_TYPE,
-                    'ob_midline': FLOAT_TYPE,
-                    'ob_size_percent': FLOAT_TYPE
-                }
-                
-                with self.engine.connect() as conn:
-                    for col_name, col_def in exec_needed.items():
-                        if col_name not in exec_columns:
-                            try:
-                                sql = f"ALTER TABLE smart_money_execution_log ADD COLUMN {col_name} {col_def}"
-                                logger.info(f"🔧 Executing: {sql}")
-                                conn.execute(text(sql))
-                                conn.commit()
-                                logger.info(f"✅ Migration: Added column '{col_name}' to smart_money_execution_log")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Migration exec_log '{col_name}': {e}")
-                        else:
-                            logger.debug(f"Column '{col_name}' already exists in smart_money_execution_log")
-            except Exception as e:
-                logger.warning(f"⚠️ Migration smart_money_execution_log failed: {e}")
-            
-            # === DETECTED_ORDER_BLOCKS TABLE (OB columns) ===
-            try:
-                ob_columns = {col['name'] for col in inspector.get_columns('detected_order_blocks')}
-                ob_needed = {
-                    'ob_start_time': DATETIME_TYPE,
-                    'ob_midline': FLOAT_TYPE,
-                    'ob_size_percent': FLOAT_TYPE
-                }
-                
-                with self.engine.connect() as conn:
-                    for col_name, col_def in ob_needed.items():
-                        if col_name not in ob_columns:
-                            try:
-                                conn.execute(text(f"ALTER TABLE detected_order_blocks ADD COLUMN {col_name} {col_def}"))
-                                conn.commit()
-                                logger.info(f"✅ Migration: Added column '{col_name}' to detected_order_blocks")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Migration detected_ob '{col_name}': {e}")
-            except Exception as e:
-                pass  # Table might not exist yet
-            
-            logger.info("✅ Migrations completed")
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Migration failed: {e}")
-    
-    # === ФУНКЦІЯ ПРИМУСОВОГО ПЕРЕСТВОРЕННЯ ТАБЛИЦІ ===
-    def recreate_analysis_table(self):
-        try:
-            AnalysisResult.__table__.drop(self.engine, checkfirst=True)
-            AnalysisResult.__table__.create(self.engine, checkfirst=True)
-        except Exception as e:
-            print(f"❌ Error recreating table: {e}")
 
-db_manager = DatabaseManager()
+def cleanup_old_snapshots(session: Session, days: int = 7) -> int:
+    """
+    Видаляє старі snapshots старші за N днів.
+    Повертає кількість видалених записів.
+    """
+    from datetime import timedelta
+    
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        
+        deleted = session.query(MarketSnapshot).filter(
+            MarketSnapshot.timestamp < cutoff
+        ).delete(synchronize_session=False)
+        
+        session.commit()
+        
+        if deleted > 0:
+            logger.info(f"🗑️ Cleaned up {deleted} old snapshots (older than {days} days)")
+        
+        return deleted
+        
+    except Exception as e:
+        logger.error(f"❌ Cleanup error: {e}")
+        session.rollback()
+        return 0
+
+
+def get_snapshot_count(session: Session, symbol: str = None) -> int:
+    """Повертає кількість snapshots"""
+    try:
+        query = session.query(MarketSnapshot)
+        if symbol:
+            query = query.filter(MarketSnapshot.symbol == symbol)
+        return query.count()
+    except Exception as e:
+        logger.error(f"Count error: {e}")
+        return 0
+
+
+def get_latest_snapshot(session: Session, symbol: str) -> Optional[MarketSnapshot]:
+    """Повертає останній snapshot для монети"""
+    try:
+        return session.query(MarketSnapshot).filter(
+            MarketSnapshot.symbol == symbol
+        ).order_by(MarketSnapshot.timestamp.desc()).first()
+    except Exception as e:
+        logger.error(f"Get latest error: {e}")
+        return None
+
+
+def get_snapshots_for_period(
+    session: Session,
+    symbol: str,
+    hours: int = 4
+) -> List[MarketSnapshot]:
+    """Повертає snapshots за останні N годин"""
+    from datetime import timedelta
+    
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        
+        return session.query(MarketSnapshot).filter(
+            MarketSnapshot.symbol == symbol,
+            MarketSnapshot.timestamp >= cutoff
+        ).order_by(MarketSnapshot.timestamp.asc()).all()
+        
+    except Exception as e:
+        logger.error(f"Get snapshots error: {e}")
+        return []
