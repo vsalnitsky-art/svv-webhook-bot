@@ -391,7 +391,7 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                         <div class="row g-2">
                             <div class="col-6">
                                 <label class="form-label small">Min Score</label>
-                                <input type="number" class="form-control form-control-sm" id="minScore" value="{{ config.css_min_score }}" min="30" max="90">
+                                <input type="number" class="form-control form-control-sm" id="minScore" value="{{ config.css_min_score|default(35) }}" min="20" max="90">
                             </div>
                             <div class="col-6">
                                 <label class="form-label small">Scan Limit</label>
