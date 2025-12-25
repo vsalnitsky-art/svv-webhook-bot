@@ -31,6 +31,29 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+# === SAFE MODEL IMPORTS ===
+try:
+    from .models import (
+        MarketSnapshot, 
+        SqueezeSignal, 
+        SqueezeWatchlist,
+        get_snapshots_for_period
+    )
+except ImportError:
+    try:
+        from squeeze_detector.models import (
+            MarketSnapshot, 
+            SqueezeSignal, 
+            SqueezeWatchlist,
+            get_snapshots_for_period
+        )
+    except ImportError:
+        logger.error("Failed to import models - squeeze_detector may not work")
+        MarketSnapshot = None
+        SqueezeSignal = None
+        SqueezeWatchlist = None
+        get_snapshots_for_period = None
+
 
 # ============================================================================
 #                              ENUMS & CONSTANTS
@@ -262,7 +285,7 @@ class SqueezeAnalyzer:
         Returns:
             AnalysisResult або None якщо недостатньо даних
         """
-        from .models import MarketSnapshot, get_snapshots_for_period
+        # Models вже імпортовані глобально
         
         session = self.db_session_factory()
         
@@ -417,7 +440,7 @@ class SqueezeAnalyzer:
         Returns:
             List[HeatmapEntry] відсортований за k_max
         """
-        from .models import SqueezeWatchlist
+        # Models вже імпортовані глобально
         
         session = self.db_session_factory()
         heatmap = []
@@ -495,7 +518,7 @@ class SqueezeAnalyzer:
         Returns:
             Dict зі статистикою оновлень
         """
-        from .models import SqueezeWatchlist, SqueezeSignal
+        # Models вже імпортовані глобально
         
         session = self.db_session_factory()
         stats = {
@@ -742,7 +765,7 @@ class SqueezeAnalyzer:
     
     def get_watchlist(self) -> List[Dict]:
         """Повертає поточний watchlist"""
-        from .models import SqueezeWatchlist
+        # Models вже імпортовані глобально
         
         session = self.db_session_factory()
         
@@ -763,7 +786,7 @@ class SqueezeAnalyzer:
     
     def get_recent_signals(self, limit: int = 50) -> List[Dict]:
         """Повертає останні сигнали"""
-        from .models import SqueezeSignal
+        # Models вже імпортовані глобально
         
         session = self.db_session_factory()
         
@@ -782,7 +805,7 @@ class SqueezeAnalyzer:
     
     def clear_watchlist(self):
         """Очищає watchlist"""
-        from .models import SqueezeWatchlist
+        # Models вже імпортовані глобально
         
         session = self.db_session_factory()
         
