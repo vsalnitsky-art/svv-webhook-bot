@@ -137,11 +137,11 @@ class SqueezeDetectorManager:
             # Отримуємо engine з db_manager
             engine = None
             try:
-                from database_manager import db_manager
+                from models import db_manager
                 if db_manager:
                     engine = db_manager.engine
             except ImportError:
-                logger.warning("database_manager not available for table creation")
+                logger.warning("models.db_manager not available for table creation")
             
             if engine:
                 create_squeeze_tables(engine)
@@ -339,11 +339,11 @@ def get_detector_manager() -> SqueezeDetectorManager:
         bot_instance = None
         
         try:
-            from database_manager import db_manager
+            from models import db_manager
             if db_manager:
                 db_session_factory = db_manager.get_session
         except ImportError as e:
-            logger.warning(f"database_manager not available: {e}")
+            logger.warning(f"models.db_manager not available: {e}")
         
         # НЕ імпортуємо main_app щоб уникнути circular import
         # bot_instance буде встановлено через set_bot_instance()
