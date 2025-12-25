@@ -48,10 +48,18 @@ from rsi_sniper_pro import register_rsi_sniper_routes
 # ✅ IMPORT COILING SPRING SCANNER
 from coiling_spring_scanner import register_coiling_spring_routes
 # ✅ IMPORT SQUEEZE DETECTOR
+import sys
+import os
+# Додаємо поточну директорію в sys.path для squeeze_detector
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+if _current_dir not in sys.path:
+    sys.path.insert(0, _current_dir)
+
 try:
     from squeeze_detector.routes import register_squeeze_detector_routes
     HAS_SQUEEZE_DETECTOR = True
-except ImportError:
+except ImportError as e:
+    print(f"⚠️ Squeeze Detector import error: {e}")
     HAS_SQUEEZE_DETECTOR = False
     register_squeeze_detector_routes = None
 
