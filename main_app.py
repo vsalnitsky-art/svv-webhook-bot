@@ -45,6 +45,8 @@ from signal_flip_scalper import register_routes as register_signal_flip_scalper
 from scanner_coordinator import coordinator as scanner_coordinator, register_routes as register_coordinator_routes
 # ✅ IMPORT RSI SNIPER PRO
 from rsi_sniper_pro import register_rsi_sniper_routes
+# ✅ IMPORT COILING SPRING SCANNER
+from coiling_spring_scanner import register_coiling_spring_routes
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -1764,6 +1766,9 @@ register_coordinator_routes(app)
 
 # === RSI SNIPER PRO v1.0 ROUTES ===
 register_rsi_sniper_routes(app)
+
+# === COILING SPRING SCANNER v1.0 ROUTES ===
+register_coiling_spring_routes(app)
 
 # Запускаємо координатор
 try:
