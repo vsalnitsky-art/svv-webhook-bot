@@ -448,6 +448,44 @@ DEFAULT_SETTINGS = {
     "css_paper_trading": True,
     "css_telegram_alerts": True,
     "css_auto_mode": False,
+    
+    # === SQUEEZE DETECTOR v1.0 ===
+    "sd_enabled": True,
+    "sd_top_coins": 100,
+    "sd_snapshot_interval": 300,
+    "sd_analysis_interval": 300,
+    "sd_min_volume_24h": 5000000,
+    
+    # Thresholds
+    "sd_price_change_threshold": 2.0,
+    "sd_oi_change_threshold": 5.0,
+    "sd_k_coefficient_threshold": 3.0,
+    
+    # Lookback
+    "sd_lookback_4h": True,
+    "sd_lookback_8h": True,
+    "sd_lookback_24h": True,
+    
+    # Funding
+    "sd_funding_extreme_positive": 0.0003,
+    "sd_funding_extreme_negative": -0.0003,
+    
+    # Watchlist
+    "sd_min_consecutive_signals": 2,
+    "sd_ready_consecutive_signals": 4,
+    "sd_watchlist_timeout_hours": 48,
+    "sd_breakout_threshold": 3.0,
+    
+    # Auto-trade (disabled by default)
+    "sd_auto_trade_enabled": False,
+    "sd_auto_trade_size_usdt": 100,
+    "sd_auto_trade_leverage": 5,
+    "sd_auto_trade_tp_percent": 10,
+    "sd_auto_trade_sl_percent": 3,
+    
+    # Alerts
+    "sd_telegram_alerts": False,
+    "sd_ui_alerts": True,
 }
 
 class SettingsManager:
