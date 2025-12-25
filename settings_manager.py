@@ -450,16 +450,17 @@ DEFAULT_SETTINGS = {
     "css_auto_mode": False,
     
     # === SQUEEZE DETECTOR v1.0 ===
+    # Default: Aggressive Mode (400 coins, 1min, $1M)
     "sd_enabled": True,
-    "sd_top_coins": 100,
-    "sd_snapshot_interval": 300,
-    "sd_analysis_interval": 300,
-    "sd_min_volume_24h": 5000000,
+    "sd_top_coins": 400,              # All Market
+    "sd_snapshot_interval": 60,       # 1 min
+    "sd_analysis_interval": 60,       # 1 min
+    "sd_min_volume_24h": 1000000,     # $1M
     
-    # Thresholds
-    "sd_price_change_threshold": 2.0,
-    "sd_oi_change_threshold": 5.0,
-    "sd_k_coefficient_threshold": 3.0,
+    # Thresholds (трохи м'якші для aggressive)
+    "sd_price_change_threshold": 2.5,  # max price change %
+    "sd_oi_change_threshold": 4.0,     # min OI change %
+    "sd_k_coefficient_threshold": 2.5, # min K coefficient
     
     # Lookback
     "sd_lookback_4h": True,
