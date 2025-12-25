@@ -47,6 +47,13 @@ from scanner_coordinator import coordinator as scanner_coordinator, register_rou
 from rsi_sniper_pro import register_rsi_sniper_routes
 # ✅ IMPORT COILING SPRING SCANNER
 from coiling_spring_scanner import register_coiling_spring_routes
+# ✅ IMPORT SQUEEZE DETECTOR
+try:
+    from squeeze_detector.routes import register_squeeze_detector_routes
+    HAS_SQUEEZE_DETECTOR = True
+except ImportError:
+    HAS_SQUEEZE_DETECTOR = False
+    register_squeeze_detector_routes = None
 
 # === ІНІЦІАЛІЗАЦІЯ ЛОГУВАННЯ ===
 setup_logging()
@@ -1769,6 +1776,13 @@ register_rsi_sniper_routes(app)
 
 # === COILING SPRING SCANNER v1.0 ROUTES ===
 register_coiling_spring_routes(app)
+
+# === SQUEEZE DETECTOR v1.0 ROUTES ===
+if HAS_SQUEEZE_DETECTOR and register_squeeze_detector_routes:
+    register_squeeze_detector_routes(app)
+    logger.info("✅ Squeeze Detector routes registered")
+else:
+    logger.warning("⚠️ Squeeze Detector not available")
 
 # Запускаємо координатор
 try:
