@@ -1,0 +1,667 @@
+{% extends "base.html" %}
+{% block title %}Squeeze Detector{% endblock %}
+
+{% block extra_css %}
+<style>
+/* === HEADER === */
+.squeeze-header {
+    background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+    border-radius: 16px;
+    padding: 20px 24px;
+    color: white;
+    margin-bottom: 20px;
+}
+.squeeze-header h1 { font-size: 1.5rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 10px; }
+.squeeze-header .version { background: rgba(255,255,255,0.2); padding: 2px 10px; border-radius: 20px; font-size: 0.75rem; }
+
+/* === METRIC CARDS === */
+.metric-card {
+    background: white;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    transition: transform 0.2s;
+}
+.metric-card:hover { transform: translateY(-2px); }
+.metric-card .value { font-size: 2rem; font-weight: 700; color: #dc2626; }
+.metric-card .label { font-size: 0.75rem; color: #6b7280; margin-top: 4px; }
+.metric-card.success .value { color: #16a34a; }
+.metric-card.warning .value { color: #f59e0b; }
+
+/* === SETTINGS CARD === */
+.settings-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    overflow: hidden;
+}
+.settings-header {
+    background: #f8fafc;
+    padding: 12px 16px;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    border-bottom: 1px solid #e5e7eb;
+}
+.settings-body { padding: 16px; }
+
+/* === HEATMAP TABLE === */
+.heatmap-container {
+    overflow-x: auto;
+    max-height: 600px;
+    overflow-y: auto;
+}
+.heatmap-table {
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+.heatmap-table th {
+    background: #f8fafc;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.heatmap-table td { vertical-align: middle; }
+.heatmap-table tr:hover { background: #f8fafc; }
+
+/* K Value Cells */
+.k-cell {
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: 6px;
+    text-align: center;
+}
+.k-cell.extreme { background: #dc2626; color: white; }
+.k-cell.high { background: #f97316; color: white; }
+.k-cell.medium { background: #fbbf24; color: #78350f; }
+.k-cell.low { background: #fef3c7; color: #92400e; }
+.k-cell.neutral { background: #f3f4f6; color: #6b7280; }
+
+/* Phase badges */
+.phase-badge { padding: 3px 8px; border-radius: 20px; font-size: 0.65rem; font-weight: 600; }
+.phase-badge.WATCHING { background: #e5e7eb; color: #4b5563; }
+.phase-badge.ACCUMULATING { background: #fef3c7; color: #92400e; }
+.phase-badge.SQUEEZE_READY { background: #fee2e2; color: #991b1b; animation: pulse 1s infinite; }
+.phase-badge.TRIGGERED { background: #dcfce7; color: #166534; }
+
+/* Direction badges */
+.dir-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600; }
+.dir-badge.LONG { background: #dcfce7; color: #166534; }
+.dir-badge.SHORT { background: #fee2e2; color: #991b1b; }
+.dir-badge.UNKNOWN { background: #f3f4f6; color: #6b7280; }
+
+/* Funding badge */
+.funding-badge { padding: 2px 6px; border-radius: 8px; font-size: 0.65rem; }
+.funding-badge.positive { background: #fee2e2; color: #991b1b; }
+.funding-badge.negative { background: #dcfce7; color: #166534; }
+.funding-badge.neutral { background: #f3f4f6; color: #6b7280; }
+
+/* === CONTROLS === */
+.control-btn {
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-weight: 600;
+    transition: all 0.2s;
+    border: none;
+}
+.control-btn.primary {
+    background: linear-gradient(135deg, #dc2626, #991b1b);
+    color: white;
+}
+.control-btn.primary:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4); }
+.control-btn.success { background: linear-gradient(135deg, #16a34a, #15803d); color: white; }
+.control-btn.warning { background: linear-gradient(135deg, #f59e0b, #d97706); color: white; }
+.control-btn:disabled { opacity: 0.6; transform: none; }
+
+/* === STATUS INDICATORS === */
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+}
+.status-indicator.active {
+    background: linear-gradient(135deg, #16a34a, #15803d);
+    color: white;
+    animation: pulse 2s infinite;
+}
+.status-indicator.inactive { background: #f3f4f6; color: #6b7280; }
+.status-indicator .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+/* === LIVE LOG === */
+.live-log {
+    background: #1e1e2e;
+    border-radius: 12px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.75rem;
+    max-height: 250px;
+    overflow-y: auto;
+}
+.live-log .header {
+    background: #2d2d3d;
+    padding: 10px 16px;
+    color: #dc2626;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    display: flex;
+    justify-content: space-between;
+}
+.live-log .entry {
+    padding: 6px 16px;
+    border-bottom: 1px solid #2d2d3d;
+    color: #e5e7eb;
+}
+.live-log .entry.signal { color: #22c55e; }
+.live-log .entry.warning { color: #f59e0b; }
+.live-log .entry.error { color: #ef4444; }
+
+/* === TOGGLE SWITCH === */
+.toggle-switch { position: relative; width: 48px; height: 24px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #e5e7eb;
+    transition: 0.3s;
+    border-radius: 24px;
+}
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px; width: 18px;
+    left: 3px; bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+input:checked + .toggle-slider { background: linear-gradient(135deg, #dc2626, #991b1b); }
+input:checked + .toggle-slider:before { transform: translateX(24px); }
+
+/* === ANIMATIONS === */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
+/* === EMPTY STATE === */
+.empty-state { text-align: center; padding: 40px; color: #9ca3af; }
+.empty-state i { font-size: 3rem; margin-bottom: 10px; }
+
+/* === PROGRESS === */
+.progress-bar {
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    overflow: hidden;
+}
+.progress-bar .fill {
+    height: 100%;
+    background: linear-gradient(90deg, #dc2626, #991b1b);
+    transition: width 0.3s;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-3">
+    
+    <!-- Header -->
+    <div class="squeeze-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h1>
+                    🎯 Squeeze Detector
+                    <span class="version">v1.0</span>
+                </h1>
+                <small class="opacity-75">Виявлення прихованого накопичення • K = ΔOI / ΔPrice • Heatmap</small>
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+                <div id="recordingStatus" class="status-indicator {{ 'active' if status.recording else 'inactive' }}">
+                    <span class="dot"></span>
+                    <span id="recordingText">{{ 'RECORDING' if status.recording else 'STOPPED' }}</span>
+                </div>
+                <button class="control-btn primary" onclick="runScan()" id="scanBtn">
+                    <i class="ri-radar-line me-1"></i> SCAN
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Left Column - Controls -->
+        <div class="col-lg-3">
+            
+            <!-- Metrics -->
+            <div class="row g-2 mb-3">
+                <div class="col-6">
+                    <div class="metric-card">
+                        <div class="value" id="symbolsCount">{{ status.monitored_symbols }}</div>
+                        <div class="label">Symbols</div>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="metric-card warning">
+                        <div class="value" id="watchlistCount">0</div>
+                        <div class="label">Watchlist</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Recording Control -->
+            <div class="settings-card mb-3">
+                <div class="settings-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <span class="fw-bold">📹 Recording</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="recordingToggle" {{ 'checked' if status.recording }} onchange="toggleRecording()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="fw-bold">🔍 Analyzing</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="analyzingToggle" {{ 'checked' if status.analyzing }} onchange="toggleAnalyzing()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Filters -->
+            <div class="settings-card mb-3">
+                <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">
+                    <span><i class="ri-filter-3-line me-2"></i>Filters</span>
+                    <i class="ri-arrow-down-s-line"></i>
+                </div>
+                <div class="collapse show" id="filtersCollapse">
+                    <div class="settings-body">
+                        <div class="mb-3">
+                            <label class="form-label small">Top Coins</label>
+                            <select class="form-select form-select-sm" id="topCoins">
+                                <option value="50">Top 50</option>
+                                <option value="100" selected>Top 100</option>
+                                <option value="150">Top 150</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">Min Volume 24h</label>
+                            <select class="form-select form-select-sm" id="minVolume">
+                                <option value="1000000">$1M</option>
+                                <option value="5000000" selected>$5M</option>
+                                <option value="10000000">$10M</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">K Threshold</label>
+                            <input type="number" class="form-control form-control-sm" id="kThreshold" value="{{ config.sd_k_coefficient_threshold|default(3) }}" step="0.5" min="1">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">Price Flat % (4h)</label>
+                            <input type="number" class="form-control form-control-sm" id="priceThreshold" value="{{ config.sd_price_change_threshold|default(2) }}" step="0.5" min="0.5">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">OI Change % (4h)</label>
+                            <input type="number" class="form-control form-control-sm" id="oiThreshold" value="{{ config.sd_oi_change_threshold|default(5) }}" step="0.5" min="1">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Buttons -->
+            <div class="d-grid gap-2 mb-3">
+                <button class="control-btn success" onclick="saveConfig()">
+                    <i class="ri-save-line me-1"></i> Save Settings
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="refreshSymbols()">
+                    <i class="ri-refresh-line me-1"></i> Refresh Symbols
+                </button>
+                <button class="btn btn-outline-danger btn-sm" onclick="clearWatchlist()">
+                    <i class="ri-delete-bin-line me-1"></i> Clear Watchlist
+                </button>
+            </div>
+            
+            <!-- Legend -->
+            <div class="settings-card">
+                <div class="settings-header">
+                    <span><i class="ri-information-line me-2"></i>K Coefficient Legend</span>
+                </div>
+                <div class="settings-body">
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <span class="k-cell extreme" style="min-width: 50px;">10+</span>
+                        <small>Extreme - Гарантована аномалія</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <span class="k-cell high" style="min-width: 50px;">5-10</span>
+                        <small>High - Сильне накопичення</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <span class="k-cell medium" style="min-width: 50px;">3-5</span>
+                        <small>Medium - Початок накопичення</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="k-cell low" style="min-width: 50px;">&lt;3</span>
+                        <small>Low - Норма</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Column - Heatmap -->
+        <div class="col-lg-9">
+            
+            <!-- Live Log -->
+            <div class="live-log mb-3">
+                <div class="header">
+                    <span>📡 Activity Log</span>
+                    <small id="lastUpdate">--:--:--</small>
+                </div>
+                <div id="logEntries">
+                    <div class="entry">Waiting for scan...</div>
+                </div>
+            </div>
+            
+            <!-- Heatmap Table -->
+            <div class="settings-card">
+                <div class="settings-header">
+                    <span><i class="ri-fire-line me-2"></i>Heatmap - K Coefficient</span>
+                    <span class="badge bg-secondary" id="heatmapCount">0</span>
+                </div>
+                <div class="heatmap-container">
+                    <table class="table heatmap-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Phase</th>
+                                <th>K (4h)</th>
+                                <th>K (8h)</th>
+                                <th>K (24h)</th>
+                                <th>Price Δ 4h</th>
+                                <th>OI Δ 4h</th>
+                                <th>Funding</th>
+                                <th>Direction</th>
+                                <th>Confidence</th>
+                            </tr>
+                        </thead>
+                        <tbody id="heatmapBody">
+                            <tr>
+                                <td colspan="10" class="empty-state">
+                                    <i class="ri-radar-line d-block"></i>
+                                    <div>No data yet</div>
+                                    <small class="text-muted">Click SCAN to analyze</small>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Watchlist -->
+            <div class="settings-card mt-3">
+                <div class="settings-header">
+                    <span><i class="ri-eye-line me-2"></i>Active Watchlist</span>
+                    <span class="badge bg-warning" id="watchlistBadge">0</span>
+                </div>
+                <div class="heatmap-container" style="max-height: 300px;">
+                    <table class="table heatmap-table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Phase</th>
+                                <th>Signals</th>
+                                <th>Current K</th>
+                                <th>OI Δ Total</th>
+                                <th>Price Δ Total</th>
+                                <th>Direction</th>
+                                <th>Added</th>
+                            </tr>
+                        </thead>
+                        <tbody id="watchlistBody">
+                            <tr>
+                                <td colspan="8" class="empty-state">
+                                    <div>No items in watchlist</div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const csrfToken = '{{ csrf_token() if csrf_token is defined else "" }}';
+let pollInterval = null;
+
+// === API CALLS ===
+
+async function apiCall(endpoint, method = 'GET', data = null) {
+    const options = {
+        method,
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }
+    };
+    if (data) options.body = JSON.stringify(data);
+    
+    const response = await fetch(`/squeeze/api/${endpoint}`, options);
+    return response.json();
+}
+
+// === ACTIONS ===
+
+async function runScan() {
+    const btn = document.getElementById('scanBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="ri-loader-4-line ri-spin me-1"></i> Scanning...';
+    
+    addLog('🔍 Starting scan...');
+    
+    try {
+        const result = await apiCall('scan', 'POST');
+        
+        addLog(`✅ Scan complete: ${result.signals_found || 0} signals found`, 'signal');
+        
+        if (result.top_k && result.top_k.length > 0) {
+            result.top_k.slice(0, 5).forEach(r => {
+                if ((r.k_coefficient || 0) > 3) {
+                    addLog(`🎯 ${r.symbol}: K=${safeFixed(r.k_coefficient, 1)} | OI: ${safeFixed(r.oi_change_pct, 1)}% | Price: ${safeFixed(r.price_change_pct, 1)}%`, 'signal');
+                }
+            });
+        }
+        
+        loadHeatmap();
+        loadWatchlist();
+        loadStatus();
+        
+    } catch (e) {
+        addLog(`❌ Scan error: ${e.message}`, 'error');
+    }
+    
+    btn.disabled = false;
+    btn.innerHTML = '<i class="ri-radar-line me-1"></i> SCAN';
+}
+
+async function toggleRecording() {
+    const checked = document.getElementById('recordingToggle').checked;
+    await apiCall('recording', 'POST', { [checked ? 'start' : 'stop']: true });
+    loadStatus();
+    addLog(checked ? '📹 Recording started' : '⏹️ Recording stopped');
+}
+
+async function toggleAnalyzing() {
+    const checked = document.getElementById('analyzingToggle').checked;
+    await apiCall('analyzing', 'POST', { [checked ? 'start' : 'stop']: true });
+    loadStatus();
+    addLog(checked ? '🔍 Analyzing started' : '⏹️ Analyzing stopped');
+}
+
+async function saveConfig() {
+    const config = {
+        sd_top_coins: parseInt(document.getElementById('topCoins').value),
+        sd_min_volume_24h: parseInt(document.getElementById('minVolume').value),
+        sd_k_coefficient_threshold: parseFloat(document.getElementById('kThreshold').value),
+        sd_price_change_threshold: parseFloat(document.getElementById('priceThreshold').value),
+        sd_oi_change_threshold: parseFloat(document.getElementById('oiThreshold').value),
+    };
+    
+    await apiCall('config', 'POST', config);
+    addLog('💾 Settings saved');
+    
+    // Button feedback
+    const btn = document.querySelector('.control-btn.success');
+    btn.innerHTML = '<i class="ri-check-line me-1"></i> Saved!';
+    setTimeout(() => btn.innerHTML = '<i class="ri-save-line me-1"></i> Save Settings', 2000);
+}
+
+async function refreshSymbols() {
+    addLog('📋 Refreshing symbols...');
+    const result = await apiCall('symbols');
+    document.getElementById('symbolsCount').textContent = result.count;
+    addLog(`✅ Loaded ${result.count} symbols`);
+}
+
+async function clearWatchlist() {
+    if (!confirm('Clear all watchlist items?')) return;
+    await apiCall('clear', 'POST');
+    loadWatchlist();
+    addLog('🗑️ Watchlist cleared');
+}
+
+// === DATA LOADING ===
+
+async function loadStatus() {
+    const status = await apiCall('status');
+    
+    document.getElementById('symbolsCount').textContent = status.monitored_symbols || 0;
+    
+    const recStatus = document.getElementById('recordingStatus');
+    const recText = document.getElementById('recordingText');
+    if (status.recording) {
+        recStatus.className = 'status-indicator active';
+        recText.textContent = 'RECORDING';
+    } else {
+        recStatus.className = 'status-indicator inactive';
+        recText.textContent = 'STOPPED';
+    }
+    
+    document.getElementById('recordingToggle').checked = status.recording;
+    document.getElementById('analyzingToggle').checked = status.analyzing;
+}
+
+// Safe toFixed helper
+function safeFixed(val, decimals = 2) {
+    if (val === null || val === undefined || isNaN(val)) return '0';
+    return Number(val).toFixed(decimals);
+}
+
+async function loadHeatmap() {
+    const data = await apiCall('heatmap');
+    const tbody = document.getElementById('heatmapBody');
+    document.getElementById('heatmapCount').textContent = data.length;
+    
+    if (data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" class="empty-state"><i class="ri-radar-line d-block"></i><div>No data yet</div></td></tr>`;
+        return;
+    }
+    
+    tbody.innerHTML = data.map(r => `
+        <tr class="${r.in_watchlist ? 'table-warning' : ''}">
+            <td><strong>${r.symbol}</strong></td>
+            <td>${r.in_watchlist ? `<span class="phase-badge ${r.phase}">${r.phase}</span>` : '-'}</td>
+            <td><span class="k-cell ${getKClass(r.k_4h || 0)}">${safeFixed(r.k_4h, 1)}</span></td>
+            <td><span class="k-cell ${getKClass(r.k_8h || 0)}">${safeFixed(r.k_8h, 1)}</span></td>
+            <td><span class="k-cell ${getKClass(r.k_24h || 0)}">${safeFixed(r.k_24h, 1)}</span></td>
+            <td class="${(r.price_change_4h || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(r.price_change_4h)}%</td>
+            <td class="${(r.oi_change_4h || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(r.oi_change_4h)}%</td>
+            <td><span class="funding-badge ${getFundingClass(r.funding_rate || 0)}">${safeFixed(r.funding_rate, 4)}%</span></td>
+            <td><span class="dir-badge ${r.direction || 'UNKNOWN'}">${r.direction || 'UNKNOWN'}</span></td>
+            <td>${r.confidence || 0}%</td>
+        </tr>
+    `).join('');
+}
+
+async function loadWatchlist() {
+    const data = await apiCall('watchlist');
+    const tbody = document.getElementById('watchlistBody');
+    document.getElementById('watchlistBadge').textContent = data.length;
+    document.getElementById('watchlistCount').textContent = data.length;
+    
+    if (data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div>No items in watchlist</div></td></tr>`;
+        return;
+    }
+    
+    tbody.innerHTML = data.map(w => `
+        <tr>
+            <td><strong>${w.symbol}</strong></td>
+            <td><span class="phase-badge ${w.phase || 'WATCHING'}">${w.phase || 'WATCHING'}</span></td>
+            <td>${w.consecutive_signals || 0} / ${w.total_signals || 0}</td>
+            <td><span class="k-cell ${getKClass(w.current_k || 0)}">${safeFixed(w.current_k, 1)}</span></td>
+            <td class="${(w.total_oi_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(w.total_oi_change_pct)}%</td>
+            <td class="${(w.total_price_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(w.total_price_change_pct)}%</td>
+            <td><span class="dir-badge ${w.direction || 'UNKNOWN'}">${w.direction || 'UNKNOWN'}</span></td>
+            <td class="small text-muted">${w.added_at ? new Date(w.added_at).toLocaleString() : '-'}</td>
+        </tr>
+    `).join('');
+}
+
+// === HELPERS ===
+
+function getKClass(k) {
+    if (k >= 10) return 'extreme';
+    if (k >= 5) return 'high';
+    if (k >= 3) return 'medium';
+    if (k >= 1) return 'low';
+    return 'neutral';
+}
+
+function getFundingClass(rate) {
+    if (rate > 0.01) return 'positive';
+    if (rate < -0.01) return 'negative';
+    return 'neutral';
+}
+
+function addLog(message, type = 'info') {
+    const container = document.getElementById('logEntries');
+    const entry = document.createElement('div');
+    entry.className = `entry ${type}`;
+    entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+    container.insertBefore(entry, container.firstChild);
+    
+    // Keep max 50 entries
+    while (container.children.length > 50) {
+        container.removeChild(container.lastChild);
+    }
+    
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+}
+
+// === INIT ===
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadStatus();
+    loadHeatmap();
+    loadWatchlist();
+    
+    // Auto-refresh every 30 seconds if recording
+    pollInterval = setInterval(() => {
+        if (document.getElementById('recordingToggle').checked) {
+            loadHeatmap();
+            loadWatchlist();
+        }
+    }, 30000);
+});
+</script>
+{% endblock %}
