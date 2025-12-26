@@ -155,6 +155,13 @@ class AnalysisResult:
     # Сигнал
     has_signal: bool = False
     signal_type: str = None
+    
+    # === BIAS + CONFIRMATION ===
+    bias_score: float = 0.0         # Загальний score (-5 to +5)
+    bias_direction: str = "NEUTRAL" # LONG / SHORT / NEUTRAL
+    bias_confidence: int = 50       # 0-100%
+    
+    # Legacy (для сумісності)
     direction: str = "UNKNOWN"
     confidence: int = 0
     
@@ -179,6 +186,9 @@ class AnalysisResult:
             'is_accumulating': self.is_accumulating,
             'has_signal': self.has_signal,
             'signal_type': self.signal_type,
+            'bias_score': round(self.bias_score, 2),
+            'bias_direction': self.bias_direction,
+            'bias_confidence': self.bias_confidence,
             'direction': self.direction,
             'confidence': self.confidence,
         }
@@ -206,6 +216,14 @@ class HeatmapEntry:
     volume_24h: float = 0.0
     
     phase: str = "NONE"
+    
+    # === BIAS + CONFIRMATION ===
+    bias_score: float = 0.0
+    bias_direction: str = "NEUTRAL"  # LONG / SHORT / NEUTRAL
+    bias_confidence: int = 50        # 0-100%
+    confirmation_status: str = "PENDING"  # PENDING / CONFIRMED / DIVERGENCE
+    
+    # Legacy
     direction: str = "UNKNOWN"
     confidence: int = 0
     
@@ -229,6 +247,10 @@ class HeatmapEntry:
             'current_price': self.current_price,
             'volume_24h': self.volume_24h,
             'phase': self.phase,
+            'bias_score': round(self.bias_score, 2),
+            'bias_direction': self.bias_direction,
+            'bias_confidence': self.bias_confidence,
+            'confirmation_status': self.confirmation_status,
             'direction': self.direction,
             'confidence': self.confidence,
             'in_watchlist': self.in_watchlist,
@@ -373,33 +395,70 @@ class SqueezeAnalyzer:
             
             has_signal = is_squeeze and is_accumulating and k_coefficient >= k_threshold
             
-            # Визначаємо напрямок
-            direction = "UNKNOWN"
-            if has_signal:
-                if funding_bias == "LONG":
-                    direction = "LONG"
-                elif funding_bias == "SHORT":
-                    direction = "SHORT"
-                else:
-                    # Якщо funding нейтральний, дивимось на OI trend
-                    direction = "LONG" if oi_change > 0 else "SHORT"
+            # === BIAS CALCULATION (Варіант C) ===
+            bias_score = 0.0
             
-            # Confidence score
-            confidence = self._get('sd_base_confidence', 50)
-            if has_signal:
-                # +5 за кожен K понад threshold
-                k_bonus = int((k_coefficient - k_threshold) * self._get('sd_k_confidence_multiplier', 5))
-                confidence += min(k_bonus, 30)  # Max +30
-                
-                # +15 якщо funding extreme
-                if funding_bias in ["LONG", "SHORT"]:
-                    confidence += self._get('sd_funding_confidence_bonus', 15)
-                
-                # +10 якщо Combined (обидва фільтри спрацювали)
-                if analysis_method == 'combined' and is_flat and is_low_volatility:
-                    confidence += 10
-                
-                confidence = min(confidence, 100)
+            # Фактор 1: OI + Price комбінація
+            price_is_flat_or_down = price_change <= price_threshold
+            price_is_up = price_change > price_threshold
+            oi_is_up = oi_change > 0
+            oi_is_down = oi_change <= 0
+            
+            if oi_is_up and price_is_flat_or_down:
+                # Шорти накопичуються, але ціна не падає → Short trap → LONG
+                bias_score += 2.0
+            elif oi_is_up and price_is_up:
+                # Лонги накопичуються → Ризик long squeeze → SHORT
+                bias_score -= 1.0
+            elif oi_is_down and price_is_up:
+                # Short covering → Продовження росту → LONG
+                bias_score += 1.0
+            elif oi_is_down and not price_is_up:
+                # Long liquidation → Продовження падіння → SHORT
+                bias_score -= 1.0
+            
+            # Фактор 2: Funding Rate
+            funding_extreme_threshold = 0.0005  # 0.05%
+            if funding_rate < -funding_extreme_threshold:
+                # Екстремально негативний → Short squeeze → LONG
+                bias_score += 1.5
+            elif funding_rate > funding_extreme_threshold:
+                # Екстремально позитивний → Long squeeze → SHORT
+                bias_score -= 1.5
+            
+            # Фактор 3: K-coefficient boost
+            if k_coefficient > k_threshold * 1.5:
+                # Дуже високий K підсилює bias
+                if bias_score > 0:
+                    bias_score += 0.5
+                elif bias_score < 0:
+                    bias_score -= 0.5
+            
+            # Визначаємо Bias Direction та Confidence
+            if bias_score >= 1.0:
+                bias_direction = "LONG"
+            elif bias_score <= -1.0:
+                bias_direction = "SHORT"
+            else:
+                bias_direction = "NEUTRAL"
+            
+            # Bias Confidence: конвертуємо score в %
+            # Score від -3.5 до +3.5, конвертуємо в 50-95%
+            abs_score = abs(bias_score)
+            if abs_score >= 3.0:
+                bias_confidence = 95
+            elif abs_score >= 2.0:
+                bias_confidence = 80
+            elif abs_score >= 1.0:
+                bias_confidence = 65
+            else:
+                bias_confidence = 50
+            
+            # Legacy direction (для сумісності)
+            direction = bias_direction if bias_direction != "NEUTRAL" else "UNKNOWN"
+            
+            # Legacy confidence
+            confidence = bias_confidence if has_signal else 50
             
             # Signal type
             signal_type = None
@@ -423,6 +482,9 @@ class SqueezeAnalyzer:
                 is_accumulating=is_accumulating,
                 has_signal=has_signal,
                 signal_type=signal_type,
+                bias_score=bias_score,
+                bias_direction=bias_direction,
+                bias_confidence=bias_confidence,
                 direction=direction,
                 confidence=confidence,
                 raw_data={
@@ -436,6 +498,7 @@ class SqueezeAnalyzer:
                     'min_price': min_price if prices else None,
                     'max_price': max_price if prices else None,
                     'analysis_method': analysis_method,
+                    'bias_score': bias_score,
                 }
             )
             
@@ -511,6 +574,11 @@ class SqueezeAnalyzer:
                                 entry.current_price = result.current_price
                                 entry.funding_rate = result.funding_rate
                                 entry.funding_bias = result.funding_bias
+                                # === BIAS DATA ===
+                                entry.bias_score = result.bias_score
+                                entry.bias_direction = result.bias_direction
+                                entry.bias_confidence = result.bias_confidence
+                                # Legacy
                                 entry.direction = result.direction
                                 entry.confidence = result.confidence
                             elif hours == 8:
@@ -523,13 +591,42 @@ class SqueezeAnalyzer:
                     # Max K
                     entry.k_max = max(entry.k_4h, entry.k_8h, entry.k_24h)
                     
-                    # Watchlist info
+                    # Watchlist info + Confirmation
                     if symbol in watchlist_dict:
                         wl = watchlist_dict[symbol]
                         entry.in_watchlist = True
                         entry.phase = wl.phase
                         entry.consecutive_signals = wl.consecutive_signals
-                        entry.direction = wl.direction or entry.direction
+                        
+                        # Використовуємо bias з watchlist якщо є
+                        if wl.direction:
+                            entry.bias_direction = wl.direction
+                        
+                        # === CONFIRMATION LOGIC ===
+                        if wl.phase == "TRIGGERED":
+                            # Визначаємо Confirmation на основі breakout напрямку
+                            breakout_price_change = entry.price_change_4h
+                            
+                            if entry.bias_direction == "LONG":
+                                if breakout_price_change > 0:
+                                    entry.confirmation_status = "CONFIRMED"
+                                    entry.direction = "LONG"
+                                else:
+                                    entry.confirmation_status = "DIVERGENCE"
+                                    entry.direction = "SHORT"  # Фактичний напрямок
+                            elif entry.bias_direction == "SHORT":
+                                if breakout_price_change < 0:
+                                    entry.confirmation_status = "CONFIRMED"
+                                    entry.direction = "SHORT"
+                                else:
+                                    entry.confirmation_status = "DIVERGENCE"
+                                    entry.direction = "LONG"  # Фактичний напрямок
+                            else:
+                                # Neutral bias - визначаємо по факту
+                                entry.direction = "LONG" if breakout_price_change > 0 else "SHORT"
+                                entry.confirmation_status = "CONFIRMED"
+                        else:
+                            entry.confirmation_status = "PENDING"
                     
                     heatmap.append(entry)
                     
@@ -600,9 +697,9 @@ class SqueezeAnalyzer:
                         if wl.entry_price and wl.entry_price > 0:
                             wl.total_price_change_pct = ((wl.current_price or 0) - wl.entry_price) / wl.entry_price * 100
                         
-                        # Direction
-                        wl.direction = result.direction
-                        wl.direction_confidence = result.confidence
+                        # Direction - використовуємо bias_direction
+                        wl.direction = result.bias_direction if result.bias_direction != "NEUTRAL" else result.direction
+                        wl.direction_confidence = result.bias_confidence
                         wl.funding_bias = result.funding_bias
                         
                         # Фаза
@@ -658,8 +755,8 @@ class SqueezeAnalyzer:
                             current_price=result.current_price,
                             current_oi=result.current_oi,
                             current_k=result.k_coefficient,
-                            direction=result.direction,
-                            direction_confidence=result.confidence,
+                            direction=result.bias_direction if result.bias_direction != "NEUTRAL" else result.direction,
+                            direction_confidence=result.bias_confidence,
                             funding_bias=result.funding_bias,
                         )
                         session.add(wl)
@@ -672,7 +769,7 @@ class SqueezeAnalyzer:
                     signal = SqueezeSignal(
                         symbol=result.symbol,
                         signal_type=result.signal_type,
-                        direction=result.direction,
+                        direction=result.bias_direction if result.bias_direction != "NEUTRAL" else result.direction,
                         k_coefficient=result.k_coefficient,
                         price_change_pct=result.price_change_pct,
                         oi_change_pct=result.oi_change_pct,
@@ -681,8 +778,8 @@ class SqueezeAnalyzer:
                         price_at_signal=result.current_price,
                         oi_at_signal=result.current_oi,
                         lookback_hours=result.lookback_hours,
-                        confidence=result.confidence,
-                        raw_data=json.dumps(result.raw_data),
+                        confidence=result.bias_confidence,
+                        raw_data=json.dumps({**result.raw_data, 'bias_score': result.bias_score}),
                     )
                     session.add(signal)
                     self.stats['signals_generated'] += 1
