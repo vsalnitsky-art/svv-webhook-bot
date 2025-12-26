@@ -478,7 +478,7 @@ input:checked + .toggle-slider:before {
             <div class="settings-body">
                 <div class="d-flex align-items-center gap-2">
                     <label class="small fw-bold mb-0">Interval:</label>
-                    <select class="form-select form-select-sm" id="scanInterval" style="width: 100px;">
+                    <select class="form-select form-select-sm" id="scanInterval" style="width: 100px;" onchange="autoSave()">
                         <option value="1" {{ 'selected' if config.rsp_scan_interval == 1 }}>1 min</option>
                         <option value="5" {{ 'selected' if config.rsp_scan_interval == 5 }}>5 min</option>
                         <option value="15" {{ 'selected' if config.rsp_scan_interval == 15 }}>15 min</option>
