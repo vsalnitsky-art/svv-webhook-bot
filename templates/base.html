@@ -27,6 +27,12 @@
             position: fixed; top: 0; left: 0; height: 100vh; z-index: 1000;
             transition: width var(--transition-speed) ease; display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--shadow-sm);
         }
+        .sidebar-nav {
+            overflow-y: auto; overflow-x: hidden; flex: 1; min-height: 0;
+        }
+        .sidebar-nav::-webkit-scrollbar { width: 4px; }
+        .sidebar-nav::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+        .sidebar-nav::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
         body.sidebar-collapsed #sidebar { width: var(--sidebar-collapsed-width); }
         .nav-label, .logo-text { opacity: 1; transition: opacity 0.1s ease; white-space: nowrap; }
         body.sidebar-collapsed .nav-label, body.sidebar-collapsed .logo-text { opacity: 0; pointer-events: none; display: none; }
@@ -72,7 +78,7 @@
         </div>
     </div>
 
-    <div class="py-4 flex-grow-1">
+    <div class="py-4 flex-grow-1 sidebar-nav">
         <ul class="list-unstyled mb-0">
             <li><a href="/" class="nav-link {{ 'active' if request.path == '/' }}"><i class="ri-layout-grid-line nav-icon"></i><span class="nav-label">Огляд</span></a></li>
             
