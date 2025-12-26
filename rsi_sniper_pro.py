@@ -976,9 +976,18 @@ class RSISniperPro:
     def save_config(self, data: Dict):
         """Зберігає конфігурацію"""
         if HAS_SETTINGS and settings is not None:
+            # Зберігаємо старий інтервал для порівняння
+            old_interval = self._load_config().get('rsp_scan_interval', 1)
+            
             settings.save_settings(data)
             self.signal_generator.update_config(self._load_config())
             logger.info("✅ Config saved")
+            
+            # Перезапускаємо auto_mode якщо змінився інтервал і він активний
+            new_interval = data.get('rsp_scan_interval')
+            if new_interval is not None and new_interval != old_interval and self.auto_running:
+                logger.info(f"🔄 Interval changed {old_interval} -> {new_interval}, restarting auto mode")
+                self.start_auto_mode(int(new_interval))
     
     def get_status(self) -> Dict:
         """Повертає статус"""
@@ -1488,8 +1497,13 @@ class RSISniperPro:
     
     def start_auto_mode(self, interval: int = 1):
         """Запускає авто-режим"""
+        # Якщо вже запущено - перезапускаємо з новим інтервалом
         if self.auto_running:
-            return
+            logger.info(f"🔄 Restarting auto mode with new interval: {interval} min")
+            self.stop_auto_mode()
+            # Чекаємо поки потік завершиться
+            if self._auto_thread and self._auto_thread.is_alive():
+                self._auto_thread.join(timeout=5)
         
         self.auto_running = True
         self._auto_thread = threading.Thread(target=self._auto_loop, args=(interval,), daemon=True)
