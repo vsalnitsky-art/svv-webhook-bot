@@ -791,7 +791,8 @@ class DataRecorder:
     
     def set_symbols(self, symbols: List[str]):
         """Встановлює список символів для моніторингу"""
-        self.monitored_symbols = symbols[:100]  # Max 100
+        # Підтримуємо до 500 монет (для Aggressive mode 400)
+        self.monitored_symbols = symbols[:500]
         logger.info(f"📋 Monitoring {len(self.monitored_symbols)} symbols")
         
         # Перезапускаємо WebSocket якщо активний
@@ -802,7 +803,7 @@ class DataRecorder:
         if self.use_websocket and self.monitored_symbols:
             self._start_websocket()
     
-    def update_symbols_from_api(self, min_volume: float = 5_000_000, limit: int = 100):
+    def update_symbols_from_api(self, min_volume: float = 5_000_000, limit: int = 400):
         """Оновлює список символів з API"""
         symbols_data = self.rest_client.get_usdt_perpetuals(min_volume)
         symbols = [s['symbol'] for s in symbols_data[:limit]]
