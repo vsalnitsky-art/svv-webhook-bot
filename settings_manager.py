@@ -457,8 +457,12 @@ DEFAULT_SETTINGS = {
     "sd_analysis_interval": 60,       # 1 min
     "sd_min_volume_24h": 1000000,     # $1M
     
-    # Thresholds (трохи м'якші для aggressive)
-    "sd_price_change_threshold": 2.5,  # max price change %
+    # Analysis Method: net_change | volatility_range | combined
+    "sd_analysis_method": "combined", # Recommended
+    
+    # Thresholds
+    "sd_price_change_threshold": 2.5,  # Net Change: max price change %
+    "sd_volatility_threshold": 4.0,    # Range: max (high-low) % за період
     "sd_oi_change_threshold": 4.0,     # min OI change %
     "sd_k_coefficient_threshold": 2.5, # min K coefficient
     
