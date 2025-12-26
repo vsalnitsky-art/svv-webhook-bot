@@ -330,6 +330,36 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                 </div>
             </div>
             
+            <!-- Analysis Method -->
+            <div class="settings-card mb-3">
+                <div class="settings-header">
+                    <span><i class="ri-compass-3-line me-2"></i>Analysis Method</span>
+                </div>
+                <div class="settings-body">
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="radio" name="analysisMethod" id="methodNetChange" value="net_change" onchange="onMethodChange()">
+                        <label class="form-check-label small" for="methodNetChange">
+                            <strong>Net Change</strong> <span class="text-muted">(Classic)</span>
+                            <div class="text-muted" style="font-size: 11px;">Порівнює першу і останню точку</div>
+                        </label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="radio" name="analysisMethod" id="methodVolatility" value="volatility_range" onchange="onMethodChange()">
+                        <label class="form-check-label small" for="methodVolatility">
+                            <strong>Volatility Range</strong> <span class="text-muted">(Strict)</span>
+                            <div class="text-muted" style="font-size: 11px;">Перевіряє min/max за весь період</div>
+                        </label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="analysisMethod" id="methodCombined" value="combined" checked onchange="onMethodChange()">
+                        <label class="form-check-label small" for="methodCombined">
+                            <strong>Combined</strong> <span class="badge bg-success">Recommended</span>
+                            <div class="text-muted" style="font-size: 11px;">Обидва фільтри разом</div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
             <!-- Filters -->
             <div class="settings-card mb-3">
                 <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#filtersCollapse">
@@ -363,8 +393,12 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                             <input type="number" class="form-control form-control-sm" id="kThreshold" value="3" step="0.5" min="1">
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small">Price Flat % (max)</label>
+                            <label class="form-label small">Price Flat % (max) <span class="text-muted">- Net Change</span></label>
                             <input type="number" class="form-control form-control-sm" id="priceThreshold" value="2" step="0.5" min="0.5">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small">Volatility Range % (max) <span class="text-muted">- High-Low</span></label>
+                            <input type="number" class="form-control form-control-sm" id="volatilityThreshold" value="4" step="0.5" min="1">
                         </div>
                         <div class="mb-3">
                             <label class="form-label small">OI Change % (min)</label>
@@ -582,6 +616,7 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                                 <th>K (8h)</th>
                                 <th>K (24h)</th>
                                 <th>Price Δ 4h</th>
+                                <th>Range %</th>
                                 <th>OI Δ 4h</th>
                                 <th>Funding</th>
                                 <th>Direction</th>
@@ -590,7 +625,7 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                         </thead>
                         <tbody id="heatmapBody">
                             <tr>
-                                <td colspan="10" class="empty-state">
+                                <td colspan="11" class="empty-state">
                                     <i class="ri-radar-line d-block"></i>
                                     <div>No data yet</div>
                                     <small class="text-muted">Click SCAN to analyze</small>
@@ -618,8 +653,9 @@ const PRESETS = {
         sd_snapshot_interval: 300,
         sd_analysis_interval: 300,
         sd_k_coefficient_threshold: 3.0,
-        sd_price_change_threshold: 2.0,
-        sd_oi_change_threshold: 5.0,
+        sd_price_change_threshold: 1.5,
+        sd_volatility_threshold: 3.0,
+        sd_oi_change_threshold: 6.0,
     },
     balanced: {
         name: 'Balanced',
@@ -630,6 +666,7 @@ const PRESETS = {
         sd_analysis_interval: 120,
         sd_k_coefficient_threshold: 3.0,
         sd_price_change_threshold: 2.0,
+        sd_volatility_threshold: 4.0,
         sd_oi_change_threshold: 5.0,
     },
     aggressive: {
@@ -641,6 +678,7 @@ const PRESETS = {
         sd_analysis_interval: 60,
         sd_k_coefficient_threshold: 2.5,
         sd_price_change_threshold: 2.5,
+        sd_volatility_threshold: 5.0,
         sd_oi_change_threshold: 4.0,
     }
 };
@@ -656,6 +694,7 @@ async function applyPreset(presetName) {
     document.getElementById('analysisInterval').value = preset.sd_analysis_interval;
     document.getElementById('kThreshold').value = preset.sd_k_coefficient_threshold;
     document.getElementById('priceThreshold').value = preset.sd_price_change_threshold;
+    document.getElementById('volatilityThreshold').value = preset.sd_volatility_threshold;
     document.getElementById('oiThreshold').value = preset.sd_oi_change_threshold;
     
     // Update preset buttons
@@ -762,12 +801,25 @@ async function toggleAnalyzing() {
 }
 
 async function saveConfig() {
+    // Get selected analysis method
+    const methodRadios = document.getElementsByName('analysisMethod');
+    let analysisMethod = 'combined';
+    for (const radio of methodRadios) {
+        if (radio.checked) {
+            analysisMethod = radio.value;
+            break;
+        }
+    }
+    
     const config = {
+        // Analysis Method
+        sd_analysis_method: analysisMethod,
         // Filters
         sd_top_coins: parseInt(document.getElementById('topCoins').value),
         sd_min_volume_24h: parseInt(document.getElementById('minVolume').value),
         sd_k_coefficient_threshold: parseFloat(document.getElementById('kThreshold').value),
         sd_price_change_threshold: parseFloat(document.getElementById('priceThreshold').value),
+        sd_volatility_threshold: parseFloat(document.getElementById('volatilityThreshold').value),
         sd_oi_change_threshold: parseFloat(document.getElementById('oiThreshold').value),
         // Intervals
         sd_snapshot_interval: parseInt(document.getElementById('snapshotInterval').value),
@@ -802,6 +854,14 @@ async function loadConfig() {
     try {
         const config = await apiCall('config');
         
+        // Analysis Method
+        if (config.sd_analysis_method) {
+            const methodRadios = document.getElementsByName('analysisMethod');
+            for (const radio of methodRadios) {
+                radio.checked = radio.value === config.sd_analysis_method;
+            }
+        }
+        
         // Filters
         if (config.sd_top_coins) {
             document.getElementById('topCoins').value = config.sd_top_coins;
@@ -814,6 +874,9 @@ async function loadConfig() {
         }
         if (config.sd_price_change_threshold !== undefined) {
             document.getElementById('priceThreshold').value = config.sd_price_change_threshold;
+        }
+        if (config.sd_volatility_threshold !== undefined) {
+            document.getElementById('volatilityThreshold').value = config.sd_volatility_threshold;
         }
         if (config.sd_oi_change_threshold !== undefined) {
             document.getElementById('oiThreshold').value = config.sd_oi_change_threshold;
@@ -906,7 +969,7 @@ async function loadHeatmap() {
     document.getElementById('heatmapCount').textContent = data.length;
     
     if (data.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" class="empty-state"><i class="ri-radar-line d-block"></i><div>No data yet</div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="11" class="empty-state"><i class="ri-radar-line d-block"></i><div>No data yet</div></td></tr>`;
         return;
     }
     
@@ -918,6 +981,7 @@ async function loadHeatmap() {
             <td><span class="k-cell ${getKClass(r.k_8h || 0)}">${safeFixed(r.k_8h, 1)}</span></td>
             <td><span class="k-cell ${getKClass(r.k_24h || 0)}">${safeFixed(r.k_24h, 1)}</span></td>
             <td class="${(r.price_change_4h || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(r.price_change_4h)}%</td>
+            <td class="${getRangeClass(r.volatility_range_4h || 0)}">${safeFixed(r.volatility_range_4h)}%</td>
             <td class="${(r.oi_change_4h || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(r.oi_change_4h)}%</td>
             <td><span class="funding-badge ${getFundingClass(r.funding_rate || 0)}">${safeFixed(r.funding_rate, 4)}%</span></td>
             <td><span class="dir-badge ${r.direction || 'UNKNOWN'}">${r.direction || 'UNKNOWN'}</span></td>
@@ -965,6 +1029,19 @@ function getFundingClass(rate) {
     if (rate > 0.01) return 'positive';
     if (rate < -0.01) return 'negative';
     return 'neutral';
+}
+
+function getRangeClass(range) {
+    // Range % - менше = краще (спокійніша монета)
+    if (range <= 2) return 'text-success';    // Дуже спокійна
+    if (range <= 4) return 'text-warning';    // Нормальна
+    return 'text-danger';                     // Занадто волатильна
+}
+
+function onMethodChange() {
+    // Автоматично зберігаємо при зміні методу
+    saveConfig();
+    addLog('🔄 Analysis method changed');
 }
 
 function addLog(message, type = 'info') {
