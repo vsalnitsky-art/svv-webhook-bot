@@ -93,6 +93,19 @@
 .dir-badge.LONG { background: #dcfce7; color: #166534; }
 .dir-badge.SHORT { background: #fee2e2; color: #991b1b; }
 .dir-badge.UNKNOWN { background: #f3f4f6; color: #6b7280; }
+.dir-badge.NEUTRAL { background: #fef3c7; color: #92400e; }
+
+/* Bias badge з confidence */
+.bias-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600; }
+.bias-badge.LONG { background: #dcfce7; color: #166534; }
+.bias-badge.SHORT { background: #fee2e2; color: #991b1b; }
+.bias-badge.NEUTRAL { background: #fef3c7; color: #92400e; }
+
+/* Status badge */
+.status-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.65rem; font-weight: 600; }
+.status-badge.PENDING { background: #f3f4f6; color: #6b7280; }
+.status-badge.CONFIRMED { background: #dcfce7; color: #166534; animation: pulse 1s infinite; }
+.status-badge.DIVERGENCE { background: #fef3c7; color: #92400e; }
 
 /* Funding badge */
 .funding-badge { padding: 2px 6px; border-radius: 8px; font-size: 0.65rem; }
@@ -585,8 +598,8 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                                 <th>Current K</th>
                                 <th>OI Δ Total</th>
                                 <th>Price Δ Total</th>
-                                <th>Direction</th>
-                                <th>Added</th>
+                                <th>Bias</th>
+                                <th>Status</th>
                             </tr>
                         </thead>
                         <tbody id="watchlistBody">
@@ -615,12 +628,12 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                                 <th>K (4h)</th>
                                 <th>K (8h)</th>
                                 <th>K (24h)</th>
-                                <th>Price Δ 4h</th>
-                                <th>Range %</th>
-                                <th>OI Δ 4h</th>
+                                <th>Price Δ</th>
+                                <th>OI Δ</th>
                                 <th>Funding</th>
-                                <th>Direction</th>
-                                <th>Confidence</th>
+                                <th>Bias</th>
+                                <th>Conf.</th>
+                                <th>Status</th>
                             </tr>
                         </thead>
                         <tbody id="heatmapBody">
@@ -974,18 +987,18 @@ async function loadHeatmap() {
     }
     
     tbody.innerHTML = data.map(r => `
-        <tr class="${r.in_watchlist ? 'table-warning' : ''}">
+        <tr class="${r.in_watchlist ? 'table-warning' : ''} ${r.confirmation_status === 'CONFIRMED' ? 'table-success' : ''} ${r.confirmation_status === 'DIVERGENCE' ? 'table-danger' : ''}">
             <td><strong>${r.symbol}</strong></td>
             <td>${r.in_watchlist ? `<span class="phase-badge ${r.phase}">${r.phase}</span>` : '-'}</td>
             <td><span class="k-cell ${getKClass(r.k_4h || 0)}">${safeFixed(r.k_4h, 1)}</span></td>
             <td><span class="k-cell ${getKClass(r.k_8h || 0)}">${safeFixed(r.k_8h, 1)}</span></td>
             <td><span class="k-cell ${getKClass(r.k_24h || 0)}">${safeFixed(r.k_24h, 1)}</span></td>
             <td class="${(r.price_change_4h || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(r.price_change_4h)}%</td>
-            <td class="${getRangeClass(r.volatility_range_4h || 0)}">${safeFixed(r.volatility_range_4h)}%</td>
             <td class="${(r.oi_change_4h || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(r.oi_change_4h)}%</td>
             <td><span class="funding-badge ${getFundingClass(r.funding_rate || 0)}">${safeFixed(r.funding_rate, 4)}%</span></td>
-            <td><span class="dir-badge ${r.direction || 'UNKNOWN'}">${r.direction || 'UNKNOWN'}</span></td>
-            <td>${r.confidence || 0}%</td>
+            <td><span class="bias-badge ${r.bias_direction || 'NEUTRAL'}">${r.bias_direction || 'NEUTRAL'}</span></td>
+            <td>${r.bias_confidence || 50}%</td>
+            <td>${getStatusBadge(r)}</td>
         </tr>
     `).join('');
 }
@@ -1002,15 +1015,15 @@ async function loadWatchlist() {
     }
     
     tbody.innerHTML = data.map(w => `
-        <tr>
+        <tr class="${w.phase === 'TRIGGERED' ? 'table-success' : ''}">
             <td><strong>${w.symbol}</strong></td>
             <td><span class="phase-badge ${w.phase || 'WATCHING'}">${w.phase || 'WATCHING'}</span></td>
             <td>${w.consecutive_signals || 0} / ${w.total_signals || 0}</td>
             <td><span class="k-cell ${getKClass(w.current_k || 0)}">${safeFixed(w.current_k, 1)}</span></td>
             <td class="${(w.total_oi_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(w.total_oi_change_pct)}%</td>
             <td class="${(w.total_price_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(w.total_price_change_pct)}%</td>
-            <td><span class="dir-badge ${w.direction || 'UNKNOWN'}">${w.direction || 'UNKNOWN'}</span></td>
-            <td class="small text-muted">${w.added_at ? new Date(w.added_at).toLocaleString() : '-'}</td>
+            <td><span class="bias-badge ${w.direction || 'NEUTRAL'}">${w.direction || 'NEUTRAL'} <small>${w.direction_confidence || 50}%</small></span></td>
+            <td>${getWatchlistStatusBadge(w)}</td>
         </tr>
     `).join('');
 }
@@ -1036,6 +1049,48 @@ function getRangeClass(range) {
     if (range <= 2) return 'text-success';    // Дуже спокійна
     if (range <= 4) return 'text-warning';    // Нормальна
     return 'text-danger';                     // Занадто волатильна
+}
+
+function getStatusBadge(r) {
+    // Для Heatmap
+    if (!r.in_watchlist) {
+        return '<span class="status-badge PENDING">-</span>';
+    }
+    
+    if (r.confirmation_status === 'CONFIRMED') {
+        return `<span class="status-badge CONFIRMED">✅ ${r.direction}</span>`;
+    } else if (r.confirmation_status === 'DIVERGENCE') {
+        return `<span class="status-badge DIVERGENCE">⚠️ DIV</span>`;
+    } else if (r.phase === 'SQUEEZE_READY') {
+        return '<span class="status-badge PENDING">🔥 READY</span>';
+    } else if (r.phase === 'ACCUMULATING') {
+        return '<span class="status-badge PENDING">⏳ ACC</span>';
+    } else {
+        return '<span class="status-badge PENDING">👀</span>';
+    }
+}
+
+function getWatchlistStatusBadge(w) {
+    // Для Watchlist
+    if (w.phase === 'TRIGGERED') {
+        // Перевіряємо чи співпадає напрямок
+        const priceUp = (w.total_price_change_pct || 0) > 0;
+        const biasLong = w.direction === 'LONG';
+        
+        if ((priceUp && biasLong) || (!priceUp && !biasLong && w.direction === 'SHORT')) {
+            return `<span class="status-badge CONFIRMED">✅ CONFIRMED</span>`;
+        } else if (w.direction !== 'NEUTRAL' && w.direction !== 'UNKNOWN') {
+            return `<span class="status-badge DIVERGENCE">⚠️ DIVERGENCE</span>`;
+        } else {
+            return `<span class="status-badge CONFIRMED">✅ TRIGGERED</span>`;
+        }
+    } else if (w.phase === 'SQUEEZE_READY') {
+        return '<span class="status-badge PENDING">🔥 READY</span>';
+    } else if (w.phase === 'ACCUMULATING') {
+        return '<span class="status-badge PENDING">⏳ WAITING</span>';
+    } else {
+        return '<span class="status-badge PENDING">👀 WATCH</span>';
+    }
 }
 
 function onMethodChange() {
