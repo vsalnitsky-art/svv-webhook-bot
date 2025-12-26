@@ -100,13 +100,31 @@ class SqueezeDetectorManager:
             'sd_snapshot_interval': 60,       # 1 min
             'sd_analysis_interval': 60,       # 1 min
             'sd_min_volume_24h': 1_000_000,   # $1M
+            # Analysis Method
+            'sd_analysis_method': 'combined', # net_change | volatility_range | combined
             'sd_price_change_threshold': 2.5,
+            'sd_volatility_threshold': 4.0,   # Range threshold
             'sd_oi_change_threshold': 4.0,
             'sd_k_coefficient_threshold': 2.5,
+            # Lookback
             'sd_lookback_4h': True,
             'sd_lookback_8h': True,
             'sd_lookback_24h': True,
+            # Funding
+            'sd_funding_extreme_positive': 0.0003,
+            'sd_funding_extreme_negative': -0.0003,
+            # Watchlist
+            'sd_min_consecutive_signals': 2,
+            'sd_ready_consecutive_signals': 4,
+            'sd_watchlist_timeout_hours': 48,
+            'sd_breakout_threshold': 3.0,
+            # Auto-trade
             'sd_auto_trade_enabled': False,
+            'sd_auto_trade_size_usdt': 100,
+            'sd_auto_trade_leverage': 5,
+            'sd_auto_trade_tp_percent': 10,
+            'sd_auto_trade_sl_percent': 3,
+            # Alerts
             'sd_telegram_alerts': False,
             'sd_ui_alerts': True,
         }
@@ -123,7 +141,7 @@ class SqueezeDetectorManager:
         except ImportError:
             logger.warning("settings_manager not available")
         
-        logger.info(f"📋 Config loaded: top_coins={config.get('sd_top_coins')}, interval={config.get('sd_snapshot_interval')}, min_vol={config.get('sd_min_volume_24h')}")
+        logger.info(f"📋 Config loaded: top_coins={config.get('sd_top_coins')}, interval={config.get('sd_snapshot_interval')}, min_vol={config.get('sd_min_volume_24h')}, method={config.get('sd_analysis_method')}")
         return config
     
     def _initialize(self):
