@@ -144,9 +144,13 @@ class AnalysisResult:
     # Lookback
     lookback_hours: int = 4
     
+    # Volatility
+    volatility_range_pct: float = 0.0  # (max - min) / min * 100
+    
     # Фільтри
-    is_flat: bool = False      # Ціна у флеті
-    is_accumulating: bool = False  # OI росте
+    is_flat: bool = False           # Net Change < threshold
+    is_low_volatility: bool = False # Range < threshold
+    is_accumulating: bool = False   # OI росте
     
     # Сигнал
     has_signal: bool = False
@@ -162,6 +166,7 @@ class AnalysisResult:
             'symbol': self.symbol,
             'timestamp': self.timestamp.isoformat(),
             'price_change_pct': round(self.price_change_pct, 2),
+            'volatility_range_pct': round(self.volatility_range_pct, 2),
             'oi_change_pct': round(self.oi_change_pct, 2),
             'k_coefficient': round(self.k_coefficient, 2),
             'funding_rate': self.funding_rate,
@@ -170,6 +175,7 @@ class AnalysisResult:
             'current_oi': self.current_oi,
             'lookback_hours': self.lookback_hours,
             'is_flat': self.is_flat,
+            'is_low_volatility': self.is_low_volatility,
             'is_accumulating': self.is_accumulating,
             'has_signal': self.has_signal,
             'signal_type': self.signal_type,
@@ -189,6 +195,7 @@ class HeatmapEntry:
     
     price_change_4h: float = 0.0
     price_change_24h: float = 0.0
+    volatility_range_4h: float = 0.0
     oi_change_4h: float = 0.0
     oi_change_24h: float = 0.0
     
@@ -214,6 +221,7 @@ class HeatmapEntry:
             'k_max': round(self.k_max, 2),
             'price_change_4h': round(self.price_change_4h, 2),
             'price_change_24h': round(self.price_change_24h, 2),
+            'volatility_range_4h': round(self.volatility_range_4h, 2),
             'oi_change_4h': round(self.oi_change_4h, 2),
             'oi_change_24h': round(self.oi_change_24h, 2),
             'funding_rate': round(self.funding_rate * 100, 4),  # В %
@@ -301,11 +309,24 @@ class SqueezeAnalyzer:
             first = snapshots[0]
             last = snapshots[-1]
             
-            # Рахуємо зміни
+            # === NET CHANGE (Classic) ===
+            # Порівнюємо першу і останню точку
             price_change = 0.0
             if first.mark_price and first.mark_price > 0:
                 price_change = ((last.mark_price or last.last_price or 0) - first.mark_price) / first.mark_price * 100
             
+            # === VOLATILITY RANGE (Strict) ===
+            # Знаходимо min/max за весь період
+            prices = [s.mark_price or s.last_price or 0 for s in snapshots if (s.mark_price or s.last_price)]
+            
+            volatility_range_pct = 0.0
+            if prices:
+                min_price = min(prices)
+                max_price = max(prices)
+                if min_price > 0:
+                    volatility_range_pct = (max_price - min_price) / min_price * 100
+            
+            # OI change
             oi_change = 0.0
             if first.open_interest and first.open_interest > 0:
                 oi_change = ((last.open_interest or 0) - first.open_interest) / first.open_interest * 100
@@ -327,16 +348,30 @@ class SqueezeAnalyzer:
             else:
                 funding_bias = "NEUTRAL"
             
-            # Фільтри
+            # === ФІЛЬТРИ ===
             price_threshold = self._get('sd_price_change_threshold', 2.0)
+            volatility_threshold = self._get('sd_volatility_threshold', 4.0)
             oi_threshold = self._get('sd_oi_change_threshold', 5.0)
             k_threshold = self._get('sd_k_coefficient_threshold', 3.0)
+            analysis_method = self._get('sd_analysis_method', 'combined')
             
-            is_flat = abs(price_change) < price_threshold
+            # Розраховуємо обидва фільтри
+            is_flat = abs(price_change) < price_threshold           # Net Change фільтр
+            is_low_volatility = volatility_range_pct < volatility_threshold  # Range фільтр
             is_accumulating = oi_change >= oi_threshold
             
-            # Визначаємо чи є сигнал
-            has_signal = is_flat and is_accumulating and k_coefficient >= k_threshold
+            # === ВИЗНАЧЕННЯ СИГНАЛУ ЗА МЕТОДОМ ===
+            if analysis_method == 'net_change':
+                # Classic: тільки Net Change
+                is_squeeze = is_flat
+            elif analysis_method == 'volatility_range':
+                # Strict: тільки Range
+                is_squeeze = is_low_volatility
+            else:  # combined (default)
+                # Recommended: обидва фільтри
+                is_squeeze = is_flat and is_low_volatility
+            
+            has_signal = is_squeeze and is_accumulating and k_coefficient >= k_threshold
             
             # Визначаємо напрямок
             direction = "UNKNOWN"
@@ -360,6 +395,10 @@ class SqueezeAnalyzer:
                 if funding_bias in ["LONG", "SHORT"]:
                     confidence += self._get('sd_funding_confidence_bonus', 15)
                 
+                # +10 якщо Combined (обидва фільтри спрацювали)
+                if analysis_method == 'combined' and is_flat and is_low_volatility:
+                    confidence += 10
+                
                 confidence = min(confidence, 100)
             
             # Signal type
@@ -371,6 +410,7 @@ class SqueezeAnalyzer:
                 symbol=symbol,
                 timestamp=datetime.utcnow(),
                 price_change_pct=price_change,
+                volatility_range_pct=volatility_range_pct,
                 oi_change_pct=oi_change,
                 k_coefficient=k_coefficient,
                 funding_rate=funding_rate,
@@ -379,6 +419,7 @@ class SqueezeAnalyzer:
                 current_oi=last.open_interest or 0,
                 lookback_hours=lookback_hours,
                 is_flat=is_flat,
+                is_low_volatility=is_low_volatility,
                 is_accumulating=is_accumulating,
                 has_signal=has_signal,
                 signal_type=signal_type,
@@ -392,6 +433,9 @@ class SqueezeAnalyzer:
                     'last_oi': last.open_interest,
                     'first_price': first.mark_price,
                     'last_price': last.mark_price,
+                    'min_price': min_price if prices else None,
+                    'max_price': max_price if prices else None,
+                    'analysis_method': analysis_method,
                 }
             )
             
@@ -462,6 +506,7 @@ class SqueezeAnalyzer:
                             if hours == 4:
                                 entry.k_4h = result.k_coefficient
                                 entry.price_change_4h = result.price_change_pct
+                                entry.volatility_range_4h = result.volatility_range_pct
                                 entry.oi_change_4h = result.oi_change_pct
                                 entry.current_price = result.current_price
                                 entry.funding_rate = result.funding_rate
