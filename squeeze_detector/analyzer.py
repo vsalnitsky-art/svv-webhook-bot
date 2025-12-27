@@ -984,3 +984,27 @@ class SqueezeAnalyzer:
             session.rollback()
         finally:
             session.close()
+    
+    def remove_from_watchlist(self, symbol: str) -> bool:
+        """Видаляє символ з watchlist"""
+        session = self.db_session_factory()
+        
+        try:
+            result = session.query(SqueezeWatchlist).filter(
+                SqueezeWatchlist.symbol == symbol
+            ).delete()
+            session.commit()
+            
+            if result > 0:
+                logger.info(f"🗑️ Removed {symbol} from watchlist")
+                return True
+            else:
+                logger.warning(f"⚠️ {symbol} not found in watchlist")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Remove from watchlist error: {e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
