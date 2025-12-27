@@ -481,8 +481,8 @@ DEFAULT_SETTINGS = {
     "sd_watchlist_timeout_hours": 48,
     "sd_breakout_threshold": 3.0,
     
-    # Auto-trade (disabled by default)
-    "sd_auto_trade_enabled": False,
+    # Execute mode (off | manual | auto)
+    "sd_execute_mode": "off",
     "sd_auto_trade_size_usdt": 100,
     "sd_auto_trade_leverage": 5,
     "sd_auto_trade_tp_percent": 10,
