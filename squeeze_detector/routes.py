@@ -119,7 +119,7 @@ class SqueezeDetectorManager:
             'sd_watchlist_timeout_hours': 48,
             'sd_breakout_threshold': 3.0,
             # Auto-trade
-            'sd_auto_trade_enabled': False,
+            'sd_execute_mode': 'off',
             'sd_auto_trade_size_usdt': 100,
             'sd_auto_trade_leverage': 5,
             'sd_auto_trade_tp_percent': 10,
@@ -377,6 +377,12 @@ class SqueezeDetectorManager:
         if self.analyzer:
             self.analyzer.clear_watchlist()
     
+    def remove_from_watchlist(self, symbol: str) -> bool:
+        """Видаляє символ з watchlist"""
+        if self.analyzer:
+            return self.analyzer.remove_from_watchlist(symbol)
+        return False
+    
     def shutdown(self):
         """Завершує роботу"""
         self.stop_recording()
@@ -537,6 +543,112 @@ def register_squeeze_detector_routes(app):
         manager = get_detector_manager()
         manager.clear_watchlist()
         return jsonify({'status': 'cleared'})
+    
+    @app.route('/squeeze/api/execute', methods=['POST'])
+    def squeeze_api_execute():
+        """
+        Виконує угоду через RSI Sniper PRO.
+        
+        Request:
+            {
+                'symbol': 'SOLUSDT',
+                'direction': 'SHORT',
+                'entry_price': 180.50,  # optional, якщо не вказано - береться поточна
+                'tp_percent': 10,
+                'sl_percent': 3,
+                'leverage': 5,
+                'size_usdt': 100,
+                'bias_confidence': 89,
+                'k_coefficient': 5.1,
+                'remove_from_watchlist': True
+            }
+        """
+        manager = get_detector_manager()
+        data = request.json or {}
+        
+        symbol = data.get('symbol')
+        if not symbol:
+            return jsonify({'success': False, 'error': 'Symbol required'}), 400
+        
+        direction = data.get('direction')
+        if direction not in ['LONG', 'SHORT']:
+            return jsonify({'success': False, 'error': 'Invalid direction'}), 400
+        
+        try:
+            # Import RSI Sniper
+            from rsi_sniper_pro import RSISniperPro
+            sniper = RSISniperPro()
+            
+            # Get current price if not provided
+            entry_price = data.get('entry_price')
+            if not entry_price:
+                # Try to get from recorder
+                if manager.recorder:
+                    snapshots = manager.recorder.get_snapshots(symbol, hours=1)
+                    if snapshots:
+                        entry_price = snapshots[-1].mark_price or snapshots[-1].last_price
+                
+                # Fallback - try from Bybit API
+                if not entry_price:
+                    try:
+                        from bot import bot_instance
+                        if bot_instance and bot_instance.exchange:
+                            ticker = bot_instance.exchange.fetch_ticker(symbol)
+                            entry_price = ticker.get('last', 0)
+                    except:
+                        pass
+            
+            if not entry_price:
+                return jsonify({'success': False, 'error': 'Could not get entry price'}), 400
+            
+            # Prepare squeeze data for RSI Sniper
+            squeeze_data = {
+                'symbol': symbol,
+                'direction': direction,
+                'entry_price': float(entry_price),
+                'tp_percent': float(data.get('tp_percent', manager.config.get('sd_auto_trade_tp_percent', 10))),
+                'sl_percent': float(data.get('sl_percent', manager.config.get('sd_auto_trade_sl_percent', 3))),
+                'leverage': int(data.get('leverage', manager.config.get('sd_auto_trade_leverage', 5))),
+                'size_usdt': float(data.get('size_usdt', manager.config.get('sd_auto_trade_size_usdt', 100))),
+                'bias_confidence': data.get('bias_confidence', 50),
+                'k_coefficient': data.get('k_coefficient', 0),
+                'source': 'SQUEEZE_DETECTOR'
+            }
+            
+            # Execute via RSI Sniper
+            result = sniper.execute_from_squeeze(squeeze_data)
+            
+            if result.get('success'):
+                # Remove from watchlist if requested
+                if data.get('remove_from_watchlist', True):
+                    manager.remove_from_watchlist(symbol)
+                    result['removed_from_watchlist'] = True
+                
+                logger.info(f"🎯 Squeeze executed: {symbol} {direction} @ {entry_price}")
+            
+            return jsonify(result)
+            
+        except ImportError as e:
+            logger.error(f"RSI Sniper import error: {e}")
+            return jsonify({'success': False, 'error': 'RSI Sniper module not available'}), 500
+        except Exception as e:
+            logger.error(f"Execute error: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/squeeze/api/remove_watchlist', methods=['POST'])
+    def squeeze_api_remove_watchlist():
+        """Видаляє символ з watchlist"""
+        manager = get_detector_manager()
+        data = request.json or {}
+        
+        symbol = data.get('symbol')
+        if not symbol:
+            return jsonify({'success': False, 'error': 'Symbol required'}), 400
+        
+        success = manager.remove_from_watchlist(symbol)
+        return jsonify({'success': success, 'symbol': symbol})
     
     @app.route('/squeeze/api/load_history', methods=['POST'])
     def squeeze_api_load_history():
