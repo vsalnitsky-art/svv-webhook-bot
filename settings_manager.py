@@ -491,6 +491,9 @@ DEFAULT_SETTINGS = {
     # Alerts
     "sd_telegram_alerts": False,
     "sd_ui_alerts": True,
+    
+    # Auto-start Recording & Analyzing
+    "sd_auto_start": True,
 }
 
 class SettingsManager:
