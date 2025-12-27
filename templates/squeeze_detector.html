@@ -490,41 +490,61 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                 </div>
             </div>
             
-            <!-- Auto-Trade (Future) -->
+            <!-- Auto-Trade → RSI Sniper -->
             <div class="settings-card mb-3">
                 <div class="settings-header" data-bs-toggle="collapse" data-bs-target="#autotradeCollapse">
-                    <span><i class="ri-robot-line me-2"></i>Auto-Trade</span>
-                    <span class="badge bg-secondary ms-2">Soon</span>
+                    <span><i class="ri-robot-line me-2"></i>Execute → RSI Sniper</span>
+                    <span class="badge bg-success ms-2">NEW</span>
                     <i class="ri-arrow-down-s-line"></i>
                 </div>
-                <div class="collapse" id="autotradeCollapse">
+                <div class="collapse show" id="autotradeCollapse">
                     <div class="settings-body">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <label class="form-label small mb-0">Enable Auto-Trade</label>
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="autoTradeEnabled" disabled>
-                                <span class="toggle-slider"></span>
-                            </label>
+                        <!-- Mode Selection -->
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Execution Mode</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="executeMode" id="executeModeOff" value="off" checked>
+                                <label class="form-check-label small" for="executeModeOff">
+                                    <strong>OFF</strong> - тільки сигнали
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="executeMode" id="executeModeManual" value="manual">
+                                <label class="form-check-label small" for="executeModeManual">
+                                    <strong>MANUAL</strong> - кнопка Execute для кожного
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="executeMode" id="executeModeAuto" value="auto">
+                                <label class="form-check-label small" for="executeModeAuto">
+                                    <strong>AUTO</strong> - автоматично при CONFIRMED
+                                </label>
+                            </div>
                         </div>
+                        <hr class="my-2">
+                        <!-- Trade Parameters -->
                         <div class="mb-2">
                             <label class="form-label small">Position Size (USDT)</label>
-                            <input type="number" class="form-control form-control-sm" id="autoTradeSize" value="100" disabled>
+                            <input type="number" class="form-control form-control-sm" id="autoTradeSize" value="100" min="10">
                         </div>
                         <div class="mb-2">
                             <label class="form-label small">Leverage</label>
-                            <input type="number" class="form-control form-control-sm" id="autoTradeLeverage" value="5" min="1" max="20" disabled>
+                            <input type="number" class="form-control form-control-sm" id="autoTradeLeverage" value="5" min="1" max="20">
                         </div>
                         <div class="row g-2">
                             <div class="col-6">
                                 <label class="form-label small">TP %</label>
-                                <input type="number" class="form-control form-control-sm" id="autoTradeTp" value="10" disabled>
+                                <input type="number" class="form-control form-control-sm" id="autoTradeTp" value="10" step="0.5" min="1">
                             </div>
                             <div class="col-6">
                                 <label class="form-label small">SL %</label>
-                                <input type="number" class="form-control form-control-sm" id="autoTradeSl" value="3" disabled>
+                                <input type="number" class="form-control form-control-sm" id="autoTradeSl" value="3" step="0.5" min="1">
                             </div>
                         </div>
-                        <small class="text-muted d-block mt-2">⚠️ В розробці. Буде доступно після тестування.</small>
+                        <div class="alert alert-info small mt-3 mb-0 py-2">
+                            <i class="ri-information-line me-1"></i>
+                            Угоди створюються в <strong>RSI Sniper PRO</strong> як paper trades для тестування
+                        </div>
                     </div>
                 </div>
             </div>
@@ -596,15 +616,16 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
                                 <th>Phase</th>
                                 <th>Signals</th>
                                 <th>Current K</th>
-                                <th>OI Δ Total</th>
-                                <th>Price Δ Total</th>
+                                <th>OI Δ</th>
+                                <th>Price Δ</th>
                                 <th>Bias</th>
                                 <th>Status</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody id="watchlistBody">
                             <tr>
-                                <td colspan="8" class="empty-state">
+                                <td colspan="9" class="empty-state">
                                     <div>No items in watchlist</div>
                                 </td>
                             </tr>
@@ -842,8 +863,8 @@ async function saveConfig() {
         sd_lookback_24h: document.getElementById('lookback24h').checked,
         // Telegram
         sd_telegram_alerts: document.getElementById('telegramAlerts').checked,
-        // Auto-trade (зберігаємо навіть якщо disabled)
-        sd_auto_trade_enabled: document.getElementById('autoTradeEnabled').checked,
+        // Execute mode
+        sd_execute_mode: getExecuteMode(),
         sd_auto_trade_size_usdt: parseInt(document.getElementById('autoTradeSize').value) || 100,
         sd_auto_trade_leverage: parseInt(document.getElementById('autoTradeLeverage').value) || 5,
         sd_auto_trade_tp_percent: parseFloat(document.getElementById('autoTradeTp').value) || 10,
@@ -911,8 +932,13 @@ async function loadConfig() {
         // Telegram
         document.getElementById('telegramAlerts').checked = config.sd_telegram_alerts === true;
         
-        // Auto-trade
-        document.getElementById('autoTradeEnabled').checked = config.sd_auto_trade_enabled === true;
+        // Execute mode
+        if (config.sd_execute_mode) {
+            const modeRadios = document.getElementsByName('executeMode');
+            for (const radio of modeRadios) {
+                radio.checked = radio.value === config.sd_execute_mode;
+            }
+        }
         if (config.sd_auto_trade_size_usdt) {
             document.getElementById('autoTradeSize').value = config.sd_auto_trade_size_usdt;
         }
@@ -1009,23 +1035,182 @@ async function loadWatchlist() {
     document.getElementById('watchlistBadge').textContent = data.length;
     document.getElementById('watchlistCount').textContent = data.length;
     
+    // Get execute mode
+    const executeMode = getExecuteMode();
+    
     if (data.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="empty-state"><div>No items in watchlist</div></td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state"><div>No items in watchlist</div></td></tr>`;
         return;
     }
     
-    tbody.innerHTML = data.map(w => `
-        <tr class="${w.phase === 'TRIGGERED' ? 'table-success' : ''}">
-            <td><strong>${w.symbol}</strong></td>
-            <td><span class="phase-badge ${w.phase || 'WATCHING'}">${w.phase || 'WATCHING'}</span></td>
-            <td>${w.consecutive_signals || 0} / ${w.total_signals || 0}</td>
-            <td><span class="k-cell ${getKClass(w.current_k || 0)}">${safeFixed(w.current_k, 1)}</span></td>
-            <td class="${(w.total_oi_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(w.total_oi_change_pct)}%</td>
-            <td class="${(w.total_price_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(w.total_price_change_pct)}%</td>
-            <td><span class="bias-badge ${w.direction || 'NEUTRAL'}">${w.direction || 'NEUTRAL'} <small>${w.direction_confidence || 50}%</small></span></td>
-            <td>${getWatchlistStatusBadge(w)}</td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = data.map(w => {
+        // Determine if can execute (TRIGGERED + CONFIRMED or SQUEEZE_READY)
+        const canExecute = (w.phase === 'TRIGGERED' || w.phase === 'SQUEEZE_READY') && 
+                          w.direction && w.direction !== 'NEUTRAL' && w.direction !== 'UNKNOWN';
+        const isConfirmed = w.phase === 'TRIGGERED';
+        const isDivergence = false; // We'll check this better when we have confirmation_status
+        
+        // Action buttons based on mode
+        let actionButtons = '';
+        if (executeMode === 'manual' && canExecute && !isDivergence) {
+            actionButtons = `
+                <button class="btn btn-sm btn-success me-1" onclick="executeSqueezeManual('${w.symbol}', '${w.direction}', ${w.current_price || 0}, ${w.current_k || 0}, ${w.direction_confidence || 50})" title="Execute ${w.direction}">
+                    🚀
+                </button>
+            `;
+        } else if (executeMode === 'auto' && isConfirmed && canExecute && !isDivergence) {
+            actionButtons = `<span class="badge bg-success">Auto ✓</span>`;
+        }
+        
+        // Always show remove button
+        actionButtons += `
+            <button class="btn btn-sm btn-outline-danger" onclick="removeFromWatchlist('${w.symbol}')" title="Remove">
+                🗑️
+            </button>
+        `;
+        
+        return `
+            <tr class="${w.phase === 'TRIGGERED' ? 'table-success' : ''}">
+                <td><strong>${w.symbol}</strong></td>
+                <td><span class="phase-badge ${w.phase || 'WATCHING'}">${w.phase || 'WATCHING'}</span></td>
+                <td>${w.consecutive_signals || 0} / ${w.total_signals || 0}</td>
+                <td><span class="k-cell ${getKClass(w.current_k || 0)}">${safeFixed(w.current_k, 1)}</span></td>
+                <td class="${(w.total_oi_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(w.total_oi_change_pct)}%</td>
+                <td class="${(w.total_price_change_pct || 0) >= 0 ? 'text-success' : 'text-danger'}">${safeFixed(w.total_price_change_pct)}%</td>
+                <td><span class="bias-badge ${w.direction || 'NEUTRAL'}">${w.direction || 'NEUTRAL'} <small>${w.direction_confidence || 50}%</small></span></td>
+                <td>${getWatchlistStatusBadge(w)}</td>
+                <td class="text-nowrap">${actionButtons}</td>
+            </tr>
+        `;
+    }).join('');
+    
+    // Auto-execute if mode is AUTO
+    if (executeMode === 'auto') {
+        for (const w of data) {
+            if (w.phase === 'TRIGGERED' && w.direction && w.direction !== 'NEUTRAL' && w.direction !== 'UNKNOWN') {
+                // Check if not already executed (simple check by having a flag or using localStorage)
+                const executedKey = `squeeze_executed_${w.symbol}`;
+                if (!sessionStorage.getItem(executedKey)) {
+                    console.log(`🤖 Auto-executing ${w.symbol} ${w.direction}`);
+                    await executeSqueezeAuto(w);
+                    sessionStorage.setItem(executedKey, 'true');
+                }
+            }
+        }
+    }
+}
+
+function getExecuteMode() {
+    const radios = document.querySelectorAll('input[name="executeMode"]');
+    for (const radio of radios) {
+        if (radio.checked) return radio.value;
+    }
+    return 'off';
+}
+
+async function executeSqueezeManual(symbol, direction, currentPrice, kCoefficient, confidence) {
+    if (!confirm(`Execute ${direction} on ${symbol}?\n\nPrice: ${currentPrice}\nK: ${kCoefficient}\nConfidence: ${confidence}%`)) {
+        return;
+    }
+    
+    const size = parseInt(document.getElementById('autoTradeSize').value) || 100;
+    const leverage = parseInt(document.getElementById('autoTradeLeverage').value) || 5;
+    const tp = parseFloat(document.getElementById('autoTradeTp').value) || 10;
+    const sl = parseFloat(document.getElementById('autoTradeSl').value) || 3;
+    
+    try {
+        const response = await fetch('/squeeze/api/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: symbol,
+                direction: direction,
+                entry_price: currentPrice,
+                tp_percent: tp,
+                sl_percent: sl,
+                leverage: leverage,
+                size_usdt: size,
+                bias_confidence: confidence,
+                k_coefficient: kCoefficient,
+                remove_from_watchlist: true
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            addLog(`🎯 Executed: ${symbol} ${direction} @ ${result.entry_price?.toFixed(4)} | TP: ${result.tp1_price?.toFixed(4)} | SL: ${result.sl_price?.toFixed(4)}`, 'success');
+            await loadWatchlist();
+        } else {
+            addLog(`❌ Execute failed: ${result.error}`, 'error');
+            alert(`Execute failed: ${result.error}`);
+        }
+    } catch (e) {
+        addLog(`❌ Execute error: ${e.message}`, 'error');
+        alert(`Error: ${e.message}`);
+    }
+}
+
+async function executeSqueezeAuto(watchlistItem) {
+    const w = watchlistItem;
+    const size = parseInt(document.getElementById('autoTradeSize').value) || 100;
+    const leverage = parseInt(document.getElementById('autoTradeLeverage').value) || 5;
+    const tp = parseFloat(document.getElementById('autoTradeTp').value) || 10;
+    const sl = parseFloat(document.getElementById('autoTradeSl').value) || 3;
+    
+    try {
+        const response = await fetch('/squeeze/api/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: w.symbol,
+                direction: w.direction,
+                entry_price: w.current_price,
+                tp_percent: tp,
+                sl_percent: sl,
+                leverage: leverage,
+                size_usdt: size,
+                bias_confidence: w.direction_confidence || 50,
+                k_coefficient: w.current_k || 0,
+                remove_from_watchlist: true
+            })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            addLog(`🤖 AUTO Executed: ${w.symbol} ${w.direction} @ ${result.entry_price?.toFixed(4)}`, 'success');
+        } else {
+            addLog(`❌ Auto-execute failed: ${w.symbol} - ${result.error}`, 'error');
+        }
+    } catch (e) {
+        addLog(`❌ Auto-execute error: ${e.message}`, 'error');
+    }
+}
+
+async function removeFromWatchlist(symbol) {
+    if (!confirm(`Remove ${symbol} from watchlist?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/squeeze/api/remove_watchlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: symbol })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            addLog(`🗑️ Removed ${symbol} from watchlist`, 'info');
+            await loadWatchlist();
+        } else {
+            addLog(`❌ Remove failed: ${result.error}`, 'error');
+        }
+    } catch (e) {
+        addLog(`❌ Remove error: ${e.message}`, 'error');
+    }
 }
 
 // === HELPERS ===
