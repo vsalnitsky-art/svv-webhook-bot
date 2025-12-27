@@ -127,6 +127,8 @@ class SqueezeDetectorManager:
             # Alerts
             'sd_telegram_alerts': False,
             'sd_ui_alerts': True,
+            # Auto-start
+            'sd_auto_start': True,  # Auto-start Recording & Analyzing
         }
         
         # Завантажуємо з settings_manager - ПЕРЕЗАПИСУЄ дефолти
@@ -204,6 +206,13 @@ class SqueezeDetectorManager:
             
             self.status['initialized'] = True
             logger.info("✅ SqueezeDetectorManager initialized")
+            
+            # === AUTO-START Recording & Analyzing ===
+            # Автоматично запускаємо при ініціалізації
+            if self.config.get('sd_auto_start', True):
+                logger.info("🚀 Auto-starting Recording & Analyzing...")
+                self.start_recording()
+                self.start_analyzing()
             
         except Exception as e:
             logger.error(f"❌ Initialize error: {e}")
@@ -443,6 +452,13 @@ def set_bot_instance(bot):
 
 def register_squeeze_detector_routes(app):
     """Реєструє Flask routes"""
+    
+    # Ініціалізуємо manager при старті (auto-start recording/analyzing)
+    try:
+        manager = get_detector_manager()
+        logger.info(f"📊 Squeeze Detector initialized at startup: recording={manager.status.get('recording')}, analyzing={manager.status.get('analyzing')}")
+    except Exception as e:
+        logger.error(f"Failed to initialize Squeeze Detector at startup: {e}")
     
     @app.route('/squeeze')
     def squeeze_detector_page():
