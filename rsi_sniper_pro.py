@@ -81,6 +81,7 @@ class SignalType(Enum):
     DIVERGENCE = "DIVERGENCE"
     FLOW = "FLOW"
     ROYAL = "ROYAL"
+    SQUEEZE = "SQUEEZE"  # From Squeeze Detector
 
 
 class Direction(Enum):
@@ -976,18 +977,9 @@ class RSISniperPro:
     def save_config(self, data: Dict):
         """Зберігає конфігурацію"""
         if HAS_SETTINGS and settings is not None:
-            # Зберігаємо старий інтервал для порівняння
-            old_interval = self._load_config().get('rsp_scan_interval', 1)
-            
             settings.save_settings(data)
             self.signal_generator.update_config(self._load_config())
             logger.info("✅ Config saved")
-            
-            # Перезапускаємо auto_mode якщо змінився інтервал і він активний
-            new_interval = data.get('rsp_scan_interval')
-            if new_interval is not None and new_interval != old_interval and self.auto_running:
-                logger.info(f"🔄 Interval changed {old_interval} -> {new_interval}, restarting auto mode")
-                self.start_auto_mode(int(new_interval))
     
     def get_status(self) -> Dict:
         """Повертає статус"""
@@ -1338,6 +1330,136 @@ class RSISniperPro:
         except Exception as e:
             return {'success': False, 'error': str(e)}
     
+    def execute_from_squeeze(self, squeeze_data: Dict) -> Dict:
+        """
+        Виконує угоду з Squeeze Detector.
+        
+        Args:
+            squeeze_data: {
+                'symbol': 'SOLUSDT',
+                'direction': 'SHORT',
+                'entry_price': 180.50,
+                'tp_percent': 10,
+                'sl_percent': 3,
+                'leverage': 5,
+                'size_usdt': 100,
+                'bias_confidence': 89,
+                'k_coefficient': 5.1,
+                'source': 'SQUEEZE_DETECTOR'
+            }
+        """
+        if not HAS_DB or db_manager is None:
+            return {'success': False, 'error': 'Database not available'}
+        
+        session = None
+        try:
+            symbol = squeeze_data['symbol']
+            direction = squeeze_data['direction']
+            entry_price = float(squeeze_data['entry_price'])
+            tp_percent = float(squeeze_data.get('tp_percent', 10))
+            sl_percent = float(squeeze_data.get('sl_percent', 3))
+            leverage = int(squeeze_data.get('leverage', 5))
+            size_usdt = float(squeeze_data.get('size_usdt', 100))
+            
+            # Calculate TP/SL prices
+            if direction == 'LONG':
+                tp1_price = entry_price * (1 + tp_percent / 100)
+                tp2_price = entry_price * (1 + tp_percent * 1.5 / 100)
+                sl_price = entry_price * (1 - sl_percent / 100)
+            else:  # SHORT
+                tp1_price = entry_price * (1 - tp_percent / 100)
+                tp2_price = entry_price * (1 - tp_percent * 1.5 / 100)
+                sl_price = entry_price * (1 + sl_percent / 100)
+            
+            # Check existing position
+            if self.has_open_position(symbol):
+                existing = self._open_positions.get(symbol)
+                if existing and existing.get('direction') == direction:
+                    return {'success': False, 'error': f'Already have {direction} position for {symbol}'}
+                
+                # Close opposite position
+                logger.info(f"🔄 Closing opposite position for {symbol}")
+                self._close_by_opposite(symbol, direction, entry_price)
+            
+            # Create notes with Squeeze info
+            notes = f"Squeeze Detector | K: {squeeze_data.get('k_coefficient', 0):.1f} | Conf: {squeeze_data.get('bias_confidence', 0)}%"
+            
+            # Initialize price history
+            import json
+            initial_history = json.dumps([{
+                'p': round(entry_price, 6),
+                't': datetime.utcnow().strftime('%H:%M')
+            }])
+            
+            session = db_manager.get_session()
+            
+            trade = RSISniperTrade(
+                symbol=symbol,
+                direction=direction,
+                signal_type='SQUEEZE',
+                status='Open',
+                signal_price=entry_price,
+                entry_price=entry_price,
+                current_price=entry_price,
+                sl_price=sl_price,
+                tp1_price=tp1_price,
+                tp2_price=tp2_price,
+                bb_upper=None,
+                bb_middle=None,
+                bb_lower=None,
+                rsi_value=None,
+                mfi_value=None,
+                mfi_cloud='NEUTRAL',
+                structure=None,
+                timeframe='4h',
+                paper_trade=True,  # Завжди paper для Squeeze
+                leverage=leverage,
+                position_size=size_usdt,
+                signal_time=datetime.utcnow(),
+                entry_time=datetime.utcnow(),
+                notes=notes,
+                max_price=entry_price,
+                min_price=entry_price,
+                max_favorable_pnl=0.0,
+                max_adverse_pnl=0.0,
+                price_history=initial_history,
+            )
+            
+            session.add(trade)
+            session.commit()
+            
+            # Update cache
+            self._open_positions[symbol] = {
+                'id': trade.id,
+                'direction': direction,
+                'entry_price': entry_price,
+                'signal_type': 'SQUEEZE'
+            }
+            
+            logger.info(f"🎯 SQUEEZE TRADE: {symbol} {direction} @ {entry_price:.4f} | SL: {sl_price:.4f} | TP: {tp1_price:.4f} | Lev: {leverage}x")
+            
+            return {
+                'success': True,
+                'trade_id': trade.id,
+                'symbol': symbol,
+                'direction': direction,
+                'entry_price': entry_price,
+                'sl_price': sl_price,
+                'tp1_price': tp1_price,
+                'leverage': leverage
+            }
+            
+        except Exception as e:
+            logger.error(f"Squeeze execute error: {e}")
+            import traceback
+            traceback.print_exc()
+            if session:
+                session.rollback()
+            return {'success': False, 'error': str(e)}
+        finally:
+            if session:
+                session.close()
+    
     def get_trades(self, limit: int = 50, status: str = None) -> List[Dict]:
         """Отримує угоди"""
         if not HAS_DB or db_manager is None:
@@ -1497,13 +1619,8 @@ class RSISniperPro:
     
     def start_auto_mode(self, interval: int = 1):
         """Запускає авто-режим"""
-        # Якщо вже запущено - перезапускаємо з новим інтервалом
         if self.auto_running:
-            logger.info(f"🔄 Restarting auto mode with new interval: {interval} min")
-            self.stop_auto_mode()
-            # Чекаємо поки потік завершиться
-            if self._auto_thread and self._auto_thread.is_alive():
-                self._auto_thread.join(timeout=5)
+            return
         
         self.auto_running = True
         self._auto_thread = threading.Thread(target=self._auto_loop, args=(interval,), daemon=True)
