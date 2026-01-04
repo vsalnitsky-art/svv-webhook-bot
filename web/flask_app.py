@@ -447,7 +447,17 @@ def get_app():
     return app
 
 
+# Module-level app instance
+app = None
+
+def get_or_create_app():
+    """Get existing app or create new one"""
+    global app
+    if app is None:
+        app = get_app()
+    return app
+
 # For direct run
 if __name__ == '__main__':
-    app = get_app()
+    app = get_or_create_app()
     app.run(host='0.0.0.0', port=5000, debug=True)

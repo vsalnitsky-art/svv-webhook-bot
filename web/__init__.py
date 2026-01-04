@@ -2,9 +2,10 @@
 Web module - Flask application
 """
 
-from .flask_app import app, create_app
+from .flask_app import create_app, get_app, get_or_create_app
 
 __all__ = [
-    'app',
-    'create_app'
+    'create_app',
+    'get_app',
+    'get_or_create_app'
 ]

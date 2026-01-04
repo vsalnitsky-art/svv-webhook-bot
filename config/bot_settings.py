@@ -40,6 +40,7 @@ DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///sleeper_ob_bot.db')
 DEFAULT_SETTINGS = {
     'execution_mode': ExecutionMode.SEMI_AUTO.value,
     'paper_trading': True,
+    'paper_balance': 10000.0,
     
     'sleeper_scan_interval': 240,
     'sleeper_min_score': 60,

@@ -1,274 +1,386 @@
 """
-Bybit Connector - API client for Bybit exchange
+Bybit Connector - використовує офіційну бібліотеку pybit
 """
+
+import os
 import time
-import hmac
-import hashlib
-import requests
-from typing import Dict, List, Optional, Any
-from config import BYBIT_API_KEY, BYBIT_API_SECRET, BYBIT_CONFIG, API_LIMITS
+from typing import Optional, Dict, Any, List
+from pybit.unified_trading import HTTP
+from pybit.exceptions import InvalidRequestError
+
+from config.bot_settings import BYBIT_API_KEY, BYBIT_API_SECRET, BYBIT_CONFIG
+
 
 class BybitConnector:
-    """Bybit API client with rate limiting and error handling"""
+    """Клієнт для роботи з Bybit API через pybit"""
     
-    BASE_URL = "https://api.bybit.com"
-    TESTNET_URL = "https://api-testnet.bybit.com"
+    def __init__(self):
+        self.api_key = BYBIT_API_KEY
+        self.api_secret = BYBIT_API_SECRET
+        self.testnet = BYBIT_CONFIG.get('testnet', False)
+        self.recv_window = BYBIT_CONFIG.get('recv_window', 20000)
+        
+        # Створити сесію
+        self.session = self._create_session()
     
-    def __init__(self, api_key: str = None, api_secret: str = None, testnet: bool = False):
-        self.api_key = api_key or BYBIT_API_KEY
-        self.api_secret = api_secret or BYBIT_API_SECRET
-        self.base_url = self.TESTNET_URL if testnet else self.BASE_URL
-        self.recv_window = BYBIT_CONFIG['recv_window']
-        self.timeout = BYBIT_CONFIG['timeout']
-        self.session = requests.Session()
-        
-    def _generate_signature(self, params: Dict) -> str:
-        """Generate HMAC SHA256 signature"""
-        param_str = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
-        return hmac.new(
-            self.api_secret.encode('utf-8'),
-            param_str.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
+    def _create_session(self) -> HTTP:
+        """Створити HTTP сесію pybit"""
+        if self.api_key and self.api_secret:
+            return HTTP(
+                testnet=self.testnet,
+                api_key=self.api_key,
+                api_secret=self.api_secret,
+                recv_window=self.recv_window
+            )
+        else:
+            # Public API only (без ключів)
+            return HTTP(testnet=self.testnet)
     
-    def _make_request(self, method: str, endpoint: str, params: Dict = None, 
-                      signed: bool = False) -> Dict:
-        """Make API request with retry logic"""
-        url = f"{self.base_url}{endpoint}"
-        params = params or {}
-        
-        if signed:
-            timestamp = str(int(time.time() * 1000))
-            params['api_key'] = self.api_key
-            params['timestamp'] = timestamp
-            params['recv_window'] = self.recv_window
-            params['sign'] = self._generate_signature(params)
-        
-        for attempt in range(API_LIMITS['max_retries']):
-            try:
-                if method == 'GET':
-                    response = self.session.get(url, params=params, timeout=self.timeout)
-                else:
-                    response = self.session.post(url, json=params, timeout=self.timeout)
-                
-                data = response.json()
-                
-                if data.get('retCode') == 0:
-                    return data.get('result', data)
-                else:
-                    error_msg = data.get('retMsg', 'Unknown error')
-                    if attempt < API_LIMITS['max_retries'] - 1:
-                        time.sleep(API_LIMITS['rate_limit_delay'] * (attempt + 1))
-                        continue
-                    raise Exception(f"API Error: {error_msg}")
-                    
-            except requests.exceptions.RequestException as e:
-                if attempt < API_LIMITS['max_retries'] - 1:
-                    time.sleep(API_LIMITS['rate_limit_delay'] * (attempt + 1))
-                    continue
-                raise Exception(f"Request failed: {str(e)}")
-        
-        return {}
+    def _safe_float(self, value, default: float = 0.0) -> float:
+        """Безпечне перетворення в float"""
+        try:
+            return float(value) if value else default
+        except (ValueError, TypeError):
+            return default
     
-    # === PUBLIC ENDPOINTS ===
+    def _handle_response(self, response: Dict) -> Optional[Dict]:
+        """Обробка відповіді API"""
+        if response.get('retCode') == 0:
+            return response.get('result')
+        else:
+            print(f"[BYBIT ERROR] Code: {response.get('retCode')}, Msg: {response.get('retMsg')}")
+            return None
+    
+    # ===== PUBLIC API =====
     
     def get_tickers(self, category: str = "linear") -> List[Dict]:
-        """Get all tickers for category"""
-        result = self._make_request('GET', '/v5/market/tickers', {'category': category})
-        return result.get('list', [])
+        """Отримати всі тікери"""
+        try:
+            response = self.session.get_tickers(category=category)
+            result = self._handle_response(response)
+            return result.get('list', []) if result else []
+        except Exception as e:
+            print(f"[BYBIT] get_tickers error: {e}")
+            return []
     
-    def get_klines(self, symbol: str, interval: str, limit: int = 200, 
-                   category: str = "linear") -> List[Dict]:
-        """Get kline/candlestick data"""
-        params = {
-            'category': category,
-            'symbol': symbol,
-            'interval': interval,
-            'limit': min(limit, API_LIMITS['kline_limit'])
-        }
-        result = self._make_request('GET', '/v5/market/kline', params)
+    def get_ticker(self, symbol: str, category: str = "linear") -> Optional[Dict]:
+        """Отримати тікер для одного символу"""
+        try:
+            response = self.session.get_tickers(category=category, symbol=symbol)
+            result = self._handle_response(response)
+            if result and result.get('list'):
+                return result['list'][0]
+            return None
+        except Exception as e:
+            print(f"[BYBIT] get_ticker error: {e}")
+            return None
+    
+    def get_price(self, symbol: str) -> float:
+        """Отримати поточну ціну"""
+        ticker = self.get_ticker(symbol)
+        if ticker:
+            return self._safe_float(ticker.get('lastPrice'))
+        return 0.0
+    
+    def get_klines(self, symbol: str, interval: str = "60", limit: int = 200) -> List[Dict]:
+        """
+        Отримати свічки (klines)
+        interval: 1, 3, 5, 15, 30, 60, 120, 240, 360, 720, D, W, M
+        """
+        try:
+            response = self.session.get_kline(
+                category="linear",
+                symbol=symbol,
+                interval=interval,
+                limit=limit
+            )
+            result = self._handle_response(response)
+            if result and result.get('list'):
+                # Bybit повертає у зворотному порядку, конвертуємо
+                klines = []
+                for k in reversed(result['list']):
+                    klines.append({
+                        'timestamp': int(k[0]),
+                        'open': self._safe_float(k[1]),
+                        'high': self._safe_float(k[2]),
+                        'low': self._safe_float(k[3]),
+                        'close': self._safe_float(k[4]),
+                        'volume': self._safe_float(k[5]),
+                        'turnover': self._safe_float(k[6]) if len(k) > 6 else 0
+                    })
+                return klines
+            return []
+        except Exception as e:
+            print(f"[BYBIT] get_klines error: {e}")
+            return []
+    
+    def get_orderbook(self, symbol: str, limit: int = 25) -> Optional[Dict]:
+        """Отримати orderbook"""
+        try:
+            response = self.session.get_orderbook(
+                category="linear",
+                symbol=symbol,
+                limit=limit
+            )
+            result = self._handle_response(response)
+            return result
+        except Exception as e:
+            print(f"[BYBIT] get_orderbook error: {e}")
+            return None
+    
+    def get_instrument_info(self, symbol: str) -> Optional[Dict]:
+        """Отримати інформацію про інструмент"""
+        try:
+            response = self.session.get_instruments_info(
+                category="linear",
+                symbol=symbol
+            )
+            result = self._handle_response(response)
+            if result and result.get('list'):
+                return result['list'][0]
+            return None
+        except Exception as e:
+            print(f"[BYBIT] get_instrument_info error: {e}")
+            return None
+    
+    def get_funding_rate(self, symbol: str) -> Optional[Dict]:
+        """Отримати funding rate"""
+        try:
+            response = self.session.get_tickers(
+                category="linear",
+                symbol=symbol
+            )
+            result = self._handle_response(response)
+            if result and result.get('list'):
+                ticker = result['list'][0]
+                return {
+                    'symbol': symbol,
+                    'funding_rate': self._safe_float(ticker.get('fundingRate')),
+                    'next_funding_time': ticker.get('nextFundingTime')
+                }
+            return None
+        except Exception as e:
+            print(f"[BYBIT] get_funding_rate error: {e}")
+            return None
+    
+    def get_open_interest(self, symbol: str, interval: str = "1h", limit: int = 50) -> List[Dict]:
+        """Отримати історію open interest"""
+        try:
+            response = self.session.get_open_interest(
+                category="linear",
+                symbol=symbol,
+                intervalTime=interval,
+                limit=limit
+            )
+            result = self._handle_response(response)
+            if result and result.get('list'):
+                return [
+                    {
+                        'timestamp': int(item['timestamp']),
+                        'open_interest': self._safe_float(item['openInterest'])
+                    }
+                    for item in result['list']
+                ]
+            return []
+        except Exception as e:
+            print(f"[BYBIT] get_open_interest error: {e}")
+            return []
+    
+    # ===== PRIVATE API =====
+    
+    def get_wallet_balance(self) -> float:
+        """Отримати баланс USDT"""
+        if not self.api_key:
+            return 0.0
         
-        # Convert to list of dicts
-        klines = []
-        for k in result.get('list', []):
-            klines.append({
-                'timestamp': int(k[0]),
-                'open': float(k[1]),
-                'high': float(k[2]),
-                'low': float(k[3]),
-                'close': float(k[4]),
-                'volume': float(k[5]),
-                'turnover': float(k[6]) if len(k) > 6 else 0
-            })
-        return list(reversed(klines))  # Oldest first
+        try:
+            response = self.session.get_wallet_balance(accountType="UNIFIED")
+            result = self._handle_response(response)
+            if result and result.get('list'):
+                for acc in result['list']:
+                    for coin in acc.get('coin', []):
+                        if coin['coin'] == 'USDT':
+                            return self._safe_float(coin.get('walletBalance'))
+            return 0.0
+        except Exception as e:
+            print(f"[BYBIT] get_wallet_balance error: {e}")
+            return 0.0
     
-    def get_orderbook(self, symbol: str, limit: int = 25, category: str = "linear") -> Dict:
-        """Get order book"""
-        params = {'category': category, 'symbol': symbol, 'limit': limit}
-        return self._make_request('GET', '/v5/market/orderbook', params)
-    
-    def get_instrument_info(self, symbol: str = None, category: str = "linear") -> List[Dict]:
-        """Get instrument info"""
-        params = {'category': category}
-        if symbol:
-            params['symbol'] = symbol
-        result = self._make_request('GET', '/v5/market/instruments-info', params)
-        return result.get('list', [])
-    
-    def get_funding_rate(self, symbol: str, category: str = "linear") -> Dict:
-        """Get current funding rate"""
-        params = {'category': category, 'symbol': symbol}
-        result = self._make_request('GET', '/v5/market/funding/history', params)
-        if result.get('list'):
-            return result['list'][0]
-        return {}
-    
-    def get_open_interest(self, symbol: str, interval: str = "1h", 
-                          limit: int = 48, category: str = "linear") -> List[Dict]:
-        """Get open interest history"""
-        params = {
-            'category': category,
-            'symbol': symbol,
-            'intervalTime': interval,
-            'limit': limit
-        }
-        result = self._make_request('GET', '/v5/market/open-interest', params)
-        return result.get('list', [])
-    
-    # === PRIVATE ENDPOINTS (require API keys) ===
-    
-    def get_wallet_balance(self, account_type: str = "UNIFIED") -> Dict:
-        """Get wallet balance"""
-        params = {'accountType': account_type}
-        result = self._make_request('GET', '/v5/account/wallet-balance', params, signed=True)
+    def get_positions(self, symbol: str = None) -> List[Dict]:
+        """Отримати відкриті позиції"""
+        if not self.api_key:
+            return []
         
-        if result.get('list'):
-            account = result['list'][0]
-            return {
-                'total_equity': float(account.get('totalEquity', 0)),
-                'available_balance': float(account.get('totalAvailableBalance', 0)),
-                'total_margin': float(account.get('totalMarginBalance', 0)),
-                'unrealized_pnl': float(account.get('totalPerpUPL', 0)),
+        try:
+            params = {"category": "linear", "settleCoin": "USDT"}
+            if symbol:
+                params["symbol"] = symbol
+            
+            response = self.session.get_positions(**params)
+            result = self._handle_response(response)
+            if result and result.get('list'):
+                positions = []
+                for pos in result['list']:
+                    size = self._safe_float(pos.get('size'))
+                    if size > 0:
+                        positions.append({
+                            'symbol': pos.get('symbol'),
+                            'side': pos.get('side'),
+                            'size': size,
+                            'entry_price': self._safe_float(pos.get('avgPrice')),
+                            'mark_price': self._safe_float(pos.get('markPrice')),
+                            'unrealized_pnl': self._safe_float(pos.get('unrealisedPnl')),
+                            'leverage': self._safe_float(pos.get('leverage')),
+                            'position_value': self._safe_float(pos.get('positionValue')),
+                            'liq_price': self._safe_float(pos.get('liqPrice')),
+                            'take_profit': self._safe_float(pos.get('takeProfit')),
+                            'stop_loss': self._safe_float(pos.get('stopLoss'))
+                        })
+                return positions
+            return []
+        except Exception as e:
+            print(f"[BYBIT] get_positions error: {e}")
+            return []
+    
+    def place_order(
+        self,
+        symbol: str,
+        side: str,  # "Buy" or "Sell"
+        qty: float,
+        order_type: str = "Market",
+        price: float = None,
+        stop_loss: float = None,
+        take_profit: float = None,
+        reduce_only: bool = False
+    ) -> Optional[Dict]:
+        """Розмістити ордер"""
+        if not self.api_key:
+            print("[BYBIT] No API key - cannot place order")
+            return None
+        
+        try:
+            params = {
+                "category": "linear",
+                "symbol": symbol,
+                "side": side,
+                "orderType": order_type,
+                "qty": str(qty),
+                "reduceOnly": reduce_only
             }
-        return {'total_equity': 0, 'available_balance': 0, 'total_margin': 0, 'unrealized_pnl': 0}
+            
+            if order_type == "Limit" and price:
+                params["price"] = str(price)
+            
+            if stop_loss:
+                params["stopLoss"] = str(stop_loss)
+            
+            if take_profit:
+                params["takeProfit"] = str(take_profit)
+            
+            response = self.session.place_order(**params)
+            result = self._handle_response(response)
+            
+            if result:
+                return {
+                    'order_id': result.get('orderId'),
+                    'symbol': symbol,
+                    'side': side,
+                    'qty': qty,
+                    'order_type': order_type
+                }
+            return None
+        except InvalidRequestError as e:
+            print(f"[BYBIT] Invalid request: {e}")
+            return None
+        except Exception as e:
+            print(f"[BYBIT] place_order error: {e}")
+            return None
     
-    def get_positions(self, symbol: str = None, category: str = "linear") -> List[Dict]:
-        """Get open positions"""
-        params = {'category': category, 'settleCoin': 'USDT'}
-        if symbol:
-            params['symbol'] = symbol
-        result = self._make_request('GET', '/v5/position/list', params, signed=True)
+    def cancel_order(self, symbol: str, order_id: str) -> bool:
+        """Скасувати ордер"""
+        if not self.api_key:
+            return False
         
-        positions = []
-        for p in result.get('list', []):
-            if float(p.get('size', 0)) > 0:
-                positions.append({
-                    'symbol': p['symbol'],
-                    'side': p['side'],
-                    'size': float(p['size']),
-                    'entry_price': float(p.get('avgPrice', 0)),
-                    'mark_price': float(p.get('markPrice', 0)),
-                    'unrealized_pnl': float(p.get('unrealisedPnl', 0)),
-                    'leverage': int(p.get('leverage', 1)),
-                    'liq_price': float(p.get('liqPrice', 0)) if p.get('liqPrice') else None,
-                })
-        return positions
+        try:
+            response = self.session.cancel_order(
+                category="linear",
+                symbol=symbol,
+                orderId=order_id
+            )
+            return response.get('retCode') == 0
+        except Exception as e:
+            print(f"[BYBIT] cancel_order error: {e}")
+            return False
     
-    def place_order(self, symbol: str, side: str, qty: float, order_type: str = "Market",
-                    price: float = None, stop_loss: float = None, take_profit: float = None,
-                    reduce_only: bool = False, category: str = "linear") -> Dict:
-        """Place a new order"""
-        params = {
-            'category': category,
-            'symbol': symbol,
-            'side': side,  # Buy or Sell
-            'orderType': order_type,
-            'qty': str(qty),
-            'timeInForce': 'GTC',
-            'reduceOnly': reduce_only,
-        }
+    def set_leverage(self, symbol: str, leverage: int) -> bool:
+        """Встановити leverage"""
+        if not self.api_key:
+            return False
         
-        if price and order_type == "Limit":
-            params['price'] = str(price)
+        try:
+            response = self.session.set_leverage(
+                category="linear",
+                symbol=symbol,
+                buyLeverage=str(leverage),
+                sellLeverage=str(leverage)
+            )
+            # 110043 = leverage not modified (вже такий)
+            return response.get('retCode') in [0, 110043]
+        except Exception as e:
+            print(f"[BYBIT] set_leverage error: {e}")
+            return False
+    
+    def set_trading_stop(
+        self,
+        symbol: str,
+        stop_loss: float = None,
+        take_profit: float = None,
+        trailing_stop: float = None,
+        position_idx: int = 0
+    ) -> bool:
+        """Встановити SL/TP/Trailing"""
+        if not self.api_key:
+            return False
         
-        if stop_loss:
-            params['stopLoss'] = str(stop_loss)
-        if take_profit:
-            params['takeProfit'] = str(take_profit)
-        
-        return self._make_request('POST', '/v5/order/create', params, signed=True)
+        try:
+            params = {
+                "category": "linear",
+                "symbol": symbol,
+                "positionIdx": position_idx
+            }
+            
+            if stop_loss:
+                params["stopLoss"] = str(stop_loss)
+            if take_profit:
+                params["takeProfit"] = str(take_profit)
+            if trailing_stop:
+                params["trailingStop"] = str(trailing_stop)
+            
+            response = self.session.set_trading_stop(**params)
+            return response.get('retCode') == 0
+        except Exception as e:
+            print(f"[BYBIT] set_trading_stop error: {e}")
+            return False
     
-    def cancel_order(self, symbol: str, order_id: str, category: str = "linear") -> Dict:
-        """Cancel an order"""
-        params = {
-            'category': category,
-            'symbol': symbol,
-            'orderId': order_id
-        }
-        return self._make_request('POST', '/v5/order/cancel', params, signed=True)
-    
-    def cancel_all_orders(self, symbol: str = None, category: str = "linear") -> Dict:
-        """Cancel all orders"""
-        params = {'category': category}
-        if symbol:
-            params['symbol'] = symbol
-        return self._make_request('POST', '/v5/order/cancel-all', params, signed=True)
-    
-    def set_leverage(self, symbol: str, leverage: int, category: str = "linear") -> Dict:
-        """Set leverage for a symbol"""
-        params = {
-            'category': category,
-            'symbol': symbol,
-            'buyLeverage': str(leverage),
-            'sellLeverage': str(leverage)
-        }
-        return self._make_request('POST', '/v5/position/set-leverage', params, signed=True)
-    
-    def set_trading_stop(self, symbol: str, stop_loss: float = None, 
-                         take_profit: float = None, trailing_stop: float = None,
-                         category: str = "linear") -> Dict:
-        """Set trading stop for a position"""
-        params = {
-            'category': category,
-            'symbol': symbol,
-            'positionIdx': 0
-        }
-        if stop_loss:
-            params['stopLoss'] = str(stop_loss)
-        if take_profit:
-            params['takeProfit'] = str(take_profit)
-        if trailing_stop:
-            params['trailingStop'] = str(trailing_stop)
-        
-        return self._make_request('POST', '/v5/position/trading-stop', params, signed=True)
-    
-    def close_position(self, symbol: str, side: str, qty: float, category: str = "linear") -> Dict:
-        """Close a position"""
+    def close_position(self, symbol: str, side: str, qty: float) -> Optional[Dict]:
+        """Закрити позицію"""
+        # Для закриття позиції потрібно виставити протилежний ордер
         close_side = "Sell" if side == "Buy" else "Buy"
         return self.place_order(
             symbol=symbol,
             side=close_side,
             qty=qty,
             order_type="Market",
-            reduce_only=True,
-            category=category
+            reduce_only=True
         )
-    
-    def test_connection(self) -> bool:
-        """Test API connection"""
-        try:
-            result = self._make_request('GET', '/v5/market/time')
-            return True
-        except:
-            return False
 
 
-# Singleton instance
-_connector_instance = None
+# ===== Singleton =====
+_connector: Optional[BybitConnector] = None
 
-def get_connector(api_key: str = None, api_secret: str = None, testnet: bool = False) -> BybitConnector:
-    """Get or create Bybit connector instance"""
-    global _connector_instance
-    if _connector_instance is None or api_key:
-        _connector_instance = BybitConnector(api_key, api_secret, testnet)
-    return _connector_instance
+def get_connector() -> BybitConnector:
+    """Отримати singleton instance"""
+    global _connector
+    if _connector is None:
+        _connector = BybitConnector()
+    return _connector
