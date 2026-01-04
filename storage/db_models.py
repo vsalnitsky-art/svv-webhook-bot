@@ -278,8 +278,15 @@ class EventLog(Base):
         }
 
 
-# Engine and session factory
-engine = create_engine(DATABASE_URL, echo=False)
+# Engine and session factory with connection pool settings
+engine = create_engine(
+    DATABASE_URL, 
+    echo=False,
+    pool_pre_ping=True,      # Verify connection before use
+    pool_recycle=300,        # Recycle connections every 5 min
+    pool_size=5,             # Number of connections to keep
+    max_overflow=10,         # Allow up to 10 extra connections
+)
 SessionLocal = sessionmaker(bind=engine)
 
 def init_db():
