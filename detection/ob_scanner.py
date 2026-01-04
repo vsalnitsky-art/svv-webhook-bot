@@ -53,19 +53,29 @@ class OBScanner:
         return all_obs
     
     def _detect_ob_on_timeframe(self, symbol: str, timeframe: str) -> List[Dict]:
-        """Detect order blocks on a single timeframe"""
-        klines = self.fetcher.get_klines(symbol, timeframe, limit=100)
-        if len(klines) < 20:
+        """Detect order blocks on a single timeframe with full data"""
+        from config import DATA_REQUIREMENTS
+        
+        # Get appropriate limit based on timeframe
+        tf_limits = {
+            '15': DATA_REQUIREMENTS['ob_klines_15m'],  # 500
+            '5': DATA_REQUIREMENTS['ob_klines_5m'],    # 300
+            '1': DATA_REQUIREMENTS['ob_klines_1m'],    # 200
+        }
+        limit = tf_limits.get(timeframe, 200)
+        
+        klines = self.fetcher.get_klines(symbol, timeframe, limit=limit)
+        if len(klines) < 50:  # Need minimum data
             return []
         
         detected = []
         
-        # Calculate volume average
+        # Calculate volume average over larger sample
         volumes = [k['volume'] for k in klines]
-        avg_volume = sum(volumes[:-5]) / len(volumes[:-5]) if len(volumes) > 5 else 1
+        avg_volume = sum(volumes[:-10]) / len(volumes[:-10]) if len(volumes) > 10 else 1
         
         # Scan for OBs (skip last few candles)
-        for i in range(10, len(klines) - 2):
+        for i in range(20, len(klines) - 2):
             ob = self._check_ob_at_index(klines, i, avg_volume, symbol, timeframe)
             if ob:
                 detected.append(ob)

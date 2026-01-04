@@ -81,29 +81,49 @@ class SleeperScanner:
         return candidates
     
     def _analyze_symbol(self, symbol_data: Dict) -> Optional[Dict]:
-        """Analyze a single symbol for sleeper characteristics"""
+        """Analyze a single symbol for sleeper characteristics with full data"""
         symbol = symbol_data['symbol']
         
-        # Get 4H klines for analysis
-        klines = self.fetcher.get_klines(symbol, '4h', limit=100)
-        if len(klines) < 20:
+        from config import DATA_REQUIREMENTS
+        
+        # === ЗАВАНТАЖЕННЯ ПОВНИХ ДАНИХ ===
+        
+        # 1. Multi-timeframe klines
+        klines_4h = self.fetcher.get_klines(symbol, '240', limit=DATA_REQUIREMENTS['sleeper_klines_4h'])  # 500 x 4h = 83 days
+        klines_1h = self.fetcher.get_klines(symbol, '60', limit=DATA_REQUIREMENTS['sleeper_klines_1h'])   # 200 x 1h = 8 days
+        klines_1d = self.fetcher.get_klines(symbol, 'D', limit=DATA_REQUIREMENTS['sleeper_klines_1d'])    # 100 days
+        
+        if len(klines_4h) < 50:  # Minimum required
             return None
         
-        # Calculate indicators
-        indicators = self.indicators.calculate_all(klines)
+        # 2. Calculate indicators on multiple timeframes
+        indicators_4h = self.indicators.calculate_all(klines_4h)
+        indicators_1h = self.indicators.calculate_all(klines_1h) if len(klines_1h) > 20 else None
+        indicators_1d = self.indicators.calculate_all(klines_1d) if len(klines_1d) > 20 else None
         
-        # Get additional metrics
+        # 3. Get funding rate
         funding_rate = self.fetcher.get_funding_rate(symbol) or 0
+        
+        # 4. Get Open Interest change
         oi_change = self.fetcher.get_oi_change(symbol, hours=4) or 0
         
-        # Calculate component scores
-        fuel_score = self._calculate_fuel_score(funding_rate, oi_change)
-        volatility_score = self._calculate_volatility_score(indicators)
-        price_score = self._calculate_price_score(indicators)
+        # 5. Get OI history for accumulation analysis
+        oi_history = self.fetcher.get_oi_history(symbol, limit=API_LIMITS.get('oi_history_limit', 200))
+        oi_accumulation = self._analyze_oi_accumulation(oi_history) if oi_history else 0
+        
+        # === РОЗРАХУНОК SCORES ===
+        
+        # Calculate component scores with enhanced data
+        fuel_score = self._calculate_fuel_score(funding_rate, oi_change, oi_accumulation)
+        volatility_score = self._calculate_volatility_score(indicators_4h, indicators_1d)
+        price_score = self._calculate_price_score(indicators_4h, indicators_1d)
         liquidity_score = self._calculate_liquidity_score(
-            indicators['volume_profile'], 
+            indicators_4h['volume_profile'], 
             symbol_data['volume_24h']
         )
+        
+        # MTF confirmation bonus
+        mtf_bonus = self._calculate_mtf_bonus(indicators_4h, indicators_1h, indicators_1d)
         
         # Total weighted score
         total_score = (
@@ -111,14 +131,17 @@ class SleeperScanner:
             volatility_score * self.thresholds['weight_volatility'] +
             price_score * self.thresholds['weight_price'] +
             liquidity_score * self.thresholds['weight_liquidity']
-        )
+        ) + mtf_bonus
         
         # Determine direction bias
-        direction = self._determine_direction(funding_rate, oi_change, indicators)
+        direction = self._determine_direction(funding_rate, oi_change, indicators_4h, indicators_1d)
         
         min_score = self.db.get_setting('sleeper_min_score', 60)
         if total_score < min_score:
             return None
+        
+        # BB Width trend (is it compressing?)
+        bb_width_change = self._calculate_bb_compression(klines_4h)
         
         return {
             'symbol': symbol,
@@ -132,44 +155,134 @@ class SleeperScanner:
             'direction': direction,
             'funding_rate': funding_rate,
             'oi_change_4h': oi_change,
-            'bb_width': indicators['bb_width_current'],
+            'bb_width': indicators_4h['bb_width_current'],
+            'bb_width_change': bb_width_change,
             'volume_24h': symbol_data['volume_24h'],
-            'volume_ratio': indicators['volume_profile']['ratio'],
-            'price_range_pct': indicators['price_range']['range_pct'],
-            'rsi': indicators['rsi_current'],
+            'volume_ratio': indicators_4h['volume_profile']['ratio'],
+            'price_range_pct': indicators_4h['price_range']['range_pct'],
+            'rsi': indicators_4h['rsi_current'],
         }
     
-    def _calculate_fuel_score(self, funding_rate: float, oi_change: float) -> float:
+    def _analyze_oi_accumulation(self, oi_history: List[Dict]) -> float:
+        """Analyze OI accumulation pattern (0-100)"""
+        if not oi_history or len(oi_history) < 10:
+            return 0
+        
+        # Get OI values
+        oi_values = [h['open_interest'] for h in oi_history]
+        
+        # Calculate trend (linear regression slope)
+        n = len(oi_values)
+        x_mean = n / 2
+        y_mean = sum(oi_values) / n
+        
+        numerator = sum((i - x_mean) * (oi_values[i] - y_mean) for i in range(n))
+        denominator = sum((i - x_mean) ** 2 for i in range(n))
+        
+        if denominator == 0:
+            return 0
+        
+        slope = numerator / denominator
+        
+        # Normalize slope to 0-100 score
+        # Positive slope = accumulation, negative = distribution
+        oi_change_pct = (slope * n) / y_mean * 100 if y_mean > 0 else 0
+        
+        if oi_change_pct > 20:
+            return 100
+        elif oi_change_pct > 10:
+            return 80
+        elif oi_change_pct > 5:
+            return 60
+        elif oi_change_pct > 0:
+            return 40
+        else:
+            return 20  # Distribution
+    
+    def _calculate_bb_compression(self, klines: List[Dict]) -> float:
+        """Calculate BB width compression rate"""
+        if len(klines) < 50:
+            return 0
+        
+        # Calculate BB width for recent vs older periods
+        recent_closes = [k['close'] for k in klines[-20:]]
+        older_closes = [k['close'] for k in klines[-50:-30]]
+        
+        def bb_width(closes):
+            if len(closes) < 5:
+                return 0
+            sma = sum(closes) / len(closes)
+            variance = sum((c - sma) ** 2 for c in closes) / len(closes)
+            std = variance ** 0.5
+            return (std * 4) / sma * 100 if sma > 0 else 0
+        
+        recent_width = bb_width(recent_closes)
+        older_width = bb_width(older_closes)
+        
+        if older_width > 0:
+            compression = (older_width - recent_width) / older_width * 100
+            return round(compression, 2)
+        return 0
+    
+    def _calculate_mtf_bonus(self, ind_4h: Dict, ind_1h: Dict, ind_1d: Dict) -> float:
+        """Calculate multi-timeframe alignment bonus"""
+        bonus = 0
+        
+        # Check RSI alignment
+        rsi_4h = ind_4h.get('rsi_current', 50)
+        rsi_1h = ind_1h.get('rsi_current', 50) if ind_1h else 50
+        rsi_1d = ind_1d.get('rsi_current', 50) if ind_1d else 50
+        
+        # All in oversold zone (potential long)
+        if rsi_4h < 35 and rsi_1h < 40 and rsi_1d < 45:
+            bonus += 5
+        # All in overbought zone (potential short)
+        elif rsi_4h > 65 and rsi_1h > 60 and rsi_1d > 55:
+            bonus += 5
+        
+        # Check BB squeeze alignment
+        bb_4h = ind_4h.get('bb_width_current', 5)
+        bb_1d = ind_1d.get('bb_width_current', 5) if ind_1d else 5
+        
+        if bb_4h < 3 and bb_1d < 4:  # Compressed on both
+            bonus += 5
+        
+        return bonus
+    
+    def _calculate_fuel_score(self, funding_rate: float, oi_change: float, oi_accumulation: float = 0) -> float:
         """
-        Calculate Fuel Score based on funding rate and OI change
-        High funding + increasing OI = potential reversal setup
+        Calculate Fuel Score based on funding rate, OI change, and OI accumulation
+        High funding + increasing OI + accumulation = potential reversal setup
         """
         score = 0
         
         # Funding rate component (extreme funding = fuel for reversal)
         abs_funding = abs(funding_rate)
         if abs_funding >= self.thresholds['funding_rate_extreme']:
-            score += 50
+            score += 40
         elif abs_funding >= self.thresholds['funding_rate_moderate']:
-            score += 30
+            score += 25
         else:
             score += 10
         
-        # OI change component (accumulation signal)
+        # OI change component (short-term accumulation signal)
         if oi_change >= self.thresholds['oi_change_high']:
-            score += 50
-        elif oi_change >= self.thresholds['oi_change_moderate']:
             score += 30
+        elif oi_change >= self.thresholds['oi_change_moderate']:
+            score += 20
         elif oi_change > 0:
-            score += 15
+            score += 10
         else:
             score += 5
         
-        return score
+        # OI accumulation pattern (long-term signal) - NEW
+        score += oi_accumulation * 0.3  # Max 30 points from OI accumulation
+        
+        return min(100, score)
     
-    def _calculate_volatility_score(self, indicators: Dict) -> float:
+    def _calculate_volatility_score(self, indicators: Dict, indicators_daily: Dict = None) -> float:
         """
-        Calculate Volatility Score based on BB squeeze
+        Calculate Volatility Score based on BB squeeze (MTF)
         Tight BBs = energy building
         """
         score = 0
@@ -187,15 +300,21 @@ class SleeperScanner:
         else:
             score = 20
         
+        # Daily BB confirmation (MTF bonus)
+        if indicators_daily:
+            bb_daily = indicators_daily.get('bb_width_current', 5)
+            if bb_daily < 4:  # Daily also squeezed
+                score += 15
+        
         # Divergence bonus
         if indicators.get('divergence'):
             score += 20
         
         return min(100, score)
     
-    def _calculate_price_score(self, indicators: Dict) -> float:
+    def _calculate_price_score(self, indicators: Dict, indicators_daily: Dict = None) -> float:
         """
-        Calculate Price Score based on range and position
+        Calculate Price Score based on range and position (MTF)
         Tight range + neutral position = good setup
         """
         score = 0
@@ -223,7 +342,14 @@ class SleeperScanner:
         else:  # Extremes
             score += 20
         
-        return score
+        # Daily trend alignment (MTF bonus)
+        if indicators_daily:
+            daily_rsi = indicators_daily.get('rsi_current', 50)
+            # RSI not overbought/oversold on daily = room to move
+            if 30 < daily_rsi < 70:
+                score += 10
+        
+        return min(100, score)
     
     def _calculate_liquidity_score(self, volume_profile: Dict, 
                                    volume_24h: float) -> float:
@@ -255,8 +381,8 @@ class SleeperScanner:
         return score
     
     def _determine_direction(self, funding_rate: float, oi_change: float,
-                            indicators: Dict) -> str:
-        """Determine probable direction based on metrics"""
+                            indicators: Dict, indicators_daily: Dict = None) -> str:
+        """Determine probable direction based on metrics (MTF)"""
         bullish_signals = 0
         bearish_signals = 0
         
@@ -290,6 +416,14 @@ class SleeperScanner:
             bullish_signals += 2
         elif div == 'bearish':
             bearish_signals += 2
+        
+        # Daily RSI confirmation (MTF)
+        if indicators_daily:
+            daily_rsi = indicators_daily.get('rsi_current', 50)
+            if daily_rsi < 40:
+                bullish_signals += 1
+            elif daily_rsi > 60:
+                bearish_signals += 1
         
         if bullish_signals > bearish_signals + 1:
             return 'LONG'

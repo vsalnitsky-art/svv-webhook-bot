@@ -104,8 +104,32 @@ TIMEFRAME_MAP = {
 
 # === API LIMITS ===
 API_LIMITS = {
-    'kline_limit': 200,                  # Max candles per request
-    'symbols_per_batch': 20,             # Process 20 symbols at a time
-    'rate_limit_delay': 0.1,             # 100ms between requests
+    'kline_limit': 1000,                 # Max candles per request (Bybit allows 1000)
+    'symbols_per_batch': 10,             # Process 10 symbols at a time (for stability)
+    'rate_limit_delay': 0.15,            # 150ms between requests (safe margin)
     'max_retries': 3,                    # Retry failed requests
+    'oi_history_limit': 200,             # Open Interest history points
+}
+
+# === DATA REQUIREMENTS ===
+DATA_REQUIREMENTS = {
+    # Sleeper Scanner - потрібно багато історії для виявлення накопичення
+    'sleeper_klines_4h': 500,            # 500 x 4h = ~83 днів (для BB width history)
+    'sleeper_klines_1h': 200,            # 200 x 1h = ~8 днів (для короткострокових патернів)
+    'sleeper_klines_1d': 100,            # 100 днів (для довгострокового тренду)
+    
+    # OB Scanner - потрібна точність для виявлення OB
+    'ob_klines_15m': 500,                # 500 x 15m = ~5 днів
+    'ob_klines_5m': 300,                 # 300 x 5m = ~1 день  
+    'ob_klines_1m': 200,                 # 200 x 1m = ~3 години
+    
+    # Multi-timeframe analysis
+    'mtf_klines': {
+        '1': 200,                        # 1 min - 3+ hours
+        '5': 300,                        # 5 min - 1 day
+        '15': 500,                       # 15 min - 5 days
+        '60': 500,                       # 1 hour - 20 days
+        '240': 500,                      # 4 hour - 83 days
+        'D': 200,                        # Daily - 200 days
+    }
 }

@@ -107,6 +107,25 @@ class MarketDataFetcher:
         except:
             return None
     
+    def get_oi_history(self, symbol: str, limit: int = 200, interval: str = '1h') -> List[Dict]:
+        """Get OI history for accumulation analysis"""
+        try:
+            oi_data = self.connector.get_open_interest(symbol, interval, limit)
+            if not oi_data:
+                return []
+            
+            # Convert to standard format
+            result = []
+            for item in oi_data:
+                result.append({
+                    'timestamp': item.get('timestamp'),
+                    'open_interest': float(item.get('open_interest', item.get('openInterest', 0)))
+                })
+            
+            return result
+        except:
+            return []
+    
     def get_orderbook_imbalance(self, symbol: str, depth: int = 25) -> Dict:
         """Calculate orderbook imbalance"""
         try:
