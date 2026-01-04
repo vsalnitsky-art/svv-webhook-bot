@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, D
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import DATABASE_URL
+from config.bot_settings import OBStatus  # Re-export for convenience
 
 Base = declarative_base()
 

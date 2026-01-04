@@ -27,6 +27,11 @@ def create_app():
     
     app.secret_key = os.getenv('FLASK_SECRET_KEY', 'sleeper-ob-bot-secret-key-change-me')
     
+    # Context processor for templates
+    @app.context_processor
+    def inject_now():
+        return {'now': datetime.utcnow()}
+    
     # Initialize database
     init_db()
     
@@ -99,7 +104,7 @@ def register_routes(app):
         from storage.db_models import OrderBlock, OBStatus, get_session
         session = get_session()
         obs = session.query(OrderBlock).filter(
-            OrderBlock.status.in_([OBStatus.FRESH.value, OBStatus.TESTED.value])
+            OrderBlock.status.in_([OBStatus.ACTIVE.value, OBStatus.TOUCHED.value])
         ).order_by(OrderBlock.created_at.desc()).limit(50).all()
         session.close()
         
@@ -237,7 +242,7 @@ def register_api_routes(app):
         
         session = get_session()
         obs = session.query(OrderBlock).filter(
-            OrderBlock.status.in_([OBStatus.FRESH.value, OBStatus.TESTED.value])
+            OrderBlock.status.in_([OBStatus.ACTIVE.value, OBStatus.TOUCHED.value])
         ).order_by(OrderBlock.created_at.desc()).limit(50).all()
         
         data = []
