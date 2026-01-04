@@ -24,6 +24,9 @@ from storage.db_models import init_db
 from storage.db_operations import get_db
 from alerts.telegram_notifier import get_notifier
 
+# Import app for gunicorn (gunicorn main_bot:app)
+from web.flask_app import app
+
 
 def print_banner():
     """Вивести банер"""
