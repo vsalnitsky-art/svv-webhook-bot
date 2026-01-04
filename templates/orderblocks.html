@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Order Blocks - Sleeper OB Bot{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="page-header">
+        <h1>📦 Order Blocks</h1>
+        <div class="header-actions">
+            <input type="text" id="ob-symbol" placeholder="BTCUSDT" class="input-field">
+            <button class="btn btn-primary" onclick="scanOBs()">🔍 Scan Symbol</button>
+        </div>
+    </div>
+
+    <div class="info-box">
+        <strong>Multi-Timeframe OB Detection</strong> - Scans 15m → 5m → 1m for institutional zones.
+        Quality scoring based on volume, impulse strength, freshness, and structure.
+    </div>
+
+    {% if orderblocks %}
+    <table class="data-table ob-table">
+        <thead>
+            <tr>
+                <th>Symbol</th>
+                <th>Timeframe</th>
+                <th>Type</th>
+                <th>Zone</th>
+                <th>Quality</th>
+                <th>Vol Ratio</th>
+                <th>Impulse</th>
+                <th>Status</th>
+                <th>Touches</th>
+                <th>Age</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ob in orderblocks %}
+            <tr class="{{ ob.ob_type|lower }}-row">
+                <td class="symbol">
+                    <a href="https://www.tradingview.com/chart/?symbol=BYBIT:{{ ob.symbol }}" target="_blank">
+                        {{ ob.symbol }}
+                    </a>
+                </td>
+                <td>{{ ob.timeframe }}</td>
+                <td>
+                    <span class="ob-type {{ ob.ob_type|lower }}">
+                        {% if ob.ob_type == 'BULLISH' %}🟢 BULLISH
+                        {% else %}🔴 BEARISH{% endif %}
+                    </span>
+                </td>
+                <td class="zone">
+                    <div class="zone-prices">
+                        <span class="zone-high">${{ "%.4f"|format(ob.ob_high) }}</span>
+                        <span class="zone-sep">-</span>
+                        <span class="zone-low">${{ "%.4f"|format(ob.ob_low) }}</span>
+                    </div>
+                </td>
+                <td>
+                    <div class="quality-bar">
+                        <div class="quality-fill {% if ob.quality_score >= 70 %}high{% elif ob.quality_score >= 50 %}mid{% else %}low{% endif %}" 
+                             style="width: {{ ob.quality_score }}%"></div>
+                        <span class="quality-value">{{ "%.0f"|format(ob.quality_score or 0) }}</span>
+                    </div>
+                </td>
+                <td>{{ "%.1f"|format(ob.volume_ratio or 0) }}x</td>
+                <td>{{ "%.2f"|format(ob.impulse_pct or 0) }}%</td>
+                <td>
+                    <span class="status-badge {{ ob.status|lower }}">{{ ob.status }}</span>
+                </td>
+                <td>{{ ob.touch_count }}</td>
+                <td class="time-ago">
+                    {% if ob.created_at %}
+                        {{ ((now - ob.created_at).total_seconds() / 60)|int }}m
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">📦</div>
+        <div class="empty-text">No active order blocks</div>
+        <p>Enter a symbol above and scan to find OB zones</p>
+    </div>
+    {% endif %}
+
+    <div class="legend">
+        <h3>Quality Score Components</h3>
+        <ul>
+            <li><strong>Volume (35%)</strong>: Volume ratio vs average</li>
+            <li><strong>Impulse (30%)</strong>: Price movement strength</li>
+            <li><strong>Freshness (20%)</strong>: How recent the OB formed</li>
+            <li><strong>Structure (15%)</strong>: Body/wick ratio</li>
+        </ul>
+        
+        <h3>Status</h3>
+        <ul>
+            <li><strong>FRESH</strong>: Untouched, high probability</li>
+            <li><strong>TESTED</strong>: Price returned once</li>
+            <li><strong>BROKEN</strong>: Price closed through zone</li>
+            <li><strong>EXPIRED</strong>: Too old (>60 min default)</li>
+        </ul>
+    </div>
+</div>
+
+<script>
+async function scanOBs() {
+    const symbol = document.getElementById('ob-symbol').value.toUpperCase().trim();
+    
+    if (!symbol) {
+        alert('Please enter a symbol');
+        return;
+    }
+    
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Scanning...';
+    
+    try {
+        const res = await fetch('/api/scan/orderblocks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: symbol })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Scan failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Scan Symbol';
+    }
+}
+
+document.getElementById('ob-symbol').addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') scanOBs();
+});
+</script>
+{% endblock %}

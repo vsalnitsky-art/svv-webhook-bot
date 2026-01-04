@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Sleepers - Sleeper OB Bot{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="page-header">
+        <h1>🎯 Sleeper Candidates</h1>
+        <div class="header-actions">
+            <button class="btn btn-primary" onclick="scanSleepers()">🔍 Scan Now</button>
+        </div>
+    </div>
+
+    <div class="info-box">
+        <strong>Sleeper Detector v2.0</strong> - Identifies coins preparing for breakout moves.
+        States: IDLE → WATCHING → BUILDING → READY → TRIGGERED
+    </div>
+
+    {% if sleepers %}
+    <table class="data-table sleepers-table">
+        <thead>
+            <tr>
+                <th>Symbol</th>
+                <th>State</th>
+                <th>Direction</th>
+                <th>Total Score</th>
+                <th>Fuel</th>
+                <th>Volatility</th>
+                <th>HP</th>
+                <th>Funding</th>
+                <th>OI Δ 4H</th>
+                <th>BB Width</th>
+                <th>RSI</th>
+                <th>Updated</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in sleepers %}
+            <tr class="{% if s.state == 'READY' %}ready-row{% elif s.state == 'BUILDING' %}building-row{% endif %}">
+                <td class="symbol">
+                    <a href="https://www.tradingview.com/chart/?symbol=BYBIT:{{ s.symbol }}" target="_blank">
+                        {{ s.symbol }}
+                    </a>
+                </td>
+                <td>
+                    <span class="state-badge {{ s.state|lower }}">{{ s.state }}</span>
+                </td>
+                <td>
+                    <span class="direction {{ s.direction|lower if s.direction else '' }}">
+                        {% if s.direction == 'LONG' %}🟢 LONG
+                        {% elif s.direction == 'SHORT' %}🔴 SHORT
+                        {% else %}⚪ N/A{% endif %}
+                    </span>
+                </td>
+                <td class="score">
+                    <div class="score-bar">
+                        <div class="score-fill" style="width: {{ s.total_score or 0 }}%"></div>
+                        <span class="score-value">{{ "%.1f"|format(s.total_score or 0) }}</span>
+                    </div>
+                </td>
+                <td>{{ "%.1f"|format(s.fuel_score or 0) }}</td>
+                <td>{{ "%.1f"|format(s.volatility_score or 0) }}</td>
+                <td>
+                    <span class="hp-badge {% if s.hp >= 7 %}high{% elif s.hp >= 4 %}mid{% else %}low{% endif %}">
+                        {{ s.hp }}/10
+                    </span>
+                </td>
+                <td class="{% if s.funding_rate and s.funding_rate < 0 %}negative{% elif s.funding_rate and s.funding_rate > 0.01 %}positive{% endif %}">
+                    {{ "%.4f"|format(s.funding_rate or 0) }}%
+                </td>
+                <td class="{% if s.oi_change_4h and s.oi_change_4h > 5 %}positive{% elif s.oi_change_4h and s.oi_change_4h < -5 %}negative{% endif %}">
+                    {{ "%.2f"|format(s.oi_change_4h or 0) }}%
+                </td>
+                <td>{{ "%.4f"|format(s.bb_width or 0) }}</td>
+                <td class="{% if s.rsi and s.rsi > 70 %}overbought{% elif s.rsi and s.rsi < 30 %}oversold{% endif %}">
+                    {{ "%.1f"|format(s.rsi or 0) }}
+                </td>
+                <td class="time-ago">
+                    {% if s.updated_at %}
+                        {{ ((now - s.updated_at).total_seconds() / 60)|int }}m ago
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-text">No sleeper candidates found</div>
+        <button class="btn btn-primary" onclick="scanSleepers()">Run Scan</button>
+    </div>
+    {% endif %}
+
+    <div class="legend">
+        <h3>Score Components</h3>
+        <ul>
+            <li><strong>Fuel (30%)</strong>: Funding rate + OI accumulation</li>
+            <li><strong>Volatility (25%)</strong>: Bollinger Band squeeze</li>
+            <li><strong>Price (25%)</strong>: Range tightness + position</li>
+            <li><strong>Liquidity (20%)</strong>: Volume profile</li>
+        </ul>
+        
+        <h3>HP System</h3>
+        <p>Health Points start at 5. Increases when score improves, decreases when score drops. Removed at HP=0.</p>
+    </div>
+</div>
+
+<script>
+async function scanSleepers() {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Scanning...';
+    
+    try {
+        const res = await fetch('/api/scan/sleepers', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert(`Scanned ${data.data.total} symbols. ${data.data.ready} ready, ${data.data.building} building.`);
+            location.reload();
+        } else {
+            alert('Scan failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Scan Now';
+    }
+}
+</script>
+{% endblock %}

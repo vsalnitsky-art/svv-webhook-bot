@@ -1,0 +1,50 @@
+# Render.com deployment configuration
+# https://render.com/docs/yaml-spec
+
+services:
+  - type: web
+    name: sleeper-ob-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 "web.flask_app:app"
+    
+    envVars:
+      # Bybit API (set in Render dashboard)
+      - key: BYBIT_API_KEY
+        sync: false
+      - key: BYBIT_API_SECRET
+        sync: false
+      
+      # Telegram (optional, set in Render dashboard)
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      
+      # App settings
+      - key: PAPER_TRADING
+        value: "true"
+      - key: EXECUTION_MODE
+        value: "semi_auto"
+      
+      # Python
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    
+    # Health check
+    healthCheckPath: /api/health
+    
+    # Auto-deploy on push
+    autoDeploy: true
+    
+    # Plan (free tier available)
+    plan: free
+    
+    # Region
+    region: frankfurt  # or oregon, singapore, etc.
+
+# Persistent disk for SQLite (optional, paid feature)
+# disk:
+#   name: bot-data
+#   mountPath: /data
+#   sizeGB: 1

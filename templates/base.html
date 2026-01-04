@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Sleeper OB Bot{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="logo">🎯</span>
+            <span class="brand-text">Sleeper OB Bot</span>
+        </div>
+        <div class="nav-links">
+            <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">Dashboard</a>
+            <a href="{{ url_for('sleepers_page') }}" class="nav-link {% if request.endpoint == 'sleepers_page' %}active{% endif %}">Sleepers</a>
+            <a href="{{ url_for('orderblocks_page') }}" class="nav-link {% if request.endpoint == 'orderblocks_page' %}active{% endif %}">Order Blocks</a>
+            <a href="{{ url_for('signals_page') }}" class="nav-link {% if request.endpoint == 'signals_page' %}active{% endif %}">Signals</a>
+            <a href="{{ url_for('trades_page') }}" class="nav-link {% if request.endpoint == 'trades_page' %}active{% endif %}">Trades</a>
+            <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">⚙️</a>
+        </div>
+        <div class="nav-status">
+            <span class="status-badge {% if paper_trading %}paper{% else %}live{% endif %}">
+                {{ 'PAPER' if paper_trading else 'LIVE' }}
+            </span>
+        </div>
+    </nav>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <span>Sleeper OB Bot v1.0</span>
+        <span>|</span>
+        <span id="current-time">{{ now.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

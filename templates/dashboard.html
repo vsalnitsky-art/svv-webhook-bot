@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Sleeper OB Bot{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="page-header">
+        <h1>Dashboard</h1>
+        <div class="header-actions">
+            <button class="btn btn-primary" onclick="runFullScan()">🔍 Full Scan</button>
+            <button class="btn btn-secondary" onclick="refreshStats()">🔄 Refresh</button>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">💰</div>
+            <div class="stat-content">
+                <div class="stat-value" id="balance">
+                    {% if paper_trading %}
+                        ${{ "%.2f"|format(paper_balance) }}
+                    {% else %}
+                        ---
+                    {% endif %}
+                </div>
+                <div class="stat-label">{{ 'Paper Balance' if paper_trading else 'Live Balance' }}</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+                <div class="stat-value">{{ trade_stats.total_trades }}</div>
+                <div class="stat-label">Total Trades (30d)</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">🎯</div>
+            <div class="stat-content">
+                <div class="stat-value {% if trade_stats.win_rate >= 50 %}positive{% else %}negative{% endif %}">
+                    {{ "%.1f"|format(trade_stats.win_rate) }}%
+                </div>
+                <div class="stat-label">Win Rate</div>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon">💵</div>
+            <div class="stat-content">
+                <div class="stat-value {% if trade_stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                    ${{ "%.2f"|format(trade_stats.total_pnl) }}
+                </div>
+                <div class="stat-label">Total P&L</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sleeper Status -->
+    <div class="section">
+        <div class="section-header">
+            <h2>🎯 Sleeper Status</h2>
+            <a href="{{ url_for('sleepers_page') }}" class="btn btn-sm">View All →</a>
+        </div>
+        
+        <div class="sleeper-counts">
+            <div class="count-badge total">
+                <span class="count">{{ sleeper_counts.total }}</span>
+                <span class="label">Total</span>
+            </div>
+            <div class="count-badge watching">
+                <span class="count">{{ sleeper_counts.watching }}</span>
+                <span class="label">Watching</span>
+            </div>
+            <div class="count-badge building">
+                <span class="count">{{ sleeper_counts.building }}</span>
+                <span class="label">Building</span>
+            </div>
+            <div class="count-badge ready">
+                <span class="count">{{ sleeper_counts.ready }}</span>
+                <span class="label">Ready 🔥</span>
+            </div>
+        </div>
+
+        {% if sleepers %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>State</th>
+                    <th>Direction</th>
+                    <th>Score</th>
+                    <th>HP</th>
+                    <th>RSI</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in sleepers %}
+                <tr>
+                    <td class="symbol">{{ s.symbol }}</td>
+                    <td>
+                        <span class="state-badge {{ s.state|lower }}">{{ s.state }}</span>
+                    </td>
+                    <td>
+                        <span class="direction {{ s.direction|lower if s.direction else '' }}">
+                            {{ s.direction or 'N/A' }}
+                        </span>
+                    </td>
+                    <td>{{ "%.1f"|format(s.total_score or 0) }}</td>
+                    <td>
+                        <span class="hp-badge">{{ s.hp }}/10</span>
+                    </td>
+                    <td>{{ "%.1f"|format(s.rsi or 0) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">No sleeper candidates yet. Run a scan to find them.</div>
+        {% endif %}
+    </div>
+
+    <!-- Open Positions -->
+    <div class="section">
+        <div class="section-header">
+            <h2>📈 Open Positions</h2>
+            {% if open_trades %}
+            <button class="btn btn-danger btn-sm" onclick="closeAllTrades()">Close All</button>
+            {% endif %}
+        </div>
+
+        {% if open_trades %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Direction</th>
+                    <th>Entry</th>
+                    <th>Size</th>
+                    <th>P&L</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in open_trades %}
+                <tr>
+                    <td class="symbol">{{ t.symbol }}</td>
+                    <td>
+                        <span class="direction {{ t.direction|lower }}">{{ t.direction }}</span>
+                    </td>
+                    <td>${{ "%.4f"|format(t.entry_price) }}</td>
+                    <td>${{ "%.2f"|format(t.position_size) }}</td>
+                    <td class="{% if (t.pnl_usdt or 0) >= 0 %}positive{% else %}negative{% endif %}">
+                        ${{ "%.2f"|format(t.pnl_usdt or 0) }}
+                    </td>
+                    <td>
+                        <button class="btn btn-danger btn-xs" onclick="closeTrade({{ t.id }})">Close</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">No open positions</div>
+        {% endif %}
+    </div>
+
+    <!-- Recent Events -->
+    <div class="section">
+        <div class="section-header">
+            <h2>📋 Recent Events</h2>
+        </div>
+
+        <div class="events-list">
+            {% for e in recent_events %}
+            <div class="event-item {{ e.level|lower }}">
+                <span class="event-time">{{ e.timestamp.strftime('%H:%M:%S') }}</span>
+                <span class="event-category">{{ e.category }}</span>
+                <span class="event-message">{{ e.message }}</span>
+                {% if e.symbol %}
+                <span class="event-symbol">{{ e.symbol }}</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<script>
+async function runFullScan() {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Scanning...';
+    
+    try {
+        const res = await fetch('/api/scan/full', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert(`Scan complete! ${data.data.length} signals found.`);
+            location.reload();
+        } else {
+            alert('Scan failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Full Scan';
+    }
+}
+
+async function refreshStats() {
+    location.reload();
+}
+
+async function closeTrade(tradeId) {
+    if (!confirm('Close this trade?')) return;
+    
+    try {
+        const res = await fetch(`/api/trade/close/${tradeId}`, { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function closeAllTrades() {
+    if (!confirm('Close ALL open trades?')) return;
+    
+    try {
+        const res = await fetch('/api/trade/close-all', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert(`Closed ${data.data.length} trades`);
+            location.reload();
+        } else {
+            alert('Failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+</script>
+{% endblock %}

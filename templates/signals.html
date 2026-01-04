@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Signals - Sleeper OB Bot{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="page-header">
+        <h1>📡 Trading Signals</h1>
+        <div class="header-actions">
+            <button class="btn btn-primary" onclick="runFullScan()">🔍 Full Scan</button>
+        </div>
+    </div>
+
+    <!-- Pending Signals (SEMI_AUTO mode) -->
+    {% if pending_signals %}
+    <div class="section pending-section">
+        <div class="section-header">
+            <h2>⏳ Pending Confirmation</h2>
+            <span class="badge warning">Requires your action</span>
+        </div>
+        
+        <div class="signals-grid">
+            {% for sig in pending_signals %}
+            <div class="signal-card pending">
+                <div class="signal-header">
+                    <span class="signal-symbol">{{ sig.symbol }}</span>
+                    <span class="signal-direction {{ sig.direction|lower }}">{{ sig.direction }}</span>
+                </div>
+                
+                <div class="signal-details">
+                    <div class="detail-row">
+                        <span class="label">Entry Zone</span>
+                        <span class="value">${{ "%.4f"|format(sig.entry_price) }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">Stop Loss</span>
+                        <span class="value danger">${{ "%.4f"|format(sig.sl_price) }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">Take Profit</span>
+                        <span class="value success">${{ "%.4f"|format(sig.tp1_price) }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">Confidence</span>
+                        <span class="value">{{ "%.0f"|format(sig.confidence) }}%</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">Sleeper Score</span>
+                        <span class="value">{{ "%.1f"|format(sig.sleeper_score) }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">OB Quality</span>
+                        <span class="value">{{ "%.0f"|format(sig.ob_quality) }}</span>
+                    </div>
+                </div>
+                
+                <div class="signal-actions">
+                    <button class="btn btn-success" onclick="confirmSignal('{{ sig.id }}')">✓ Confirm</button>
+                    <button class="btn btn-danger" onclick="rejectSignal('{{ sig.id }}')">✗ Reject</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Ready Signals -->
+    {% if ready_signals %}
+    <div class="section ready-section">
+        <div class="section-header">
+            <h2>🎯 Ready for Entry</h2>
+            <span class="badge success">Price at OB zone</span>
+        </div>
+        
+        <div class="signals-grid">
+            {% for sig in ready_signals %}
+            <div class="signal-card ready">
+                <div class="signal-header">
+                    <span class="signal-symbol">{{ sig.symbol }}</span>
+                    <span class="signal-direction {{ sig.direction|lower }}">{{ sig.direction }}</span>
+                </div>
+                
+                <div class="signal-details">
+                    <div class="detail-row">
+                        <span class="label">Current Price</span>
+                        <span class="value">${{ "%.4f"|format(sig.current_price) }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">OB Zone</span>
+                        <span class="value">${{ "%.4f"|format(sig.ob_low) }} - ${{ "%.4f"|format(sig.ob_high) }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">Confidence</span>
+                        <span class="value">{{ "%.0f"|format(sig.confidence) }}%</span>
+                    </div>
+                </div>
+                
+                <div class="signal-meta">
+                    <span class="timeframe">{{ sig.ob_timeframe }}</span>
+                    <span class="sleeper-state">{{ sig.sleeper_state }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not pending_signals and not ready_signals %}
+    <div class="empty-state">
+        <div class="empty-icon">📡</div>
+        <div class="empty-text">No active signals</div>
+        <p>Run a full scan to detect sleepers and find entry signals</p>
+        <button class="btn btn-primary" onclick="runFullScan()">Run Full Scan</button>
+    </div>
+    {% endif %}
+
+    <div class="info-box">
+        <h3>Signal Generation Process</h3>
+        <ol>
+            <li><strong>Sleeper Scan</strong>: Find coins in READY state</li>
+            <li><strong>OB Scan</strong>: Detect order blocks on ready sleepers</li>
+            <li><strong>Signal Merge</strong>: Combine sleeper + OB data</li>
+            <li><strong>Entry Check</strong>: Monitor for price touching OB zone</li>
+        </ol>
+        
+        <h3>Execution Modes</h3>
+        <ul>
+            <li><strong>MANUAL</strong>: Notification only, no execution</li>
+            <li><strong>SEMI_AUTO</strong>: Requires confirmation before execution</li>
+            <li><strong>AUTO</strong>: Automatic execution when signal triggers</li>
+        </ul>
+    </div>
+</div>
+
+<script>
+async function runFullScan() {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Scanning...';
+    
+    try {
+        const res = await fetch('/api/scan/full', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert(`Scan complete! ${data.data.length} signals generated.`);
+            location.reload();
+        } else {
+            alert('Scan failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔍 Full Scan';
+    }
+}
+
+async function confirmSignal(signalId) {
+    if (!confirm('Execute this trade?')) return;
+    
+    try {
+        const res = await fetch(`/api/signal/confirm/${signalId}`, { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert('Signal confirmed and executed!');
+            location.reload();
+        } else {
+            alert('Failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function rejectSignal(signalId) {
+    if (!confirm('Reject this signal?')) return;
+    
+    try {
+        const res = await fetch(`/api/signal/reject/${signalId}`, { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert('Signal rejected');
+            location.reload();
+        } else {
+            alert('Failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+</script>
+{% endblock %}

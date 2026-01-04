@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Trades - Sleeper OB Bot{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="page-header">
+        <h1>📈 Trade History</h1>
+    </div>
+
+    <!-- Stats Summary -->
+    <div class="stats-grid small">
+        <div class="stat-card mini">
+            <div class="stat-value">{{ trade_stats.total_trades }}</div>
+            <div class="stat-label">Total Trades</div>
+        </div>
+        <div class="stat-card mini">
+            <div class="stat-value {% if trade_stats.win_rate >= 50 %}positive{% else %}negative{% endif %}">
+                {{ "%.1f"|format(trade_stats.win_rate) }}%
+            </div>
+            <div class="stat-label">Win Rate</div>
+        </div>
+        <div class="stat-card mini">
+            <div class="stat-value {% if trade_stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                ${{ "%.2f"|format(trade_stats.total_pnl) }}
+            </div>
+            <div class="stat-label">Total P&L</div>
+        </div>
+        <div class="stat-card mini">
+            <div class="stat-value">{{ "%.2f"|format(trade_stats.profit_factor) }}</div>
+            <div class="stat-label">Profit Factor</div>
+        </div>
+    </div>
+
+    {% if trades %}
+    <table class="data-table trades-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Symbol</th>
+                <th>Direction</th>
+                <th>Entry</th>
+                <th>Exit</th>
+                <th>Size</th>
+                <th>P&L</th>
+                <th>P&L %</th>
+                <th>Status</th>
+                <th>Mode</th>
+                <th>Opened</th>
+                <th>Closed</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in trades %}
+            <tr class="{% if t.status == 'OPEN' %}open-trade{% elif t.pnl_usdt and t.pnl_usdt > 0 %}win-trade{% elif t.pnl_usdt and t.pnl_usdt < 0 %}loss-trade{% endif %}">
+                <td>#{{ t.id }}</td>
+                <td class="symbol">
+                    <a href="https://www.tradingview.com/chart/?symbol=BYBIT:{{ t.symbol }}" target="_blank">
+                        {{ t.symbol }}
+                    </a>
+                </td>
+                <td>
+                    <span class="direction {{ t.direction|lower }}">
+                        {% if t.direction == 'LONG' %}🟢{% else %}🔴{% endif %} {{ t.direction }}
+                    </span>
+                </td>
+                <td>${{ "%.4f"|format(t.entry_price) }}</td>
+                <td>
+                    {% if t.exit_price %}
+                        ${{ "%.4f"|format(t.exit_price) }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td>${{ "%.2f"|format(t.position_size) }}</td>
+                <td class="{% if (t.pnl_usdt or 0) > 0 %}positive{% elif (t.pnl_usdt or 0) < 0 %}negative{% endif %}">
+                    {% if t.pnl_usdt is not none %}
+                        ${{ "%.2f"|format(t.pnl_usdt) }}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="{% if (t.pnl_percent or 0) > 0 %}positive{% elif (t.pnl_percent or 0) < 0 %}negative{% endif %}">
+                    {% if t.pnl_percent is not none %}
+                        {{ "%.2f"|format(t.pnl_percent) }}%
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td>
+                    <span class="status-badge {{ t.status|lower }}">{{ t.status }}</span>
+                </td>
+                <td>
+                    <span class="mode-badge {% if t.is_paper %}paper{% else %}live{% endif %}">
+                        {{ 'PAPER' if t.is_paper else 'LIVE' }}
+                    </span>
+                </td>
+                <td class="datetime">{{ t.opened_at.strftime('%m/%d %H:%M') if t.opened_at else '-' }}</td>
+                <td class="datetime">{{ t.closed_at.strftime('%m/%d %H:%M') if t.closed_at else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Pagination -->
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="{{ url_for('trades_page', page=page-1) }}" class="btn btn-sm">← Prev</a>
+        {% endif %}
+        
+        <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+        
+        {% if page < total_pages %}
+        <a href="{{ url_for('trades_page', page=page+1) }}" class="btn btn-sm">Next →</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-icon">📈</div>
+        <div class="empty-text">No trades yet</div>
+        <p>Trades will appear here once signals are executed</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

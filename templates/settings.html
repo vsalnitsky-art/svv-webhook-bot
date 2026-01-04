@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Settings - Sleeper OB Bot{% endblock %}
+
+{% block content %}
+<div class="page">
+    <div class="page-header">
+        <h1>⚙️ Bot Settings</h1>
+    </div>
+
+    <form id="settings-form" class="settings-form">
+        <!-- Execution Mode -->
+        <div class="settings-section">
+            <h2>Execution Mode</h2>
+            
+            <div class="form-group">
+                <label for="execution_mode">Mode</label>
+                <select id="execution_mode" name="execution_mode" class="form-control">
+                    {% for mode in execution_modes %}
+                    <option value="{{ mode }}" {% if settings.execution_mode == mode %}selected{% endif %}>
+                        {{ mode }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <small>MANUAL = notifications only, SEMI_AUTO = confirm before trade, AUTO = automatic execution</small>
+            </div>
+            
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="paper_trading" name="paper_trading" 
+                           {% if settings.paper_trading %}checked{% endif %}>
+                    Paper Trading Mode
+                </label>
+                <small>When enabled, trades are simulated with paper balance</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="paper_balance">Paper Balance (USDT)</label>
+                <input type="number" id="paper_balance" name="paper_balance" 
+                       value="{{ settings.paper_balance }}" step="0.01" class="form-control">
+            </div>
+        </div>
+
+        <!-- Sleeper Detection -->
+        <div class="settings-section">
+            <h2>Sleeper Detection</h2>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="sleeper_min_score">Min Score</label>
+                    <input type="number" id="sleeper_min_score" name="sleeper_min_score" 
+                           value="{{ settings.sleeper_min_score }}" step="1" class="form-control">
+                </div>
+                
+                <div class="form-group">
+                    <label for="sleeper_scan_limit">Scan Limit</label>
+                    <input type="number" id="sleeper_scan_limit" name="sleeper_scan_limit" 
+                           value="{{ settings.sleeper_scan_limit }}" class="form-control">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="sleeper_timeframe">Timeframe</label>
+                <input type="text" id="sleeper_timeframe" name="sleeper_timeframe" 
+                       value="{{ settings.sleeper_timeframe }}" class="form-control">
+            </div>
+        </div>
+
+        <!-- Order Block Detection -->
+        <div class="settings-section">
+            <h2>Order Block Detection</h2>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="ob_min_quality">Min Quality</label>
+                    <input type="number" id="ob_min_quality" name="ob_min_quality" 
+                           value="{{ settings.ob_min_quality }}" class="form-control">
+                </div>
+                
+                <div class="form-group">
+                    <label for="ob_max_age_minutes">Max Age (min)</label>
+                    <input type="number" id="ob_max_age_minutes" name="ob_max_age_minutes" 
+                           value="{{ settings.ob_max_age_minutes }}" class="form-control">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="ob_timeframes">Timeframes</label>
+                <input type="text" id="ob_timeframes" name="ob_timeframes" 
+                       value="{{ settings.ob_timeframes | join(',') }}" class="form-control">
+                <small>Comma-separated, e.g.: 15,5,1</small>
+            </div>
+        </div>
+
+        <!-- Risk Management -->
+        <div class="settings-section">
+            <h2>Risk Management</h2>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="risk_per_trade">Risk per Trade (%)</label>
+                    <input type="number" id="risk_per_trade" name="risk_per_trade" 
+                           value="{{ settings.risk_per_trade }}" step="0.1" class="form-control">
+                </div>
+                
+                <div class="form-group">
+                    <label for="max_positions">Max Positions</label>
+                    <input type="number" id="max_positions" name="max_positions" 
+                           value="{{ settings.max_positions }}" class="form-control">
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="default_leverage">Default Leverage</label>
+                    <input type="number" id="default_leverage" name="default_leverage" 
+                           value="{{ settings.default_leverage }}" class="form-control">
+                </div>
+                
+                <div class="form-group">
+                    <label for="atr_sl_multiplier">ATR SL Multiplier</label>
+                    <input type="number" id="atr_sl_multiplier" name="atr_sl_multiplier" 
+                           value="{{ settings.atr_sl_multiplier }}" step="0.1" class="form-control">
+                </div>
+            </div>
+        </div>
+
+        <!-- Telegram -->
+        <div class="settings-section">
+            <h2>Telegram Notifications</h2>
+            
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="telegram_enabled" name="telegram_enabled" 
+                           {% if settings.telegram_enabled %}checked{% endif %}>
+                    Enable Telegram Notifications
+                </label>
+            </div>
+            
+            <div class="form-group">
+                <label for="telegram_chat_id">Chat ID</label>
+                <input type="text" id="telegram_chat_id" name="telegram_chat_id" 
+                       value="{{ settings.telegram_chat_id or '' }}" class="form-control">
+                <small>Get from @userinfobot on Telegram</small>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+            <button type="button" class="btn btn-secondary" onclick="resetDefaults()">Reset Defaults</button>
+        </div>
+    </form>
+</div>
+
+<script>
+document.getElementById('settings-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const form = e.target;
+    const formData = new FormData(form);
+    
+    // Convert to object
+    const settings = {};
+    formData.forEach((value, key) => {
+        // Handle checkboxes
+        if (form.querySelector(`[name="${key}"]`).type === 'checkbox') {
+            settings[key] = form.querySelector(`[name="${key}"]`).checked;
+        }
+        // Handle numbers
+        else if (['paper_balance', 'sleeper_min_score', 'sleeper_scan_limit', 
+                  'ob_min_quality', 'ob_max_age_minutes', 'risk_per_trade',
+                  'max_positions', 'default_leverage', 'atr_sl_multiplier'].includes(key)) {
+            settings[key] = parseFloat(value);
+        }
+        // Handle arrays
+        else if (key === 'ob_timeframes') {
+            settings[key] = value.split(',').map(t => t.trim());
+        }
+        else {
+            settings[key] = value;
+        }
+    });
+    
+    // Add unchecked checkboxes
+    ['paper_trading', 'telegram_enabled'].forEach(key => {
+        if (!(key in settings)) {
+            settings[key] = false;
+        }
+    });
+    
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            alert('Settings saved!');
+            location.reload();
+        } else {
+            alert('Failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+});
+
+function resetDefaults() {
+    if (!confirm('Reset all settings to defaults?')) return;
+    
+    // Reload page to get defaults
+    location.reload();
+}
+</script>
+{% endblock %}
