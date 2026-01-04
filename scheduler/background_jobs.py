@@ -248,14 +248,14 @@ class BackgroundJobs:
                 self.notifier.notify_trade_close(trade)
             
             # Оновлення trailing stops
-            tracker.update_trailing_stop()
+            trailing_updates = tracker.update_all_trailing_stops()
             
             duration = time.time() - start
             self._log_job_execution(
                 'position_monitor',
                 True,
                 duration,
-                f"Closed {len(closed)} positions"
+                f"Closed {len(closed)}, trailing updates: {len(trailing_updates)}"
             )
         except Exception as e:
             duration = time.time() - start

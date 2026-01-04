@@ -390,13 +390,15 @@ class DBOperations:
         finally:
             session.close()
     
-    def get_recent_events(self, limit: int = 50, level: str = None) -> List[Dict]:
+    def get_recent_events(self, limit: int = 50, level: str = None, category: str = None) -> List[Dict]:
         """Get recent events"""
         session = get_session()
         try:
             query = session.query(EventLog)
             if level:
                 query = query.filter(EventLog.level == level)
+            if category:
+                query = query.filter(EventLog.category == category)
             
             events = query.order_by(desc(EventLog.timestamp)).limit(limit).all()
             return [e.to_dict() for e in events]

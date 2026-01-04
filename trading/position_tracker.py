@@ -205,6 +205,34 @@ class PositionTracker:
         
         return None
     
+    def update_all_trailing_stops(self) -> List[Dict]:
+        """Update trailing stops for all open positions"""
+        positions = self.get_all_positions()
+        updates = []
+        
+        for pos in positions:
+            if pos.get('current_price', 0) <= 0:
+                continue
+            
+            new_sl = self.update_trailing_stop(pos['id'], pos['current_price'])
+            if new_sl:
+                # Update in database
+                self.db.update_trade(pos['id'], {'stop_loss': new_sl})
+                updates.append({
+                    'trade_id': pos['id'],
+                    'symbol': pos['symbol'],
+                    'old_sl': pos.get('stop_loss'),
+                    'new_sl': new_sl
+                })
+                
+                self.db.log_event(
+                    'INFO', 'TRADE',
+                    f"Trailing stop updated: {pos.get('stop_loss'):.4f} → {new_sl:.4f}",
+                    pos['symbol']
+                )
+        
+        return updates
+    
     def get_position_summary(self) -> Dict:
         """Get summary of all positions"""
         positions = self.get_all_positions()

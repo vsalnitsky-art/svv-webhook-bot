@@ -282,26 +282,20 @@ def register_api_routes(app):
         db = get_db()
         
         limit = request.args.get('limit', 20, type=int)
-        trades = db.get_trades(limit=limit)
+        status = request.args.get('status')
+        trades = db.get_trades(status=status, limit=limit)
         
-        data = []
-        for t in trades:
-            data.append({
-                'id': t.id,
-                'symbol': t.symbol,
-                'direction': t.direction,
-                'entry_price': t.entry_price,
-                'exit_price': t.exit_price,
-                'position_size': t.position_size,
-                'pnl_usdt': round(t.pnl_usdt or 0, 2),
-                'pnl_percent': round(t.pnl_percent or 0, 2),
-                'status': t.status,
-                'is_paper': t.is_paper,
-                'opened_at': t.opened_at.isoformat() if t.opened_at else None,
-                'closed_at': t.closed_at.isoformat() if t.closed_at else None
-            })
+        return jsonify({'success': True, 'data': trades})
+    
+    @app.route('/api/signals')
+    def api_signals():
+        """Get pending signals"""
+        from detection.signal_merger import get_signal_merger
         
-        return jsonify({'success': True, 'data': data})
+        merger = get_signal_merger()
+        signals = merger.get_pending_signals()
+        
+        return jsonify({'success': True, 'data': signals})
     
     @app.route('/api/settings', methods=['GET', 'POST'])
     def api_settings():
@@ -449,18 +443,8 @@ def register_api_routes(app):
         
         events = db.get_recent_events(limit=limit, category=category)
         
-        data = []
-        for e in events:
-            data.append({
-                'id': e.id,
-                'timestamp': e.timestamp.isoformat() if e.timestamp else None,
-                'level': e.level,
-                'category': e.category,
-                'message': e.message,
-                'symbol': e.symbol
-            })
-        
-        return jsonify({'success': True, 'data': data})
+        # events already are dicts from to_dict()
+        return jsonify({'success': True, 'data': events})
     
     # ===== SCHEDULER API =====
     
