@@ -38,6 +38,18 @@ def create_app():
     # Register routes
     register_routes(app)
     
+    # Start background scheduler (if enabled)
+    enable_scheduler = os.getenv('ENABLE_SCHEDULER', 'true').lower() in ('true', '1', 'yes')
+    if enable_scheduler:
+        try:
+            from scheduler.background_jobs import get_scheduler
+            scheduler = get_scheduler()
+            if not scheduler.is_running:
+                scheduler.start()
+                print("[APP] Background scheduler started automatically")
+        except Exception as e:
+            print(f"[APP] Failed to start scheduler: {e}")
+    
     return app
 
 
@@ -450,8 +462,70 @@ def register_api_routes(app):
         
         return jsonify({'success': True, 'data': data})
     
-    # Register API routes
-    register_api_routes.__call__ = lambda: None  # Placeholder
+    # ===== SCHEDULER API =====
+    
+    @app.route('/api/scheduler/status')
+    def api_scheduler_status():
+        """Get scheduler status and job stats"""
+        from scheduler.background_jobs import get_scheduler
+        
+        scheduler = get_scheduler()
+        
+        jobs = []
+        for job in scheduler.scheduler.get_jobs():
+            jobs.append({
+                'id': job.id,
+                'name': job.name,
+                'next_run': job.next_run_time.isoformat() if job.next_run_time else None,
+                'trigger': str(job.trigger)
+            })
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'is_running': scheduler.is_running,
+                'jobs': jobs,
+                'job_stats': scheduler.job_stats
+            }
+        })
+    
+    @app.route('/api/scheduler/start', methods=['POST'])
+    def api_scheduler_start():
+        """Start the scheduler"""
+        from scheduler.background_jobs import get_scheduler
+        
+        scheduler = get_scheduler()
+        if scheduler.is_running:
+            return jsonify({'success': False, 'message': 'Scheduler already running'})
+        
+        scheduler.start()
+        return jsonify({'success': True, 'message': 'Scheduler started'})
+    
+    @app.route('/api/scheduler/stop', methods=['POST'])
+    def api_scheduler_stop():
+        """Stop the scheduler"""
+        from scheduler.background_jobs import get_scheduler
+        
+        scheduler = get_scheduler()
+        if not scheduler.is_running:
+            return jsonify({'success': False, 'message': 'Scheduler not running'})
+        
+        scheduler.stop()
+        return jsonify({'success': True, 'message': 'Scheduler stopped'})
+    
+    @app.route('/api/scheduler/trigger/<job_id>', methods=['POST'])
+    def api_scheduler_trigger(job_id):
+        """Manually trigger a specific job"""
+        from scheduler.background_jobs import get_scheduler
+        
+        scheduler = get_scheduler()
+        result = scheduler.trigger_job(job_id)
+        
+        if result:
+            return jsonify({'success': True, 'message': f'Job {job_id} triggered'})
+        return jsonify({'success': False, 'error': f'Job {job_id} not found'}), 404
+    
+    # End of register_api_routes
 
 
 # Create app with all routes

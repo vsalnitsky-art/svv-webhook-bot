@@ -26,6 +26,8 @@ services:
         value: "true"
       - key: EXECUTION_MODE
         value: "semi_auto"
+      - key: ENABLE_SCHEDULER
+        value: "true"
       
       # Python
       - key: PYTHONUNBUFFERED

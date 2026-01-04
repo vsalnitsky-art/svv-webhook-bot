@@ -56,6 +56,22 @@
         </div>
     </div>
 
+    <!-- Scheduler Status -->
+    <div class="section scheduler-section">
+        <div class="section-header">
+            <h2>⚙️ Scheduler</h2>
+            <div class="scheduler-controls">
+                <span id="scheduler-status" class="status-badge">Loading...</span>
+                <button class="btn btn-sm btn-success" id="btn-start-scheduler" onclick="startScheduler()">▶ Start</button>
+                <button class="btn btn-sm btn-danger" id="btn-stop-scheduler" onclick="stopScheduler()">⏹ Stop</button>
+            </div>
+        </div>
+        
+        <div class="jobs-grid" id="jobs-list">
+            <!-- Filled by JS -->
+        </div>
+    </div>
+
     <!-- Sleeper Status -->
     <div class="section">
         <div class="section-header">
@@ -187,6 +203,95 @@
 </div>
 
 <script>
+// Scheduler functions
+async function loadSchedulerStatus() {
+    try {
+        const res = await fetch('/api/scheduler/status');
+        const data = await res.json();
+        
+        if (data.success) {
+            const status = data.data;
+            const statusEl = document.getElementById('scheduler-status');
+            const startBtn = document.getElementById('btn-start-scheduler');
+            const stopBtn = document.getElementById('btn-stop-scheduler');
+            const jobsList = document.getElementById('jobs-list');
+            
+            if (status.is_running) {
+                statusEl.textContent = '🟢 Running';
+                statusEl.className = 'status-badge running';
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'inline-block';
+            } else {
+                statusEl.textContent = '🔴 Stopped';
+                statusEl.className = 'status-badge stopped';
+                startBtn.style.display = 'inline-block';
+                stopBtn.style.display = 'none';
+            }
+            
+            // Render jobs
+            let html = '';
+            for (const job of status.jobs) {
+                const stats = status.job_stats[job.id] || {};
+                const lastRun = stats.last_run ? new Date(stats.last_run).toLocaleTimeString() : 'Never';
+                const nextRun = job.next_run ? new Date(job.next_run).toLocaleTimeString() : 'N/A';
+                
+                html += `
+                    <div class="job-card">
+                        <div class="job-name">${job.name}</div>
+                        <div class="job-meta">
+                            <span>Last: ${lastRun}</span>
+                            <span>Next: ${nextRun}</span>
+                            <span>Runs: ${stats.runs || 0}</span>
+                        </div>
+                        <button class="btn btn-xs btn-secondary" onclick="triggerJob('${job.id}')">▶ Run</button>
+                    </div>
+                `;
+            }
+            jobsList.innerHTML = html || '<div class="empty-state">No jobs configured</div>';
+        }
+    } catch (err) {
+        console.error('Failed to load scheduler status:', err);
+    }
+}
+
+async function startScheduler() {
+    try {
+        const res = await fetch('/api/scheduler/start', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message);
+        loadSchedulerStatus();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function stopScheduler() {
+    if (!confirm('Stop scheduler? Automatic scans will pause.')) return;
+    try {
+        const res = await fetch('/api/scheduler/stop', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message);
+        loadSchedulerStatus();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function triggerJob(jobId) {
+    try {
+        const res = await fetch(`/api/scheduler/trigger/${jobId}`, { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || data.error);
+        loadSchedulerStatus();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+// Load on page load
+document.addEventListener('DOMContentLoaded', loadSchedulerStatus);
+setInterval(loadSchedulerStatus, 30000); // Refresh every 30s
+
 async function runFullScan() {
     const btn = event.target;
     btn.disabled = true;

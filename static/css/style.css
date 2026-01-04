@@ -820,3 +820,70 @@ body {
         padding: 0.4rem;
     }
 }
+
+/* Scheduler Section */
+.scheduler-section .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.scheduler-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.status-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.status-badge.running {
+    background: rgba(76, 175, 80, 0.2);
+    color: var(--accent-green);
+}
+
+.status-badge.stopped {
+    background: rgba(239, 83, 80, 0.2);
+    color: var(--accent-red);
+}
+
+.jobs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.job-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.job-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.job-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.job-card .btn {
+    margin-top: auto;
+    align-self: flex-start;
+}
