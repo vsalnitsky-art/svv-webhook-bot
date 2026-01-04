@@ -190,7 +190,7 @@
         <div class="events-list">
             {% for e in recent_events %}
             <div class="event-item {{ e.level|lower }}">
-                <span class="event-time">{{ e.timestamp.strftime('%H:%M:%S') }}</span>
+                <span class="event-time">{{ e.timestamp[11:19] if e.timestamp else '--:--:--' }}</span>
                 <span class="event-category">{{ e.category }}</span>
                 <span class="event-message">{{ e.message }}</span>
                 {% if e.symbol %}
