@@ -164,9 +164,8 @@ def run_web_only():
     """Запустити тільки Web UI"""
     print("\n[WEB] Starting web server only...")
     
-    from web.flask_app import get_app
+    from web.flask_app import app
     
-    app = get_app()
     host = WEB_CONFIG['host']
     port = int(os.getenv('PORT', WEB_CONFIG['port']))
     debug = WEB_CONFIG['debug']
@@ -183,10 +182,8 @@ def run_full():
     """Запустити Web + Scheduler"""
     print("\n[FULL] Starting web server + background scheduler...")
     
-    from web.flask_app import get_app
+    from web.flask_app import app
     from scheduler.background_jobs import get_scheduler
-    
-    app = get_app()
     
     # Запустити scheduler
     scheduler = get_scheduler()

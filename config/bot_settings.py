@@ -34,7 +34,11 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # === DATABASE ===
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///sleeper_ob_bot.db')
+# Render uses postgres:// but SQLAlchemy 2.0 requires postgresql://
+_db_url = os.environ.get('DATABASE_URL', 'sqlite:///sleeper_ob_bot.db')
+if _db_url.startswith('postgres://'):
+    _db_url = _db_url.replace('postgres://', 'postgresql://', 1)
+DATABASE_URL = _db_url
 
 # === DEFAULT SETTINGS ===
 DEFAULT_SETTINGS = {
