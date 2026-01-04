@@ -329,12 +329,58 @@ def register_api_routes(app):
         else:  # POST
             data = request.get_json() or {}
             
+            # Accept all settings, not just those in DEFAULT_SETTINGS
             for key, value in data.items():
-                if key in DEFAULT_SETTINGS:
-                    db.set_setting(key, value)
+                db.set_setting(key, value)
             
-            db.log_event('INFO', 'SYSTEM', 'Settings updated via API')
+            db.log_event(
+                message=f'Settings updated: {len(data)} parameters',
+                level='INFO',
+                category='SYSTEM'
+            )
             return jsonify({'success': True, 'message': 'Settings updated'})
+    
+    @app.route('/api/settings/reset', methods=['POST'])
+    def api_settings_reset():
+        """Reset all settings to defaults"""
+        db = get_db()
+        
+        # Set all defaults
+        for key, value in DEFAULT_SETTINGS.items():
+            db.set_setting(key, value)
+        
+        # Add additional defaults not in DEFAULT_SETTINGS
+        additional_defaults = {
+            'sleeper_min_score': 40,
+            'sleeper_building_score': 55,
+            'sleeper_ready_score': 70,
+            'sleeper_min_volume': 20000000,
+            'weight_fuel': 30,
+            'weight_volatility': 25,
+            'weight_price': 25,
+            'weight_liquidity': 20,
+            'ob_signal_quality': 70,
+            'ob_volume_ratio': 1.5,
+            'ob_max_age_hours': 48,
+            'atr_tp_multiplier': 3,
+            'trailing_stop_enabled': True,
+            'tp1_pct': 50,
+            'tp2_pct': 25,
+            'tp3_pct': 25,
+            'max_daily_loss_pct': 5,
+            'max_daily_trades': 10,
+            'max_position_pct': 20,
+        }
+        
+        for key, value in additional_defaults.items():
+            db.set_setting(key, value)
+        
+        db.log_event(
+            message='Settings reset to defaults',
+            level='INFO',
+            category='SYSTEM'
+        )
+        return jsonify({'success': True, 'message': 'Settings reset to defaults'})
     
     @app.route('/api/scan/sleepers', methods=['POST'])
     def api_scan_sleepers():

@@ -25,13 +25,28 @@ class OBScanner:
         self.fetcher = get_fetcher()
         self.indicators = get_indicators()
         self.db = get_db()
-        self.thresholds = OB_THRESHOLDS
+        self.thresholds = OB_THRESHOLDS.copy()
+    
+    def _load_settings(self):
+        """Load settings from DB"""
+        self.min_quality = self.db.get_setting('ob_min_quality', 60)
+        self.signal_quality = self.db.get_setting('ob_signal_quality', 70)
+        self.volume_ratio = self.db.get_setting('ob_volume_ratio', 1.5)
+        self.max_age_hours = self.db.get_setting('ob_max_age_hours', 48)
+        
+        # Parse timeframes
+        tf_setting = self.db.get_setting('ob_timeframes', '15,5')
+        if isinstance(tf_setting, str):
+            self.timeframes = [f"{t.strip()}m" if t.strip().isdigit() else t.strip() for t in tf_setting.split(',')]
+        else:
+            self.timeframes = tf_setting
     
     def scan_symbol(self, symbol: str, timeframes: List[str] = None) -> List[Dict]:
         """
         Scan a symbol for order blocks on multiple timeframes
         """
-        timeframes = timeframes or self.db.get_setting('ob_timeframes', ['15m', '5m', '1m'])
+        self._load_settings()
+        timeframes = timeframes or self.timeframes
         all_obs = []
         
         for tf in timeframes:

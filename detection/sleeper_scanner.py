@@ -15,25 +15,51 @@ class SleeperScanner:
     Detects coins in accumulation/distribution phase before explosive moves
     
     Score Components:
-    - Fuel Score (30%): Funding rate + OI change
-    - Volatility Score (25%): BB width compression
-    - Price Score (25%): Range tightness + position
-    - Liquidity Score (20%): Volume profile
+    - Fuel Score: Funding rate + OI change
+    - Volatility Score: BB width compression
+    - Price Score: Range tightness + position
+    - Liquidity Score: Volume profile
     """
     
     def __init__(self):
         self.fetcher = get_fetcher()
         self.indicators = get_indicators()
         self.db = get_db()
-        self.thresholds = SLEEPER_THRESHOLDS
+        self.thresholds = SLEEPER_THRESHOLDS.copy()
         
-    def scan(self, max_symbols: int = 100, min_volume: float = 20000000) -> List[Dict]:
+    def _load_settings(self):
+        """Load settings from DB, fallback to defaults"""
+        # Score weights (should sum to 1.0)
+        self.thresholds['weight_fuel'] = self.db.get_setting('weight_fuel', 30) / 100
+        self.thresholds['weight_volatility'] = self.db.get_setting('weight_volatility', 25) / 100
+        self.thresholds['weight_price'] = self.db.get_setting('weight_price', 25) / 100
+        self.thresholds['weight_liquidity'] = self.db.get_setting('weight_liquidity', 20) / 100
+        
+        # Score thresholds
+        self.min_score = self.db.get_setting('sleeper_min_score', 40)
+        self.building_score = self.db.get_setting('sleeper_building_score', 55)
+        self.ready_score = self.db.get_setting('sleeper_ready_score', 70)
+        
+        # Scan parameters
+        self.scan_limit = int(self.db.get_setting('sleeper_scan_limit', 100))
+        self.min_volume = float(self.db.get_setting('sleeper_min_volume', 20000000))
+        
+    def scan(self, max_symbols: int = None, min_volume: float = None) -> List[Dict]:
         """
         Run full sleeper scan on top symbols
         Returns list of detected sleeper candidates
         """
+        # Load settings from DB
+        self._load_settings()
+        
+        # Use DB settings if not overridden
+        max_symbols = max_symbols or self.scan_limit
+        min_volume = min_volume or self.min_volume
+        
         print(f"\n{'='*50}")
         print(f"[SLEEPER SCAN] Starting scan: {max_symbols} symbols, min vol ${min_volume/1e6:.0f}M")
+        print(f"[SLEEPER SCAN] Thresholds: min={self.min_score}, building={self.building_score}, ready={self.ready_score}")
+        print(f"[SLEEPER SCAN] Weights: F={self.thresholds['weight_fuel']:.0%} V={self.thresholds['weight_volatility']:.0%} P={self.thresholds['weight_price']:.0%} L={self.thresholds['weight_liquidity']:.0%}")
         print(f"{'='*50}")
         
         self.db.log_event(
@@ -156,11 +182,10 @@ class SleeperScanner:
         # Determine direction bias
         direction = self._determine_direction(funding_rate, oi_change, indicators_4h, indicators_1d)
         
-        min_score = self.db.get_setting('sleeper_min_score', 50)  # Default 50 instead of 60
-        if total_score < min_score:
-            # Debug: show why rejected
-            if total_score > 40:  # Only log close misses
-                print(f"[SLEEPER] ⚠ {symbol}: Score {total_score:.1f} < {min_score} (F:{fuel_score:.0f} V:{volatility_score:.0f} P:{price_score:.0f} L:{liquidity_score:.0f})")
+        if total_score < self.min_score:
+            # Debug: show why rejected (only close misses)
+            if total_score > self.min_score - 10:
+                print(f"[SLEEPER] ⚠ {symbol}: Score {total_score:.1f} < {self.min_score} (F:{fuel_score:.0f} V:{volatility_score:.0f} P:{price_score:.0f} L:{liquidity_score:.0f})")
             return None
         
         # BB Width trend (is it compressing?)
@@ -456,19 +481,17 @@ class SleeperScanner:
     
     def _update_states(self, candidates: List[Dict]):
         """Update sleeper states based on scores"""
-        ready_score = self.db.get_setting('sleeper_ready_score', 80)
-        
         for c in candidates:
             symbol = c['symbol']
             score = c['total_score']
             
-            if score >= ready_score:
+            if score >= self.ready_score:
                 new_state = SleeperState.READY.value
                 self.db.log_event(
-                    f"{symbol} READY (Score: {score})",
+                    f"{symbol} READY (Score: {score:.1f})",
                     level='SUCCESS', category='SLEEPER', symbol=symbol
                 )
-            elif score >= 70:
+            elif score >= self.building_score:
                 new_state = SleeperState.BUILDING.value
             else:
                 new_state = SleeperState.WATCHING.value
