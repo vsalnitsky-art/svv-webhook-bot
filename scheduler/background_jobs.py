@@ -46,7 +46,18 @@ class BackgroundJobs:
         self.scheduler.start()
         self.is_running = True
         print("[SCHEDULER] Started background jobs")
-        self.db.log_event("INFO", "SYSTEM", "Background scheduler started")
+        self.db.log_event(message="Background scheduler started", level="INFO", category="SYSTEM")
+        
+        # Run initial scan after 30 seconds to give time for app to fully start
+        print("[SCHEDULER] Initial Sleeper scan scheduled in 30 seconds...")
+        self.scheduler.add_job(
+            self._job_sleeper_scan,
+            'date',
+            run_date=datetime.now() + timedelta(seconds=30),
+            id='initial_sleeper_scan',
+            name='Initial Sleeper Scan',
+            replace_existing=True
+        )
     
     def stop(self):
         """Зупинити scheduler"""
@@ -56,7 +67,7 @@ class BackgroundJobs:
         self.scheduler.shutdown(wait=False)
         self.is_running = False
         print("[SCHEDULER] Stopped background jobs")
-        self.db.log_event("INFO", "SYSTEM", "Background scheduler stopped")
+        self.db.log_event(message="Background scheduler stopped", level="INFO", category="SYSTEM")
     
     def _setup_jobs(self):
         """Налаштувати всі фонові задачі"""

@@ -56,11 +56,16 @@ class BybitConnector:
     def get_tickers(self, category: str = "linear") -> List[Dict]:
         """Отримати всі тікери"""
         try:
+            print(f"[BYBIT] Calling get_tickers(category={category})...")
             response = self.session.get_tickers(category=category)
             result = self._handle_response(response)
-            return result.get('list', []) if result else []
+            tickers = result.get('list', []) if result else []
+            print(f"[BYBIT] get_tickers returned {len(tickers)} tickers")
+            return tickers
         except Exception as e:
             print(f"[BYBIT] get_tickers error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_ticker(self, symbol: str, category: str = "linear") -> Optional[Dict]:

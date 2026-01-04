@@ -38,6 +38,23 @@ def create_app():
     # Register routes
     register_routes(app)
     
+    # Register diagnostic blueprint
+    from web.diagnostic import diagnostic_bp
+    app.register_blueprint(diagnostic_bp)
+    
+    # Test Bybit API connectivity on startup
+    try:
+        print("[APP] Testing Bybit API connectivity...")
+        from core.bybit_connector import get_connector
+        connector = get_connector()
+        tickers = connector.get_tickers()
+        if tickers:
+            print(f"[APP] ✓ Bybit API working: {len(tickers)} tickers available")
+        else:
+            print("[APP] ⚠ Bybit API returned empty tickers list")
+    except Exception as e:
+        print(f"[APP] ✗ Bybit API test failed: {e}")
+    
     # Start background scheduler (if enabled)
     enable_scheduler = os.getenv('ENABLE_SCHEDULER', 'true').lower() in ('true', '1', 'yes')
     if enable_scheduler:
