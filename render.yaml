@@ -6,7 +6,7 @@ services:
     name: sleeper-ob-bot
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 "web.flask_app:app"
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180 "main_bot:app"
     
     envVars:
       # Bybit API (set in Render dashboard)
@@ -32,7 +32,7 @@ services:
         value: "1"
     
     # Health check
-    healthCheckPath: /api/health
+    healthCheckPath: /health
     
     # Auto-deploy on push
     autoDeploy: true
@@ -42,9 +42,3 @@ services:
     
     # Region
     region: frankfurt  # or oregon, singapore, etc.
-
-# Persistent disk for SQLite (optional, paid feature)
-# disk:
-#   name: bot-data
-#   mountPath: /data
-#   sizeGB: 1

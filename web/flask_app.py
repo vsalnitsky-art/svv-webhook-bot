@@ -172,6 +172,16 @@ def register_routes(app):
 def register_api_routes(app):
     """Register API endpoints"""
     
+    @app.route('/health')
+    @app.route('/api/health')
+    def api_health():
+        """Health check endpoint for Render"""
+        return jsonify({
+            'status': 'ok',
+            'service': 'sleeper-ob-bot',
+            'timestamp': datetime.now().isoformat()
+        })
+    
     @app.route('/api/stats')
     def api_stats():
         """Get dashboard statistics"""

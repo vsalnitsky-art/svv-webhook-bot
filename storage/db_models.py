@@ -9,9 +9,12 @@ from config import DATABASE_URL
 
 Base = declarative_base()
 
+# Table prefix to avoid conflicts with other bots
+TABLE_PREFIX = 'sob_'  # sleeper_ob_bot
+
 class SleeperCandidate(Base):
     """Sleeper detector candidates"""
-    __tablename__ = 'sleeper_candidates'
+    __tablename__ = f'{TABLE_PREFIX}sleeper_candidates'
     
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), unique=True, nullable=False, index=True)
@@ -68,7 +71,7 @@ class SleeperCandidate(Base):
 
 class OrderBlock(Base):
     """Detected order blocks"""
-    __tablename__ = 'order_blocks'
+    __tablename__ = f'{TABLE_PREFIX}order_blocks'
     
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), nullable=False, index=True)
@@ -123,7 +126,7 @@ class OrderBlock(Base):
 
 class Trade(Base):
     """Trade records"""
-    __tablename__ = 'trades'
+    __tablename__ = f'{TABLE_PREFIX}trades'
     
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), nullable=False, index=True)
@@ -204,7 +207,7 @@ class Trade(Base):
 
 class PerformanceStats(Base):
     """Daily performance statistics"""
-    __tablename__ = 'performance_stats'
+    __tablename__ = f'{TABLE_PREFIX}performance_stats'
     
     id = Column(Integer, primary_key=True)
     date = Column(DateTime, unique=True, nullable=False, index=True)
@@ -245,7 +248,7 @@ class PerformanceStats(Base):
 
 class BotSetting(Base):
     """Bot settings storage"""
-    __tablename__ = 'bot_settings'
+    __tablename__ = f'{TABLE_PREFIX}bot_settings'
     
     key = Column(String(50), primary_key=True)
     value = Column(Text)
@@ -254,7 +257,7 @@ class BotSetting(Base):
 
 class EventLog(Base):
     """Event log for dashboard"""
-    __tablename__ = 'event_logs'
+    __tablename__ = f'{TABLE_PREFIX}event_logs'
     
     id = Column(Integer, primary_key=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
@@ -279,8 +282,10 @@ engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(bind=engine)
 
 def init_db():
-    """Initialize database tables"""
+    """Initialize database tables (creates only if not exist)"""
+    print("[DB] Creating tables if not exist...")
     Base.metadata.create_all(bind=engine)
+    print("[DB] Tables ready")
 
 def get_session():
     """Get database session"""
