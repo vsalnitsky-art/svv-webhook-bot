@@ -32,6 +32,10 @@ class SleeperScanner:
         Run full sleeper scan on top symbols
         Returns list of detected sleeper candidates
         """
+        print(f"\n{'='*50}")
+        print(f"[SLEEPER SCAN] Starting scan: {max_symbols} symbols, min vol ${min_volume/1e6:.0f}M")
+        print(f"{'='*50}")
+        
         self.db.log_event(
             f"Starting Sleeper scan: {max_symbols} symbols, min vol ${min_volume/1e6:.0f}M",
             level='INFO', category='SLEEPER'
@@ -39,20 +43,31 @@ class SleeperScanner:
         
         # Get top symbols by volume
         symbols = self.fetcher.get_top_symbols(limit=max_symbols, min_volume=min_volume)
+        print(f"[SLEEPER SCAN] Found {len(symbols)} symbols to analyze")
         
         candidates = []
         processed = 0
+        passed = 0
         
         for symbol_data in symbols:
             try:
+                symbol = symbol_data.get('symbol', 'UNKNOWN')
                 result = self._analyze_symbol(symbol_data)
+                
+                processed += 1
+                
                 if result:
                     candidates.append(result)
+                    passed += 1
                     
                     # Save to database
                     self.db.upsert_sleeper(result)
                     
-                processed += 1
+                    print(f"[SLEEPER] ✓ {symbol}: Score={result['total_score']:.1f} Dir={result['direction']}")
+                
+                # Progress every 10 symbols
+                if processed % 10 == 0:
+                    print(f"[SLEEPER SCAN] Progress: {processed}/{len(symbols)} ({passed} candidates)")
                 
                 # Rate limiting
                 if processed % API_LIMITS['symbols_per_batch'] == 0:
@@ -61,7 +76,7 @@ class SleeperScanner:
                     time.sleep(API_LIMITS['rate_limit_delay'])
                     
             except Exception as e:
-                print(f"Error analyzing {symbol_data.get('symbol')}: {e}")
+                print(f"[SLEEPER] ✗ {symbol_data.get('symbol')}: {e}")
                 continue
         
         # Sort by score
@@ -72,6 +87,11 @@ class SleeperScanner:
         
         # Remove dead sleepers (HP = 0)
         removed = self.db.remove_dead_sleepers()
+        
+        print(f"\n{'='*50}")
+        print(f"[SLEEPER SCAN] Complete: {len(candidates)} candidates from {processed} symbols")
+        print(f"[SLEEPER SCAN] Removed {removed} dead sleepers")
+        print(f"{'='*50}\n")
         
         self.db.log_event(
             f"Sleeper scan complete: {len(candidates)} candidates found, {removed} removed",
@@ -136,8 +156,11 @@ class SleeperScanner:
         # Determine direction bias
         direction = self._determine_direction(funding_rate, oi_change, indicators_4h, indicators_1d)
         
-        min_score = self.db.get_setting('sleeper_min_score', 60)
+        min_score = self.db.get_setting('sleeper_min_score', 50)  # Default 50 instead of 60
         if total_score < min_score:
+            # Debug: show why rejected
+            if total_score > 40:  # Only log close misses
+                print(f"[SLEEPER] ⚠ {symbol}: Score {total_score:.1f} < {min_score} (F:{fuel_score:.0f} V:{volatility_score:.0f} P:{price_score:.0f} L:{liquidity_score:.0f})")
             return None
         
         # BB Width trend (is it compressing?)

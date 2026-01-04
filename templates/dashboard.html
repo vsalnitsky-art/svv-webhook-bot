@@ -56,6 +56,18 @@
         </div>
     </div>
 
+    <!-- Live Activity Feed -->
+    <div class="section activity-section">
+        <div class="section-header">
+            <h2>📡 Live Activity</h2>
+            <span class="live-indicator" id="live-status">🔴 Offline</span>
+        </div>
+        
+        <div class="activity-feed" id="activity-feed">
+            <div class="activity-loading">Connecting...</div>
+        </div>
+    </div>
+
     <!-- Scheduler Status -->
     <div class="section scheduler-section">
         <div class="section-header">
@@ -181,13 +193,14 @@
         {% endif %}
     </div>
 
-    <!-- Recent Events -->
+    <!-- Recent Events (from DB) -->
     <div class="section">
         <div class="section-header">
-            <h2>📋 Recent Events</h2>
+            <h2>📋 Event Log</h2>
+            <button class="btn btn-xs" onclick="refreshEvents()">🔄</button>
         </div>
 
-        <div class="events-list">
+        <div class="events-list" id="events-list">
             {% for e in recent_events %}
             <div class="event-item {{ e.level|lower }}">
                 <span class="event-time">{{ e.timestamp[11:19] if e.timestamp else '--:--:--' }}</span>
@@ -202,8 +215,159 @@
     </div>
 </div>
 
+<style>
+/* Live Activity Styles */
+.activity-section {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    border: 1px solid #0f3460;
+}
+
+.live-indicator {
+    font-size: 0.9rem;
+    padding: 4px 12px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.1);
+}
+
+.live-indicator.online {
+    color: #00ff88;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.activity-feed {
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.85rem;
+    background: #0a0a15;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.activity-item {
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    gap: 10px;
+}
+
+.activity-item:last-child {
+    border-bottom: none;
+}
+
+.activity-time {
+    color: #666;
+    min-width: 70px;
+}
+
+.activity-type {
+    font-weight: bold;
+    min-width: 80px;
+}
+
+.activity-type.sleeper { color: #ffa500; }
+.activity-type.ob { color: #00bcd4; }
+.activity-type.signal { color: #ff4081; }
+.activity-type.trade { color: #4caf50; }
+.activity-type.scheduler { color: #9c27b0; }
+
+.activity-msg {
+    color: #ccc;
+    flex: 1;
+}
+
+.activity-loading {
+    color: #666;
+    text-align: center;
+    padding: 20px;
+}
+
+/* Job cards improvements */
+.job-card {
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.job-name {
+    font-weight: bold;
+    color: #fff;
+}
+
+.job-meta {
+    display: flex;
+    gap: 15px;
+    font-size: 0.8rem;
+    color: #888;
+}
+
+.job-meta span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+</style>
+
 <script>
-// Scheduler functions
+// === Live Activity Feed ===
+let activityItems = [];
+let lastEventId = 0;
+
+async function loadActivity() {
+    try {
+        const res = await fetch('/api/events?limit=20');
+        const data = await res.json();
+        
+        if (data.success && data.data.length > 0) {
+            document.getElementById('live-status').textContent = '🟢 Online';
+            document.getElementById('live-status').classList.add('online');
+            
+            renderActivity(data.data);
+        }
+    } catch (err) {
+        document.getElementById('live-status').textContent = '🔴 Offline';
+        document.getElementById('live-status').classList.remove('online');
+    }
+}
+
+function renderActivity(events) {
+    const feed = document.getElementById('activity-feed');
+    
+    let html = '';
+    for (const e of events.slice(0, 15)) {
+        const time = e.timestamp ? e.timestamp.substring(11, 19) : '--:--:--';
+        const category = (e.category || 'SYSTEM').toLowerCase();
+        const symbol = e.symbol ? ` [${e.symbol}]` : '';
+        
+        html += `
+            <div class="activity-item">
+                <span class="activity-time">${time}</span>
+                <span class="activity-type ${category}">${e.category || 'SYSTEM'}</span>
+                <span class="activity-msg">${e.message}${symbol}</span>
+            </div>
+        `;
+    }
+    
+    feed.innerHTML = html || '<div class="activity-loading">No recent activity</div>';
+}
+
+// Load activity every 5 seconds
+document.addEventListener('DOMContentLoaded', loadActivity);
+setInterval(loadActivity, 5000);
+
+async function refreshEvents() {
+    await loadActivity();
+}
+
+// === Scheduler functions ===
 async function loadSchedulerStatus() {
     try {
         const res = await fetch('/api/scheduler/status');
@@ -234,16 +398,17 @@ async function loadSchedulerStatus() {
                 const stats = status.job_stats[job.id] || {};
                 const lastRun = stats.last_run ? new Date(stats.last_run).toLocaleTimeString() : 'Never';
                 const nextRun = job.next_run ? new Date(job.next_run).toLocaleTimeString() : 'N/A';
+                const successRate = stats.runs > 0 ? Math.round((stats.success / stats.runs) * 100) : 0;
                 
                 html += `
                     <div class="job-card">
                         <div class="job-name">${job.name}</div>
                         <div class="job-meta">
-                            <span>Last: ${lastRun}</span>
-                            <span>Next: ${nextRun}</span>
-                            <span>Runs: ${stats.runs || 0}</span>
+                            <span>⏱ Last: ${lastRun}</span>
+                            <span>⏭ Next: ${nextRun}</span>
+                            <span>📊 ${stats.runs || 0} runs (${successRate}% ✓)</span>
                         </div>
-                        <button class="btn btn-xs btn-secondary" onclick="triggerJob('${job.id}')">▶ Run</button>
+                        <button class="btn btn-xs btn-secondary" onclick="triggerJob('${job.id}')">▶ Run Now</button>
                     </div>
                 `;
             }
@@ -281,8 +446,17 @@ async function triggerJob(jobId) {
     try {
         const res = await fetch(`/api/scheduler/trigger/${jobId}`, { method: 'POST' });
         const data = await res.json();
-        alert(data.message || data.error);
-        loadSchedulerStatus();
+        
+        if (data.success) {
+            // Show running indicator
+            document.getElementById('live-status').textContent = '⚡ Running...';
+        }
+        
+        // Refresh after a moment
+        setTimeout(() => {
+            loadSchedulerStatus();
+            loadActivity();
+        }, 2000);
     } catch (err) {
         alert('Error: ' + err.message);
     }
@@ -296,6 +470,7 @@ async function runFullScan() {
     const btn = event.target;
     btn.disabled = true;
     btn.textContent = '⏳ Scanning...';
+    document.getElementById('live-status').textContent = '⚡ Scanning...';
     
     try {
         const res = await fetch('/api/scan/full', { method: 'POST' });

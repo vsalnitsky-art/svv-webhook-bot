@@ -148,7 +148,17 @@ class BackgroundJobs:
             stats['failures'] += 1
         
         level = "INFO" if success else "ERROR"
-        self.db.log_event(level, "SCHEDULER", f"{job_name}: {details} ({duration:.2f}s)")
+        log_msg = f"[{job_name.upper()}] {details} ({duration:.2f}s)"
+        
+        # Console log for visibility
+        print(f"[SCHEDULER] {'✓' if success else '✗'} {log_msg}")
+        
+        # Database log with correct argument order
+        self.db.log_event(
+            message=log_msg,
+            level=level,
+            category="SCHEDULER"
+        )
     
     # ===== Job Implementations =====
     
