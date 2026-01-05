@@ -1,49 +1,94 @@
 """
-Order Block Scanner - Detects institutional order blocks
-Multi-timeframe OB detection with quality scoring
+Order Block Scanner - Exact Pine Script Logic Implementation
+Based on "Volumized Order Blocks | SVV Charts" indicator
+
+Detection Logic (from Pine Script):
+1. Find swing highs/lows using swingLength
+2. When price crosses swing → find origin candle (lowest/highest point before impulse)
+3. Mark OB zone with volume data
+4. Track invalidation (breaker) when price breaks through zone
 """
 import time
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
-from config import OB_THRESHOLDS, API_LIMITS
+from dataclasses import dataclass
+from config import API_LIMITS
 from core import get_fetcher, get_indicators
 from storage import get_db
 
+
+@dataclass
+class OBSwing:
+    """Swing point for OB detection"""
+    bar_index: int = 0
+    price: float = 0.0
+    volume: float = 0.0
+    crossed: bool = False
+
+
+@dataclass  
+class OrderBlockInfo:
+    """Order Block data structure matching Pine Script"""
+    top: float
+    bottom: float
+    ob_volume: float  # Total volume (3 bars)
+    ob_type: str  # "Bull" or "Bear"
+    start_time: int  # Unix timestamp
+    ob_low_volume: float  # Volume at OB formation
+    ob_high_volume: float  # Volume after impulse
+    breaker: bool = False
+    break_time: Optional[int] = None
+    timeframe: str = ""
+    symbol: str = ""
+    quality: float = 0.0
+
+
 class OBScanner:
     """
-    Order Block Detector
-    Detects institutional order blocks using multi-timeframe analysis
+    Order Block Detector - Pine Script Logic
     
-    Detection Logic:
-    1. Find impulse candle (large move with volume)
-    2. Mark the origin zone (last opposite candle before impulse)
-    3. Calculate quality score
-    4. Track price return to zone
+    Exact implementation of "Volumized Order Blocks | SVV Charts"
+    
+    Detection:
+    1. Find swing high/low (swingLength bars)
+    2. When close crosses swing → mark OB at origin candle
+    3. OB zone = candle body/wick before impulse move
+    4. Volume ratio = obHighVolume / obLowVolume
     """
     
     def __init__(self):
         self.fetcher = get_fetcher()
         self.indicators = get_indicators()
         self.db = get_db()
-        self.thresholds = OB_THRESHOLDS.copy()
-    
-    def _load_settings(self):
-        """Load settings from DB"""
-        self.min_quality = self.db.get_setting('ob_min_quality', 60)
-        self.signal_quality = self.db.get_setting('ob_signal_quality', 70)
-        self.volume_ratio = self.db.get_setting('ob_volume_ratio', 1.5)
-        self.max_age_hours = self.db.get_setting('ob_max_age_hours', 48)
         
-        # Parse timeframes
+    def _load_settings(self):
+        """Load settings from DB - matching Pine Script parameters"""
+        # Pine Script parameters
+        self.swing_length = int(self.db.get_setting('ob_swing_length', 5))
+        self.max_atr_mult = float(self.db.get_setting('ob_max_atr_mult', 3.5))
+        self.max_order_blocks = int(self.db.get_setting('ob_max_count', 30))
+        self.ob_end_method = self.db.get_setting('ob_end_method', 'Wick')  # "Wick" or "Close"
+        
+        # Zone count: "High"=10, "Medium"=5, "Low"=3, "One"=1
+        zone_count = self.db.get_setting('ob_zone_count', 'Low')
+        self.bullish_ob_count = {'One': 1, 'Low': 3, 'Medium': 5, 'High': 10}.get(zone_count, 3)
+        self.bearish_ob_count = self.bullish_ob_count
+        
+        # Quality thresholds
+        self.min_quality = float(self.db.get_setting('ob_min_quality', 60))
+        self.signal_quality = float(self.db.get_setting('ob_signal_quality', 70))
+        
+        # Timeframes
         tf_setting = self.db.get_setting('ob_timeframes', '15,5')
         if isinstance(tf_setting, str):
-            self.timeframes = [f"{t.strip()}m" if t.strip().isdigit() else t.strip() for t in tf_setting.split(',')]
+            self.timeframes = [t.strip() for t in tf_setting.split(',')]
         else:
             self.timeframes = tf_setting
     
     def scan_symbol(self, symbol: str, timeframes: List[str] = None) -> List[Dict]:
         """
         Scan a symbol for order blocks on multiple timeframes
+        Returns list of detected OBs
         """
         self._load_settings()
         timeframes = timeframes or self.timeframes
@@ -51,308 +96,380 @@ class OBScanner:
         
         for tf in timeframes:
             try:
-                obs = self._detect_ob_on_timeframe(symbol, tf)
+                # Convert timeframe format (15 -> 15, 5 -> 5, etc)
+                interval = tf.replace('m', '') if 'm' in tf else tf
+                obs = self._detect_order_blocks(symbol, interval)
                 all_obs.extend(obs)
-                time.sleep(API_LIMITS['rate_limit_delay'])
+                time.sleep(API_LIMITS.get('rate_limit_delay', 0.1))
             except Exception as e:
-                print(f"Error scanning {symbol} {tf}: {e}")
+                print(f"[OB] Error scanning {symbol} {tf}: {e}")
                 continue
         
-        # Cross-timeframe confirmation
-        all_obs = self._confirm_mtf(all_obs)
+        # Filter by quality and save
+        quality_obs = [ob for ob in all_obs if ob['quality'] >= self.min_quality]
         
-        # Save to database
-        for ob in all_obs:
+        for ob in quality_obs:
             self.db.add_orderblock(ob)
         
-        return all_obs
+        return quality_obs
     
-    def _detect_ob_on_timeframe(self, symbol: str, timeframe: str) -> List[Dict]:
-        """Detect order blocks on a single timeframe with full data"""
-        from config import DATA_REQUIREMENTS
+    def _detect_order_blocks(self, symbol: str, interval: str) -> List[Dict]:
+        """
+        Detect order blocks using Pine Script swing logic
         
-        # Get appropriate limit based on timeframe
-        tf_limits = {
-            '15': DATA_REQUIREMENTS['ob_klines_15m'],  # 500
-            '5': DATA_REQUIREMENTS['ob_klines_5m'],    # 300
-            '1': DATA_REQUIREMENTS['ob_klines_1m'],    # 200
-        }
-        limit = tf_limits.get(timeframe, 200)
+        Pine Script equivalent:
+        - findOBSwings(swingLength)
+        - findOrderBlocks()
+        """
+        # Get klines - need enough data for swing detection
+        limit = 200  # Sufficient for swing analysis
+        klines = self.fetcher.get_klines(symbol, interval, limit)
         
-        klines = self.fetcher.get_klines(symbol, timeframe, limit=limit)
-        if len(klines) < 50:  # Need minimum data
+        if not klines or len(klines) < self.swing_length + 10:
             return []
         
-        detected = []
+        # Calculate ATR for size filter
+        atr = self._calculate_atr(klines, 10)
         
-        # Calculate volume average over larger sample
+        # Find swing points
+        swings = self._find_swings(klines)
+        
+        # Detect OBs from swings
+        bullish_obs = self._detect_bullish_obs(klines, swings['tops'], atr)
+        bearish_obs = self._detect_bearish_obs(klines, swings['bottoms'], atr)
+        
+        # Limit count
+        bullish_obs = bullish_obs[:self.bullish_ob_count]
+        bearish_obs = bearish_obs[:self.bearish_ob_count]
+        
+        # Convert to dict format
+        result = []
+        for ob in bullish_obs + bearish_obs:
+            result.append(self._ob_to_dict(ob, symbol, interval))
+        
+        return result
+    
+    def _find_swings(self, klines: List[Dict]) -> Dict[str, List[OBSwing]]:
+        """
+        Find swing highs and lows - Pine Script logic
+        
+        Pine Script:
+        upper = ta.highest(len)
+        lower = ta.lowest(len)
+        swingType := high[len] > upper ? 0 : low[len] < lower ? 1 : swingType
+        """
+        tops = []
+        bottoms = []
+        swing_type = -1
+        
+        highs = [k['high'] for k in klines]
+        lows = [k['low'] for k in klines]
         volumes = [k['volume'] for k in klines]
-        avg_volume = sum(volumes[:-10]) / len(volumes[:-10]) if len(volumes) > 10 else 1
         
-        # Scan for OBs (skip last few candles)
-        for i in range(20, len(klines) - 2):
-            ob = self._check_ob_at_index(klines, i, avg_volume, symbol, timeframe)
-            if ob:
-                detected.append(ob)
-        
-        return detected
-    
-    def _check_ob_at_index(self, klines: List[Dict], idx: int, avg_volume: float,
-                           symbol: str, timeframe: str) -> Optional[Dict]:
-        """Check if there's an OB at given index"""
-        current = klines[idx]
-        next_candle = klines[idx + 1]
-        
-        # Impulse detection
-        current_body = abs(current['close'] - current['open'])
-        current_range = current['high'] - current['low']
-        next_body = abs(next_candle['close'] - next_candle['open'])
-        
-        # Skip if current candle is too small
-        if current_range == 0:
-            return None
-        
-        body_ratio = current_body / current_range
-        
-        # Check for impulse candle (large body, high volume)
-        is_impulse = (
-            next_body > current_body * 1.5 and
-            next_candle['volume'] > avg_volume * self.thresholds['ob_volume_ratio_min']
-        )
-        
-        if not is_impulse:
-            return None
-        
-        # Determine OB type
-        if next_candle['close'] > next_candle['open']:  # Bullish impulse
-            # Look for last bearish candle before
-            ob_candle = self._find_opposite_candle(klines, idx, 'bearish')
-            if not ob_candle:
-                return None
-            ob_type = 'BULLISH'
-        else:  # Bearish impulse
-            # Look for last bullish candle before
-            ob_candle = self._find_opposite_candle(klines, idx, 'bullish')
-            if not ob_candle:
-                return None
-            ob_type = 'BEARISH'
-        
-        # Calculate impulse percentage
-        price_move = abs(next_candle['close'] - current['close'])
-        impulse_pct = (price_move / current['close']) * 100
-        
-        if impulse_pct < self.thresholds['ob_impulse_min'] * 100:
-            return None
-        
-        # Volume ratio
-        volume_ratio = next_candle['volume'] / avg_volume if avg_volume > 0 else 1
-        
-        # Quality score
-        quality = self._calculate_ob_quality(
-            volume_ratio=volume_ratio,
-            impulse_pct=impulse_pct,
-            body_ratio=body_ratio,
-            fresh=True
-        )
-        
-        min_quality = self.db.get_setting('ob_min_quality', 65)
-        if quality < min_quality:
-            return None
-        
-        # OB zone
-        ob_high = ob_candle['high']
-        ob_low = ob_candle['low']
-        ob_mid = (ob_high + ob_low) / 2
-        
-        # Expiry time
-        max_age = self.db.get_setting('ob_max_age_minutes', 60)
-        expires_at = datetime.utcnow() + timedelta(minutes=max_age)
-        
-        return {
-            'symbol': symbol,
-            'timeframe': timeframe,
-            'ob_type': ob_type,
-            'ob_high': ob_high,
-            'ob_low': ob_low,
-            'ob_mid': ob_mid,
-            'quality_score': round(quality, 2),
-            'volume_ratio': round(volume_ratio, 2),
-            'impulse_pct': round(impulse_pct, 4),
-            'status': 'ACTIVE',
-            'expires_at': expires_at,
-        }
-    
-    def _find_opposite_candle(self, klines: List[Dict], idx: int, 
-                              candle_type: str) -> Optional[Dict]:
-        """Find the last opposite candle before index"""
-        for i in range(idx, max(idx - 5, 0), -1):
-            candle = klines[i]
-            is_bullish = candle['close'] > candle['open']
+        for i in range(self.swing_length, len(klines) - self.swing_length):
+            # Calculate highest/lowest over swing_length (looking forward)
+            upper = max(highs[i+1:i+1+self.swing_length]) if i+1+self.swing_length <= len(highs) else highs[i]
+            lower = min(lows[i+1:i+1+self.swing_length]) if i+1+self.swing_length <= len(lows) else lows[i]
             
-            if candle_type == 'bullish' and is_bullish:
-                return candle
-            elif candle_type == 'bearish' and not is_bullish:
-                return candle
-        
-        return None
-    
-    def _calculate_ob_quality(self, volume_ratio: float, impulse_pct: float,
-                              body_ratio: float, fresh: bool) -> float:
-        """Calculate OB quality score (0-100)"""
-        score = 0
-        
-        # Volume component (35%)
-        if volume_ratio >= self.thresholds['ob_volume_ratio_strong']:
-            score += 35
-        elif volume_ratio >= self.thresholds['ob_volume_ratio_min']:
-            score += 25
-        else:
-            score += 10
-        
-        # Impulse component (30%)
-        if impulse_pct >= self.thresholds['ob_impulse_strong'] * 100:
-            score += 30
-        elif impulse_pct >= self.thresholds['ob_impulse_min'] * 100:
-            score += 20
-        else:
-            score += 10
-        
-        # Freshness component (20%)
-        if fresh:
-            score += 20
-        else:
-            score += 5
-        
-        # Structure component (15%) - body ratio
-        if body_ratio >= 0.7:
-            score += 15
-        elif body_ratio >= 0.5:
-            score += 10
-        else:
-            score += 5
-        
-        return score
-    
-    def _confirm_mtf(self, obs: List[Dict]) -> List[Dict]:
-        """Add bonus for multi-timeframe confirmation"""
-        if len(obs) < 2:
-            return obs
-        
-        # Group by type
-        bullish = [ob for ob in obs if ob['ob_type'] == 'BULLISH']
-        bearish = [ob for ob in obs if ob['ob_type'] == 'BEARISH']
-        
-        # Check for overlapping zones
-        for ob in obs:
-            same_type = bullish if ob['ob_type'] == 'BULLISH' else bearish
+            prev_swing_type = swing_type
             
-            # Check if other timeframes have overlapping OBs
-            for other in same_type:
-                if other['timeframe'] != ob['timeframe']:
-                    if self._zones_overlap(ob, other):
-                        ob['quality_score'] = min(100, 
-                            ob['quality_score'] + self.thresholds['mtf_confirmation_bonus'])
-                        break
+            # Check if current bar is swing
+            if highs[i] > upper:
+                swing_type = 0  # Potential swing high
+            elif lows[i] < lower:
+                swing_type = 1  # Potential swing low
+            
+            # When swing type changes, record the swing point
+            if swing_type == 0 and prev_swing_type != 0:
+                tops.append(OBSwing(
+                    bar_index=i,
+                    price=highs[i],
+                    volume=volumes[i],
+                    crossed=False
+                ))
+            
+            if swing_type == 1 and prev_swing_type != 1:
+                bottoms.append(OBSwing(
+                    bar_index=i,
+                    price=lows[i],
+                    volume=volumes[i],
+                    crossed=False
+                ))
+        
+        return {'tops': tops, 'bottoms': bottoms}
+    
+    def _detect_bullish_obs(self, klines: List[Dict], tops: List[OBSwing], atr: float) -> List[OrderBlockInfo]:
+        """
+        Detect Bullish Order Blocks - Pine Script logic
+        
+        When close > swing high and not crossed:
+        - Find lowest point between swing and current bar
+        - That's the OB zone
+        """
+        obs = []
+        
+        for top in tops:
+            if top.crossed:
+                continue
+            
+            # Look for cross after the swing
+            for i in range(top.bar_index + 1, len(klines)):
+                if klines[i]['close'] > top.price:
+                    # Swing crossed! Find OB origin
+                    top.crossed = True
+                    
+                    # Find lowest point between swing and current bar
+                    box_btm = klines[i-1]['low'] if i > 0 else klines[i]['low']
+                    box_top = klines[i-1]['high'] if i > 0 else klines[i]['high']
+                    box_idx = i - 1
+                    
+                    for j in range(1, i - top.bar_index):
+                        idx = i - j
+                        if idx >= 0 and klines[idx]['low'] < box_btm:
+                            box_btm = klines[idx]['low']
+                            box_top = klines[idx]['high']
+                            box_idx = idx
+                    
+                    # Check size vs ATR
+                    ob_size = abs(box_top - box_btm)
+                    if ob_size > atr * self.max_atr_mult:
+                        continue
+                    
+                    # Volume calculation (3 bars)
+                    vol_0 = klines[i]['volume'] if i < len(klines) else 0
+                    vol_1 = klines[i-1]['volume'] if i-1 >= 0 else 0
+                    vol_2 = klines[i-2]['volume'] if i-2 >= 0 else 0
+                    
+                    ob = OrderBlockInfo(
+                        top=box_top,
+                        bottom=box_btm,
+                        ob_volume=vol_0 + vol_1 + vol_2,
+                        ob_type="Bull",
+                        start_time=klines[box_idx]['timestamp'],
+                        ob_low_volume=vol_2,  # Volume before impulse
+                        ob_high_volume=vol_0 + vol_1,  # Volume during impulse
+                        timeframe=str(klines[0].get('interval', ''))
+                    )
+                    
+                    # Check if already invalidated
+                    ob = self._check_invalidation(ob, klines, i)
+                    
+                    obs.append(ob)
+                    break
         
         return obs
     
-    def _zones_overlap(self, ob1: Dict, ob2: Dict) -> bool:
-        """Check if two OB zones overlap"""
-        return not (ob1['ob_high'] < ob2['ob_low'] or ob2['ob_high'] < ob1['ob_low'])
-    
-    def check_price_at_ob(self, symbol: str) -> List[Dict]:
+    def _detect_bearish_obs(self, klines: List[Dict], bottoms: List[OBSwing], atr: float) -> List[OrderBlockInfo]:
         """
-        Check if current price is at any active OB zone
-        Returns list of touched/triggered OBs
+        Detect Bearish Order Blocks - Pine Script logic
+        
+        When close < swing low and not crossed:
+        - Find highest point between swing and current bar
+        - That's the OB zone
         """
-        current_price = self.fetcher.get_current_price(symbol)
-        if not current_price:
-            return []
+        obs = []
         
-        active_obs = self.db.get_orderblocks(symbol=symbol, status='ACTIVE')
-        touched = []
-        
-        for ob in active_obs:
-            tolerance = current_price * self.thresholds['ob_touch_tolerance']
+        for btm in bottoms:
+            if btm.crossed:
+                continue
             
-            # Check if price is in zone
-            if ob['ob_low'] - tolerance <= current_price <= ob['ob_high'] + tolerance:
-                # Update status
-                self.db.update_ob_status(
-                    ob_id=ob['id'],
-                    status='TOUCHED',
-                    touch_count=ob.get('touch_count', 0) + 1
-                )
-                
-                ob['current_price'] = current_price
-                ob['status'] = 'TOUCHED'
-                touched.append(ob)
-                
-                self.db.log_event(
-                    f"{symbol} price at {ob['ob_type']} OB zone ({ob['timeframe']})",
-                    level='INFO', category='OB', symbol=symbol
-                )
+            # Look for cross after the swing
+            for i in range(btm.bar_index + 1, len(klines)):
+                if klines[i]['close'] < btm.price:
+                    # Swing crossed! Find OB origin
+                    btm.crossed = True
+                    
+                    # Find highest point between swing and current bar
+                    box_top = klines[i-1]['high'] if i > 0 else klines[i]['high']
+                    box_btm = klines[i-1]['low'] if i > 0 else klines[i]['low']
+                    box_idx = i - 1
+                    
+                    for j in range(1, i - btm.bar_index):
+                        idx = i - j
+                        if idx >= 0 and klines[idx]['high'] > box_top:
+                            box_top = klines[idx]['high']
+                            box_btm = klines[idx]['low']
+                            box_idx = idx
+                    
+                    # Check size vs ATR
+                    ob_size = abs(box_top - box_btm)
+                    if ob_size > atr * self.max_atr_mult:
+                        continue
+                    
+                    # Volume calculation (reversed for bearish)
+                    vol_0 = klines[i]['volume'] if i < len(klines) else 0
+                    vol_1 = klines[i-1]['volume'] if i-1 >= 0 else 0
+                    vol_2 = klines[i-2]['volume'] if i-2 >= 0 else 0
+                    
+                    ob = OrderBlockInfo(
+                        top=box_top,
+                        bottom=box_btm,
+                        ob_volume=vol_0 + vol_1 + vol_2,
+                        ob_type="Bear",
+                        start_time=klines[box_idx]['timestamp'],
+                        ob_low_volume=vol_0 + vol_1,  # Volume during impulse
+                        ob_high_volume=vol_2,  # Volume before impulse
+                        timeframe=str(klines[0].get('interval', ''))
+                    )
+                    
+                    # Check if already invalidated
+                    ob = self._check_invalidation(ob, klines, i)
+                    
+                    obs.append(ob)
+                    break
         
-        return touched
+        return obs
     
-    def get_entry_signal(self, symbol: str, sleeper_direction: str) -> Optional[Dict]:
+    def _check_invalidation(self, ob: OrderBlockInfo, klines: List[Dict], start_idx: int) -> OrderBlockInfo:
         """
-        Get entry signal when price touches OB matching sleeper direction
+        Check if OB has been invalidated (breaker)
+        
+        Pine Script:
+        Bullish: if (obEndMethod == "Wick" ? low : close) < OB.bottom → breaker
+        Bearish: if (obEndMethod == "Wick" ? high : close) > OB.top → breaker
         """
-        touched_obs = self.check_price_at_ob(symbol)
+        for i in range(start_idx + 1, len(klines)):
+            if ob.ob_type == "Bull":
+                # Bullish OB invalidated when price goes below bottom
+                check_price = klines[i]['low'] if self.ob_end_method == "Wick" else klines[i]['close']
+                if check_price < ob.bottom:
+                    ob.breaker = True
+                    ob.break_time = klines[i]['timestamp']
+                    break
+            else:
+                # Bearish OB invalidated when price goes above top
+                check_price = klines[i]['high'] if self.ob_end_method == "Wick" else klines[i]['close']
+                if check_price > ob.top:
+                    ob.breaker = True
+                    ob.break_time = klines[i]['timestamp']
+                    break
         
-        for ob in touched_obs:
-            # Match direction
-            if sleeper_direction == 'LONG' and ob['ob_type'] == 'BULLISH':
-                return self._create_signal(symbol, ob, 'LONG')
-            elif sleeper_direction == 'SHORT' and ob['ob_type'] == 'BEARISH':
-                return self._create_signal(symbol, ob, 'SHORT')
-        
-        return None
+        return ob
     
-    def _create_signal(self, symbol: str, ob: Dict, direction: str) -> Dict:
-        """Create trading signal from OB"""
-        current_price = ob.get('current_price') or self.fetcher.get_current_price(symbol)
+    def _calculate_atr(self, klines: List[Dict], period: int = 10) -> float:
+        """Calculate ATR (Average True Range)"""
+        if len(klines) < period + 1:
+            return 0
         
-        # Calculate entry zone
-        entry_price = ob['ob_mid']
+        tr_values = []
+        for i in range(1, min(period + 1, len(klines))):
+            high = klines[i]['high']
+            low = klines[i]['low']
+            prev_close = klines[i-1]['close']
+            
+            tr = max(
+                high - low,
+                abs(high - prev_close),
+                abs(low - prev_close)
+            )
+            tr_values.append(tr)
         
-        # SL below/above OB zone
-        if direction == 'LONG':
-            stop_loss = ob['ob_low'] * 0.998  # 0.2% below
-            risk = entry_price - stop_loss
-            take_profit = entry_price + (risk * 2)  # 2R
-        else:
-            stop_loss = ob['ob_high'] * 1.002  # 0.2% above
-            risk = stop_loss - entry_price
-            take_profit = entry_price - (risk * 2)  # 2R
+        return sum(tr_values) / len(tr_values) if tr_values else 0
+    
+    def _calculate_quality(self, ob: OrderBlockInfo) -> float:
+        """
+        Calculate OB quality score (0-100)
+        
+        Based on:
+        - Volume ratio (higher = better confirmation)
+        - Size relative to ATR
+        - Whether still valid (not breaker)
+        """
+        quality = 50.0  # Base score
+        
+        # Volume ratio bonus (Pine Script shows percentage)
+        if ob.ob_high_volume > 0 and ob.ob_low_volume > 0:
+            vol_ratio = min(ob.ob_high_volume, ob.ob_low_volume) / max(ob.ob_high_volume, ob.ob_low_volume)
+            # Higher ratio = more balanced = better
+            quality += vol_ratio * 30
+        
+        # Breaker penalty
+        if ob.breaker:
+            quality -= 20
+        
+        # Volume presence bonus
+        if ob.ob_volume > 0:
+            quality += 10
+        
+        return min(100, max(0, quality))
+    
+    def _ob_to_dict(self, ob: OrderBlockInfo, symbol: str, interval: str) -> Dict:
+        """Convert OrderBlockInfo to dict for DB storage"""
+        quality = self._calculate_quality(ob)
+        
+        # Volume percentage (Pine Script display)
+        vol_pct = 0
+        if ob.ob_high_volume > 0 and ob.ob_low_volume > 0:
+            vol_pct = int((min(ob.ob_high_volume, ob.ob_low_volume) / 
+                          max(ob.ob_high_volume, ob.ob_low_volume)) * 100)
         
         return {
             'symbol': symbol,
-            'direction': direction,
-            'entry_price': entry_price,
-            'current_price': current_price,
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'ob_id': ob['id'],
-            'ob_quality': ob['quality_score'],
-            'ob_timeframe': ob['timeframe'],
-            'risk_pct': abs(entry_price - stop_loss) / entry_price * 100,
-            'distance_percent': abs(current_price - entry_price) / entry_price * 100,
+            'timeframe': interval,
+            'ob_type': ob.ob_type,
+            'top': float(ob.top),
+            'bottom': float(ob.bottom),
+            'volume': float(ob.ob_volume),
+            'volume_pct': vol_pct,  # Pine Script percentage display
+            'ob_low_volume': float(ob.ob_low_volume),
+            'ob_high_volume': float(ob.ob_high_volume),
+            'quality': round(quality, 2),
+            'start_time': ob.start_time,
+            'breaker': ob.breaker,
+            'break_time': ob.break_time,
+            'mitigated': ob.breaker,  # Same as breaker
+            'created_at': datetime.utcnow(),
         }
     
-    def cleanup_expired(self) -> int:
-        """Clean up expired order blocks"""
-        max_age = self.db.get_setting('ob_max_age_minutes', 60)
-        return self.db.expire_old_orderblocks(max_age)
+    def scan_ready_sleepers(self) -> List[Dict]:
+        """Scan all ready sleepers for OBs"""
+        sleepers = self.db.get_sleepers(state='READY')
+        all_obs = []
+        
+        for sleeper in sleepers:
+            try:
+                obs = self.scan_symbol(sleeper['symbol'])
+                all_obs.extend(obs)
+            except Exception as e:
+                print(f"[OB] Error scanning {sleeper['symbol']}: {e}")
+        
+        return all_obs
+    
+    def get_active_obs(self, symbol: str = None) -> List[Dict]:
+        """Get active (non-mitigated) OBs"""
+        return self.db.get_orderblocks(symbol=symbol, status='ACTIVE')
+    
+    def check_price_near_ob(self, symbol: str, current_price: float, 
+                           proximity_pct: float = 0.5) -> Optional[Dict]:
+        """
+        Check if price is near any active OB
+        Returns the OB if price is within proximity_pct of zone
+        """
+        active_obs = self.get_active_obs(symbol)
+        
+        for ob in active_obs:
+            zone_size = ob['top'] - ob['bottom']
+            proximity = zone_size * (proximity_pct / 100)
+            
+            # Check if price is near the zone
+            if ob['ob_type'] == 'Bull':
+                # For bullish OB, check if price approaching from above
+                if ob['bottom'] - proximity <= current_price <= ob['top'] + proximity:
+                    return ob
+            else:
+                # For bearish OB, check if price approaching from below
+                if ob['bottom'] - proximity <= current_price <= ob['top'] + proximity:
+                    return ob
+        
+        return None
 
 
 # Singleton instance
-_ob_scanner_instance = None
+_ob_scanner = None
 
 def get_ob_scanner() -> OBScanner:
-    """Get OB scanner instance"""
-    global _ob_scanner_instance
-    if _ob_scanner_instance is None:
-        _ob_scanner_instance = OBScanner()
-    return _ob_scanner_instance
+    """Get singleton OB scanner instance"""
+    global _ob_scanner
+    if _ob_scanner is None:
+        _ob_scanner = OBScanner()
+    return _ob_scanner

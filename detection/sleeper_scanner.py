@@ -191,6 +191,13 @@ class SleeperScanner:
         # BB Width trend (is it compressing?)
         bb_width_change = self._calculate_bb_compression(klines_4h)
         
+        # Helper to convert numpy types to Python native
+        def to_float(val):
+            try:
+                return float(val) if val is not None else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+        
         return {
             'symbol': symbol,
             'total_score': round(total_score, 2),
@@ -201,14 +208,14 @@ class SleeperScanner:
             'state': SleeperState.WATCHING.value,
             'hp': self.thresholds['hp_initial'],
             'direction': direction,
-            'funding_rate': funding_rate,
-            'oi_change_4h': oi_change,
-            'bb_width': indicators_4h['bb_width_current'],
-            'bb_width_change': bb_width_change,
-            'volume_24h': symbol_data['volume_24h'],
-            'volume_ratio': indicators_4h['volume_profile']['ratio'],
-            'price_range_pct': indicators_4h['price_range']['range_pct'],
-            'rsi': indicators_4h['rsi_current'],
+            'funding_rate': to_float(funding_rate),
+            'oi_change_4h': to_float(oi_change),
+            'bb_width': to_float(indicators_4h.get('bb_width_current')),
+            'bb_width_change': to_float(bb_width_change),
+            'volume_24h': to_float(symbol_data.get('volume_24h')),
+            'volume_ratio': to_float(indicators_4h.get('volume_profile', {}).get('ratio')),
+            'price_range_pct': to_float(indicators_4h.get('price_range', {}).get('range_pct')),
+            'rsi': to_float(indicators_4h.get('rsi_current')),
         }
     
     def _analyze_oi_accumulation(self, oi_history: List[Dict]) -> float:

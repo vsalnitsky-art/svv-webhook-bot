@@ -155,7 +155,66 @@
         <!-- Order Block Tab -->
         <div class="tab-content" id="tab-orderblock">
             <div class="settings-section">
-                <h2>📦 Order Block Detection</h2>
+                <h2>📦 Order Block Detection (Pine Script)</h2>
+                <p class="section-desc">Parameters matching "Volumized Order Blocks | SVV Charts" indicator</p>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ob_swing_length">Swing Length</label>
+                        <input type="number" id="ob_swing_length" name="ob_swing_length" 
+                               value="{{ settings.ob_swing_length | default(5) }}" min="3" max="20" class="form-control">
+                        <small>Bars to find swing highs/lows (default: 5)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ob_max_atr_mult">Max ATR Multiplier</label>
+                        <input type="number" id="ob_max_atr_mult" name="ob_max_atr_mult" 
+                               value="{{ settings.ob_max_atr_mult | default(3.5) }}" step="0.5" min="1" max="10" class="form-control">
+                        <small>Max OB size = ATR × this (default: 3.5)</small>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ob_zone_count">Zone Count</label>
+                        <select id="ob_zone_count" name="ob_zone_count" class="form-control">
+                            <option value="One" {% if settings.ob_zone_count == 'One' %}selected{% endif %}>One (1 zone)</option>
+                            <option value="Low" {% if settings.ob_zone_count == 'Low' or not settings.ob_zone_count %}selected{% endif %}>Low (3 zones)</option>
+                            <option value="Medium" {% if settings.ob_zone_count == 'Medium' %}selected{% endif %}>Medium (5 zones)</option>
+                            <option value="High" {% if settings.ob_zone_count == 'High' %}selected{% endif %}>High (10 zones)</option>
+                        </select>
+                        <small>Number of OB zones to track</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ob_end_method">Zone Invalidation</label>
+                        <select id="ob_end_method" name="ob_end_method" class="form-control">
+                            <option value="Wick" {% if settings.ob_end_method == 'Wick' or not settings.ob_end_method %}selected{% endif %}>Wick (high/low)</option>
+                            <option value="Close" {% if settings.ob_end_method == 'Close' %}selected{% endif %}>Close (candle close)</option>
+                        </select>
+                        <small>How OB is invalidated</small>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ob_max_count">Max Order Blocks</label>
+                        <input type="number" id="ob_max_count" name="ob_max_count" 
+                               value="{{ settings.ob_max_count | default(30) }}" min="5" max="100" class="form-control">
+                        <small>Maximum OBs to store (default: 30)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ob_timeframes">Scan Timeframes</label>
+                        <input type="text" id="ob_timeframes" name="ob_timeframes" 
+                               value="{{ settings.ob_timeframes | default('15,5') }}" class="form-control">
+                        <small>Minutes, comma-separated (e.g. 15,5,1)</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h2>🎯 Quality Filters</h2>
                 
                 <div class="form-row">
                     <div class="form-group">
@@ -171,29 +230,6 @@
                                value="{{ settings.ob_signal_quality | default(70) }}" min="0" max="100" class="form-control">
                         <small>Min quality to generate signal</small>
                     </div>
-                </div>
-                
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="ob_volume_ratio">Min Volume Ratio</label>
-                        <input type="number" id="ob_volume_ratio" name="ob_volume_ratio" 
-                               value="{{ settings.ob_volume_ratio | default(1.5) }}" step="0.1" min="1" class="form-control">
-                        <small>OB candle vs average (e.g. 1.5x)</small>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="ob_max_age_hours">Max OB Age (hours)</label>
-                        <input type="number" id="ob_max_age_hours" name="ob_max_age_hours" 
-                               value="{{ settings.ob_max_age_hours | default(48) }}" min="1" class="form-control">
-                        <small>Older OBs are removed</small>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="ob_timeframes">Scan Timeframes (minutes)</label>
-                    <input type="text" id="ob_timeframes" name="ob_timeframes" 
-                           value="{{ settings.ob_timeframes | default('15,5') }}" class="form-control">
-                    <small>Comma-separated (e.g. 15,5,1)</small>
                 </div>
             </div>
         </div>

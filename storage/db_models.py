@@ -115,6 +115,11 @@ class OrderBlock(Base):
             'ob_high': self.ob_high,
             'ob_low': self.ob_low,
             'ob_mid': self.ob_mid,
+            # Aliases for OB scanner compatibility
+            'top': self.ob_high,
+            'bottom': self.ob_low,
+            'quality': self.quality_score,
+            # Original fields
             'quality_score': self.quality_score,
             'volume_ratio': self.volume_ratio,
             'impulse_pct': self.impulse_pct,

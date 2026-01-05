@@ -94,19 +94,32 @@ class DBOperations:
     
     def upsert_sleeper(self, data: Dict) -> Optional[SleeperCandidate]:
         """Insert or update sleeper candidate"""
+        # Convert numpy types to Python native types
+        clean_data = {}
+        for key, value in data.items():
+            if hasattr(value, 'item'):  # numpy scalar
+                clean_data[key] = value.item()
+            elif isinstance(value, (int, float, str, bool, type(None), datetime)):
+                clean_data[key] = value
+            else:
+                try:
+                    clean_data[key] = float(value)
+                except (TypeError, ValueError):
+                    clean_data[key] = str(value)
+        
         session = get_session()
         try:
             sleeper = session.query(SleeperCandidate).filter_by(
-                symbol=data['symbol']
+                symbol=clean_data['symbol']
             ).first()
             
             if sleeper:
-                for key, value in data.items():
+                for key, value in clean_data.items():
                     if hasattr(sleeper, key):
                         setattr(sleeper, key, value)
                 sleeper.checks_count += 1
             else:
-                sleeper = SleeperCandidate(**data)
+                sleeper = SleeperCandidate(**clean_data)
                 session.add(sleeper)
             
             session.commit()
@@ -182,23 +195,69 @@ class DBOperations:
     
     def add_orderblock(self, data: Dict) -> Optional[OrderBlock]:
         """Add new order block"""
+        # Convert numpy types and map fields
+        clean_data = {}
+        
+        # Field mapping from new OB scanner format to DB model
+        field_map = {
+            'symbol': 'symbol',
+            'timeframe': 'timeframe',
+            'ob_type': 'ob_type',
+            'top': 'ob_high',
+            'bottom': 'ob_low',
+            'quality': 'quality_score',
+            'volume': 'volume_ratio',  # Using volume as ratio temporarily
+        }
+        
+        for src, dst in field_map.items():
+            if src in data:
+                value = data[src]
+                # Convert numpy types
+                if hasattr(value, 'item'):
+                    clean_data[dst] = value.item()
+                else:
+                    clean_data[dst] = value
+        
+        # Calculate mid point
+        if 'ob_high' in clean_data and 'ob_low' in clean_data:
+            clean_data['ob_mid'] = (clean_data['ob_high'] + clean_data['ob_low']) / 2
+        
+        # Map ob_type to DB format (Bull -> BULLISH, Bear -> BEARISH)
+        if 'ob_type' in clean_data:
+            ob_type = clean_data['ob_type']
+            if ob_type == 'Bull':
+                clean_data['ob_type'] = 'BULLISH'
+            elif ob_type == 'Bear':
+                clean_data['ob_type'] = 'BEARISH'
+        
+        # Status based on breaker
+        clean_data['status'] = 'MITIGATED' if data.get('breaker', False) else 'ACTIVE'
+        
+        # Expiration
+        clean_data['expires_at'] = datetime.utcnow() + timedelta(hours=48)
+        
         session = get_session()
         try:
-            # Check for duplicate
-            existing = session.query(OrderBlock).filter(
-                and_(
-                    OrderBlock.symbol == data['symbol'],
-                    OrderBlock.timeframe == data['timeframe'],
-                    OrderBlock.status == 'ACTIVE',
-                    OrderBlock.ob_type == data['ob_type'],
-                    OrderBlock.ob_mid.between(data['ob_low'], data['ob_high'])
-                )
-            ).first()
+            # Check for duplicate - similar zone
+            if all(k in clean_data for k in ['symbol', 'timeframe', 'ob_type', 'ob_mid']):
+                zone_tolerance = abs(clean_data.get('ob_high', 0) - clean_data.get('ob_low', 0)) * 0.5
+                existing = session.query(OrderBlock).filter(
+                    and_(
+                        OrderBlock.symbol == clean_data['symbol'],
+                        OrderBlock.timeframe == clean_data['timeframe'],
+                        OrderBlock.status == 'ACTIVE',
+                        OrderBlock.ob_type == clean_data['ob_type'],
+                        OrderBlock.ob_mid.between(
+                            clean_data['ob_mid'] - zone_tolerance,
+                            clean_data['ob_mid'] + zone_tolerance
+                        )
+                    )
+                ).first()
+                
+                if existing:
+                    return existing
             
-            if existing:
-                return existing
-            
-            ob = OrderBlock(**data)
+            ob = OrderBlock(**clean_data)
             session.add(ob)
             session.commit()
             session.refresh(ob)
