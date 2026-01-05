@@ -58,7 +58,8 @@ class DBOperations:
         session = get_session()
         try:
             setting = session.query(BotSetting).filter_by(key=key).first()
-            str_value = json.dumps(value) if not isinstance(value, str) else value
+            # Always use json.dumps for consistency
+            str_value = json.dumps(value)
             
             if setting:
                 setting.value = str_value

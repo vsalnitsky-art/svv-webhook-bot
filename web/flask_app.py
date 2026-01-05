@@ -90,12 +90,12 @@ def register_routes(app):
         paper_trading = settings.get('paper_trading', DEFAULT_SETTINGS['paper_trading'])
         paper_balance = settings.get('paper_balance', DEFAULT_SETTINGS['paper_balance'])
         
-        # Count sleepers by state
+        # Count sleepers by state (sleepers are dicts)
         sleeper_counts = {
             'total': len(sleepers),
-            'watching': len([s for s in sleepers if s.state == 'WATCHING']),
-            'building': len([s for s in sleepers if s.state == 'BUILDING']),
-            'ready': len([s for s in sleepers if s.state == 'READY'])
+            'watching': len([s for s in sleepers if s.get('state') == 'WATCHING']),
+            'building': len([s for s in sleepers if s.get('state') == 'BUILDING']),
+            'ready': len([s for s in sleepers if s.get('state') == 'READY'])
         }
         
         return render_template('dashboard.html',
@@ -116,8 +116,8 @@ def register_routes(app):
         db = get_db()
         sleepers = db.get_sleepers()
         
-        # Sort by total_score desc
-        sleepers.sort(key=lambda x: x.total_score or 0, reverse=True)
+        # Sort by total_score desc (sleepers are dicts)
+        sleepers.sort(key=lambda x: x.get('total_score') or 0, reverse=True)
         
         return render_template('sleepers.html',
             sleepers=sleepers,
@@ -130,12 +130,7 @@ def register_routes(app):
         db = get_db()
         
         # Get active OBs
-        from storage.db_models import OrderBlock, OBStatus, get_session
-        session = get_session()
-        obs = session.query(OrderBlock).filter(
-            OrderBlock.status.in_([OBStatus.ACTIVE.value, OBStatus.TOUCHED.value])
-        ).order_by(OrderBlock.created_at.desc()).limit(50).all()
-        session.close()
+        obs = db.get_orderblocks(status='ACTIVE', limit=50)
         
         return render_template('orderblocks.html',
             orderblocks=obs,
@@ -233,7 +228,7 @@ def register_api_routes(app):
             'data': {
                 'trade_stats': trade_stats,
                 'sleeper_count': len(sleepers),
-                'ready_sleepers': len([s for s in sleepers if s.state == 'READY']),
+                'ready_sleepers': len([s for s in sleepers if s.get('state') == 'READY']),
                 'open_trades': len(open_trades),
                 'paper_balance': paper_balance
             }
@@ -245,53 +240,18 @@ def register_api_routes(app):
         db = get_db()
         sleepers = db.get_sleepers()
         
-        data = []
-        for s in sleepers:
-            data.append({
-                'symbol': s.symbol,
-                'state': s.state,
-                'direction': s.direction,
-                'total_score': round(s.total_score or 0, 1),
-                'fuel_score': round(s.fuel_score or 0, 1),
-                'volatility_score': round(s.volatility_score or 0, 1),
-                'hp': s.hp,
-                'funding_rate': s.funding_rate,
-                'oi_change_4h': round(s.oi_change_4h or 0, 2),
-                'bb_width': round(s.bb_width or 0, 4),
-                'rsi': round(s.rsi or 0, 1),
-                'updated_at': s.updated_at.isoformat() if s.updated_at else None
-            })
-        
-        return jsonify({'success': True, 'data': data})
+        # Sleepers are already dicts from to_dict()
+        return jsonify({'success': True, 'data': sleepers})
     
     @app.route('/api/orderblocks')
     def api_orderblocks():
         """Get active order blocks"""
-        from storage.db_models import OrderBlock, OBStatus, get_session
+        db = get_db()
         
-        session = get_session()
-        obs = session.query(OrderBlock).filter(
-            OrderBlock.status.in_([OBStatus.ACTIVE.value, OBStatus.TOUCHED.value])
-        ).order_by(OrderBlock.created_at.desc()).limit(50).all()
+        # Get OBs as dicts
+        obs = db.get_orderblocks(status='ACTIVE', limit=50)
         
-        data = []
-        for ob in obs:
-            data.append({
-                'id': ob.id,
-                'symbol': ob.symbol,
-                'timeframe': ob.timeframe,
-                'ob_type': ob.ob_type,
-                'ob_high': ob.ob_high,
-                'ob_low': ob.ob_low,
-                'ob_mid': ob.ob_mid,
-                'quality_score': round(ob.quality_score or 0, 1),
-                'status': ob.status,
-                'touch_count': ob.touch_count,
-                'created_at': ob.created_at.isoformat() if ob.created_at else None
-            })
-        
-        session.close()
-        return jsonify({'success': True, 'data': data})
+        return jsonify({'success': True, 'data': obs})
     
     @app.route('/api/trades')
     def api_trades():
@@ -351,17 +311,26 @@ def register_api_routes(app):
         
         # Add additional defaults not in DEFAULT_SETTINGS
         additional_defaults = {
+            # Sleeper detection
             'sleeper_min_score': 40,
             'sleeper_building_score': 55,
             'sleeper_ready_score': 70,
             'sleeper_min_volume': 20000000,
+            'sleeper_timeframe': '240',
             'weight_fuel': 30,
             'weight_volatility': 25,
             'weight_price': 25,
             'weight_liquidity': 20,
+            # Order Block (Pine Script params)
+            'ob_swing_length': 5,
+            'ob_max_atr_mult': 3.5,
+            'ob_zone_count': 'Low',
+            'ob_end_method': 'Wick',
+            'ob_max_count': 30,
+            'ob_timeframes': '15,5',
+            'ob_min_quality': 60,
             'ob_signal_quality': 70,
-            'ob_volume_ratio': 1.5,
-            'ob_max_age_hours': 48,
+            # Trading
             'atr_tp_multiplier': 3,
             'trailing_stop_enabled': True,
             'tp1_pct': 50,
