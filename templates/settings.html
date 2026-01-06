@@ -19,6 +19,7 @@
             <button type="button" class="tab-btn" data-tab="orderblock">Order Blocks</button>
             <button type="button" class="tab-btn" data-tab="trading">Trading</button>
             <button type="button" class="tab-btn" data-tab="notifications">Notifications</button>
+            <button type="button" class="tab-btn" data-tab="maintenance">🗑️ Maintenance</button>
         </div>
 
         <!-- General Tab -->
@@ -482,6 +483,74 @@
             </div>
         </div>
 
+        <!-- Maintenance Tab (NEW) -->
+        <div class="tab-content" id="tab-maintenance">
+            <div class="settings-section danger-section">
+                <h2>🗑️ Database Cleanup</h2>
+                <p class="section-desc">Clear old or corrupted data. Use with caution!</p>
+                
+                <div class="cleanup-grid">
+                    <div class="cleanup-card">
+                        <h3>📦 Order Blocks</h3>
+                        <p>Remove all order blocks from database. New ones will be detected on next scan.</p>
+                        <div id="ob-count" class="count-badge">Loading...</div>
+                        <button type="button" class="btn btn-danger" onclick="cleanupOrderBlocks()">
+                            🗑️ Clear All Order Blocks
+                        </button>
+                    </div>
+                    
+                    <div class="cleanup-card">
+                        <h3>😴 Sleeper Candidates</h3>
+                        <p>Remove all sleeper candidates. New ones will be detected on next scan.</p>
+                        <div id="sleeper-count" class="count-badge">Loading...</div>
+                        <button type="button" class="btn btn-danger" onclick="cleanupSleepers()">
+                            🗑️ Clear All Sleepers
+                        </button>
+                    </div>
+                    
+                    <div class="cleanup-card full-width">
+                        <h3>⚠️ Full Database Reset</h3>
+                        <p>Remove ALL data: Order Blocks, Sleepers, and closed Trades. Settings will be preserved.</p>
+                        <button type="button" class="btn btn-danger btn-lg" onclick="cleanupAll()">
+                            ⚠️ Clear Everything
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="settings-section">
+                <h2>🔧 Debug Tools</h2>
+                <p class="section-desc">Diagnose issues with data fetching</p>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Test Symbol Analysis</label>
+                        <div class="input-group">
+                            <input type="text" id="debug_symbol" placeholder="BTCUSDT" class="form-control">
+                            <button type="button" class="btn btn-secondary" onclick="debugSymbol()">🔍 Debug</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="debug-result" class="debug-result" style="display: none;">
+                    <!-- Debug results will be shown here -->
+                </div>
+            </div>
+            
+            <div class="settings-section">
+                <h2>🔄 Manual Actions</h2>
+                
+                <div class="action-buttons">
+                    <button type="button" class="btn btn-primary" onclick="triggerSleeperScan()">
+                        🔍 Run Sleeper Scan Now
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="triggerOBScan()">
+                        📦 Scan OBs for Ready Sleepers
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="form-actions">
             <button type="submit" class="btn btn-primary btn-lg">💾 Save All Settings</button>
         </div>
@@ -647,6 +716,62 @@
 .badge.danger { background: rgba(255, 59, 48, 0.2); color: #ff3b30; }
 .badge.secondary { background: rgba(142, 142, 147, 0.2); color: #8e8e93; }
 .badge.small { font-size: 0.65rem; padding: 2px 6px; }
+
+/* Maintenance Section */
+.danger-section {
+    border: 1px solid rgba(255, 59, 48, 0.3);
+    background: rgba(255, 59, 48, 0.05);
+}
+.cleanup-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    margin-top: 15px;
+}
+.cleanup-card {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+}
+.cleanup-card.full-width { grid-column: 1 / -1; }
+.cleanup-card h3 { margin: 0 0 10px 0; }
+.cleanup-card p { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 15px; }
+.count-badge {
+    display: inline-block;
+    padding: 5px 15px;
+    background: rgba(0, 122, 255, 0.2);
+    border-radius: 20px;
+    font-weight: bold;
+    margin-bottom: 15px;
+}
+.btn-danger {
+    background: #ff3b30;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+}
+.btn-danger:hover { background: #e0352b; }
+
+.debug-result {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 15px;
+    margin-top: 15px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
 </style>
 
 <script>
@@ -799,6 +924,148 @@ async function testTrend() {
         }
     } catch (err) {
         resultDiv.innerHTML = `<div class="error">❌ Error: ${err.message}</div>`;
+    }
+}
+
+// ==========================================
+// MAINTENANCE FUNCTIONS
+// ==========================================
+
+// Load counts when maintenance tab is opened
+document.querySelector('[data-tab="maintenance"]').addEventListener('click', loadMaintenanceCounts);
+
+async function loadMaintenanceCounts() {
+    try {
+        // Get OB count
+        const obsRes = await fetch('/api/orderblocks');
+        const obsData = await obsRes.json();
+        document.getElementById('ob-count').textContent = 
+            `${obsData.data?.length || 0} order blocks`;
+        
+        // Get sleeper count
+        const sleepersRes = await fetch('/api/sleepers');
+        const sleepersData = await sleepersRes.json();
+        document.getElementById('sleeper-count').textContent = 
+            `${sleepersData.data?.length || 0} sleepers`;
+    } catch (err) {
+        console.error('Error loading counts:', err);
+    }
+}
+
+async function cleanupOrderBlocks() {
+    if (!confirm('⚠️ Delete ALL order blocks? This cannot be undone.')) return;
+    
+    try {
+        const res = await fetch('/api/cleanup/orderblocks', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Deleted ${data.deleted} order blocks`);
+            loadMaintenanceCounts();
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function cleanupSleepers() {
+    if (!confirm('⚠️ Delete ALL sleeper candidates? This cannot be undone.')) return;
+    
+    try {
+        const res = await fetch('/api/cleanup/sleepers', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Deleted ${data.deleted} sleepers`);
+            loadMaintenanceCounts();
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function cleanupAll() {
+    if (!confirm('⚠️⚠️⚠️ DELETE EVERYTHING? Order Blocks, Sleepers, Closed Trades? This CANNOT be undone!')) return;
+    if (!confirm('Are you REALLY sure?')) return;
+    
+    try {
+        const res = await fetch('/api/cleanup/all', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Deleted: ${data.deleted.orderblocks} OBs, ${data.deleted.sleepers} sleepers, ${data.deleted.trades} trades`);
+            loadMaintenanceCounts();
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function debugSymbol() {
+    const symbol = document.getElementById('debug_symbol').value.trim().toUpperCase();
+    if (!symbol) {
+        alert('Enter a symbol');
+        return;
+    }
+    
+    const resultDiv = document.getElementById('debug-result');
+    resultDiv.style.display = 'block';
+    resultDiv.textContent = 'Loading...';
+    
+    try {
+        const res = await fetch(`/api/debug/sleeper/${symbol}`);
+        const data = await res.json();
+        
+        resultDiv.textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+        resultDiv.textContent = 'Error: ' + err.message;
+    }
+}
+
+async function triggerSleeperScan() {
+    showToast('🔍 Starting sleeper scan...');
+    
+    try {
+        const res = await fetch('/api/scan/sleepers', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Scanned! Found ${data.data.total} (${data.data.ready} ready, ${data.data.building} building)`);
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function triggerOBScan() {
+    const symbol = prompt('Enter symbol to scan (e.g., BTCUSDT):');
+    if (!symbol) return;
+    
+    showToast(`📦 Scanning OBs for ${symbol.toUpperCase()}...`);
+    
+    try {
+        const res = await fetch('/api/scan/orderblocks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: symbol.toUpperCase() })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Found ${data.data.length} order blocks for ${symbol.toUpperCase()}`);
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
     }
 }
 

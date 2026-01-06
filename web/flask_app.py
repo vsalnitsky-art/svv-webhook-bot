@@ -721,6 +721,130 @@ def register_api_routes(app):
             'allowed_count': len([r for r in results if r['allowed']])
         })
     
+    # =========================================
+    # DATABASE CLEANUP API
+    # =========================================
+    
+    @app.route('/api/cleanup/orderblocks', methods=['POST'])
+    def api_cleanup_orderblocks():
+        """Delete all order blocks from database"""
+        from storage.db_models import OrderBlock, get_session
+        
+        session = get_session()
+        try:
+            count = session.query(OrderBlock).delete()
+            session.commit()
+            
+            db = get_db()
+            db.log_event(f"Deleted {count} order blocks", level='WARN', category='CLEANUP')
+            
+            return jsonify({
+                'success': True,
+                'message': f'Deleted {count} order blocks',
+                'deleted': count
+            })
+        except Exception as e:
+            session.rollback()
+            return jsonify({'success': False, 'error': str(e)}), 500
+        finally:
+            session.close()
+    
+    @app.route('/api/cleanup/sleepers', methods=['POST'])
+    def api_cleanup_sleepers():
+        """Delete all sleepers from database"""
+        from storage.db_models import SleeperCandidate, get_session
+        
+        session = get_session()
+        try:
+            count = session.query(SleeperCandidate).delete()
+            session.commit()
+            
+            db = get_db()
+            db.log_event(f"Deleted {count} sleepers", level='WARN', category='CLEANUP')
+            
+            return jsonify({
+                'success': True,
+                'message': f'Deleted {count} sleepers',
+                'deleted': count
+            })
+        except Exception as e:
+            session.rollback()
+            return jsonify({'success': False, 'error': str(e)}), 500
+        finally:
+            session.close()
+    
+    @app.route('/api/cleanup/all', methods=['POST'])
+    def api_cleanup_all():
+        """Delete all data from all tables (except settings and events)"""
+        from storage.db_models import OrderBlock, SleeperCandidate, Trade, get_session
+        
+        session = get_session()
+        try:
+            ob_count = session.query(OrderBlock).delete()
+            sleeper_count = session.query(SleeperCandidate).delete()
+            trade_count = session.query(Trade).filter(Trade.status != 'OPEN').delete()
+            session.commit()
+            
+            db = get_db()
+            db.log_event(
+                f"Full cleanup: {ob_count} OBs, {sleeper_count} sleepers, {trade_count} closed trades",
+                level='WARN', category='CLEANUP'
+            )
+            
+            return jsonify({
+                'success': True,
+                'message': 'Database cleaned',
+                'deleted': {
+                    'orderblocks': ob_count,
+                    'sleepers': sleeper_count,
+                    'trades': trade_count
+                }
+            })
+        except Exception as e:
+            session.rollback()
+            return jsonify({'success': False, 'error': str(e)}), 500
+        finally:
+            session.close()
+    
+    @app.route('/api/debug/sleeper/<symbol>', methods=['GET'])
+    def api_debug_sleeper(symbol):
+        """Debug endpoint - show raw data for sleeper analysis"""
+        from core import get_fetcher
+        
+        fetcher = get_fetcher()
+        
+        # Get raw data
+        funding = fetcher.get_funding_rate(symbol)
+        oi_change = fetcher.get_oi_change(symbol, hours=4)
+        klines_4h = fetcher.get_klines(symbol, '240', limit=50)
+        
+        # Calculate indicators
+        from core import get_indicators
+        indicators = get_indicators()
+        
+        if klines_4h:
+            ind = indicators.calculate_all(klines_4h)
+        else:
+            ind = {}
+        
+        return jsonify({
+            'success': True,
+            'symbol': symbol,
+            'raw_data': {
+                'funding_rate': funding,
+                'oi_change_4h': oi_change,
+                'klines_count': len(klines_4h) if klines_4h else 0,
+                'last_kline': klines_4h[-1] if klines_4h else None
+            },
+            'indicators': {
+                'rsi': ind.get('rsi_current'),
+                'atr': ind.get('atr_current'),
+                'bb_width': ind.get('bb_width_current'),
+                'volume_profile': ind.get('volume_profile'),
+                'price_range': ind.get('price_range')
+            }
+        })
+    
     # End of register_api_routes
 
 
