@@ -145,7 +145,7 @@ class OBScanner:
         # Convert to dict format
         result = []
         for ob in bullish_obs + bearish_obs:
-            result.append(self._ob_to_dict(ob, symbol, interval))
+            result.append(self._ob_to_dict(ob, symbol, interval, klines))
         
         return result
     
@@ -393,15 +393,38 @@ class OBScanner:
         
         return min(100, max(0, quality))
     
-    def _ob_to_dict(self, ob: OrderBlockInfo, symbol: str, interval: str) -> Dict:
+    def _ob_to_dict(self, ob: OrderBlockInfo, symbol: str, interval: str, klines: List[Dict] = None) -> Dict:
         """Convert OrderBlockInfo to dict for DB storage"""
         quality = self._calculate_quality(ob)
         
-        # Volume percentage (Pine Script display)
-        vol_pct = 0
+        # Volume ratio (як Pine Script показує у відсотках) 
+        vol_ratio = 0.0
         if ob.ob_high_volume > 0 and ob.ob_low_volume > 0:
-            vol_pct = int((min(ob.ob_high_volume, ob.ob_low_volume) / 
-                          max(ob.ob_high_volume, ob.ob_low_volume)) * 100)
+            vol_ratio = round(max(ob.ob_high_volume, ob.ob_low_volume) / 
+                             min(ob.ob_high_volume, ob.ob_low_volume), 1)
+        
+        # Impulse percentage - зміна ціни від OB до найближчого екстремуму
+        impulse_pct = 0.0
+        if klines and ob.top > 0 and ob.bottom > 0:
+            ob_mid = (ob.top + ob.bottom) / 2
+            
+            # Знаходимо max/min ціну після OB формування
+            recent_prices = []
+            for k in klines[-20:]:  # Останні 20 свічок
+                recent_prices.append(float(k['high']))
+                recent_prices.append(float(k['low']))
+            
+            if recent_prices:
+                if ob.ob_type == 'Bull':
+                    # Для бичачого OB - рух вгору
+                    max_price = max(recent_prices)
+                    if ob_mid > 0:
+                        impulse_pct = round((max_price - ob_mid) / ob_mid * 100, 2)
+                else:
+                    # Для ведмежого OB - рух вниз
+                    min_price = min(recent_prices)
+                    if ob_mid > 0:
+                        impulse_pct = round((ob_mid - min_price) / ob_mid * 100, 2)
         
         return {
             'symbol': symbol,
@@ -410,14 +433,15 @@ class OBScanner:
             'top': float(ob.top),
             'bottom': float(ob.bottom),
             'volume': float(ob.ob_volume),
-            'volume_pct': vol_pct,  # Pine Script percentage display
+            'volume_ratio': vol_ratio,        # Відношення (1.5x, 2.3x, etc)
+            'impulse_pct': abs(impulse_pct),  # Відсоток руху
             'ob_low_volume': float(ob.ob_low_volume),
             'ob_high_volume': float(ob.ob_high_volume),
             'quality': round(quality, 2),
             'start_time': ob.start_time,
             'breaker': ob.breaker,
             'break_time': ob.break_time,
-            'mitigated': ob.breaker,  # Same as breaker
+            'mitigated': ob.breaker,
             'created_at': datetime.utcnow(),
         }
     

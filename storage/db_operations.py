@@ -207,7 +207,8 @@ class DBOperations:
             'top': 'ob_high',
             'bottom': 'ob_low',
             'quality': 'quality_score',
-            'volume': 'volume_ratio',  # Using volume as ratio temporarily
+            'volume_ratio': 'volume_ratio',   # Правильне відношення (1.5x, 2.3x)
+            'impulse_pct': 'impulse_pct',     # Відсоток імпульсного руху
         }
         
         for src, dst in field_map.items():
