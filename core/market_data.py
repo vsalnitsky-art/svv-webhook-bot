@@ -57,6 +57,10 @@ class MarketDataFetcher:
         self._ticker_cache_time = now
         return self._ticker_cache
     
+    def get_ticker(self, symbol: str) -> Optional[Dict]:
+        """Get single ticker data for symbol"""
+        return self.connector.get_ticker(symbol)
+    
     def get_klines(self, symbol: str, interval: str, limit: int = 200) -> List[Dict]:
         """Get candlestick data"""
         return self.connector.get_klines(symbol, interval, limit)
