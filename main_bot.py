@@ -14,6 +14,9 @@ import os
 import sys
 import argparse
 import signal
+import threading
+import time
+import requests
 from datetime import datetime
 
 # Додати кореневу папку до path
@@ -26,6 +29,36 @@ from alerts.telegram_notifier import get_notifier
 
 # Import app for gunicorn (gunicorn main_bot:app)
 from web.flask_app import app
+
+
+# ===== KEEP-ALIVE THREAD (Anti-Sleep for Render/Heroku) =====
+
+def keep_alive():
+    """🫀 Keep-alive для хостів (Render, Heroku) - запобігає засинанню"""
+    time.sleep(10)  # Початкова затримка
+    
+    base_url = os.environ.get('RENDER_EXTERNAL_URL')
+    if not base_url:
+        port = os.environ.get('PORT', 10000)
+        base_url = f'http://127.0.0.1:{port}'
+    
+    target = f"{base_url}/health"
+    print(f"[KEEP-ALIVE] Started, pinging {target} every 5 min")
+    
+    while True:
+        try:
+            response = requests.get(target, timeout=10)
+            print(f"[KEEP-ALIVE] Ping OK: {response.status_code}")
+        except Exception as e:
+            print(f"[KEEP-ALIVE] Ping failed: {e}")
+        time.sleep(300)  # 5 хвилин
+
+
+def start_keep_alive():
+    """Запустити keep-alive потік"""
+    thread = threading.Thread(target=keep_alive, daemon=True, name="KeepAlive")
+    thread.start()
+    print("[STARTUP] Keep-alive thread started")
 
 
 def print_banner():
@@ -268,6 +301,23 @@ def main():
         run_web_only()
     else:
         run_full()
+
+
+# ===== AUTO-START KEEP-ALIVE FOR GUNICORN =====
+# Запускається при імпорті модуля (gunicorn main_bot:app)
+def _auto_start_keep_alive():
+    """Автоматичний запуск keep-alive при імпорті"""
+    # Перевіряємо чи це Render/production
+    if os.environ.get('RENDER') or os.environ.get('RENDER_EXTERNAL_URL'):
+        def delayed_start():
+            time.sleep(3)  # Затримка для повної ініціалізації
+            start_keep_alive()
+        
+        thread = threading.Thread(target=delayed_start, daemon=True)
+        thread.start()
+        print("[STARTUP] Keep-alive scheduled for Render environment")
+
+_auto_start_keep_alive()
 
 
 if __name__ == '__main__':

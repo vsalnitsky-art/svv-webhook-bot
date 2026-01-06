@@ -29,27 +29,27 @@
                 <div class="signal-details">
                     <div class="detail-row">
                         <span class="label">Entry Zone</span>
-                        <span class="value">${{ "%.4f"|format(sig.entry_price) }}</span>
+                        <span class="value">${{ "%.4f"|format(sig.entry_price|default(0)) }}</span>
                     </div>
                     <div class="detail-row">
                         <span class="label">Stop Loss</span>
-                        <span class="value danger">${{ "%.4f"|format(sig.sl_price) }}</span>
+                        <span class="value danger">${{ "%.4f"|format(sig.stop_loss|default(sig.sl_price|default(0))) }}</span>
                     </div>
                     <div class="detail-row">
                         <span class="label">Take Profit</span>
-                        <span class="value success">${{ "%.4f"|format(sig.tp1_price) }}</span>
+                        <span class="value success">${{ "%.4f"|format(sig.take_profit|default(sig.tp1_price|default(0))) }}</span>
                     </div>
                     <div class="detail-row">
                         <span class="label">Confidence</span>
-                        <span class="value">{{ "%.0f"|format(sig.confidence) }}%</span>
+                        <span class="value">{{ "%.0f"|format(sig.signal_confidence|default(sig.confidence|default(0))) }}%</span>
                     </div>
                     <div class="detail-row">
                         <span class="label">Sleeper Score</span>
-                        <span class="value">{{ "%.1f"|format(sig.sleeper_score) }}</span>
+                        <span class="value">{{ "%.1f"|format(sig.sleeper_score|default(0)) }}</span>
                     </div>
                     <div class="detail-row">
                         <span class="label">OB Quality</span>
-                        <span class="value">{{ "%.0f"|format(sig.ob_quality) }}</span>
+                        <span class="value">{{ "%.0f"|format(sig.ob_quality|default(0)) }}</span>
                     </div>
                 </div>
                 
@@ -82,21 +82,21 @@
                 <div class="signal-details">
                     <div class="detail-row">
                         <span class="label">Current Price</span>
-                        <span class="value">${{ "%.4f"|format(sig.current_price) }}</span>
+                        <span class="value">${{ "%.4f"|format(sig.current_price|default(0)) }}</span>
                     </div>
                     <div class="detail-row">
                         <span class="label">OB Zone</span>
-                        <span class="value">${{ "%.4f"|format(sig.ob_low) }} - ${{ "%.4f"|format(sig.ob_high) }}</span>
+                        <span class="value">${{ "%.4f"|format(sig.zone_low|default(sig.ob_low|default(0))) }} - ${{ "%.4f"|format(sig.zone_high|default(sig.ob_high|default(0))) }}</span>
                     </div>
                     <div class="detail-row">
                         <span class="label">Confidence</span>
-                        <span class="value">{{ "%.0f"|format(sig.confidence) }}%</span>
+                        <span class="value">{{ "%.0f"|format(sig.signal_confidence|default(sig.confidence|default(0))) }}%</span>
                     </div>
                 </div>
                 
                 <div class="signal-meta">
-                    <span class="timeframe">{{ sig.ob_timeframe }}</span>
-                    <span class="sleeper-state">{{ sig.sleeper_state }}</span>
+                    <span class="timeframe">{{ sig.timeframe|default(sig.ob_timeframe|default('-')) }}</span>
+                    <span class="sleeper-state">{{ sig.sleeper_state|default('-') }}</span>
                 </div>
             </div>
             {% endfor %}
