@@ -212,7 +212,8 @@ class BackgroundJobs:
             total_obs = 0
             
             for sleeper in sleepers:
-                obs = scanner.scan_symbol(sleeper.symbol)
+                # sleeper is a dict
+                obs = scanner.scan_symbol(sleeper['symbol'])
                 total_obs += len(obs)
                 
                 # Сповіщення про якісні OB
@@ -345,8 +346,8 @@ class BackgroundJobs:
             
             updated = 0
             for sleeper in sleepers:
-                # Перевірити чи умови все ще виконуються
-                result = scanner.check_single(sleeper.symbol)
+                # sleeper is a dict - перевірити чи умови все ще виконуються
+                result = scanner.check_single(sleeper['symbol'])
                 if result:
                     updated += 1
             

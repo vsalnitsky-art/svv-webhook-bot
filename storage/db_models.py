@@ -125,8 +125,9 @@ class OrderBlock(Base):
             'impulse_pct': self.impulse_pct,
             'status': self.status,
             'touch_count': self.touch_count,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            # Keep as datetime for template compatibility
+            'created_at': self.created_at,
+            'expires_at': self.expires_at,
         }
 
 

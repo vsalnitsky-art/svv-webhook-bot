@@ -251,6 +251,13 @@ def register_api_routes(app):
         # Get OBs as dicts
         obs = db.get_orderblocks(status='ACTIVE', limit=50)
         
+        # Convert datetime to string for JSON
+        for ob in obs:
+            if ob.get('created_at') and hasattr(ob['created_at'], 'isoformat'):
+                ob['created_at'] = ob['created_at'].isoformat()
+            if ob.get('expires_at') and hasattr(ob['expires_at'], 'isoformat'):
+                ob['expires_at'] = ob['expires_at'].isoformat()
+        
         return jsonify({'success': True, 'data': obs})
     
     @app.route('/api/trades')

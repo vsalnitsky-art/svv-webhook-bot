@@ -462,6 +462,125 @@ class OBScanner:
                     return ob
         
         return None
+    
+    def cleanup_expired(self) -> int:
+        """
+        Remove expired or mitigated order blocks
+        Returns number of cleaned up OBs
+        """
+        from datetime import datetime, timedelta
+        
+        session = None
+        try:
+            from storage.db_models import OrderBlock, get_session
+            session = get_session()
+            
+            # Mark expired OBs
+            expired_count = session.query(OrderBlock).filter(
+                OrderBlock.status == 'ACTIVE',
+                OrderBlock.expires_at < datetime.utcnow()
+            ).update({'status': 'EXPIRED'})
+            
+            # Delete very old OBs (older than 7 days)
+            cutoff = datetime.utcnow() - timedelta(days=7)
+            deleted_count = session.query(OrderBlock).filter(
+                OrderBlock.created_at < cutoff
+            ).delete()
+            
+            session.commit()
+            
+            total = expired_count + deleted_count
+            if total > 0:
+                print(f"[OB] Cleanup: {expired_count} expired, {deleted_count} deleted")
+            
+            return total
+        except Exception as e:
+            if session:
+                session.rollback()
+            print(f"[OB] Cleanup error: {e}")
+            return 0
+        finally:
+            if session:
+                session.close()
+    
+    def get_entry_signal(self, symbol: str, direction: str) -> Optional[Dict]:
+        """
+        Check if there's a valid entry signal for symbol
+        
+        Returns signal dict if:
+        1. Active OB exists for symbol
+        2. Current price is near OB zone
+        3. Direction matches (LONG→Bullish OB, SHORT→Bearish OB)
+        """
+        # Get current price
+        try:
+            ticker = self.fetcher.get_ticker(symbol)
+            if not ticker:
+                return None
+            current_price = float(ticker.get('lastPrice', 0))
+            if current_price <= 0:
+                return None
+        except Exception as e:
+            print(f"[OB] Error getting price for {symbol}: {e}")
+            return None
+        
+        # Get active OBs for symbol
+        active_obs = self.get_active_obs(symbol)
+        if not active_obs:
+            return None
+        
+        # Filter by direction
+        expected_ob_type = 'BULLISH' if direction == 'LONG' else 'BEARISH'
+        matching_obs = [ob for ob in active_obs if ob['ob_type'] == expected_ob_type]
+        
+        if not matching_obs:
+            return None
+        
+        # Check proximity to each OB
+        for ob in matching_obs:
+            zone_size = ob['ob_high'] - ob['ob_low']
+            proximity = zone_size * 0.5  # 50% of zone size
+            
+            # Check if price is in or near the zone
+            if direction == 'LONG':
+                # For LONG, price should be at or below bullish OB (support)
+                if ob['ob_low'] - proximity <= current_price <= ob['ob_high'] + proximity:
+                    return self._create_signal(symbol, direction, ob, current_price)
+            else:
+                # For SHORT, price should be at or above bearish OB (resistance)
+                if ob['ob_low'] - proximity <= current_price <= ob['ob_high'] + proximity:
+                    return self._create_signal(symbol, direction, ob, current_price)
+        
+        return None
+    
+    def _create_signal(self, symbol: str, direction: str, ob: Dict, current_price: float) -> Dict:
+        """Create entry signal from OB"""
+        zone_size = ob['ob_high'] - ob['ob_low']
+        
+        # Entry at zone edge
+        if direction == 'LONG':
+            entry_price = ob['ob_low']  # Enter at bottom of bullish OB
+            stop_loss = entry_price - (zone_size * 1.5)  # SL below zone
+            take_profit = entry_price + (zone_size * 3)  # 3:1 R:R
+        else:
+            entry_price = ob['ob_high']  # Enter at top of bearish OB
+            stop_loss = entry_price + (zone_size * 1.5)  # SL above zone
+            take_profit = entry_price - (zone_size * 3)  # 3:1 R:R
+        
+        return {
+            'symbol': symbol,
+            'direction': direction,
+            'entry_price': entry_price,
+            'current_price': current_price,
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'ob_id': ob['id'],
+            'ob_type': ob['ob_type'],
+            'ob_quality': ob.get('quality_score', 0),
+            'zone_high': ob['ob_high'],
+            'zone_low': ob['ob_low'],
+            'timeframe': ob['timeframe'],
+        }
 
 
 # Singleton instance
