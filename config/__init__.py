@@ -1,8 +1,9 @@
 """Config module initialization"""
 from .bot_settings import (
-    ExecutionMode, SleeperState, OBStatus, TradeStatus,
+    ExecutionMode, TradingMode, SleeperState, OBStatus, TradeStatus,
     BYBIT_API_KEY, BYBIT_API_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-    DATABASE_URL, DEFAULT_SETTINGS, BYBIT_CONFIG, WEB_CONFIG
+    DATABASE_URL, DEFAULT_SETTINGS, BYBIT_CONFIG, WEB_CONFIG,
+    SCALPING_PRESET, SWING_PRESET
 )
 from .bot_constants import (
     SLEEPER_THRESHOLDS, OB_THRESHOLDS, TRADING_CONSTANTS,
@@ -10,9 +11,10 @@ from .bot_constants import (
 )
 
 __all__ = [
-    'ExecutionMode', 'SleeperState', 'OBStatus', 'TradeStatus',
+    'ExecutionMode', 'TradingMode', 'SleeperState', 'OBStatus', 'TradeStatus',
     'BYBIT_API_KEY', 'BYBIT_API_SECRET', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID',
     'DATABASE_URL', 'DEFAULT_SETTINGS', 'BYBIT_CONFIG', 'WEB_CONFIG',
+    'SCALPING_PRESET', 'SWING_PRESET',
     'SLEEPER_THRESHOLDS', 'OB_THRESHOLDS', 'TRADING_CONSTANTS',
     'TIMEFRAME_MAP', 'API_LIMITS', 'DATA_REQUIREMENTS'
 ]

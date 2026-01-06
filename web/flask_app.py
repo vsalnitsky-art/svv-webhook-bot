@@ -351,6 +351,18 @@ def register_api_routes(app):
         for key, value in additional_defaults.items():
             db.set_setting(key, value)
         
+        # Trend analyzer defaults
+        trend_defaults = {
+            'use_trend_filter': True,
+            'trend_timeframe': '240',
+            'min_trend_score': 65,
+            'allow_signals_without_trend': False,
+            'trading_mode': 'SWING',
+        }
+        
+        for key, value in trend_defaults.items():
+            db.set_setting(key, value)
+        
         db.log_event(
             message='Settings reset to defaults',
             level='INFO',
@@ -547,6 +559,167 @@ def register_api_routes(app):
         if result:
             return jsonify({'success': True, 'message': f'Job {job_id} triggered'})
         return jsonify({'success': False, 'error': f'Job {job_id} not found'}), 404
+    
+    # =========================================
+    # TREND ANALYSIS API
+    # =========================================
+    
+    @app.route('/api/trend/<symbol>', methods=['GET'])
+    def api_trend_analysis(symbol):
+        """
+        Get trend analysis for a symbol.
+        Returns 4-component TrendScore with regime classification.
+        """
+        from detection.trend_analyzer import get_trend_analyzer
+        
+        analyzer = get_trend_analyzer()
+        timeframe = request.args.get('timeframe', '240')  # 4H default
+        
+        result = analyzer.analyze(symbol, timeframe)
+        
+        if result:
+            return jsonify({
+                'success': True,
+                'data': {
+                    'symbol': result.symbol,
+                    'timeframe': result.timeframe,
+                    'total_score': round(result.total_score, 1),
+                    'regime': result.regime.value,
+                    'direction': result.overall_direction.value,
+                    'components': {
+                        'structure': {
+                            'score': round(result.structure_score, 1),
+                            'direction': result.structure_direction.value,
+                            'weight': '30%',
+                            'details': result.details.get('structure', {})
+                        },
+                        'volatility': {
+                            'score': round(result.volatility_score, 1),
+                            'weight': '25%',
+                            'details': result.details.get('volatility', {})
+                        },
+                        'acceptance': {
+                            'score': round(result.acceptance_score, 1),
+                            'weight': '25%',
+                            'details': result.details.get('acceptance', {})
+                        },
+                        'momentum': {
+                            'score': round(result.momentum_score, 1),
+                            'weight': '20%',
+                            'details': result.details.get('momentum', {})
+                        }
+                    },
+                    'calculated_at': result.calculated_at.isoformat()
+                }
+            })
+        
+        return jsonify({
+            'success': False,
+            'error': f'Could not analyze trend for {symbol}'
+        }), 400
+    
+    @app.route('/api/trend/batch', methods=['POST'])
+    def api_trend_batch():
+        """
+        Get trend analysis for multiple symbols.
+        Request body: {"symbols": ["BTCUSDT", "ETHUSDT", ...]}
+        """
+        from detection.trend_analyzer import get_trend_analyzer
+        
+        data = request.get_json() or {}
+        symbols = data.get('symbols', [])
+        timeframe = data.get('timeframe', '240')
+        
+        if not symbols:
+            return jsonify({'success': False, 'error': 'No symbols provided'}), 400
+        
+        analyzer = get_trend_analyzer()
+        results = {}
+        
+        for symbol in symbols[:20]:  # Limit to 20
+            result = analyzer.analyze(symbol, timeframe)
+            if result:
+                results[symbol] = {
+                    'score': round(result.total_score, 1),
+                    'regime': result.regime.value,
+                    'direction': result.overall_direction.value
+                }
+        
+        return jsonify({
+            'success': True,
+            'data': results,
+            'count': len(results)
+        })
+    
+    @app.route('/api/trend/check', methods=['POST'])
+    def api_trend_check():
+        """
+        Check if trading is allowed for symbol + direction.
+        Request body: {"symbol": "BTCUSDT", "direction": "LONG"}
+        """
+        from detection.trend_analyzer import get_trend_analyzer
+        
+        data = request.get_json() or {}
+        symbol = data.get('symbol')
+        direction = data.get('direction')
+        
+        if not symbol or not direction:
+            return jsonify({'success': False, 'error': 'symbol and direction required'}), 400
+        
+        analyzer = get_trend_analyzer()
+        allowed = analyzer.is_tradeable(symbol, direction)
+        result = analyzer.analyze(symbol)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'symbol': symbol,
+                'direction': direction,
+                'allowed': allowed,
+                'regime': result.regime.value if result else 'UNKNOWN',
+                'score': round(result.total_score, 1) if result else 0,
+                'reason': 'Trend aligned' if allowed else 'Trend filter blocked'
+            }
+        })
+    
+    @app.route('/api/trend/sleepers', methods=['GET'])
+    def api_trend_sleepers():
+        """
+        Get trend analysis for all READY sleepers.
+        Useful for dashboard display.
+        """
+        from detection.trend_analyzer import get_trend_analyzer
+        
+        db = get_db()
+        analyzer = get_trend_analyzer()
+        
+        ready_sleepers = db.get_sleepers(state='READY')
+        results = []
+        
+        for sleeper in ready_sleepers[:30]:  # Limit
+            symbol = sleeper['symbol']
+            trend = analyzer.analyze(symbol)
+            
+            if trend:
+                results.append({
+                    'symbol': symbol,
+                    'sleeper_direction': sleeper['direction'],
+                    'sleeper_score': sleeper['total_score'],
+                    'trend_score': round(trend.total_score, 1),
+                    'trend_regime': trend.regime.value,
+                    'trend_direction': trend.overall_direction.value,
+                    'allowed': (
+                        (trend.regime.value == 'BULLISH' and sleeper['direction'] == 'LONG') or
+                        (trend.regime.value == 'BEARISH' and sleeper['direction'] == 'SHORT')
+                    )
+                })
+        
+        return jsonify({
+            'success': True,
+            'data': results,
+            'count': len(results),
+            'allowed_count': len([r for r in results if r['allowed']])
+        })
     
     # End of register_api_routes
 

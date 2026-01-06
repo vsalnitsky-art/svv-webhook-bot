@@ -14,6 +14,7 @@
         <!-- Tabs -->
         <div class="settings-tabs">
             <button type="button" class="tab-btn active" data-tab="general">General</button>
+            <button type="button" class="tab-btn" data-tab="trend">📈 Trend Context</button>
             <button type="button" class="tab-btn" data-tab="sleeper">Sleeper Detection</button>
             <button type="button" class="tab-btn" data-tab="orderblock">Order Blocks</button>
             <button type="button" class="tab-btn" data-tab="trading">Trading</button>
@@ -37,6 +38,19 @@
                     <small>MANUAL = alerts only | SEMI_AUTO = confirm trades | AUTO = automatic</small>
                 </div>
                 
+                <div class="form-group">
+                    <label for="trading_mode">Trading Style</label>
+                    <select id="trading_mode" name="trading_mode" class="form-control">
+                        <option value="SCALPING" {% if settings.trading_mode == 'SCALPING' %}selected{% endif %}>
+                            ⚡ SCALPING - Quick trades, tight stops, frequent
+                        </option>
+                        <option value="SWING" {% if settings.trading_mode == 'SWING' or not settings.trading_mode %}selected{% endif %}>
+                            📊 SWING - Longer holds, wider stops, patient
+                        </option>
+                    </select>
+                    <small>SCALPING: 15m setup, 5m entry, RR 1.5 | SWING: 1H setup, 15m entry, RR 3.0</small>
+                </div>
+                
                 <div class="form-row">
                     <div class="form-group">
                         <label class="checkbox-label">
@@ -51,6 +65,85 @@
                         <label for="paper_balance">Paper Balance ($)</label>
                         <input type="number" id="paper_balance" name="paper_balance" 
                                value="{{ settings.paper_balance | default(10000) }}" step="100" class="form-control">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trend Context Tab (NEW) -->
+        <div class="tab-content" id="tab-trend">
+            <div class="settings-section">
+                <h2>📈 4H Trend Context Filter</h2>
+                <p class="section-desc">Professional trend analysis using 4-component TrendScore system</p>
+                
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="use_trend_filter" name="use_trend_filter" 
+                               {% if settings.use_trend_filter or settings.use_trend_filter is not defined %}checked{% endif %}>
+                        🎯 Enable 4H Trend Filter
+                    </label>
+                    <small>Only allow signals aligned with higher timeframe trend</small>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="trend_timeframe">Context Timeframe</label>
+                        <select id="trend_timeframe" name="trend_timeframe" class="form-control">
+                            <option value="60" {% if settings.trend_timeframe == '60' %}selected{% endif %}>1H</option>
+                            <option value="240" {% if settings.trend_timeframe == '240' or not settings.trend_timeframe %}selected{% endif %}>4H (Recommended)</option>
+                            <option value="D" {% if settings.trend_timeframe == 'D' %}selected{% endif %}>Daily</option>
+                        </select>
+                        <small>Timeframe for trend analysis</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="min_trend_score">Min Trend Score</label>
+                        <input type="number" id="min_trend_score" name="min_trend_score" 
+                               value="{{ settings.min_trend_score | default(65) }}" step="5" min="40" max="90" class="form-control">
+                        <small>Score threshold for trending market (65+ recommended)</small>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="allow_signals_without_trend" name="allow_signals_without_trend" 
+                               {% if settings.allow_signals_without_trend %}checked{% endif %}>
+                        ⚠️ Allow Signals Without Trend Data
+                    </label>
+                    <small>If enabled, signals will be allowed when trend analysis fails</small>
+                </div>
+            </div>
+            
+            <div class="settings-section">
+                <h2>📊 TrendScore Components</h2>
+                <p class="section-desc">4-component weighted scoring system</p>
+                
+                <div class="info-box">
+                    <h4>How TrendScore Works:</h4>
+                    <ul>
+                        <li><strong>Market Structure (30%)</strong> - Swing HH/HL detection</li>
+                        <li><strong>Volatility Expansion (25%)</strong> - ATR growth analysis</li>
+                        <li><strong>Acceptance (25%)</strong> - VWAP price position</li>
+                        <li><strong>Momentum Asymmetry (20%)</strong> - Impulse imbalance</li>
+                    </ul>
+                    <p><strong>Regime Classification:</strong></p>
+                    <ul>
+                        <li>🟢 Score > 65 + Bullish direction → <strong>BULLISH</strong> (only LONG allowed)</li>
+                        <li>🔴 Score > 65 + Bearish direction → <strong>BEARISH</strong> (only SHORT allowed)</li>
+                        <li>⚪ Score < 65 or Neutral → <strong>NO_TRADE</strong> (signals blocked)</li>
+                    </ul>
+                </div>
+                
+                <div class="form-row two-col" style="margin-top: 20px;">
+                    <div class="form-group">
+                        <label>Test Trend Analysis</label>
+                        <div class="input-group">
+                            <input type="text" id="test_trend_symbol" placeholder="BTCUSDT" class="form-control">
+                            <button type="button" class="btn btn-primary" onclick="testTrend()">Analyze</button>
+                        </div>
+                    </div>
+                    <div id="trend-result" class="trend-result" style="display: none;">
+                        <!-- Results will be shown here -->
                     </div>
                 </div>
             </div>
@@ -489,6 +582,71 @@
 
 .form-actions { margin-top: 30px; text-align: center; }
 .btn-lg { padding: 15px 40px; font-size: 1.1rem; }
+
+/* Info Box */
+.info-box {
+    background: rgba(0, 122, 255, 0.1);
+    border: 1px solid rgba(0, 122, 255, 0.2);
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 10px;
+}
+.info-box h4 { margin: 0 0 10px 0; color: var(--primary); }
+.info-box ul { margin: 5px 0; padding-left: 20px; }
+.info-box li { margin: 5px 0; }
+.info-box p { margin: 10px 0 5px 0; }
+
+/* Input Group */
+.input-group { display: flex; gap: 10px; }
+.input-group .form-control { flex: 1; }
+.input-group .btn { flex-shrink: 0; }
+
+/* Trend Analysis Result */
+.trend-result {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 15px;
+    margin-top: 10px;
+}
+.trend-result .loading { text-align: center; color: var(--text-secondary); }
+.trend-result .error { color: var(--danger); }
+.trend-analysis h4 { margin: 0 0 10px 0; }
+.trend-score { 
+    display: flex; 
+    align-items: center; 
+    gap: 15px; 
+    margin-bottom: 15px;
+}
+.trend-score .score-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--primary);
+}
+.components {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+.component {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 6px;
+}
+.component .label { color: var(--text-secondary); flex: 1; }
+.component .value { font-weight: bold; }
+.badge { 
+    padding: 4px 8px; 
+    border-radius: 4px; 
+    font-size: 0.75rem;
+    font-weight: bold;
+}
+.badge.success { background: rgba(52, 199, 89, 0.2); color: #34c759; }
+.badge.danger { background: rgba(255, 59, 48, 0.2); color: #ff3b30; }
+.badge.secondary { background: rgba(142, 142, 147, 0.2); color: #8e8e93; }
+.badge.small { font-size: 0.65rem; padding: 2px 6px; }
 </style>
 
 <script>
@@ -586,6 +744,62 @@ function resetDefaults() {
             }
         })
         .catch(err => alert('Error: ' + err.message));
+}
+
+async function testTrend() {
+    const symbol = document.getElementById('test_trend_symbol').value.trim().toUpperCase();
+    if (!symbol) {
+        alert('Enter a symbol (e.g., BTCUSDT)');
+        return;
+    }
+    
+    const resultDiv = document.getElementById('trend-result');
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<div class="loading">Analyzing trend...</div>';
+    
+    try {
+        const res = await fetch(`/api/trend/${symbol}`);
+        const data = await res.json();
+        
+        if (data.success) {
+            const t = data.data;
+            const regimeClass = t.regime === 'BULLISH' ? 'success' : 
+                               t.regime === 'BEARISH' ? 'danger' : 'secondary';
+            
+            resultDiv.innerHTML = `
+                <div class="trend-analysis">
+                    <h4>${t.symbol} - ${t.timeframe}m Trend</h4>
+                    <div class="trend-score">
+                        <span class="score-value">${t.total_score.toFixed(1)}</span>
+                        <span class="badge ${regimeClass}">${t.regime}</span>
+                    </div>
+                    <div class="components">
+                        <div class="component">
+                            <span class="label">Structure</span>
+                            <span class="value">${t.components.structure.score.toFixed(1)}</span>
+                            <span class="badge small">${t.components.structure.direction}</span>
+                        </div>
+                        <div class="component">
+                            <span class="label">Volatility</span>
+                            <span class="value">${t.components.volatility.score.toFixed(1)}</span>
+                        </div>
+                        <div class="component">
+                            <span class="label">Acceptance</span>
+                            <span class="value">${t.components.acceptance.score.toFixed(1)}</span>
+                        </div>
+                        <div class="component">
+                            <span class="label">Momentum</span>
+                            <span class="value">${t.components.momentum.score.toFixed(1)}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            resultDiv.innerHTML = `<div class="error">❌ ${data.error}</div>`;
+        }
+    } catch (err) {
+        resultDiv.innerHTML = `<div class="error">❌ Error: ${err.message}</div>`;
+    }
 }
 
 function showToast(msg) {
