@@ -331,8 +331,8 @@ class SignalMerger:
             # Find best matching OB
             best_ob = None
             for ob in obs:
-                if (sleeper['direction'] == 'LONG' and ob['ob_type'] == 'BULLISH') or \
-                   (sleeper['direction'] == 'SHORT' and ob['ob_type'] == 'BEARISH'):
+                if (sleeper['direction'] == 'LONG' and ob['ob_type'] == 'LONG') or \
+                   (sleeper['direction'] == 'SHORT' and ob['ob_type'] == 'SHORT'):
                     if best_ob is None or ob['quality_score'] > best_ob['quality_score']:
                         best_ob = ob
             

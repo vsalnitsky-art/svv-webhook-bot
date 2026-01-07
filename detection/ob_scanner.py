@@ -32,7 +32,7 @@ class OrderBlockInfo:
     top: float
     bottom: float
     ob_volume: float  # Total volume (3 bars)
-    ob_type: str  # "Bull" or "Bear"
+    ob_type: str  # "LONG" or "SHORT"
     start_time: int  # Unix timestamp
     ob_low_volume: float  # Volume at OB formation
     ob_high_volume: float  # Volume after impulse
@@ -244,7 +244,7 @@ class OBScanner:
                         top=box_top,
                         bottom=box_btm,
                         ob_volume=vol_0 + vol_1 + vol_2,
-                        ob_type="Bull",
+                        ob_type="LONG",
                         start_time=klines[box_idx]['timestamp'],
                         ob_low_volume=vol_2,  # Volume before impulse
                         ob_high_volume=vol_0 + vol_1,  # Volume during impulse
@@ -305,7 +305,7 @@ class OBScanner:
                         top=box_top,
                         bottom=box_btm,
                         ob_volume=vol_0 + vol_1 + vol_2,
-                        ob_type="Bear",
+                        ob_type="SHORT",
                         start_time=klines[box_idx]['timestamp'],
                         ob_low_volume=vol_0 + vol_1,  # Volume during impulse
                         ob_high_volume=vol_2,  # Volume before impulse
@@ -329,15 +329,15 @@ class OBScanner:
         Bearish: if (obEndMethod == "Wick" ? high : close) > OB.top → breaker
         """
         for i in range(start_idx + 1, len(klines)):
-            if ob.ob_type == "Bull":
-                # Bullish OB invalidated when price goes below bottom
+            if ob.ob_type == "LONG":
+                # LONG OB invalidated when price goes below bottom
                 check_price = klines[i]['low'] if self.ob_end_method == "Wick" else klines[i]['close']
                 if check_price < ob.bottom:
                     ob.breaker = True
                     ob.break_time = klines[i]['timestamp']
                     break
             else:
-                # Bearish OB invalidated when price goes above top
+                # SHORT OB invalidated when price goes above top
                 check_price = klines[i]['high'] if self.ob_end_method == "Wick" else klines[i]['close']
                 if check_price > ob.top:
                     ob.breaker = True
@@ -415,13 +415,13 @@ class OBScanner:
                 recent_prices.append(float(k['low']))
             
             if recent_prices:
-                if ob.ob_type == 'Bull':
-                    # Для бичачого OB - рух вгору
+                if ob.ob_type == 'LONG':
+                    # Для LONG OB - рух вгору
                     max_price = max(recent_prices)
                     if ob_mid > 0:
                         impulse_pct = round((max_price - ob_mid) / ob_mid * 100, 2)
                 else:
-                    # Для ведмежого OB - рух вниз
+                    # Для SHORT OB - рух вниз
                     min_price = min(recent_prices)
                     if ob_mid > 0:
                         impulse_pct = round((ob_mid - min_price) / ob_mid * 100, 2)
@@ -476,12 +476,12 @@ class OBScanner:
             proximity = zone_size * (proximity_pct / 100)
             
             # Check if price is near the zone
-            if ob['ob_type'] == 'Bull':
-                # For bullish OB, check if price approaching from above
+            if ob['ob_type'] == 'LONG':
+                # For LONG OB, check if price approaching from above
                 if ob['bottom'] - proximity <= current_price <= ob['top'] + proximity:
                     return ob
             else:
-                # For bearish OB, check if price approaching from below
+                # For SHORT OB, check if price approaching from below
                 if ob['bottom'] - proximity <= current_price <= ob['top'] + proximity:
                     return ob
         
@@ -553,8 +553,8 @@ class OBScanner:
         if not active_obs:
             return None
         
-        # Filter by direction
-        expected_ob_type = 'BULLISH' if direction == 'LONG' else 'BEARISH'
+        # Filter by direction (OB type matches direction: LONG→LONG OB, SHORT→SHORT OB)
+        expected_ob_type = 'LONG' if direction == 'LONG' else 'SHORT'
         matching_obs = [ob for ob in active_obs if ob['ob_type'] == expected_ob_type]
         
         if not matching_obs:

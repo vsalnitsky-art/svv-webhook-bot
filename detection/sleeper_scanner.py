@@ -179,8 +179,8 @@ class SleeperScanner:
             liquidity_score * self.thresholds['weight_liquidity']
         ) + mtf_bonus
         
-        # Determine direction bias
-        direction = self._determine_direction(funding_rate, oi_change, indicators_4h, indicators_1d)
+        # Determine direction bias (with 4H trend context)
+        direction = self._determine_direction(symbol, funding_rate, oi_change, indicators_4h, indicators_1d)
         
         if total_score < self.min_score:
             # Debug: show why rejected (only close misses)
@@ -435,9 +435,39 @@ class SleeperScanner:
         
         return score
     
-    def _determine_direction(self, funding_rate: float, oi_change: float,
+    def _determine_direction(self, symbol: str, funding_rate: float, oi_change: float,
                             indicators: Dict, indicators_daily: Dict = None) -> str:
-        """Determine probable direction based on metrics (MTF)"""
+        """
+        Determine probable direction based on:
+        1. 4H Trend Context (primary filter)
+        2. Technical indicators (secondary confirmation)
+        """
+        # ==========================================
+        # PRIMARY: 4H Trend Context
+        # ==========================================
+        use_trend_filter = self.db.get_setting('use_trend_filter', True)
+        
+        if use_trend_filter:
+            try:
+                from detection.trend_analyzer import get_trend_analyzer, TrendRegime
+                
+                analyzer = get_trend_analyzer()
+                trend_timeframe = self.db.get_setting('trend_timeframe', '240')
+                trend_result = analyzer.analyze(symbol, trend_timeframe)
+                
+                if trend_result:
+                    # If clear trend, use it
+                    if trend_result.regime == TrendRegime.BULLISH:
+                        return 'LONG'
+                    elif trend_result.regime == TrendRegime.BEARISH:
+                        return 'SHORT'
+                    # If NO_TRADE regime, fall through to technical analysis
+            except Exception as e:
+                print(f"[SLEEPER] Trend analysis error for {symbol}: {e}")
+        
+        # ==========================================
+        # SECONDARY: Technical Indicators
+        # ==========================================
         bullish_signals = 0
         bearish_signals = 0
         
@@ -448,7 +478,7 @@ class SleeperScanner:
             bearish_signals += 2
         
         # RSI
-        rsi = indicators['rsi_current']
+        rsi = indicators.get('rsi_current', 50)
         if rsi < 35:
             bullish_signals += 2
         elif rsi > 65:
@@ -459,7 +489,8 @@ class SleeperScanner:
             bearish_signals += 1
         
         # Price position in range
-        position = indicators['price_range']['position']
+        price_range = indicators.get('price_range', {})
+        position = price_range.get('position', 0.5)
         if position < 0.3:
             bullish_signals += 1
         elif position > 0.7:

@@ -422,8 +422,8 @@ body {
     font-weight: 500;
 }
 
-.ob-type.bullish { color: var(--accent-green); }
-.ob-type.bearish { color: var(--accent-red); }
+.ob-type.bullish, .ob-type.long { color: var(--accent-green); }
+.ob-type.bearish, .ob-type.short { color: var(--accent-red); }
 
 /* Zone Prices */
 .zone-prices {

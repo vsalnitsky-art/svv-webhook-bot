@@ -43,8 +43,8 @@
                 <td>{{ ob.timeframe }}</td>
                 <td>
                     <span class="ob-type {{ ob.ob_type|lower }}">
-                        {% if ob.ob_type == 'BULLISH' %}🟢 BULLISH
-                        {% else %}🔴 BEARISH{% endif %}
+                        {% if ob.ob_type == 'LONG' %}🟢 LONG
+                        {% else %}🔴 SHORT{% endif %}
                     </span>
                 </td>
                 <td class="zone">

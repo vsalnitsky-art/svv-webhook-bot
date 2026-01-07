@@ -224,13 +224,15 @@ class DBOperations:
         if 'ob_high' in clean_data and 'ob_low' in clean_data:
             clean_data['ob_mid'] = (clean_data['ob_high'] + clean_data['ob_low']) / 2
         
-        # Map ob_type to DB format (Bull -> BULLISH, Bear -> BEARISH)
+        # ob_type is already LONG or SHORT from scanner
+        # (Legacy support: Bull -> LONG, Bear -> SHORT)
         if 'ob_type' in clean_data:
             ob_type = clean_data['ob_type']
             if ob_type == 'Bull':
-                clean_data['ob_type'] = 'BULLISH'
+                clean_data['ob_type'] = 'LONG'
             elif ob_type == 'Bear':
-                clean_data['ob_type'] = 'BEARISH'
+                clean_data['ob_type'] = 'SHORT'
+            # LONG and SHORT pass through as-is
         
         # Status based on breaker
         clean_data['status'] = 'MITIGATED' if data.get('breaker', False) else 'ACTIVE'
