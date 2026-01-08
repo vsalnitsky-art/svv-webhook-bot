@@ -340,6 +340,10 @@ class SignalMerger:
                 from core import get_fetcher
                 current_price = get_fetcher().get_current_price(symbol) or 0
                 
+                # Calculate distance to OB zone
+                ob_mid = best_ob['ob_mid'] if best_ob.get('ob_mid') else (best_ob['ob_high'] + best_ob['ob_low']) / 2
+                distance_pct = abs(current_price - ob_mid) / ob_mid * 100 if ob_mid > 0 else 0
+                
                 entry = {
                     'symbol': symbol,
                     'score': sleeper['total_score'],
@@ -348,8 +352,27 @@ class SignalMerger:
                     'ob_high': best_ob['ob_high'],
                     'ob_quality': best_ob['quality_score'],
                     'current_price': current_price,
-                    'distance_percent': abs(current_price - best_ob['ob_mid']) / best_ob['ob_mid'] * 100 if best_ob['ob_mid'] > 0 else 0,
+                    'distance_percent': distance_pct,
                 }
+                
+                # Calculate confidence score
+                # Sleeper score (40%)
+                sleeper_component = (sleeper['total_score'] / 100) * 40
+                # OB quality (40%)
+                ob_component = (best_ob['quality_score'] / 100) * 40
+                # HP bonus (10%)
+                hp_component = (sleeper.get('hp', 5) / 10) * 10
+                # Distance penalty (10%)
+                if distance_pct < 0.5:
+                    distance_component = 10
+                elif distance_pct < 1:
+                    distance_component = 7
+                elif distance_pct < 2:
+                    distance_component = 4
+                else:
+                    distance_component = 0
+                
+                entry['signal_confidence'] = round(sleeper_component + ob_component + hp_component + distance_component, 1)
                 
                 # Add trend info
                 if use_trend_filter:
