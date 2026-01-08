@@ -14,7 +14,7 @@ TrendScore < 40 → Range/No Trade
 
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from dataclasses import dataclass
 
@@ -123,11 +123,12 @@ class TrendAnalyzer:
             TrendScore with all components and regime
         """
         cache_key = f"{symbol}_{timeframe}"
+        now_utc = datetime.now(timezone.utc)
         
         # Check cache
         if cache_key in self._cache:
             cached, timestamp = self._cache[cache_key]
-            if (datetime.utcnow() - timestamp).total_seconds() < self._cache_ttl:
+            if (now_utc - timestamp).total_seconds() < self._cache_ttl:
                 return cached
         
         try:
@@ -204,16 +205,18 @@ class TrendAnalyzer:
                     'momentum': momentum_details,
                     'direction_mult': direction_mult
                 },
-                calculated_at=datetime.utcnow()
+                calculated_at=now_utc
             )
             
             # Cache result
-            self._cache[cache_key] = (result, datetime.utcnow())
+            self._cache[cache_key] = (result, now_utc)
             
             return result
             
         except Exception as e:
             print(f"[TREND] Error analyzing {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def get_regime(self, symbol: str, timeframe: str = "240") -> TrendRegime:
@@ -337,7 +340,7 @@ class TrendAnalyzer:
                 swings.append(SwingPoint(
                     index=i,
                     price=highs[i],
-                    timestamp=datetime.utcnow(),  # Placeholder
+                    timestamp=datetime.now(timezone.utc),  # Placeholder timestamp
                     is_high=True
                 ))
         
@@ -355,7 +358,7 @@ class TrendAnalyzer:
                 swings.append(SwingPoint(
                     index=i,
                     price=lows[i],
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc), # Placeholder timestamp
                     is_high=False
                 ))
         
@@ -396,9 +399,6 @@ class TrendAnalyzer:
         """
         if not swing_highs or not swing_lows:
             return 0.0
-        
-        last_high = swing_highs[-1].price
-        last_low = swing_lows[-1].price
         
         if direction == TrendDirection.UP:
             # In uptrend, last HL should not be broken
@@ -536,7 +536,7 @@ class TrendAnalyzer:
         Returns:
             (score 0-100, details dict)
         """
-        # Calculate VWAP (session-based approximation for 4H)
+        # Calculate VWAP (rolling VWAP approximation for 4H)
         vwap = self._calculate_vwap(highs, lows, closes, volumes, period=20)
         
         if len(vwap) < 20:
@@ -560,9 +560,17 @@ class TrendAnalyzer:
         lower_wicks = np.minimum(opens, closes) - lows
         bodies = np.abs(closes - opens)
         
-        # Wick ratio (high = rejection)
-        recent_upper_wick_ratio = np.mean(upper_wicks[-10:]) / (np.mean(bodies[-10:]) + 1e-10)
-        recent_lower_wick_ratio = np.mean(lower_wicks[-10:]) / (np.mean(bodies[-10:]) + 1e-10)
+        # Safety check for Doji / very small bodies to avoid division by zero
+        # If average body is less than 5% of average range, treat wick ratio as neutral (0)
+        avg_body = np.mean(bodies[-10:])
+        avg_range_raw = np.mean(highs[-10:] - lows[-10:])
+        
+        if avg_body < (avg_range_raw * 0.05):
+            recent_upper_wick_ratio = 0.0
+            recent_lower_wick_ratio = 0.0
+        else:
+            recent_upper_wick_ratio = np.mean(upper_wicks[-10:]) / (avg_body + 1e-10)
+            recent_lower_wick_ratio = np.mean(lower_wicks[-10:]) / (avg_body + 1e-10)
         
         # Calculate score
         if above_vwap > below_vwap:
