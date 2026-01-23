@@ -1,17 +1,18 @@
 """
 Market Data - Data retrieval and caching for Sleeper OB Bot
+Використовує Binance Futures для сканування/аналізу
 """
 import time
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from config import API_LIMITS, TIMEFRAME_MAP
-from core.bybit_connector import get_connector
+from core.binance_connector import get_binance_connector
 
 class MarketDataFetcher:
-    """Fetches and caches market data from Bybit"""
+    """Fetches and caches market data from Binance Futures"""
     
     def __init__(self):
-        self.connector = get_connector()
+        self.connector = get_binance_connector()
         self._ticker_cache = {}
         self._ticker_cache_time = 0
         self._cache_ttl = 10  # 10 seconds cache

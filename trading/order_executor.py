@@ -1,10 +1,12 @@
 """
 Order Executor - Execute trades (paper and live)
+Торгівля на Bybit, сканування на Binance
 """
 from typing import Dict, Optional
 from datetime import datetime
 from config import TRADING_CONSTANTS
-from core import get_connector, get_fetcher
+from core import get_connector  # Bybit для торгівлі
+from core.binance_connector import get_binance_connector  # Binance для цін (альтернатива)
 from storage import get_db
 from trading.risk_calculator import get_risk_calculator
 from trading.position_tracker import get_position_tracker
@@ -18,12 +20,14 @@ class OrderExecutor:
     - Live trade execution
     - Order validation
     - Position opening/closing
+    
+    NOTE: Торгівля виконується на Bybit
+          Ціни беруться з Bybit для точності
     """
     
     def __init__(self):
         self.db = get_db()
-        self.connector = get_connector()
-        self.fetcher = get_fetcher()
+        self.connector = get_connector()  # Bybit для торгівлі
         self.risk_calc = get_risk_calculator()
         self.position_tracker = get_position_tracker()
         self.constants = TRADING_CONSTANTS
@@ -43,7 +47,8 @@ class OrderExecutor:
         """
         symbol = signal['symbol']
         direction = signal['direction']
-        entry_price = signal.get('entry_price') or self.fetcher.get_current_price(symbol)
+        # Отримуємо ціну з Bybit (де торгуємо)
+        entry_price = signal.get('entry_price') or self.connector.get_price(symbol)
         stop_loss = signal['stop_loss']
         
         if not entry_price:
@@ -253,7 +258,8 @@ class OrderExecutor:
         Manual entry for a symbol
         Calculates SL if not provided
         """
-        entry_price = self.fetcher.get_current_price(symbol)
+        # Отримуємо ціну з Bybit (де торгуємо)
+        entry_price = self.connector.get_price(symbol)
         if not entry_price:
             return {'success': False, 'error': 'Could not get price'}
         

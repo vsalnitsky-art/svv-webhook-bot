@@ -42,7 +42,20 @@ def create_app():
     from web.diagnostic import diagnostic_bp
     app.register_blueprint(diagnostic_bp)
     
-    # Test Bybit API connectivity on startup
+    # Test Binance API connectivity on startup (для сканування)
+    try:
+        print("[APP] Testing Binance Futures API connectivity...")
+        from core.binance_connector import get_binance_connector
+        binance = get_binance_connector()
+        if binance.test_connection():
+            tickers = binance.get_tickers()
+            print(f"[APP] ✓ Binance Futures API working: {len(tickers)} tickers available")
+        else:
+            print("[APP] ⚠ Binance Futures API connection test failed")
+    except Exception as e:
+        print(f"[APP] ✗ Binance API test failed: {e}")
+    
+    # Test Bybit API connectivity on startup (для торгівлі)
     try:
         print("[APP] Testing Bybit API connectivity...")
         from core.bybit_connector import get_connector

@@ -6,35 +6,49 @@ import traceback
 
 diagnostic_bp = Blueprint('diagnostic', __name__)
 
-@diagnostic_bp.route('/api/diagnostic/bybit')
-def test_bybit_api():
-    """Test Bybit API connectivity"""
+@diagnostic_bp.route('/api/diagnostic/binance')
+def test_binance_api():
+    """Test Binance Futures API connectivity (для сканування)"""
     results = {
         'tickers': {'status': 'pending'},
         'klines': {'status': 'pending'},
         'funding': {'status': 'pending'},
+        'open_interest': {'status': 'pending'},
     }
     
     try:
-        from core.market_data import MarketDataFetcher
-        fetcher = MarketDataFetcher()
+        from core.binance_connector import get_binance_connector
+        connector = get_binance_connector()
         
-        # Test 1: Get tickers
+        # Test 1: Connection test
+        if not connector.test_connection():
+            return jsonify({
+                'success': False,
+                'error': 'Binance connection test failed',
+                'results': results
+            })
+        
+        # Test 2: Get tickers
         try:
-            symbols = fetcher.get_top_symbols(limit=5, min_volume=1000000)
+            tickers = connector.get_tickers()
+            # Filter USDT pairs with good volume
+            usdt_tickers = [t for t in tickers if t['symbol'].endswith('USDT')]
+            usdt_tickers.sort(key=lambda x: float(x.get('turnover24h', 0)), reverse=True)
+            top_symbols = usdt_tickers[:5]
+            
             results['tickers'] = {
                 'status': 'ok',
-                'count': len(symbols),
-                'sample': [s['symbol'] for s in symbols[:3]] if symbols else []
+                'count': len(usdt_tickers),
+                'sample': [s['symbol'] for s in top_symbols]
             }
         except Exception as e:
             results['tickers'] = {'status': 'error', 'error': str(e)}
         
-        # Test 2: Get klines
+        # Test 3: Get klines
         if results['tickers']['status'] == 'ok' and results['tickers']['count'] > 0:
             try:
                 sym = results['tickers']['sample'][0]
-                klines = fetcher.get_klines(sym, '240', limit=10)
+                klines = connector.get_klines(sym, '240', limit=10)
                 results['klines'] = {
                     'status': 'ok',
                     'symbol': sym,
@@ -44,21 +58,96 @@ def test_bybit_api():
             except Exception as e:
                 results['klines'] = {'status': 'error', 'error': str(e)}
         
-        # Test 3: Get funding rate
+        # Test 4: Get funding rate
         if results['tickers']['status'] == 'ok' and results['tickers']['count'] > 0:
             try:
                 sym = results['tickers']['sample'][0]
-                funding = fetcher.get_funding_rate(sym)
+                funding = connector.get_funding_rate(sym)
                 results['funding'] = {
                     'status': 'ok',
                     'symbol': sym,
-                    'rate': funding
+                    'rate': funding.get('funding_rate') if funding else None
                 }
             except Exception as e:
                 results['funding'] = {'status': 'error', 'error': str(e)}
         
+        # Test 5: Get Open Interest
+        if results['tickers']['status'] == 'ok' and results['tickers']['count'] > 0:
+            try:
+                sym = results['tickers']['sample'][0]
+                oi = connector.get_current_open_interest(sym)
+                results['open_interest'] = {
+                    'status': 'ok',
+                    'symbol': sym,
+                    'oi': oi.get('open_interest') if oi else None
+                }
+            except Exception as e:
+                results['open_interest'] = {'status': 'error', 'error': str(e)}
+        
         return jsonify({
             'success': True,
+            'exchange': 'Binance Futures',
+            'purpose': 'Scanning & Analysis',
+            'results': results,
+            'all_ok': all(r['status'] == 'ok' for r in results.values())
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        })
+
+@diagnostic_bp.route('/api/diagnostic/bybit')
+def test_bybit_api():
+    """Test Bybit API connectivity (для торгівлі)"""
+    results = {
+        'tickers': {'status': 'pending'},
+        'balance': {'status': 'pending'},
+        'positions': {'status': 'pending'},
+    }
+    
+    try:
+        from core.bybit_connector import get_connector
+        connector = get_connector()
+        
+        # Test 1: Get tickers
+        try:
+            tickers = connector.get_tickers()
+            usdt_tickers = [t for t in tickers if t.get('symbol', '').endswith('USDT')]
+            results['tickers'] = {
+                'status': 'ok',
+                'count': len(usdt_tickers),
+                'sample': [t['symbol'] for t in usdt_tickers[:3]]
+            }
+        except Exception as e:
+            results['tickers'] = {'status': 'error', 'error': str(e)}
+        
+        # Test 2: Get balance (requires API key)
+        try:
+            balance = connector.get_wallet_balance()
+            results['balance'] = {
+                'status': 'ok',
+                'balance': balance if balance else 'No API key'
+            }
+        except Exception as e:
+            results['balance'] = {'status': 'error', 'error': str(e)}
+        
+        # Test 3: Get positions (requires API key)
+        try:
+            positions = connector.get_positions()
+            results['positions'] = {
+                'status': 'ok',
+                'count': len(positions) if positions else 0
+            }
+        except Exception as e:
+            results['positions'] = {'status': 'error', 'error': str(e)}
+        
+        return jsonify({
+            'success': True,
+            'exchange': 'Bybit',
+            'purpose': 'Trading',
             'results': results,
             'all_ok': all(r['status'] == 'ok' for r in results.values())
         })

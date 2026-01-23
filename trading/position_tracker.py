@@ -1,10 +1,11 @@
 """
 Position Tracker - Monitor and manage open positions
+Торгівля на Bybit - ціни беремо з Bybit
 """
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from config import TRADING_CONSTANTS
-from core import get_connector, get_fetcher
+from core import get_connector  # Bybit для торгівлі
 from storage import get_db
 
 class PositionTracker:
@@ -16,12 +17,13 @@ class PositionTracker:
     - P&L calculations
     - TP/SL hit detection
     - Trailing stop management
+    
+    NOTE: Використовує Bybit для цін (торгівля на Bybit)
     """
     
     def __init__(self):
         self.db = get_db()
-        self.connector = get_connector()
-        self.fetcher = get_fetcher()
+        self.connector = get_connector()  # Bybit
         self.constants = TRADING_CONSTANTS
     
     def get_all_positions(self) -> List[Dict]:
@@ -31,9 +33,9 @@ class PositionTracker:
         if not open_trades:
             return []
         
-        # Get current prices
+        # Get current prices from Bybit (де торгуємо)
         symbols = [t['symbol'] for t in open_trades]
-        prices = self.fetcher.batch_get_prices(symbols)
+        prices = self._batch_get_prices(symbols)
         
         positions = []
         for trade in open_trades:
@@ -49,6 +51,22 @@ class PositionTracker:
             positions.append(trade)
         
         return positions
+    
+    def _batch_get_prices(self, symbols: List[str]) -> Dict[str, float]:
+        """Get prices for multiple symbols from Bybit"""
+        try:
+            tickers = self.connector.get_tickers()
+            prices = {}
+            
+            ticker_map = {t.get('symbol'): float(t.get('lastPrice', 0)) for t in tickers}
+            
+            for symbol in symbols:
+                prices[symbol] = ticker_map.get(symbol, 0)
+            
+            return prices
+        except Exception as e:
+            print(f"[POSITION_TRACKER] Error getting prices: {e}")
+            return {s: 0 for s in symbols}
     
     def _calculate_pnl(self, trade: Dict, current_price: float) -> Dict:
         """Calculate P&L for a trade"""
@@ -314,7 +332,8 @@ class PositionTracker:
         if not trade:
             return {'success': False, 'error': 'Trade not found'}
         
-        current_price = self.fetcher.get_current_price(trade['symbol'])
+        # Get price from Bybit (де торгуємо)
+        current_price = self.connector.get_price(trade['symbol'])
         if not current_price:
             return {'success': False, 'error': 'Could not get current price'}
         

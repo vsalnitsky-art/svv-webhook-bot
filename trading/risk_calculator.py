@@ -1,9 +1,10 @@
 """
 Risk Calculator - Position sizing and risk management
+Торгівля на Bybit - використовуємо Bybit для всіх даних
 """
 from typing import Dict, Optional, Tuple
 from config import TRADING_CONSTANTS
-from core import get_connector, get_fetcher
+from core import get_connector  # Bybit для торгівлі
 from storage import get_db
 
 class RiskCalculator:
@@ -15,12 +16,13 @@ class RiskCalculator:
     - Stop loss levels
     - Take profit levels
     - Max position limits
+    
+    NOTE: Використовує Bybit для всіх даних (торгівля на Bybit)
     """
     
     def __init__(self):
         self.db = get_db()
-        self.connector = get_connector()
-        self.fetcher = get_fetcher()
+        self.connector = get_connector()  # Bybit
         self.constants = TRADING_CONSTANTS
     
     def calculate_position_size(self, symbol: str, entry_price: float, 
@@ -94,11 +96,13 @@ class RiskCalculator:
         # Calculate contracts
         position_size = position_value / entry_price
         
-        # Get symbol info for rounding
-        symbol_info = self.fetcher.get_symbol_info(symbol)
+        # Get symbol info for rounding (from Bybit)
+        symbol_info = self.connector.get_instrument_info(symbol)
         if symbol_info:
-            qty_step = symbol_info.get('qty_step', 0.001)
-            min_qty = symbol_info.get('min_qty', 0.001)
+            price_filter = symbol_info.get('priceFilter', {})
+            lot_filter = symbol_info.get('lotSizeFilter', {})
+            qty_step = float(lot_filter.get('qtyStep', 0.001))
+            min_qty = float(lot_filter.get('minOrderQty', 0.001))
             
             # Round to qty step
             position_size = round(position_size / qty_step) * qty_step
@@ -154,8 +158,8 @@ class RiskCalculator:
         """
         from core import get_indicators
         
-        # Get recent klines
-        klines = self.fetcher.get_klines(symbol, '15m', limit=20)
+        # Get recent klines from Bybit (де торгуємо)
+        klines = self.connector.get_klines(symbol, '15', limit=20)
         if len(klines) < 15:
             return None
         

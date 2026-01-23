@@ -16,8 +16,11 @@ apscheduler>=3.10.0
 requests>=2.31.0
 aiohttp>=3.9.0
 
-# Bybit API
+# Bybit API (для торгівлі)
 pybit>=5.6.0
+
+# Binance API (для сканування/аналізу)
+python-binance>=1.0.19
 
 # Data Processing
 numpy>=1.24.0

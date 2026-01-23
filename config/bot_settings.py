@@ -33,8 +33,15 @@ class TradeStatus(Enum):
     CANCELLED = "CANCELLED"
 
 # === ENVIRONMENT VARIABLES ===
+# Binance - для сканування та аналізу
+BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY', '')
+BINANCE_API_SECRET = os.environ.get('BINANCE_API_SECRET', '')
+
+# Bybit - для торгівлі
 BYBIT_API_KEY = os.environ.get('BYBIT_API_KEY', '')
 BYBIT_API_SECRET = os.environ.get('BYBIT_API_SECRET', '')
+
+# Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
@@ -142,6 +149,14 @@ BYBIT_CONFIG = {
     'testnet': False,
     'recv_window': 5000,
     'timeout': 30,
+}
+
+BINANCE_CONFIG = {
+    'testnet': False,
+    'timeout': 30,
+    # Rate limiting
+    'requests_per_minute': 1200,  # Binance limit
+    'safe_margin': 0.8,  # Use 80% of limit
 }
 
 WEB_CONFIG = {
