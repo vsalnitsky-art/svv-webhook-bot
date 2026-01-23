@@ -421,6 +421,30 @@ def register_api_routes(app):
             'data': obs
         })
     
+    @app.route('/api/sleepers/clear-bad', methods=['POST'])
+    def api_clear_bad_sleepers():
+        """Remove sleepers with poor data quality"""
+        db = get_db()
+        count = db.remove_low_quality_sleepers()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Removed {count} low-quality sleepers',
+            'removed': count
+        })
+    
+    @app.route('/api/sleepers/clear-all', methods=['POST'])
+    def api_clear_all_sleepers():
+        """Remove ALL sleepers for fresh scan"""
+        db = get_db()
+        count = db.clear_all_sleepers()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Cleared {count} sleepers',
+            'removed': count
+        })
+    
     @app.route('/api/scan/full', methods=['POST'])
     def api_full_scan():
         """Run full scan cycle: Sleepers → OBs → Signals"""

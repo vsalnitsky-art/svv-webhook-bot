@@ -21,11 +21,46 @@ class MarketDataFetcher:
         """Get top symbols by 24h volume"""
         tickers = self._get_tickers()
         
+        # Prefixes/patterns to EXCLUDE (leveraged, premium, problematic tokens)
+        EXCLUDED_PREFIXES = (
+            '1000',      # 1000PEPE, 1000SHIB, etc. (denomination tokens)
+            '1M',        # 1MBABYDOGE, etc.
+            '10000',     # 10000SATS, etc.
+        )
+        
+        EXCLUDED_SUFFIXES = (
+            'DOWNUSDT',  # Short leveraged tokens
+            'UPUSDT',    # Long leveraged tokens
+            'BULLUSDT',
+            'BEARUSDT',
+        )
+        
+        # Low-liquidity / problematic tokens to exclude
+        EXCLUDED_SYMBOLS = {
+            # Low liquidity / delisting candidates
+            'BSWUSDT', 'UNFIUSDT', 'RENUSDT', 'STRKUSDT', 'VIDTUSDT',
+            'AGIXUSDT', 'ALPHAUSDT', 'UNAUSDT', 'LEVERUSDT', 'MDTUSDT',
+            'OAXUSDT', 'RAREUSDT', 'VGXUSDT', 'FIROUSDT', 'MOBUSDT',
+            'OOKIUSDT', 'FORTHUSDT', 'BONDUSDT', 'MLNUSDT', 'AMBUSDT',
+            # Meme coins with unreliable data
+            'NEIROETHUSDT', 'MEMEFUSDT',
+        }
+        
         # Filter and sort by volume
         usdt_tickers = []
         for t in tickers:
             symbol = t.get('symbol', '')
             if not symbol.endswith('USDT'):
+                continue
+            
+            # Skip leveraged/premium tokens
+            if symbol.startswith(EXCLUDED_PREFIXES):
+                continue
+            if symbol.endswith(EXCLUDED_SUFFIXES):
+                continue
+            
+            # Skip known problematic symbols
+            if symbol in EXCLUDED_SYMBOLS:
                 continue
             
             try:
@@ -88,28 +123,40 @@ class MarketDataFetcher:
         """Get current funding rate"""
         try:
             data = self.connector.get_funding_rate(symbol)
-            return float(data.get('fundingRate', 0))
-        except:
+            if data:
+                # Binance connector returns 'funding_rate' key
+                return float(data.get('funding_rate', data.get('fundingRate', 0)))
+            return None
+        except Exception as e:
+            print(f"[MARKET_DATA] Error getting funding rate for {symbol}: {e}")
             return None
     
     def get_oi_change(self, symbol: str, hours: int = 4) -> Optional[float]:
         """Calculate OI change over specified hours"""
         try:
-            oi_data = self.connector.get_open_interest(symbol, '1h', hours + 1)
-            if len(oi_data) < 2:
+            # Binance OI history - отримуємо достатньо даних
+            oi_data = self.connector.get_open_interest(symbol, '1h', hours + 2)
+            
+            if not oi_data or len(oi_data) < 2:
+                # Fallback: спробуємо отримати поточний OI
+                current_oi = self.connector.get_current_open_interest(symbol)
+                if current_oi:
+                    return 0.0  # Немає історії для порівняння
                 return None
             
-            # Oldest to newest
-            oi_data = list(reversed(oi_data))
-            
-            old_oi = float(oi_data[0].get('openInterest', 0))
-            new_oi = float(oi_data[-1].get('openInterest', 0))
+            # Binance повертає в хронологічному порядку (старі -> нові)
+            # Не потрібно реверсувати
+            old_oi = float(oi_data[0].get('open_interest', oi_data[0].get('openInterest', 0)))
+            new_oi = float(oi_data[-1].get('open_interest', oi_data[-1].get('openInterest', 0)))
             
             if old_oi == 0:
                 return None
             
-            return ((new_oi - old_oi) / old_oi) * 100
-        except:
+            change_pct = ((new_oi - old_oi) / old_oi) * 100
+            return change_pct
+            
+        except Exception as e:
+            print(f"[MARKET_DATA] Error getting OI change for {symbol}: {e}")
             return None
     
     def get_oi_history(self, symbol: str, limit: int = 200, interval: str = '1h') -> List[Dict]:
@@ -163,18 +210,21 @@ class MarketDataFetcher:
     def get_symbol_info(self, symbol: str) -> Optional[Dict]:
         """Get symbol trading info"""
         try:
-            info_list = self.connector.get_instrument_info(symbol)
-            if info_list:
-                info = info_list[0]
+            info = self.connector.get_instrument_info(symbol)
+            if info:
+                # Binance connector returns a dict directly, not a list
                 return {
-                    'symbol': info['symbol'],
-                    'tick_size': float(info.get('priceFilter', {}).get('tickSize', 0)),
-                    'min_qty': float(info.get('lotSizeFilter', {}).get('minOrderQty', 0)),
-                    'qty_step': float(info.get('lotSizeFilter', {}).get('qtyStep', 0)),
-                    'max_leverage': int(info.get('leverageFilter', {}).get('maxLeverage', 1)),
+                    'symbol': info.get('symbol', symbol),
+                    'tick_size': float(info.get('priceFilter', {}).get('tickSize', 0.01)),
+                    'min_qty': float(info.get('lotSizeFilter', {}).get('minOrderQty', 0.001)),
+                    'qty_step': float(info.get('lotSizeFilter', {}).get('qtyStep', 0.001)),
+                    'max_leverage': 20,  # Binance default
+                    'pricePrecision': info.get('pricePrecision', 2),
+                    'quantityPrecision': info.get('quantityPrecision', 3),
                 }
             return None
-        except:
+        except Exception as e:
+            print(f"[MARKET_DATA] Error getting symbol info for {symbol}: {e}")
             return None
     
     def get_current_price(self, symbol: str) -> Optional[float]:

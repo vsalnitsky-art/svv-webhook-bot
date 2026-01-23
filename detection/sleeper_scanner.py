@@ -198,6 +198,29 @@ class SleeperScanner:
             except (TypeError, ValueError):
                 return 0.0
         
+        # Витягуємо значення для валідації
+        bb_width_val = to_float(indicators_4h.get('bb_width_current'))
+        rsi_val = to_float(indicators_4h.get('rsi_current'))
+        funding_val = to_float(funding_rate)
+        oi_val = to_float(oi_change)
+        
+        # === ВАЛІДАЦІЯ ДАНИХ ===
+        # Якщо монета має всі нульові/default значення - відхиляємо
+        # Це означає що дані не завантажились правильно
+        data_quality_issues = 0
+        
+        if bb_width_val == 0:
+            data_quality_issues += 1
+        if rsi_val == 50 or rsi_val == 100:  # Default values
+            data_quality_issues += 1
+        if funding_val == 0 and oi_val == 0:
+            data_quality_issues += 1
+        
+        # Якщо 2+ проблеми з якістю даних - відхиляємо
+        if data_quality_issues >= 2:
+            print(f"[SLEEPER] ⛔ {symbol}: Rejected - poor data quality (BB={bb_width_val:.4f}, RSI={rsi_val:.1f}, FR={funding_val:.6f}, OI={oi_val:.2f}%)")
+            return None
+        
         return {
             'symbol': symbol,
             'total_score': round(total_score, 2),
@@ -208,14 +231,14 @@ class SleeperScanner:
             'state': SleeperState.WATCHING.value,
             'hp': self.thresholds['hp_initial'],
             'direction': direction,
-            'funding_rate': to_float(funding_rate),
-            'oi_change_4h': to_float(oi_change),
-            'bb_width': to_float(indicators_4h.get('bb_width_current')),
+            'funding_rate': funding_val,
+            'oi_change_4h': oi_val,
+            'bb_width': bb_width_val,
             'bb_width_change': to_float(bb_width_change),
             'volume_24h': to_float(symbol_data.get('volume_24h')),
             'volume_ratio': to_float(indicators_4h.get('volume_profile', {}).get('ratio')),
             'price_range_pct': to_float(indicators_4h.get('price_range', {}).get('range_pct')),
-            'rsi': to_float(indicators_4h.get('rsi_current')),
+            'rsi': rsi_val,
         }
     
     def _analyze_oi_accumulation(self, oi_history: List[Dict]) -> float:
@@ -309,6 +332,10 @@ class SleeperScanner:
         Calculate Fuel Score based on funding rate, OI change, and OI accumulation
         High funding + increasing OI + accumulation = potential reversal setup
         """
+        # ВАЖЛИВО: якщо немає даних (funding=0 і oi=0), повертаємо нейтральний score
+        if funding_rate == 0 and oi_change == 0 and oi_accumulation == 0:
+            return 50  # Нейтральний score - немає даних для аналізу
+        
         score = 0
         
         # Funding rate component (extreme funding = fuel for reversal)
@@ -317,8 +344,10 @@ class SleeperScanner:
             score += 40
         elif abs_funding >= self.thresholds['funding_rate_moderate']:
             score += 25
+        elif abs_funding > 0:
+            score += 15
         else:
-            score += 10
+            score += 5  # No funding data
         
         # OI change component (short-term accumulation signal)
         if oi_change >= self.thresholds['oi_change_high']:
@@ -326,9 +355,11 @@ class SleeperScanner:
         elif oi_change >= self.thresholds['oi_change_moderate']:
             score += 20
         elif oi_change > 0:
-            score += 10
+            score += 15
+        elif oi_change == 0:
+            score += 5  # No OI data
         else:
-            score += 5
+            score += 10  # Distribution (negative OI)
         
         # OI accumulation pattern (long-term signal) - NEW
         score += oi_accumulation * 0.3  # Max 30 points from OI accumulation
@@ -341,7 +372,11 @@ class SleeperScanner:
         Tight BBs = energy building
         """
         score = 0
-        bb_width = indicators['bb_width_current']
+        bb_width = indicators.get('bb_width_current', 0)
+        
+        # ВАЖЛИВО: якщо bb_width = 0, це означає відсутність даних, не squeeze!
+        if bb_width <= 0:
+            return 50  # Нейтральний score при відсутності даних
         
         # BB squeeze detection
         if bb_width < 2:  # Very tight
@@ -357,8 +392,8 @@ class SleeperScanner:
         
         # Daily BB confirmation (MTF bonus)
         if indicators_daily:
-            bb_daily = indicators_daily.get('bb_width_current', 5)
-            if bb_daily < 4:  # Daily also squeezed
+            bb_daily = indicators_daily.get('bb_width_current', 0)
+            if bb_daily > 0 and bb_daily < 4:  # Daily also squeezed
                 score += 15
         
         # Divergence bonus
@@ -373,10 +408,19 @@ class SleeperScanner:
         Tight range + neutral position = good setup
         """
         score = 0
-        price_range = indicators['price_range']
+        price_range = indicators.get('price_range', {})
+        
+        # Захист від відсутності даних
+        if not price_range:
+            return 50  # Нейтральний score
         
         # Range tightness
-        range_pct = price_range['range_pct']
+        range_pct = price_range.get('range_pct', 0)
+        
+        # Якщо range_pct = 0, це означає відсутність даних
+        if range_pct <= 0:
+            return 50  # Нейтральний score
+        
         if range_pct < 2:
             score += 50
         elif range_pct < 3:
@@ -389,7 +433,7 @@ class SleeperScanner:
             score += 10
         
         # Position within range (middle is best for breakout potential)
-        position = price_range['position']
+        position = price_range.get('position', 0.5)
         if 0.35 <= position <= 0.65:  # Middle
             score += 50
         elif 0.2 <= position <= 0.8:  # Near middle

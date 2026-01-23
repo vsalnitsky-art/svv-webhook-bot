@@ -6,6 +6,8 @@
     <div class="page-header">
         <h1>🎯 Sleeper Candidates</h1>
         <div class="header-actions">
+            <button class="btn btn-secondary" onclick="clearBadSleepers()" title="Remove sleepers with missing data">🧹 Clear Bad</button>
+            <button class="btn btn-danger" onclick="clearAllSleepers()" title="Remove ALL sleepers">🗑️ Clear All</button>
             <button class="btn btn-primary" onclick="scanSleepers()">🔍 Scan Now</button>
         </div>
     </div>
@@ -37,7 +39,7 @@
             {% for s in sleepers %}
             <tr class="{% if s.state == 'READY' %}ready-row{% elif s.state == 'BUILDING' %}building-row{% endif %}">
                 <td class="symbol">
-                    <a href="https://www.tradingview.com/chart/?symbol=BYBIT:{{ s.symbol }}" target="_blank">
+                    <a href="https://www.tradingview.com/chart/?symbol=BINANCE:{{ s.symbol }}.P" target="_blank">
                         {{ s.symbol }}
                     </a>
                 </td>
@@ -128,6 +130,42 @@ async function scanSleepers() {
     } finally {
         btn.disabled = false;
         btn.textContent = '🔍 Scan Now';
+    }
+}
+
+async function clearBadSleepers() {
+    if (!confirm('Remove sleepers with missing data (Funding=0, OI=0, BB=0)?')) return;
+    
+    try {
+        const res = await fetch('/api/sleepers/clear-bad', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert(`Removed ${data.removed} low-quality sleepers`);
+            location.reload();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function clearAllSleepers() {
+    if (!confirm('⚠️ Remove ALL sleepers? This cannot be undone!')) return;
+    
+    try {
+        const res = await fetch('/api/sleepers/clear-all', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            alert(`Cleared ${data.removed} sleepers`);
+            location.reload();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
     }
 }
 </script>

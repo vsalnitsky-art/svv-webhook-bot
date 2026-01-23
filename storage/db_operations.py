@@ -192,6 +192,43 @@ class DBOperations:
         finally:
             session.close()
     
+    def clear_all_sleepers(self) -> int:
+        """Remove ALL sleepers (for fresh scan)"""
+        session = get_session()
+        try:
+            count = session.query(SleeperCandidate).delete()
+            session.commit()
+            print(f"[DB] Cleared {count} sleepers")
+            return count
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] Error clearing sleepers: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def remove_low_quality_sleepers(self) -> int:
+        """Remove sleepers with poor data quality (funding=0, oi=0, bb=0)"""
+        session = get_session()
+        try:
+            from sqlalchemy import and_
+            count = session.query(SleeperCandidate).filter(
+                and_(
+                    SleeperCandidate.funding_rate == 0,
+                    SleeperCandidate.oi_change_4h == 0,
+                    SleeperCandidate.bb_width == 0
+                )
+            ).delete()
+            session.commit()
+            print(f"[DB] Removed {count} low-quality sleepers")
+            return count
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] Error removing low-quality sleepers: {e}")
+            return 0
+        finally:
+            session.close()
+    
     # === ORDER BLOCKS ===
     
     def add_orderblock(self, data: Dict) -> Optional[OrderBlock]:
