@@ -372,6 +372,25 @@ class DBOperations:
         """Get open trades"""
         return self.get_trades(status='OPEN')
     
+    def update_trade(self, trade_id: int, data: Dict) -> bool:
+        """Update trade fields"""
+        session = get_session()
+        try:
+            trade = session.query(Trade).filter_by(id=trade_id).first()
+            if trade:
+                for key, value in data.items():
+                    if hasattr(trade, key):
+                        setattr(trade, key, value)
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            print(f"Error updating trade: {e}")
+            return False
+        finally:
+            session.close()
+    
     def close_trade(self, trade_id: int, exit_price: float, exit_reason: str,
                     pnl_usdt: float, pnl_percent: float, fees: float = 0) -> bool:
         """Close a trade"""
