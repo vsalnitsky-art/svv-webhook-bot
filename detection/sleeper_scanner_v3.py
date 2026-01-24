@@ -1,5 +1,9 @@
 """
-Sleeper Scanner v3.1 - 5-Day Strategy with VC-EXTREME Detection
+Sleeper Scanner v3.2 - 5-Day Strategy with VC-EXTREME Detection
+
+CRITICAL FIX v3.2: BB width zero-filter bug fixed!
+- Previous: bb_widths[:5] = [0,0,0,0,0] → bb_width_start = 0 → VC always = 20
+- Fixed: Filter out zero values before calculation
 
 Система оцінки:
 - VOLATILITY_COMPRESSION: 40% - стиснення волатильності за 5 днів
@@ -139,7 +143,8 @@ class SleeperScannerV3:
                               f"VS:{result['volume_suppression']:.0f} "
                               f"OI:{result['oi_growth']:.0f} "
                               f"OB:{result['order_book_imbalance']:.0f})"
-                              f"{' [VC-EXTREME]' if vc_flag else ''}")
+                              f"{' [VC-EXTREME]' if vc_flag else ''}"
+                              f" BB:{result.get('bb_compression_pct', 0):.1f}%")
                 
                 # Progress
                 if (i + 1) % 20 == 0:
@@ -162,19 +167,19 @@ class SleeperScannerV3:
             print(f"[SLEEPER v3] Removed {removed} dead sleepers (HP=0)")
         
         elapsed = time.time() - start_time
-        print(f"\n[SLEEPER v3.1] Scan complete in {elapsed:.1f}s")
-        print(f"[SLEEPER v3.1] Results: {len(candidates)} candidates from {len(symbols)} symbols")
+        print(f"\n[SLEEPER v3.2] Scan complete in {elapsed:.1f}s")
+        print(f"[SLEEPER v3.2] Results: {len(candidates)} candidates from {len(symbols)} symbols")
         
         # Count by state
         by_state = {}
         for c in candidates:
             state = c.get('state', 'UNKNOWN')
             by_state[state] = by_state.get(state, 0) + 1
-        print(f"[SLEEPER v3.1] States: {by_state}")
+        print(f"[SLEEPER v3.2] States: {by_state}")
         
         # VC-Extreme summary
         if vc_extreme_count > 0:
-            print(f"[SLEEPER v3.1] 🔥 VC-EXTREME candidates: {vc_extreme_count}")
+            print(f"[SLEEPER v3.2] 🔥 VC-EXTREME candidates: {vc_extreme_count}")
         
         return candidates
     
@@ -390,34 +395,39 @@ class SleeperScannerV3:
         Calculate BB width compression over 5 days
         Returns score 0-100 based on compression amount
         
-        FIXED: Adaptive calculation for different data availability
+        v3.1 FIX: Filter out zero values from BB width array
         """
-        bb_widths = indicators.get('bb', {}).get('width', [])
+        bb_widths_raw = indicators.get('bb', {}).get('width', [])
         
-        # FIXED: Adaptive minimum requirement
-        min_required = 10  # Reduced from 20
+        # CRITICAL FIX: Filter out zero values (BB period warmup)
+        bb_widths = [w for w in bb_widths_raw if w > 0]
+        
+        min_required = 5  # Need at least 5 valid BB width values
+        
         if not bb_widths or len(bb_widths) < min_required:
-            # Fallback: calculate from klines directly
+            # Fallback: calculate from klines directly using range compression
             if klines and len(klines) >= 10:
                 closes = [k['close'] for k in klines]
                 highs = [k['high'] for k in klines]
                 lows = [k['low'] for k in klines]
                 
-                # Calculate range compression
-                old_range = 0
-                new_range = 0
-                
-                # First half vs second half
+                # Calculate ATR-style range compression
+                # First half vs second half of data
                 half = len(klines) // 2
+                
+                old_ranges = []
+                new_ranges = []
+                
                 for i in range(half):
                     if closes[i] > 0:
-                        old_range += (highs[i] - lows[i]) / closes[i]
+                        old_ranges.append((highs[i] - lows[i]) / closes[i] * 100)
+                        
                 for i in range(half, len(klines)):
                     if closes[i] > 0:
-                        new_range += (highs[i] - lows[i]) / closes[i]
+                        new_ranges.append((highs[i] - lows[i]) / closes[i] * 100)
                 
-                old_range /= max(half, 1)
-                new_range /= max(len(klines) - half, 1)
+                old_range = sum(old_ranges) / len(old_ranges) if old_ranges else 0
+                new_range = sum(new_ranges) / len(new_ranges) if new_ranges else 0
                 
                 if old_range > 0:
                     compression_pct = ((old_range - new_range) / old_range) * 100
@@ -428,8 +438,8 @@ class SleeperScannerV3:
                 
                 return {
                     'score': score,
-                    'bb_width_start': round(old_range * 100, 4),
-                    'bb_width_current': round(new_range * 100, 4),
+                    'bb_width_start': round(old_range, 4),
+                    'bb_width_current': round(new_range, 4),
                     'compression_pct': round(compression_pct, 2),
                 }
             
@@ -440,14 +450,17 @@ class SleeperScannerV3:
                 'compression_pct': 0,
             }
         
-        # Adaptive periods based on available data
+        # Now bb_widths contains only valid (non-zero) values
         available = len(bb_widths)
-        start_period = min(5, available // 4)
-        end_period = min(3, available // 6)
         
-        # Get BB width at start (oldest) and current (newest)
-        bb_width_start = sum(bb_widths[:start_period]) / max(start_period, 1)
-        bb_width_current = sum(bb_widths[-end_period:]) / max(end_period, 1)
+        # Take first 1/3 for start, last 1/3 for current
+        third = max(1, available // 3)
+        
+        # Oldest valid BB widths (start of compression period)
+        bb_width_start = sum(bb_widths[:third]) / third
+        
+        # Newest valid BB widths (current compression state)
+        bb_width_current = sum(bb_widths[-third:]) / third
         
         # Calculate compression percentage
         if bb_width_start > 0:
@@ -465,9 +478,14 @@ class SleeperScannerV3:
         }
     
     def _compression_to_score(self, compression_pct: float) -> float:
-        """Convert compression percentage to score 0-100"""
+        """
+        Convert compression percentage to score 0-100
+        
+        Positive compression = volatility decreasing = higher score
+        Negative compression = volatility expanding = lower score but not zero
+        """
         if compression_pct >= 70:
-            return 100
+            return 100  # Extreme compression - ready to explode
         elif compression_pct >= 60:
             return 90
         elif compression_pct >= 50:
@@ -479,12 +497,17 @@ class SleeperScannerV3:
         elif compression_pct >= 20:
             return 50
         elif compression_pct >= 10:
-            return 40
-        elif compression_pct > 0:
-            return 30
+            return 45
+        elif compression_pct >= 0:
+            return 40  # No compression but stable
+        elif compression_pct >= -10:
+            return 35  # Slight expansion
+        elif compression_pct >= -20:
+            return 30  # Moderate expansion
+        elif compression_pct >= -30:
+            return 25  # Significant expansion
         else:
-            # Expanding volatility - low score
-            return 20
+            return 20  # Strong expansion
     
     def _calculate_volume_suppression(self, klines: List[Dict]) -> Dict:
         """
