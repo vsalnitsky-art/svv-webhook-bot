@@ -249,7 +249,10 @@ class SleeperScannerV3:
             indicators_1d.get('rsi_current', 50) if indicators_1d else 50
         )
         
-        # === 8. BUILD RESULT ===
+        # === 8. CALCULATE DYNAMIC HP ===
+        hp = self._calculate_initial_hp(total_score, state)
+        
+        # === 9. BUILD RESULT ===
         
         return {
             'symbol': symbol,
@@ -269,7 +272,7 @@ class SleeperScannerV3:
             
             # State
             'state': state,
-            'hp': self.HP_INITIAL,
+            'hp': hp,  # Dynamic HP based on score
             'direction': direction,
             
             # 5-day metrics
@@ -298,24 +301,106 @@ class SleeperScannerV3:
             'rsi': indicators_4h.get('rsi_current', 50),
         }
     
+    def _calculate_initial_hp(self, total_score: float, state: str) -> int:
+        """
+        Calculate initial HP based on score and state
+        
+        HP Scale:
+        - READY/TRIGGERED: 7-10 (high priority)
+        - BUILDING: 5-7 (medium-high)
+        - WATCHING: 3-5 (medium)
+        - IDLE: 1-3 (low)
+        """
+        # Base HP from score (higher score = higher HP)
+        if total_score >= 80:
+            base_hp = 8
+        elif total_score >= 70:
+            base_hp = 7
+        elif total_score >= 60:
+            base_hp = 6
+        elif total_score >= 50:
+            base_hp = 5
+        elif total_score >= 40:
+            base_hp = 4
+        else:
+            base_hp = 3
+        
+        # State modifier
+        if state in [SleeperState.READY.value, SleeperState.TRIGGERED.value]:
+            state_bonus = 2
+        elif state == SleeperState.BUILDING.value:
+            state_bonus = 1
+        elif state == SleeperState.WATCHING.value:
+            state_bonus = 0
+        else:
+            state_bonus = -1
+        
+        hp = base_hp + state_bonus
+        return max(self.HP_MIN, min(self.HP_MAX, hp))
+    
     def _calculate_volatility_compression(self, klines: List[Dict], indicators: Dict) -> Dict:
         """
         Calculate BB width compression over 5 days
         Returns score 0-100 based on compression amount
+        
+        FIXED: Adaptive calculation for different data availability
         """
         bb_widths = indicators.get('bb', {}).get('width', [])
         
-        if not bb_widths or len(bb_widths) < 20:
+        # FIXED: Adaptive minimum requirement
+        min_required = 10  # Reduced from 20
+        if not bb_widths or len(bb_widths) < min_required:
+            # Fallback: calculate from klines directly
+            if klines and len(klines) >= 10:
+                closes = [k['close'] for k in klines]
+                highs = [k['high'] for k in klines]
+                lows = [k['low'] for k in klines]
+                
+                # Calculate range compression
+                old_range = 0
+                new_range = 0
+                
+                # First half vs second half
+                half = len(klines) // 2
+                for i in range(half):
+                    if closes[i] > 0:
+                        old_range += (highs[i] - lows[i]) / closes[i]
+                for i in range(half, len(klines)):
+                    if closes[i] > 0:
+                        new_range += (highs[i] - lows[i]) / closes[i]
+                
+                old_range /= max(half, 1)
+                new_range /= max(len(klines) - half, 1)
+                
+                if old_range > 0:
+                    compression_pct = ((old_range - new_range) / old_range) * 100
+                else:
+                    compression_pct = 0
+                
+                score = self._compression_to_score(compression_pct)
+                
+                return {
+                    'score': score,
+                    'bb_width_start': round(old_range * 100, 4),
+                    'bb_width_current': round(new_range * 100, 4),
+                    'compression_pct': round(compression_pct, 2),
+                }
+            
             return {
-                'score': 50,
+                'score': 50,  # Neutral when no data
                 'bb_width_start': 0,
                 'bb_width_current': 0,
                 'compression_pct': 0,
             }
         
-        # Get BB width at start (5 days ago) and current
-        bb_width_start = sum(bb_widths[:5]) / 5 if len(bb_widths) >= 5 else bb_widths[0]
-        bb_width_current = sum(bb_widths[-3:]) / 3  # Average of last 3
+        # Adaptive periods based on available data
+        available = len(bb_widths)
+        start_period = min(5, available // 4)
+        end_period = min(3, available // 6)
+        
+        # Get BB width at start (oldest) and current (newest)
+        bb_width_start = sum(bb_widths[:start_period]) / max(start_period, 1)
+        bb_width_current = sum(bb_widths[-end_period:]) / max(end_period, 1)
         
         # Calculate compression percentage
         if bb_width_start > 0:
@@ -323,27 +408,7 @@ class SleeperScannerV3:
         else:
             compression_pct = 0
         
-        # Score based on compression
-        # More compression = higher score
-        if compression_pct >= 70:
-            score = 100
-        elif compression_pct >= 60:
-            score = 90
-        elif compression_pct >= 50:
-            score = 80
-        elif compression_pct >= 40:
-            score = 70
-        elif compression_pct >= 30:
-            score = 60
-        elif compression_pct >= 20:
-            score = 50
-        elif compression_pct >= 10:
-            score = 40
-        elif compression_pct > 0:
-            score = 30
-        else:
-            # Expanding volatility - low score
-            score = 20
+        score = self._compression_to_score(compression_pct)
         
         return {
             'score': score,
@@ -351,6 +416,28 @@ class SleeperScannerV3:
             'bb_width_current': round(bb_width_current, 4),
             'compression_pct': round(compression_pct, 2),
         }
+    
+    def _compression_to_score(self, compression_pct: float) -> float:
+        """Convert compression percentage to score 0-100"""
+        if compression_pct >= 70:
+            return 100
+        elif compression_pct >= 60:
+            return 90
+        elif compression_pct >= 50:
+            return 80
+        elif compression_pct >= 40:
+            return 70
+        elif compression_pct >= 30:
+            return 60
+        elif compression_pct >= 20:
+            return 50
+        elif compression_pct >= 10:
+            return 40
+        elif compression_pct > 0:
+            return 30
+        else:
+            # Expanding volatility - low score
+            return 20
     
     def _calculate_volume_suppression(self, klines: List[Dict]) -> Dict:
         """
@@ -596,21 +683,65 @@ class SleeperScannerV3:
     def _update_hp_scores(self, new_candidates: List[Dict]):
         """
         Update HP for existing sleepers based on score changes
+        
+        HP Changes:
+        - Score improved significantly (+5): HP +2
+        - Score improved slightly (+1): HP +1
+        - Score stable: HP unchanged
+        - Score dropped slightly (-1): HP -1
+        - Score dropped significantly (-5): HP -2
+        - Not in new scan: HP -2
+        - State upgraded: HP +1
+        - State downgraded: HP -1
         """
         existing = self.db.get_sleepers(limit=500)
         new_map = {c['symbol']: c for c in new_candidates}
         
+        state_rank = {
+            'TRIGGERED': 5,
+            'READY': 4,
+            'BUILDING': 3,
+            'WATCHING': 2,
+            'IDLE': 1
+        }
+        
         for old in existing:
             symbol = old['symbol']
+            old_score = old.get('total_score', 0) or 0
+            old_state = old.get('state', 'IDLE')
+            
             if symbol not in new_map:
-                # Not in new scan - decrease HP
-                self.db.update_sleeper_state(symbol, old['state'], hp_change=-1)
+                # Not in new scan - decrease HP significantly
+                self.db.update_sleeper_state(symbol, old_state, hp_change=-2)
             else:
                 new = new_map[symbol]
-                # Compare scores
-                if new['total_score'] > old.get('total_score', 0):
-                    # Score improved - increase HP
-                    self.db.update_sleeper_state(symbol, new['state'], hp_change=1)
+                new_score = new.get('total_score', 0) or 0
+                new_state = new.get('state', 'IDLE')
+                
+                hp_change = 0
+                
+                # Score change
+                score_diff = new_score - old_score
+                if score_diff >= 5:
+                    hp_change += 2
+                elif score_diff >= 1:
+                    hp_change += 1
+                elif score_diff <= -5:
+                    hp_change -= 2
+                elif score_diff <= -1:
+                    hp_change -= 1
+                
+                # State change
+                old_rank = state_rank.get(old_state, 1)
+                new_rank = state_rank.get(new_state, 1)
+                
+                if new_rank > old_rank:
+                    hp_change += 1  # State upgraded
+                elif new_rank < old_rank:
+                    hp_change -= 1  # State downgraded
+                
+                if hp_change != 0:
+                    self.db.update_sleeper_state(symbol, new_state, hp_change=hp_change)
     
     def _get_state_emoji(self, state: str) -> str:
         """Get emoji for state"""
