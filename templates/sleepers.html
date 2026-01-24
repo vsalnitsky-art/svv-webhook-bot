@@ -8,13 +8,13 @@
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="clearBadSleepers()" title="Remove sleepers with missing data">🧹 Clear Bad</button>
             <button class="btn btn-danger" onclick="clearAllSleepers()" title="Remove ALL sleepers">🗑️ Clear All</button>
-            <button class="btn btn-primary" onclick="scanSleepersV3()">🔍 Scan v3</button>
+            <button class="btn btn-primary" onclick="scanSleepersV3()">🔍 Scan v4</button>
         </div>
     </div>
 
     <div class="info-box">
-        <strong>Sleeper Detector v3.3 (5-Day Strategy + VC-EXTREME)</strong><br>
-        Two paths: Classic (VS>60%) OR Accelerated (VC>90% + OI growth)
+        <strong>Sleeper Detector v4.0 (5-Day Strategy + ADX + BTC Correlation)</strong><br>
+        ADX &lt; 20 = trendless (bonus +10-15) | BTC volatile = warning | VC &gt; 90% = accelerated path
     </div>
 
     {% if sleepers %}
@@ -89,6 +89,8 @@
                 </td>
                 <td class="flags">
                     {% if s.vc_extreme_detected or s.vc_extreme %}🔥{% endif %}
+                    {% if s.adx_trendless %}📊{% endif %}
+                    {% if s.price_at_poc %}🎯{% endif %}
                     {% if s.volume_spike_detected %}📈{% endif %}
                     {% if s.oi_jump_detected %}⚡{% endif %}
                     {% if s.breakout_detected %}🎆{% endif %}
@@ -101,12 +103,12 @@
     <div class="empty-state">
         <div class="empty-icon">🔍</div>
         <div class="empty-text">No sleeper candidates found</div>
-        <button class="btn btn-primary" onclick="scanSleepersV3()">Run Scan v3</button>
+        <button class="btn btn-primary" onclick="scanSleepersV3()">Run Scan v4</button>
     </div>
     {% endif %}
 
     <div class="legend">
-        <h3>5-Day Strategy Score (v3.3)</h3>
+        <h3>5-Day Strategy Score (v4.0)</h3>
         <ul>
             <li><strong>VC - Volatility Compression (40%)</strong>: BB squeeze over 5 days. Higher = more compressed</li>
             <li><strong>VS - Volume Suppression (25%)</strong>: Volume decline vs 5-day average. Higher = quieter</li>
@@ -114,7 +116,14 @@
             <li><strong>OB - Order Book Imbalance (15%)</strong>: Bid/Ask imbalance. Higher = stronger directional pressure</li>
         </ul>
         
-        <h3>State Transitions (Two Paths)</h3>
+        <h3>v4 Bonuses</h3>
+        <ul>
+            <li><strong>ADX Bonus</strong>: ADX &lt; 20 = +10 pts, ADX falling = +15 pts (true sleeper confirmation)</li>
+            <li><strong>POC Bonus</strong>: Price at POC = +8 pts, Strong POC = +12 pts (equilibrium zone)</li>
+            <li><strong>Liquidity Filter</strong>: Min $50M 24h volume (slippage protection)</li>
+        </ul>
+        
+        <h3>State Transitions</h3>
         <ul>
             <li>⚪ <strong>IDLE</strong>: Not tracking</li>
             <li>👀 <strong>WATCHING</strong>: Score >40 OR VC >95%</li>
@@ -128,10 +137,18 @@
         
         <h3>Flags</h3>
         <ul>
-            <li>🔥 VC-EXTREME (VC >95% + VOL <1.2x) - Imminent breakout!</li>
+            <li>🔥 VC-EXTREME - Imminent breakout (VC >95% + VOL <1.2x)</li>
+            <li>📊 TRENDLESS - True sleeper (ADX <20)</li>
+            <li>🎯 POC - Price at Point of Control (equilibrium)</li>
             <li>📈 Volume Spike (>200% of avg)</li>
             <li>⚡ OI Jump (>15%)</li>
             <li>🎆 Breakout Detected</li>
+        </ul>
+        
+        <h3>BTC Correlation (v4)</h3>
+        <ul>
+            <li>If BTC ADX >30 (trending) → Altcoin sleepers may be less reliable</li>
+            <li>If BTC volatility high → Market-wide movement expected</li>
         </ul>
     </div>
 </div>
@@ -146,13 +163,14 @@
 .flags { font-size: 1.2em; }
 .vc-extreme { color: #ff4500; font-weight: bold; }
 .legend .vc-extreme { background: rgba(255, 69, 0, 0.1); padding: 2px 6px; border-radius: 4px; }
+.trendless { color: #00bfff; font-weight: bold; }
 </style>
 
 <script>
 async function scanSleepersV3() {
     const btn = event.target;
     btn.disabled = true;
-    btn.textContent = '⏳ Scanning...';
+    btn.textContent = '⏳ Scanning v4...';
     
     try {
         const res = await fetch('/api/scan/sleepers/v3', { method: 'POST' });

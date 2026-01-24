@@ -1,13 +1,15 @@
 """
-Sleeper Scanner v3.3 - 5-Day Strategy with VC-EXTREME Detection
+Sleeper Scanner v4.0 - Professional 5-Day Strategy
 
-CRITICAL FIX v3.2: BB width zero-filter bug fixed!
-- Previous: bb_widths[:5] = [0,0,0,0,0] → bb_width_start = 0 → VC always = 20
-- Fixed: Filter out zero values before calculation
+MAJOR FEATURES:
+- ADX filter (ADX < 20 = trendless = true sleeper)
+- BTC correlation check (volatile BTC = unreliable signals)
+- VC-EXTREME detection (BB squeeze > 95%)
+- Aggressive caching (prevents Binance IP ban)
 
-FIX v3.3:
-- Rate limit increased to 500ms (Binance ban protection)
-- Compression % clamped to -100% to +100% (no more -949% anomalies)
+CRITICAL FIXES:
+- v3.2: BB width zero-filter bug
+- v3.3: Rate limit 500ms + compression clamp
 
 Система оцінки:
 - VOLATILITY_COMPRESSION: 40% - стиснення волатильності за 5 днів
@@ -56,7 +58,7 @@ class SleeperScannerV3:
     4. Стакан показує напрямок (дисбаланс)
     """
     
-    # === КОНФІГУРАЦІЯ ===
+    # === КОНФІГУРАЦІЯ v4 ===
     
     # Scoring weights (must sum to 100)
     WEIGHTS = {
@@ -90,6 +92,20 @@ class SleeperScannerV3:
     HP_MAX = 10
     HP_MIN = 0
     
+    # === v4: PROTECTION FILTERS ===
+    
+    # Liquidity Filter (slippage protection)
+    MIN_24H_VOLUME_USD = 50_000_000  # $50M minimum for safe entry/exit
+    MIN_ORDERBOOK_DEPTH = 100_000    # $100K minimum in top 25 levels
+    
+    # Sleeper Timeout (prevents "eternal sleep")
+    MAX_WATCHING_HOURS = 72          # 3 days max in WATCHING
+    MAX_BUILDING_HOURS = 48          # 2 days max in BUILDING
+    
+    # POC (Point of Control) Filter
+    POC_PROXIMITY_PCT = 2.0          # Price within 2% of POC = bonus
+    POC_STRENGTH_MIN = 5.0           # Minimum POC strength for bonus
+    
     def __init__(self):
         self.fetcher = get_fetcher()
         self.indicators = get_indicators()
@@ -108,9 +124,19 @@ class SleeperScannerV3:
         """
         Run full sleeper scan with rate limiting
         Returns list of candidates
+        
+        v4 features:
+        - ADX filter (trendless markets get bonus)
+        - BTC correlation check (warn if BTC volatile)
+        - Batch processing with delays
         """
-        print(f"\n[SLEEPER v3] Starting 5-day strategy scan...")
+        print(f"\n[SLEEPER v4] Starting 5-day strategy scan...")
         start_time = time.time()
+        
+        # === BTC CORRELATION CHECK (v4) ===
+        btc_warning = self._check_btc_volatility()
+        if btc_warning:
+            print(f"[SLEEPER v4] ⚠️ {btc_warning}")
         
         # 1. Get top symbols by volume (limited to prevent API abuse)
         symbols = self.fetcher.get_top_symbols(
@@ -119,14 +145,16 @@ class SleeperScannerV3:
         )
         
         if not symbols:
-            print("[SLEEPER v3] No symbols found")
+            print("[SLEEPER v4] No symbols found")
             return []
         
-        print(f"[SLEEPER v3] Analyzing {len(symbols)} symbols (batch_size={self.batch_size}, delay={self.batch_delay}s)...")
+        print(f"[SLEEPER v4] Analyzing {len(symbols)} symbols (batch_size={self.batch_size}, delay={self.batch_delay}s)...")
         
         candidates = []
         errors = 0
         vc_extreme_count = 0
+        trendless_count = 0
+        poc_count = 0
         
         for i, sym_data in enumerate(symbols):
             try:
@@ -144,32 +172,49 @@ class SleeperScannerV3:
                         if result.get('vc_extreme_detected'):
                             vc_extreme_count += 1
                         
-                        print(f"[SLEEPER v3] {state_emoji}{vc_flag} {result['symbol']}: "
-                              f"Score={result['total_score']:.1f} "
+                        # ADX trendless flag (v4)
+                        adx_flag = "📊" if result.get('adx_trendless') else ""
+                        if result.get('adx_trendless'):
+                            trendless_count += 1
+                        
+                        # POC flag (v4)
+                        poc_flag = "🎯" if result.get('price_at_poc') else ""
+                        if result.get('price_at_poc'):
+                            poc_count += 1
+                        
+                        # Compact log with bonuses
+                        bonuses = []
+                        if result.get('adx_bonus', 0) > 0:
+                            bonuses.append(f"+{result['adx_bonus']}ADX")
+                        if result.get('poc_bonus', 0) > 0:
+                            bonuses.append(f"+{result['poc_bonus']}POC")
+                        bonus_str = f" ({','.join(bonuses)})" if bonuses else ""
+                        
+                        print(f"[SLEEPER v4] {state_emoji}{vc_flag}{adx_flag}{poc_flag} {result['symbol']}: "
+                              f"Score={result['total_score']:.1f}{bonus_str} "
                               f"Dir={result['direction']} "
                               f"(VC:{result['volatility_compression']:.0f} "
                               f"VS:{result['volume_suppression']:.0f} "
                               f"OI:{result['oi_growth']:.0f} "
-                              f"OB:{result['order_book_imbalance']:.0f})"
-                              f"{' [VC-EXTREME]' if vc_flag else ''}"
-                              f" BB:{result.get('bb_compression_pct', 0):.1f}%")
+                              f"OB:{result['order_book_imbalance']:.0f}) "
+                              f"BB:{result.get('bb_compression_pct', 0):.1f}%")
                 
                 # Progress every 10 symbols
                 if (i + 1) % 10 == 0:
-                    print(f"[SLEEPER v3] Progress: {i+1}/{len(symbols)} ({len(candidates)} candidates)")
+                    print(f"[SLEEPER v4] Progress: {i+1}/{len(symbols)} ({len(candidates)} candidates)")
                 
                 # Rate limiting between individual symbols
                 time.sleep(API_LIMITS.get('rate_limit_delay', 0.5))
                 
                 # Batch delay - longer pause every batch_size symbols
                 if (i + 1) % self.batch_size == 0:
-                    print(f"[SLEEPER v3] Batch complete, waiting {self.batch_delay}s...")
+                    print(f"[SLEEPER v4] Batch complete, waiting {self.batch_delay}s...")
                     time.sleep(self.batch_delay)
                 
             except Exception as e:
                 errors += 1
                 if errors <= 3:
-                    print(f"[SLEEPER v3] Error analyzing {sym_data.get('symbol')}: {e}")
+                    print(f"[SLEEPER v4] Error analyzing {sym_data.get('symbol')}: {e}")
         
         # Update HP for existing sleepers
         self._update_hp_scores(candidates)
@@ -177,30 +222,93 @@ class SleeperScannerV3:
         # Remove dead sleepers
         removed = self.db.remove_dead_sleepers()
         if removed > 0:
-            print(f"[SLEEPER v3] Removed {removed} dead sleepers (HP=0)")
+            print(f"[SLEEPER v4] Removed {removed} dead sleepers (HP=0)")
         
         elapsed = time.time() - start_time
-        print(f"\n[SLEEPER v3.3] Scan complete in {elapsed:.1f}s")
-        print(f"[SLEEPER v3.3] Results: {len(candidates)} candidates from {len(symbols)} symbols")
+        print(f"\n[SLEEPER v4] Scan complete in {elapsed:.1f}s")
+        print(f"[SLEEPER v4] Results: {len(candidates)} candidates from {len(symbols)} symbols")
         
         # Count by state
         by_state = {}
         for c in candidates:
             state = c.get('state', 'UNKNOWN')
             by_state[state] = by_state.get(state, 0) + 1
-        print(f"[SLEEPER v3.3] States: {by_state}")
+        print(f"[SLEEPER v4] States: {by_state}")
         
-        # VC-Extreme summary
+        # v4 Summary
+        special_flags = []
         if vc_extreme_count > 0:
-            print(f"[SLEEPER v3.3] 🔥 VC-EXTREME candidates: {vc_extreme_count}")
+            special_flags.append(f"🔥VC-EXTREME:{vc_extreme_count}")
+        if trendless_count > 0:
+            special_flags.append(f"📊TRENDLESS:{trendless_count}")
+        if poc_count > 0:
+            special_flags.append(f"🎯POC:{poc_count}")
+        
+        if special_flags:
+            print(f"[SLEEPER v4] Special: {' | '.join(special_flags)}")
         
         return candidates
     
+    def _check_btc_volatility(self) -> Optional[str]:
+        """
+        Check BTC volatility to assess market conditions.
+        If BTC is volatile (ADX > 30), altcoin sleeper signals may be unreliable.
+        
+        Returns warning message or None
+        """
+        try:
+            # Get BTC 4h klines
+            btc_klines = self.fetcher.get_klines('BTCUSDT', '4h', limit=30)
+            if len(btc_klines) < 20:
+                return None
+            
+            # Calculate BTC indicators
+            btc_indicators = self.indicators.calculate_all(btc_klines)
+            
+            # Check BTC ADX
+            btc_adx = btc_indicators.get('adx', {})
+            btc_adx_value = btc_adx.get('adx', 25)
+            
+            # Check BTC BB width (volatility)
+            btc_bb = btc_indicators.get('bb', {})
+            btc_bb_widths = [w for w in btc_bb.get('width', []) if w > 0]
+            btc_volatility = btc_bb_widths[-1] if btc_bb_widths else 0
+            
+            warnings = []
+            
+            # BTC trending strongly
+            if btc_adx_value > 30:
+                warnings.append(f"BTC ADX={btc_adx_value:.0f} (trending)")
+            
+            # BTC volatile
+            if btc_volatility > 5:  # BB width > 5% = high volatility
+                warnings.append(f"BTC Vol={btc_volatility:.1f}% (high)")
+            
+            if warnings:
+                return f"Market warning: {', '.join(warnings)} - sleeper signals may be less reliable"
+            
+            return None
+            
+        except Exception as e:
+            print(f"[SLEEPER v4] BTC check error: {e}")
+            return None
+    
     def _analyze_symbol_5day(self, symbol_data: Dict) -> Optional[Dict]:
         """
-        Analyze symbol using 5-day strategy
+        Analyze symbol using 5-day strategy (v4)
+        
+        v4 enhancements:
+        - ADX filter (trendless markets)
+        - POC (Point of Control) bonus
+        - Liquidity filter (slippage protection)
         """
         symbol = symbol_data['symbol']
+        volume_24h = symbol_data.get('volume_24h', 0)
+        
+        # === 0. LIQUIDITY FILTER (v4) ===
+        # Skip illiquid symbols to avoid slippage
+        if volume_24h < self.MIN_24H_VOLUME_USD:
+            return None
         
         # === 1. GET 5-DAY DATA ===
         
@@ -230,6 +338,38 @@ class SleeperScannerV3:
         indicators_4h = self.indicators.calculate_all(klines_4h)
         indicators_1d = self.indicators.calculate_all(klines_1d) if len(klines_1d) > 5 else None
         
+        # === 2.5 ADX FILTER (v4) ===
+        # ADX < 20 = no trend = perfect for sleeper
+        # ADX < 20 AND falling = even better
+        adx_data = indicators_4h.get('adx', {})
+        adx_value = adx_data.get('adx', 25)
+        is_trendless = adx_data.get('is_trendless', False)
+        adx_falling = adx_data.get('adx_falling', False)
+        
+        # ADX bonus for true sleepers
+        adx_bonus = 0
+        if is_trendless:  # ADX < 20
+            adx_bonus = 10  # +10 to score
+            if adx_falling:  # AND falling
+                adx_bonus = 15  # +15 to score
+        elif adx_value < 25:  # Weak trend
+            adx_bonus = 5
+        
+        # === 2.6 POC (Point of Control) ANALYSIS (v4) ===
+        poc_data = self.indicators.volume_profile_poc(klines_4h)
+        poc_bonus = 0
+        price_at_poc = poc_data.get('price_at_poc', False)
+        poc_strength = poc_data.get('poc_strength', 0)
+        poc_distance = poc_data.get('poc_distance_pct', 100)
+        
+        # Bonus if price is sleeping at POC (equilibrium zone)
+        if poc_distance < self.POC_PROXIMITY_PCT and poc_strength >= self.POC_STRENGTH_MIN:
+            poc_bonus = 8  # +8 to score (significant equilibrium)
+            if poc_strength >= 10:  # Very strong POC
+                poc_bonus = 12
+        elif poc_distance < 3.0:  # Within 3% of POC
+            poc_bonus = 4
+        
         # === 3. CALCULATE 5-DAY METRICS ===
         
         # Volatility Compression (40%)
@@ -246,12 +386,15 @@ class SleeperScannerV3:
         
         # === 4. CALCULATE TOTAL SCORE ===
         
-        total_score = (
+        base_score = (
             vc_data['score'] * (self.WEIGHTS['volatility_compression'] / 100) +
             vs_data['score'] * (self.WEIGHTS['volume_suppression'] / 100) +
             oi_data['score'] * (self.WEIGHTS['oi_growth'] / 100) +
             ob_data['score'] * (self.WEIGHTS['order_book_imbalance'] / 100)
         )
+        
+        # Apply ADX bonus + POC bonus (capped at 100)
+        total_score = min(100, base_score + adx_bonus + poc_bonus)
         
         # === 5. DATA QUALITY CHECK ===
         
@@ -316,6 +459,14 @@ class SleeperScannerV3:
         if vc_extreme:
             hp = min(self.HP_MAX, hp + 2)
         
+        # Boost HP for trendless markets (v4: ADX bonus)
+        if is_trendless:
+            hp = min(self.HP_MAX, hp + 1)
+        
+        # Boost HP for POC equilibrium (v4)
+        if price_at_poc and poc_strength >= self.POC_STRENGTH_MIN:
+            hp = min(self.HP_MAX, hp + 1)
+        
         # === 10. BUILD RESULT ===
         
         return {
@@ -339,6 +490,21 @@ class SleeperScannerV3:
             'hp': hp,  # Dynamic HP based on score
             'direction': direction,
             'vc_extreme_detected': vc_extreme,  # v3.1: VC-Extreme flag
+            
+            # v4: ADX data
+            'adx_value': round(adx_value, 1),
+            'adx_trendless': is_trendless,
+            'adx_bonus': adx_bonus,
+            
+            # v4: POC data
+            'poc_price': round(poc_data.get('poc_price', 0), 6),
+            'poc_distance_pct': round(poc_distance, 2),
+            'poc_strength': round(poc_strength, 1),
+            'price_at_poc': price_at_poc,
+            'poc_bonus': poc_bonus,
+            
+            # v4: Liquidity data
+            'volume_24h_usd': volume_24h,
             
             # 5-day metrics
             'bb_width_5d_start': vc_data['bb_width_start'],
