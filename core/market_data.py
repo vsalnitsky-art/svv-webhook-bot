@@ -35,7 +35,7 @@ class MarketDataFetcher:
             'BEARUSDT',
         )
         
-        # Low-liquidity / problematic tokens to exclude
+        # Low-liquidity / problematic / delivering tokens to exclude
         EXCLUDED_SYMBOLS = {
             # Low liquidity / delisting candidates
             'BSWUSDT', 'UNFIUSDT', 'RENUSDT', 'STRKUSDT', 'VIDTUSDT',
@@ -43,7 +43,9 @@ class MarketDataFetcher:
             'OAXUSDT', 'RAREUSDT', 'VGXUSDT', 'FIROUSDT', 'MOBUSDT',
             'OOKIUSDT', 'FORTHUSDT', 'BONDUSDT', 'MLNUSDT', 'AMBUSDT',
             # Meme coins with unreliable data
-            'NEIROETHUSDT', 'MEMEFUSDT',
+            'NEIROETHUSDT', 'MEMEFUSDT', 'MEMEFIUSDT',
+            # Symbols in delivering/settling state (API error -4108)
+            'PORT3USDT', 'UXLINKUSDT', 'LTAUSDT', 'FTMUSDT',
         }
         
         # Filter and sort by volume

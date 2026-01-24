@@ -14,14 +14,22 @@ Base = declarative_base()
 TABLE_PREFIX = 'sob_'  # sleeper_ob_bot
 
 class SleeperCandidate(Base):
-    """Sleeper detector candidates"""
+    """Sleeper detector candidates - 5-Day Strategy v3.0"""
     __tablename__ = f'{TABLE_PREFIX}sleeper_candidates'
     
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), unique=True, nullable=False, index=True)
     
-    # Score breakdown
+    # === NEW: 5-Day Strategy Score Breakdown ===
     total_score = Column(Float, default=0)
+    
+    # Primary metrics (weights: 40/25/20/15)
+    volatility_compression = Column(Float, default=0)  # 40% - BB squeeze over 5 days
+    volume_suppression = Column(Float, default=0)      # 25% - volume decline ratio
+    oi_growth = Column(Float, default=0)               # 20% - OI accumulation
+    order_book_imbalance = Column(Float, default=0)    # 15% - bid/ask imbalance
+    
+    # Legacy scores (keep for backward compatibility)
     fuel_score = Column(Float, default=0)
     volatility_score = Column(Float, default=0)
     price_score = Column(Float, default=0)
@@ -32,40 +40,90 @@ class SleeperCandidate(Base):
     hp = Column(Integer, default=5)
     direction = Column(String(10), default='NEUTRAL')  # LONG/SHORT/NEUTRAL
     
-    # Metrics
+    # === NEW: 5-Day Metrics ===
+    # Volatility compression data
+    bb_width_5d_start = Column(Float)    # BB width 5 days ago
+    bb_width_current = Column(Float)     # Current BB width
+    bb_compression_pct = Column(Float)   # Compression percentage
+    
+    # Volume suppression data
+    volume_5d_avg = Column(Float)        # 5-day average volume
+    volume_current = Column(Float)       # Current volume
+    volume_ratio = Column(Float)         # current/average ratio
+    
+    # OI growth data
+    oi_5d_start = Column(Float)          # OI 5 days ago
+    oi_current = Column(Float)           # Current OI
+    oi_growth_pct = Column(Float)        # Growth percentage
+    
+    # Order book data
+    bid_volume = Column(Float)           # Total bid volume
+    ask_volume = Column(Float)           # Total ask volume
+    ob_imbalance_pct = Column(Float)     # Imbalance percentage
+    
+    # === Trigger flags ===
+    volume_spike_detected = Column(Boolean, default=False)  # Volume > 200% of avg
+    oi_jump_detected = Column(Boolean, default=False)       # OI jump > 15%
+    breakout_detected = Column(Boolean, default=False)      # Price breakout
+    
+    # Legacy metrics (keep for compatibility)
     funding_rate = Column(Float)
     oi_change_4h = Column(Float)
     bb_width = Column(Float)
     bb_width_change = Column(Float)
     volume_24h = Column(Float)
-    volume_ratio = Column(Float)
     price_range_pct = Column(Float)
     rsi = Column(Float)
     
     # Tracking
     added_at = Column(DateTime, default=datetime.utcnow)
     last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     checks_count = Column(Integer, default=0)
+    
+    # State transition tracking
+    watching_since = Column(DateTime)
+    building_since = Column(DateTime)
+    ready_since = Column(DateTime)
     
     def to_dict(self):
         return {
             'id': self.id,
             'symbol': self.symbol,
+            # New 5-day scores
             'total_score': self.total_score,
+            'volatility_compression': self.volatility_compression,
+            'volume_suppression': self.volume_suppression,
+            'oi_growth': self.oi_growth,
+            'order_book_imbalance': self.order_book_imbalance,
+            # Legacy scores
             'fuel_score': self.fuel_score,
             'volatility_score': self.volatility_score,
             'price_score': self.price_score,
             'liquidity_score': self.liquidity_score,
+            # State
             'state': self.state,
             'hp': self.hp,
             'direction': self.direction,
+            # 5-day metrics
+            'bb_compression_pct': self.bb_compression_pct,
+            'volume_ratio': self.volume_ratio,
+            'oi_growth_pct': self.oi_growth_pct,
+            'ob_imbalance_pct': self.ob_imbalance_pct,
+            # Trigger flags
+            'volume_spike_detected': self.volume_spike_detected,
+            'oi_jump_detected': self.oi_jump_detected,
+            'breakout_detected': self.breakout_detected,
+            # Legacy metrics
             'funding_rate': self.funding_rate,
             'oi_change_4h': self.oi_change_4h,
-            'bb_width': self.bb_width,
+            'bb_width': self.bb_width or self.bb_width_current,
             'volume_24h': self.volume_24h,
             'rsi': self.rsi,
+            # Timestamps
             'added_at': self.added_at.isoformat() if self.added_at else None,
             'last_update': self.last_update.isoformat() if self.last_update else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'checks_count': self.checks_count,
         }
 

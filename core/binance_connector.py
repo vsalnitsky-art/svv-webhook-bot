@@ -418,6 +418,10 @@ class BinanceConnector:
             return result
             
         except Exception as e:
+            error_str = str(e)
+            # Code -4108: Symbol is on delivering/delivered/settling/closed/pre-trading
+            if '-4108' in error_str:
+                return []
             print(f"[BINANCE] get_open_interest error: {e}")
             return []
     
@@ -439,6 +443,11 @@ class BinanceConnector:
             }
             
         except Exception as e:
+            error_str = str(e)
+            # Code -4108: Symbol is on delivering/delivered/settling/closed/pre-trading
+            # This is normal for some futures contracts, just skip silently
+            if '-4108' in error_str:
+                return None
             print(f"[BINANCE] get_current_open_interest error: {e}")
             return None
     

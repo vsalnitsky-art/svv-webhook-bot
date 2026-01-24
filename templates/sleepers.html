@@ -8,13 +8,13 @@
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="clearBadSleepers()" title="Remove sleepers with missing data">🧹 Clear Bad</button>
             <button class="btn btn-danger" onclick="clearAllSleepers()" title="Remove ALL sleepers">🗑️ Clear All</button>
-            <button class="btn btn-primary" onclick="scanSleepers()">🔍 Scan Now</button>
+            <button class="btn btn-primary" onclick="scanSleepersV3()">🔍 Scan v3</button>
         </div>
     </div>
 
     <div class="info-box">
-        <strong>Sleeper Detector v2.0</strong> - Identifies coins preparing for breakout moves.
-        States: IDLE → WATCHING → BUILDING → READY → TRIGGERED
+        <strong>Sleeper Detector v3.0 (5-Day Strategy)</strong><br>
+        States: IDLE → WATCHING (>40) → BUILDING (>55, compression >50%) → READY (>65, compression >70%) → TRIGGERED
     </div>
 
     {% if sleepers %}
@@ -23,65 +23,74 @@
             <tr>
                 <th>Symbol</th>
                 <th>State</th>
-                <th>Direction</th>
-                <th>Total Score</th>
-                <th>Fuel</th>
-                <th>Volatility</th>
+                <th>Dir</th>
+                <th>Score</th>
+                <th title="Volatility Compression 40%">VC</th>
+                <th title="Volume Suppression 25%">VS</th>
+                <th title="OI Growth 20%">OI</th>
+                <th title="Order Book Imbalance 15%">OB</th>
                 <th>HP</th>
-                <th>Funding</th>
-                <th>OI Δ 4H</th>
-                <th>BB Width</th>
+                <th title="BB Compression %">BB%</th>
+                <th title="Volume Ratio">Vol</th>
                 <th>RSI</th>
-                <th>Updated</th>
+                <th>Flags</th>
             </tr>
         </thead>
         <tbody>
             {% for s in sleepers %}
-            <tr class="{% if s.state == 'READY' %}ready-row{% elif s.state == 'BUILDING' %}building-row{% endif %}">
+            <tr class="{% if s.state == 'READY' %}ready-row{% elif s.state == 'BUILDING' %}building-row{% elif s.state == 'TRIGGERED' %}triggered-row{% endif %}">
                 <td class="symbol">
                     <a href="https://www.tradingview.com/chart/?symbol=BINANCE:{{ s.symbol }}.P" target="_blank">
                         {{ s.symbol }}
                     </a>
                 </td>
                 <td>
-                    <span class="state-badge {{ s.state|lower }}">{{ s.state }}</span>
+                    <span class="state-badge {{ s.state|lower }}">
+                        {% if s.state == 'IDLE' %}⚪{% elif s.state == 'WATCHING' %}👀{% elif s.state == 'BUILDING' %}🔨{% elif s.state == 'READY' %}🎯{% elif s.state == 'TRIGGERED' %}🚀{% endif %}
+                        {{ s.state }}
+                    </span>
                 </td>
                 <td>
                     <span class="direction {{ s.direction|lower if s.direction else '' }}">
-                        {% if s.direction == 'LONG' %}🟢 LONG
-                        {% elif s.direction == 'SHORT' %}🔴 SHORT
-                        {% else %}⚪ N/A{% endif %}
+                        {% if s.direction == 'LONG' %}🟢{% elif s.direction == 'SHORT' %}🔴{% else %}⚪{% endif %}
                     </span>
                 </td>
                 <td class="score">
                     <div class="score-bar">
                         <div class="score-fill" style="width: {{ s.total_score or 0 }}%"></div>
-                        <span class="score-value">{{ "%.1f"|format(s.total_score or 0) }}</span>
+                        <span class="score-value">{{ "%.0f"|format(s.total_score or 0) }}</span>
                     </div>
                 </td>
-                <td>{{ "%.1f"|format(s.fuel_score or 0) }}</td>
-                <td>{{ "%.1f"|format(s.volatility_score or 0) }}</td>
+                <td class="{% if (s.volatility_compression or 0) >= 80 %}high{% elif (s.volatility_compression or 0) >= 60 %}mid{% endif %}">
+                    {{ "%.0f"|format(s.volatility_compression or s.volatility_score or 0) }}
+                </td>
+                <td class="{% if (s.volume_suppression or 0) >= 80 %}high{% elif (s.volume_suppression or 0) >= 60 %}mid{% endif %}">
+                    {{ "%.0f"|format(s.volume_suppression or s.price_score or 0) }}
+                </td>
+                <td class="{% if (s.oi_growth or 0) >= 80 %}high{% elif (s.oi_growth or 0) >= 60 %}mid{% endif %}">
+                    {{ "%.0f"|format(s.oi_growth or s.fuel_score or 0) }}
+                </td>
+                <td class="{% if (s.order_book_imbalance or 0) >= 80 %}high{% elif (s.order_book_imbalance or 0) >= 60 %}mid{% endif %}">
+                    {{ "%.0f"|format(s.order_book_imbalance or s.liquidity_score or 0) }}
+                </td>
                 <td>
                     <span class="hp-badge {% if s.hp >= 7 %}high{% elif s.hp >= 4 %}mid{% else %}low{% endif %}">
                         {{ s.hp }}/10
                     </span>
                 </td>
-                <td class="{% if s.funding_rate and s.funding_rate < 0 %}negative{% elif s.funding_rate and s.funding_rate > 0.01 %}positive{% endif %}">
-                    {{ "%.4f"|format(s.funding_rate or 0) }}%
+                <td class="{% if (s.bb_compression_pct or 0) >= 70 %}high{% elif (s.bb_compression_pct or 0) >= 50 %}mid{% endif %}">
+                    {{ "%.0f"|format(s.bb_compression_pct or 0) }}%
                 </td>
-                <td class="{% if s.oi_change_4h and s.oi_change_4h > 5 %}positive{% elif s.oi_change_4h and s.oi_change_4h < -5 %}negative{% endif %}">
-                    {{ "%.2f"|format(s.oi_change_4h or 0) }}%
+                <td class="{% if (s.volume_ratio or 1) <= 0.4 %}high{% elif (s.volume_ratio or 1) <= 0.6 %}mid{% elif (s.volume_ratio or 1) >= 2.0 %}warning{% endif %}">
+                    {{ "%.2f"|format(s.volume_ratio or 1) }}x
                 </td>
-                <td>{{ "%.4f"|format(s.bb_width or 0) }}</td>
                 <td class="{% if s.rsi and s.rsi > 70 %}overbought{% elif s.rsi and s.rsi < 30 %}oversold{% endif %}">
-                    {{ "%.1f"|format(s.rsi or 0) }}
+                    {{ "%.0f"|format(s.rsi or 50) }}
                 </td>
-                <td class="time-ago">
-                    {% if s.updated_at %}
-                        {{ ((now - s.updated_at).total_seconds() / 60)|int }}m ago
-                    {% else %}
-                        -
-                    {% endif %}
+                <td class="flags">
+                    {% if s.volume_spike_detected %}📈{% endif %}
+                    {% if s.oi_jump_detected %}⚡{% endif %}
+                    {% if s.breakout_detected %}🎆{% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -91,32 +100,55 @@
     <div class="empty-state">
         <div class="empty-icon">🔍</div>
         <div class="empty-text">No sleeper candidates found</div>
-        <button class="btn btn-primary" onclick="scanSleepers()">Run Scan</button>
+        <button class="btn btn-primary" onclick="scanSleepersV3()">Run Scan v3</button>
     </div>
     {% endif %}
 
     <div class="legend">
-        <h3>Score Components</h3>
+        <h3>5-Day Strategy Score (v3.0)</h3>
         <ul>
-            <li><strong>Fuel (30%)</strong>: Funding rate + OI accumulation</li>
-            <li><strong>Volatility (25%)</strong>: Bollinger Band squeeze</li>
-            <li><strong>Price (25%)</strong>: Range tightness + position</li>
-            <li><strong>Liquidity (20%)</strong>: Volume profile</li>
+            <li><strong>VC - Volatility Compression (40%)</strong>: BB squeeze over 5 days. Higher = more compressed</li>
+            <li><strong>VS - Volume Suppression (25%)</strong>: Volume decline vs 5-day average. Higher = quieter</li>
+            <li><strong>OI - OI Growth (20%)</strong>: Open Interest accumulation. Higher = more positions building</li>
+            <li><strong>OB - Order Book Imbalance (15%)</strong>: Bid/Ask imbalance. Higher = stronger directional pressure</li>
         </ul>
         
-        <h3>HP System</h3>
-        <p>Health Points start at 5. Increases when score improves, decreases when score drops. Removed at HP=0.</p>
+        <h3>State Transitions</h3>
+        <ul>
+            <li>⚪ <strong>IDLE</strong>: Not tracking</li>
+            <li>👀 <strong>WATCHING</strong>: Score >40</li>
+            <li>🔨 <strong>BUILDING</strong>: Score >55, BB compression >50%, Vol suppression >60%</li>
+            <li>🎯 <strong>READY</strong>: Score >65, BB compression >70%</li>
+            <li>🚀 <strong>TRIGGERED</strong>: Volume spike >200% + OI jump >15%</li>
+        </ul>
+        
+        <h3>Flags</h3>
+        <ul>
+            <li>📈 Volume Spike (>200% of avg)</li>
+            <li>⚡ OI Jump (>15%)</li>
+            <li>🎆 Breakout Detected</li>
+        </ul>
     </div>
 </div>
 
+<style>
+.triggered-row { background: rgba(255, 215, 0, 0.2) !important; }
+.building-row { background: rgba(255, 165, 0, 0.15) !important; }
+.ready-row { background: rgba(0, 255, 0, 0.15) !important; }
+.high { color: #00ff00; font-weight: bold; }
+.mid { color: #ffaa00; }
+.warning { color: #ff6600; }
+.flags { font-size: 1.2em; }
+</style>
+
 <script>
-async function scanSleepers() {
+async function scanSleepersV3() {
     const btn = event.target;
     btn.disabled = true;
     btn.textContent = '⏳ Scanning...';
     
     try {
-        const res = await fetch('/api/scan/sleepers', { method: 'POST' });
+        const res = await fetch('/api/scan/sleepers/v3', { method: 'POST' });
         const data = await res.json();
         
         if (data.success) {
@@ -129,12 +161,12 @@ async function scanSleepers() {
         alert('Error: ' + err.message);
     } finally {
         btn.disabled = false;
-        btn.textContent = '🔍 Scan Now';
+        btn.textContent = '🔍 Scan v3';
     }
 }
 
 async function clearBadSleepers() {
-    if (!confirm('Remove sleepers with missing data (Funding=0, OI=0, BB=0)?')) return;
+    if (!confirm('Remove sleepers with missing data?')) return;
     
     try {
         const res = await fetch('/api/sleepers/clear-bad', { method: 'POST' });

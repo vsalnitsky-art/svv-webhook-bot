@@ -11,7 +11,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from config.bot_settings import DEFAULT_SETTINGS
+# Import both v2 and v3 scanners
 from detection.sleeper_scanner import get_sleeper_scanner
+from detection.sleeper_scanner_v3 import get_sleeper_scanner_v3
 from detection.ob_scanner import get_ob_scanner
 from detection.signal_merger import get_signal_merger
 from trading.position_tracker import get_position_tracker
@@ -33,6 +35,9 @@ class BackgroundJobs:
         self.is_running = False
         self.db = get_db()
         self.notifier = get_notifier()
+        
+        # Use v3 scanner by default (5-day strategy)
+        self.use_v3_scanner = True
         
         # Статистика виконання
         self.job_stats: Dict[str, Dict[str, Any]] = {}
@@ -174,23 +179,36 @@ class BackgroundJobs:
     # ===== Job Implementations =====
     
     def _job_sleeper_scan(self):
-        """Сканування Sleepers"""
+        """Сканування Sleepers (5-Day Strategy v3)"""
         start = time.time()
         try:
-            scanner = get_sleeper_scanner()
-            results = scanner.scan()
+            # Use v3 scanner (5-day strategy) by default
+            if self.use_v3_scanner:
+                scanner = get_sleeper_scanner_v3()
+                results = scanner.run_scan()
+            else:
+                scanner = get_sleeper_scanner()
+                results = scanner.scan()
             
             # Сповіщення про нові READY sleepers
             for sleeper in results:
-                if sleeper.get('state') == 'READY' and sleeper.get('just_became_ready'):
+                if sleeper.get('state') == 'READY':
+                    # Check if just became ready (optional notification)
                     self.notifier.notify_sleeper_ready(sleeper)
             
+            # Count by state
+            states = {}
+            for r in results:
+                state = r.get('state', 'UNKNOWN')
+                states[state] = states.get(state, 0) + 1
+            
             duration = time.time() - start
+            version = "v3 (5-Day)" if self.use_v3_scanner else "v2"
             self._log_job_execution(
                 'sleeper_scan', 
                 True, 
                 duration,
-                f"Scanned {len(results)} symbols"
+                f"[{version}] {len(results)} candidates | READY:{states.get('READY', 0)} BUILD:{states.get('BUILDING', 0)} WATCH:{states.get('WATCHING', 0)}"
             )
         except Exception as e:
             duration = time.time() - start
@@ -338,18 +356,25 @@ class BackgroundJobs:
             print(f"[SCHEDULER ERROR] Daily summary: {e}")
     
     def _job_hp_update(self):
-        """Оновлення HP для sleepers"""
+        """Оновлення HP для sleepers (integrated in v3 scan)"""
         start = time.time()
         try:
-            scanner = get_sleeper_scanner()
-            sleepers = self.db.get_sleepers()
+            # In v3, HP updates are handled during the scan
+            # This job just triggers a full rescan
+            if self.use_v3_scanner:
+                scanner = get_sleeper_scanner_v3()
+                results = scanner.run_scan()
+                updated = len(results)
+            else:
+                scanner = get_sleeper_scanner()
+                sleepers = self.db.get_sleepers()
+                updated = 0
+                for sleeper in sleepers:
+                    result = scanner.check_single(sleeper['symbol'])
+                    if result:
+                        updated += 1
             
-            updated = 0
-            for sleeper in sleepers:
-                # sleeper is a dict - перевірити чи умови все ще виконуються
-                result = scanner.check_single(sleeper['symbol'])
-                if result:
-                    updated += 1
+            sleepers = self.db.get_sleepers()
             
             duration = time.time() - start
             self._log_job_execution(

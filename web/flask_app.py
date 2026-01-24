@@ -385,7 +385,7 @@ def register_api_routes(app):
     
     @app.route('/api/scan/sleepers', methods=['POST'])
     def api_scan_sleepers():
-        """Trigger sleeper scan"""
+        """Trigger sleeper scan (legacy v2)"""
         from detection.sleeper_scanner import get_sleeper_scanner
         
         scanner = get_sleeper_scanner()
@@ -398,6 +398,33 @@ def register_api_routes(app):
                 'total': len(results),
                 'ready': len([r for r in results if r.get('state') == 'READY']),
                 'building': len([r for r in results if r.get('state') == 'BUILDING'])
+            }
+        })
+    
+    @app.route('/api/scan/sleepers/v3', methods=['POST'])
+    def api_scan_sleepers_v3():
+        """Trigger sleeper scan with 5-day strategy (v3)"""
+        from detection.sleeper_scanner_v3 import get_sleeper_scanner_v3
+        
+        scanner = get_sleeper_scanner_v3()
+        results = scanner.run_scan()
+        
+        # Count by state
+        states = {}
+        for r in results:
+            state = r.get('state', 'UNKNOWN')
+            states[state] = states.get(state, 0) + 1
+        
+        return jsonify({
+            'success': True,
+            'message': f'5-Day Strategy: Scanned {len(results)} candidates',
+            'data': {
+                'total': len(results),
+                'ready': states.get('READY', 0),
+                'building': states.get('BUILDING', 0),
+                'watching': states.get('WATCHING', 0),
+                'triggered': states.get('TRIGGERED', 0),
+                'by_state': states
             }
         })
     
