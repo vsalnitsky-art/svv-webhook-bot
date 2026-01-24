@@ -75,39 +75,47 @@ class BackgroundJobs:
         self.db.log_event(message="Background scheduler stopped", level="INFO", category="SYSTEM")
     
     def _setup_jobs(self):
-        """Налаштувати всі фонові задачі"""
+        """
+        Налаштувати всі фонові задачі
         
-        # 1. Sleeper Scan - кожні 15 хвилин
+        v3.3: Optimized intervals to prevent Binance IP ban
+        - Sleeper scan: 30 min (was 15)
+        - OB scan: 10 min (was 5)
+        - Signal check: 2 min (was 1)
+        - Position monitor: 60 sec (was 30)
+        """
+        
+        # 1. Sleeper Scan - кожні 30 хвилин (збільшено для захисту від бану)
         self.scheduler.add_job(
             self._job_sleeper_scan,
-            IntervalTrigger(minutes=15),
+            IntervalTrigger(minutes=30),
             id='sleeper_scan',
             name='Sleeper Scanner',
             replace_existing=True
         )
         
-        # 2. Order Block Scan для ready sleepers - кожні 5 хвилин
+        # 2. Order Block Scan для ready sleepers - кожні 10 хвилин
         self.scheduler.add_job(
             self._job_ob_scan,
-            IntervalTrigger(minutes=5),
+            IntervalTrigger(minutes=10),
             id='ob_scan',
             name='Order Block Scanner',
             replace_existing=True
         )
         
-        # 3. Signal Check - кожну хвилину
+        # 3. Signal Check - кожні 2 хвилини
         self.scheduler.add_job(
             self._job_signal_check,
-            IntervalTrigger(minutes=1),
+            IntervalTrigger(minutes=2),
             id='signal_check',
             name='Signal Checker',
             replace_existing=True
         )
         
-        # 4. Position Monitor - кожні 30 секунд
+        # 4. Position Monitor - кожну хвилину
         self.scheduler.add_job(
             self._job_position_monitor,
-            IntervalTrigger(seconds=30),
+            IntervalTrigger(seconds=60),
             id='position_monitor',
             name='Position Monitor',
             replace_existing=True

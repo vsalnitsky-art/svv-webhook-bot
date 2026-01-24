@@ -1,6 +1,12 @@
 """
 Market Data - Data retrieval and caching for Sleeper OB Bot
 Використовує Binance Futures для сканування/аналізу
+
+v3.3: Aggressive caching to prevent Binance IP ban
+- Klines: 60s cache
+- Funding rate: 120s cache  
+- OI data: 60s cache
+- Orderbook: 30s cache
 """
 import time
 from typing import Dict, List, Optional, Tuple
@@ -8,14 +14,86 @@ from datetime import datetime, timedelta
 from config import API_LIMITS, TIMEFRAME_MAP
 from core.binance_connector import get_binance_connector
 
+
+class MarketDataCache:
+    """
+    Centralized cache for all market data
+    Prevents duplicate API calls across different modules
+    """
+    
+    def __init__(self):
+        self._cache = {}
+        self._timestamps = {}
+        
+        # TTL settings (seconds)
+        self.TTL = {
+            'tickers': 30,       # Tickers refresh every 30s
+            'klines': 60,        # Klines cache 1 minute
+            'funding': 120,      # Funding rate cache 2 minutes
+            'oi': 60,            # OI data cache 1 minute
+            'oi_history': 300,   # OI history cache 5 minutes
+            'orderbook': 30,     # Orderbook cache 30s
+            'symbol_info': 3600, # Symbol info cache 1 hour
+        }
+        
+        # Stats for monitoring
+        self._hits = 0
+        self._misses = 0
+    
+    def get(self, cache_type: str, key: str) -> Optional[any]:
+        """Get cached value if not expired"""
+        full_key = f"{cache_type}:{key}"
+        
+        if full_key not in self._cache:
+            self._misses += 1
+            return None
+        
+        ttl = self.TTL.get(cache_type, 60)
+        if time.time() - self._timestamps.get(full_key, 0) > ttl:
+            del self._cache[full_key]
+            del self._timestamps[full_key]
+            self._misses += 1
+            return None
+        
+        self._hits += 1
+        return self._cache[full_key]
+    
+    def set(self, cache_type: str, key: str, value: any):
+        """Set cached value"""
+        full_key = f"{cache_type}:{key}"
+        self._cache[full_key] = value
+        self._timestamps[full_key] = time.time()
+    
+    def get_stats(self) -> Dict:
+        """Get cache statistics"""
+        total = self._hits + self._misses
+        hit_rate = (self._hits / total * 100) if total > 0 else 0
+        return {
+            'hits': self._hits,
+            'misses': self._misses,
+            'hit_rate': f"{hit_rate:.1f}%",
+            'cached_items': len(self._cache),
+        }
+    
+    def clear(self):
+        """Clear all cache"""
+        self._cache.clear()
+        self._timestamps.clear()
+
+
+# Global cache instance
+_global_cache = MarketDataCache()
+
+
 class MarketDataFetcher:
     """Fetches and caches market data from Binance Futures"""
     
     def __init__(self):
         self.connector = get_binance_connector()
+        self.cache = _global_cache
         self._ticker_cache = {}
         self._ticker_cache_time = 0
-        self._cache_ttl = 10  # 10 seconds cache
+        self._cache_ttl = 30  # 30 seconds cache for tickers
         
     def get_top_symbols(self, limit: int = 100, min_volume: float = 20000000) -> List[Dict]:
         """Get top symbols by 24h volume"""
@@ -100,8 +178,22 @@ class MarketDataFetcher:
         return self.connector.get_ticker(symbol)
     
     def get_klines(self, symbol: str, interval: str, limit: int = 200) -> List[Dict]:
-        """Get candlestick data"""
-        return self.connector.get_klines(symbol, interval, limit)
+        """Get candlestick data with caching"""
+        cache_key = f"{symbol}_{interval}_{limit}"
+        
+        # Check cache first
+        cached = self.cache.get('klines', cache_key)
+        if cached is not None:
+            return cached
+        
+        # Fetch from API
+        result = self.connector.get_klines(symbol, interval, limit)
+        
+        # Cache result
+        if result:
+            self.cache.set('klines', cache_key, result)
+        
+        return result
     
     def get_multi_tf_klines(self, symbol: str, 
                             timeframes: List[str] = ['4h', '15m', '5m', '1m'],
@@ -122,12 +214,19 @@ class MarketDataFetcher:
         return result
     
     def get_funding_rate(self, symbol: str) -> Optional[float]:
-        """Get current funding rate"""
+        """Get current funding rate with caching"""
+        # Check cache first
+        cached = self.cache.get('funding', symbol)
+        if cached is not None:
+            return cached
+        
         try:
             data = self.connector.get_funding_rate(symbol)
             if data:
                 # Binance connector returns 'funding_rate' key
-                return float(data.get('funding_rate', data.get('fundingRate', 0)))
+                rate = float(data.get('funding_rate', data.get('fundingRate', 0)))
+                self.cache.set('funding', symbol, rate)
+                return rate
             return None
         except Exception as e:
             print(f"[MARKET_DATA] Error getting funding rate for {symbol}: {e}")
@@ -162,7 +261,14 @@ class MarketDataFetcher:
             return None
     
     def get_oi_history(self, symbol: str, limit: int = 200, interval: str = '1h') -> List[Dict]:
-        """Get OI history for accumulation analysis"""
+        """Get OI history for accumulation analysis with caching"""
+        cache_key = f"{symbol}_{interval}_{limit}"
+        
+        # Check cache first
+        cached = self.cache.get('oi_history', cache_key)
+        if cached is not None:
+            return cached
+        
         try:
             oi_data = self.connector.get_open_interest(symbol, interval, limit)
             if not oi_data:
@@ -176,12 +282,23 @@ class MarketDataFetcher:
                     'open_interest': float(item.get('open_interest', item.get('openInterest', 0)))
                 })
             
+            # Cache result
+            if result:
+                self.cache.set('oi_history', cache_key, result)
+            
             return result
         except:
             return []
     
     def get_orderbook_imbalance(self, symbol: str, depth: int = 25) -> Dict:
-        """Calculate orderbook imbalance"""
+        """Calculate orderbook imbalance with caching"""
+        cache_key = f"{symbol}_{depth}"
+        
+        # Check cache first
+        cached = self.cache.get('orderbook', cache_key)
+        if cached is not None:
+            return cached
+        
         try:
             orderbook = self.connector.get_orderbook(symbol, depth)
             
@@ -193,19 +310,24 @@ class MarketDataFetcher:
             
             total = bid_volume + ask_volume
             if total == 0:
-                return {'bid_pct': 50, 'ask_pct': 50, 'imbalance': 0}
+                result = {'bid_pct': 50, 'ask_pct': 50, 'imbalance': 0}
+            else:
+                bid_pct = (bid_volume / total) * 100
+                ask_pct = (ask_volume / total) * 100
+                imbalance = bid_pct - ask_pct  # Positive = more buyers
+                
+                result = {
+                    'bid_pct': bid_pct,
+                    'ask_pct': ask_pct,
+                    'imbalance': imbalance,
+                    'bid_volume': bid_volume,
+                    'ask_volume': ask_volume
+                }
             
-            bid_pct = (bid_volume / total) * 100
-            ask_pct = (ask_volume / total) * 100
-            imbalance = bid_pct - ask_pct  # Positive = more buyers
+            # Cache result
+            self.cache.set('orderbook', cache_key, result)
+            return result
             
-            return {
-                'bid_pct': bid_pct,
-                'ask_pct': ask_pct,
-                'imbalance': imbalance,
-                'bid_volume': bid_volume,
-                'ask_volume': ask_volume
-            }
         except:
             return {'bid_pct': 50, 'ask_pct': 50, 'imbalance': 0}
     
@@ -298,8 +420,16 @@ def get_fetcher() -> MarketDataFetcher:
     return _fetcher_instance
 
 def get_cache() -> DataCache:
-    """Get data cache instance"""
+    """Get legacy data cache instance (for backwards compatibility)"""
     global _cache_instance
     if _cache_instance is None:
         _cache_instance = DataCache()
     return _cache_instance
+
+def get_market_cache() -> MarketDataCache:
+    """Get global market data cache with statistics"""
+    return _global_cache
+
+def get_cache_stats() -> Dict:
+    """Get cache statistics for monitoring"""
+    return _global_cache.get_stats()

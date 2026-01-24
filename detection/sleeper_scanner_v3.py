@@ -1,9 +1,13 @@
 """
-Sleeper Scanner v3.2 - 5-Day Strategy with VC-EXTREME Detection
+Sleeper Scanner v3.3 - 5-Day Strategy with VC-EXTREME Detection
 
 CRITICAL FIX v3.2: BB width zero-filter bug fixed!
 - Previous: bb_widths[:5] = [0,0,0,0,0] → bb_width_start = 0 → VC always = 20
 - Fixed: Filter out zero values before calculation
+
+FIX v3.3:
+- Rate limit increased to 500ms (Binance ban protection)
+- Compression % clamped to -100% to +100% (no more -949% anomalies)
 
 Система оцінки:
 - VOLATILITY_COMPRESSION: 40% - стиснення волатильності за 5 днів
@@ -91,20 +95,24 @@ class SleeperScannerV3:
         self.indicators = get_indicators()
         self.db = get_db()
         
-        # Scan settings from DB
-        self.max_symbols = self.db.get_setting('sleeper_max_symbols', 150)
-        self.min_volume = self.db.get_setting('sleeper_min_volume', 50_000_000)
+        # Scan settings from DB (reduced defaults for Binance rate limit protection)
+        self.max_symbols = min(self.db.get_setting('sleeper_max_symbols', 30), 50)  # Max 50
+        self.min_volume = self.db.get_setting('sleeper_min_volume', 75_000_000)  # Increased to 75M
         self.scan_interval = self.db.get_setting('sleeper_scan_interval', 240)  # 4H
+        
+        # Batch processing settings
+        self.batch_size = 5   # Process 5 symbols at a time
+        self.batch_delay = 3  # 3 seconds between batches
     
     def run_scan(self) -> List[Dict]:
         """
-        Run full sleeper scan
+        Run full sleeper scan with rate limiting
         Returns list of candidates
         """
         print(f"\n[SLEEPER v3] Starting 5-day strategy scan...")
         start_time = time.time()
         
-        # 1. Get top symbols by volume
+        # 1. Get top symbols by volume (limited to prevent API abuse)
         symbols = self.fetcher.get_top_symbols(
             limit=self.max_symbols,
             min_volume=self.min_volume
@@ -114,7 +122,7 @@ class SleeperScannerV3:
             print("[SLEEPER v3] No symbols found")
             return []
         
-        print(f"[SLEEPER v3] Analyzing {len(symbols)} symbols...")
+        print(f"[SLEEPER v3] Analyzing {len(symbols)} symbols (batch_size={self.batch_size}, delay={self.batch_delay}s)...")
         
         candidates = []
         errors = 0
@@ -146,12 +154,17 @@ class SleeperScannerV3:
                               f"{' [VC-EXTREME]' if vc_flag else ''}"
                               f" BB:{result.get('bb_compression_pct', 0):.1f}%")
                 
-                # Progress
-                if (i + 1) % 20 == 0:
+                # Progress every 10 symbols
+                if (i + 1) % 10 == 0:
                     print(f"[SLEEPER v3] Progress: {i+1}/{len(symbols)} ({len(candidates)} candidates)")
                 
-                # Rate limiting
-                time.sleep(API_LIMITS.get('rate_limit_delay', 0.1))
+                # Rate limiting between individual symbols
+                time.sleep(API_LIMITS.get('rate_limit_delay', 0.5))
+                
+                # Batch delay - longer pause every batch_size symbols
+                if (i + 1) % self.batch_size == 0:
+                    print(f"[SLEEPER v3] Batch complete, waiting {self.batch_delay}s...")
+                    time.sleep(self.batch_delay)
                 
             except Exception as e:
                 errors += 1
@@ -167,19 +180,19 @@ class SleeperScannerV3:
             print(f"[SLEEPER v3] Removed {removed} dead sleepers (HP=0)")
         
         elapsed = time.time() - start_time
-        print(f"\n[SLEEPER v3.2] Scan complete in {elapsed:.1f}s")
-        print(f"[SLEEPER v3.2] Results: {len(candidates)} candidates from {len(symbols)} symbols")
+        print(f"\n[SLEEPER v3.3] Scan complete in {elapsed:.1f}s")
+        print(f"[SLEEPER v3.3] Results: {len(candidates)} candidates from {len(symbols)} symbols")
         
         # Count by state
         by_state = {}
         for c in candidates:
             state = c.get('state', 'UNKNOWN')
             by_state[state] = by_state.get(state, 0) + 1
-        print(f"[SLEEPER v3.2] States: {by_state}")
+        print(f"[SLEEPER v3.3] States: {by_state}")
         
         # VC-Extreme summary
         if vc_extreme_count > 0:
-            print(f"[SLEEPER v3.2] 🔥 VC-EXTREME candidates: {vc_extreme_count}")
+            print(f"[SLEEPER v3.3] 🔥 VC-EXTREME candidates: {vc_extreme_count}")
         
         return candidates
     
@@ -431,6 +444,8 @@ class SleeperScannerV3:
                 
                 if old_range > 0:
                     compression_pct = ((old_range - new_range) / old_range) * 100
+                    # Clamp to reasonable range
+                    compression_pct = max(-100, min(100, compression_pct))
                 else:
                     compression_pct = 0
                 
@@ -465,6 +480,9 @@ class SleeperScannerV3:
         # Calculate compression percentage
         if bb_width_start > 0:
             compression_pct = ((bb_width_start - bb_width_current) / bb_width_start) * 100
+            # Clamp to reasonable range (-100% to +100%)
+            # Values outside this range indicate data issues
+            compression_pct = max(-100, min(100, compression_pct))
         else:
             compression_pct = 0
         

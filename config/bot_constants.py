@@ -106,7 +106,7 @@ TIMEFRAME_MAP = {
 API_LIMITS = {
     'kline_limit': 1000,                 # Max candles per request (Bybit allows 1000)
     'symbols_per_batch': 10,             # Process 10 symbols at a time (for stability)
-    'rate_limit_delay': 0.15,            # 150ms between requests (safe margin)
+    'rate_limit_delay': 0.5,             # 500ms between requests (Binance ban protection)
     'max_retries': 3,                    # Retry failed requests
     'oi_history_limit': 200,             # Open Interest history points
 }
