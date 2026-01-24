@@ -165,12 +165,12 @@ class SleeperScannerV3:
         # === 1. GET 5-DAY DATA ===
         
         # 4H klines for 5 days (30 candles)
-        klines_4h = self.fetcher.get_klines(symbol, '240', limit=self.KLINES_5D)
+        klines_4h = self.fetcher.get_klines(symbol, '4h', limit=self.KLINES_5D)
         if len(klines_4h) < 20:
             return None
         
         # Daily klines for context
-        klines_1d = self.fetcher.get_klines(symbol, 'D', limit=self.KLINES_1D)
+        klines_1d = self.fetcher.get_klines(symbol, '1d', limit=self.KLINES_1D)
         
         # OI history
         oi_history = self.fetcher.get_oi_history(symbol, limit=self.OI_PERIODS)

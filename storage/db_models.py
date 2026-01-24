@@ -358,6 +358,70 @@ def init_db():
     print("[DB] Creating tables if not exist...")
     Base.metadata.create_all(bind=engine)
     print("[DB] Tables ready")
+    
+    # Run migrations for new columns
+    migrate_sleeper_candidates_v3()
+
+
+def migrate_sleeper_candidates_v3():
+    """Add new columns for 5-Day Strategy v3.0"""
+    from sqlalchemy import text
+    
+    new_columns = [
+        # 5-Day Strategy scores
+        ("volatility_compression", "FLOAT DEFAULT 0"),
+        ("volume_suppression", "FLOAT DEFAULT 0"),
+        ("oi_growth", "FLOAT DEFAULT 0"),
+        ("order_book_imbalance", "FLOAT DEFAULT 0"),
+        # BB compression data
+        ("bb_width_5d_start", "FLOAT"),
+        ("bb_width_current", "FLOAT"),
+        ("bb_compression_pct", "FLOAT"),
+        # Volume suppression data
+        ("volume_5d_avg", "FLOAT"),
+        ("volume_current", "FLOAT"),
+        # OI growth data
+        ("oi_5d_start", "FLOAT"),
+        ("oi_current", "FLOAT"),
+        ("oi_growth_pct", "FLOAT"),
+        # Order book data
+        ("bid_volume", "FLOAT"),
+        ("ask_volume", "FLOAT"),
+        ("ob_imbalance_pct", "FLOAT"),
+        # Trigger flags
+        ("volume_spike_detected", "BOOLEAN DEFAULT FALSE"),
+        ("oi_jump_detected", "BOOLEAN DEFAULT FALSE"),
+        ("breakout_detected", "BOOLEAN DEFAULT FALSE"),
+        # State transition tracking
+        ("watching_since", "TIMESTAMP"),
+        ("building_since", "TIMESTAMP"),
+        ("ready_since", "TIMESTAMP"),
+        # Updated at alias
+        ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+    ]
+    
+    table_name = f"{TABLE_PREFIX}sleeper_candidates"
+    
+    with engine.connect() as conn:
+        for col_name, col_type in new_columns:
+            try:
+                # Check if column exists
+                result = conn.execute(text(f"""
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name = '{table_name}' AND column_name = '{col_name}'
+                """))
+                
+                if result.fetchone() is None:
+                    # Column doesn't exist, add it
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
+                    conn.commit()
+                    print(f"[DB MIGRATE] Added column: {col_name}")
+            except Exception as e:
+                # Ignore errors (column might already exist)
+                print(f"[DB MIGRATE] Skipping {col_name}: {e}")
+                conn.rollback()
+    
+    print("[DB MIGRATE] Migration complete")
 
 def get_session():
     """Get database session"""
