@@ -13,8 +13,8 @@
     </div>
 
     <div class="info-box">
-        <strong>Sleeper Detector v3.0 (5-Day Strategy)</strong><br>
-        States: IDLE → WATCHING (>40) → BUILDING (>55, compression >50%) → READY (>65, compression >70%) → TRIGGERED
+        <strong>Sleeper Detector v3.1 (5-Day Strategy + VC-EXTREME)</strong><br>
+        Two paths: Classic (VS>60%) OR Accelerated (VC>90% + OI growth)
     </div>
 
     {% if sleepers %}
@@ -88,6 +88,7 @@
                     {{ "%.0f"|format(s.rsi or 50) }}
                 </td>
                 <td class="flags">
+                    {% if s.vc_extreme_detected or s.vc_extreme %}🔥{% endif %}
                     {% if s.volume_spike_detected %}📈{% endif %}
                     {% if s.oi_jump_detected %}⚡{% endif %}
                     {% if s.breakout_detected %}🎆{% endif %}
@@ -105,7 +106,7 @@
     {% endif %}
 
     <div class="legend">
-        <h3>5-Day Strategy Score (v3.0)</h3>
+        <h3>5-Day Strategy Score (v3.1)</h3>
         <ul>
             <li><strong>VC - Volatility Compression (40%)</strong>: BB squeeze over 5 days. Higher = more compressed</li>
             <li><strong>VS - Volume Suppression (25%)</strong>: Volume decline vs 5-day average. Higher = quieter</li>
@@ -113,17 +114,21 @@
             <li><strong>OB - Order Book Imbalance (15%)</strong>: Bid/Ask imbalance. Higher = stronger directional pressure</li>
         </ul>
         
-        <h3>State Transitions</h3>
+        <h3>State Transitions (Two Paths)</h3>
         <ul>
             <li>⚪ <strong>IDLE</strong>: Not tracking</li>
-            <li>👀 <strong>WATCHING</strong>: Score >40</li>
-            <li>🔨 <strong>BUILDING</strong>: Score >55, BB compression >50%, Vol suppression >60%</li>
-            <li>🎯 <strong>READY</strong>: Score >65, BB compression >70%</li>
+            <li>👀 <strong>WATCHING</strong>: Score >40 OR VC >95%</li>
+            <li>🔨 <strong>BUILDING</strong>: 
+                <br>• Classic: Score >55, VC >50%, VS >60%
+                <br>• <span class="vc-extreme">Accelerated: VC >90% + OI growth >15%</span>
+            </li>
+            <li>🎯 <strong>READY</strong>: Score >65, VC >70% OR VC >95% + OI growth >20%</li>
             <li>🚀 <strong>TRIGGERED</strong>: Volume spike >200% + OI jump >15%</li>
         </ul>
         
         <h3>Flags</h3>
         <ul>
+            <li>🔥 VC-EXTREME (VC >95% + VOL <1.2x) - Imminent breakout!</li>
             <li>📈 Volume Spike (>200% of avg)</li>
             <li>⚡ OI Jump (>15%)</li>
             <li>🎆 Breakout Detected</li>
@@ -139,6 +144,8 @@
 .mid { color: #ffaa00; }
 .warning { color: #ff6600; }
 .flags { font-size: 1.2em; }
+.vc-extreme { color: #ff4500; font-weight: bold; }
+.legend .vc-extreme { background: rgba(255, 69, 0, 0.1); padding: 2px 6px; border-radius: 4px; }
 </style>
 
 <script>

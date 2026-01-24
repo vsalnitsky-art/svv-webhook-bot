@@ -65,6 +65,7 @@ class SleeperCandidate(Base):
     volume_spike_detected = Column(Boolean, default=False)  # Volume > 200% of avg
     oi_jump_detected = Column(Boolean, default=False)       # OI jump > 15%
     breakout_detected = Column(Boolean, default=False)      # Price breakout
+    vc_extreme_detected = Column(Boolean, default=False)    # VC > 95% + VOL < 1.2x
     
     # Legacy metrics (keep for compatibility)
     funding_rate = Column(Float)
@@ -114,6 +115,7 @@ class SleeperCandidate(Base):
             'volume_spike_detected': self.volume_spike_detected,
             'oi_jump_detected': self.oi_jump_detected,
             'breakout_detected': self.breakout_detected,
+            'vc_extreme_detected': self.vc_extreme_detected,  # v3.1
             # Legacy metrics
             'funding_rate': self.funding_rate,
             'oi_change_4h': self.oi_change_4h,
@@ -392,6 +394,7 @@ def migrate_sleeper_candidates_v3():
         ("volume_spike_detected", "BOOLEAN DEFAULT FALSE"),
         ("oi_jump_detected", "BOOLEAN DEFAULT FALSE"),
         ("breakout_detected", "BOOLEAN DEFAULT FALSE"),
+        ("vc_extreme_detected", "BOOLEAN DEFAULT FALSE"),  # v3.1: VC > 95% + VOL < 1.2x
         # State transition tracking
         ("watching_since", "TIMESTAMP"),
         ("building_since", "TIMESTAMP"),

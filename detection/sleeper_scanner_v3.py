@@ -1,5 +1,5 @@
 """
-Sleeper Scanner v3.0 - 5-Day Strategy Implementation
+Sleeper Scanner v3.1 - 5-Day Strategy with VC-EXTREME Detection
 
 Система оцінки:
 - VOLATILITY_COMPRESSION: 40% - стиснення волатильності за 5 днів
@@ -7,12 +7,22 @@ Sleeper Scanner v3.0 - 5-Day Strategy Implementation
 - OI_GROWTH: 20% - зростання Open Interest
 - ORDER_BOOK_IMBALANCE: 15% - дисбаланс стакану
 
+Для VC > 90% використовується modified formula:
+- VC: 50%, VS: 15%, OI: 25%, OB: 10%
+
+ДВА ШЛЯХИ ДО BUILDING:
+1. Classic: Score > 55, VC > 50%, VS > 60%
+2. Accelerated: VC > 90% + OI growth > 15% (пропускає VS requirement)
+
 Стани:
 - IDLE: Не відстежується
-- WATCHING: Score > 40, базові умови виконані
-- BUILDING: Score > 55, compression > 50%, volume < 40%
-- READY: Score > 65, compression > 70%, volume spike imminent
+- WATCHING: Score > 40 OR VC > 95%
+- BUILDING: Classic path OR Accelerated path (VC > 90% + OI growth)
+- READY: Score > 65, compression > 70% OR VC > 95% + OI > 20%
 - TRIGGERED: Volume > 200% + OI jump > 15%
+
+Флаги:
+- VC_EXTREME: VC > 95% при VOL < 1.2x (imminent breakout)
 """
 
 import time
@@ -104,6 +114,7 @@ class SleeperScannerV3:
         
         candidates = []
         errors = 0
+        vc_extreme_count = 0
         
         for i, sym_data in enumerate(symbols):
             try:
@@ -115,13 +126,20 @@ class SleeperScannerV3:
                     if saved:
                         candidates.append(result)
                         state_emoji = self._get_state_emoji(result['state'])
-                        print(f"[SLEEPER v3] {state_emoji} {result['symbol']}: "
+                        
+                        # VC-Extreme flag
+                        vc_flag = "🔥" if result.get('vc_extreme_detected') else ""
+                        if result.get('vc_extreme_detected'):
+                            vc_extreme_count += 1
+                        
+                        print(f"[SLEEPER v3] {state_emoji}{vc_flag} {result['symbol']}: "
                               f"Score={result['total_score']:.1f} "
                               f"Dir={result['direction']} "
                               f"(VC:{result['volatility_compression']:.0f} "
                               f"VS:{result['volume_suppression']:.0f} "
                               f"OI:{result['oi_growth']:.0f} "
-                              f"OB:{result['order_book_imbalance']:.0f})")
+                              f"OB:{result['order_book_imbalance']:.0f})"
+                              f"{' [VC-EXTREME]' if vc_flag else ''}")
                 
                 # Progress
                 if (i + 1) % 20 == 0:
@@ -144,15 +162,19 @@ class SleeperScannerV3:
             print(f"[SLEEPER v3] Removed {removed} dead sleepers (HP=0)")
         
         elapsed = time.time() - start_time
-        print(f"\n[SLEEPER v3] Scan complete in {elapsed:.1f}s")
-        print(f"[SLEEPER v3] Results: {len(candidates)} candidates from {len(symbols)} symbols")
+        print(f"\n[SLEEPER v3.1] Scan complete in {elapsed:.1f}s")
+        print(f"[SLEEPER v3.1] Results: {len(candidates)} candidates from {len(symbols)} symbols")
         
         # Count by state
         by_state = {}
         for c in candidates:
             state = c.get('state', 'UNKNOWN')
             by_state[state] = by_state.get(state, 0) + 1
-        print(f"[SLEEPER v3] States: {by_state}")
+        print(f"[SLEEPER v3.1] States: {by_state}")
+        
+        # VC-Extreme summary
+        if vc_extreme_count > 0:
+            print(f"[SLEEPER v3.1] 🔥 VC-EXTREME candidates: {vc_extreme_count}")
         
         return candidates
     
@@ -226,21 +248,41 @@ class SleeperScannerV3:
         if data_issues >= 2:
             return None
         
-        # === 6. DETERMINE STATE ===
+        # === 6. VC-ADJUSTED SCORE ===
+        # For extreme compression (VC > 90%), use modified weights
+        # This prioritizes volatility compression over volume suppression
         
-        state = self._determine_state(
+        if vc_data['compression_pct'] >= 90:
+            # Modified formula: VC*0.5 + VS*0.15 + OI*0.25 + OB*0.10
+            adjusted_score = (
+                vc_data['score'] * 0.50 +
+                vs_data['score'] * 0.15 +
+                oi_data['score'] * 0.25 +
+                ob_data['score'] * 0.10
+            )
+            # Use higher of standard or adjusted score
+            total_score = max(total_score, adjusted_score)
+        
+        # === 7. DETERMINE STATE ===
+        
+        state, vc_extreme = self._determine_state(
             total_score,
             vc_data['compression_pct'],
             vs_data['suppression_pct'],
             vs_data['volume_spike'],
-            oi_data['oi_jump']
+            oi_data['oi_jump'],
+            # Additional params for accelerated paths
+            vc_score=vc_data['score'],
+            oi_score=oi_data['score'],
+            oi_growth_pct=oi_data['growth_pct'],
+            volume_ratio=vs_data['volume_ratio']
         )
         
-        # Minimum score filter
-        if state == 'IDLE' and total_score < self.MIN_SCORE_WATCHING:
+        # Minimum score filter (but keep VC-extreme candidates)
+        if state == 'IDLE' and total_score < self.MIN_SCORE_WATCHING and not vc_extreme:
             return None
         
-        # === 7. DETERMINE DIRECTION ===
+        # === 8. DETERMINE DIRECTION ===
         
         direction = self._determine_direction(
             funding_rate,
@@ -249,10 +291,14 @@ class SleeperScannerV3:
             indicators_1d.get('rsi_current', 50) if indicators_1d else 50
         )
         
-        # === 8. CALCULATE DYNAMIC HP ===
+        # === 9. CALCULATE DYNAMIC HP ===
         hp = self._calculate_initial_hp(total_score, state)
         
-        # === 9. BUILD RESULT ===
+        # Boost HP for VC-extreme candidates
+        if vc_extreme:
+            hp = min(self.HP_MAX, hp + 2)
+        
+        # === 10. BUILD RESULT ===
         
         return {
             'symbol': symbol,
@@ -274,6 +320,7 @@ class SleeperScannerV3:
             'state': state,
             'hp': hp,  # Dynamic HP based on score
             'direction': direction,
+            'vc_extreme_detected': vc_extreme,  # v3.1: VC-Extreme flag
             
             # 5-day metrics
             'bb_width_5d_start': vc_data['bb_width_start'],
@@ -616,30 +663,70 @@ class SleeperScannerV3:
         }
     
     def _determine_state(self, total_score: float, compression_pct: float,
-                         suppression_pct: float, volume_spike: bool, oi_jump: bool) -> str:
+                         suppression_pct: float, volume_spike: bool, oi_jump: bool,
+                         vc_score: float = 0, oi_score: float = 0, 
+                         oi_growth_pct: float = 0, volume_ratio: float = 1.0) -> Tuple[str, bool]:
         """
         Determine sleeper state based on metrics
-        """
-        # TRIGGERED: Volume spike + OI jump (breakout happening)
-        if volume_spike and oi_jump:
-            return SleeperState.TRIGGERED.value
         
-        # READY: High compression, ready for breakout
+        Returns: (state, vc_extreme_flag)
+        
+        TWO PATHS TO BUILDING:
+        1. Classic: Score > 55, VC > 50%, VS > 60%
+        2. Accelerated: VC > 90% + OI growth > 15% (skip VS requirement)
+        """
+        vc_extreme = False
+        
+        # === TRIGGERED ===
+        # Volume spike + OI jump (breakout happening)
+        if volume_spike and oi_jump:
+            return (SleeperState.TRIGGERED.value, vc_extreme)
+        
+        # === VC-EXTREME FLAG ===
+        # Extreme compression with low volume = imminent breakout
+        if compression_pct >= 95 and volume_ratio <= 1.2:
+            vc_extreme = True
+        
+        # === READY ===
+        # High compression, ready for breakout
         if (total_score >= self.MIN_SCORE_READY and 
             compression_pct >= self.COMPRESSION_READY):
-            return SleeperState.READY.value
+            return (SleeperState.READY.value, vc_extreme)
         
-        # BUILDING: Good compression, volume suppressed
+        # === ACCELERATED PATH TO READY ===
+        # VC > 95% + OI growth > 20% = big money entering during extreme squeeze
+        if compression_pct >= 95 and oi_growth_pct >= 20:
+            return (SleeperState.READY.value, True)
+        
+        # === BUILDING (Classic Path) ===
+        # Good compression + volume suppressed
         if (total_score >= self.MIN_SCORE_BUILDING and 
             compression_pct >= self.COMPRESSION_BUILDING and
             suppression_pct >= self.VOLUME_SUPPRESSION_MIN):
-            return SleeperState.BUILDING.value
+            return (SleeperState.BUILDING.value, vc_extreme)
         
-        # WATCHING: Basic conditions met
+        # === BUILDING (Accelerated Path) ===
+        # VC > 90% + OI growth > 15% = big money accumulating
+        # Skip VS requirement - volume hasn't dropped but smart money is entering
+        if compression_pct >= 90 and oi_growth_pct >= 15:
+            return (SleeperState.BUILDING.value, True)
+        
+        # === BUILDING (VC-Priority Path) ===
+        # VC > 90% + OI score > 70 = extreme squeeze with strong OI signal
+        if compression_pct >= 90 and oi_score >= 70:
+            return (SleeperState.BUILDING.value, True)
+        
+        # === WATCHING ===
+        # Basic conditions met
         if total_score >= self.MIN_SCORE_WATCHING:
-            return SleeperState.WATCHING.value
+            return (SleeperState.WATCHING.value, vc_extreme)
         
-        return SleeperState.IDLE.value
+        # === WATCHING (VC-Extreme Override) ===
+        # VC > 95% alone is worth watching
+        if compression_pct >= 95:
+            return (SleeperState.WATCHING.value, True)
+        
+        return (SleeperState.IDLE.value, vc_extreme)
     
     def _determine_direction(self, funding_rate: float, ob_imbalance: float,
                              rsi_4h: float, rsi_1d: float) -> str:
