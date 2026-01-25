@@ -108,19 +108,25 @@ class DBOperations:
                 except (TypeError, ValueError):
                     clean_data[key] = str(value)
         
+        # Get valid column names from model
+        valid_columns = {c.name for c in SleeperCandidate.__table__.columns}
+        
+        # Filter to only valid columns (prevents "invalid keyword argument" errors)
+        filtered_data = {k: v for k, v in clean_data.items() if k in valid_columns}
+        
         session = get_session()
         try:
             sleeper = session.query(SleeperCandidate).filter_by(
-                symbol=clean_data['symbol']
+                symbol=filtered_data['symbol']
             ).first()
             
             if sleeper:
-                for key, value in clean_data.items():
+                for key, value in filtered_data.items():
                     if hasattr(sleeper, key):
                         setattr(sleeper, key, value)
                 sleeper.checks_count += 1
             else:
-                sleeper = SleeperCandidate(**clean_data)
+                sleeper = SleeperCandidate(**filtered_data)
                 session.add(sleeper)
             
             session.commit()

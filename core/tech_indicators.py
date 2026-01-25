@@ -375,7 +375,7 @@ class TechIndicators:
         lows = np.array(lows, dtype=float)
         closes = np.array(closes, dtype=float)
         
-        if len(closes) < period + 1:
+        if len(closes) < period * 2:
             return {'adx': 25, 'plus_di': 50, 'minus_di': 50, 'is_trendless': False, 'adx_falling': False}
         
         # True Range
@@ -400,19 +400,22 @@ class TechIndicators:
             if down_move > up_move and down_move > 0:
                 minus_dm[i] = down_move
         
-        # Smoothed values using Wilder's smoothing
+        # Wilder's smoothing (first value = SMA, then smoothed)
         def wilder_smooth(values, period):
             result = np.zeros(len(values))
-            result[period] = np.sum(values[1:period+1])
+            # First value is SMA
+            result[period] = np.mean(values[1:period+1])
+            # Subsequent values use Wilder's formula
             for i in range(period + 1, len(values)):
                 result[i] = result[i-1] - (result[i-1] / period) + values[i]
             return result
         
+        # Smoothed TR, +DM, -DM
         atr = wilder_smooth(tr, period)
         smoothed_plus_dm = wilder_smooth(plus_dm, period)
         smoothed_minus_dm = wilder_smooth(minus_dm, period)
         
-        # +DI and -DI
+        # +DI and -DI (as percentages)
         plus_di = np.zeros(len(closes))
         minus_di = np.zeros(len(closes))
         
@@ -421,28 +424,38 @@ class TechIndicators:
                 plus_di[i] = (smoothed_plus_dm[i] / atr[i]) * 100
                 minus_di[i] = (smoothed_minus_dm[i] / atr[i]) * 100
         
-        # DX and ADX
+        # DX (Directional Index)
         dx = np.zeros(len(closes))
         for i in range(period, len(closes)):
             di_sum = plus_di[i] + minus_di[i]
             if di_sum > 0:
                 dx[i] = (abs(plus_di[i] - minus_di[i]) / di_sum) * 100
         
-        # ADX = smoothed DX
-        adx_values = wilder_smooth(dx, period)
+        # ADX = Smoothed DX (starts after 2*period)
+        adx_values = np.zeros(len(closes))
+        if len(dx) > period * 2:
+            adx_values[period*2] = np.mean(dx[period:period*2])
+            for i in range(period * 2 + 1, len(closes)):
+                adx_values[i] = (adx_values[i-1] * (period - 1) + dx[i]) / period
         
         current_adx = adx_values[-1] if len(adx_values) > 0 else 25
+        
+        # Clamp ADX to valid range (0-100)
+        current_adx = max(0, min(100, current_adx))
         
         # Check if ADX is falling (last 5 periods)
         adx_falling = False
         if len(adx_values) >= 5:
             recent_adx = adx_values[-5:]
-            adx_falling = recent_adx[-1] < recent_adx[0]
+            # Filter out zeros
+            recent_valid = [v for v in recent_adx if v > 0]
+            if len(recent_valid) >= 2:
+                adx_falling = recent_valid[-1] < recent_valid[0]
         
         return {
             'adx': float(current_adx),
-            'plus_di': float(plus_di[-1]) if len(plus_di) > 0 else 50,
-            'minus_di': float(minus_di[-1]) if len(minus_di) > 0 else 50,
+            'plus_di': float(min(100, plus_di[-1])) if len(plus_di) > 0 else 50,
+            'minus_di': float(min(100, minus_di[-1])) if len(minus_di) > 0 else 50,
             'is_trendless': current_adx < 20,
             'adx_falling': adx_falling,
             'adx_values': adx_values[-10:].tolist() if len(adx_values) >= 10 else []
