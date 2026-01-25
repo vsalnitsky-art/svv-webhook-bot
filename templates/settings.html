@@ -472,29 +472,105 @@
                     </button>
                     <span id="telegram-test-result" style="margin-left: 10px;"></span>
                 </div>
+            </div>
+            
+            <div class="settings-section">
+                <h2>🔔 Alert Types</h2>
+                <p class="section-desc">Choose which alerts to receive in Telegram</p>
                 
-                <h3>Notify on:</h3>
-                <div class="checkbox-grid">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="notify_sleeper_ready" name="notify_sleeper_ready" 
-                               {% if settings.notify_sleeper_ready | default(true) %}checked{% endif %}>
-                        Sleeper Ready
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="notify_ob_formed" name="notify_ob_formed" 
-                               {% if settings.notify_ob_formed | default(true) %}checked{% endif %}>
-                        Order Block Formed
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="notify_signal" name="notify_signal" 
-                               {% if settings.notify_signal | default(true) %}checked{% endif %}>
-                        Trade Signal
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="notify_trade_closed" name="notify_trade_closed" 
-                               {% if settings.notify_trade_closed | default(true) %}checked{% endif %}>
-                        Trade Closed
-                    </label>
+                <div class="alert-settings-grid">
+                    <!-- Sleeper Alerts -->
+                    <div class="alert-category">
+                        <h3>😴 Sleeper Scanner</h3>
+                        <div class="alert-items">
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_sleeper_ready" name="alert_sleeper_ready" 
+                                       {% if settings.alert_sleeper_ready | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">🔥</span>
+                                <span class="alert-name">Sleeper Ready</span>
+                                <span class="alert-desc">When sleeper reaches READY state</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Order Block Alerts -->
+                    <div class="alert-category">
+                        <h3>📦 Order Blocks</h3>
+                        <div class="alert-items">
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_ob_formed" name="alert_ob_formed" 
+                                       {% if settings.alert_ob_formed | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">📦</span>
+                                <span class="alert-name">OB Detected</span>
+                                <span class="alert-desc">When new Order Block is found</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Trading Alerts -->
+                    <div class="alert-category">
+                        <h3>💰 Trading</h3>
+                        <div class="alert-items">
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_signal" name="alert_signal" 
+                                       {% if settings.alert_signal | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">🎯</span>
+                                <span class="alert-name">Trade Signal</span>
+                                <span class="alert-desc">New trading signal generated</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_trade_open" name="alert_trade_open" 
+                                       {% if settings.alert_trade_open | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">📈</span>
+                                <span class="alert-name">Trade Opened</span>
+                                <span class="alert-desc">Position opened (SEMI_AUTO/AUTO)</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_trade_close" name="alert_trade_close" 
+                                       {% if settings.alert_trade_close | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">📊</span>
+                                <span class="alert-name">Trade Closed</span>
+                                <span class="alert-desc">Position closed (TP/SL hit)</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Monitoring Alerts -->
+                    <div class="alert-category">
+                        <h3>👀 Monitoring</h3>
+                        <div class="alert-items">
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_intensive" name="alert_intensive" 
+                                       {% if settings.alert_intensive | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">⚡</span>
+                                <span class="alert-name">Intensive Alerts</span>
+                                <span class="alert-desc">Volume spikes on READY sleepers</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_daily_summary" name="alert_daily_summary" 
+                                       {% if settings.alert_daily_summary | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">📋</span>
+                                <span class="alert-name">Daily Summary</span>
+                                <span class="alert-desc">Daily report at 20:00 UTC</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_system" name="alert_system" 
+                                       {% if settings.alert_system | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">⚙️</span>
+                                <span class="alert-name">System Messages</span>
+                                <span class="alert-desc">Bot start/stop, errors</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="quick-actions" style="margin-top: 20px; display: flex; gap: 10px;">
+                    <button type="button" class="btn btn-secondary" onclick="toggleAllAlerts(true)">
+                        ✅ Enable All
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="toggleAllAlerts(false)">
+                        ❌ Disable All
+                    </button>
                 </div>
             </div>
         </div>
@@ -654,6 +730,65 @@
 .checkbox-label input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
 
 .checkbox-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+/* Alert Settings Grid */
+.alert-settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+}
+@media (max-width: 768px) {
+    .alert-settings-grid { grid-template-columns: 1fr; }
+}
+.alert-category {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 15px;
+}
+.alert-category h3 {
+    margin: 0 0 15px 0;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: 10px;
+}
+.alert-items {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.alert-toggle {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    grid-template-rows: auto auto;
+    gap: 5px 10px;
+    align-items: center;
+    padding: 10px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+.alert-toggle:hover {
+    background: rgba(255,255,255,0.08);
+}
+.alert-toggle input[type="checkbox"] {
+    grid-row: span 2;
+    width: 20px;
+    height: 20px;
+}
+.alert-emoji {
+    font-size: 1.2rem;
+    grid-row: span 2;
+}
+.alert-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.alert-desc {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    grid-column: 3;
+}
 
 .weight-total {
     margin-top: 10px;
@@ -1133,6 +1268,29 @@ async function resetPaperBalance() {
     } catch (err) {
         alert('❌ Error: ' + err.message);
     }
+}
+
+// Toggle all alert checkboxes
+function toggleAllAlerts(enable) {
+    const alertCheckboxes = [
+        'alert_sleeper_ready',
+        'alert_ob_formed', 
+        'alert_signal',
+        'alert_trade_open',
+        'alert_trade_close',
+        'alert_intensive',
+        'alert_daily_summary',
+        'alert_system'
+    ];
+    
+    alertCheckboxes.forEach(id => {
+        const checkbox = document.getElementById(id);
+        if (checkbox) {
+            checkbox.checked = enable;
+        }
+    });
+    
+    showToast(enable ? '✅ All alerts enabled' : '❌ All alerts disabled');
 }
 
 function showToast(msg) {

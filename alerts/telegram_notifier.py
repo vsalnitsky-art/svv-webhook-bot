@@ -1,6 +1,6 @@
 """
 Telegram Notifier - сповіщення про сигнали та події
-v4.2.2: Switched to synchronous requests for reliability
+v5.0: Added per-alert-type toggle settings
 """
 
 import os
@@ -25,6 +25,22 @@ class NotificationType(Enum):
     URGENT_ALERT = "urgent_alert"
     HIGH_ALERT = "high_alert"
     VOLUME_SPIKE = "volume_spike"
+    # v5.0 - Additional types
+    INTENSIVE_ALERT = "intensive_alert"
+    DAILY_SUMMARY = "daily_summary"
+
+
+# Default alert settings (all enabled by default)
+DEFAULT_ALERT_SETTINGS = {
+    'alert_sleeper_ready': True,      # Sleeper став READY
+    'alert_ob_formed': True,          # Order Block виявлено
+    'alert_signal': True,             # Торговий сигнал
+    'alert_trade_open': True,         # Позиція відкрита
+    'alert_trade_close': True,        # Позиція закрита
+    'alert_intensive': True,          # Intensive monitoring (volume spikes)
+    'alert_daily_summary': True,      # Денний звіт
+    'alert_system': True,             # Системні повідомлення
+}
 
 
 class TelegramNotifier:
@@ -32,6 +48,7 @@ class TelegramNotifier:
     
     def __init__(self):
         self._load_config()
+        self._alert_settings = DEFAULT_ALERT_SETTINGS.copy()
         
         # Emoji для різних типів
         self.emoji = {
@@ -48,7 +65,28 @@ class TelegramNotifier:
             NotificationType.URGENT_ALERT: "⚡⚡⚡",
             NotificationType.HIGH_ALERT: "🚀🔥",
             NotificationType.VOLUME_SPIKE: "📊💥",
+            NotificationType.INTENSIVE_ALERT: "👀📊",
+            NotificationType.DAILY_SUMMARY: "📋",
         }
+    
+    def load_alert_settings(self, db):
+        """Load alert settings from database"""
+        for key in DEFAULT_ALERT_SETTINGS:
+            value = db.get_setting(key, DEFAULT_ALERT_SETTINGS[key])
+            # Handle string 'true'/'false' from DB
+            if isinstance(value, str):
+                self._alert_settings[key] = value.lower() == 'true'
+            else:
+                self._alert_settings[key] = bool(value)
+    
+    def is_alert_enabled(self, alert_type: str) -> bool:
+        """Check if specific alert type is enabled"""
+        setting_key = f'alert_{alert_type}'
+        return self._alert_settings.get(setting_key, True)
+    
+    def get_alert_settings(self) -> Dict[str, bool]:
+        """Get all alert settings"""
+        return self._alert_settings.copy()
     
     def _load_config(self):
         """Load/reload configuration from environment"""
@@ -106,6 +144,9 @@ class TelegramNotifier:
     
     def notify_signal(self, signal: Dict[str, Any]) -> bool:
         """Сповіщення про новий сигнал"""
+        if not self.is_alert_enabled('signal'):
+            return False
+        
         emoji = self.emoji[NotificationType.SIGNAL]
         direction_emoji = "🟢" if signal.get('direction') == 'LONG' else "🔴"
         
@@ -132,6 +173,9 @@ class TelegramNotifier:
     
     def notify_trade_open(self, trade: Dict[str, Any]) -> bool:
         """Сповіщення про відкриття позиції"""
+        if not self.is_alert_enabled('trade_open'):
+            return False
+        
         emoji = self.emoji[NotificationType.TRADE_OPEN]
         direction_emoji = "🟢" if trade.get('direction') == 'LONG' else "🔴"
         mode = "📝 PAPER" if trade.get('is_paper') else "💵 LIVE"
@@ -153,6 +197,9 @@ class TelegramNotifier:
     
     def notify_trade_close(self, trade: Dict[str, Any]) -> bool:
         """Сповіщення про закриття позиції"""
+        if not self.is_alert_enabled('trade_close'):
+            return False
+        
         pnl = trade.get('pnl_usdt', 0)
         pnl_pct = trade.get('pnl_percent', 0)
         
@@ -180,6 +227,9 @@ class TelegramNotifier:
     
     def notify_sleeper_ready(self, sleeper: Dict[str, Any]) -> bool:
         """Сповіщення про готовий Sleeper - v5 з phase/exhaustion інформацією"""
+        if not self.is_alert_enabled('sleeper_ready'):
+            return False
+        
         emoji = self.emoji[NotificationType.SLEEPER_READY]
         direction = sleeper.get('direction', 'NEUTRAL')
         direction_emoji = "🟢" if direction == 'LONG' else ("🔴" if direction == 'SHORT' else "⚪")
@@ -240,6 +290,9 @@ class TelegramNotifier:
     
     def notify_ob_formed(self, ob: Dict[str, Any]) -> bool:
         """Сповіщення про новий Order Block"""
+        if not self.is_alert_enabled('ob_formed'):
+            return False
+        
         emoji = self.emoji[NotificationType.OB_FORMED]
         ob_type = ob.get('ob_type', 'UNKNOWN')
         type_emoji = "🟢" if ob_type == 'BULLISH' else "🔴"
@@ -260,6 +313,9 @@ class TelegramNotifier:
     
     def notify_system(self, message: str, level: str = "INFO") -> bool:
         """Системне сповіщення"""
+        if not self.is_alert_enabled('system'):
+            return False
+        
         emoji = self.emoji[NotificationType.SYSTEM]
         if level == "ERROR":
             emoji = self.emoji[NotificationType.ERROR]
@@ -275,6 +331,9 @@ class TelegramNotifier:
     
     def notify_daily_summary(self, stats: Dict[str, Any]) -> bool:
         """Денний звіт"""
+        if not self.is_alert_enabled('daily_summary'):
+            return False
+        
         pnl = stats.get('total_pnl', 0)
         pnl_emoji = "📈" if pnl >= 0 else "📉"
         

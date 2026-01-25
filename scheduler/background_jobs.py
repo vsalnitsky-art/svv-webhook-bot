@@ -36,6 +36,9 @@ class BackgroundJobs:
         self.db = get_db()
         self.notifier = get_notifier()
         
+        # Load alert settings from DB
+        self.notifier.load_alert_settings(self.db)
+        
         # Use v3 scanner by default (5-day strategy)
         self.use_v3_scanner = True
         
@@ -585,7 +588,9 @@ class BackgroundJobs:
 ⏱ {datetime.now().strftime('%H:%M:%S UTC')}
 """
         
-        self.notifier.send_sync(message.strip())
+        # Check if intensive alerts are enabled
+        if self.notifier.is_alert_enabled('intensive'):
+            self.notifier.send_sync(message.strip())
     
     # ===== Manual Triggers =====
     

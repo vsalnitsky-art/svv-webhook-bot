@@ -313,6 +313,13 @@ def register_api_routes(app):
             for key, value in data.items():
                 db.set_setting(key, value)
             
+            # Reload alert settings in notifier if any alert settings were changed
+            alert_keys = [k for k in data.keys() if k.startswith('alert_')]
+            if alert_keys:
+                from alerts.telegram_notifier import get_notifier
+                notifier = get_notifier()
+                notifier.load_alert_settings(db)
+            
             db.log_event(
                 message=f'Settings updated: {len(data)} parameters',
                 level='INFO',
