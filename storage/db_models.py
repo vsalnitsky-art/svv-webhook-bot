@@ -401,7 +401,7 @@ def init_db():
 
 
 def migrate_sleeper_candidates_v3():
-    """Add new columns for 5-Day Strategy v3.0"""
+    """Add new columns for 5-Day Strategy v3.0 and Direction Engine v4.1"""
     from sqlalchemy import text
     
     new_columns = [
@@ -436,6 +436,25 @@ def migrate_sleeper_candidates_v3():
         ("ready_since", "TIMESTAMP"),
         # Updated at alias
         ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        
+        # === v4.1 Direction Engine ===
+        ("direction_score", "FLOAT DEFAULT 0"),
+        ("direction_confidence", "VARCHAR(10) DEFAULT 'LOW'"),
+        ("direction_htf_bias", "FLOAT DEFAULT 0"),
+        ("direction_ltf_bias", "FLOAT DEFAULT 0"),
+        ("direction_deriv_bias", "FLOAT DEFAULT 0"),
+        
+        # === v4.1 ADX data ===
+        ("adx_value", "FLOAT"),
+        ("adx_trendless", "BOOLEAN DEFAULT FALSE"),
+        ("adx_bonus", "INTEGER DEFAULT 0"),
+        
+        # === v4.1 POC data ===
+        ("poc_price", "FLOAT"),
+        ("poc_distance_pct", "FLOAT"),
+        ("poc_strength", "FLOAT"),
+        ("price_at_poc", "BOOLEAN DEFAULT FALSE"),
+        ("poc_bonus", "INTEGER DEFAULT 0"),
     ]
     
     table_name = f"{TABLE_PREFIX}sleeper_candidates"
