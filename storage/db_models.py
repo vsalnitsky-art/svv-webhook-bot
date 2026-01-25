@@ -43,9 +43,29 @@ class SleeperCandidate(Base):
     # === Direction Engine v4.1 ===
     direction_score = Column(Float, default=0)           # -1.0 to +1.0
     direction_confidence = Column(String(10), default='LOW')  # HIGH/MEDIUM/LOW
-    direction_htf_bias = Column(Float, default=0)        # HTF layer result
-    direction_ltf_bias = Column(Float, default=0)        # LTF layer result
-    direction_deriv_bias = Column(Float, default=0)      # Derivatives layer result
+    direction_htf_bias = Column(Float, default=0)        # HTF layer result (deprecated in v5)
+    direction_ltf_bias = Column(Float, default=0)        # LTF layer result (deprecated in v5)
+    direction_deriv_bias = Column(Float, default=0)      # Derivatives layer result (deprecated in v5)
+    
+    # === Direction Engine v5 - Phase & Exhaustion ===
+    market_phase = Column(String(20), default='UNKNOWN')       # ACCUMULATION/MARKUP/DISTRIBUTION/MARKDOWN
+    phase_maturity = Column(String(20), default='MIDDLE')      # EARLY/MIDDLE/LATE/EXHAUSTED
+    is_reversal_setup = Column(Boolean, default=False)         # Reversal detected
+    exhaustion_score = Column(Float, default=0)                # 0-1 exhaustion level
+    direction_reason = Column(String(200))                     # Primary reason for direction
+    
+    # === v5: Price Structure ===
+    price_change_5d = Column(Float)          # 5-day price change %
+    price_change_20d = Column(Float)         # 20-day price change %
+    distance_from_high = Column(Float)       # % distance from recent high
+    distance_from_low = Column(Float)        # % distance from recent low
+    support_level = Column(Float)            # Calculated support price
+    resistance_level = Column(Float)         # Calculated resistance price
+    
+    # === v5: Exhaustion Signals ===
+    rsi_divergence = Column(String(10))      # bullish/bearish/none
+    at_support = Column(Boolean, default=False)     # Price at support
+    at_resistance = Column(Boolean, default=False)  # Price at resistance
     
     # === v4 ADX data ===
     adx_value = Column(Float)                # Current ADX (0-100)
@@ -131,6 +151,23 @@ class SleeperCandidate(Base):
             'direction_htf_bias': self.direction_htf_bias,
             'direction_ltf_bias': self.direction_ltf_bias,
             'direction_deriv_bias': self.direction_deriv_bias,
+            # v5: Phase & Exhaustion
+            'market_phase': self.market_phase,
+            'phase_maturity': self.phase_maturity,
+            'is_reversal_setup': self.is_reversal_setup,
+            'exhaustion_score': self.exhaustion_score,
+            'direction_reason': self.direction_reason,
+            # v5: Price Structure
+            'price_change_5d': self.price_change_5d,
+            'price_change_20d': self.price_change_20d,
+            'distance_from_high': self.distance_from_high,
+            'distance_from_low': self.distance_from_low,
+            'support_level': self.support_level,
+            'resistance_level': self.resistance_level,
+            # v5: Exhaustion Signals
+            'rsi_divergence': self.rsi_divergence,
+            'at_support': self.at_support,
+            'at_resistance': self.at_resistance,
             # v4: ADX data
             'adx_value': self.adx_value,
             'adx_trendless': self.adx_trendless,

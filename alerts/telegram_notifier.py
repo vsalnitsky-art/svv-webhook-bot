@@ -179,24 +179,60 @@ class TelegramNotifier:
         return self.send_sync(text.strip())
     
     def notify_sleeper_ready(self, sleeper: Dict[str, Any]) -> bool:
-        """Сповіщення про готовий Sleeper"""
+        """Сповіщення про готовий Sleeper - v5 з phase/exhaustion інформацією"""
         emoji = self.emoji[NotificationType.SLEEPER_READY]
-        direction_emoji = "🟢" if sleeper.get('direction') == 'LONG' else "🔴"
+        direction = sleeper.get('direction', 'NEUTRAL')
+        direction_emoji = "🟢" if direction == 'LONG' else ("🔴" if direction == 'SHORT' else "⚪")
         
+        # v5: Phase and reversal info
+        market_phase = sleeper.get('market_phase', 'UNKNOWN')
+        phase_maturity = sleeper.get('phase_maturity', 'MIDDLE')
+        is_reversal = sleeper.get('is_reversal_setup', False)
+        exhaustion_score = sleeper.get('exhaustion_score', 0)
+        
+        # Phase emoji
+        phase_emoji = {
+            'ACCUMULATION': '📥',  # Buying at bottom
+            'MARKUP': '📈',        # Uptrend
+            'DISTRIBUTION': '📤', # Selling at top
+            'MARKDOWN': '📉',      # Downtrend
+            'UNKNOWN': '❓'
+        }.get(market_phase, '❓')
+        
+        # Maturity indicator
+        maturity_indicator = {
+            'EARLY': '🌱',
+            'MIDDLE': '🌿',
+            'LATE': '🍂',
+            'EXHAUSTED': '💀'
+        }.get(phase_maturity, '❓')
+        
+        # Reversal badge
+        reversal_badge = "🔄 REVERSAL SETUP!" if is_reversal else ""
+        
+        # Build message
         text = f"""
 {emoji} <b>SLEEPER ГОТОВИЙ!</b>
+{reversal_badge}
 
 {direction_emoji} <b>{sleeper.get('symbol')}</b>
 
 📊 <b>Scores:</b>
 • Total: {sleeper.get('total_score', 0):.1f}/100
-• Fuel: {sleeper.get('fuel_score', 0):.1f}
-• Volatility: {sleeper.get('volatility_score', 0):.1f}
-• Price: {sleeper.get('price_score', 0):.1f}
-• Liquidity: {sleeper.get('liquidity_score', 0):.1f}
+• Direction Score: {sleeper.get('direction_score', 0):+.2f}
+• Confidence: {sleeper.get('direction_confidence', 'LOW')}
+
+{phase_emoji} <b>Phase:</b> {market_phase} {maturity_indicator}
+• Maturity: {phase_maturity}
+• Exhaustion: {exhaustion_score*100:.0f}%
+
+📍 <b>Position:</b>
+• From High: -{sleeper.get('distance_from_high', 0):.1f}%
+• From Low: +{sleeper.get('distance_from_low', 0):.1f}%
 
 ❤️ HP: {sleeper.get('hp', 5)}/10
-🎯 Direction: {sleeper.get('direction', 'NEUTRAL')}
+🎯 Direction: <b>{direction}</b>
+💡 {sleeper.get('direction_reason', 'No specific reason')[:50]}
 
 ⏰ {datetime.now().strftime('%H:%M:%S')}
 """

@@ -1,51 +1,41 @@
 """
-Sleeper Scanner v4.1.2 - Professional 5-Day Strategy with Direction Engine
+Sleeper Scanner v5.0 - Professional Strategy with Phase-Aware Direction Engine
 
-ВЕРСІЯ v4.1.2 ЗМІНИ:
-- Знижено thresholds для раніших сигналів:
-  - COMPRESSION_BUILDING: 50% → 35%
-  - COMPRESSION_READY: 70% → 50%
-  - VOLUME_SUPPRESSION_MIN: 60% → 40%
-- Додано Direction-based paths:
-  - BUILDING: Score >= 65 + Direction != NEUTRAL + confidence HIGH/MEDIUM
-  - READY: Score >= 75 + Direction != NEUTRAL + confidence HIGH + score >= 0.5
+ВЕРСІЯ v5.0 КРИТИЧНІ ЗМІНИ:
+- Direction Engine v5 з exhaustion detection
+- Phase-aware state machine (не шортимо на дні, не лонгаємо на топі!)
+- Reversal setup detection (розвороти на S/R рівнях)
+- Wyckoff-inspired market phases (Accumulation/Markup/Distribution/Markdown)
 
-DATA REQUIREMENTS (v4.1.1):
-- 4H klines: 60 candles (10 days) - for EMA20 + direction analysis
-- 1D klines: 60 candles (2 months) - for EMA50 structural analysis
+КЛЮЧОВА ЛОГІКА v5:
+- На ДНІ (LATE/EXHAUSTED MARKDOWN) → шукаємо LONG, блокуємо SHORT
+- На ТОПІ (LATE/EXHAUSTED MARKUP) → шукаємо SHORT, блокуємо LONG
+- В середині тренду → торгуємо з трендом
+- При вичерпанні тренду → шукаємо розворот
+
+DIRECTION ENGINE v5 КОМПОНЕНТИ:
+1. Phase Detection - визначає фазу ринку за Вайкоффом
+2. Exhaustion Detection - бачить коли тренд закінчується
+3. Reversal Signals - RSI divergence + S/R levels + volume exhaustion
+4. Support/Resistance - автоматичний розрахунок рівнів
+
+STATE MACHINE v5:
+- REVERSAL SETUP → автоматично READY (високий пріоритет)
+- EXHAUSTED phase + direction → READY для розвороту
+- LATE phase → блокуємо сигнали В НАПРЯМКУ тренду
+- EARLY/MIDDLE phase → торгуємо з трендом
+
+PATHS TO READY (v5):
+1. Reversal Setup: is_reversal_setup = True + exhaustion > 50%
+2. Exhausted Phase: phase_maturity = EXHAUSTED + clear direction
+3. Classic: Score > 65, VC > 50%
+4. Direction-based: Score > 75 + HIGH confidence
+
+DATA REQUIREMENTS:
+- HTF (1D/1H): 100 candles - for phase/structure analysis
+- MTF (4H/15m): 100 candles - for momentum/exhaustion
 - Cache TTL: 3 minutes (reduced API calls)
 - Batch delay: 5 seconds (rate limit protection)
-
-MAJOR FEATURES:
-- v4.0: ADX filter, POC analysis, BTC correlation, Liquidity filter
-- v4.1: Professional 3-Layer Direction Engine
-  - HTF Structural Bias (50%): 1D EMA50 structure + 4H EMA20 slope
-  - LTF Momentum Shift (30%): RSI divergence + BB position
-  - Derivatives Positioning (20%): OI + Funding + Price action
-- v4.1.2: Relaxed thresholds + Direction-based state transitions
-
-PATHS TO BUILDING (v4.1.2):
-1. Classic: Score > 55, VC > 35%, VS > 40%
-2. Accelerated: VC > 90% + OI growth > 15%
-3. VC-Priority: VC > 90% + OI score > 70
-4. Direction-based: Score > 65 + clear direction (HIGH/MEDIUM confidence)
-
-PATHS TO READY (v4.1.2):
-1. Classic: Score > 65, VC > 50%
-2. Accelerated: VC > 95% + OI growth > 20%
-3. Direction-based: Score > 75 + HIGH confidence direction
-
-Система оцінки:
-- VOLATILITY_COMPRESSION: 40% - стиснення волатильності за 5 днів
-- VOLUME_SUPPRESSION: 25% - пригнічення об'ємів
-- OI_GROWTH: 20% - зростання Open Interest
-- ORDER_BOOK_IMBALANCE: 15% - дисбаланс стакану
-
-Флаги:
-- VC_EXTREME: VC > 95% при VOL < 1.2x (imminent breakout)
-- TRENDLESS: ADX < 20 (true sleeper)
-- POC: Price at Point of Control
-- HIGH_CONF: High confidence direction
 """
 
 import time
@@ -58,7 +48,10 @@ from config.bot_settings import SleeperState
 from core.market_data import get_fetcher
 from core.tech_indicators import get_indicators
 from storage import get_db
-from detection.direction_engine import get_direction_engine, DirectionResult
+from detection.direction_engine_v5 import (
+    get_direction_engine_v5, DirectionResultV5, 
+    Direction, MarketPhase, PhaseMaturity
+)
 
 
 class SleeperScannerV3:
@@ -124,7 +117,10 @@ class SleeperScannerV3:
         self.fetcher = get_fetcher()
         self.indicators = get_indicators()
         self.db = get_db()
-        self.direction_engine = get_direction_engine()  # v4.1: Professional direction model
+        
+        # Get trading style from settings
+        self.trading_style = self.db.get_setting('trading_mode', 'SWING')
+        self.direction_engine = get_direction_engine_v5(self.trading_style)  # v5: Professional with exhaustion detection
         
         # Scan settings from DB (reduced defaults for Binance rate limit protection)
         self.max_symbols = min(self.db.get_setting('sleeper_max_symbols', 30), 50)  # Max 50
@@ -448,31 +444,33 @@ class SleeperScannerV3:
             # Use higher of standard or adjusted score
             total_score = max(total_score, adjusted_score)
         
-        # === 7. DETERMINE DIRECTION (v4.1.2: moved before state) ===
+        # === 7. DETERMINE DIRECTION (v5: Professional with exhaustion detection) ===
         
-        # Calculate price change for derivatives bias
-        price_change_4h = 0
-        if len(klines_4h) >= 2:
-            price_change_4h = (klines_4h[-1]['close'] - klines_4h[-2]['close']) / klines_4h[-2]['close'] * 100
-        
-        # Use existing klines (no extra API calls!)
-        # klines_4h: 60 candles, klines_1d: 60 candles - enough for EMA50 analysis
+        # v5 Direction Engine uses HTF and MTF data
+        # For SWING: HTF=1d, MTF=4h - we have both!
+        # For SCALPING: HTF=1h, MTF=15m - use 4h as HTF approximation
         direction_result = self.direction_engine.resolve(
             symbol=symbol,
-            klines_4h=klines_4h,      # Reuse existing data (60 candles)
-            klines_1d=klines_1d,      # Reuse existing data (60 candles)
+            klines_htf=klines_1d,      # HTF data (1D for SWING, approximation for SCALPING)
+            klines_mtf=klines_4h,      # MTF data (4H)
             oi_change=oi_data['growth_pct'],
-            funding_rate=funding_rate,
-            price_change_4h=price_change_4h
+            funding_rate=funding_rate
         )
         
         direction = direction_result.direction.value  # LONG, SHORT, or NEUTRAL
         direction_score = direction_result.score
         direction_confidence = direction_result.confidence
         
-        # === 8. DETERMINE STATE (v4.1.2: with direction-based paths) ===
+        # v5: Extract phase and exhaustion info
+        market_phase = direction_result.market_phase.value
+        phase_maturity = direction_result.phase_maturity.value
+        is_reversal_setup = direction_result.is_reversal_setup
+        exhaustion_score = direction_result.exhaustion.exhaustion_score
+        primary_reason = direction_result.primary_reason
         
-        state, vc_extreme = self._determine_state(
+        # === 8. DETERMINE STATE (v5: with phase-aware logic) ===
+        
+        state, vc_extreme = self._determine_state_v5(
             total_score,
             vc_data['compression_pct'],
             vs_data['suppression_pct'],
@@ -483,10 +481,15 @@ class SleeperScannerV3:
             oi_score=oi_data['score'],
             oi_growth_pct=oi_data['growth_pct'],
             volume_ratio=vs_data['volume_ratio'],
-            # Direction params (v4.1.2)
+            # Direction params
             direction=direction,
             direction_score=direction_score,
-            direction_confidence=direction_confidence
+            direction_confidence=direction_confidence,
+            # v5: Phase params
+            market_phase=market_phase,
+            phase_maturity=phase_maturity,
+            is_reversal_setup=is_reversal_setup,
+            exhaustion_score=exhaustion_score
         )
         
         # Minimum score filter (but keep VC-extreme candidates)
@@ -508,9 +511,13 @@ class SleeperScannerV3:
         if price_at_poc and poc_strength >= self.POC_STRENGTH_MIN:
             hp = min(self.HP_MAX, hp + 1)
         
-        # Boost HP for high direction confidence (v4.1)
+        # Boost HP for high direction confidence (v5)
         if direction_confidence == "HIGH" and direction != "NEUTRAL":
             hp = min(self.HP_MAX, hp + 1)
+        
+        # Boost HP for reversal setup (v5)
+        if is_reversal_setup:
+            hp = min(self.HP_MAX, hp + 2)
         
         # === 10. BUILD RESULT ===
         
@@ -536,13 +543,27 @@ class SleeperScannerV3:
             'direction': direction,
             'vc_extreme_detected': vc_extreme,  # v3.1: VC-Extreme flag
             
-            # v4.1: Direction Engine data
+            # v5: Direction Engine data
             'direction_score': round(direction_score, 3),
             'direction_confidence': direction_confidence,
-            'direction_htf_bias': direction_result.htf_bias,
-            'direction_ltf_bias': direction_result.ltf_bias,
-            'direction_deriv_bias': direction_result.deriv_bias,
-            'direction_reason': f"HTF:{direction_result.htf_reason[:30]}... | Deriv:{direction_result.deriv_reason[:30]}...",
+            'market_phase': market_phase,
+            'phase_maturity': phase_maturity,
+            'is_reversal_setup': is_reversal_setup,
+            'exhaustion_score': round(exhaustion_score, 2),
+            'direction_reason': primary_reason,
+            
+            # v5: Structure data
+            'price_change_5d': round(direction_result.structure.price_change_5d, 2),
+            'price_change_20d': round(direction_result.structure.price_change_20d, 2),
+            'distance_from_high': round(direction_result.structure.distance_from_high, 1),
+            'distance_from_low': round(direction_result.structure.distance_from_low, 1),
+            'support_level': round(direction_result.structure.support_level, 6),
+            'resistance_level': round(direction_result.structure.resistance_level, 6),
+            
+            # v5: Exhaustion signals
+            'rsi_divergence': direction_result.exhaustion.rsi_divergence,
+            'at_support': direction_result.exhaustion.at_support,
+            'at_resistance': direction_result.exhaustion.at_resistance,
             
             # v4: ADX data
             'adx_value': round(adx_value, 1),
@@ -921,6 +942,156 @@ class SleeperScannerV3:
             'ask_volume': round(ask_volume, 2),
             'imbalance': round(imbalance, 2),
         }
+    
+    def _determine_state_v5(self, total_score: float, compression_pct: float,
+                           suppression_pct: float, volume_spike: bool, oi_jump: bool,
+                           vc_score: float = 0, oi_score: float = 0, 
+                           oi_growth_pct: float = 0, volume_ratio: float = 1.0,
+                           direction: str = 'NEUTRAL', direction_score: float = 0,
+                           direction_confidence: str = 'LOW',
+                           market_phase: str = 'UNKNOWN', phase_maturity: str = 'MIDDLE',
+                           is_reversal_setup: bool = False,
+                           exhaustion_score: float = 0.0) -> Tuple[str, bool]:
+        """
+        Determine sleeper state based on metrics - v5 with phase awareness
+        
+        Returns: (state, vc_extreme_flag)
+        
+        v5 КРИТИЧНА ЛОГІКА:
+        - EXHAUSTED фаза + at support/resistance → READY для розвороту
+        - LATE фаза → НЕ торгуємо в напрямку тренду!
+        - REVERSAL SETUP → високий пріоритет
+        
+        PATHS TO READY (v5):
+        1. Reversal Setup: is_reversal_setup = True
+        2. Exhausted + Support/Resistance: phase_maturity = EXHAUSTED
+        3. Classic: Score > 65, VC > 50%
+        4. Accelerated: VC > 95% + OI growth > 20%
+        
+        PATHS TO BUILDING (v5):
+        1. Phase-aware: Early/Middle phase + clear direction
+        2. Classic: Score > 55, VC > 35%, VS > 40%
+        3. Accelerated: VC > 90% + OI growth > 15%
+        
+        BLOCKED PATHS (v5):
+        - LATE phase downtrend → NO SHORT
+        - LATE phase uptrend → NO LONG
+        """
+        vc_extreme = False
+        
+        # === VC-EXTREME FLAG ===
+        if compression_pct >= 95 and volume_ratio <= 1.2:
+            vc_extreme = True
+        
+        # === TRIGGERED ===
+        # Volume spike + OI jump (breakout happening)
+        if volume_spike and oi_jump:
+            return (SleeperState.TRIGGERED.value, vc_extreme)
+        
+        # ============================================
+        # v5: REVERSAL PRIORITY PATH
+        # ============================================
+        
+        # READY якщо reversal setup виявлено
+        if is_reversal_setup and exhaustion_score >= 0.5:
+            return (SleeperState.READY.value, vc_extreme)
+        
+        # READY якщо фаза вичерпана (exhausted) і є чіткий напрямок
+        if phase_maturity == 'EXHAUSTED' and direction != 'NEUTRAL':
+            if abs(direction_score) >= 0.4:
+                return (SleeperState.READY.value, vc_extreme)
+        
+        # ============================================
+        # v5: PHASE-AWARE BLOCKING
+        # Не даємо сигнали в кінці тренду в напрямку тренду!
+        # ============================================
+        
+        phase_blocked = False
+        
+        if phase_maturity == 'LATE':
+            # LATE MARKDOWN → блокуємо SHORT (тренд закінчується)
+            if market_phase == 'MARKDOWN' and direction == 'SHORT':
+                phase_blocked = True
+            # LATE MARKUP → блокуємо LONG (тренд закінчується)
+            elif market_phase == 'MARKUP' and direction == 'LONG':
+                phase_blocked = True
+        
+        if phase_maturity == 'EXHAUSTED':
+            # EXHAUSTED фаза → не даємо сигнали з трендом, тільки проти
+            if market_phase == 'MARKDOWN' and direction == 'SHORT':
+                phase_blocked = True
+            elif market_phase == 'MARKUP' and direction == 'LONG':
+                phase_blocked = True
+        
+        # Якщо фаза заблокувала напрямок, повертаємо WATCHING замість READY/BUILDING
+        if phase_blocked:
+            if total_score >= self.MIN_SCORE_WATCHING:
+                return (SleeperState.WATCHING.value, vc_extreme)
+            return (SleeperState.IDLE.value, vc_extreme)
+        
+        # ============================================
+        # CLASSIC PATHS (with phase awareness)
+        # ============================================
+        
+        # === READY (Classic) ===
+        if (total_score >= self.MIN_SCORE_READY and 
+            compression_pct >= self.COMPRESSION_READY):
+            return (SleeperState.READY.value, vc_extreme)
+        
+        # === READY (Accelerated) ===
+        if compression_pct >= 95 and oi_growth_pct >= 20:
+            return (SleeperState.READY.value, True)
+        
+        # === READY (High Confidence Direction) ===
+        if (total_score >= 75 and 
+            direction != 'NEUTRAL' and 
+            direction_confidence == 'HIGH' and
+            abs(direction_score) >= 0.5):
+            return (SleeperState.READY.value, vc_extreme)
+        
+        # === BUILDING (Phase-aware) ===
+        # В EARLY або MIDDLE фазі з чітким напрямком
+        if (phase_maturity in ['EARLY', 'MIDDLE'] and
+            direction != 'NEUTRAL' and
+            direction_confidence in ['HIGH', 'MEDIUM'] and
+            total_score >= 60):
+            return (SleeperState.BUILDING.value, vc_extreme)
+        
+        # === BUILDING (Classic) ===
+        if (total_score >= self.MIN_SCORE_BUILDING and 
+            compression_pct >= self.COMPRESSION_BUILDING and
+            suppression_pct >= self.VOLUME_SUPPRESSION_MIN):
+            return (SleeperState.BUILDING.value, vc_extreme)
+        
+        # === BUILDING (Accelerated) ===
+        if compression_pct >= 90 and oi_growth_pct >= 15:
+            return (SleeperState.BUILDING.value, True)
+        
+        # === BUILDING (VC-Priority) ===
+        if compression_pct >= 90 and oi_score >= 70:
+            return (SleeperState.BUILDING.value, True)
+        
+        # === BUILDING (Direction-based) ===
+        if (total_score >= 65 and 
+            direction != 'NEUTRAL' and 
+            direction_confidence in ['HIGH', 'MEDIUM'] and
+            abs(direction_score) >= 0.4):
+            return (SleeperState.BUILDING.value, vc_extreme)
+        
+        # === WATCHING ===
+        if total_score >= self.MIN_SCORE_WATCHING:
+            return (SleeperState.WATCHING.value, vc_extreme)
+        
+        # === WATCHING (VC-Extreme Override) ===
+        if compression_pct >= 95:
+            return (SleeperState.WATCHING.value, True)
+        
+        # === WATCHING (Reversal potential) ===
+        # Якщо є ознаки вичерпання, варто слідкувати
+        if exhaustion_score >= 0.4:
+            return (SleeperState.WATCHING.value, vc_extreme)
+        
+        return (SleeperState.IDLE.value, vc_extreme)
     
     def _determine_state(self, total_score: float, compression_pct: float,
                          suppression_pct: float, volume_spike: bool, oi_jump: bool,

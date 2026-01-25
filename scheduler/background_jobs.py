@@ -529,7 +529,7 @@ class BackgroundJobs:
     def _send_intensive_alert(self, symbol: str, direction: str, priority: str,
                                reasons: list, sleeper: dict, current_price: float,
                                price_change: float, volume_ratio: float):
-        """Send intensive monitoring alert via Telegram"""
+        """Send intensive monitoring alert via Telegram - v5 with phase info"""
         
         # Priority emojis
         priority_emoji = {
@@ -540,10 +540,35 @@ class BackgroundJobs:
         
         direction_emoji = '🟢' if direction == 'LONG' else '🔴' if direction == 'SHORT' else '⚪'
         
+        # v5: Phase info
+        market_phase = sleeper.get('market_phase', 'UNKNOWN')
+        phase_maturity = sleeper.get('phase_maturity', 'MIDDLE')
+        is_reversal = sleeper.get('is_reversal_setup', False)
+        exhaustion_score = sleeper.get('exhaustion_score', 0)
+        
+        # Phase emoji
+        phase_emoji = {
+            'ACCUMULATION': '📥',
+            'MARKUP': '📈',
+            'DISTRIBUTION': '📤',
+            'MARKDOWN': '📉',
+            'UNKNOWN': '❓'
+        }.get(market_phase, '❓')
+        
+        # Maturity warning
+        maturity_warning = ""
+        if phase_maturity == 'EXHAUSTED':
+            maturity_warning = "⚠️ EXHAUSTED - можливий розворот!"
+        elif phase_maturity == 'LATE':
+            maturity_warning = "⚠️ LATE phase - обережно!"
+        
+        # Reversal badge
+        reversal_badge = "\n🔄 <b>REVERSAL SETUP!</b>" if is_reversal else ""
+        
         # Format message
         message = f"""
 {priority_emoji.get(priority, '📢')} <b>{priority} ALERT</b> {priority_emoji.get(priority, '📢')}
-{direction_emoji} <b>{symbol}</b> | {direction}
+{direction_emoji} <b>{symbol}</b> | {direction}{reversal_badge}
 
 📊 <b>Triggers:</b>
 {chr(10).join(['• ' + r for r in reasons])}
@@ -552,6 +577,10 @@ class BackgroundJobs:
 📈 <b>Volume:</b> {volume_ratio:.1f}x average
 🎯 <b>Score:</b> {sleeper.get('total_score', 0):.0f}/100
 ❤️ <b>HP:</b> {sleeper.get('hp', 0)}/10
+
+{phase_emoji} <b>Phase:</b> {market_phase} ({phase_maturity})
+💀 <b>Exhaustion:</b> {exhaustion_score*100:.0f}%
+{maturity_warning}
 
 ⏱ {datetime.now().strftime('%H:%M:%S UTC')}
 """
