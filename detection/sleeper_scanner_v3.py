@@ -1,5 +1,14 @@
 """
-Sleeper Scanner v4.1.1 - Professional 5-Day Strategy with Direction Engine
+Sleeper Scanner v4.1.2 - Professional 5-Day Strategy with Direction Engine
+
+ВЕРСІЯ v4.1.2 ЗМІНИ:
+- Знижено thresholds для раніших сигналів:
+  - COMPRESSION_BUILDING: 50% → 35%
+  - COMPRESSION_READY: 70% → 50%
+  - VOLUME_SUPPRESSION_MIN: 60% → 40%
+- Додано Direction-based paths:
+  - BUILDING: Score >= 65 + Direction != NEUTRAL + confidence HIGH/MEDIUM
+  - READY: Score >= 75 + Direction != NEUTRAL + confidence HIGH + score >= 0.5
 
 DATA REQUIREMENTS (v4.1.1):
 - 4H klines: 60 candles (10 days) - for EMA20 + direction analysis
@@ -13,20 +22,18 @@ MAJOR FEATURES:
   - HTF Structural Bias (50%): 1D EMA50 structure + 4H EMA20 slope
   - LTF Momentum Shift (30%): RSI divergence + BB position
   - Derivatives Positioning (20%): OI + Funding + Price action
-- v4.1.1: Increased data for quality analysis, improved caching
+- v4.1.2: Relaxed thresholds + Direction-based state transitions
 
-PROFESSIONAL PARADIGM:
-1. Sleeper Detector → ЧИ є сенс торгувати (this module)
-2. Direction Engine → В ЯКИЙ БІК (integrated)
-3. Trigger Engine   → КОЛИ входити (future)
+PATHS TO BUILDING (v4.1.2):
+1. Classic: Score > 55, VC > 35%, VS > 40%
+2. Accelerated: VC > 90% + OI growth > 15%
+3. VC-Priority: VC > 90% + OI score > 70
+4. Direction-based: Score > 65 + clear direction (HIGH/MEDIUM confidence)
 
-Direction = HTF Bias (50%) + LTF Momentum (30%) + Derivatives (20%)
-NEUTRAL = валідний стан (не торгуємо)
-
-CRITICAL FIXES:
-- v3.2: BB width zero-filter bug
-- v3.3: Rate limit 500ms + compression clamp
-- v4.1.1: Increased klines for EMA50 analysis
+PATHS TO READY (v4.1.2):
+1. Classic: Score > 65, VC > 50%
+2. Accelerated: VC > 95% + OI growth > 20%
+3. Direction-based: Score > 75 + HIGH confidence direction
 
 Система оцінки:
 - VOLATILITY_COMPRESSION: 40% - стиснення волатильності за 5 днів
@@ -34,22 +41,11 @@ CRITICAL FIXES:
 - OI_GROWTH: 20% - зростання Open Interest
 - ORDER_BOOK_IMBALANCE: 15% - дисбаланс стакану
 
-Для VC > 90% використовується modified formula:
-- VC: 50%, VS: 15%, OI: 25%, OB: 10%
-
-ДВА ШЛЯХИ ДО BUILDING:
-1. Classic: Score > 55, VC > 50%, VS > 60%
-2. Accelerated: VC > 90% + OI growth > 15% (пропускає VS requirement)
-
-Стани:
-- IDLE: Не відстежується
-- WATCHING: Score > 40 OR VC > 95%
-- BUILDING: Classic path OR Accelerated path (VC > 90% + OI growth)
-- READY: Score > 65, compression > 70% OR VC > 95% + OI > 20%
-- TRIGGERED: Volume > 200% + OI jump > 15%
-
 Флаги:
 - VC_EXTREME: VC > 95% при VOL < 1.2x (imminent breakout)
+- TRENDLESS: ADX < 20 (true sleeper)
+- POC: Price at Point of Control
+- HIGH_CONF: High confidence direction
 """
 
 import time
@@ -96,10 +92,10 @@ class SleeperScannerV3:
     MIN_SCORE_BUILDING = 55
     MIN_SCORE_READY = 65
     
-    # Transition conditions
-    COMPRESSION_BUILDING = 50   # % BB compression for BUILDING
-    COMPRESSION_READY = 70      # % BB compression for READY
-    VOLUME_SUPPRESSION_MIN = 60 # % volume below average for BUILDING
+    # Transition conditions (v4.1.2: relaxed for earlier signals)
+    COMPRESSION_BUILDING = 35   # % BB compression for BUILDING (was 50)
+    COMPRESSION_READY = 50      # % BB compression for READY (was 70)
+    VOLUME_SUPPRESSION_MIN = 40 # % volume suppression for BUILDING (was 60)
     
     # Trigger conditions
     VOLUME_SPIKE_THRESHOLD = 200  # % of average for trigger
@@ -452,26 +448,7 @@ class SleeperScannerV3:
             # Use higher of standard or adjusted score
             total_score = max(total_score, adjusted_score)
         
-        # === 7. DETERMINE STATE ===
-        
-        state, vc_extreme = self._determine_state(
-            total_score,
-            vc_data['compression_pct'],
-            vs_data['suppression_pct'],
-            vs_data['volume_spike'],
-            oi_data['oi_jump'],
-            # Additional params for accelerated paths
-            vc_score=vc_data['score'],
-            oi_score=oi_data['score'],
-            oi_growth_pct=oi_data['growth_pct'],
-            volume_ratio=vs_data['volume_ratio']
-        )
-        
-        # Minimum score filter (but keep VC-extreme candidates)
-        if state == 'IDLE' and total_score < self.MIN_SCORE_WATCHING and not vc_extreme:
-            return None
-        
-        # === 8. DETERMINE DIRECTION (v4.1: Professional Direction Engine) ===
+        # === 7. DETERMINE DIRECTION (v4.1.2: moved before state) ===
         
         # Calculate price change for derivatives bias
         price_change_4h = 0
@@ -492,6 +469,29 @@ class SleeperScannerV3:
         direction = direction_result.direction.value  # LONG, SHORT, or NEUTRAL
         direction_score = direction_result.score
         direction_confidence = direction_result.confidence
+        
+        # === 8. DETERMINE STATE (v4.1.2: with direction-based paths) ===
+        
+        state, vc_extreme = self._determine_state(
+            total_score,
+            vc_data['compression_pct'],
+            vs_data['suppression_pct'],
+            vs_data['volume_spike'],
+            oi_data['oi_jump'],
+            # Additional params for accelerated paths
+            vc_score=vc_data['score'],
+            oi_score=oi_data['score'],
+            oi_growth_pct=oi_data['growth_pct'],
+            volume_ratio=vs_data['volume_ratio'],
+            # Direction params (v4.1.2)
+            direction=direction,
+            direction_score=direction_score,
+            direction_confidence=direction_confidence
+        )
+        
+        # Minimum score filter (but keep VC-extreme candidates)
+        if state == 'IDLE' and total_score < self.MIN_SCORE_WATCHING and not vc_extreme:
+            return None
         
         # === 9. CALCULATE DYNAMIC HP ===
         hp = self._calculate_initial_hp(total_score, state)
@@ -925,15 +925,18 @@ class SleeperScannerV3:
     def _determine_state(self, total_score: float, compression_pct: float,
                          suppression_pct: float, volume_spike: bool, oi_jump: bool,
                          vc_score: float = 0, oi_score: float = 0, 
-                         oi_growth_pct: float = 0, volume_ratio: float = 1.0) -> Tuple[str, bool]:
+                         oi_growth_pct: float = 0, volume_ratio: float = 1.0,
+                         direction: str = 'NEUTRAL', direction_score: float = 0,
+                         direction_confidence: str = 'LOW') -> Tuple[str, bool]:
         """
         Determine sleeper state based on metrics
         
         Returns: (state, vc_extreme_flag)
         
-        TWO PATHS TO BUILDING:
-        1. Classic: Score > 55, VC > 50%, VS > 60%
-        2. Accelerated: VC > 90% + OI growth > 15% (skip VS requirement)
+        PATHS TO BUILDING (v4.1.2):
+        1. Classic: Score > 55, VC > 35%, VS > 40%
+        2. Accelerated: VC > 90% + OI growth > 15%
+        3. Direction-based: Score > 70 + clear direction (HIGH/MEDIUM confidence)
         """
         vc_extreme = False
         
@@ -958,6 +961,14 @@ class SleeperScannerV3:
         if compression_pct >= 95 and oi_growth_pct >= 20:
             return (SleeperState.READY.value, True)
         
+        # === DIRECTION-BASED READY (v4.1.2) ===
+        # High score + clear direction + high confidence = ready even without extreme compression
+        if (total_score >= 75 and 
+            direction != 'NEUTRAL' and 
+            direction_confidence == 'HIGH' and
+            abs(direction_score) >= 0.5):
+            return (SleeperState.READY.value, vc_extreme)
+        
         # === BUILDING (Classic Path) ===
         # Good compression + volume suppressed
         if (total_score >= self.MIN_SCORE_BUILDING and 
@@ -975,6 +986,14 @@ class SleeperScannerV3:
         # VC > 90% + OI score > 70 = extreme squeeze with strong OI signal
         if compression_pct >= 90 and oi_score >= 70:
             return (SleeperState.BUILDING.value, True)
+        
+        # === BUILDING (Direction-Based Path) v4.1.2 ===
+        # High score + clear direction = building position even without compression
+        if (total_score >= 65 and 
+            direction != 'NEUTRAL' and 
+            direction_confidence in ['HIGH', 'MEDIUM'] and
+            abs(direction_score) >= 0.4):
+            return (SleeperState.BUILDING.value, vc_extreme)
         
         # === WATCHING ===
         # Basic conditions met

@@ -40,6 +40,25 @@ class SleeperCandidate(Base):
     hp = Column(Integer, default=5)
     direction = Column(String(10), default='NEUTRAL')  # LONG/SHORT/NEUTRAL
     
+    # === Direction Engine v4.1 ===
+    direction_score = Column(Float, default=0)           # -1.0 to +1.0
+    direction_confidence = Column(String(10), default='LOW')  # HIGH/MEDIUM/LOW
+    direction_htf_bias = Column(Float, default=0)        # HTF layer result
+    direction_ltf_bias = Column(Float, default=0)        # LTF layer result
+    direction_deriv_bias = Column(Float, default=0)      # Derivatives layer result
+    
+    # === v4 ADX data ===
+    adx_value = Column(Float)                # Current ADX (0-100)
+    adx_trendless = Column(Boolean, default=False)  # ADX < 20
+    adx_bonus = Column(Integer, default=0)   # Bonus points from ADX
+    
+    # === v4 POC data ===
+    poc_price = Column(Float)                # Point of Control price
+    poc_distance_pct = Column(Float)         # Distance from POC %
+    poc_strength = Column(Float)             # POC strength %
+    price_at_poc = Column(Boolean, default=False)  # Is price at POC
+    poc_bonus = Column(Integer, default=0)   # Bonus points from POC
+    
     # === NEW: 5-Day Metrics ===
     # Volatility compression data
     bb_width_5d_start = Column(Float)    # BB width 5 days ago
@@ -106,6 +125,22 @@ class SleeperCandidate(Base):
             'state': self.state,
             'hp': self.hp,
             'direction': self.direction,
+            # v4.1: Direction Engine
+            'direction_score': self.direction_score,
+            'direction_confidence': self.direction_confidence,
+            'direction_htf_bias': self.direction_htf_bias,
+            'direction_ltf_bias': self.direction_ltf_bias,
+            'direction_deriv_bias': self.direction_deriv_bias,
+            # v4: ADX data
+            'adx_value': self.adx_value,
+            'adx_trendless': self.adx_trendless,
+            'adx_bonus': self.adx_bonus,
+            # v4: POC data
+            'poc_price': self.poc_price,
+            'poc_distance_pct': self.poc_distance_pct,
+            'poc_strength': self.poc_strength,
+            'price_at_poc': self.price_at_poc,
+            'poc_bonus': self.poc_bonus,
             # 5-day metrics
             'bb_compression_pct': self.bb_compression_pct,
             'volume_ratio': self.volume_ratio,
