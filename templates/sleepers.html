@@ -8,13 +8,14 @@
         <div class="header-actions">
             <button class="btn btn-secondary" onclick="clearBadSleepers()" title="Remove sleepers with missing data">🧹 Clear Bad</button>
             <button class="btn btn-danger" onclick="clearAllSleepers()" title="Remove ALL sleepers">🗑️ Clear All</button>
-            <button class="btn btn-primary" onclick="scanSleepersV3()">🔍 Scan v4</button>
+            <button class="btn btn-primary" onclick="scanSleepersV3()">🔍 Scan v4.1</button>
         </div>
     </div>
 
     <div class="info-box">
-        <strong>Sleeper Detector v4.0 (5-Day Strategy + ADX + BTC Correlation)</strong><br>
-        ADX &lt; 20 = trendless (bonus +10-15) | BTC volatile = warning | VC &gt; 90% = accelerated path
+        <strong>Sleeper Detector v4.1 (Direction Engine)</strong><br>
+        Direction = HTF Bias (50%) + LTF Momentum (30%) + Derivatives (20%) | 
+        🟢LONG ≥ +0.5 | 🔴SHORT ≤ -0.5 | ⚪WAIT = don't trade
     </div>
 
     {% if sleepers %}
@@ -51,8 +52,10 @@
                     </span>
                 </td>
                 <td>
-                    <span class="direction {{ s.direction|lower if s.direction else '' }}">
+                    <span class="direction {{ s.direction|lower if s.direction else '' }} {% if s.direction_confidence == 'HIGH' %}high-conf{% elif s.direction_confidence == 'MEDIUM' %}mid-conf{% endif %}" 
+                          title="Score: {{ '%.2f'|format(s.direction_score or 0) }} | {{ s.direction_confidence or 'LOW' }}">
                         {% if s.direction == 'LONG' %}🟢{% elif s.direction == 'SHORT' %}🔴{% else %}⚪{% endif %}
+                        {% if s.direction != 'NEUTRAL' %}{{ '%.2f'|format(s.direction_score or 0) }}{% endif %}
                     </span>
                 </td>
                 <td class="score">
@@ -91,6 +94,7 @@
                     {% if s.vc_extreme_detected or s.vc_extreme %}🔥{% endif %}
                     {% if s.adx_trendless %}📊{% endif %}
                     {% if s.price_at_poc %}🎯{% endif %}
+                    {% if s.direction_confidence == 'HIGH' and s.direction != 'NEUTRAL' %}💪{% endif %}
                     {% if s.volume_spike_detected %}📈{% endif %}
                     {% if s.oi_jump_detected %}⚡{% endif %}
                     {% if s.breakout_detected %}🎆{% endif %}
@@ -135,17 +139,29 @@
             <li>🚀 <strong>TRIGGERED</strong>: Volume spike >200% + OI jump >15%</li>
         </ul>
         
+        <h3>Direction Engine v4.1</h3>
+        <ul>
+            <li><strong>3-Layer Model:</strong></li>
+            <li>• HTF Structural Bias (50%): 1D structure + 4H EMA slope</li>
+            <li>• LTF Momentum Shift (30%): RSI divergence + BB position</li>
+            <li>• Derivatives Positioning (20%): OI + Funding + Price</li>
+            <li><strong>Direction Score:</strong> -1.0 to +1.0 (shown next to emoji)</li>
+            <li>🟢 LONG (score ≥ +0.5) | 🔴 SHORT (score ≤ -0.5) | ⚪ NEUTRAL (wait)</li>
+            <li><strong>READY + NEUTRAL = Don't trade</strong> (direction unclear)</li>
+        </ul>
+        
         <h3>Flags</h3>
         <ul>
             <li>🔥 VC-EXTREME - Imminent breakout (VC >95% + VOL <1.2x)</li>
             <li>📊 TRENDLESS - True sleeper (ADX <20)</li>
             <li>🎯 POC - Price at Point of Control (equilibrium)</li>
+            <li>💪 HIGH confidence direction</li>
             <li>📈 Volume Spike (>200% of avg)</li>
             <li>⚡ OI Jump (>15%)</li>
             <li>🎆 Breakout Detected</li>
         </ul>
         
-        <h3>BTC Correlation (v4)</h3>
+        <h3>BTC Correlation</h3>
         <ul>
             <li>If BTC ADX >30 (trending) → Altcoin sleepers may be less reliable</li>
             <li>If BTC volatility high → Market-wide movement expected</li>
@@ -164,6 +180,11 @@
 .vc-extreme { color: #ff4500; font-weight: bold; }
 .legend .vc-extreme { background: rgba(255, 69, 0, 0.1); padding: 2px 6px; border-radius: 4px; }
 .trendless { color: #00bfff; font-weight: bold; }
+.direction.high-conf { font-weight: bold; }
+.direction.mid-conf { opacity: 0.9; }
+.direction.long { color: #00ff00; }
+.direction.short { color: #ff4444; }
+.direction.neutral { color: #888; }
 </style>
 
 <script>

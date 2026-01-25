@@ -1,11 +1,20 @@
 """
-Sleeper Scanner v4.0 - Professional 5-Day Strategy
+Sleeper Scanner v4.1 - Professional 5-Day Strategy with Direction Engine
 
 MAJOR FEATURES:
-- ADX filter (ADX < 20 = trendless = true sleeper)
-- BTC correlation check (volatile BTC = unreliable signals)
-- VC-EXTREME detection (BB squeeze > 95%)
-- Aggressive caching (prevents Binance IP ban)
+- v4.0: ADX filter, POC analysis, BTC correlation, Liquidity filter
+- v4.1: Professional 3-Layer Direction Engine
+  - HTF Structural Bias (50%): 1D structure + 4H EMA slope
+  - LTF Momentum Shift (30%): RSI divergence + BB position
+  - Derivatives Positioning (20%): OI + Funding + Price action
+
+PROFESSIONAL PARADIGM:
+1. Sleeper Detector → ЧИ є сенс торгувати (this module)
+2. Direction Engine → В ЯКИЙ БІК (integrated)
+3. Trigger Engine   → КОЛИ входити (future)
+
+Direction = HTF Bias (50%) + LTF Momentum (30%) + Derivatives (20%)
+NEUTRAL = валідний стан (не торгуємо)
 
 CRITICAL FIXES:
 - v3.2: BB width zero-filter bug
@@ -45,6 +54,7 @@ from config.bot_settings import SleeperState
 from core.market_data import get_fetcher
 from core.tech_indicators import get_indicators
 from storage import get_db
+from detection.direction_engine import get_direction_engine, DirectionResult
 
 
 class SleeperScannerV3:
@@ -110,6 +120,7 @@ class SleeperScannerV3:
         self.fetcher = get_fetcher()
         self.indicators = get_indicators()
         self.db = get_db()
+        self.direction_engine = get_direction_engine()  # v4.1: Professional direction model
         
         # Scan settings from DB (reduced defaults for Binance rate limit protection)
         self.max_symbols = min(self.db.get_setting('sleeper_max_symbols', 30), 50)  # Max 50
@@ -182,6 +193,10 @@ class SleeperScannerV3:
                         if result.get('price_at_poc'):
                             poc_count += 1
                         
+                        # Direction confidence flag (v4.1)
+                        dir_confidence = result.get('direction_confidence', 'LOW')
+                        dir_flag = "💪" if dir_confidence == "HIGH" else ""
+                        
                         # Compact log with bonuses
                         bonuses = []
                         if result.get('adx_bonus', 0) > 0:
@@ -190,9 +205,14 @@ class SleeperScannerV3:
                             bonuses.append(f"+{result['poc_bonus']}POC")
                         bonus_str = f" ({','.join(bonuses)})" if bonuses else ""
                         
-                        print(f"[SLEEPER v4] {state_emoji}{vc_flag}{adx_flag}{poc_flag} {result['symbol']}: "
+                        # Direction with confidence
+                        direction = result['direction']
+                        dir_score = result.get('direction_score', 0)
+                        dir_str = f"{direction}[{dir_score:+.2f}]" if direction != "NEUTRAL" else "WAIT"
+                        
+                        print(f"[SLEEPER v4.1] {state_emoji}{vc_flag}{adx_flag}{poc_flag}{dir_flag} {result['symbol']}: "
                               f"Score={result['total_score']:.1f}{bonus_str} "
-                              f"Dir={result['direction']} "
+                              f"Dir={dir_str} "
                               f"(VC:{result['volatility_compression']:.0f} "
                               f"VS:{result['volume_suppression']:.0f} "
                               f"OI:{result['oi_growth']:.0f} "
@@ -443,14 +463,30 @@ class SleeperScannerV3:
         if state == 'IDLE' and total_score < self.MIN_SCORE_WATCHING and not vc_extreme:
             return None
         
-        # === 8. DETERMINE DIRECTION ===
+        # === 8. DETERMINE DIRECTION (v4.1: Professional Direction Engine) ===
         
-        direction = self._determine_direction(
-            funding_rate,
-            ob_data['imbalance'],
-            indicators_4h.get('rsi_current', 50),
-            indicators_1d.get('rsi_current', 50) if indicators_1d else 50
+        # Calculate price change for derivatives bias
+        price_change_4h = 0
+        if len(klines_4h) >= 2:
+            price_change_4h = (klines_4h[-1]['close'] - klines_4h[-2]['close']) / klines_4h[-2]['close'] * 100
+        
+        # Get extended klines for direction engine (it needs more data for HTF bias)
+        klines_4h_extended = self.fetcher.get_klines(symbol, '4h', limit=50)
+        klines_1d_extended = self.fetcher.get_klines(symbol, '1d', limit=30)
+        
+        # Resolve direction using 3-layer model
+        direction_result = self.direction_engine.resolve(
+            symbol=symbol,
+            klines_4h=klines_4h_extended,
+            klines_1d=klines_1d_extended,
+            oi_change=oi_data['growth_pct'],
+            funding_rate=funding_rate,
+            price_change_4h=price_change_4h
         )
+        
+        direction = direction_result.direction.value  # LONG, SHORT, or NEUTRAL
+        direction_score = direction_result.score
+        direction_confidence = direction_result.confidence
         
         # === 9. CALCULATE DYNAMIC HP ===
         hp = self._calculate_initial_hp(total_score, state)
@@ -465,6 +501,10 @@ class SleeperScannerV3:
         
         # Boost HP for POC equilibrium (v4)
         if price_at_poc and poc_strength >= self.POC_STRENGTH_MIN:
+            hp = min(self.HP_MAX, hp + 1)
+        
+        # Boost HP for high direction confidence (v4.1)
+        if direction_confidence == "HIGH" and direction != "NEUTRAL":
             hp = min(self.HP_MAX, hp + 1)
         
         # === 10. BUILD RESULT ===
@@ -490,6 +530,14 @@ class SleeperScannerV3:
             'hp': hp,  # Dynamic HP based on score
             'direction': direction,
             'vc_extreme_detected': vc_extreme,  # v3.1: VC-Extreme flag
+            
+            # v4.1: Direction Engine data
+            'direction_score': round(direction_score, 3),
+            'direction_confidence': direction_confidence,
+            'direction_htf_bias': direction_result.htf_bias,
+            'direction_ltf_bias': direction_result.ltf_bias,
+            'direction_deriv_bias': direction_result.deriv_bias,
+            'direction_reason': f"HTF:{direction_result.htf_reason[:30]}... | Deriv:{direction_result.deriv_reason[:30]}...",
             
             # v4: ADX data
             'adx_value': round(adx_value, 1),

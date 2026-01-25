@@ -164,3 +164,30 @@ WEB_CONFIG = {
     'port': int(os.environ.get('PORT', 5000)),
     'debug': os.environ.get('DEBUG', 'False').lower() == 'true',
 }
+
+# === DIRECTION ENGINE v1.0 ===
+# Professional 3-layer direction model
+DIRECTION_ENGINE = {
+    # Thresholds for direction decision
+    'long_threshold': 0.5,      # score >= 0.5 → LONG
+    'short_threshold': -0.5,    # score <= -0.5 → SHORT
+    # Between -0.5 and 0.5 → NEUTRAL (don't trade)
+    
+    # Layer weights (must sum to 1.0)
+    'weights': {
+        'htf': 0.5,         # HTF Structural Bias (1D structure + 4H EMA)
+        'ltf': 0.3,         # LTF Momentum Shift (RSI divergence + BB)
+        'derivatives': 0.2   # Derivatives Positioning (OI + Funding)
+    },
+    
+    # HTF thresholds
+    'htf_ema_period': 50,       # EMA period for 1D structure
+    'htf_slope_period': 5,      # Candles for slope calculation
+    'htf_price_threshold': 1,   # % distance from EMA for bias
+    
+    # Derivatives thresholds
+    'funding_high': 0.0005,     # 0.05% = crowded
+    'funding_low': -0.0003,     # -0.03% = squeeze potential
+    'oi_significant': 5,        # 5% OI change = significant
+    'price_move_threshold': 1,  # 1% price move = significant
+}
