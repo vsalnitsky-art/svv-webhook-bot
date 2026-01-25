@@ -1,10 +1,10 @@
 """
 Telegram Notifier - сповіщення про сигнали та події
+v4.2.2: Switched to synchronous requests for reliability
 """
 
 import os
-import asyncio
-import aiohttp
+import requests
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
@@ -67,49 +67,40 @@ class TelegramNotifier:
         self._load_config()
         return self.enabled
     
-    async def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
-        """Відправити повідомлення в Telegram"""
+    def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
+        """Відправити повідомлення в Telegram (синхронно)"""
         if not self.enabled:
             print(f"[TG DISABLED] {text[:100]}...")
             return False
         
         try:
-            async with aiohttp.ClientSession() as session:
-                url = f"{self.base_url}/sendMessage"
-                payload = {
-                    "chat_id": self.chat_id,
-                    "text": text,
-                    "parse_mode": parse_mode,
-                    "disable_web_page_preview": True
-                }
-                async with session.post(url, json=payload) as resp:
-                    if resp.status == 200:
-                        return True
-                    else:
-                        print(f"Telegram error: {resp.status}")
-                        return False
+            url = f"{self.base_url}/sendMessage"
+            payload = {
+                "chat_id": self.chat_id,
+                "text": text,
+                "parse_mode": parse_mode,
+                "disable_web_page_preview": True
+            }
+            
+            resp = requests.post(url, json=payload, timeout=10)
+            
+            if resp.status_code == 200:
+                print(f"[TG] Message sent successfully")
+                return True
+            else:
+                # Log detailed error
+                error_data = resp.json() if resp.text else {}
+                error_desc = error_data.get('description', 'Unknown error')
+                print(f"[TG ERROR] Status {resp.status_code}: {error_desc}")
+                return False
+                
         except Exception as e:
-            print(f"Telegram send error: {e}")
+            print(f"[TG ERROR] Send failed: {e}")
             return False
     
     def send_sync(self, text: str) -> bool:
-        """Синхронна обгортка для send_message"""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Якщо вже в async контексті
-                asyncio.create_task(self.send_message(text))
-                return True
-            else:
-                return loop.run_until_complete(self.send_message(text))
-        except RuntimeError:
-            # Новий event loop якщо немає
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(self.send_message(text))
-            finally:
-                loop.close()
+        """Синхронна обгортка для send_message (alias)"""
+        return self.send_message(text)
     
     # ===== Форматовані сповіщення =====
     

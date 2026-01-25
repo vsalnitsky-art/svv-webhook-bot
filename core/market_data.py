@@ -433,3 +433,7 @@ def get_market_cache() -> MarketDataCache:
 def get_cache_stats() -> Dict:
     """Get cache statistics for monitoring"""
     return _global_cache.get_stats()
+
+def get_market_data() -> DataFetcher:
+    """Get market data fetcher instance (alias for get_data_fetcher)"""
+    return get_data_fetcher()
