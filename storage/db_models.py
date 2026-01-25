@@ -519,20 +519,27 @@ def migrate_sleeper_candidates_v3():
     with engine.connect() as conn:
         for col_name, col_type in new_columns:
             try:
-                # Check if column exists
-                result = conn.execute(text(f"""
-                    SELECT column_name FROM information_schema.columns 
-                    WHERE table_name = '{table_name}' AND column_name = '{col_name}'
-                """))
-                
-                if result.fetchone() is None:
-                    # Column doesn't exist, add it
-                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"))
-                    conn.commit()
-                    print(f"[DB MIGRATE] Added column: {col_name}")
+                # PostgreSQL-compatible: use DO block to add column if not exists
+                # This avoids race conditions and works reliably
+                sql = text(f"""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = '{table_name}' AND column_name = '{col_name}'
+                        ) THEN 
+                            ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type};
+                            RAISE NOTICE 'Added column: {col_name}';
+                        END IF;
+                    END $$;
+                """)
+                conn.execute(sql)
+                conn.commit()
             except Exception as e:
-                # Ignore errors (column might already exist)
-                print(f"[DB MIGRATE] Skipping {col_name}: {e}")
+                # Log error but continue with other columns
+                error_str = str(e)
+                if 'already exists' not in error_str.lower():
+                    print(f"[DB MIGRATE] Error adding {col_name}: {e}")
                 conn.rollback()
     
     print("[DB MIGRATE] Migration complete")
