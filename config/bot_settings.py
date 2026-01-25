@@ -168,10 +168,10 @@ WEB_CONFIG = {
 # === DIRECTION ENGINE v1.0 ===
 # Professional 3-layer direction model
 DIRECTION_ENGINE = {
-    # Thresholds for direction decision
-    'long_threshold': 0.5,      # score >= 0.5 → LONG
-    'short_threshold': -0.5,    # score <= -0.5 → SHORT
-    # Between -0.5 and 0.5 → NEUTRAL (don't trade)
+    # Thresholds for direction decision (lowered for more signals)
+    'long_threshold': 0.3,      # score >= 0.3 → LONG (was 0.5)
+    'short_threshold': -0.3,    # score <= -0.3 → SHORT (was -0.5)
+    # Between -0.3 and 0.3 → NEUTRAL (don't trade)
     
     # Layer weights (must sum to 1.0)
     'weights': {

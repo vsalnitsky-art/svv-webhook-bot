@@ -470,15 +470,12 @@ class SleeperScannerV3:
         if len(klines_4h) >= 2:
             price_change_4h = (klines_4h[-1]['close'] - klines_4h[-2]['close']) / klines_4h[-2]['close'] * 100
         
-        # Get extended klines for direction engine (it needs more data for HTF bias)
-        klines_4h_extended = self.fetcher.get_klines(symbol, '4h', limit=50)
-        klines_1d_extended = self.fetcher.get_klines(symbol, '1d', limit=30)
-        
-        # Resolve direction using 3-layer model
+        # Use existing klines (no extra API calls!)
+        # klines_4h already has 30 candles, klines_1d has 7 - enough for direction
         direction_result = self.direction_engine.resolve(
             symbol=symbol,
-            klines_4h=klines_4h_extended,
-            klines_1d=klines_1d_extended,
+            klines_4h=klines_4h,      # Reuse existing data
+            klines_1d=klines_1d,      # Reuse existing data  
             oi_change=oi_data['growth_pct'],
             funding_rate=funding_rate,
             price_change_4h=price_change_4h
@@ -658,8 +655,8 @@ class SleeperScannerV3:
                 
                 if old_range > 0:
                     compression_pct = ((old_range - new_range) / old_range) * 100
-                    # Clamp to reasonable range
-                    compression_pct = max(-100, min(100, compression_pct))
+                    # Clamp to 0-100% (negative = expanding, show as 0)
+                    compression_pct = max(0, min(100, compression_pct))
                 else:
                     compression_pct = 0
                 
@@ -694,9 +691,9 @@ class SleeperScannerV3:
         # Calculate compression percentage
         if bb_width_start > 0:
             compression_pct = ((bb_width_start - bb_width_current) / bb_width_start) * 100
-            # Clamp to reasonable range (-100% to +100%)
-            # Values outside this range indicate data issues
-            compression_pct = max(-100, min(100, compression_pct))
+            # Clamp to 0-100% range for display
+            # Negative = volatility expanding (not compression) → show as 0
+            compression_pct = max(0, min(100, compression_pct))
         else:
             compression_pct = 0
         

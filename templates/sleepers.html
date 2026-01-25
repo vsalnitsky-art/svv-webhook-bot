@@ -14,8 +14,8 @@
 
     <div class="info-box">
         <strong>Sleeper Detector v4.1 (Direction Engine)</strong><br>
-        Direction = HTF Bias (50%) + LTF Momentum (30%) + Derivatives (20%) | 
-        🟢LONG ≥ +0.5 | 🔴SHORT ≤ -0.5 | ⚪WAIT = don't trade
+        Direction = HTF (50%) + LTF (30%) + Derivatives (20%) | 
+        🟢LONG ≥ +0.3 | 🔴SHORT ≤ -0.3 | ⚪WAIT = don't trade
     </div>
 
     {% if sleepers %}
@@ -112,64 +112,75 @@
     {% endif %}
 
     <div class="legend">
-        <h3>5-Day Strategy Score (v4.0)</h3>
-        <ul>
-            <li><strong>VC - Volatility Compression (40%)</strong>: BB squeeze over 5 days. Higher = more compressed</li>
-            <li><strong>VS - Volume Suppression (25%)</strong>: Volume decline vs 5-day average. Higher = quieter</li>
-            <li><strong>OI - OI Growth (20%)</strong>: Open Interest accumulation. Higher = more positions building</li>
-            <li><strong>OB - Order Book Imbalance (15%)</strong>: Bid/Ask imbalance. Higher = stronger directional pressure</li>
-        </ul>
+        <details>
+            <summary><h3>📊 5-Day Strategy Score</h3></summary>
+            <ul>
+                <li><strong>VC (40%)</strong>: BB squeeze over 5 days</li>
+                <li><strong>VS (25%)</strong>: Volume decline vs average</li>
+                <li><strong>OI (20%)</strong>: Open Interest accumulation</li>
+                <li><strong>OB (15%)</strong>: Bid/Ask imbalance</li>
+            </ul>
+        </details>
         
-        <h3>v4 Bonuses</h3>
-        <ul>
-            <li><strong>ADX Bonus</strong>: ADX &lt; 20 = +10 pts, ADX falling = +15 pts (true sleeper confirmation)</li>
-            <li><strong>POC Bonus</strong>: Price at POC = +8 pts, Strong POC = +12 pts (equilibrium zone)</li>
-            <li><strong>Liquidity Filter</strong>: Min $50M 24h volume (slippage protection)</li>
-        </ul>
+        <details>
+            <summary><h3>🎁 v4 Bonuses</h3></summary>
+            <ul>
+                <li><strong>ADX</strong>: &lt;20 = +10pts, falling = +15pts</li>
+                <li><strong>POC</strong>: At POC = +8pts, Strong = +12pts</li>
+                <li><strong>Liquidity</strong>: Min $50M 24h volume</li>
+            </ul>
+        </details>
         
-        <h3>State Transitions</h3>
-        <ul>
-            <li>⚪ <strong>IDLE</strong>: Not tracking</li>
-            <li>👀 <strong>WATCHING</strong>: Score >40 OR VC >95%</li>
-            <li>🔨 <strong>BUILDING</strong>: 
-                <br>• Classic: Score >55, VC >50%, VS >60%
-                <br>• <span class="vc-extreme">Accelerated: VC >90% + OI growth >15%</span>
-            </li>
-            <li>🎯 <strong>READY</strong>: Score >65, VC >70% OR VC >95% + OI growth >20%</li>
-            <li>🚀 <strong>TRIGGERED</strong>: Volume spike >200% + OI jump >15%</li>
-        </ul>
+        <details>
+            <summary><h3>🔄 State Transitions</h3></summary>
+            <ul>
+                <li>⚪ IDLE: Not tracking</li>
+                <li>👀 WATCHING: Score >40 OR VC >95%</li>
+                <li>🔨 BUILDING: Score >55, VC >50%, VS >60%</li>
+                <li>🎯 READY: Score >65, VC >70%</li>
+                <li>🚀 TRIGGERED: Volume >200% + OI >15%</li>
+            </ul>
+        </details>
         
-        <h3>Direction Engine v4.1</h3>
-        <ul>
-            <li><strong>3-Layer Model:</strong></li>
-            <li>• HTF Structural Bias (50%): 1D structure + 4H EMA slope</li>
-            <li>• LTF Momentum Shift (30%): RSI divergence + BB position</li>
-            <li>• Derivatives Positioning (20%): OI + Funding + Price</li>
-            <li><strong>Direction Score:</strong> -1.0 to +1.0 (shown next to emoji)</li>
-            <li>🟢 LONG (score ≥ +0.5) | 🔴 SHORT (score ≤ -0.5) | ⚪ NEUTRAL (wait)</li>
-            <li><strong>READY + NEUTRAL = Don't trade</strong> (direction unclear)</li>
-        </ul>
+        <details>
+            <summary><h3>🧭 Direction Engine v4.1</h3></summary>
+            <ul>
+                <li>HTF Bias (50%): 1D structure + 4H EMA</li>
+                <li>LTF Momentum (30%): RSI + BB position</li>
+                <li>Derivatives (20%): OI + Funding</li>
+                <li>🟢 LONG ≥ +0.3 | 🔴 SHORT ≤ -0.3 | ⚪ WAIT</li>
+                <li><strong>READY + WAIT = Don't trade</strong></li>
+            </ul>
+        </details>
         
-        <h3>Flags</h3>
-        <ul>
-            <li>🔥 VC-EXTREME - Imminent breakout (VC >95% + VOL <1.2x)</li>
-            <li>📊 TRENDLESS - True sleeper (ADX <20)</li>
-            <li>🎯 POC - Price at Point of Control (equilibrium)</li>
-            <li>💪 HIGH confidence direction</li>
-            <li>📈 Volume Spike (>200% of avg)</li>
-            <li>⚡ OI Jump (>15%)</li>
-            <li>🎆 Breakout Detected</li>
-        </ul>
+        <details>
+            <summary><h3>🚩 Flags</h3></summary>
+            <ul>
+                <li>🔥 VC-EXTREME: Imminent breakout</li>
+                <li>📊 TRENDLESS: ADX &lt;20</li>
+                <li>🎯 POC: At equilibrium</li>
+                <li>💪 HIGH confidence</li>
+                <li>📈 Volume Spike | ⚡ OI Jump</li>
+            </ul>
+        </details>
         
-        <h3>BTC Correlation</h3>
-        <ul>
-            <li>If BTC ADX >30 (trending) → Altcoin sleepers may be less reliable</li>
-            <li>If BTC volatility high → Market-wide movement expected</li>
-        </ul>
+        <details>
+            <summary><h3>₿ BTC Correlation</h3></summary>
+            <ul>
+                <li>BTC ADX >30 → Altcoin signals less reliable</li>
+                <li>BTC volatile → Market-wide movement</li>
+            </ul>
+        </details>
     </div>
 </div>
 
 <style>
+.legend details { margin-bottom: 8px; }
+.legend summary { cursor: pointer; user-select: none; }
+.legend summary h3 { display: inline; margin: 0; font-size: 14px; }
+.legend details[open] summary h3 { color: #00aaff; }
+.legend ul { margin: 8px 0 0 20px; padding: 0; font-size: 13px; }
+.legend li { margin: 4px 0; }
 .triggered-row { background: rgba(255, 215, 0, 0.2) !important; }
 .building-row { background: rgba(255, 165, 0, 0.15) !important; }
 .ready-row { background: rgba(0, 255, 0, 0.15) !important; }
@@ -178,7 +189,6 @@
 .warning { color: #ff6600; }
 .flags { font-size: 1.2em; }
 .vc-extreme { color: #ff4500; font-weight: bold; }
-.legend .vc-extreme { background: rgba(255, 69, 0, 0.1); padding: 2px 6px; border-radius: 4px; }
 .trendless { color: #00bfff; font-weight: bold; }
 .direction.high-conf { font-weight: bold; }
 .direction.mid-conf { opacity: 0.9; }
