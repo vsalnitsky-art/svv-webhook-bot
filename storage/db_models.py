@@ -492,6 +492,26 @@ def migrate_sleeper_candidates_v3():
         ("poc_strength", "FLOAT"),
         ("price_at_poc", "BOOLEAN DEFAULT FALSE"),
         ("poc_bonus", "INTEGER DEFAULT 0"),
+        
+        # === v5.0 Direction Engine - Phase & Exhaustion ===
+        ("market_phase", "VARCHAR(20) DEFAULT 'UNKNOWN'"),
+        ("phase_maturity", "VARCHAR(20) DEFAULT 'MIDDLE'"),
+        ("is_reversal_setup", "BOOLEAN DEFAULT FALSE"),
+        ("exhaustion_score", "FLOAT DEFAULT 0"),
+        ("direction_reason", "VARCHAR(200)"),
+        
+        # === v5.0 Price Structure ===
+        ("price_change_5d", "FLOAT"),
+        ("price_change_20d", "FLOAT"),
+        ("distance_from_high", "FLOAT"),
+        ("distance_from_low", "FLOAT"),
+        ("support_level", "FLOAT"),
+        ("resistance_level", "FLOAT"),
+        
+        # === v5.0 Exhaustion Signals ===
+        ("rsi_divergence", "VARCHAR(10)"),
+        ("at_support", "BOOLEAN DEFAULT FALSE"),
+        ("at_resistance", "BOOLEAN DEFAULT FALSE"),
     ]
     
     table_name = f"{TABLE_PREFIX}sleeper_candidates"
