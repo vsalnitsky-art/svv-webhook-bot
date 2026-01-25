@@ -21,6 +21,10 @@ class NotificationType(Enum):
     OB_FORMED = "ob_formed"
     SYSTEM = "system"
     ERROR = "error"
+    # v4.2 - New alert types
+    URGENT_ALERT = "urgent_alert"
+    HIGH_ALERT = "high_alert"
+    VOLUME_SPIKE = "volume_spike"
 
 
 class TelegramNotifier:
@@ -43,6 +47,10 @@ class TelegramNotifier:
             NotificationType.OB_FORMED: "📦",
             NotificationType.SYSTEM: "⚙️",
             NotificationType.ERROR: "🚨",
+            # v4.2 - New alert emojis
+            NotificationType.URGENT_ALERT: "⚡⚡⚡",
+            NotificationType.HIGH_ALERT: "🚀🔥",
+            NotificationType.VOLUME_SPIKE: "📊💥",
         }
     
     async def send_message(self, text: str, parse_mode: str = "HTML") -> bool:

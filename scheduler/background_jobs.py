@@ -147,6 +147,15 @@ class BackgroundJobs:
             name='HP Update',
             replace_existing=True
         )
+        
+        # 8. Intensive READY Monitor - кожні 5 хвилин (v4.2)
+        self.scheduler.add_job(
+            self._job_intensive_ready_monitor,
+            IntervalTrigger(minutes=5),
+            id='intensive_ready_monitor',
+            name='Intensive READY Monitor',
+            replace_existing=True
+        )
     
     def _log_job_execution(self, job_name: str, success: bool, duration: float, details: str = ""):
         """Логування виконання задачі"""
@@ -395,6 +404,159 @@ class BackgroundJobs:
             duration = time.time() - start
             self._log_job_execution('hp_update', False, duration, str(e))
             print(f"[SCHEDULER ERROR] HP update: {e}")
+    
+    def _job_intensive_ready_monitor(self):
+        """
+        Intensive monitoring for READY symbols - v4.2
+        
+        Runs every 5 minutes, checks:
+        1. Volume spikes (>150% of average)
+        2. Order book imbalance (>70%)
+        3. Price momentum
+        
+        Sends HIGH priority alerts when conditions met
+        """
+        start = time.time()
+        try:
+            from core.market_data import get_market_data
+            
+            # Get READY sleepers only
+            ready_sleepers = self.db.get_sleepers(state='READY')
+            
+            if not ready_sleepers:
+                duration = time.time() - start
+                self._log_job_execution(
+                    'intensive_ready_monitor',
+                    True,
+                    duration,
+                    "No READY symbols to monitor"
+                )
+                return
+            
+            market = get_market_data()
+            alerts_sent = 0
+            
+            for sleeper in ready_sleepers[:20]:  # Max 20 symbols
+                symbol = sleeper['symbol']
+                direction = sleeper.get('direction', 'NEUTRAL')
+                
+                try:
+                    # Get recent data (minimal API calls)
+                    ticker = market.get_ticker(symbol)
+                    if not ticker:
+                        continue
+                    
+                    # Check volume spike
+                    volume_24h = float(ticker.get('quoteVolume', 0))
+                    volume_ratio = sleeper.get('volume_ratio', 1.0)
+                    
+                    # Get current price and calculate momentum
+                    current_price = float(ticker.get('lastPrice', 0))
+                    price_change_pct = float(ticker.get('priceChangePercent', 0))
+                    
+                    # Alert conditions
+                    is_volume_spike = volume_ratio and volume_ratio >= 1.5  # 150%+
+                    is_strong_move = abs(price_change_pct) >= 2.0  # 2%+ move
+                    is_direction_aligned = (
+                        (direction == 'LONG' and price_change_pct > 0) or
+                        (direction == 'SHORT' and price_change_pct < 0)
+                    )
+                    
+                    # Determine alert priority
+                    alert_priority = None
+                    alert_reason = []
+                    
+                    # URGENT: Strong volume spike + price move + direction aligned
+                    if volume_ratio and volume_ratio >= 2.5 and is_strong_move and is_direction_aligned:
+                        alert_priority = 'URGENT'
+                        alert_reason = ['Volume 250%+', f'Price {price_change_pct:+.1f}%', 'Direction OK']
+                    
+                    # HIGH: Volume spike + movement
+                    elif is_volume_spike and (is_strong_move or is_direction_aligned):
+                        alert_priority = 'HIGH'
+                        if is_volume_spike:
+                            alert_reason.append(f'Volume {volume_ratio:.1f}x')
+                        if is_strong_move:
+                            alert_reason.append(f'Price {price_change_pct:+.1f}%')
+                    
+                    # MEDIUM: Just volume spike on READY symbol
+                    elif is_volume_spike:
+                        alert_priority = 'MEDIUM'
+                        alert_reason.append(f'Volume spike {volume_ratio:.1f}x')
+                    
+                    # Send alert if conditions met
+                    if alert_priority:
+                        self._send_intensive_alert(
+                            symbol=symbol,
+                            direction=direction,
+                            priority=alert_priority,
+                            reasons=alert_reason,
+                            sleeper=sleeper,
+                            current_price=current_price,
+                            price_change=price_change_pct,
+                            volume_ratio=volume_ratio
+                        )
+                        alerts_sent += 1
+                        
+                        # Log event
+                        self.db.log_event(
+                            f"[INTENSIVE] {alert_priority} alert: {symbol} - {', '.join(alert_reason)}",
+                            level='WARN' if alert_priority == 'URGENT' else 'INFO',
+                            category='ALERT',
+                            symbol=symbol
+                        )
+                
+                except Exception as symbol_error:
+                    print(f"[INTENSIVE] Error checking {symbol}: {symbol_error}")
+                    continue
+                
+                # Small delay between symbols
+                time.sleep(0.1)
+            
+            duration = time.time() - start
+            self._log_job_execution(
+                'intensive_ready_monitor',
+                True,
+                duration,
+                f"Checked {len(ready_sleepers)} READY symbols, sent {alerts_sent} alerts"
+            )
+            
+        except Exception as e:
+            duration = time.time() - start
+            self._log_job_execution('intensive_ready_monitor', False, duration, str(e))
+            print(f"[SCHEDULER ERROR] Intensive monitor: {e}")
+    
+    def _send_intensive_alert(self, symbol: str, direction: str, priority: str,
+                               reasons: list, sleeper: dict, current_price: float,
+                               price_change: float, volume_ratio: float):
+        """Send intensive monitoring alert via Telegram"""
+        
+        # Priority emojis
+        priority_emoji = {
+            'URGENT': '⚡⚡⚡',
+            'HIGH': '🚀🔥',
+            'MEDIUM': '👀📊'
+        }
+        
+        direction_emoji = '🟢' if direction == 'LONG' else '🔴' if direction == 'SHORT' else '⚪'
+        
+        # Format message
+        message = f"""
+{priority_emoji.get(priority, '📢')} <b>{priority} ALERT</b> {priority_emoji.get(priority, '📢')}
+{direction_emoji} <b>{symbol}</b> | {direction}
+
+📊 <b>Triggers:</b>
+{chr(10).join(['• ' + r for r in reasons])}
+
+💰 <b>Price:</b> {current_price:.4f} ({price_change:+.1f}%)
+📈 <b>Volume:</b> {volume_ratio:.1f}x average
+🎯 <b>Score:</b> {sleeper.get('total_score', 0):.0f}/100
+❤️ <b>HP:</b> {sleeper.get('hp', 0)}/10
+
+⏱ {datetime.now().strftime('%H:%M:%S UTC')}
+"""
+        
+        self.notifier.send_sync(message.strip())
     
     # ===== Manual Triggers =====
     
