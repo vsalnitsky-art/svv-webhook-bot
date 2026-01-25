@@ -1,12 +1,19 @@
 """
-Sleeper Scanner v4.1 - Professional 5-Day Strategy with Direction Engine
+Sleeper Scanner v4.1.1 - Professional 5-Day Strategy with Direction Engine
+
+DATA REQUIREMENTS (v4.1.1):
+- 4H klines: 60 candles (10 days) - for EMA20 + direction analysis
+- 1D klines: 60 candles (2 months) - for EMA50 structural analysis
+- Cache TTL: 3 minutes (reduced API calls)
+- Batch delay: 5 seconds (rate limit protection)
 
 MAJOR FEATURES:
 - v4.0: ADX filter, POC analysis, BTC correlation, Liquidity filter
 - v4.1: Professional 3-Layer Direction Engine
-  - HTF Structural Bias (50%): 1D structure + 4H EMA slope
+  - HTF Structural Bias (50%): 1D EMA50 structure + 4H EMA20 slope
   - LTF Momentum Shift (30%): RSI divergence + BB position
   - Derivatives Positioning (20%): OI + Funding + Price action
+- v4.1.1: Increased data for quality analysis, improved caching
 
 PROFESSIONAL PARADIGM:
 1. Sleeper Detector → ЧИ є сенс торгувати (this module)
@@ -19,6 +26,7 @@ NEUTRAL = валідний стан (не торгуємо)
 CRITICAL FIXES:
 - v3.2: BB width zero-filter bug
 - v3.3: Rate limit 500ms + compression clamp
+- v4.1.1: Increased klines for EMA50 analysis
 
 Система оцінки:
 - VOLATILITY_COMPRESSION: 40% - стиснення волатильності за 5 днів
@@ -79,8 +87,8 @@ class SleeperScannerV3:
     }
     
     # Data requirements
-    KLINES_5D = 30   # 30 x 4H = 5 days
-    KLINES_1D = 7    # 7 days for context
+    KLINES_5D = 60   # 60 x 4H = 10 days (enough for EMA20 + direction analysis)
+    KLINES_1D = 60   # 60 days for EMA50 + structural analysis
     OI_PERIODS = 30  # 30 hours of OI data
     
     # Score thresholds
@@ -127,9 +135,9 @@ class SleeperScannerV3:
         self.min_volume = self.db.get_setting('sleeper_min_volume', 75_000_000)  # Increased to 75M
         self.scan_interval = self.db.get_setting('sleeper_scan_interval', 240)  # 4H
         
-        # Batch processing settings
+        # Batch processing settings (v4.1: increased delay for more data)
         self.batch_size = 5   # Process 5 symbols at a time
-        self.batch_delay = 3  # 3 seconds between batches
+        self.batch_delay = 5  # 5 seconds between batches (was 3)
     
     def run_scan(self) -> List[Dict]:
         """
@@ -471,11 +479,11 @@ class SleeperScannerV3:
             price_change_4h = (klines_4h[-1]['close'] - klines_4h[-2]['close']) / klines_4h[-2]['close'] * 100
         
         # Use existing klines (no extra API calls!)
-        # klines_4h already has 30 candles, klines_1d has 7 - enough for direction
+        # klines_4h: 60 candles, klines_1d: 60 candles - enough for EMA50 analysis
         direction_result = self.direction_engine.resolve(
             symbol=symbol,
-            klines_4h=klines_4h,      # Reuse existing data
-            klines_1d=klines_1d,      # Reuse existing data  
+            klines_4h=klines_4h,      # Reuse existing data (60 candles)
+            klines_1d=klines_1d,      # Reuse existing data (60 candles)
             oi_change=oi_data['growth_pct'],
             funding_rate=funding_rate,
             price_change_4h=price_change_4h

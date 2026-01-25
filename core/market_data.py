@@ -28,9 +28,9 @@ class MarketDataCache:
         # TTL settings (seconds)
         self.TTL = {
             'tickers': 30,       # Tickers refresh every 30s
-            'klines': 60,        # Klines cache 1 minute
-            'funding': 120,      # Funding rate cache 2 minutes
-            'oi': 60,            # OI data cache 1 minute
+            'klines': 180,       # Klines cache 3 minutes (v4.1: reduced API calls)
+            'funding': 180,      # Funding rate cache 3 minutes
+            'oi': 120,           # OI data cache 2 minutes
             'oi_history': 300,   # OI history cache 5 minutes
             'orderbook': 30,     # Orderbook cache 30s
             'symbol_info': 3600, # Symbol info cache 1 hour

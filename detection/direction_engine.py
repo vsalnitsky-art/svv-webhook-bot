@@ -93,11 +93,11 @@ class DirectionEngine:
         Returns DirectionResult with direction, score, and component breakdown.
         """
         
-        # Fetch data if not provided
+        # Fetch data if not provided (standalone usage)
         if klines_4h is None:
-            klines_4h = self.fetcher.get_klines(symbol, '4h', limit=50)
+            klines_4h = self.fetcher.get_klines(symbol, '4h', limit=60)
         if klines_1d is None:
-            klines_1d = self.fetcher.get_klines(symbol, '1d', limit=30)
+            klines_1d = self.fetcher.get_klines(symbol, '1d', limit=60)
         
         # Calculate price change if not provided
         if price_change_4h is None and len(klines_4h) >= 2:
@@ -157,83 +157,97 @@ class DirectionEngine:
         Layer 1: HTF Structural Bias
         
         Components:
-        - 1D: Price position vs SMA (structure) - works with 7 candles
-        - 4H: EMA20 slope (momentum)
+        - 1D: Price position vs EMA50 (market structure)
+        - 4H: EMA20 slope (momentum direction)
         
         Returns: (bias: -1 to +1, reason: str)
         """
-        # Reduced requirements to work with available data
-        if len(klines_4h) < 10:
+        # Need sufficient data for quality analysis
+        if not klines_1d or len(klines_1d) < 50:
+            # Fallback to 4H only if no daily data
+            if not klines_4h or len(klines_4h) < 20:
+                return 0, "Insufficient data"
+            # Use 4H only
+            closes_4h = [k['close'] for k in klines_4h]
+            ema20 = self.indicators.ema(closes_4h, 20)
+            ema50 = self.indicators.ema(closes_4h, min(50, len(closes_4h)-1))
+            
+            current_price = closes_4h[-1]
+            price_vs_ema = (current_price - ema50[-1]) / ema50[-1] * 100 if ema50[-1] > 0 else 0
+            
+            if price_vs_ema > 2:
+                return 0.6, f"4H above EMA50 (+{price_vs_ema:.1f}%)"
+            elif price_vs_ema < -2:
+                return -0.6, f"4H below EMA50 ({price_vs_ema:.1f}%)"
+            return 0, "4H near EMA50"
+        
+        if not klines_4h or len(klines_4h) < 20:
             return 0, "Insufficient 4H data"
         
-        # === 1D Structure (simplified for 7 candles) ===
-        structure_bias = 0
-        structure_reason = "No 1D data"
+        # === 1D Structure (EMA50) ===
+        closes_1d = [k['close'] for k in klines_1d]
+        ema50_1d = self.indicators.ema(closes_1d, 50)
         
-        if klines_1d and len(klines_1d) >= 5:
-            closes_1d = [k['close'] for k in klines_1d]
-            # Use SMA of available data instead of EMA50
-            sma_1d = sum(closes_1d) / len(closes_1d)
-            current_price = closes_1d[-1]
-            
-            # Price position relative to SMA
-            price_vs_sma = (current_price - sma_1d) / sma_1d * 100
-            
-            # Structure bias based on price position
-            if price_vs_sma > 3:
-                structure_bias = 1.0
-                structure_reason = f"Price +{price_vs_sma:.1f}% above SMA"
-            elif price_vs_sma > 1:
-                structure_bias = 0.5
-                structure_reason = f"Price +{price_vs_sma:.1f}% above SMA"
-            elif price_vs_sma < -3:
-                structure_bias = -1.0
-                structure_reason = f"Price {price_vs_sma:.1f}% below SMA"
-            elif price_vs_sma < -1:
-                structure_bias = -0.5
-                structure_reason = f"Price {price_vs_sma:.1f}% below SMA"
-            else:
-                structure_bias = 0
-                structure_reason = "Price near SMA"
+        current_price = closes_1d[-1]
+        ema50_current = ema50_1d[-1]
         
-        # === 4H EMA Slope ===
-        closes_4h = [k['close'] for k in klines_4h]
+        # Price position relative to EMA50
+        price_vs_ema = (current_price - ema50_current) / ema50_current * 100 if ema50_current > 0 else 0
         
-        # Use shorter EMA for available data
-        ema_period = min(20, len(closes_4h) - 1)
-        if ema_period < 5:
-            return structure_bias * 0.6, structure_reason
-            
-        ema_4h = self.indicators.ema(closes_4h, ema_period)
-        
-        # Slope over last 5 candles (or available)
-        slope_period = min(5, len(ema_4h) - 1)
-        if slope_period < 2:
-            slope_bias = 0
-            slope_reason = "Insufficient slope data"
+        # Structure bias based on price position
+        if price_vs_ema > 5:
+            structure_bias = 1.0
+            structure_reason = f"Strong bullish (+{price_vs_ema:.1f}% above EMA50)"
+        elif price_vs_ema > 2:
+            structure_bias = 0.6
+            structure_reason = f"Bullish (+{price_vs_ema:.1f}% above EMA50)"
+        elif price_vs_ema > 0:
+            structure_bias = 0.3
+            structure_reason = f"Slight bullish (+{price_vs_ema:.1f}%)"
+        elif price_vs_ema < -5:
+            structure_bias = -1.0
+            structure_reason = f"Strong bearish ({price_vs_ema:.1f}% below EMA50)"
+        elif price_vs_ema < -2:
+            structure_bias = -0.6
+            structure_reason = f"Bearish ({price_vs_ema:.1f}% below EMA50)"
+        elif price_vs_ema < 0:
+            structure_bias = -0.3
+            structure_reason = f"Slight bearish ({price_vs_ema:.1f}%)"
         else:
-            slope = ema_4h[-1] - ema_4h[-slope_period]
-            slope_pct = slope / ema_4h[-slope_period] * 100 if ema_4h[-slope_period] != 0 else 0
+            structure_bias = 0
+            structure_reason = "Neutral (at EMA50)"
+        
+        # === 4H EMA Slope (momentum direction) ===
+        closes_4h = [k['close'] for k in klines_4h]
+        ema20_4h = self.indicators.ema(closes_4h, 20)
+        
+        # Slope over last 5 candles (20 hours)
+        if len(ema20_4h) >= 5:
+            slope = ema20_4h[-1] - ema20_4h[-5]
+            slope_pct = slope / ema20_4h[-5] * 100 if ema20_4h[-5] != 0 else 0
             
-            if slope_pct > 1:
+            if slope_pct > 1.5:
                 slope_bias = 1.0
-                slope_reason = f"EMA rising +{slope_pct:.2f}%"
-            elif slope_pct > 0.3:
+                slope_reason = f"Strong momentum (+{slope_pct:.2f}%)"
+            elif slope_pct > 0.5:
                 slope_bias = 0.5
-                slope_reason = f"EMA slight up +{slope_pct:.2f}%"
-            elif slope_pct < -1:
+                slope_reason = f"Positive momentum (+{slope_pct:.2f}%)"
+            elif slope_pct < -1.5:
                 slope_bias = -1.0
-                slope_reason = f"EMA falling {slope_pct:.2f}%"
-            elif slope_pct < -0.3:
+                slope_reason = f"Strong down momentum ({slope_pct:.2f}%)"
+            elif slope_pct < -0.5:
                 slope_bias = -0.5
-                slope_reason = f"EMA slight down {slope_pct:.2f}%"
+                slope_reason = f"Negative momentum ({slope_pct:.2f}%)"
             else:
                 slope_bias = 0
-                slope_reason = "EMA flat"
+                slope_reason = "Flat momentum"
+        else:
+            slope_bias = 0
+            slope_reason = "Insufficient slope data"
         
-        # Combine structure (60%) + slope (40%)
+        # Combine: Structure (60%) + Slope (40%)
         combined_bias = structure_bias * 0.6 + slope_bias * 0.4
-        combined_reason = f"HTF: {structure_reason} | {slope_reason}"
+        combined_reason = f"{structure_reason} | {slope_reason}"
         
         return combined_bias, combined_reason
     
