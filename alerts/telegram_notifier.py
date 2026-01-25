@@ -31,10 +31,7 @@ class TelegramNotifier:
     """Telegram bot для сповіщень"""
     
     def __init__(self):
-        self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
-        self.chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
-        self.enabled = bool(self.bot_token and self.chat_id)
-        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        self._load_config()
         
         # Emoji для різних типів
         self.emoji = {
@@ -52,6 +49,23 @@ class TelegramNotifier:
             NotificationType.HIGH_ALERT: "🚀🔥",
             NotificationType.VOLUME_SPIKE: "📊💥",
         }
+    
+    def _load_config(self):
+        """Load/reload configuration from environment"""
+        self.bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+        self.chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
+        self.enabled = bool(self.bot_token and self.chat_id)
+        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        
+        if self.enabled:
+            print(f"[TG] Telegram notifier enabled (chat_id: {self.chat_id[:4]}...)")
+        else:
+            print("[TG] Telegram notifier DISABLED - missing BOT_TOKEN or CHAT_ID")
+    
+    def reload(self):
+        """Reload configuration (call after env vars change)"""
+        self._load_config()
+        return self.enabled
     
     async def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
         """Відправити повідомлення в Telegram"""

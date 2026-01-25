@@ -383,6 +383,51 @@ def register_api_routes(app):
         )
         return jsonify({'success': True, 'message': 'Settings reset to defaults'})
     
+    @app.route('/api/telegram/reload', methods=['POST'])
+    def api_telegram_reload():
+        """Reload Telegram configuration from environment"""
+        from alerts.telegram_notifier import get_notifier
+        
+        notifier = get_notifier()
+        enabled = notifier.reload()
+        
+        return jsonify({
+            'success': True,
+            'enabled': enabled,
+            'message': 'Telegram enabled' if enabled else 'Telegram disabled (check env vars)'
+        })
+    
+    @app.route('/api/telegram/test', methods=['POST'])
+    def api_telegram_test():
+        """Send test message to Telegram"""
+        from alerts.telegram_notifier import get_notifier
+        
+        notifier = get_notifier()
+        
+        # Reload first to pick up any new env vars
+        notifier.reload()
+        
+        if not notifier.enabled:
+            return jsonify({
+                'success': False,
+                'error': 'Telegram not configured. Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to environment.'
+            })
+        
+        # Send test message
+        test_message = """
+🧪 <b>TEST MESSAGE</b>
+
+✅ Telegram integration working!
+📊 SVV Webhook Bot v4.2
+⏱ """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+        
+        result = notifier.send_sync(test_message.strip())
+        
+        return jsonify({
+            'success': result,
+            'message': 'Test message sent!' if result else 'Failed to send message'
+        })
+    
     @app.route('/api/scan/sleepers', methods=['POST'])
     def api_scan_sleepers():
         """Trigger sleeper scan (legacy v2)"""

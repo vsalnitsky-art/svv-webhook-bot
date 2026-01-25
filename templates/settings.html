@@ -64,8 +64,12 @@
                     
                     <div class="form-group">
                         <label for="paper_balance">Paper Balance ($)</label>
-                        <input type="number" id="paper_balance" name="paper_balance" 
-                               value="{{ settings.paper_balance | default(10000) }}" step="100" class="form-control">
+                        <div class="input-group">
+                            <input type="number" id="paper_balance" name="paper_balance" 
+                                   value="{{ settings.paper_balance | default(10000) | round(2) }}" 
+                                   step="100" min="100" max="1000000" class="form-control">
+                            <button type="button" class="btn btn-secondary" onclick="resetPaperBalance()">Reset to $10K</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -442,6 +446,11 @@
             <div class="settings-section">
                 <h2>📱 Telegram</h2>
                 
+                <div class="info-box" style="margin-bottom: 15px; background: rgba(255, 193, 7, 0.1); border-color: rgba(255, 193, 7, 0.3);">
+                    <p style="margin: 0;"><b>⚠️ Note:</b> Telegram token must be set in <b>Render Environment Variables</b>, not here.</p>
+                    <p style="margin: 5px 0 0 0; font-size: 0.85em;">Required vars: <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code></p>
+                </div>
+                
                 <div class="form-group">
                     <label class="checkbox-label">
                         <input type="checkbox" id="telegram_enabled" name="telegram_enabled" 
@@ -451,10 +460,17 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="telegram_chat_id">Chat ID</label>
+                    <label for="telegram_chat_id">Chat ID (for reference)</label>
                     <input type="text" id="telegram_chat_id" name="telegram_chat_id" 
-                           value="{{ settings.telegram_chat_id or '' }}" class="form-control">
-                    <small>Get from @userinfobot on Telegram</small>
+                           value="{{ settings.telegram_chat_id or '' }}" class="form-control" readonly>
+                    <small>Get from @userinfobot on Telegram. Set in Render env vars.</small>
+                </div>
+                
+                <div class="form-group" style="margin-top: 15px;">
+                    <button type="button" class="btn btn-primary" onclick="testTelegram()">
+                        📤 Send Test Message
+                    </button>
+                    <span id="telegram-test-result" style="margin-left: 10px;"></span>
                 </div>
                 
                 <h3>Notify on:</h3>
@@ -1061,6 +1077,56 @@ async function triggerOBScan() {
         
         if (data.success) {
             showToast(`✅ Found ${data.data.length} order blocks for ${symbol.toUpperCase()}`);
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function testTelegram() {
+    const resultSpan = document.getElementById('telegram-test-result');
+    resultSpan.textContent = '⏳ Sending...';
+    resultSpan.style.color = 'var(--text-secondary)';
+    
+    try {
+        const res = await fetch('/api/telegram/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            resultSpan.textContent = '✅ Message sent!';
+            resultSpan.style.color = 'var(--success)';
+            showToast('✅ Telegram test message sent!');
+        } else {
+            resultSpan.textContent = '❌ ' + data.error;
+            resultSpan.style.color = 'var(--danger)';
+            alert('❌ ' + data.error);
+        }
+    } catch (err) {
+        resultSpan.textContent = '❌ Error';
+        resultSpan.style.color = 'var(--danger)';
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function resetPaperBalance() {
+    if (!confirm('Reset paper balance to $10,000?')) return;
+    
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paper_balance: 10000 })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            document.getElementById('paper_balance').value = 10000;
+            showToast('✅ Paper balance reset to $10,000');
         } else {
             alert('❌ Error: ' + data.error);
         }
