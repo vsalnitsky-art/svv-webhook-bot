@@ -296,7 +296,9 @@ class UTBotMonitor:
         events = []
         now = datetime.now()
         
-        # Get top coin to monitor
+        # =====================================================
+        # 1. CHECK FOR OPEN SIGNALS ON TOP COIN
+        # =====================================================
         top_coin = self.get_top_coin()
         
         if top_coin:
@@ -305,28 +307,49 @@ class UTBotMonitor:
             if last_signal:
                 elapsed = (now - last_signal).total_seconds()
                 if elapsed < self.config['min_signal_gap_minutes'] * 60:
-                    return events
-            
-            # Check UT Bot signal
-            signal_result = self.ut_bot.check_signal_with_bias(
-                top_coin.symbol,
-                top_coin.direction,
-                timeframe=self.config['timeframe']
-            )
-            
-            # Process signal
-            if signal_result.get('aligned') and signal_result.get('action', '').startswith('ENTER'):
-                # Open trade
-                trade = self._open_trade(top_coin, signal_result)
-                if trade:
-                    events.append({
-                        'type': 'TRADE_OPENED',
-                        'trade': trade.to_dict(),
-                        'signal': signal_result
-                    })
-                    self._last_signal_time[top_coin.symbol] = now
+                    pass  # Skip this coin due to cooldown
+                else:
+                    # Check UT Bot signal
+                    signal_result = self.ut_bot.check_signal_with_bias(
+                        top_coin.symbol,
+                        top_coin.direction,
+                        timeframe=self.config['timeframe']
+                    )
+                    
+                    # Process OPEN signal (aligned with bias)
+                    trade_action = signal_result.get('trade_action', 'HOLD')
+                    if signal_result.get('aligned') and trade_action.startswith('ENTER'):
+                        # Open trade
+                        trade = self._open_trade(top_coin, signal_result)
+                        if trade:
+                            events.append({
+                                'type': 'TRADE_OPENED',
+                                'trade': trade.to_dict(),
+                                'signal': signal_result
+                            })
+                            self._last_signal_time[top_coin.symbol] = now
+            else:
+                # No cooldown - check signal
+                signal_result = self.ut_bot.check_signal_with_bias(
+                    top_coin.symbol,
+                    top_coin.direction,
+                    timeframe=self.config['timeframe']
+                )
+                
+                trade_action = signal_result.get('trade_action', 'HOLD')
+                if signal_result.get('aligned') and trade_action.startswith('ENTER'):
+                    trade = self._open_trade(top_coin, signal_result)
+                    if trade:
+                        events.append({
+                            'type': 'TRADE_OPENED',
+                            'trade': trade.to_dict(),
+                            'signal': signal_result
+                        })
+                        self._last_signal_time[top_coin.symbol] = now
         
-        # Monitor open trades for exit
+        # =====================================================
+        # 2. MONITOR OPEN TRADES FOR EXIT SIGNALS
+        # =====================================================
         for symbol, trade in list(self.open_trades.items()):
             exit_signal = self._check_exit_signal(trade)
             if exit_signal:
@@ -390,15 +413,36 @@ class UTBotMonitor:
         should_exit = False
         exit_reason = None
         
-        # 1. Opposite signal
-        if trade.direction == 'LONG' and signal.signal == UTSignalType.SELL:
-            should_exit = True
-            exit_reason = 'UT_SELL_SIGNAL'
-        elif trade.direction == 'SHORT' and signal.signal == UTSignalType.BUY:
-            should_exit = True
-            exit_reason = 'UT_BUY_SIGNAL'
+        # =====================================================
+        # EXIT LOGIC (EXACT PINE SCRIPT)
+        # =====================================================
+        # Exit when UT Bot gives CLOSE signal for our direction
+        # This happens when pos changes FROM our position TO neutral/opposite
+        #
+        # For LONG: pos was 1, now is 0 or -1 → CLOSE_LONG
+        # For SHORT: pos was -1, now is 0 or 1 → CLOSE_SHORT
+        # =====================================================
         
-        # 2. Max duration
+        # 1. UT Bot CLOSE signal matching our position direction
+        if signal.signal_action == 'CLOSE':
+            if trade.direction == 'LONG' and signal.direction == 'LONG':
+                should_exit = True
+                exit_reason = 'UT_CLOSE_LONG'
+            elif trade.direction == 'SHORT' and signal.direction == 'SHORT':
+                should_exit = True
+                exit_reason = 'UT_CLOSE_SHORT'
+        
+        # 2. Opposite OPEN signal (alternative exit - more aggressive)
+        # This covers the case when pos goes directly from 1 to -1 (or vice versa)
+        elif signal.signal_action == 'OPEN':
+            if trade.direction == 'LONG' and signal.direction == 'SHORT':
+                should_exit = True
+                exit_reason = 'UT_REVERSE_TO_SHORT'
+            elif trade.direction == 'SHORT' and signal.direction == 'LONG':
+                should_exit = True
+                exit_reason = 'UT_REVERSE_TO_LONG'
+        
+        # 3. Max duration
         if trade.opened_at:
             duration = (datetime.now() - trade.opened_at).total_seconds() / 3600
             if duration > self.config['max_trade_duration_hours']:

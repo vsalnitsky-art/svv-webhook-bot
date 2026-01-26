@@ -46,24 +46,24 @@ class UTBotSignal:
     timestamp: datetime
     
     # Додаткова інформація
-    buy_condition: bool = False
-    sell_condition: bool = False
+    signal_action: str = "HOLD"   # 'OPEN', 'CLOSE', 'HOLD'
+    prev_position: int = 0        # Previous position state
     bar_color: str = "neutral"    # 'green', 'red', 'neutral'
     
     def to_dict(self) -> Dict:
         return {
             'symbol': self.symbol,
             'signal': self.signal.value,
+            'signal_action': self.signal_action,
             'direction': self.direction,
             'price': round(self.price, 8),
             'atr_trailing_stop': round(self.atr_trailing_stop, 8),
             'atr_value': round(self.atr_value, 8),
             'position': self.position,
+            'prev_position': self.prev_position,
             'confidence': round(self.confidence, 1),
             'heikin_ashi_used': self.heikin_ashi_used,
             'timeframe': self.timeframe,
-            'buy_condition': self.buy_condition,
-            'sell_condition': self.sell_condition,
             'bar_color': self.bar_color,
             'timestamp': self.timestamp.isoformat()
         }
@@ -173,25 +173,57 @@ class UTBotFilter:
         last_idx = len(src) - 1
         current_price = closes[last_idx]
         current_stop = x_atr_trailing_stop[last_idx]
-        current_pos = pos[last_idx]
+        current_pos = int(pos[last_idx])
+        prev_pos = int(pos[last_idx - 1]) if last_idx > 0 else 0
         current_atr = atr[last_idx] if last_idx < len(atr) else atr[-1]
         
-        # Determine signal
+        # =====================================================
+        # DETERMINE SIGNAL BY STATE CHANGE (EXACT PINE SCRIPT)
+        # =====================================================
+        # pos = 1: LONG position
+        # pos = -1: SHORT position  
+        # pos = 0: neutral
+        #
+        # Signals occur on STATE CHANGE:
+        # - pos changes 0 → 1: UT Long (open LONG)
+        # - pos changes 0 → -1: UT Short (open SHORT)
+        # - pos changes 1 → 0: Close LONG
+        # - pos changes -1 → 0: Close SHORT
+        # =====================================================
+        
         signal_type = UTSignalType.HOLD
+        signal_action = 'HOLD'  # OPEN, CLOSE, HOLD
         direction = None
         
-        if buy[last_idx]:
+        # OPEN LONG: pos changes to 1 from anything else
+        if current_pos == 1 and prev_pos != 1:
             signal_type = UTSignalType.BUY
+            signal_action = 'OPEN'
             direction = "LONG"
-        elif sell[last_idx]:
+        
+        # OPEN SHORT: pos changes to -1 from anything else
+        elif current_pos == -1 and prev_pos != -1:
             signal_type = UTSignalType.SELL
+            signal_action = 'OPEN'
             direction = "SHORT"
+        
+        # CLOSE LONG: pos changes from 1 to 0 (or -1)
+        elif prev_pos == 1 and current_pos != 1:
+            signal_type = UTSignalType.SELL  # Exit signal
+            signal_action = 'CLOSE'
+            direction = "LONG"  # Direction of position to close
+        
+        # CLOSE SHORT: pos changes from -1 to 0 (or 1)
+        elif prev_pos == -1 and current_pos != -1:
+            signal_type = UTSignalType.BUY  # Exit signal
+            signal_action = 'CLOSE'
+            direction = "SHORT"  # Direction of position to close
         
         # Determine bar color
         bar_color = "neutral"
-        if bar_buy[last_idx]:
+        if current_pos == 1:
             bar_color = "green"
-        elif bar_sell[last_idx]:
+        elif current_pos == -1:
             bar_color = "red"
         
         # Calculate confidence
@@ -207,13 +239,13 @@ class UTBotFilter:
             price=current_price,
             atr_trailing_stop=current_stop,
             atr_value=current_atr,
-            position=int(current_pos),
+            position=current_pos,
             confidence=confidence,
             heikin_ashi_used=self.config['use_heikin_ashi'],
             timeframe=tf,
             timestamp=datetime.now(),
-            buy_condition=bool(buy[last_idx]),
-            sell_condition=bool(sell[last_idx]),
+            signal_action=signal_action,
+            prev_position=prev_pos,
             bar_color=bar_color
         )
     
@@ -383,17 +415,50 @@ class UTBotFilter:
         result = signal.to_dict()
         result['bias'] = bias
         result['aligned'] = False
-        result['action'] = 'HOLD'
+        result['trade_action'] = 'HOLD'
+        result['reason'] = ''
         
-        # Check alignment
-        if bias == 'LONG' and signal.signal == UTSignalType.BUY:
-            result['aligned'] = True
-            result['action'] = 'ENTER_LONG'
-        elif bias == 'SHORT' and signal.signal == UTSignalType.SELL:
-            result['aligned'] = True
-            result['action'] = 'ENTER_SHORT'
-        elif signal.signal in [UTSignalType.BUY, UTSignalType.SELL] and bias == 'NEUTRAL':
-            result['action'] = 'SIGNAL_NO_BIAS'
+        # =====================================================
+        # LOGIC FOR OPEN SIGNALS
+        # =====================================================
+        if signal.signal_action == 'OPEN':
+            # OPEN LONG: Check if bias is LONG
+            if signal.direction == 'LONG':
+                if bias == 'LONG':
+                    result['aligned'] = True
+                    result['trade_action'] = 'ENTER_LONG'
+                    result['reason'] = 'UT Long signal aligned with LONG bias'
+                elif bias == 'NEUTRAL':
+                    result['trade_action'] = 'SIGNAL_NO_BIAS'
+                    result['reason'] = 'UT Long signal but no directional bias'
+                else:
+                    result['trade_action'] = 'IGNORE'
+                    result['reason'] = f'UT Long contradicts {bias} bias'
+            
+            # OPEN SHORT: Check if bias is SHORT
+            elif signal.direction == 'SHORT':
+                if bias == 'SHORT':
+                    result['aligned'] = True
+                    result['trade_action'] = 'ENTER_SHORT'
+                    result['reason'] = 'UT Short signal aligned with SHORT bias'
+                elif bias == 'NEUTRAL':
+                    result['trade_action'] = 'SIGNAL_NO_BIAS'
+                    result['reason'] = 'UT Short signal but no directional bias'
+                else:
+                    result['trade_action'] = 'IGNORE'
+                    result['reason'] = f'UT Short contradicts {bias} bias'
+        
+        # =====================================================
+        # LOGIC FOR CLOSE SIGNALS
+        # =====================================================
+        elif signal.signal_action == 'CLOSE':
+            # CLOSE signals always pass through (no bias check needed)
+            if signal.direction == 'LONG':
+                result['trade_action'] = 'CLOSE_LONG'
+                result['reason'] = 'UT Bot exit signal for LONG position'
+            elif signal.direction == 'SHORT':
+                result['trade_action'] = 'CLOSE_SHORT'
+                result['reason'] = 'UT Bot exit signal for SHORT position'
         
         return result
     
