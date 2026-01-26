@@ -210,9 +210,17 @@ class SleeperScannerV3:
                         dir_score = result.get('direction_score', 0)
                         dir_str = f"{direction}[{dir_score:+.2f}]" if direction != "NEUTRAL" else "WAIT"
                         
-                        print(f"[SLEEPER v4.1] {state_emoji}{vc_flag}{adx_flag}{poc_flag}{dir_flag} {result['symbol']}: "
+                        # v6: MSS indicator
+                        mss_bias = result.get('mss_bias', 'neutral')
+                        mss_str = ""
+                        if mss_bias == 'long':
+                            mss_str = f" MSS:↑{result.get('higher_lows_count', 0)}HL"
+                        elif mss_bias == 'short':
+                            mss_str = f" MSS:↓{result.get('lower_highs_count', 0)}LH"
+                        
+                        print(f"[SLEEPER v6] {state_emoji}{vc_flag}{adx_flag}{poc_flag}{dir_flag} {result['symbol']}: "
                               f"Score={result['total_score']:.1f}{bonus_str} "
-                              f"Dir={dir_str} "
+                              f"Dir={dir_str}{mss_str} "
                               f"(VC:{result['volatility_compression']:.0f} "
                               f"VS:{result['volume_suppression']:.0f} "
                               f"OI:{result['oi_growth']:.0f} "
@@ -444,9 +452,9 @@ class SleeperScannerV3:
             # Use higher of standard or adjusted score
             total_score = max(total_score, adjusted_score)
         
-        # === 7. DETERMINE DIRECTION (v5: Professional with exhaustion detection) ===
+        # === 7. DETERMINE DIRECTION (v6: Professional with MSS, OI+Delta, POC) ===
         
-        # v5 Direction Engine uses HTF and MTF data
+        # v6 Direction Engine uses HTF and MTF data + OB Imbalance + POC
         # For SWING: HTF=1d, MTF=4h - we have both!
         # For SCALPING: HTF=1h, MTF=15m - use 4h as HTF approximation
         direction_result = self.direction_engine.resolve(
@@ -454,7 +462,10 @@ class SleeperScannerV3:
             klines_htf=klines_1d,      # HTF data (1D for SWING, approximation for SCALPING)
             klines_mtf=klines_4h,      # MTF data (4H)
             oi_change=oi_data['growth_pct'],
-            funding_rate=funding_rate
+            funding_rate=funding_rate,
+            # v6: Additional signals
+            ob_imbalance=ob_data['imbalance'],     # Order Book imbalance as proxy for volume delta
+            poc_price=poc_data.get('poc_price', 0)  # Point of Control from Volume Profile
         )
         
         direction = direction_result.direction.value  # LONG, SHORT, or NEUTRAL
@@ -564,6 +575,21 @@ class SleeperScannerV3:
             'rsi_divergence': direction_result.exhaustion.rsi_divergence,
             'at_support': direction_result.exhaustion.at_support,
             'at_resistance': direction_result.exhaustion.at_resistance,
+            
+            # v6: Market Structure Shift (MSS)
+            'mss_bias': direction_result.structure.mss_bias,
+            'higher_lows_count': direction_result.structure.higher_lows_count,
+            'lower_highs_count': direction_result.structure.lower_highs_count,
+            'mss_strength': round(direction_result.structure.mss_strength, 2),
+            
+            # v6: OI + Volume Delta
+            'oi_delta_bias': direction_result.structure.oi_delta_bias,
+            'oi_growing': direction_result.structure.oi_growing,
+            'volume_delta': round(direction_result.structure.volume_delta, 2),
+            
+            # v6: POC Positioning
+            'poc_bias': direction_result.structure.poc_bias,
+            'price_vs_poc': round(direction_result.structure.price_vs_poc, 2),
             
             # v4: ADX data
             'adx_value': round(adx_value, 1),

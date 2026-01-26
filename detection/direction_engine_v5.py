@@ -1,11 +1,18 @@
 """
-Direction Engine v5.0 - Professional Reversal-Aware Direction System
+Direction Engine v6.0 - Professional Direction System with Market Structure Analysis
 
-КЛЮЧОВІ ВІДМІННОСТІ від v1:
+НОВІ ФІЧІ v6:
+1. MSS (Market Structure Shift) - детектор HL/LH всередині консолідації
+2. OI + Volume Delta Divergence - накопичення/розподіл
+3. POC Positioning - ціна вище/нижче Point of Control
+4. Покращений scoring з вагами для кожного сигналу
+
+КЛЮЧОВІ ВІДМІННОСТІ від v5:
 1. PHASE DETECTION - визначає фазу ринку (accumulation/markup/distribution/markdown)
 2. EXHAUSTION DETECTION - бачить коли тренд вичерпався
 3. REVERSAL SIGNALS - шукає розвороти на S/R рівнях
-4. SMART DIRECTION - враховує контекст, не просто тренд
+4. MSS DETECTION - Higher Lows = LONG, Lower Highs = SHORT
+5. OI DIVERGENCE - OI↑ + Delta↑ = LONG, OI↑ + Delta↓ = SHORT
 
 КРИТИЧНО: 
 - На ДНІ → шукаємо LONG (не short!)
@@ -13,7 +20,7 @@ Direction Engine v5.0 - Professional Reversal-Aware Direction System
 - В середині тренду → торгуємо з трендом
 
 Автор: SVV Bot Team
-Версія: 5.0 (2026-01-25)
+Версія: 6.0 (2026-01-26)
 """
 
 from typing import Dict, Optional, Tuple, List, NamedTuple
@@ -132,6 +139,22 @@ class StructureAnalysis:
     distance_from_low: float = 0.0   # % від останнього лоу
     
     adx_value: float = 0.0
+    
+    # ===== v6: Market Structure Shift (MSS) =====
+    mss_bias: str = "neutral"        # "long" / "short" / "neutral"
+    higher_lows_count: int = 0       # Кількість Higher Lows в консолідації
+    lower_highs_count: int = 0       # Кількість Lower Highs в консолідації
+    mss_strength: float = 0.0        # 0-1: сила сигналу MSS
+    
+    # ===== v6: OI + Volume Delta =====
+    oi_delta_bias: str = "neutral"   # "long" / "short" / "neutral"
+    oi_growing: bool = False         # OI зростає?
+    volume_delta: float = 0.0        # Positive = buyers, Negative = sellers
+    
+    # ===== v6: POC (Point of Control) =====
+    poc_bias: str = "neutral"        # "long" / "short" / "neutral"
+    poc_price: float = 0.0
+    price_vs_poc: float = 0.0        # % вище/нижче POC
 
 
 @dataclass
@@ -202,9 +225,15 @@ class DirectionEngineV5:
                 klines_htf: List[Dict] = None,
                 klines_mtf: List[Dict] = None,
                 oi_change: float = None,
-                funding_rate: float = None) -> DirectionResultV5:
+                funding_rate: float = None,
+                ob_imbalance: float = None,  # v6: Order Book imbalance %
+                poc_price: float = None) -> DirectionResultV5:  # v6: Point of Control price
         """
         Main entry point - resolve direction with full analysis
+        
+        v6 additions:
+        - ob_imbalance: Order book bid/ask imbalance (positive = more bids)
+        - poc_price: Volume Profile Point of Control price
         """
         
         # Fetch data if not provided
@@ -221,6 +250,12 @@ class DirectionEngineV5:
         
         # === STEP 1: Structure Analysis ===
         structure = self._analyze_structure(klines_htf, klines_mtf)
+        
+        # === STEP 1.5 (v6): Additional Structure Signals ===
+        # OI + Volume Delta divergence
+        self._detect_oi_volume_divergence(structure, oi_change, ob_imbalance)
+        # POC positioning
+        self._detect_poc_positioning(structure, poc_price)
         
         # === STEP 2: Exhaustion Detection ===
         exhaustion = self._detect_exhaustion(klines_htf, klines_mtf, structure)
@@ -315,6 +350,9 @@ class DirectionEngineV5:
         structure.trend_direction = self._determine_trend_direction(closes_htf, structure)
         structure.trend_strength, structure.adx_value = self._calculate_trend_strength(klines_mtf)
         
+        # v6: Detect Market Structure Shift (HL/LH pattern)
+        self._detect_mss(klines_htf, structure)
+        
         return structure
     
     def _find_support(self, klines: List[Dict]) -> float:
@@ -354,6 +392,129 @@ class DirectionEngineV5:
             return min(resistances_above)  # Nearest resistance
         
         return max(highs[-20:]) if len(highs) >= 20 else max(highs)
+    
+    def _detect_mss(self, klines: List[Dict], structure: StructureAnalysis) -> None:
+        """
+        Detect Market Structure Shift (MSS) inside consolidation
+        
+        v6: Професійний аналіз структури:
+        - Higher Lows (HL) = лімітний покупець витісняє продавців → LONG bias
+        - Lower Highs (LH) = агресивний продавець тисне на ринок → SHORT bias
+        
+        Працює найкраще в фазі "сну" (низька волатильність, ADX < 25)
+        """
+        if len(klines) < 20:
+            return
+        
+        highs = [k['high'] for k in klines[-50:]]  # Last 50 candles
+        lows = [k['low'] for k in klines[-50:]]
+        
+        # Find pivot points (swing highs and swing lows)
+        # Using 2-bar lookback/lookforward for simple pivot detection
+        pivot_highs = []  # (index, price)
+        pivot_lows = []   # (index, price)
+        
+        for i in range(2, len(highs) - 2):
+            # Pivot High: higher than 2 bars on each side
+            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and \
+               highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+                pivot_highs.append((i, highs[i]))
+            
+            # Pivot Low: lower than 2 bars on each side
+            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and \
+               lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+                pivot_lows.append((i, lows[i]))
+        
+        if len(pivot_lows) < 2 or len(pivot_highs) < 2:
+            return
+        
+        # Analyze last 3-4 pivot lows for Higher Lows pattern
+        recent_lows = pivot_lows[-4:]  # Last 4 pivot lows
+        hl_count = 0
+        for i in range(1, len(recent_lows)):
+            if recent_lows[i][1] > recent_lows[i-1][1]:
+                hl_count += 1
+        
+        # Analyze last 3-4 pivot highs for Lower Highs pattern
+        recent_highs = pivot_highs[-4:]  # Last 4 pivot highs
+        lh_count = 0
+        for i in range(1, len(recent_highs)):
+            if recent_highs[i][1] < recent_highs[i-1][1]:
+                lh_count += 1
+        
+        structure.higher_lows_count = hl_count
+        structure.lower_highs_count = lh_count
+        
+        # Determine MSS bias
+        # Need at least 2 consecutive HL or LH to be significant
+        if hl_count >= 2 and lh_count <= 1:
+            structure.mss_bias = "long"
+            structure.mss_strength = min(1.0, hl_count / 3)  # Max at 3 HLs
+        elif lh_count >= 2 and hl_count <= 1:
+            structure.mss_bias = "short"
+            structure.mss_strength = min(1.0, lh_count / 3)  # Max at 3 LHs
+        else:
+            structure.mss_bias = "neutral"
+            structure.mss_strength = 0.0
+    
+    def _detect_oi_volume_divergence(self, structure: StructureAnalysis,
+                                      oi_change: float = None,
+                                      ob_imbalance: float = None) -> None:
+        """
+        Detect OI + Volume Delta divergence
+        
+        v6: Професійний аналіз накопичення/розподілу:
+        - OI↑ + positive delta = накопичення (LONG)
+        - OI↑ + negative delta = розподіл (SHORT)
+        
+        Використовуємо OB Imbalance як proxy для Volume Delta:
+        - Bid > Ask = покупці агресивніші = positive delta
+        - Ask > Bid = продавці агресивніші = negative delta
+        """
+        # OI growing?
+        structure.oi_growing = oi_change is not None and oi_change > 2  # >2% growth
+        
+        # Use OB Imbalance as proxy for volume delta
+        # Imbalance: positive = more bids, negative = more asks
+        if ob_imbalance is not None:
+            structure.volume_delta = ob_imbalance
+        
+        # Determine OI + Delta bias
+        if structure.oi_growing:
+            if structure.volume_delta > 10:  # >10% bid imbalance
+                structure.oi_delta_bias = "long"
+            elif structure.volume_delta < -10:  # >10% ask imbalance
+                structure.oi_delta_bias = "short"
+            else:
+                structure.oi_delta_bias = "neutral"
+        else:
+            structure.oi_delta_bias = "neutral"
+    
+    def _detect_poc_positioning(self, structure: StructureAnalysis,
+                                 poc_price: float = None) -> None:
+        """
+        Detect price positioning relative to POC (Point of Control)
+        
+        v6: Професійний аналіз Volume Profile:
+        - Price > POC = POC як підтримка → LONG bias
+        - Price < POC = POC як опір → SHORT bias
+        """
+        if poc_price is None or poc_price <= 0:
+            return
+        
+        structure.poc_price = poc_price
+        
+        # Calculate distance from POC
+        if structure.current_price > 0:
+            structure.price_vs_poc = ((structure.current_price - poc_price) / poc_price) * 100
+        
+        # Determine POC bias (need >0.5% distance to be significant)
+        if structure.price_vs_poc > 0.5:
+            structure.poc_bias = "long"
+        elif structure.price_vs_poc < -0.5:
+            structure.poc_bias = "short"
+        else:
+            structure.poc_bias = "neutral"
     
     def _determine_trend_direction(self, closes: List[float], 
                                    structure: StructureAnalysis) -> str:
@@ -746,16 +907,28 @@ class DirectionEngineV5:
                           oi_change: float = None,
                           funding_rate: float = None) -> Tuple[Direction, float, str]:
         """
-        MAIN DECISION LOGIC
+        MAIN DECISION LOGIC v6
+        
+        v6 scoring system with weighted signals:
+        - MSS (Market Structure Shift): ±0.30 (30% weight) - LEADING indicator
+        - OI + Delta Divergence: ±0.25 (25% weight) - accumulation/distribution
+        - POC Positioning: ±0.20 (20% weight) - volume profile support/resistance
+        - Phase/Trend: ±0.15 (15% weight) - background context
+        - Exhaustion/Reversal: ±0.10 (10% weight) - extreme conditions
         
         Priority:
         1. REVERSAL SETUP → trade reversal direction
-        2. EXHAUSTED TREND → don't trade with trend!
-        3. STRONG TREND → trade with trend
-        4. UNCLEAR → NEUTRAL
+        2. MSS SIGNALS → strong leading indicator in consolidation
+        3. OI + DELTA DIVERGENCE → accumulation/distribution
+        4. POC POSITIONING → volume profile bias
+        5. STRONG TREND → trade with trend (if not exhausted)
+        6. UNCLEAR → NEUTRAL
         """
         
-        # === PRIORITY 1: REVERSAL SETUP ===
+        score = 0.0
+        reasons = []
+        
+        # === PRIORITY 1: REVERSAL SETUP (extreme conditions) ===
         if is_reversal:
             if reversal_direction == Direction.LONG:
                 score = 0.6 + exhaustion.exhaustion_score * 0.3
@@ -766,60 +939,80 @@ class DirectionEngineV5:
                 reason = f"REVERSAL: Uptrend exhausted at resistance, bearish setup"
                 return reversal_direction, score, reason
         
-        # === PRIORITY 2: EXHAUSTED TREND - DON'T TRADE WITH IT ===
+        # === v6 SCORING SYSTEM ===
+        
+        # --- MSS (Market Structure Shift) - 30% weight ---
+        # Best indicator in low volatility / consolidation
+        if structure.mss_bias == "long":
+            mss_score = 0.30 * structure.mss_strength
+            score += mss_score
+            reasons.append(f"MSS: {structure.higher_lows_count} Higher Lows (+{mss_score:.2f})")
+        elif structure.mss_bias == "short":
+            mss_score = -0.30 * structure.mss_strength
+            score += mss_score
+            reasons.append(f"MSS: {structure.lower_highs_count} Lower Highs ({mss_score:.2f})")
+        
+        # --- OI + Volume Delta Divergence - 25% weight ---
+        # Shows accumulation (OI↑ + buying) or distribution (OI↑ + selling)
+        if structure.oi_delta_bias == "long":
+            oi_score = 0.25
+            score += oi_score
+            reasons.append(f"OI Divergence: Accumulation (OI↑ + Buy Delta)")
+        elif structure.oi_delta_bias == "short":
+            oi_score = -0.25
+            score += oi_score
+            reasons.append(f"OI Divergence: Distribution (OI↑ + Sell Delta)")
+        
+        # --- POC Positioning - 20% weight ---
+        # Price above POC = support, below = resistance
+        if structure.poc_bias == "long":
+            poc_score = 0.20
+            score += poc_score
+            reasons.append(f"POC: Price {structure.price_vs_poc:+.1f}% above (support)")
+        elif structure.poc_bias == "short":
+            poc_score = -0.20
+            score += poc_score
+            reasons.append(f"POC: Price {structure.price_vs_poc:.1f}% below (resistance)")
+        
+        # --- Phase/Trend Context - 15% weight ---
+        if maturity != PhaseMaturity.EXHAUSTED:
+            if phase == MarketPhase.MARKUP and structure.trend_strength in [TrendStrength.STRONG, TrendStrength.MODERATE]:
+                score += 0.15
+                reasons.append(f"Trend: Uptrend (ADX {structure.adx_value:.0f})")
+            elif phase == MarketPhase.MARKDOWN and structure.trend_strength in [TrendStrength.STRONG, TrendStrength.MODERATE]:
+                score -= 0.15
+                reasons.append(f"Trend: Downtrend (ADX {structure.adx_value:.0f})")
+            elif phase == MarketPhase.ACCUMULATION:
+                score += 0.10
+                reasons.append("Phase: Accumulation")
+            elif phase == MarketPhase.DISTRIBUTION:
+                score -= 0.10
+                reasons.append("Phase: Distribution")
+        
+        # --- Exhaustion Adjustment - 10% weight ---
         if maturity == PhaseMaturity.EXHAUSTED:
             if phase == MarketPhase.MARKDOWN:
-                # Downtrend exhausted - lean LONG or NEUTRAL, never SHORT
-                if exhaustion.exhaustion_score > 0.5:
-                    return Direction.LONG, 0.4, "Downtrend exhausted - expecting bounce"
-                return Direction.NEUTRAL, 0.0, "Downtrend exhausted - wait for confirmation"
-            
+                # Exhausted downtrend - don't short, lean long
+                score += 0.10
+                reasons.append("Exhaustion: Downtrend exhausted")
             elif phase == MarketPhase.MARKUP:
-                # Uptrend exhausted - lean SHORT or NEUTRAL, never LONG
-                if exhaustion.exhaustion_score > 0.5:
-                    return Direction.SHORT, -0.4, "Uptrend exhausted - expecting pullback"
-                return Direction.NEUTRAL, 0.0, "Uptrend exhausted - wait for confirmation"
+                # Exhausted uptrend - don't long, lean short
+                score -= 0.10
+                reasons.append("Exhaustion: Uptrend exhausted")
         
-        # === PRIORITY 3: LATE PHASE - CAUTION ===
-        if maturity == PhaseMaturity.LATE:
-            if phase == MarketPhase.MARKDOWN:
-                # Late downtrend - don't short, wait for reversal
-                return Direction.NEUTRAL, 0.1, "Late downtrend - wait for reversal signals"
-            elif phase == MarketPhase.MARKUP:
-                # Late uptrend - don't long, wait for reversal
-                return Direction.NEUTRAL, -0.1, "Late uptrend - wait for reversal signals"
+        # === DETERMINE FINAL DIRECTION ===
+        # Threshold: need score >= 0.35 for direction, else NEUTRAL
+        if score >= 0.35:
+            direction = Direction.LONG
+            primary_reason = " | ".join(reasons[:2]) if reasons else "Multiple bullish signals"
+        elif score <= -0.35:
+            direction = Direction.SHORT
+            primary_reason = " | ".join(reasons[:2]) if reasons else "Multiple bearish signals"
+        else:
+            direction = Direction.NEUTRAL
+            primary_reason = "No clear directional bias" if not reasons else f"Mixed signals: {reasons[0] if reasons else ''}"
         
-        # === PRIORITY 4: STRONG TREND - TRADE WITH IT ===
-        if structure.trend_strength in [TrendStrength.STRONG, TrendStrength.MODERATE]:
-            if phase == MarketPhase.MARKUP:
-                # Strong uptrend - LONG
-                score = 0.5 + (0.2 if structure.trend_strength == TrendStrength.STRONG else 0)
-                return Direction.LONG, score, f"Strong uptrend (ADX: {structure.adx_value:.0f})"
-            
-            elif phase == MarketPhase.MARKDOWN:
-                # Strong downtrend - SHORT
-                score = -0.5 - (0.2 if structure.trend_strength == TrendStrength.STRONG else 0)
-                return Direction.SHORT, score, f"Strong downtrend (ADX: {structure.adx_value:.0f})"
-        
-        # === PRIORITY 5: ACCUMULATION/DISTRIBUTION PHASES ===
-        if phase == MarketPhase.ACCUMULATION:
-            # Accumulation phase - lean bullish
-            return Direction.LONG, 0.35, "Accumulation phase - buyers building"
-        
-        elif phase == MarketPhase.DISTRIBUTION:
-            # Distribution phase - lean bearish
-            return Direction.SHORT, -0.35, "Distribution phase - sellers building"
-        
-        # === PRIORITY 6: WEAK/UNCLEAR - DERIVATIVES CHECK ===
-        deriv_bias = self._get_derivatives_bias(oi_change, funding_rate)
-        if abs(deriv_bias) > 0.3:
-            if deriv_bias > 0:
-                return Direction.LONG, deriv_bias * 0.8, "Derivatives signal bullish"
-            else:
-                return Direction.SHORT, deriv_bias * 0.8, "Derivatives signal bearish"
-        
-        # === DEFAULT: NEUTRAL ===
-        return Direction.NEUTRAL, 0.0, "No clear directional bias"
+        return direction, round(score, 3), primary_reason
     
     def _get_derivatives_bias(self, oi_change: float = None, 
                               funding_rate: float = None) -> float:

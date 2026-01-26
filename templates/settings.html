@@ -187,19 +187,24 @@
             <div class="settings-section">
                 <h2>🔍 Scan Parameters</h2>
                 
+                <div class="info-box" style="margin-bottom: 15px; background: rgba(255, 193, 7, 0.1); border-color: rgba(255, 193, 7, 0.3);">
+                    <p style="margin: 0;"><b>⚠️ API Limits:</b> Lower values = less API calls = no IP ban risk</p>
+                    <p style="margin: 5px 0 0 0; font-size: 0.85em;">Recommended: 20-30 symbols for stable operation</p>
+                </div>
+                
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="sleeper_scan_limit">Max Symbols to Scan</label>
-                        <input type="number" id="sleeper_scan_limit" name="sleeper_scan_limit" 
-                               value="{{ settings.sleeper_scan_limit | default(100) }}" min="10" max="500" class="form-control">
-                        <small>Top N by volume</small>
+                        <label for="sleeper_max_symbols">Max Symbols to Scan</label>
+                        <input type="number" id="sleeper_max_symbols" name="sleeper_max_symbols" 
+                               value="{{ settings.sleeper_max_symbols | default(30) }}" min="10" max="50" class="form-control">
+                        <small>Top N by volume (max 50 to avoid API ban)</small>
                     </div>
                     
                     <div class="form-group">
                         <label for="sleeper_min_volume">Min 24h Volume ($M)</label>
                         <input type="number" id="sleeper_min_volume" name="sleeper_min_volume" 
-                               value="{{ (settings.sleeper_min_volume | default(20000000)) / 1000000 }}" step="1" class="form-control">
-                        <small>In millions (e.g. 20 = $20M)</small>
+                               value="{{ (settings.sleeper_min_volume | default(50000000)) / 1000000 }}" step="1" class="form-control">
+                        <small>In millions (e.g. 50 = $50M)</small>
                     </div>
                 </div>
                 
