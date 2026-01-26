@@ -44,6 +44,45 @@ class BackgroundJobs:
         
         # Статистика виконання
         self.job_stats: Dict[str, Dict[str, Any]] = {}
+        
+        # ===== ANTI-SPAM: Cooldown tracking =====
+        # Format: {'symbol': datetime_of_last_alert}
+        self._sleeper_ready_sent: Dict[str, datetime] = {}  # Cooldown 2 hours
+        self._intensive_alert_sent: Dict[str, datetime] = {}  # Cooldown 1 hour
+        self._ob_alert_sent: Dict[str, datetime] = {}  # Cooldown 30 min
+        
+        # Track known READY sleepers - alert only on TRANSITION to READY
+        self._known_ready_sleepers: set = set()  # Symbols currently in READY state
+        
+        # Cooldown periods (in seconds)
+        self.COOLDOWN_SLEEPER_READY = 7200  # 2 hours - backup cooldown
+        self.COOLDOWN_INTENSIVE = 3600  # 1 hour - don't spam same symbol
+        self.COOLDOWN_OB = 1800  # 30 min - don't spam same OB
+    
+    # ===== ANTI-SPAM: Cooldown helpers =====
+    
+    def _can_send_alert(self, cooldown_dict: Dict[str, datetime], key: str, cooldown_seconds: int) -> bool:
+        """Check if enough time passed since last alert for this key"""
+        last_sent = cooldown_dict.get(key)
+        if last_sent is None:
+            return True
+        
+        elapsed = (datetime.now() - last_sent).total_seconds()
+        return elapsed >= cooldown_seconds
+    
+    def _mark_alert_sent(self, cooldown_dict: Dict[str, datetime], key: str):
+        """Mark that we sent an alert for this key"""
+        cooldown_dict[key] = datetime.now()
+    
+    def _cleanup_old_cooldowns(self):
+        """Remove old entries from cooldown dicts (run periodically)"""
+        now = datetime.now()
+        max_age = timedelta(hours=4)  # Keep entries for 4 hours max
+        
+        for d in [self._sleeper_ready_sent, self._intensive_alert_sent, self._ob_alert_sent]:
+            keys_to_remove = [k for k, v in d.items() if (now - v) > max_age]
+            for k in keys_to_remove:
+                del d[k]
     
     def start(self):
         """Запустити scheduler"""
@@ -210,11 +249,33 @@ class BackgroundJobs:
                 scanner = get_sleeper_scanner()
                 results = scanner.scan()
             
-            # Сповіщення про нові READY sleepers
+            # Track current READY sleepers and alert on TRANSITIONS
+            current_ready = set()
+            alerts_sent = 0
+            
             for sleeper in results:
-                if sleeper.get('state') == 'READY':
-                    # Check if just became ready (optional notification)
-                    self.notifier.notify_sleeper_ready(sleeper)
+                symbol = sleeper.get('symbol', '')
+                state = sleeper.get('state', '')
+                
+                if state == 'READY':
+                    current_ready.add(symbol)
+                    
+                    # Alert only if this is a NEW ready (wasn't ready before)
+                    if symbol not in self._known_ready_sleepers:
+                        self.notifier.notify_sleeper_ready(sleeper)
+                        alerts_sent += 1
+                        print(f"[SLEEPER] 🔔 NEW READY: {symbol}")
+            
+            # Update known ready set
+            # Sleepers that left READY will be removed, new READY will be added
+            left_ready = self._known_ready_sleepers - current_ready
+            if left_ready:
+                print(f"[SLEEPER] Sleepers left READY: {left_ready}")
+            
+            self._known_ready_sleepers = current_ready
+            
+            # Periodic cleanup of old cooldowns
+            self._cleanup_old_cooldowns()
             
             # Count by state
             states = {}
@@ -248,16 +309,22 @@ class BackgroundJobs:
             
             scanner = get_ob_scanner()
             total_obs = 0
+            alerts_sent = 0
             
             for sleeper in sleepers:
                 # sleeper is a dict
                 obs = scanner.scan_symbol(sleeper['symbol'])
                 total_obs += len(obs)
                 
-                # Сповіщення про якісні OB
+                # Сповіщення про якісні OB (з cooldown)
                 for ob in obs:
                     if ob.get('quality_score', 0) >= 70:
-                        self.notifier.notify_ob_formed(ob)
+                        # Cooldown key: symbol + direction
+                        ob_key = f"{ob.get('symbol', '')}_{ob.get('direction', '')}"
+                        if self._can_send_alert(self._ob_alert_sent, ob_key, self.COOLDOWN_OB):
+                            self.notifier.notify_ob_formed(ob)
+                            self._mark_alert_sent(self._ob_alert_sent, ob_key)
+                            alerts_sent += 1
             
             duration = time.time() - start
             self._log_job_execution(
@@ -487,27 +554,47 @@ class BackgroundJobs:
                         alert_priority = 'MEDIUM'
                         alert_reason.append(f'Volume spike {volume_ratio:.1f}x')
                     
-                    # Send alert if conditions met
+                    # Send alert if conditions met (with smart cooldown)
                     if alert_priority:
-                        self._send_intensive_alert(
-                            symbol=symbol,
-                            direction=direction,
-                            priority=alert_priority,
-                            reasons=alert_reason,
-                            sleeper=sleeper,
-                            current_price=current_price,
-                            price_change=price_change_pct,
-                            volume_ratio=volume_ratio
-                        )
-                        alerts_sent += 1
+                        should_send = False
                         
-                        # Log event
-                        self.db.log_event(
-                            f"[INTENSIVE] {alert_priority} alert: {symbol} - {', '.join(alert_reason)}",
-                            level='WARN' if alert_priority == 'URGENT' else 'INFO',
-                            category='ALERT',
-                            symbol=symbol
-                        )
+                        # URGENT alerts ALWAYS go through - never miss breakouts!
+                        if alert_priority == 'URGENT':
+                            should_send = True
+                        else:
+                            # Check cooldown for HIGH/MEDIUM
+                            # Key includes priority so higher priority can still fire
+                            cooldown_key = f"{symbol}_{alert_priority}"
+                            cooldown = 1800 if alert_priority == 'HIGH' else self.COOLDOWN_INTENSIVE  # 30m for HIGH, 1h for MEDIUM
+                            
+                            if self._can_send_alert(self._intensive_alert_sent, cooldown_key, cooldown):
+                                should_send = True
+                        
+                        if should_send:
+                            self._send_intensive_alert(
+                                symbol=symbol,
+                                direction=direction,
+                                priority=alert_priority,
+                                reasons=alert_reason,
+                                sleeper=sleeper,
+                                current_price=current_price,
+                                price_change=price_change_pct,
+                                volume_ratio=volume_ratio
+                            )
+                            
+                            # Mark sent (for non-URGENT, track by symbol+priority)
+                            if alert_priority != 'URGENT':
+                                self._mark_alert_sent(self._intensive_alert_sent, f"{symbol}_{alert_priority}")
+                            
+                            alerts_sent += 1
+                            
+                            # Log event
+                            self.db.log_event(
+                                f"[INTENSIVE] {alert_priority} alert: {symbol} - {', '.join(alert_reason)}",
+                                level='WARN' if alert_priority == 'URGENT' else 'INFO',
+                                category='ALERT',
+                                symbol=symbol
+                            )
                 
                 except Exception as symbol_error:
                     print(f"[INTENSIVE] Error checking {symbol}: {symbol_error}")
