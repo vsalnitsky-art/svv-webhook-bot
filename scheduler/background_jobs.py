@@ -227,6 +227,24 @@ class BackgroundJobs:
             name='Intensive READY Monitor',
             replace_existing=True
         )
+        
+        # 9. UT Bot Update - оновлення з Sleepers кожні 5 хвилин
+        self.scheduler.add_job(
+            self._job_ut_bot_update,
+            IntervalTrigger(minutes=5),
+            id='ut_bot_update',
+            name='UT Bot Update from Sleepers',
+            replace_existing=True
+        )
+        
+        # 10. UT Bot Signal Check - перевірка сигналів кожну хвилину
+        self.scheduler.add_job(
+            self._job_ut_bot_signals,
+            IntervalTrigger(minutes=1),
+            id='ut_bot_signals',
+            name='UT Bot Signal Check',
+            replace_existing=True
+        )
     
     def _log_job_execution(self, job_name: str, success: bool, duration: float, details: str = ""):
         """Логування виконання задачі"""
@@ -729,6 +747,90 @@ class BackgroundJobs:
             self.notifier.send_sync(message.strip())
     
     # ===== Manual Triggers =====
+    
+    # ============================================
+    # UT BOT JOBS
+    # ============================================
+    
+    def _job_ut_bot_update(self):
+        """Update UT Bot potential coins from Sleeper Scanner"""
+        # Check if module is enabled
+        if not self._is_module_enabled('ut_bot'):
+            return
+        
+        start = time.time()
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            
+            monitor = get_ut_bot_monitor()
+            
+            # Get current sleepers
+            sleepers = self.db.get_sleepers()
+            
+            # Update monitor
+            updated = monitor.update_from_sleepers(sleepers)
+            
+            duration = time.time() - start
+            self._log_job_execution(
+                'ut_bot_update',
+                True,
+                duration,
+                f"Updated {updated} coins from {len(sleepers)} sleepers"
+            )
+        except Exception as e:
+            duration = time.time() - start
+            self._log_job_execution('ut_bot_update', False, duration, str(e))
+            print(f"[SCHEDULER ERROR] UT Bot Update: {e}")
+    
+    def _job_ut_bot_signals(self):
+        """Check UT Bot signals for potential coins"""
+        # Check if module is enabled
+        if not self._is_module_enabled('ut_bot'):
+            return
+        
+        start = time.time()
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            
+            monitor = get_ut_bot_monitor()
+            
+            # Check signals
+            events = monitor.check_signals()
+            
+            # Notify on trade events
+            for event in events:
+                event_type = event.get('type', '')
+                trade = event.get('trade', {})
+                
+                if event_type == 'TRADE_OPENED':
+                    self.notifier.send_message(
+                        f"🚀 UT Bot Paper Trade OPENED\n"
+                        f"Symbol: {trade.get('symbol')}\n"
+                        f"Direction: {trade.get('direction')}\n"
+                        f"Entry: {trade.get('entry_price')}\n"
+                        f"ATR Stop: {trade.get('atr_stop')}",
+                        alert_type='ut_bot'
+                    )
+                elif event_type == 'TRADE_CLOSED':
+                    emoji = "✅" if trade.get('pnl_usdt', 0) >= 0 else "❌"
+                    self.notifier.send_message(
+                        f"{emoji} UT Bot Paper Trade CLOSED\n"
+                        f"Symbol: {trade.get('symbol')}\n"
+                        f"PnL: ${trade.get('pnl_usdt', 0):.2f} ({trade.get('pnl_percent', 0):.2f}%)",
+                        alert_type='ut_bot'
+                    )
+            
+            duration = time.time() - start
+            self._log_job_execution(
+                'ut_bot_signals',
+                True,
+                duration,
+                f"{len(events)} events"
+            )
+        except Exception as e:
+            duration = time.time() - start
+            self._log_job_execution('ut_bot_signals', False, duration, str(e))
+            print(f"[SCHEDULER ERROR] UT Bot Signals: {e}")
     
     def trigger_job(self, job_id: str) -> bool:
         """Ручний запуск задачі"""

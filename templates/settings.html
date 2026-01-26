@@ -262,6 +262,20 @@
                             </label>
                         </div>
                     </div>
+                    
+                    <div class="module-toggle-card" style="background: linear-gradient(135deg, rgba(255, 193, 7, 0.1) 0%, rgba(255, 152, 0, 0.1) 100%); padding: 15px; border-radius: 8px; border: 1px solid rgba(255, 193, 7, 0.3);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">⚡ UT Bot Trading</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">ATR Trailing Stop (Paper Trading)</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_ut_bot" id="module_ut_bot" 
+                                       {% if settings.module_ut_bot == '1' or settings.module_ut_bot == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
                 </div>
             </div>
 

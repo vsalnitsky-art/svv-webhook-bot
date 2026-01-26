@@ -961,6 +961,142 @@ def register_api_routes(app):
             }
         })
     
+    # ============================================
+    # UT BOT MODULE ROUTES
+    # ============================================
+    
+    @app.route('/ut_bot')
+    def ut_bot_page():
+        """UT Bot Trading page"""
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            monitor = get_ut_bot_monitor()
+            
+            return render_template('ut_bot.html',
+                status=monitor.get_status(),
+                potential_coins=monitor.get_potential_coins(),
+                open_trades=monitor.get_open_trades(),
+                trade_history=monitor.get_trade_history(limit=20)
+            )
+        except Exception as e:
+            print(f"[UT BOT PAGE] Error: {e}")
+            return render_template('ut_bot.html',
+                status={
+                    'enabled': False,
+                    'potential_coins': 0,
+                    'open_trades': 0,
+                    'top_coin': None,
+                    'stats': {'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0, 'total_pnl': 0},
+                    'config': {'timeframe': '15m', 'atr_period': 10, 'atr_multiplier': 1.0, 'use_heikin_ashi': True}
+                },
+                potential_coins=[],
+                open_trades=[],
+                trade_history=[]
+            )
+    
+    @app.route('/api/ut_bot/status')
+    def api_ut_bot_status():
+        """Get UT Bot module status"""
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            monitor = get_ut_bot_monitor()
+            return jsonify({
+                'success': True,
+                **monitor.get_status()
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/config', methods=['GET', 'POST'])
+    def api_ut_bot_config():
+        """Get or update UT Bot configuration"""
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            monitor = get_ut_bot_monitor()
+            
+            if request.method == 'GET':
+                return jsonify({
+                    'success': True,
+                    'config': monitor.config
+                })
+            
+            # POST - update config
+            data = request.get_json()
+            if data:
+                monitor.update_config(data)
+                
+                # Save to DB
+                db = get_db()
+                for key, value in data.items():
+                    db.set_setting(f'ut_bot_{key}', str(value))
+            
+            return jsonify({
+                'success': True,
+                'message': 'Configuration updated',
+                'config': monitor.config
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/potential_coins')
+    def api_ut_bot_potential_coins():
+        """Get potential coins for UT Bot"""
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            monitor = get_ut_bot_monitor()
+            return jsonify({
+                'success': True,
+                'coins': monitor.get_potential_coins()
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/trades')
+    def api_ut_bot_trades():
+        """Get UT Bot trades (open and history)"""
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            monitor = get_ut_bot_monitor()
+            return jsonify({
+                'success': True,
+                'open_trades': monitor.get_open_trades(),
+                'history': monitor.get_trade_history(limit=50)
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/analyze/<symbol>')
+    def api_ut_bot_analyze(symbol):
+        """Analyze symbol with UT Bot indicator"""
+        try:
+            from modules.ut_bot_filter import get_ut_bot_filter
+            ut_bot = get_ut_bot_filter()
+            
+            timeframe = request.args.get('timeframe', '15m')
+            signal = ut_bot.analyze(symbol, timeframe=timeframe)
+            
+            return jsonify({
+                'success': True,
+                'signal': signal.to_dict()
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/check_signals', methods=['POST'])
+    def api_ut_bot_check_signals():
+        """Manually trigger signal check"""
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            monitor = get_ut_bot_monitor()
+            events = monitor.check_signals()
+            
+            return jsonify({
+                'success': True,
+                'events': events
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
     # End of register_api_routes
 
 
