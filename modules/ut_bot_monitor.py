@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from modules.ut_bot_filter import get_ut_bot_filter, UTSignalType
 from detection.direction_engine_v7 import get_direction_engine_v7, BiasDirection
-from core.bybit_connector import get_bybit_connector
+from core.bybit_connector import get_connector
 from storage.db_operations import get_db
 
 
@@ -140,7 +140,7 @@ class UTBotMonitor:
         })
         
         self.direction_engine = get_direction_engine_v7()
-        self.bybit = get_bybit_connector()
+        self.bybit = get_connector()
         self.db = get_db()
         
         # State

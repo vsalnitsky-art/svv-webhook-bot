@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
 
-from core.bybit_connector import get_bybit_connector
+from core.bybit_connector import get_connector
 
 
 class UTSignalType(Enum):
@@ -99,7 +99,7 @@ class UTBotFilter:
         if config:
             self.config.update(config)
         
-        self.bybit = get_bybit_connector()
+        self.bybit = get_connector()
         
         # Cache for trailing stop values
         self._trailing_stop_cache: Dict[str, float] = {}
