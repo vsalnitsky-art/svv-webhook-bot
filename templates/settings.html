@@ -185,6 +185,87 @@
             </div>
 
             <div class="settings-section">
+                <h2>🎛️ Module Control</h2>
+                <p class="section-desc">Enable/disable bot modules to reduce API usage</p>
+                
+                <div class="info-box" style="margin-bottom: 15px; background: rgba(0, 200, 83, 0.1); border-color: rgba(0, 200, 83, 0.3);">
+                    <p style="margin: 0;"><b>💡 Tip:</b> Disable unused modules to reduce API calls and avoid IP bans</p>
+                </div>
+                
+                <div class="module-toggles" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">😴 Sleepers</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">Main scanner for sleeping coins</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_sleepers" id="module_sleepers" 
+                                       {% if settings.module_sleepers != '0' and settings.module_sleepers != 'false' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">📦 Order Blocks</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">OB detection for ready sleepers</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_orderblocks" id="module_orderblocks" 
+                                       {% if settings.module_orderblocks == '1' or settings.module_orderblocks == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">🎯 Signals</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">Trade signal generation</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_signals" id="module_signals" 
+                                       {% if settings.module_signals == '1' or settings.module_signals == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">📊 Position Monitor</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">Track & manage open positions</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_positions" id="module_positions" 
+                                       {% if settings.module_positions == '1' or settings.module_positions == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">⚡ Intensive Monitor</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">Real-time READY sleeper tracking</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_intensive" id="module_intensive" 
+                                       {% if settings.module_intensive == '1' or settings.module_intensive == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
                 <h2>🔍 Scan Parameters</h2>
                 
                 <div class="info-box" style="margin-bottom: 15px; background: rgba(255, 193, 7, 0.1); border-color: rgba(255, 193, 7, 0.3);">

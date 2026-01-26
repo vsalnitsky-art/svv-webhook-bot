@@ -59,6 +59,22 @@ class BackgroundJobs:
         self.COOLDOWN_INTENSIVE = 3600  # 1 hour - don't spam same symbol
         self.COOLDOWN_OB = 1800  # 30 min - don't spam same OB
     
+    # ===== MODULE CONTROL =====
+    
+    def _is_module_enabled(self, module_name: str) -> bool:
+        """Check if a module is enabled in settings
+        
+        Modules:
+        - sleepers: Main sleeper scanner (enabled by default)
+        - orderblocks: OB detection for ready sleepers
+        - signals: Trade signal generation
+        - positions: Position monitoring
+        - intensive: Real-time monitoring of READY sleepers
+        """
+        setting_key = f'module_{module_name}'
+        value = self.db.get_setting(setting_key, '1' if module_name == 'sleepers' else '0')
+        return value in ('1', 'true', True, 1)
+    
     # ===== ANTI-SPAM: Cooldown helpers =====
     
     def _can_send_alert(self, cooldown_dict: Dict[str, datetime], key: str, cooldown_seconds: int) -> bool:
@@ -93,7 +109,20 @@ class BackgroundJobs:
         self.scheduler.start()
         self.is_running = True
         print("[SCHEDULER] Started background jobs")
-        self.db.log_event(message="Background scheduler started", level="INFO", category="SYSTEM")
+        
+        # Log enabled modules
+        modules = ['sleepers', 'orderblocks', 'signals', 'positions', 'intensive']
+        enabled = [m for m in modules if self._is_module_enabled(m)]
+        disabled = [m for m in modules if not self._is_module_enabled(m)]
+        print(f"[SCHEDULER] Enabled modules: {', '.join(enabled) if enabled else 'none'}")
+        if disabled:
+            print(f"[SCHEDULER] Disabled modules: {', '.join(disabled)}")
+        
+        self.db.log_event(
+            message=f"Background scheduler started. Enabled: {', '.join(enabled)}", 
+            level="INFO", 
+            category="SYSTEM"
+        )
         
         # Run initial scan after 30 seconds to give time for app to fully start
         print("[SCHEDULER] Initial Sleeper scan scheduled in 30 seconds...")
@@ -239,6 +268,10 @@ class BackgroundJobs:
     
     def _job_sleeper_scan(self):
         """Сканування Sleepers (5-Day Strategy v3)"""
+        # Check if module is enabled
+        if not self._is_module_enabled('sleepers'):
+            return
+        
         start = time.time()
         try:
             # Use v3 scanner (5-day strategy) by default
@@ -298,6 +331,10 @@ class BackgroundJobs:
     
     def _job_ob_scan(self):
         """Сканування Order Blocks для готових Sleepers"""
+        # Check if module is enabled
+        if not self._is_module_enabled('orderblocks'):
+            return
+        
         start = time.time()
         try:
             # Отримати READY sleepers
@@ -340,6 +377,10 @@ class BackgroundJobs:
     
     def _job_signal_check(self):
         """Перевірка та обробка сигналів"""
+        # Check if module is enabled
+        if not self._is_module_enabled('signals'):
+            return
+        
         start = time.time()
         try:
             merger = get_signal_merger()
@@ -363,6 +404,10 @@ class BackgroundJobs:
     
     def _job_position_monitor(self):
         """Моніторинг відкритих позицій"""
+        # Check if module is enabled
+        if not self._is_module_enabled('positions'):
+            return
+        
         start = time.time()
         try:
             tracker = get_position_tracker()
@@ -486,6 +531,10 @@ class BackgroundJobs:
         
         Sends HIGH priority alerts when conditions met
         """
+        # Check if module is enabled
+        if not self._is_module_enabled('intensive'):
+            return
+        
         start = time.time()
         try:
             from core.market_data import get_market_data
