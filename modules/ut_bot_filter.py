@@ -85,7 +85,7 @@ class UTBotFilter:
     DEFAULT_CONFIG = {
         'key_value': 1.0,            # ATR multiplier (sensitivity)
         'atr_period': 10,            # ATR period
-        'use_heikin_ashi': True,     # Use Heikin Ashi candles
+        'use_heikin_ashi': False,    # Heikin Ashi OFF by default
         'timeframe': '15m',          # Default timeframe
         'required_candles': 100,     # Minimum candles for analysis
     }

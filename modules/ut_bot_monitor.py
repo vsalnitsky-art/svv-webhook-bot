@@ -105,21 +105,21 @@ class UTBotMonitor:
     
     # Configuration
     DEFAULT_CONFIG = {
-        'enabled': True,
+        'enabled': True,              # Module enabled by default
         'timeframe': '15m',           # UT Bot timeframe
         'atr_period': 10,
         'atr_multiplier': 1.0,
-        'use_heikin_ashi': True,
+        'use_heikin_ashi': False,     # Heikin Ashi OFF by default
         
-        # Filters
-        'min_sleeper_score': 65,
-        'min_sleeper_hp': 6,
-        'require_structure': True,     # Must be HH/LL not middle
+        # Filters - relaxed for more candidates
+        'min_sleeper_score': 60,      # Lowered for more candidates
+        'min_sleeper_hp': 4,          # Lowered for more candidates
+        'require_structure': False,   # Allow all positions for testing
         
         # Trading
         'max_open_trades': 3,
-        'position_size_usdt': 100,     # Paper trading size
-        'min_signal_gap_minutes': 30,
+        'position_size_usdt': 100,    # Paper trading size
+        'min_signal_gap_minutes': 15, # Reduced cooldown
         
         # Checks
         'check_interval_seconds': 60,
@@ -132,6 +132,12 @@ class UTBotMonitor:
         if config:
             self.config.update(config)
         
+        # Get DB first
+        self.db = get_db()
+        
+        # Load config from DB
+        self._load_config_from_db()
+        
         self.ut_bot = get_ut_bot_filter({
             'key_value': self.config['atr_multiplier'],
             'atr_period': self.config['atr_period'],
@@ -141,7 +147,6 @@ class UTBotMonitor:
         
         self.direction_engine = get_direction_engine_v7()
         self.bybit = get_connector()
-        self.db = get_db()
         
         # State
         self.potential_coins: Dict[str, PotentialCoin] = {}
@@ -160,6 +165,32 @@ class UTBotMonitor:
             'total_pnl': 0.0,
             'last_update': None
         }
+        
+        print(f"[UT BOT] Monitor initialized. Config: timeframe={self.config['timeframe']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}")
+    
+    def _load_config_from_db(self):
+        """Load configuration from database"""
+        try:
+            # Load each setting
+            tf = self.db.get_setting('ut_bot_timeframe', self.config['timeframe'])
+            self.config['timeframe'] = tf
+            
+            atr_p = self.db.get_setting('ut_bot_atr_period', str(self.config['atr_period']))
+            self.config['atr_period'] = int(atr_p) if atr_p else 10
+            
+            atr_m = self.db.get_setting('ut_bot_atr_multiplier', str(self.config['atr_multiplier']))
+            self.config['atr_multiplier'] = float(atr_m) if atr_m else 1.0
+            
+            # Load booleans - support both '1'/'0' and 'true'/'false'
+            ha = self.db.get_setting('ut_bot_use_heikin_ashi', '0')  # Default OFF
+            self.config['use_heikin_ashi'] = ha in ('1', 'true', 'True', True)
+            
+            enabled = self.db.get_setting('ut_bot_enabled', '1')  # Default ON
+            self.config['enabled'] = enabled in ('1', 'true', 'True', True)
+            
+            print(f"[UT BOT] Loaded config from DB: TF={self.config['timeframe']}, ATR={self.config['atr_period']}/{self.config['atr_multiplier']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}")
+        except Exception as e:
+            print(f"[UT BOT] Config load error (using defaults): {e}")
     
     def update_from_sleepers(self, sleepers: List[Dict]) -> int:
         """
@@ -172,10 +203,24 @@ class UTBotMonitor:
             Number of coins added/updated
         """
         if not self.config['enabled']:
+            print("[UT BOT] Module disabled, skipping update")
             return 0
         
         updated = 0
         now = datetime.now()
+        
+        # Stats for logging
+        stats = {
+            'total': len(sleepers),
+            'low_score': 0,
+            'low_hp': 0,
+            'wrong_state': 0,
+            'no_direction': 0,
+            'neutral': 0,
+            'in_middle': 0,
+            'not_on_bybit': 0,
+            'passed': 0
+        }
         
         for sleeper in sleepers:
             symbol = sleeper.get('symbol', '')
@@ -188,48 +233,52 @@ class UTBotMonitor:
             state = sleeper.get('state', '')
             
             if score < self.config['min_sleeper_score']:
+                stats['low_score'] += 1
                 continue
             if hp < self.config['min_sleeper_hp']:
+                stats['low_hp'] += 1
                 continue
-            if state not in ['READY', 'BUILDING', 'TRIGGERED']:
-                continue
-            
-            # Check direction and structure
-            direction_data = sleeper.get('direction_data', {})
-            if not direction_data:
-                # Try to get direction from v7 if not provided
-                direction_data = self._analyze_direction(symbol)
-            
-            if not direction_data:
+            if state not in ['READY', 'BUILDING', 'TRIGGERED', 'WATCHING']:
+                stats['wrong_state'] += 1
                 continue
             
-            direction = direction_data.get('direction', 'NEUTRAL')
-            if direction == 'NEUTRAL':
+            # Get direction from sleeper data
+            # In DB: direction = 'LONG', 'SHORT', 'NEUTRAL' (simple string)
+            # direction_score = float like 0.7 or -0.5
+            sleeper_direction = sleeper.get('direction', 'NEUTRAL')
+            direction_score = sleeper.get('direction_score', 0)
+            
+            # Parse direction
+            if sleeper_direction == 'LONG':
+                direction = 'LONG'
+                confidence = abs(direction_score) * 100 if direction_score else 50
+            elif sleeper_direction == 'SHORT':
+                direction = 'SHORT'
+                confidence = abs(direction_score) * 100 if direction_score else 50
+            else:
+                stats['neutral'] += 1
                 continue
             
-            structure = direction_data.get('structure', {})
-            is_near_high = structure.get('is_near_high', False)
-            is_near_low = structure.get('is_near_low', False)
-            is_in_middle = structure.get('is_in_middle', True)
+            # Structure info from sleeper
+            structure_type = sleeper.get('structure_type', 'UNKNOWN')
             
-            # CRITICAL: Only accept coins near HH or LL (not in middle)
+            # For now, accept all coins with direction (require_structure = False)
+            is_near_high = False
+            is_near_low = False
+            is_in_middle = True
+            
             if self.config['require_structure'] and is_in_middle:
+                stats['in_middle'] += 1
                 continue
             
-            # Determine structure type
-            structure_type = 'UNKNOWN'
-            if structure.get('dominant', 'UNKNOWN') in ['HH', 'HL']:
-                structure_type = 'HH' if is_near_high else 'HL'
-            elif structure.get('dominant', 'UNKNOWN') in ['LH', 'LL']:
-                structure_type = 'LL' if is_near_low else 'LH'
-            
-            # Check if on Bybit
+            # Check if on Bybit (quick check)
             if not self._is_symbol_on_bybit(symbol):
+                stats['not_on_bybit'] += 1
                 continue
             
             # Calculate priority
             priority = self._calculate_priority(
-                score, hp, direction_data.get('confidence', 0),
+                score, hp, confidence,
                 is_near_high, is_near_low
             )
             
@@ -240,7 +289,7 @@ class UTBotMonitor:
                 direction=direction,
                 structure_type=structure_type,
                 is_near_extreme=is_near_high or is_near_low,
-                confidence=direction_data.get('confidence', 0),
+                confidence=confidence,
                 added_at=self.potential_coins.get(symbol, PotentialCoin(
                     symbol=symbol, sleeper_score=0, direction='', 
                     structure_type='', is_near_extreme=False,
@@ -250,6 +299,11 @@ class UTBotMonitor:
                 priority=priority
             )
             updated += 1
+            stats['passed'] += 1
+        
+        # Log detailed stats
+        if updated > 0 or stats['total'] > 0:
+            print(f"[UT BOT] Update stats: {stats['total']} total → {updated} passed | Rejected: score={stats['low_score']}, hp={stats['low_hp']}, state={stats['wrong_state']}, neutral={stats['neutral']}, middle={stats['in_middle']}, bybit={stats['not_on_bybit']}")
         
         # Remove old coins (not updated in last 30 min)
         cutoff = now - timedelta(minutes=30)
@@ -291,10 +345,20 @@ class UTBotMonitor:
             List of signal events
         """
         if not self.config['enabled']:
+            self._last_check_result = {'status': 'disabled'}
             return []
         
         events = []
         now = datetime.now()
+        
+        # Initialize last check result
+        self._last_check_result = {
+            'timestamp': now.isoformat(),
+            'status': 'checked',
+            'top_coin': None,
+            'signal': None,
+            'action': 'NONE'
+        }
         
         # =====================================================
         # 1. CHECK FOR OPEN SIGNALS ON TOP COIN
@@ -302,12 +366,18 @@ class UTBotMonitor:
         top_coin = self.get_top_coin()
         
         if top_coin:
+            self._last_check_result['top_coin'] = top_coin.symbol
+            
+            # Log which coin we're checking
+            print(f"[UT BOT] Checking signals for TOP coin: {top_coin.symbol} ({top_coin.direction}, score={top_coin.sleeper_score})")
+            
             # Check cooldown
             last_signal = self._last_signal_time.get(top_coin.symbol)
             if last_signal:
                 elapsed = (now - last_signal).total_seconds()
                 if elapsed < self.config['min_signal_gap_minutes'] * 60:
-                    pass  # Skip this coin due to cooldown
+                    print(f"[UT BOT] {top_coin.symbol} on cooldown ({elapsed:.0f}s < {self.config['min_signal_gap_minutes']*60}s)")
+                    self._last_check_result['action'] = f'COOLDOWN ({int(elapsed)}s)'
                 else:
                     # Check UT Bot signal
                     signal_result = self.ut_bot.check_signal_with_bias(
@@ -315,6 +385,12 @@ class UTBotMonitor:
                         top_coin.direction,
                         timeframe=self.config['timeframe']
                     )
+                    
+                    self._last_check_result['signal'] = signal_result
+                    self._last_check_result['action'] = signal_result.get('trade_action', 'HOLD')
+                    
+                    # Log signal result
+                    print(f"[UT BOT] {top_coin.symbol} signal: action={signal_result.get('trade_action')}, pos={signal_result.get('position')}, prev_pos={signal_result.get('prev_position')}")
                     
                     # Process OPEN signal (aligned with bias)
                     trade_action = signal_result.get('trade_action', 'HOLD')
@@ -336,6 +412,12 @@ class UTBotMonitor:
                     timeframe=self.config['timeframe']
                 )
                 
+                self._last_check_result['signal'] = signal_result
+                self._last_check_result['action'] = signal_result.get('trade_action', 'HOLD')
+                
+                # Log signal result
+                print(f"[UT BOT] {top_coin.symbol} signal: action={signal_result.get('trade_action')}, pos={signal_result.get('position')}, prev_pos={signal_result.get('prev_position')}")
+                
                 trade_action = signal_result.get('trade_action', 'HOLD')
                 if signal_result.get('aligned') and trade_action.startswith('ENTER'):
                     trade = self._open_trade(top_coin, signal_result)
@@ -346,6 +428,9 @@ class UTBotMonitor:
                             'signal': signal_result
                         })
                         self._last_signal_time[top_coin.symbol] = now
+        else:
+            self._last_check_result['action'] = 'NO_COINS'
+            print("[UT BOT] No potential coins available for signal check")
         
         # =====================================================
         # 2. MONITOR OPEN TRADES FOR EXIT SIGNALS
@@ -512,13 +597,21 @@ class UTBotMonitor:
             return None
     
     def _is_symbol_on_bybit(self, symbol: str) -> bool:
-        """Check if symbol is available on Bybit"""
-        try:
-            # Simple check - try to get ticker
-            ticker = self.bybit.get_ticker(symbol)
-            return ticker is not None
-        except:
-            return False
+        """Check if symbol is available on Bybit (with caching)"""
+        # Use cached list of Bybit symbols
+        if not hasattr(self, '_bybit_symbols') or self._bybit_symbols is None:
+            try:
+                tickers = self.bybit.get_tickers()
+                if tickers:
+                    self._bybit_symbols = set(t.get('symbol', '') for t in tickers)
+                    print(f"[UT BOT] Cached {len(self._bybit_symbols)} Bybit symbols")
+                else:
+                    self._bybit_symbols = set()
+            except Exception as e:
+                print(f"[UT BOT] Failed to get Bybit symbols: {e}")
+                self._bybit_symbols = set()
+        
+        return symbol in self._bybit_symbols
     
     def _calculate_priority(self, score: float, hp: int, confidence: float,
                            is_near_high: bool, is_near_low: bool) -> float:
@@ -541,19 +634,30 @@ class UTBotMonitor:
         return priority
     
     def get_status(self) -> Dict:
-        """Get current monitor status"""
+        """Get current monitor status with detailed info"""
+        top_coin = self.get_top_coin()
+        
+        # Get last signal check info
+        last_check_info = {}
+        if top_coin and hasattr(self, '_last_check_result'):
+            last_check_info = self._last_check_result
+        
         return {
             'enabled': self.config['enabled'],
             'potential_coins': len(self.potential_coins),
             'open_trades': len(self.open_trades),
-            'top_coin': self.get_top_coin().to_dict() if self.get_top_coin() else None,
+            'top_coin': top_coin.to_dict() if top_coin else None,
             'stats': self.stats,
             'config': {
                 'timeframe': self.config['timeframe'],
                 'atr_period': self.config['atr_period'],
                 'atr_multiplier': self.config['atr_multiplier'],
                 'use_heikin_ashi': self.config['use_heikin_ashi'],
-            }
+            },
+            # Additional status info
+            'last_check': last_check_info,
+            'bybit_symbols_cached': len(getattr(self, '_bybit_symbols', set())),
+            'cooldowns_active': len(self._last_signal_time),
         }
     
     def get_potential_coins(self) -> List[Dict]:

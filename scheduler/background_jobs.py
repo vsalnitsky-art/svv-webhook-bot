@@ -70,9 +70,13 @@ class BackgroundJobs:
         - signals: Trade signal generation
         - positions: Position monitoring
         - intensive: Real-time monitoring of READY sleepers
+        - ut_bot: UT Bot trading module (enabled by default)
         """
         setting_key = f'module_{module_name}'
-        value = self.db.get_setting(setting_key, '1' if module_name == 'sleepers' else '0')
+        # Default enabled: sleepers, ut_bot
+        default_enabled = ['sleepers', 'ut_bot']
+        default_value = '1' if module_name in default_enabled else '0'
+        value = self.db.get_setting(setting_key, default_value)
         return value in ('1', 'true', True, 1)
     
     # ===== ANTI-SPAM: Cooldown helpers =====
@@ -111,7 +115,7 @@ class BackgroundJobs:
         print("[SCHEDULER] Started background jobs")
         
         # Log enabled modules
-        modules = ['sleepers', 'orderblocks', 'signals', 'positions', 'intensive']
+        modules = ['sleepers', 'orderblocks', 'signals', 'positions', 'intensive', 'ut_bot']
         enabled = [m for m in modules if self._is_module_enabled(m)]
         disabled = [m for m in modules if not self._is_module_enabled(m)]
         print(f"[SCHEDULER] Enabled modules: {', '.join(enabled) if enabled else 'none'}")

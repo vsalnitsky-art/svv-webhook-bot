@@ -5,23 +5,26 @@
 {% block content %}
 <div class="page-header">
     <h1>⚡ UT Bot Trading</h1>
-    <p class="subtitle">ATR Trailing Stop Strategy | Paper Trading</p>
+    <p class="subtitle">ATR Trailing Stop Strategy | Paper Trading | Bybit Data</p>
+</div>
+
+<!-- Current Config Info -->
+<div class="info-box" style="margin-bottom: 15px; background: rgba(33, 150, 243, 0.1); border: 1px solid rgba(33, 150, 243, 0.3); border-radius: 8px; padding: 12px 15px;">
+    <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: center;">
+        <span><strong>Timeframe:</strong> {{ status.config.timeframe }}</span>
+        <span><strong>ATR Period:</strong> {{ status.config.atr_period }}</span>
+        <span><strong>ATR Mult:</strong> {{ status.config.atr_multiplier }}</span>
+        <span><strong>Heikin Ashi:</strong> {{ 'ON' if status.config.use_heikin_ashi else 'OFF' }}</span>
+        <span style="margin-left: auto;">
+            <span class="badge {{ 'badge-success' if status.enabled else 'badge-danger' }}">
+                {{ 'MODULE ACTIVE' if status.enabled else 'MODULE DISABLED' }}
+            </span>
+        </span>
+    </div>
 </div>
 
 <!-- Status Cards -->
 <div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-icon">🎯</div>
-        <div class="stat-content">
-            <div class="stat-label">Status</div>
-            <div class="stat-value" id="ut-status">
-                <span class="badge {{ 'badge-success' if status.enabled else 'badge-danger' }}">
-                    {{ 'ENABLED' if status.enabled else 'DISABLED' }}
-                </span>
-            </div>
-        </div>
-    </div>
-    
     <div class="stat-card">
         <div class="stat-icon">🔍</div>
         <div class="stat-content">
@@ -47,42 +50,90 @@
             </div>
         </div>
     </div>
-</div>
-
-<!-- Win Rate -->
-{% set total = status.stats.winning_trades + status.stats.losing_trades %}
-{% set win_rate = (status.stats.winning_trades / total * 100) if total > 0 else 0 %}
-<div class="stats-grid" style="margin-top: 10px;">
+    
     <div class="stat-card">
-        <div class="stat-content">
-            <div class="stat-label">Total Trades</div>
-            <div class="stat-value">{{ status.stats.total_trades }}</div>
-        </div>
-    </div>
-    <div class="stat-card">
+        <div class="stat-icon">📈</div>
         <div class="stat-content">
             <div class="stat-label">Win Rate</div>
-            <div class="stat-value {{ 'text-green' if win_rate >= 50 else 'text-red' }}">{{ "%.1f"|format(win_rate) }}%</div>
-        </div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-content">
-            <div class="stat-label">Wins / Losses</div>
-            <div class="stat-value">
-                <span class="text-green">{{ status.stats.winning_trades }}</span> / 
-                <span class="text-red">{{ status.stats.losing_trades }}</span>
-            </div>
+            {% set total = status.stats.winning_trades + status.stats.losing_trades %}
+            {% set win_rate = (status.stats.winning_trades / total * 100) if total > 0 else 0 %}
+            <div class="stat-value {{ 'text-green' if win_rate >= 50 else 'text-red' }}">{{ "%.0f"|format(win_rate) }}%</div>
         </div>
     </div>
 </div>
+
+<!-- Last Check Info -->
+{% if status.last_check %}
+<div class="section-card" style="margin-top: 20px; background: linear-gradient(135deg, rgba(33, 150, 243, 0.1) 0%, rgba(3, 169, 244, 0.1) 100%); border-color: rgba(33, 150, 243, 0.3);">
+    <div class="section-header">
+        <h2>🔄 Last Signal Check</h2>
+        <span class="badge">{{ status.last_check.timestamp[:19] if status.last_check.timestamp else 'Never' }}</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; padding: 15px;">
+        <div>
+            <div style="color: var(--text-secondary); font-size: 0.85em;">Symbol</div>
+            <div style="font-size: 1.3em; font-weight: bold;">{{ status.last_check.top_coin or 'None' }}</div>
+        </div>
+        <div>
+            <div style="color: var(--text-secondary); font-size: 0.85em;">Action</div>
+            <div style="font-size: 1.2em;">
+                {% set action = status.last_check.action or 'NONE' %}
+                {% if action.startswith('ENTER') %}
+                    <span class="badge badge-success">{{ action }}</span>
+                {% elif action == 'HOLD' %}
+                    <span class="badge badge-info">{{ action }}</span>
+                {% elif 'COOLDOWN' in action %}
+                    <span class="badge badge-warning">⏳ COOLDOWN</span>
+                {% elif action == 'NO_COINS' %}
+                    <span class="badge badge-danger">{{ action }}</span>
+                {% else %}
+                    <span class="badge">{{ action }}</span>
+                {% endif %}
+            </div>
+        </div>
+        {% if status.last_check.signal %}
+        <div>
+            <div style="color: var(--text-secondary); font-size: 0.85em;">Position</div>
+            <div style="font-size: 1.2em;">
+                {% set pos = status.last_check.signal.position or 0 %}
+                {% if pos == 1 %}
+                    <span style="color: var(--accent-green);">🟢 LONG (1)</span>
+                {% elif pos == -1 %}
+                    <span style="color: var(--accent-red);">🔴 SHORT (-1)</span>
+                {% else %}
+                    ⚪ NEUTRAL (0)
+                {% endif %}
+            </div>
+        </div>
+        <div>
+            <div style="color: var(--text-secondary); font-size: 0.85em;">Prev Position</div>
+            <div style="font-size: 1.2em;">{{ status.last_check.signal.prev_position or 0 }}</div>
+        </div>
+        <div>
+            <div style="color: var(--text-secondary); font-size: 0.85em;">Bar Color</div>
+            <div style="font-size: 1.2em;">
+                {% set bar_color = status.last_check.signal.bar_color or 'neutral' %}
+                {% if bar_color == 'green' %}
+                    <span style="color: var(--accent-green);">🟢 GREEN</span>
+                {% elif bar_color == 'red' %}
+                    <span style="color: var(--accent-red);">🔴 RED</span>
+                {% else %}
+                    ⚪ NEUTRAL
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 
 <!-- Top Coin -->
 {% if status.top_coin %}
 <div class="section-card" style="margin-top: 20px; background: linear-gradient(135deg, rgba(255, 193, 7, 0.1) 0%, rgba(255, 152, 0, 0.1) 100%); border-color: rgba(255, 193, 7, 0.3);">
     <div class="section-header">
-        <h2>🎯 TOP Coin - Ready for Signal</h2>
+        <h2>🎯 TOP Coin - Monitoring</h2>
     </div>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; padding: 15px;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; padding: 15px;">
         <div>
             <div style="color: var(--text-secondary); font-size: 0.85em;">Symbol</div>
             <div style="font-size: 1.5em; font-weight: bold;">{{ status.top_coin.symbol }}</div>
@@ -98,12 +149,12 @@
             </div>
         </div>
         <div>
-            <div style="color: var(--text-secondary); font-size: 0.85em;">Structure</div>
-            <div style="font-size: 1.2em;">{{ status.top_coin.structure_type }}</div>
-        </div>
-        <div>
             <div style="color: var(--text-secondary); font-size: 0.85em;">Sleeper Score</div>
             <div style="font-size: 1.2em;">{{ status.top_coin.sleeper_score }}</div>
+        </div>
+        <div>
+            <div style="color: var(--text-secondary); font-size: 0.85em;">Confidence</div>
+            <div style="font-size: 1.2em;">{{ "%.0f"|format(status.top_coin.confidence) }}%</div>
         </div>
         <div>
             <div style="color: var(--text-secondary); font-size: 0.85em;">Priority</div>
@@ -117,8 +168,9 @@
         <h2>🎯 TOP Coin</h2>
     </div>
     <div style="padding: 30px; text-align: center; color: var(--text-secondary);">
-        <p>No potential coins available</p>
-        <p style="font-size: 0.85em;">Waiting for Sleeper Scanner to provide candidates at HH/LL levels</p>
+        <p>⏳ No potential coins available</p>
+        <p style="font-size: 0.85em;">Waiting for Sleeper Scanner to provide candidates with direction (LONG/SHORT)</p>
+        <p style="font-size: 0.8em; margin-top: 10px;">Requirements: Score ≥ 60, HP ≥ 4, Direction ≠ NEUTRAL</p>
     </div>
 </div>
 {% endif %}
@@ -147,7 +199,7 @@
                     <input type="number" name="atr_period" value="{{ status.config.atr_period }}" min="5" max="20" class="form-control">
                 </div>
                 <div class="form-group">
-                    <label>ATR Multiplier (Sensitivity)</label>
+                    <label>ATR Multiplier</label>
                     <input type="number" name="atr_multiplier" value="{{ status.config.atr_multiplier }}" step="0.1" min="0.5" max="3.0" class="form-control">
                 </div>
             </div>
@@ -155,7 +207,7 @@
                 <div class="form-group">
                     <label>
                         <input type="checkbox" name="use_heikin_ashi" {{ 'checked' if status.config.use_heikin_ashi }}>
-                        Use Heikin Ashi (recommended)
+                        Use Heikin Ashi (smoother signals)
                     </label>
                 </div>
                 <div class="form-group">
@@ -180,18 +232,18 @@
         <table class="data-table">
             <thead>
                 <tr>
+                    <th>#</th>
                     <th>Symbol</th>
                     <th>Direction</th>
-                    <th>Structure</th>
                     <th>Score</th>
                     <th>Confidence</th>
                     <th>Priority</th>
-                    <th>Position</th>
                 </tr>
             </thead>
             <tbody>
-                {% for coin in potential_coins %}
+                {% for coin in potential_coins[:10] %}
                 <tr>
+                    <td>{{ loop.index }}</td>
                     <td><strong>{{ coin.symbol }}</strong></td>
                     <td>
                         {% if coin.direction == 'LONG' %}
@@ -200,22 +252,14 @@
                             <span class="badge badge-danger">SHORT</span>
                         {% endif %}
                     </td>
-                    <td>{{ coin.structure_type }}</td>
                     <td>{{ coin.sleeper_score }}</td>
-                    <td>{{ coin.confidence }}%</td>
+                    <td>{{ "%.0f"|format(coin.confidence) }}%</td>
                     <td>{{ "%.1f"|format(coin.priority) }}</td>
-                    <td>
-                        {% if coin.is_near_extreme %}
-                            <span class="badge badge-warning">At Edge</span>
-                        {% else %}
-                            <span class="badge">Middle</span>
-                        {% endif %}
-                    </td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="7" style="text-align: center; padding: 30px; color: var(--text-secondary);">
-                        No potential coins. Waiting for Sleepers at HH/LL positions.
+                    <td colspan="6" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                        No potential coins. Waiting for Sleepers with LONG/SHORT direction.
                     </td>
                 </tr>
                 {% endfor %}
@@ -239,9 +283,7 @@
                     <th>Direction</th>
                     <th>Entry</th>
                     <th>Current</th>
-                    <th>ATR Stop</th>
                     <th>PnL %</th>
-                    <th>Duration</th>
                 </tr>
             </thead>
             <tbody>
@@ -259,15 +301,13 @@
                     </td>
                     <td>{{ "%.6f"|format(trade.entry_price) }}</td>
                     <td>{{ "%.6f"|format(trade.current_price or trade.entry_price) }}</td>
-                    <td>{{ "%.6f"|format(trade.atr_stop) }}</td>
                     <td class="{{ 'text-green' if pnl_pct >= 0 else 'text-red' }}">
                         {{ "%+.2f"|format(pnl_pct) }}%
                     </td>
-                    <td>{{ trade.opened_at[:16] if trade.opened_at else '-' }}</td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="8" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                    <td colspan="6" style="text-align: center; padding: 30px; color: var(--text-secondary);">
                         No open trades
                     </td>
                 </tr>
@@ -289,8 +329,6 @@
                     <th>ID</th>
                     <th>Symbol</th>
                     <th>Direction</th>
-                    <th>Entry</th>
-                    <th>Exit</th>
                     <th>PnL $</th>
                     <th>PnL %</th>
                     <th>Closed</th>
@@ -308,8 +346,6 @@
                             <span class="badge badge-danger">SHORT</span>
                         {% endif %}
                     </td>
-                    <td>{{ "%.6f"|format(trade.entry_price) }}</td>
-                    <td>{{ "%.6f"|format(trade.exit_price) if trade.exit_price else '-' }}</td>
                     <td class="{{ 'text-green' if trade.pnl_usdt >= 0 else 'text-red' }}">
                         ${{ "%+.2f"|format(trade.pnl_usdt) }}
                     </td>
@@ -320,7 +356,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="8" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                    <td colspan="6" style="text-align: center; padding: 30px; color: var(--text-secondary);">
                         No trade history yet
                     </td>
                 </tr>
@@ -336,6 +372,7 @@
 .badge-success { background: var(--accent-green); color: white; }
 .badge-danger { background: var(--accent-red); color: white; }
 .badge-warning { background: #ff9800; color: white; }
+.badge-info { background: #2196f3; color: white; }
 .section-card { background: var(--bg-secondary); border-radius: 12px; border: 1px solid var(--border-color); }
 .section-header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; border-bottom: 1px solid var(--border-color); }
 .section-header h2 { margin: 0; font-size: 1.1em; }
@@ -378,7 +415,8 @@ document.getElementById('ut-config-form').addEventListener('submit', async funct
             alert('Configuration saved!');
             location.reload();
         } else {
-            alert('Error saving configuration');
+            const err = await response.json();
+            alert('Error: ' + (err.error || 'Unknown error'));
         }
     } catch (err) {
         alert('Error: ' + err.message);

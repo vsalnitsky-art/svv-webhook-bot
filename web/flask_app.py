@@ -1023,12 +1023,20 @@ def register_api_routes(app):
             # POST - update config
             data = request.get_json()
             if data:
+                # Update monitor config
                 monitor.update_config(data)
                 
-                # Save to DB
+                # Save to DB with proper formatting
                 db = get_db()
                 for key, value in data.items():
-                    db.set_setting(f'ut_bot_{key}', str(value))
+                    db_key = f'ut_bot_{key}'
+                    # Convert bool to '1'/'0' for DB
+                    if isinstance(value, bool):
+                        db_value = '1' if value else '0'
+                    else:
+                        db_value = str(value)
+                    db.set_setting(db_key, db_value)
+                    print(f"[UT BOT] Saved {db_key} = {db_value}")
             
             return jsonify({
                 'success': True,
@@ -1036,6 +1044,7 @@ def register_api_routes(app):
                 'config': monitor.config
             })
         except Exception as e:
+            print(f"[UT BOT CONFIG ERROR] {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
     
     @app.route('/api/ut_bot/potential_coins')
