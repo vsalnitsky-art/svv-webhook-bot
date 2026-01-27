@@ -120,6 +120,7 @@ class UTBotMonitor:
         'max_open_trades': 3,
         'position_size_usdt': 100,    # Paper trading size
         'min_signal_gap_minutes': 15, # Reduced cooldown
+        'max_monitored_coins': 1,     # How many TOP coins to monitor for signals
         
         # Checks
         'check_interval_seconds': 60,
@@ -188,7 +189,11 @@ class UTBotMonitor:
             enabled = self.db.get_setting('ut_bot_enabled', '1')  # Default ON
             self.config['enabled'] = enabled in ('1', 'true', 'True', True)
             
-            print(f"[UT BOT] Loaded config from DB: TF={self.config['timeframe']}, ATR={self.config['atr_period']}/{self.config['atr_multiplier']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}")
+            # Load max_monitored_coins
+            max_coins = self.db.get_setting('ut_bot_max_monitored_coins', str(self.config['max_monitored_coins']))
+            self.config['max_monitored_coins'] = int(max_coins) if max_coins else 1
+            
+            print(f"[UT BOT] Loaded config from DB: TF={self.config['timeframe']}, ATR={self.config['atr_period']}/{self.config['atr_multiplier']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}, max_coins={self.config['max_monitored_coins']}")
         except Exception as e:
             print(f"[UT BOT] Config load error (using defaults): {e}")
     
@@ -407,14 +412,24 @@ class UTBotMonitor:
         return updated
     
     def get_top_coin(self) -> Optional[PotentialCoin]:
+        """Get the TOP 1 priority coin for trading (from DB)"""
+        coins = self.get_top_coins(limit=1)
+        return coins[0] if coins else None
+    
+    def get_top_coins(self, limit: int = None) -> List[PotentialCoin]:
         """
-        Get the TOP priority coin for trading (from DB)
+        Get the TOP N priority coins for trading (from DB)
+        
+        Args:
+            limit: Number of coins to return. If None, uses config max_monitored_coins
         
         Selection criteria:
         1. Must have open position slot
-        2. Must be near HH or LL
-        3. Highest priority score
+        2. Highest priority score
         """
+        if limit is None:
+            limit = self.config.get('max_monitored_coins', 1)
+        
         try:
             from storage.db_models import UTBotPotentialCoin, UTBotPaperTrade, get_session
             session = get_session()
@@ -432,36 +447,39 @@ class UTBotMonitor:
             available = [c for c in coins if c.symbol not in open_symbols]
             
             if not available:
-                return None
+                return []
             
             # Convert to PotentialCoin dataclass
-            top = available[0]
-            return PotentialCoin(
-                symbol=top.symbol,
-                sleeper_score=top.sleeper_score or 0,
-                direction=top.direction,
-                structure_type=top.structure_type or 'UNKNOWN',
-                is_near_extreme=top.is_near_extreme or False,
-                confidence=top.confidence or 0,
-                added_at=top.added_at or datetime.now(),
-                last_check=top.last_check,
-                priority=top.priority or 0
-            )
+            result = []
+            for coin in available[:limit]:
+                result.append(PotentialCoin(
+                    symbol=coin.symbol,
+                    sleeper_score=coin.sleeper_score or 0,
+                    direction=coin.direction,
+                    structure_type=coin.structure_type or 'UNKNOWN',
+                    is_near_extreme=coin.is_near_extreme or False,
+                    confidence=coin.confidence or 0,
+                    added_at=coin.added_at or datetime.now(),
+                    last_check=coin.last_check,
+                    priority=coin.priority or 0
+                ))
+            
+            return result
             
         except Exception as e:
-            print(f"[UT BOT] Error getting top coin from DB: {e}")
+            print(f"[UT BOT] Error getting top coins from DB: {e}")
             # Fallback to memory
             if not self.potential_coins:
-                return None
+                return []
             
             available = [c for s, c in self.potential_coins.items()
                          if s not in self.open_trades]
             
             if not available:
-                return None
+                return []
             
             available.sort(key=lambda x: x.priority, reverse=True)
-            return available[0]
+            return available[:limit]
     
     def check_signals(self) -> List[Dict]:
         """
@@ -477,11 +495,15 @@ class UTBotMonitor:
         events = []
         now = datetime.now()
         
+        # Get how many coins to monitor
+        max_monitored = self.config.get('max_monitored_coins', 1)
+        
         # Initialize last check result
         self._last_check_result = {
             'timestamp': now.isoformat(),
             'status': 'checked',
             'top_coin': None,
+            'monitored_coins': [],
             'signal': None,
             'action': 'NONE',
             'error': None
@@ -489,74 +511,77 @@ class UTBotMonitor:
         
         try:
             # =====================================================
-            # 1. CHECK FOR OPEN SIGNALS ON TOP COIN
+            # 1. CHECK FOR OPEN SIGNALS ON TOP N COINS
             # =====================================================
-            top_coin = self.get_top_coin()
+            top_coins = self.get_top_coins(limit=max_monitored)
             
-            if top_coin:
-                self._last_check_result['top_coin'] = top_coin.symbol
+            if top_coins:
+                self._last_check_result['top_coin'] = top_coins[0].symbol
+                self._last_check_result['monitored_coins'] = [c.symbol for c in top_coins]
                 
-                # Log which coin we're checking
-                print(f"[UT BOT] Checking signals for TOP coin: {top_coin.symbol} ({top_coin.direction}, score={top_coin.sleeper_score})")
+                # Log which coins we're checking
+                coins_str = ", ".join([f"{c.symbol}({c.direction})" for c in top_coins])
+                print(f"[UT BOT] Checking signals for TOP {len(top_coins)} coins: {coins_str}")
                 
-                # Check cooldown
-                last_signal = self._last_signal_time.get(top_coin.symbol)
-                skip_signal_check = False
-                
-                if last_signal:
-                    elapsed = (now - last_signal).total_seconds()
-                    if elapsed < self.config['min_signal_gap_minutes'] * 60:
-                        print(f"[UT BOT] {top_coin.symbol} on cooldown ({elapsed:.0f}s < {self.config['min_signal_gap_minutes']*60}s)")
-                        self._last_check_result['action'] = f'COOLDOWN ({int(elapsed)}s)'
-                        skip_signal_check = True
-                
-                if not skip_signal_check:
-                    try:
-                        # Check UT Bot signal
-                        signal_result = self.ut_bot.check_signal_with_bias(
-                            top_coin.symbol,
-                            top_coin.direction,
-                            timeframe=self.config['timeframe']
-                        )
-                        
-                        self._last_check_result['signal'] = signal_result
-                        self._last_check_result['action'] = signal_result.get('trade_action', 'HOLD')
-                        
-                        # Log signal result with details
-                        price = signal_result.get('price', 0)
-                        atr_stop = signal_result.get('atr_trailing_stop', 0)
-                        pos = signal_result.get('position', 0)
-                        prev_pos = signal_result.get('prev_position', 0)
-                        bar_color = signal_result.get('bar_color', '?')
-                        
-                        # Calculate distance to stop
-                        if price > 0 and atr_stop > 0:
-                            distance_pct = abs(price - atr_stop) / price * 100
-                            dist_dir = "above" if price > atr_stop else "below"
-                        else:
-                            distance_pct = 0
-                            dist_dir = "?"
-                        
-                        print(f"[UT BOT] {top_coin.symbol}: pos={prev_pos}→{pos} | price={price:.6f} | stop={atr_stop:.6f} ({dist_dir} {distance_pct:.2f}%) | bar={bar_color}")
-                        
-                        # Process OPEN signal (aligned with bias)
-                        trade_action = signal_result.get('trade_action', 'HOLD')
-                        if signal_result.get('aligned') and trade_action.startswith('ENTER'):
-                            # Open trade
-                            trade = self._open_trade(top_coin, signal_result)
-                            if trade:
-                                events.append({
-                                    'type': 'TRADE_OPENED',
-                                    'trade': trade.to_dict(),
-                                    'signal': signal_result
-                                })
-                                self._last_signal_time[top_coin.symbol] = now
-                                print(f"[UT BOT] ✅ TRADE OPENED: {top_coin.symbol} {trade_action}")
+                for coin in top_coins:
+                    # Check cooldown
+                    last_signal = self._last_signal_time.get(coin.symbol)
+                    skip_signal_check = False
                     
-                    except Exception as e:
-                        print(f"[UT BOT] Error checking signals for {top_coin.symbol}: {e}")
-                        self._last_check_result['error'] = str(e)
-                        self._last_check_result['action'] = f'ERROR'
+                    if last_signal:
+                        elapsed = (now - last_signal).total_seconds()
+                        if elapsed < self.config['min_signal_gap_minutes'] * 60:
+                            # Don't log cooldown for every coin - too noisy
+                            skip_signal_check = True
+                    
+                    if not skip_signal_check:
+                        try:
+                            # Check UT Bot signal
+                            signal_result = self.ut_bot.check_signal_with_bias(
+                                coin.symbol,
+                                coin.direction,
+                                timeframe=self.config['timeframe']
+                            )
+                            
+                            # Update last check result for first coin only
+                            if coin == top_coins[0]:
+                                self._last_check_result['signal'] = signal_result
+                                self._last_check_result['action'] = signal_result.get('trade_action', 'HOLD')
+                            
+                            # Log signal result with details
+                            price = signal_result.get('price', 0)
+                            atr_stop = signal_result.get('atr_trailing_stop', 0)
+                            pos = signal_result.get('position', 0)
+                            prev_pos = signal_result.get('prev_position', 0)
+                            bar_color = signal_result.get('bar_color', '?')
+                            
+                            # Calculate distance to stop
+                            if price > 0 and atr_stop > 0:
+                                distance_pct = abs(price - atr_stop) / price * 100
+                                dist_dir = "above" if price > atr_stop else "below"
+                            else:
+                                distance_pct = 0
+                                dist_dir = "?"
+                            
+                            print(f"[UT BOT] {coin.symbol}: pos={prev_pos}→{pos} | price={price:.6f} | stop={atr_stop:.6f} ({dist_dir} {distance_pct:.2f}%) | bar={bar_color}")
+                            
+                            # Process OPEN signal (aligned with bias)
+                            trade_action = signal_result.get('trade_action', 'HOLD')
+                            if signal_result.get('aligned') and trade_action.startswith('ENTER'):
+                                # Open trade
+                                trade = self._open_trade(coin, signal_result)
+                                if trade:
+                                    events.append({
+                                        'type': 'TRADE_OPENED',
+                                        'trade': trade.to_dict(),
+                                        'signal': signal_result
+                                    })
+                                    self._last_signal_time[coin.symbol] = now
+                                    print(f"[UT BOT] ✅ TRADE OPENED: {coin.symbol} {trade_action}")
+                        
+                        except Exception as e:
+                            print(f"[UT BOT] Error checking signals for {coin.symbol}: {e}")
+                            continue
             else:
                 self._last_check_result['action'] = 'NO_COINS'
                 print("[UT BOT] No potential coins available for signal check")
@@ -804,6 +829,7 @@ class UTBotMonitor:
                 'atr_period': self.config['atr_period'],
                 'atr_multiplier': self.config['atr_multiplier'],
                 'use_heikin_ashi': self.config['use_heikin_ashi'],
+                'max_monitored_coins': self.config.get('max_monitored_coins', 1),
             },
             # Additional status info
             'last_check': last_check_info,
