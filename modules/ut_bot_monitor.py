@@ -589,6 +589,9 @@ class UTBotMonitor:
             # =====================================================
             # 2. MONITOR OPEN TRADES FOR EXIT SIGNALS
             # =====================================================
+            # First, sync open_trades from database
+            self._sync_open_trades_from_db()
+            
             for symbol, trade in list(self.open_trades.items()):
                 try:
                     exit_signal = self._check_exit_signal(trade)
@@ -613,21 +616,82 @@ class UTBotMonitor:
         return events
     
     def _open_trade(self, coin: PotentialCoin, signal: Dict) -> Optional[UTBotTrade]:
-        """Open a paper trade"""
-        if len(self.open_trades) >= self.config['max_open_trades']:
+        """Open a paper trade and save to database"""
+        import json
+        from storage.db_models import UTBotPaperTrade, get_session
+        
+        # Check max trades from DB (not memory!)
+        try:
+            session = get_session()
+            open_count = session.query(UTBotPaperTrade).filter_by(status='OPEN').count()
+            session.close()
+            
+            if open_count >= self.config['max_open_trades']:
+                print(f"[UT BOT] Max open trades ({self.config['max_open_trades']}) reached, skipping {coin.symbol}")
+                return None
+            
+            # Check if already have trade for this symbol
+            session = get_session()
+            existing = session.query(UTBotPaperTrade).filter_by(
+                symbol=coin.symbol, 
+                status='OPEN'
+            ).first()
+            session.close()
+            
+            if existing:
+                print(f"[UT BOT] Already have open trade for {coin.symbol}, skipping")
+                return None
+                
+        except Exception as e:
+            print(f"[UT BOT] Error checking open trades: {e}")
             return None
         
+        # Create DB record
+        try:
+            session = get_session()
+            
+            entry_price = signal.get('price', 0)
+            
+            db_trade = UTBotPaperTrade(
+                symbol=coin.symbol,
+                direction=coin.direction,
+                status='OPEN',
+                entry_price=entry_price,
+                current_price=entry_price,
+                atr_stop=signal.get('atr_trailing_stop', 0),
+                highest_price=entry_price if coin.direction == 'LONG' else None,
+                lowest_price=entry_price if coin.direction == 'SHORT' else None,
+                entry_signal=json.dumps(signal) if signal else None,
+                opened_at=datetime.now(),
+                pnl_usdt=0,
+                pnl_percent=0
+            )
+            
+            session.add(db_trade)
+            session.commit()
+            trade_id = db_trade.id
+            session.close()
+            
+            print(f"[UT BOT] 💾 Trade saved to DB: ID={trade_id}, {coin.symbol} {coin.direction}")
+            
+        except Exception as e:
+            print(f"[UT BOT] ❌ Error saving trade to DB: {e}")
+            session.rollback()
+            session.close()
+            return None
+        
+        # Also keep in memory for quick access
         self._trade_counter += 1
         
         trade = UTBotTrade(
-            id=self._trade_counter,
+            id=trade_id,
             symbol=coin.symbol,
             direction=coin.direction,
             status='OPEN',
-            entry_price=signal.get('price', 0),
+            entry_price=entry_price,
             atr_stop=signal.get('atr_trailing_stop', 0),
-            highest_price=signal.get('price', 0) if coin.direction == 'LONG' else None,
-            lowest_price=signal.get('price', 0) if coin.direction == 'SHORT' else None,
+            highest_price=entry_price if coin.direction == 'LONG' else None,
+            lowest_price=entry_price if coin.direction == 'SHORT' else None,
             entry_signal=signal,
             opened_at=datetime.now()
         )
@@ -643,6 +707,54 @@ class UTBotMonitor:
         )
         
         return trade
+    
+    def _sync_open_trades_from_db(self):
+        """
+        Sync open_trades dict from database.
+        This is needed because scheduler worker and HTTP workers have separate memory.
+        """
+        try:
+            from storage.db_models import UTBotPaperTrade, get_session
+            session = get_session()
+            db_trades = session.query(UTBotPaperTrade).filter_by(status='OPEN').all()
+            session.close()
+            
+            # Update memory from DB
+            synced_symbols = set()
+            for db_trade in db_trades:
+                if db_trade.symbol not in self.open_trades:
+                    # Create UTBotTrade from DB record
+                    import json
+                    entry_signal = {}
+                    if db_trade.entry_signal:
+                        try:
+                            entry_signal = json.loads(db_trade.entry_signal)
+                        except:
+                            pass
+                    
+                    trade = UTBotTrade(
+                        id=db_trade.id,
+                        symbol=db_trade.symbol,
+                        direction=db_trade.direction,
+                        status=db_trade.status,
+                        entry_price=db_trade.entry_price,
+                        current_price=db_trade.current_price,
+                        atr_stop=db_trade.atr_stop,
+                        highest_price=db_trade.highest_price,
+                        lowest_price=db_trade.lowest_price,
+                        entry_signal=entry_signal,
+                        opened_at=db_trade.opened_at
+                    )
+                    self.open_trades[db_trade.symbol] = trade
+                synced_symbols.add(db_trade.symbol)
+            
+            # Remove from memory trades that are no longer in DB
+            for symbol in list(self.open_trades.keys()):
+                if symbol not in synced_symbols:
+                    del self.open_trades[symbol]
+                    
+        except Exception as e:
+            print(f"[UT BOT] Error syncing trades from DB: {e}")
     
     def _check_exit_signal(self, trade: UTBotTrade) -> Optional[Dict]:
         """Check if trade should be closed"""
@@ -708,7 +820,10 @@ class UTBotMonitor:
         return None
     
     def _close_trade(self, trade: UTBotTrade, exit_signal: Dict) -> UTBotTrade:
-        """Close a paper trade"""
+        """Close a paper trade and update in database"""
+        import json
+        from storage.db_models import UTBotPaperTrade, get_session
+        
         trade.status = 'CLOSED'
         trade.exit_price = exit_signal.get('price', trade.current_price or trade.entry_price)
         trade.exit_signal = exit_signal
@@ -722,6 +837,32 @@ class UTBotMonitor:
         
         trade.pnl_usdt = self.config['position_size_usdt'] * trade.pnl_percent / 100
         
+        # Update in database
+        try:
+            session = get_session()
+            db_trade = session.query(UTBotPaperTrade).filter_by(
+                symbol=trade.symbol,
+                status='OPEN'
+            ).first()
+            
+            if db_trade:
+                db_trade.status = 'CLOSED'
+                db_trade.exit_price = trade.exit_price
+                db_trade.exit_signal = json.dumps(exit_signal) if exit_signal else None
+                db_trade.closed_at = trade.closed_at
+                db_trade.pnl_usdt = trade.pnl_usdt
+                db_trade.pnl_percent = trade.pnl_percent
+                session.commit()
+                print(f"[UT BOT] 💾 Trade closed in DB: ID={db_trade.id}, PnL=${trade.pnl_usdt:.2f}")
+            else:
+                print(f"[UT BOT] ⚠️ Trade not found in DB for {trade.symbol}")
+            
+            session.close()
+        except Exception as e:
+            print(f"[UT BOT] ❌ Error updating trade in DB: {e}")
+            session.rollback()
+            session.close()
+        
         # Update stats
         self.stats['total_pnl'] += trade.pnl_usdt
         if trade.pnl_usdt > 0:
@@ -729,9 +870,10 @@ class UTBotMonitor:
         else:
             self.stats['losing_trades'] += 1
         
-        # Move to history
+        # Move to history (memory)
         self.trade_history.append(trade)
-        del self.open_trades[trade.symbol]
+        if trade.symbol in self.open_trades:
+            del self.open_trades[trade.symbol]
         
         # Log event
         self.db.log_event(
@@ -977,12 +1119,34 @@ class UTBotMonitor:
             return {'success': False, 'error': str(e)}
     
     def get_open_trades(self) -> List[Dict]:
-        """Get all open trades"""
-        return [t.to_dict() for t in self.open_trades.values()]
+        """Get all open trades from database"""
+        try:
+            from storage.db_models import UTBotPaperTrade, get_session
+            session = get_session()
+            trades = session.query(UTBotPaperTrade).filter_by(status='OPEN').all()
+            result = [t.to_dict() for t in trades]
+            session.close()
+            return result
+        except Exception as e:
+            print(f"[UT BOT] Error getting open trades from DB: {e}")
+            # Fallback to memory
+            return [t.to_dict() for t in self.open_trades.values()]
     
     def get_trade_history(self, limit: int = 50) -> List[Dict]:
-        """Get trade history"""
-        return [t.to_dict() for t in self.trade_history[-limit:]]
+        """Get trade history from database"""
+        try:
+            from storage.db_models import UTBotPaperTrade, get_session
+            session = get_session()
+            trades = session.query(UTBotPaperTrade).filter_by(
+                status='CLOSED'
+            ).order_by(UTBotPaperTrade.closed_at.desc()).limit(limit).all()
+            result = [t.to_dict() for t in trades]
+            session.close()
+            return result
+        except Exception as e:
+            print(f"[UT BOT] Error getting trade history from DB: {e}")
+            # Fallback to memory
+            return [t.to_dict() for t in self.trade_history[-limit:]]
     
     def set_enabled(self, enabled: bool) -> None:
         """Enable/disable monitor"""
