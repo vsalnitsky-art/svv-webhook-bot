@@ -93,6 +93,7 @@ class BybitConnector:
         interval: 1, 3, 5, 15, 30, 60, 120, 240, 360, 720, D, W, M
         """
         try:
+            print(f"[BYBIT] get_klines: symbol={symbol}, interval={interval}, limit={limit}")
             response = self.session.get_kline(
                 category="linear",
                 symbol=symbol,
@@ -113,10 +114,15 @@ class BybitConnector:
                         'volume': self._safe_float(k[5]),
                         'turnover': self._safe_float(k[6]) if len(k) > 6 else 0
                     })
+                print(f"[BYBIT] get_klines: ✅ Got {len(klines)} candles for {symbol}")
                 return klines
+            else:
+                print(f"[BYBIT] get_klines: ❌ No data for {symbol}")
             return []
         except Exception as e:
             print(f"[BYBIT] get_klines error: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_orderbook(self, symbol: str, limit: int = 25) -> Optional[Dict]:

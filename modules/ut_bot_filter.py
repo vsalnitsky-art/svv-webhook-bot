@@ -124,9 +124,12 @@ class UTBotFilter:
         
         # Fetch klines if not provided
         if klines is None:
+            print(f"[UT BOT ANALYZE] Fetching klines for {symbol}, TF={tf}")
             klines = self._fetch_klines(symbol, tf, self.config['required_candles'])
+            print(f"[UT BOT ANALYZE] Got {len(klines) if klines else 0} klines")
         
         if not klines or len(klines) < 20:
+            print(f"[UT BOT ANALYZE] ❌ Insufficient data for {symbol}: {len(klines) if klines else 0} klines")
             return self._no_signal(symbol, tf, "Insufficient data")
         
         # Prepare data
@@ -377,12 +380,24 @@ class UTBotFilter:
             # Convert timeframe to Bybit interval
             # Bybit accepts: 1, 3, 5, 15, 30, 60, 120, 240, 360, 720, D, W, M
             interval = self._convert_timeframe_to_interval(timeframe)
+            print(f"[UT BOT] Fetching klines: {symbol} TF={timeframe}→{interval} limit={limit}")
+            
             klines = self.bybit.get_klines(symbol, interval, limit)
+            
             if klines:
-                print(f"[UT BOT] Fetched {len(klines)} klines for {symbol} ({timeframe}→{interval})")
-            return klines
+                print(f"[UT BOT] ✅ Got {len(klines)} klines for {symbol}")
+                # Debug: show first kline
+                if len(klines) > 0:
+                    k = klines[-1]  # Last candle
+                    print(f"[UT BOT] Last candle: O={k.get('open')} H={k.get('high')} L={k.get('low')} C={k.get('close')}")
+            else:
+                print(f"[UT BOT] ❌ No klines returned for {symbol}!")
+            
+            return klines or []
         except Exception as e:
-            print(f"[UT BOT] Error fetching klines for {symbol}: {e}")
+            print(f"[UT BOT] ❌ Error fetching klines for {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _convert_timeframe_to_interval(self, timeframe: str) -> str:
