@@ -536,8 +536,15 @@ class UTBotMonitor:
                     
                     if not skip_signal_check:
                         try:
-                            # Check if we already have an open trade for this symbol
-                            has_open_trade = coin.symbol in self.open_trades
+                            # Check if we already have an open trade for this symbol (from DB!)
+                            from storage.db_models import UTBotPaperTrade, get_session
+                            session = get_session()
+                            existing_trade = session.query(UTBotPaperTrade).filter_by(
+                                symbol=coin.symbol,
+                                status='OPEN'
+                            ).first()
+                            session.close()
+                            has_open_trade = existing_trade is not None
                             
                             # Check UT Bot signal
                             # allow_first_entry=True only if NO open trade exists
@@ -655,7 +662,9 @@ class UTBotMonitor:
         try:
             session = get_session()
             
-            entry_price = signal.get('price', 0)
+            # Convert numpy types to Python native types for PostgreSQL
+            entry_price = float(signal.get('price', 0))
+            atr_stop = float(signal.get('atr_trailing_stop', 0))
             
             db_trade = UTBotPaperTrade(
                 symbol=coin.symbol,
@@ -663,13 +672,13 @@ class UTBotMonitor:
                 status='OPEN',
                 entry_price=entry_price,
                 current_price=entry_price,
-                atr_stop=signal.get('atr_trailing_stop', 0),
+                atr_stop=atr_stop,
                 highest_price=entry_price if coin.direction == 'LONG' else None,
                 lowest_price=entry_price if coin.direction == 'SHORT' else None,
-                entry_signal=json.dumps(signal) if signal else None,
+                entry_signal=json.dumps(signal, default=str) if signal else None,
                 opened_at=datetime.now(),
-                pnl_usdt=0,
-                pnl_percent=0
+                pnl_usdt=0.0,
+                pnl_percent=0.0
             )
             
             session.add(db_trade)
@@ -694,7 +703,7 @@ class UTBotMonitor:
             direction=coin.direction,
             status='OPEN',
             entry_price=entry_price,
-            atr_stop=signal.get('atr_trailing_stop', 0),
+            atr_stop=atr_stop,
             highest_price=entry_price if coin.direction == 'LONG' else None,
             lowest_price=entry_price if coin.direction == 'SHORT' else None,
             entry_signal=signal,
@@ -830,17 +839,20 @@ class UTBotMonitor:
         from storage.db_models import UTBotPaperTrade, get_session
         
         trade.status = 'CLOSED'
-        trade.exit_price = exit_signal.get('price', trade.current_price or trade.entry_price)
+        trade.exit_price = float(exit_signal.get('price', trade.current_price or trade.entry_price))
         trade.exit_signal = exit_signal
         trade.closed_at = datetime.now()
         
-        # Calculate PnL
-        if trade.direction == 'LONG':
-            trade.pnl_percent = (trade.exit_price - trade.entry_price) / trade.entry_price * 100
-        else:
-            trade.pnl_percent = (trade.entry_price - trade.exit_price) / trade.entry_price * 100
+        # Calculate PnL (ensure float types)
+        entry = float(trade.entry_price)
+        exit_p = float(trade.exit_price)
         
-        trade.pnl_usdt = self.config['position_size_usdt'] * trade.pnl_percent / 100
+        if trade.direction == 'LONG':
+            trade.pnl_percent = (exit_p - entry) / entry * 100
+        else:
+            trade.pnl_percent = (entry - exit_p) / entry * 100
+        
+        trade.pnl_usdt = float(self.config['position_size_usdt']) * trade.pnl_percent / 100
         
         # Update in database
         try:
@@ -852,11 +864,11 @@ class UTBotMonitor:
             
             if db_trade:
                 db_trade.status = 'CLOSED'
-                db_trade.exit_price = trade.exit_price
-                db_trade.exit_signal = json.dumps(exit_signal) if exit_signal else None
+                db_trade.exit_price = float(trade.exit_price)
+                db_trade.exit_signal = json.dumps(exit_signal, default=str) if exit_signal else None
                 db_trade.closed_at = trade.closed_at
-                db_trade.pnl_usdt = trade.pnl_usdt
-                db_trade.pnl_percent = trade.pnl_percent
+                db_trade.pnl_usdt = float(trade.pnl_usdt)
+                db_trade.pnl_percent = float(trade.pnl_percent)
                 session.commit()
                 print(f"[UT BOT] 💾 Trade closed in DB: ID={db_trade.id}, PnL=${trade.pnl_usdt:.2f}")
             else:
