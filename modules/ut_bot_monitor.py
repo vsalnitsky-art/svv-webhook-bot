@@ -317,7 +317,7 @@ class UTBotMonitor:
             elif source and 'MSS' in source:
                 stats['passed_mss_dir'] += 1
             
-            # Add coin
+            # Add coin to memory
             self.potential_coins[symbol] = PotentialCoin(
                 symbol=symbol,
                 sleeper_score=score,
@@ -336,6 +336,47 @@ class UTBotMonitor:
             updated += 1
             print(f"[UT BOT] ✅ {symbol}: {direction} (src={source}, score={score}, conf={confidence:.0f}%)")
         
+        # === SAVE ALL TO DATABASE ===
+        try:
+            from storage.db_models import UTBotPotentialCoin, get_session
+            session = get_session()
+            
+            for symbol, coin in self.potential_coins.items():
+                existing = session.query(UTBotPotentialCoin).filter_by(symbol=symbol).first()
+                if existing:
+                    # Update
+                    existing.direction = coin.direction
+                    existing.sleeper_score = coin.sleeper_score
+                    existing.confidence = coin.confidence
+                    existing.priority = coin.priority
+                    existing.source = coin.structure_type.split(':')[0] if ':' in (coin.structure_type or '') else 'SLEEPER'
+                    existing.structure_type = coin.structure_type
+                    existing.is_near_extreme = coin.is_near_extreme
+                    existing.last_check = now
+                    existing.updated_at = now
+                else:
+                    # Create new
+                    new_coin = UTBotPotentialCoin(
+                        symbol=symbol,
+                        direction=coin.direction,
+                        sleeper_score=coin.sleeper_score,
+                        confidence=coin.confidence,
+                        priority=coin.priority,
+                        source=coin.structure_type.split(':')[0] if ':' in (coin.structure_type or '') else 'SLEEPER',
+                        structure_type=coin.structure_type,
+                        is_near_extreme=coin.is_near_extreme,
+                        added_at=coin.added_at,
+                        last_check=now
+                    )
+                    session.add(new_coin)
+            
+            session.commit()
+            db_count = session.query(UTBotPotentialCoin).count()
+            session.close()
+            print(f"[UT BOT] 💾 Saved {updated} coins to DB (total: {db_count})")
+        except Exception as e:
+            print(f"[UT BOT] Error saving to DB: {e}")
+        
         # Summary
         print(f"[UT BOT] ═══════════════════════════════════")
         print(f"[UT BOT] Total: {stats['total']} | Rejected: score={stats['low_score']}, hp={stats['low_hp']}, state={stats['wrong_state']}, no_dir={stats['no_direction_found']}, bybit={stats['not_on_bybit']}")
@@ -343,36 +384,84 @@ class UTBotMonitor:
         print(f"[UT BOT] Potential coins in memory: {len(self.potential_coins)}")
         print(f"[UT BOT] ═══════════════════════════════════")
         
-        # Cleanup old
+        # Cleanup old (from both memory and DB)
         cutoff = now - timedelta(minutes=60)
         to_remove = [s for s, c in self.potential_coins.items() if c.last_check and c.last_check < cutoff]
         for s in to_remove:
             del self.potential_coins[s]
         
+        # Cleanup old from DB
+        try:
+            from storage.db_models import UTBotPotentialCoin, get_session
+            session = get_session()
+            old_coins = session.query(UTBotPotentialCoin).filter(UTBotPotentialCoin.updated_at < cutoff).all()
+            for c in old_coins:
+                session.delete(c)
+            if old_coins:
+                session.commit()
+                print(f"[UT BOT] 🗑️ Removed {len(old_coins)} stale coins from DB")
+            session.close()
+        except Exception as e:
+            print(f"[UT BOT] Error cleaning DB: {e}")
+        
         return updated
     
     def get_top_coin(self) -> Optional[PotentialCoin]:
         """
-        Get the TOP priority coin for trading
+        Get the TOP priority coin for trading (from DB)
         
         Selection criteria:
         1. Must have open position slot
         2. Must be near HH or LL
         3. Highest priority score
         """
-        if not self.potential_coins:
-            return None
-        
-        # Filter out coins with open trades
-        available = [c for s, c in self.potential_coins.items()
-                     if s not in self.open_trades]
-        
-        if not available:
-            return None
-        
-        # Sort by priority
-        available.sort(key=lambda x: x.priority, reverse=True)
-        return available[0]
+        try:
+            from storage.db_models import UTBotPotentialCoin, UTBotPaperTrade, get_session
+            session = get_session()
+            
+            # Get all potential coins sorted by priority
+            coins = session.query(UTBotPotentialCoin).order_by(UTBotPotentialCoin.priority.desc()).all()
+            
+            # Get symbols with open trades
+            open_trades = session.query(UTBotPaperTrade).filter_by(status='OPEN').all()
+            open_symbols = {t.symbol for t in open_trades}
+            
+            session.close()
+            
+            # Filter out coins with open trades
+            available = [c for c in coins if c.symbol not in open_symbols]
+            
+            if not available:
+                return None
+            
+            # Convert to PotentialCoin dataclass
+            top = available[0]
+            return PotentialCoin(
+                symbol=top.symbol,
+                sleeper_score=top.sleeper_score or 0,
+                direction=top.direction,
+                structure_type=top.structure_type or 'UNKNOWN',
+                is_near_extreme=top.is_near_extreme or False,
+                confidence=top.confidence or 0,
+                added_at=top.added_at or datetime.now(),
+                last_check=top.last_check,
+                priority=top.priority or 0
+            )
+            
+        except Exception as e:
+            print(f"[UT BOT] Error getting top coin from DB: {e}")
+            # Fallback to memory
+            if not self.potential_coins:
+                return None
+            
+            available = [c for s, c in self.potential_coins.items()
+                         if s not in self.open_trades]
+            
+            if not available:
+                return None
+            
+            available.sort(key=lambda x: x.priority, reverse=True)
+            return available[0]
     
     def check_signals(self) -> List[Dict]:
         """
@@ -711,14 +800,24 @@ class UTBotMonitor:
         }
     
     def get_potential_coins(self) -> List[Dict]:
-        """Get all potential coins"""
-        coins = list(self.potential_coins.values())
-        coins.sort(key=lambda x: x.priority, reverse=True)
-        return [c.to_dict() for c in coins]
+        """Get all potential coins from database"""
+        try:
+            from storage.db_models import UTBotPotentialCoin, get_session
+            session = get_session()
+            coins = session.query(UTBotPotentialCoin).order_by(UTBotPotentialCoin.priority.desc()).all()
+            result = [c.to_dict() for c in coins]
+            session.close()
+            return result
+        except Exception as e:
+            print(f"[UT BOT] Error getting potential coins from DB: {e}")
+            # Fallback to memory
+            coins = list(self.potential_coins.values())
+            coins.sort(key=lambda x: x.priority, reverse=True)
+            return [c.to_dict() for c in coins]
     
     def add_coin_manual(self, symbol: str, direction: str, score: float = 70.0) -> Dict:
         """
-        Manually add a coin to potential coins
+        Manually add a coin to potential coins (saves to DB)
         
         Args:
             symbol: Trading symbol (e.g., 'BTCUSDT')
@@ -741,31 +840,68 @@ class UTBotMonitor:
         now = datetime.now()
         
         # Calculate priority
-        priority = self._calculate_priority(score, 8, 70, False, False)
+        priority = self._calculate_priority(score, 8, 70, False, False) + 20  # Boost for manual
         
-        # Add to potential coins with high priority for manual
-        self.potential_coins[symbol] = PotentialCoin(
-            symbol=symbol,
-            sleeper_score=score,
-            direction=direction,
-            structure_type='MANUAL',
-            is_near_extreme=False,
-            confidence=70.0,
-            added_at=now,
-            last_check=now,
-            priority=priority + 20  # Boost priority for manual adds
-        )
-        
-        print(f"[UT BOT] ✅ Manually added: {symbol} {direction} (score={score})")
-        
-        return {
-            'success': True,
-            'coin': self.potential_coins[symbol].to_dict()
-        }
+        try:
+            from storage.db_models import UTBotPotentialCoin, get_session
+            session = get_session()
+            
+            # Check if exists
+            existing = session.query(UTBotPotentialCoin).filter_by(symbol=symbol).first()
+            if existing:
+                # Update
+                existing.direction = direction
+                existing.sleeper_score = score
+                existing.confidence = 70.0
+                existing.priority = priority
+                existing.source = 'MANUAL'
+                existing.structure_type = 'MANUAL'
+                existing.updated_at = now
+            else:
+                # Create new
+                coin = UTBotPotentialCoin(
+                    symbol=symbol,
+                    direction=direction,
+                    sleeper_score=score,
+                    confidence=70.0,
+                    priority=priority,
+                    source='MANUAL',
+                    structure_type='MANUAL',
+                    is_near_extreme=False,
+                    added_at=now
+                )
+                session.add(coin)
+            
+            session.commit()
+            
+            # Also add to memory for current worker
+            self.potential_coins[symbol] = PotentialCoin(
+                symbol=symbol,
+                sleeper_score=score,
+                direction=direction,
+                structure_type='MANUAL',
+                is_near_extreme=False,
+                confidence=70.0,
+                added_at=now,
+                last_check=now,
+                priority=priority
+            )
+            
+            result = session.query(UTBotPotentialCoin).filter_by(symbol=symbol).first()
+            coin_dict = result.to_dict() if result else self.potential_coins[symbol].to_dict()
+            session.close()
+            
+            print(f"[UT BOT] ✅ Manually added to DB: {symbol} {direction} (score={score})")
+            
+            return {'success': True, 'coin': coin_dict}
+            
+        except Exception as e:
+            print(f"[UT BOT] Error adding coin to DB: {e}")
+            return {'success': False, 'error': str(e)}
     
     def remove_coin(self, symbol: str) -> Dict:
         """
-        Remove a coin from potential coins
+        Remove a coin from potential coins (from DB)
         
         Args:
             symbol: Trading symbol
@@ -775,12 +911,29 @@ class UTBotMonitor:
         """
         symbol = symbol.upper()
         
-        if symbol in self.potential_coins:
-            del self.potential_coins[symbol]
-            print(f"[UT BOT] 🗑️ Removed: {symbol}")
-            return {'success': True, 'message': f'{symbol} removed'}
-        else:
-            return {'success': False, 'error': f'{symbol} not in potential coins'}
+        try:
+            from storage.db_models import UTBotPotentialCoin, get_session
+            session = get_session()
+            
+            coin = session.query(UTBotPotentialCoin).filter_by(symbol=symbol).first()
+            if coin:
+                session.delete(coin)
+                session.commit()
+                session.close()
+                
+                # Also remove from memory
+                if symbol in self.potential_coins:
+                    del self.potential_coins[symbol]
+                
+                print(f"[UT BOT] 🗑️ Removed from DB: {symbol}")
+                return {'success': True, 'message': f'{symbol} removed'}
+            else:
+                session.close()
+                return {'success': False, 'error': f'{symbol} not in potential coins'}
+                
+        except Exception as e:
+            print(f"[UT BOT] Error removing coin from DB: {e}")
+            return {'success': False, 'error': str(e)}
     
     def get_open_trades(self) -> List[Dict]:
         """Get all open trades"""
