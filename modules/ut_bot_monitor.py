@@ -799,7 +799,9 @@ class UTBotMonitor:
     
     def get_status(self) -> Dict:
         """Get current monitor status with detailed info"""
-        top_coin = self.get_top_coin()
+        max_monitored = self.config.get('max_monitored_coins', 1)
+        top_coins = self.get_top_coins(limit=max_monitored)
+        top_coin = top_coins[0] if top_coins else None
         
         # Get potential coins count from DB
         try:
@@ -823,6 +825,7 @@ class UTBotMonitor:
             'potential_coins': potential_count,
             'open_trades': open_trades_count,
             'top_coin': top_coin.to_dict() if top_coin else None,
+            'top_coins': [c.to_dict() for c in top_coins],  # List of monitored coins
             'stats': self.stats,
             'config': {
                 'timeframe': self.config['timeframe'],

@@ -128,8 +128,47 @@
 </div>
 {% endif %}
 
-<!-- Top Coin -->
-{% if status.top_coin %}
+<!-- Top Coins - Monitoring -->
+{% if status.top_coins and status.top_coins|length > 0 %}
+<div class="section-card" style="margin-top: 20px; background: linear-gradient(135deg, rgba(255, 193, 7, 0.1) 0%, rgba(255, 152, 0, 0.1) 100%); border-color: rgba(255, 193, 7, 0.3);">
+    <div class="section-header">
+        <h2>🎯 TOP {{ status.top_coins|length }} Coins - Monitoring</h2>
+    </div>
+    <div style="padding: 15px;">
+        <table class="data-table" style="width: 100%;">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Symbol</th>
+                    <th>Direction</th>
+                    <th>Score</th>
+                    <th>Confidence</th>
+                    <th>Priority</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for coin in status.top_coins %}
+                <tr style="{% if loop.index == 1 %}background: rgba(255, 193, 7, 0.15);{% endif %}">
+                    <td>{{ loop.index }}</td>
+                    <td><strong>{{ coin.symbol }}</strong></td>
+                    <td>
+                        {% if coin.direction == 'LONG' %}
+                            <span class="badge badge-success">🟢 LONG</span>
+                        {% else %}
+                            <span class="badge badge-danger">🔴 SHORT</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ coin.sleeper_score }}</td>
+                    <td>{{ "%.0f"|format(coin.confidence) }}%</td>
+                    <td>{{ "%.1f"|format(coin.priority) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% elif status.top_coin %}
+<!-- Fallback: single coin display -->
 <div class="section-card" style="margin-top: 20px; background: linear-gradient(135deg, rgba(255, 193, 7, 0.1) 0%, rgba(255, 152, 0, 0.1) 100%); border-color: rgba(255, 193, 7, 0.3);">
     <div class="section-header">
         <h2>🎯 TOP Coin - Monitoring</h2>

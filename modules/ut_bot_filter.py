@@ -174,7 +174,38 @@ class UTBotFilter:
         current_price = closes[last_idx]
         current_stop = x_atr_trailing_stop[last_idx]
         current_pos = int(pos[last_idx])
-        prev_pos = int(pos[last_idx - 1]) if last_idx > 0 else 0
+        
+        # =====================================================
+        # USE CACHED POSITION FOR CROSS-CALL STATE TRACKING
+        # =====================================================
+        # This ensures we catch signals even if they happened
+        # between bot checks (e.g., during restart)
+        cache_key = f"{symbol}_{tf}"
+        prev_pos_from_cache = self._position_cache.get(cache_key)
+        
+        if prev_pos_from_cache is not None:
+            # Use cached position from last check
+            prev_pos = prev_pos_from_cache
+        else:
+            # First time checking this symbol
+            # Look for the position on the PREVIOUS candle
+            if last_idx > 0:
+                prev_candle_pos = int(pos[last_idx - 1])
+                
+                # If current position differs from previous candle - this IS a signal candle!
+                # We should use the previous candle's position as prev_pos to trigger signal
+                if current_pos != prev_candle_pos:
+                    prev_pos = prev_candle_pos
+                    print(f"[UT BOT] 🆕 {symbol}: First check - detected state change on current candle! prev={prev_pos}→curr={current_pos}")
+                else:
+                    # Same position - use previous candle pos (no signal)
+                    prev_pos = prev_candle_pos
+            else:
+                prev_pos = 0
+        
+        # Update cache with current position
+        self._position_cache[cache_key] = current_pos
+        
         current_atr = atr[last_idx] if last_idx < len(atr) else atr[-1]
         
         # =====================================================
