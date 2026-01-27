@@ -805,22 +805,35 @@ class BackgroundJobs:
             for event in events:
                 event_type = event.get('type', '')
                 trade = event.get('trade', {})
+                signal = event.get('signal', {})
                 
                 if event_type == 'TRADE_OPENED':
+                    direction_emoji = "🟢" if trade.get('direction') == 'LONG' else "🔴"
                     self.notifier.send_message(
-                        f"🚀 UT Bot Paper Trade OPENED\n"
-                        f"Symbol: {trade.get('symbol')}\n"
-                        f"Direction: {trade.get('direction')}\n"
-                        f"Entry: {trade.get('entry_price')}\n"
-                        f"ATR Stop: {trade.get('atr_stop')}",
+                        f"🤖 <b>UT BOT: Paper Trade OPENED</b>\n\n"
+                        f"{direction_emoji} <b>{trade.get('symbol')}</b> {trade.get('direction')}\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"📍 Entry: <code>{trade.get('entry_price', 0):.6f}</code>\n"
+                        f"🛡️ ATR Stop: <code>{trade.get('atr_stop', 0):.6f}</code>\n"
+                        f"📊 Signal: pos {signal.get('prev_position', '?')} → {signal.get('position', '?')}\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"⏰ {datetime.now().strftime('%H:%M:%S UTC')}",
                         alert_type='ut_bot'
                     )
                 elif event_type == 'TRADE_CLOSED':
-                    emoji = "✅" if trade.get('pnl_usdt', 0) >= 0 else "❌"
+                    pnl = trade.get('pnl_usdt', 0)
+                    pnl_pct = trade.get('pnl_percent', 0)
+                    emoji = "✅" if pnl >= 0 else "❌"
+                    direction_emoji = "🟢" if trade.get('direction') == 'LONG' else "🔴"
                     self.notifier.send_message(
-                        f"{emoji} UT Bot Paper Trade CLOSED\n"
-                        f"Symbol: {trade.get('symbol')}\n"
-                        f"PnL: ${trade.get('pnl_usdt', 0):.2f} ({trade.get('pnl_percent', 0):.2f}%)",
+                        f"🤖 <b>UT BOT: Paper Trade CLOSED</b>\n\n"
+                        f"{direction_emoji} <b>{trade.get('symbol')}</b> {trade.get('direction')}\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"📍 Entry: <code>{trade.get('entry_price', 0):.6f}</code>\n"
+                        f"📍 Exit: <code>{trade.get('exit_price', 0):.6f}</code>\n"
+                        f"{emoji} PnL: <b>${pnl:+.2f}</b> ({pnl_pct:+.2f}%)\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"⏰ {datetime.now().strftime('%H:%M:%S UTC')}",
                         alert_type='ut_bot'
                     )
             

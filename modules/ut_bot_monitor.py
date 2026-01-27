@@ -433,8 +433,22 @@ class UTBotMonitor:
                         self._last_check_result['signal'] = signal_result
                         self._last_check_result['action'] = signal_result.get('trade_action', 'HOLD')
                         
-                        # Log signal result
-                        print(f"[UT BOT] {top_coin.symbol} signal: action={signal_result.get('trade_action')}, pos={signal_result.get('position')}, prev_pos={signal_result.get('prev_position')}")
+                        # Log signal result with details
+                        price = signal_result.get('price', 0)
+                        atr_stop = signal_result.get('atr_trailing_stop', 0)
+                        pos = signal_result.get('position', 0)
+                        prev_pos = signal_result.get('prev_position', 0)
+                        bar_color = signal_result.get('bar_color', '?')
+                        
+                        # Calculate distance to stop
+                        if price > 0 and atr_stop > 0:
+                            distance_pct = abs(price - atr_stop) / price * 100
+                            dist_dir = "above" if price > atr_stop else "below"
+                        else:
+                            distance_pct = 0
+                            dist_dir = "?"
+                        
+                        print(f"[UT BOT] {top_coin.symbol}: pos={prev_pos}→{pos} | price={price:.6f} | stop={atr_stop:.6f} ({dist_dir} {distance_pct:.2f}%) | bar={bar_color}")
                         
                         # Process OPEN signal (aligned with bias)
                         trade_action = signal_result.get('trade_action', 'HOLD')
