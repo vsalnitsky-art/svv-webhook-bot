@@ -374,10 +374,42 @@ class UTBotFilter:
     def _fetch_klines(self, symbol: str, timeframe: str, limit: int) -> List[Dict]:
         """Fetch klines from Bybit"""
         try:
-            return self.bybit.get_klines(symbol, timeframe, limit)
+            # Convert timeframe to Bybit interval
+            # Bybit accepts: 1, 3, 5, 15, 30, 60, 120, 240, 360, 720, D, W, M
+            interval = self._convert_timeframe_to_interval(timeframe)
+            klines = self.bybit.get_klines(symbol, interval, limit)
+            if klines:
+                print(f"[UT BOT] Fetched {len(klines)} klines for {symbol} ({timeframe}→{interval})")
+            return klines
         except Exception as e:
             print(f"[UT BOT] Error fetching klines for {symbol}: {e}")
             return []
+    
+    def _convert_timeframe_to_interval(self, timeframe: str) -> str:
+        """Convert standard timeframe to Bybit interval format"""
+        # Mapping: TradingView/standard → Bybit
+        mapping = {
+            '1m': '1',
+            '3m': '3',
+            '5m': '5',
+            '15m': '15',
+            '30m': '30',
+            '1h': '60',
+            '2h': '120',
+            '4h': '240',
+            '6h': '360',
+            '12h': '720',
+            '1d': 'D',
+            '1w': 'W',
+            '1M': 'M',
+            # Also accept raw Bybit format
+            '1': '1',
+            '15': '15',
+            '60': '60',
+            '240': '240',
+            'D': 'D',
+        }
+        return mapping.get(timeframe, '240')  # Default to 4h
     
     def _no_signal(self, symbol: str, timeframe: str, reason: str) -> UTBotSignal:
         """Return no signal result"""

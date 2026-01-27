@@ -228,6 +228,22 @@
         <h2>🔍 Potential Coins (from Sleepers)</h2>
         <span class="badge">{{ potential_coins|length }} coins</span>
     </div>
+    
+    <!-- Manual Add Form -->
+    <div style="padding: 15px; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-color);">
+        <form id="add-coin-form" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="add-symbol" placeholder="Symbol (e.g. BTCUSDT)" 
+                   style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); width: 150px;">
+            <select id="add-direction" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary);">
+                <option value="LONG">LONG</option>
+                <option value="SHORT">SHORT</option>
+            </select>
+            <input type="number" id="add-score" placeholder="Score" value="70" min="50" max="100"
+                   style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); width: 80px;">
+            <button type="submit" class="btn btn-primary" style="padding: 8px 16px;">➕ Add</button>
+        </form>
+    </div>
+    
     <div class="table-responsive">
         <table class="data-table">
             <thead>
@@ -238,28 +254,34 @@
                     <th>Score</th>
                     <th>Confidence</th>
                     <th>Priority</th>
+                    <th>Source</th>
+                    <th>Action</th>
                 </tr>
             </thead>
-            <tbody>
-                {% for coin in potential_coins[:10] %}
+            <tbody id="potential-coins-body">
+                {% for coin in potential_coins[:15] %}
                 <tr>
                     <td>{{ loop.index }}</td>
                     <td><strong>{{ coin.symbol }}</strong></td>
                     <td>
                         {% if coin.direction == 'LONG' %}
-                            <span class="badge badge-success">LONG</span>
+                            <span class="badge badge-success">🟢 LONG</span>
                         {% else %}
-                            <span class="badge badge-danger">SHORT</span>
+                            <span class="badge badge-danger">🔴 SHORT</span>
                         {% endif %}
                     </td>
                     <td>{{ coin.sleeper_score }}</td>
                     <td>{{ "%.0f"|format(coin.confidence) }}%</td>
                     <td>{{ "%.1f"|format(coin.priority) }}</td>
+                    <td><span style="font-size: 0.85em; color: var(--text-secondary);">{{ coin.structure_type or 'SLEEPER' }}</span></td>
+                    <td>
+                        <button class="btn btn-small btn-danger" onclick="removeCoin('{{ coin.symbol }}')" title="Remove">🗑️</button>
+                    </td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="6" style="text-align: center; padding: 30px; color: var(--text-secondary);">
-                        No potential coins. Waiting for Sleepers with LONG/SHORT direction.
+                    <td colspan="8" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                        No potential coins. Add manually or wait for Sleeper Scanner.
                     </td>
                 </tr>
                 {% endfor %}
@@ -422,6 +444,60 @@ document.getElementById('ut-config-form').addEventListener('submit', async funct
         alert('Error: ' + err.message);
     }
 });
+
+// Add coin form
+document.getElementById('add-coin-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const symbol = document.getElementById('add-symbol').value.toUpperCase().trim();
+    const direction = document.getElementById('add-direction').value;
+    const score = parseFloat(document.getElementById('add-score').value) || 70;
+    
+    if (!symbol) {
+        alert('Please enter a symbol');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/ut_bot/add_coin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol, direction, score })
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            alert(`✅ Added ${symbol} ${direction}`);
+            location.reload();
+        } else {
+            alert('❌ Error: ' + (result.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+});
+
+// Remove coin function
+async function removeCoin(symbol) {
+    if (!confirm(`Remove ${symbol} from monitoring?`)) return;
+    
+    try {
+        const response = await fetch('/api/ut_bot/remove_coin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol })
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            location.reload();
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
 
 // Auto-refresh every 30 seconds
 setInterval(() => location.reload(), 30000);

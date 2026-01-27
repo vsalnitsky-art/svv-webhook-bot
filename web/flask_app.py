@@ -1055,8 +1055,47 @@ def register_api_routes(app):
             monitor = get_ut_bot_monitor()
             return jsonify({
                 'success': True,
-                'coins': monitor.get_potential_coins()
+                'coins': monitor.get_potential_coins(),
+                'count': len(monitor.get_potential_coins())
             })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/add_coin', methods=['POST'])
+    def api_ut_bot_add_coin():
+        """Manually add a coin to UT Bot monitoring"""
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            monitor = get_ut_bot_monitor()
+            
+            data = request.get_json() or {}
+            symbol = data.get('symbol', '').upper()
+            direction = data.get('direction', 'LONG').upper()
+            score = float(data.get('score', 70.0))
+            
+            if not symbol:
+                return jsonify({'success': False, 'error': 'Symbol required'}), 400
+            
+            result = monitor.add_coin_manual(symbol, direction, score)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/remove_coin', methods=['POST'])
+    def api_ut_bot_remove_coin():
+        """Remove a coin from UT Bot monitoring"""
+        try:
+            from modules.ut_bot_monitor import get_ut_bot_monitor
+            monitor = get_ut_bot_monitor()
+            
+            data = request.get_json() or {}
+            symbol = data.get('symbol', '').upper()
+            
+            if not symbol:
+                return jsonify({'success': False, 'error': 'Symbol required'}), 400
+            
+            result = monitor.remove_coin(symbol)
+            return jsonify(result)
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
     

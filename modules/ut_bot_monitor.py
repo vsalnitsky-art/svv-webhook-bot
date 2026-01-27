@@ -716,6 +716,72 @@ class UTBotMonitor:
         coins.sort(key=lambda x: x.priority, reverse=True)
         return [c.to_dict() for c in coins]
     
+    def add_coin_manual(self, symbol: str, direction: str, score: float = 70.0) -> Dict:
+        """
+        Manually add a coin to potential coins
+        
+        Args:
+            symbol: Trading symbol (e.g., 'BTCUSDT')
+            direction: 'LONG' or 'SHORT'
+            score: Priority score (default 70)
+            
+        Returns:
+            Dict with result
+        """
+        symbol = symbol.upper()
+        direction = direction.upper()
+        
+        if direction not in ['LONG', 'SHORT']:
+            return {'success': False, 'error': 'Direction must be LONG or SHORT'}
+        
+        # Check if on Bybit
+        if not self._is_symbol_on_bybit(symbol):
+            return {'success': False, 'error': f'{symbol} not found on Bybit'}
+        
+        now = datetime.now()
+        
+        # Calculate priority
+        priority = self._calculate_priority(score, 8, 70, False, False)
+        
+        # Add to potential coins with high priority for manual
+        self.potential_coins[symbol] = PotentialCoin(
+            symbol=symbol,
+            sleeper_score=score,
+            direction=direction,
+            structure_type='MANUAL',
+            is_near_extreme=False,
+            confidence=70.0,
+            added_at=now,
+            last_check=now,
+            priority=priority + 20  # Boost priority for manual adds
+        )
+        
+        print(f"[UT BOT] ✅ Manually added: {symbol} {direction} (score={score})")
+        
+        return {
+            'success': True,
+            'coin': self.potential_coins[symbol].to_dict()
+        }
+    
+    def remove_coin(self, symbol: str) -> Dict:
+        """
+        Remove a coin from potential coins
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            Dict with result
+        """
+        symbol = symbol.upper()
+        
+        if symbol in self.potential_coins:
+            del self.potential_coins[symbol]
+            print(f"[UT BOT] 🗑️ Removed: {symbol}")
+            return {'success': True, 'message': f'{symbol} removed'}
+        else:
+            return {'success': False, 'error': f'{symbol} not in potential coins'}
+    
     def get_open_trades(self) -> List[Dict]:
         """Get all open trades"""
         return [t.to_dict() for t in self.open_trades.values()]
