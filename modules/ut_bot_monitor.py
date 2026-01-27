@@ -357,94 +357,93 @@ class UTBotMonitor:
             'status': 'checked',
             'top_coin': None,
             'signal': None,
-            'action': 'NONE'
+            'action': 'NONE',
+            'error': None
         }
         
-        # =====================================================
-        # 1. CHECK FOR OPEN SIGNALS ON TOP COIN
-        # =====================================================
-        top_coin = self.get_top_coin()
-        
-        if top_coin:
-            self._last_check_result['top_coin'] = top_coin.symbol
+        try:
+            # =====================================================
+            # 1. CHECK FOR OPEN SIGNALS ON TOP COIN
+            # =====================================================
+            top_coin = self.get_top_coin()
             
-            # Log which coin we're checking
-            print(f"[UT BOT] Checking signals for TOP coin: {top_coin.symbol} ({top_coin.direction}, score={top_coin.sleeper_score})")
-            
-            # Check cooldown
-            last_signal = self._last_signal_time.get(top_coin.symbol)
-            if last_signal:
-                elapsed = (now - last_signal).total_seconds()
-                if elapsed < self.config['min_signal_gap_minutes'] * 60:
-                    print(f"[UT BOT] {top_coin.symbol} on cooldown ({elapsed:.0f}s < {self.config['min_signal_gap_minutes']*60}s)")
-                    self._last_check_result['action'] = f'COOLDOWN ({int(elapsed)}s)'
-                else:
-                    # Check UT Bot signal
-                    signal_result = self.ut_bot.check_signal_with_bias(
-                        top_coin.symbol,
-                        top_coin.direction,
-                        timeframe=self.config['timeframe']
-                    )
+            if top_coin:
+                self._last_check_result['top_coin'] = top_coin.symbol
+                
+                # Log which coin we're checking
+                print(f"[UT BOT] Checking signals for TOP coin: {top_coin.symbol} ({top_coin.direction}, score={top_coin.sleeper_score})")
+                
+                # Check cooldown
+                last_signal = self._last_signal_time.get(top_coin.symbol)
+                skip_signal_check = False
+                
+                if last_signal:
+                    elapsed = (now - last_signal).total_seconds()
+                    if elapsed < self.config['min_signal_gap_minutes'] * 60:
+                        print(f"[UT BOT] {top_coin.symbol} on cooldown ({elapsed:.0f}s < {self.config['min_signal_gap_minutes']*60}s)")
+                        self._last_check_result['action'] = f'COOLDOWN ({int(elapsed)}s)'
+                        skip_signal_check = True
+                
+                if not skip_signal_check:
+                    try:
+                        # Check UT Bot signal
+                        signal_result = self.ut_bot.check_signal_with_bias(
+                            top_coin.symbol,
+                            top_coin.direction,
+                            timeframe=self.config['timeframe']
+                        )
+                        
+                        self._last_check_result['signal'] = signal_result
+                        self._last_check_result['action'] = signal_result.get('trade_action', 'HOLD')
+                        
+                        # Log signal result
+                        print(f"[UT BOT] {top_coin.symbol} signal: action={signal_result.get('trade_action')}, pos={signal_result.get('position')}, prev_pos={signal_result.get('prev_position')}")
+                        
+                        # Process OPEN signal (aligned with bias)
+                        trade_action = signal_result.get('trade_action', 'HOLD')
+                        if signal_result.get('aligned') and trade_action.startswith('ENTER'):
+                            # Open trade
+                            trade = self._open_trade(top_coin, signal_result)
+                            if trade:
+                                events.append({
+                                    'type': 'TRADE_OPENED',
+                                    'trade': trade.to_dict(),
+                                    'signal': signal_result
+                                })
+                                self._last_signal_time[top_coin.symbol] = now
+                                print(f"[UT BOT] ✅ TRADE OPENED: {top_coin.symbol} {trade_action}")
                     
-                    self._last_check_result['signal'] = signal_result
-                    self._last_check_result['action'] = signal_result.get('trade_action', 'HOLD')
-                    
-                    # Log signal result
-                    print(f"[UT BOT] {top_coin.symbol} signal: action={signal_result.get('trade_action')}, pos={signal_result.get('position')}, prev_pos={signal_result.get('prev_position')}")
-                    
-                    # Process OPEN signal (aligned with bias)
-                    trade_action = signal_result.get('trade_action', 'HOLD')
-                    if signal_result.get('aligned') and trade_action.startswith('ENTER'):
-                        # Open trade
-                        trade = self._open_trade(top_coin, signal_result)
-                        if trade:
-                            events.append({
-                                'type': 'TRADE_OPENED',
-                                'trade': trade.to_dict(),
-                                'signal': signal_result
-                            })
-                            self._last_signal_time[top_coin.symbol] = now
+                    except Exception as e:
+                        print(f"[UT BOT] Error checking signals for {top_coin.symbol}: {e}")
+                        self._last_check_result['error'] = str(e)
+                        self._last_check_result['action'] = f'ERROR'
             else:
-                # No cooldown - check signal
-                signal_result = self.ut_bot.check_signal_with_bias(
-                    top_coin.symbol,
-                    top_coin.direction,
-                    timeframe=self.config['timeframe']
-                )
-                
-                self._last_check_result['signal'] = signal_result
-                self._last_check_result['action'] = signal_result.get('trade_action', 'HOLD')
-                
-                # Log signal result
-                print(f"[UT BOT] {top_coin.symbol} signal: action={signal_result.get('trade_action')}, pos={signal_result.get('position')}, prev_pos={signal_result.get('prev_position')}")
-                
-                trade_action = signal_result.get('trade_action', 'HOLD')
-                if signal_result.get('aligned') and trade_action.startswith('ENTER'):
-                    trade = self._open_trade(top_coin, signal_result)
-                    if trade:
-                        events.append({
-                            'type': 'TRADE_OPENED',
-                            'trade': trade.to_dict(),
-                            'signal': signal_result
-                        })
-                        self._last_signal_time[top_coin.symbol] = now
-        else:
-            self._last_check_result['action'] = 'NO_COINS'
-            print("[UT BOT] No potential coins available for signal check")
+                self._last_check_result['action'] = 'NO_COINS'
+                print("[UT BOT] No potential coins available for signal check")
+            
+            # =====================================================
+            # 2. MONITOR OPEN TRADES FOR EXIT SIGNALS
+            # =====================================================
+            for symbol, trade in list(self.open_trades.items()):
+                try:
+                    exit_signal = self._check_exit_signal(trade)
+                    if exit_signal:
+                        closed_trade = self._close_trade(trade, exit_signal)
+                        if closed_trade:
+                            events.append({
+                                'type': 'TRADE_CLOSED',
+                                'trade': closed_trade.to_dict(),
+                                'signal': exit_signal
+                            })
+                            print(f"[UT BOT] ✅ TRADE CLOSED: {symbol} - {exit_signal.get('reason')}")
+                except Exception as e:
+                    print(f"[UT BOT] Error checking exit for {symbol}: {e}")
+                    continue
         
-        # =====================================================
-        # 2. MONITOR OPEN TRADES FOR EXIT SIGNALS
-        # =====================================================
-        for symbol, trade in list(self.open_trades.items()):
-            exit_signal = self._check_exit_signal(trade)
-            if exit_signal:
-                closed_trade = self._close_trade(trade, exit_signal)
-                if closed_trade:
-                    events.append({
-                        'type': 'TRADE_CLOSED',
-                        'trade': closed_trade.to_dict(),
-                        'signal': exit_signal
-                    })
+        except Exception as e:
+            print(f"[UT BOT] Critical error in check_signals: {e}")
+            self._last_check_result['status'] = 'error'
+            self._last_check_result['error'] = str(e)
         
         return events
     
