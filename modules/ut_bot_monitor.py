@@ -196,9 +196,13 @@ class UTBotMonitor:
         """
         Update potential coins from Sleeper Scanner results
         
-        Args:
-            sleepers: List of sleeper data from scanner
-            
+        STRATEGY v7.0.5:
+        1. Монети з direction LONG/SHORT від Sleeper - приймаємо (score ≥ 55)
+        2. Монети з NEUTRAL - визначаємо direction по структурі ціни:
+           - distance_from_low < 20% → LONG (ціна біля підтримки)
+           - distance_from_high < 20% → SHORT (ціна біля опору)
+        3. Або по Market Structure Shift (MSS) якщо є
+        
         Returns:
             Number of coins added/updated
         """
@@ -209,17 +213,17 @@ class UTBotMonitor:
         updated = 0
         now = datetime.now()
         
-        # Stats for logging
+        # Stats
         stats = {
             'total': len(sleepers),
             'low_score': 0,
             'low_hp': 0,
             'wrong_state': 0,
-            'no_direction': 0,
-            'neutral': 0,
-            'in_middle': 0,
+            'no_direction_found': 0,
             'not_on_bybit': 0,
-            'passed': 0
+            'passed_sleeper_dir': 0,
+            'passed_structure_dir': 0,
+            'passed_mss_dir': 0
         }
         
         for sleeper in sleepers:
@@ -227,68 +231,99 @@ class UTBotMonitor:
             if not symbol:
                 continue
             
-            # Check minimum requirements
             score = sleeper.get('total_score', 0)
             hp = sleeper.get('hp', 0)
             state = sleeper.get('state', '')
             
-            if score < self.config['min_sleeper_score']:
-                stats['low_score'] += 1
-                continue
-            if hp < self.config['min_sleeper_hp']:
-                stats['low_hp'] += 1
-                continue
+            # State filter
             if state not in ['READY', 'BUILDING', 'TRIGGERED', 'WATCHING']:
                 stats['wrong_state'] += 1
                 continue
             
-            # Get direction from sleeper data
-            # In DB: direction = 'LONG', 'SHORT', 'NEUTRAL' (simple string)
-            # direction_score = float like 0.7 or -0.5
+            # Score/HP thresholds (relaxed)
+            min_score = 55
+            min_hp = 3
+            
+            if score < min_score:
+                stats['low_score'] += 1
+                continue
+            if hp < min_hp:
+                stats['low_hp'] += 1
+                continue
+            
+            # === DETERMINE DIRECTION ===
             sleeper_direction = sleeper.get('direction', 'NEUTRAL')
             direction_score = sleeper.get('direction_score', 0)
+            direction = None
+            confidence = 50
+            source = None
             
-            # Parse direction
-            if sleeper_direction == 'LONG':
-                direction = 'LONG'
-                confidence = abs(direction_score) * 100 if direction_score else 50
-            elif sleeper_direction == 'SHORT':
-                direction = 'SHORT'
-                confidence = abs(direction_score) * 100 if direction_score else 50
+            # 1. Use Sleeper direction if available
+            if sleeper_direction in ['LONG', 'SHORT']:
+                direction = sleeper_direction
+                confidence = abs(direction_score) * 100 if direction_score else 60
+                source = 'SLEEPER'
+            
+            # 2. Fallback: Use price structure (distance from high/low)
             else:
-                stats['neutral'] += 1
+                dist_high = sleeper.get('distance_from_high', 50)
+                dist_low = sleeper.get('distance_from_low', 50)
+                
+                # Near support (low) → LONG bias
+                if dist_low < 20 and dist_low < dist_high:
+                    direction = 'LONG'
+                    confidence = max(50, 70 - dist_low)  # Closer = higher confidence
+                    source = 'STRUCTURE_LOW'
+                
+                # Near resistance (high) → SHORT bias
+                elif dist_high < 20 and dist_high < dist_low:
+                    direction = 'SHORT'
+                    confidence = max(50, 70 - dist_high)
+                    source = 'STRUCTURE_HIGH'
+                
+                # 3. Fallback: Use MSS (Market Structure Shift)
+                else:
+                    mss_bias = sleeper.get('mss_bias', 0)
+                    hl_count = sleeper.get('higher_lows_count', 0)
+                    lh_count = sleeper.get('lower_highs_count', 0)
+                    
+                    if mss_bias > 0 or hl_count >= 2:
+                        direction = 'LONG'
+                        confidence = 55
+                        source = 'MSS_BULLISH'
+                    elif mss_bias < 0 or lh_count >= 2:
+                        direction = 'SHORT'
+                        confidence = 55
+                        source = 'MSS_BEARISH'
+            
+            # No direction found
+            if not direction:
+                stats['no_direction_found'] += 1
                 continue
             
-            # Structure info from sleeper
-            structure_type = sleeper.get('structure_type', 'UNKNOWN')
-            
-            # For now, accept all coins with direction (require_structure = False)
-            is_near_high = False
-            is_near_low = False
-            is_in_middle = True
-            
-            if self.config['require_structure'] and is_in_middle:
-                stats['in_middle'] += 1
-                continue
-            
-            # Check if on Bybit (quick check)
+            # Check Bybit availability
             if not self._is_symbol_on_bybit(symbol):
                 stats['not_on_bybit'] += 1
                 continue
             
             # Calculate priority
-            priority = self._calculate_priority(
-                score, hp, confidence,
-                is_near_high, is_near_low
-            )
+            priority = self._calculate_priority(score, hp, confidence, False, False)
             
-            # Add or update
+            # Track source
+            if source == 'SLEEPER':
+                stats['passed_sleeper_dir'] += 1
+            elif source and 'STRUCTURE' in source:
+                stats['passed_structure_dir'] += 1
+            elif source and 'MSS' in source:
+                stats['passed_mss_dir'] += 1
+            
+            # Add coin
             self.potential_coins[symbol] = PotentialCoin(
                 symbol=symbol,
                 sleeper_score=score,
                 direction=direction,
-                structure_type=structure_type,
-                is_near_extreme=is_near_high or is_near_low,
+                structure_type=f"{source}:{sleeper.get('market_phase', '?')}",
+                is_near_extreme=sleeper.get('distance_from_low', 50) < 15 or sleeper.get('distance_from_high', 50) < 15,
                 confidence=confidence,
                 added_at=self.potential_coins.get(symbol, PotentialCoin(
                     symbol=symbol, sleeper_score=0, direction='', 
@@ -299,16 +334,18 @@ class UTBotMonitor:
                 priority=priority
             )
             updated += 1
-            stats['passed'] += 1
+            print(f"[UT BOT] ✅ {symbol}: {direction} (src={source}, score={score}, conf={confidence:.0f}%)")
         
-        # Log detailed stats
-        if updated > 0 or stats['total'] > 0:
-            print(f"[UT BOT] Update stats: {stats['total']} total → {updated} passed | Rejected: score={stats['low_score']}, hp={stats['low_hp']}, state={stats['wrong_state']}, neutral={stats['neutral']}, middle={stats['in_middle']}, bybit={stats['not_on_bybit']}")
+        # Summary
+        print(f"[UT BOT] ═══════════════════════════════════")
+        print(f"[UT BOT] Total: {stats['total']} | Rejected: score={stats['low_score']}, hp={stats['low_hp']}, state={stats['wrong_state']}, no_dir={stats['no_direction_found']}, bybit={stats['not_on_bybit']}")
+        print(f"[UT BOT] ✅ PASSED: {updated} (sleeper={stats['passed_sleeper_dir']}, structure={stats['passed_structure_dir']}, mss={stats['passed_mss_dir']})")
+        print(f"[UT BOT] Potential coins in memory: {len(self.potential_coins)}")
+        print(f"[UT BOT] ═══════════════════════════════════")
         
-        # Remove old coins (not updated in last 30 min)
-        cutoff = now - timedelta(minutes=30)
-        to_remove = [s for s, c in self.potential_coins.items() 
-                     if c.last_check and c.last_check < cutoff]
+        # Cleanup old
+        cutoff = now - timedelta(minutes=60)
+        to_remove = [s for s, c in self.potential_coins.items() if c.last_check and c.last_check < cutoff]
         for s in to_remove:
             del self.potential_coins[s]
         
