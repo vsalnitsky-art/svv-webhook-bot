@@ -104,6 +104,8 @@ class UTBotFilter:
         # Cache for trailing stop values
         self._trailing_stop_cache: Dict[str, float] = {}
         self._position_cache: Dict[str, int] = {}
+        # Cache for last signal timestamp (to prevent duplicate signals)
+        self._last_signal_timestamp: Dict[str, int] = {}
     
     def analyze(self, 
                 symbol: str, 
@@ -135,6 +137,7 @@ class UTBotFilter:
         lows = np.array([float(k['low']) for k in klines])
         closes = np.array([float(k['close']) for k in klines])
         volumes = np.array([float(k.get('volume', 0)) for k in klines])
+        timestamps = np.array([int(k.get('timestamp', 0)) for k in klines])
         
         # Calculate ATR
         atr = self._calculate_atr(highs, lows, closes, self.config['atr_period'])
@@ -209,52 +212,122 @@ class UTBotFilter:
         current_atr = atr[last_idx] if last_idx < len(atr) else atr[-1]
         
         # =====================================================
-        # DETERMINE SIGNAL BY STATE CHANGE (EXACT PINE SCRIPT)
+        # DETERMINE SIGNAL BY CROSSOVER (EXACT PINE SCRIPT!)
         # =====================================================
-        # pos = 1: LONG position
-        # pos = -1: SHORT position  
-        # pos = 0: neutral
+        # Pine Script original:
+        #   ema = ema(src, 1)  // EMA(1) = just the price
+        #   above = crossover(ema, xATRTrailingStop)
+        #   below = crossover(xATRTrailingStop, ema)
+        #   buy  = src > xATRTrailingStop and above
+        #   sell = src < xATRTrailingStop and below
         #
-        # Signals occur on STATE CHANGE:
-        # - pos changes 0 → 1: UT Long (open LONG)
-        # - pos changes 0 → -1: UT Short (open SHORT)
-        # - pos changes 1 → 0: Close LONG
-        # - pos changes -1 → 0: Close SHORT
+        # IMPORTANT: We check the LAST COMPLETED candle, not current!
+        # Bybit returns candles including the current incomplete one.
+        # Signal on TradingView appears when candle CLOSES.
         # =====================================================
         
         signal_type = UTSignalType.HOLD
-        signal_action = 'HOLD'  # OPEN, CLOSE, HOLD
+        signal_action = 'HOLD'
         direction = None
         
-        # OPEN LONG: pos changes to 1 from anything else
-        if current_pos == 1 and prev_pos != 1:
+        # Check signal on LAST COMPLETED candle (not current incomplete!)
+        # last_idx = current incomplete candle
+        # last_idx - 1 = last completed candle (where signal would appear on TradingView)
+        signal_idx = last_idx - 1 if last_idx > 1 else last_idx
+        
+        # Get values for signal candle and its previous
+        src_signal = closes[signal_idx]
+        src_before_signal = closes[signal_idx - 1] if signal_idx > 0 else closes[signal_idx]
+        stop_signal = x_atr_trailing_stop[signal_idx]
+        stop_before_signal = x_atr_trailing_stop[signal_idx - 1] if signal_idx > 0 else x_atr_trailing_stop[signal_idx]
+        
+        # EXACT Pine Script crossover logic:
+        # above = crossover(ema, xATRTrailingStop) = src crosses above stop
+        # crossover(a, b) = a > b AND a[1] <= b[1]
+        above = src_signal > stop_signal and src_before_signal <= stop_before_signal
+        
+        # below = crossover(xATRTrailingStop, ema) = stop crosses above src = src crosses below stop
+        below = src_signal < stop_signal and src_before_signal >= stop_before_signal
+        
+        # buy = src > xATRTrailingStop and above
+        buy_signal = src_signal > stop_signal and above
+        
+        # sell = src < xATRTrailingStop and below
+        sell_signal = src_signal < stop_signal and below
+        
+        # Also check if we need to catch up on a signal from the current candle
+        # (in case crossover just happened within this candle)
+        src_current = closes[last_idx]
+        src_prev = closes[last_idx - 1] if last_idx > 0 else closes[last_idx]
+        stop_current = x_atr_trailing_stop[last_idx]
+        stop_prev = x_atr_trailing_stop[last_idx - 1] if last_idx > 0 else x_atr_trailing_stop[last_idx]
+        
+        above_current = src_current > stop_current and src_prev <= stop_prev
+        below_current = src_current < stop_current and src_prev >= stop_prev
+        buy_current = src_current > stop_current and above_current
+        sell_current = src_current < stop_current and below_current
+        
+        # Get timestamps for signal candles
+        signal_candle_ts = timestamps[signal_idx] if signal_idx < len(timestamps) else 0
+        current_candle_ts = timestamps[last_idx] if last_idx < len(timestamps) else 0
+        
+        # Check if we already processed this signal (prevent duplicates)
+        cache_key = f"{symbol}_{tf}"
+        last_processed_ts = self._last_signal_timestamp.get(cache_key, 0)
+        
+        # Determine which signal to use and check for duplicates
+        active_signal = None
+        active_ts = 0
+        
+        if buy_signal and signal_candle_ts > last_processed_ts:
+            active_signal = 'BUY_COMPLETED'
+            active_ts = signal_candle_ts
+        elif sell_signal and signal_candle_ts > last_processed_ts:
+            active_signal = 'SELL_COMPLETED'
+            active_ts = signal_candle_ts
+        elif buy_current and current_candle_ts > last_processed_ts:
+            active_signal = 'BUY_CURRENT'
+            active_ts = current_candle_ts
+        elif sell_current and current_candle_ts > last_processed_ts:
+            active_signal = 'SELL_CURRENT'
+            active_ts = current_candle_ts
+        
+        # Process signal if active
+        if active_signal == 'BUY_COMPLETED':
             signal_type = UTSignalType.BUY
             signal_action = 'OPEN'
             direction = "LONG"
+            self._last_signal_timestamp[cache_key] = active_ts
+            print(f"[UT BOT] 🔔 BUY SIGNAL on completed candle! {symbol}: price {src_before_signal:.2f}→{src_signal:.2f} crossed above stop {stop_before_signal:.2f}→{stop_signal:.2f}")
         
-        # OPEN SHORT: pos changes to -1 from anything else
-        elif current_pos == -1 and prev_pos != -1:
+        elif active_signal == 'SELL_COMPLETED':
             signal_type = UTSignalType.SELL
             signal_action = 'OPEN'
             direction = "SHORT"
+            self._last_signal_timestamp[cache_key] = active_ts
+            print(f"[UT BOT] 🔔 SELL SIGNAL on completed candle! {symbol}: price {src_before_signal:.2f}→{src_signal:.2f} crossed below stop {stop_before_signal:.2f}→{stop_signal:.2f}")
         
-        # CLOSE LONG: pos changes from 1 to 0 (or -1)
-        elif prev_pos == 1 and current_pos != 1:
-            signal_type = UTSignalType.SELL  # Exit signal
-            signal_action = 'CLOSE'
-            direction = "LONG"  # Direction of position to close
+        elif active_signal == 'BUY_CURRENT':
+            signal_type = UTSignalType.BUY
+            signal_action = 'OPEN'
+            direction = "LONG"
+            self._last_signal_timestamp[cache_key] = active_ts
+            print(f"[UT BOT] 🔔 BUY SIGNAL on current candle! {symbol}: price {src_prev:.2f}→{src_current:.2f} crossed above stop {stop_prev:.2f}→{stop_current:.2f}")
         
-        # CLOSE SHORT: pos changes from -1 to 0 (or 1)
-        elif prev_pos == -1 and current_pos != -1:
-            signal_type = UTSignalType.BUY  # Exit signal
-            signal_action = 'CLOSE'
-            direction = "SHORT"  # Direction of position to close
+        elif active_signal == 'SELL_CURRENT':
+            signal_type = UTSignalType.SELL
+            signal_action = 'OPEN'
+            direction = "SHORT"
+            self._last_signal_timestamp[cache_key] = active_ts
+            print(f"[UT BOT] 🔔 SELL SIGNAL on current candle! {symbol}: price {src_prev:.2f}→{src_current:.2f} crossed below stop {stop_prev:.2f}→{stop_current:.2f}")
         
-        # Determine bar color
+        # Determine bar color (same as Pine Script)
+        # barbuy = src > xATRTrailingStop
+        # barsell = src < xATRTrailingStop
         bar_color = "neutral"
-        if current_pos == 1:
+        if src_current > stop_current:
             bar_color = "green"
-        elif current_pos == -1:
+        elif src_current < stop_current:
             bar_color = "red"
         
         # Calculate confidence
