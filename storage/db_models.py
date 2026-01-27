@@ -426,8 +426,8 @@ class UTBotPotentialCoin(Base):
     sleeper_score = Column(Float, default=0)
     confidence = Column(Float, default=0)
     priority = Column(Float, default=0)
-    source = Column(String(20), default='SLEEPER')  # SLEEPER/STRUCTURE/MSS/MANUAL
-    structure_type = Column(String(20))
+    source = Column(String(50), default='SLEEPER')  # SLEEPER/STRUCTURE_HIGH/STRUCTURE_LOW/MSS/MANUAL
+    structure_type = Column(String(50))  # e.g. STRUCTURE_HIGH:MARKUP
     is_near_extreme = Column(Boolean, default=False)
     added_at = Column(DateTime, default=datetime.utcnow)
     last_check = Column(DateTime)
@@ -617,7 +617,57 @@ def migrate_sleeper_candidates_v3():
                     print(f"[DB MIGRATE] Error adding {col_name}: {e}")
                 conn.rollback()
     
+    # Migrate UT Bot table column sizes
+    migrate_ut_bot_columns()
+    
     print("[DB MIGRATE] Migration complete")
+
+
+def migrate_ut_bot_columns():
+    """Migrate UT Bot columns to larger sizes"""
+    from sqlalchemy import text
+    
+    table_name = f'{TABLE_PREFIX}ut_potential_coins'
+    
+    # Column alterations (name, new_type)
+    alterations = [
+        ("source", "VARCHAR(50)"),
+        ("structure_type", "VARCHAR(50)"),
+    ]
+    
+    with engine.connect() as conn:
+        # Check if table exists first
+        check_sql = text(f"""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = '{table_name}'
+            );
+        """)
+        result = conn.execute(check_sql)
+        if not result.scalar():
+            return  # Table doesn't exist yet
+        
+        for col_name, col_type in alterations:
+            try:
+                sql = text(f"""
+                    DO $$ 
+                    BEGIN 
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = '{table_name}' AND column_name = '{col_name}'
+                        ) THEN 
+                            ALTER TABLE {table_name} ALTER COLUMN {col_name} TYPE {col_type};
+                        END IF;
+                    END $$;
+                """)
+                conn.execute(sql)
+                conn.commit()
+            except Exception as e:
+                error_str = str(e)
+                if 'nothing to alter' not in error_str.lower():
+                    print(f"[DB MIGRATE] Note: {col_name} alteration: {e}")
+                conn.rollback()
+
 
 def get_session():
     """Get database session"""

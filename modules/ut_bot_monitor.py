@@ -776,6 +776,18 @@ class UTBotMonitor:
         """Get current monitor status with detailed info"""
         top_coin = self.get_top_coin()
         
+        # Get potential coins count from DB
+        try:
+            from storage.db_models import UTBotPotentialCoin, UTBotPaperTrade, get_session
+            session = get_session()
+            potential_count = session.query(UTBotPotentialCoin).count()
+            open_trades_count = session.query(UTBotPaperTrade).filter_by(status='OPEN').count()
+            session.close()
+        except Exception as e:
+            print(f"[UT BOT] Error getting counts from DB: {e}")
+            potential_count = len(self.potential_coins)
+            open_trades_count = len(self.open_trades)
+        
         # Get last signal check info
         last_check_info = {}
         if top_coin and hasattr(self, '_last_check_result'):
@@ -783,8 +795,8 @@ class UTBotMonitor:
         
         return {
             'enabled': self.config['enabled'],
-            'potential_coins': len(self.potential_coins),
-            'open_trades': len(self.open_trades),
+            'potential_coins': potential_count,
+            'open_trades': open_trades_count,
             'top_coin': top_coin.to_dict() if top_coin else None,
             'stats': self.stats,
             'config': {
