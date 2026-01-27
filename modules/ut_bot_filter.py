@@ -538,7 +538,8 @@ class UTBotFilter:
     
     def check_signal_with_bias(self, symbol: str, bias: str, 
                                 klines: List[Dict] = None,
-                                timeframe: str = None) -> Dict:
+                                timeframe: str = None,
+                                allow_first_entry: bool = True) -> Dict:
         """
         Check UT Bot signal with Direction Engine bias alignment
         
@@ -547,6 +548,7 @@ class UTBotFilter:
             bias: Direction bias ('LONG', 'SHORT', 'NEUTRAL')
             klines: Optional pre-fetched klines
             timeframe: Timeframe to use
+            allow_first_entry: Allow entry based on aligned state (not just crossover)
             
         Returns:
             Dict with signal and alignment info
@@ -560,7 +562,7 @@ class UTBotFilter:
         result['reason'] = ''
         
         # =====================================================
-        # LOGIC FOR OPEN SIGNALS
+        # LOGIC FOR OPEN SIGNALS (crossover detected)
         # =====================================================
         if signal.signal_action == 'OPEN':
             # OPEN LONG: Check if bias is LONG
@@ -588,6 +590,28 @@ class UTBotFilter:
                 else:
                     result['trade_action'] = 'IGNORE'
                     result['reason'] = f'UT Short contradicts {bias} bias'
+        
+        # =====================================================
+        # FIRST ENTRY LOGIC: Enter on aligned state without crossover
+        # This handles cases where price is ALREADY above/below stop
+        # =====================================================
+        elif allow_first_entry and signal.signal_action == 'HOLD':
+            pos = signal.position  # Current position state
+            bar_color = result.get('bar_color', 'neutral')
+            
+            # LONG: pos=1 (price above stop) AND bias=LONG AND bar is green
+            if pos == 1 and bias == 'LONG' and bar_color == 'green':
+                result['aligned'] = True
+                result['trade_action'] = 'ENTER_LONG'
+                result['reason'] = 'FIRST ENTRY: Price above ATR stop, aligned with LONG bias'
+                print(f"[UT BOT] 🚀 FIRST ENTRY LONG! {symbol}: pos={pos}, price above stop, bias={bias}")
+            
+            # SHORT: pos=-1 (price below stop) AND bias=SHORT AND bar is red
+            elif pos == -1 and bias == 'SHORT' and bar_color == 'red':
+                result['aligned'] = True
+                result['trade_action'] = 'ENTER_SHORT'
+                result['reason'] = 'FIRST ENTRY: Price below ATR stop, aligned with SHORT bias'
+                print(f"[UT BOT] 🚀 FIRST ENTRY SHORT! {symbol}: pos={pos}, price below stop, bias={bias}")
         
         # =====================================================
         # LOGIC FOR CLOSE SIGNALS

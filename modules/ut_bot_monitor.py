@@ -536,11 +536,16 @@ class UTBotMonitor:
                     
                     if not skip_signal_check:
                         try:
+                            # Check if we already have an open trade for this symbol
+                            has_open_trade = coin.symbol in self.open_trades
+                            
                             # Check UT Bot signal
+                            # allow_first_entry=True only if NO open trade exists
                             signal_result = self.ut_bot.check_signal_with_bias(
                                 coin.symbol,
                                 coin.direction,
-                                timeframe=self.config['timeframe']
+                                timeframe=self.config['timeframe'],
+                                allow_first_entry=not has_open_trade
                             )
                             
                             # Update last check result for first coin only
