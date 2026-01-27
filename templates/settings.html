@@ -654,20 +654,19 @@
                                 <span class="alert-desc">Daily report at 20:00 UTC</span>
                             </label>
                             <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_ut_bot" name="alert_ut_bot" 
+                                       {% if settings.alert_ut_bot | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">🤖</span>
+                                <span class="alert-name">UT Bot Trading</span>
+                                <span class="alert-desc">Paper trade open/close signals</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
                                 <input type="checkbox" id="alert_system" name="alert_system" 
                                        {% if settings.alert_system | default(true) %}checked{% endif %}>
                                 <span class="alert-emoji">⚙️</span>
                                 <span class="alert-name">System Messages</span>
                                 <span class="alert-desc">Bot start/stop, errors</span>
                             </label>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="quick-actions" style="margin-top: 20px; display: flex; gap: 10px;">
-                    <button type="button" class="btn btn-secondary" onclick="toggleAllAlerts(true)">
-                        ✅ Enable All
-                    </button>
                     <button type="button" class="btn btn-secondary" onclick="toggleAllAlerts(false)">
                         ❌ Disable All
                     </button>
@@ -1380,6 +1379,7 @@ function toggleAllAlerts(enable) {
         'alert_trade_close',
         'alert_intensive',
         'alert_daily_summary',
+        'alert_ut_bot',
         'alert_system'
     ];
     

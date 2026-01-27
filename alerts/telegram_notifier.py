@@ -40,6 +40,7 @@ DEFAULT_ALERT_SETTINGS = {
     'alert_intensive': True,          # Intensive monitoring (volume spikes)
     'alert_daily_summary': True,      # Денний звіт
     'alert_system': True,             # Системні повідомлення
+    'alert_ut_bot': True,             # UT Bot signals (paper trading)
 }
 
 
@@ -105,10 +106,22 @@ class TelegramNotifier:
         self._load_config()
         return self.enabled
     
-    def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
-        """Відправити повідомлення в Telegram (синхронно)"""
+    def send_message(self, text: str, parse_mode: str = "HTML", alert_type: str = None) -> bool:
+        """
+        Відправити повідомлення в Telegram (синхронно)
+        
+        Args:
+            text: Текст повідомлення
+            parse_mode: Режим парсингу (HTML/Markdown)
+            alert_type: Тип алерту для перевірки налаштувань (optional)
+        """
         if not self.enabled:
             print(f"[TG DISABLED] {text[:100]}...")
+            return False
+        
+        # Check if this alert type is enabled
+        if alert_type and not self.is_alert_enabled(alert_type):
+            print(f"[TG] Alert type '{alert_type}' is disabled, skipping")
             return False
         
         try:
