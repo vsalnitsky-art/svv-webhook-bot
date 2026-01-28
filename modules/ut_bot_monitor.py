@@ -720,6 +720,27 @@ class UTBotMonitor:
             message=f"Paper trade opened: {coin.direction} @ {trade.entry_price}"
         )
         
+        # Send Telegram notification
+        try:
+            from alerts.telegram_notifier import get_telegram_notifier
+            telegram = get_telegram_notifier()
+            if telegram and telegram.enabled:
+                emoji = "🟢" if coin.direction == "LONG" else "🔴"
+                reason = signal.get('reason', 'UT Bot signal')
+                msg = (
+                    f"{emoji} <b>UT Bot Paper Trade OPENED</b>\n\n"
+                    f"<b>Symbol:</b> {coin.symbol}\n"
+                    f"<b>Direction:</b> {coin.direction}\n"
+                    f"<b>Entry Price:</b> {trade.entry_price:.6f}\n"
+                    f"<b>ATR Stop:</b> {trade.atr_stop:.6f}\n"
+                    f"<b>Reason:</b> {reason}\n"
+                    f"<b>Position Size:</b> ${self.config['position_size_usdt']}"
+                )
+                telegram.send_message(msg, alert_type='ut_bot')
+                print(f"[UT BOT] 📱 Telegram notification sent for {coin.symbol}")
+        except Exception as e:
+            print(f"[UT BOT] ⚠️ Telegram notification failed: {e}")
+        
         return trade
     
     def _sync_open_trades_from_db(self):
@@ -898,6 +919,28 @@ class UTBotMonitor:
             symbol=trade.symbol,
             message=f"Paper trade closed: PnL ${trade.pnl_usdt:.2f} ({trade.pnl_percent:.2f}%)"
         )
+        
+        # Send Telegram notification
+        try:
+            from alerts.telegram_notifier import get_telegram_notifier
+            telegram = get_telegram_notifier()
+            if telegram and telegram.enabled:
+                emoji = "✅" if trade.pnl_usdt >= 0 else "❌"
+                pnl_color = "🟢" if trade.pnl_usdt >= 0 else "🔴"
+                reason = exit_signal.get('reason', 'Exit signal') if exit_signal else 'Unknown'
+                msg = (
+                    f"{emoji} <b>UT Bot Paper Trade CLOSED</b>\n\n"
+                    f"<b>Symbol:</b> {trade.symbol}\n"
+                    f"<b>Direction:</b> {trade.direction}\n"
+                    f"<b>Entry:</b> {trade.entry_price:.6f}\n"
+                    f"<b>Exit:</b> {trade.exit_price:.6f}\n"
+                    f"{pnl_color} <b>PnL:</b> ${trade.pnl_usdt:.2f} ({trade.pnl_percent:.2f}%)\n"
+                    f"<b>Reason:</b> {reason}"
+                )
+                telegram.send_message(msg, alert_type='ut_bot')
+                print(f"[UT BOT] 📱 Telegram notification sent for {trade.symbol} close")
+        except Exception as e:
+            print(f"[UT BOT] ⚠️ Telegram notification failed: {e}")
         
         return trade
     
