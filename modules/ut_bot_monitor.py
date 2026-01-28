@@ -226,11 +226,12 @@ class UTBotMonitor:
                 first_entry = self.db.get_setting('ut_bot_first_entry', False)
             self.config['allow_first_entry'] = bool(first_entry)
             
-            # Update UT Bot filter with new settings
-            self.ut_bot.set_config('key_value', self.config['atr_multiplier'])
-            self.ut_bot.set_config('atr_period', self.config['atr_period'])
-            self.ut_bot.set_config('use_heikin_ashi', self.config['use_heikin_ashi'])
-            self.ut_bot.set_config('timeframe', self.config['timeframe'])
+            # Update UT Bot filter with new settings (only if already initialized)
+            if hasattr(self, 'ut_bot') and self.ut_bot:
+                self.ut_bot.set_config('key_value', self.config['atr_multiplier'])
+                self.ut_bot.set_config('atr_period', self.config['atr_period'])
+                self.ut_bot.set_config('use_heikin_ashi', self.config['use_heikin_ashi'])
+                self.ut_bot.set_config('timeframe', self.config['timeframe'])
             
             print(f"[UT BOT] Loaded config: TF={self.config['timeframe']}, ATR={self.config['atr_period']}/{self.config['atr_multiplier']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}, max_coins={self.config['max_monitored_coins']}, first_entry={self.config['allow_first_entry']}")
         except Exception as e:
@@ -771,8 +772,8 @@ class UTBotMonitor:
         
         # Send Telegram notification
         try:
-            from alerts.telegram_notifier import get_telegram_notifier
-            telegram = get_telegram_notifier()
+            from alerts.telegram_notifier import get_notifier
+            telegram = get_notifier()
             if telegram and telegram.enabled:
                 emoji = "🟢" if coin.direction == "LONG" else "🔴"
                 reason = signal.get('reason', 'UT Bot signal')
@@ -971,8 +972,8 @@ class UTBotMonitor:
         
         # Send Telegram notification
         try:
-            from alerts.telegram_notifier import get_telegram_notifier
-            telegram = get_telegram_notifier()
+            from alerts.telegram_notifier import get_notifier
+            telegram = get_notifier()
             if telegram and telegram.enabled:
                 emoji = "✅" if trade.pnl_usdt >= 0 else "❌"
                 pnl_color = "🟢" if trade.pnl_usdt >= 0 else "🔴"
