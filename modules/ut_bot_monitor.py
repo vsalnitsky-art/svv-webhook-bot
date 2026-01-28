@@ -110,6 +110,7 @@ class UTBotMonitor:
         'atr_period': 10,
         'atr_multiplier': 1.0,
         'use_heikin_ashi': False,     # Heikin Ashi OFF by default
+        'allow_first_entry': True,    # Allow entry on confirmed trend (not just crossover)
         
         # Filters - relaxed for more candidates
         'min_sleeper_score': 60,      # Lowered for more candidates
@@ -120,7 +121,7 @@ class UTBotMonitor:
         'max_open_trades': 3,
         'position_size_usdt': 100,    # Paper trading size
         'min_signal_gap_minutes': 15, # Reduced cooldown
-        'max_monitored_coins': 1,     # How many TOP coins to monitor for signals
+        'max_monitored_coins': 3,     # How many TOP coins to monitor for signals
         
         # Checks
         'check_interval_seconds': 60,
@@ -179,21 +180,47 @@ class UTBotMonitor:
             atr_p = self.db.get_setting('ut_bot_atr_period', str(self.config['atr_period']))
             self.config['atr_period'] = int(atr_p) if atr_p else 10
             
-            atr_m = self.db.get_setting('ut_bot_atr_multiplier', str(self.config['atr_multiplier']))
+            atr_m = self.db.get_setting('ut_bot_atr_mult', str(self.config['atr_multiplier']))
+            if not atr_m:
+                atr_m = self.db.get_setting('ut_bot_atr_multiplier', str(self.config['atr_multiplier']))
             self.config['atr_multiplier'] = float(atr_m) if atr_m else 1.0
             
             # Load booleans - support both '1'/'0' and 'true'/'false'
-            ha = self.db.get_setting('ut_bot_use_heikin_ashi', '0')  # Default OFF
+            ha = self.db.get_setting('ut_bot_heikin_ashi', '0')
+            if not ha or ha == '0':
+                ha = self.db.get_setting('ut_bot_use_heikin_ashi', '0')  # Fallback
             self.config['use_heikin_ashi'] = ha in ('1', 'true', 'True', True)
             
-            enabled = self.db.get_setting('ut_bot_enabled', '1')  # Default ON
+            enabled = self.db.get_setting('module_ut_bot', '1')
+            if not enabled or enabled == '0':
+                enabled = self.db.get_setting('ut_bot_enabled', '1')  # Fallback
             self.config['enabled'] = enabled in ('1', 'true', 'True', True)
             
             # Load max_monitored_coins
-            max_coins = self.db.get_setting('ut_bot_max_monitored_coins', str(self.config['max_monitored_coins']))
-            self.config['max_monitored_coins'] = int(max_coins) if max_coins else 1
+            max_coins = self.db.get_setting('ut_bot_max_coins', str(self.config['max_monitored_coins']))
+            if not max_coins:
+                max_coins = self.db.get_setting('ut_bot_max_monitored_coins', str(self.config['max_monitored_coins']))
+            self.config['max_monitored_coins'] = int(max_coins) if max_coins else 3
             
-            print(f"[UT BOT] Loaded config from DB: TF={self.config['timeframe']}, ATR={self.config['atr_period']}/{self.config['atr_multiplier']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}, max_coins={self.config['max_monitored_coins']}")
+            # Load position size
+            pos_size = self.db.get_setting('ut_bot_position_size', str(self.config['position_size_usdt']))
+            self.config['position_size_usdt'] = float(pos_size) if pos_size else 100.0
+            
+            # Load max trades
+            max_trades = self.db.get_setting('ut_bot_max_trades', str(self.config['max_open_trades']))
+            self.config['max_open_trades'] = int(max_trades) if max_trades else 3
+            
+            # Load FIRST ENTRY option (default: ON for more trades)
+            first_entry = self.db.get_setting('ut_bot_first_entry', '1')
+            self.config['allow_first_entry'] = first_entry in ('1', 'true', 'True', True)
+            
+            # Update UT Bot filter with new settings
+            self.ut_bot.set_config('key_value', self.config['atr_multiplier'])
+            self.ut_bot.set_config('atr_period', self.config['atr_period'])
+            self.ut_bot.set_config('use_heikin_ashi', self.config['use_heikin_ashi'])
+            self.ut_bot.set_config('timeframe', self.config['timeframe'])
+            
+            print(f"[UT BOT] Loaded config from DB: TF={self.config['timeframe']}, ATR={self.config['atr_period']}/{self.config['atr_multiplier']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}, max_coins={self.config['max_monitored_coins']}, first_entry={self.config['allow_first_entry']}")
         except Exception as e:
             print(f"[UT BOT] Config load error (using defaults): {e}")
     
@@ -488,6 +515,9 @@ class UTBotMonitor:
         Returns:
             List of signal events
         """
+        # Reload config from DB to get latest settings
+        self._load_config_from_db()
+        
         if not self.config['enabled']:
             self._last_check_result = {'status': 'disabled'}
             return []
@@ -547,12 +577,17 @@ class UTBotMonitor:
                             has_open_trade = existing_trade is not None
                             
                             # Check UT Bot signal
-                            # allow_first_entry=True only if NO open trade exists
+                            # allow_first_entry based on:
+                            # 1. Config setting (ut_bot_first_entry)
+                            # 2. No existing open trade for this symbol
+                            first_entry_enabled = self.config.get('allow_first_entry', True)
+                            allow_first = first_entry_enabled and not has_open_trade
+                            
                             signal_result = self.ut_bot.check_signal_with_bias(
                                 coin.symbol,
                                 coin.direction,
                                 timeframe=self.config['timeframe'],
-                                allow_first_entry=not has_open_trade
+                                allow_first_entry=allow_first
                             )
                             
                             # Update last check result for first coin only
