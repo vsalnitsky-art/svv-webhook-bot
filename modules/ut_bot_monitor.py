@@ -110,7 +110,7 @@ class UTBotMonitor:
         'atr_period': 10,
         'atr_multiplier': 1.0,
         'use_heikin_ashi': False,     # Heikin Ashi OFF by default
-        'allow_first_entry': True,    # Allow entry on confirmed trend (not just crossover)
+        'allow_first_entry': False,   # OFF by default - use pure crossover like TradingView
         
         # Filters - relaxed for more candidates
         'min_sleeper_score': 60,      # Lowered for more candidates
@@ -216,8 +216,8 @@ class UTBotMonitor:
             if max_trades is not None:
                 self.config['max_open_trades'] = int(max_trades)
             
-            # Load FIRST ENTRY option (default: ON for more trades)
-            first_entry = self.db.get_setting('ut_bot_first_entry', True)
+            # Load FIRST ENTRY option (default: OFF for pure TradingView crossover logic)
+            first_entry = self.db.get_setting('ut_bot_first_entry', False)
             self.config['allow_first_entry'] = bool(first_entry)
             
             # Update UT Bot filter with new settings

@@ -1026,17 +1026,12 @@ def register_api_routes(app):
                 # Update monitor config
                 monitor.update_config(data)
                 
-                # Save to DB with proper formatting
+                # Save to DB - db.set_setting uses json.dumps internally
                 db = get_db()
                 for key, value in data.items():
                     db_key = f'ut_bot_{key}'
-                    # Convert bool to '1'/'0' for DB
-                    if isinstance(value, bool):
-                        db_value = '1' if value else '0'
-                    else:
-                        db_value = str(value)
-                    db.set_setting(db_key, db_value)
-                    print(f"[UT BOT] Saved {db_key} = {db_value}")
+                    db.set_setting(db_key, value)
+                    print(f"[UT BOT] Saved {db_key} = {value}")
             
             return jsonify({
                 'success': True,
@@ -1141,6 +1136,79 @@ def register_api_routes(app):
             return jsonify({
                 'success': True,
                 'events': events
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/clear/potential_coins', methods=['POST'])
+    def api_ut_bot_clear_potential_coins():
+        """Clear all potential coins"""
+        try:
+            from storage.db_models import UTBotPotentialCoin, get_session
+            session = get_session()
+            deleted = session.query(UTBotPotentialCoin).delete()
+            session.commit()
+            session.close()
+            print(f"[UT BOT] Cleared {deleted} potential coins")
+            return jsonify({'success': True, 'deleted': deleted})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/clear/open_trades', methods=['POST'])
+    def api_ut_bot_clear_open_trades():
+        """Clear all open trades (mark as CANCELLED)"""
+        try:
+            from storage.db_models import UTBotPaperTrade, get_session
+            from datetime import datetime
+            session = get_session()
+            open_trades = session.query(UTBotPaperTrade).filter_by(status='OPEN').all()
+            count = 0
+            for trade in open_trades:
+                trade.status = 'CANCELLED'
+                trade.closed_at = datetime.now()
+                trade.pnl_usdt = 0
+                trade.pnl_percent = 0
+                count += 1
+            session.commit()
+            session.close()
+            print(f"[UT BOT] Cancelled {count} open trades")
+            return jsonify({'success': True, 'cancelled': count})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/clear/trade_history', methods=['POST'])
+    def api_ut_bot_clear_trade_history():
+        """Clear trade history (delete closed trades)"""
+        try:
+            from storage.db_models import UTBotPaperTrade, get_session
+            session = get_session()
+            deleted = session.query(UTBotPaperTrade).filter(
+                UTBotPaperTrade.status.in_(['CLOSED', 'CANCELLED'])
+            ).delete(synchronize_session='fetch')
+            session.commit()
+            session.close()
+            print(f"[UT BOT] Deleted {deleted} closed trades")
+            return jsonify({'success': True, 'deleted': deleted})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+    
+    @app.route('/api/ut_bot/clear/all', methods=['POST'])
+    def api_ut_bot_clear_all():
+        """Clear all UT Bot data"""
+        try:
+            from storage.db_models import UTBotPotentialCoin, UTBotPaperTrade, get_session
+            session = get_session()
+            
+            coins_deleted = session.query(UTBotPotentialCoin).delete()
+            trades_deleted = session.query(UTBotPaperTrade).delete()
+            
+            session.commit()
+            session.close()
+            print(f"[UT BOT] Cleared ALL: {coins_deleted} coins, {trades_deleted} trades")
+            return jsonify({
+                'success': True, 
+                'coins_deleted': coins_deleted,
+                'trades_deleted': trades_deleted
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500

@@ -12,10 +12,10 @@
 <div class="info-box" style="margin-bottom: 15px; background: rgba(33, 150, 243, 0.1); border: 1px solid rgba(33, 150, 243, 0.3); border-radius: 8px; padding: 12px 15px;">
     <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: center;">
         <span><strong>Timeframe:</strong> {{ status.config.timeframe }}</span>
-        <span><strong>ATR Period:</strong> {{ status.config.atr_period }}</span>
-        <span><strong>ATR Mult:</strong> {{ status.config.atr_multiplier }}</span>
-        <span><strong>Heikin Ashi:</strong> {{ 'ON' if status.config.use_heikin_ashi else 'OFF' }}</span>
-        <span><strong>Monitoring:</strong> TOP {{ status.config.max_monitored_coins|default(1) }} coins</span>
+        <span><strong>ATR:</strong> {{ status.config.atr_period }}/{{ status.config.atr_multiplier }}</span>
+        <span><strong>HA:</strong> {{ 'ON' if status.config.use_heikin_ashi else 'OFF' }}</span>
+        <span><strong>First Entry:</strong> {{ 'ON' if status.config.allow_first_entry else 'OFF' }}</span>
+        <span><strong>Monitoring:</strong> TOP {{ status.config.max_monitored_coins|default(3) }}</span>
         <span style="margin-left: auto;">
             <span class="badge {{ 'badge-success' if status.enabled else 'badge-danger' }}">
                 {{ 'MODULE ACTIVE' if status.enabled else 'MODULE DISABLED' }}
@@ -229,40 +229,88 @@
                 <div class="form-group">
                     <label>Timeframe</label>
                     <select name="timeframe" class="form-control">
-                        <option value="4h" {{ 'selected' if status.config.timeframe == '4h' }}>4H</option>
-                        <option value="1h" {{ 'selected' if status.config.timeframe == '1h' }}>1H</option>
+                        <option value="5m" {{ 'selected' if status.config.timeframe == '5m' }}>5m</option>
                         <option value="15m" {{ 'selected' if status.config.timeframe == '15m' }}>15m (recommended)</option>
+                        <option value="30m" {{ 'selected' if status.config.timeframe == '30m' }}>30m</option>
+                        <option value="1h" {{ 'selected' if status.config.timeframe == '1h' }}>1H</option>
+                        <option value="4h" {{ 'selected' if status.config.timeframe == '4h' }}>4H</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>ATR Period</label>
-                    <input type="number" name="atr_period" value="{{ status.config.atr_period }}" min="5" max="20" class="form-control">
+                    <input type="number" name="atr_period" value="{{ status.config.atr_period }}" min="5" max="50" class="form-control">
                 </div>
                 <div class="form-group">
-                    <label>ATR Multiplier</label>
-                    <input type="number" name="atr_multiplier" value="{{ status.config.atr_multiplier }}" step="0.1" min="0.5" max="3.0" class="form-control">
-                </div>
-                <div class="form-group">
-                    <label>TOP Coins to Monitor</label>
-                    <input type="number" name="max_monitored_coins" value="{{ status.config.max_monitored_coins|default(1) }}" min="1" max="10" class="form-control" title="How many TOP coins to check for signals each minute">
+                    <label>ATR Multiplier (Key Value)</label>
+                    <input type="number" name="atr_multiplier" value="{{ status.config.atr_multiplier }}" step="0.1" min="0.5" max="5.0" class="form-control">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>
+                    <label>TOP Coins to Monitor</label>
+                    <input type="number" name="max_monitored_coins" value="{{ status.config.max_monitored_coins|default(3) }}" min="1" max="10" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label>Position Size ($)</label>
+                    <input type="number" name="position_size_usdt" value="{{ status.config.position_size_usdt|default(100) }}" min="10" max="10000" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label>Max Open Trades</label>
+                    <input type="number" name="max_open_trades" value="{{ status.config.max_open_trades|default(3) }}" min="1" max="10" class="form-control">
+                </div>
+            </div>
+            <div class="form-row" style="margin-top: 15px;">
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                         <input type="checkbox" name="use_heikin_ashi" {{ 'checked' if status.config.use_heikin_ashi }}>
-                        Use Heikin Ashi (smoother signals)
+                        📊 Use Heikin Ashi (smoother signals)
                     </label>
                 </div>
                 <div class="form-group">
-                    <label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                         <input type="checkbox" name="enabled" {{ 'checked' if status.enabled }}>
-                        Module Enabled
+                        ⚡ Module Enabled
                     </label>
                 </div>
             </div>
-            <button type="submit" class="btn btn-primary">Save Configuration</button>
+            
+            <!-- First Entry Option -->
+            <div style="margin-top: 15px; padding: 12px; background: rgba(255, 193, 7, 0.1); border-radius: 8px; border: 1px solid rgba(255, 193, 7, 0.3);">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" name="allow_first_entry" {{ 'checked' if status.config.allow_first_entry }}>
+                    <span>🚀 <b>Allow First Entry</b></span>
+                </label>
+                <small style="display: block; margin-top: 5px; color: var(--text-secondary);">
+                    <b>ON:</b> Enter on confirmed trend (pos aligned with bias) - more trades<br>
+                    <b>OFF:</b> Enter only on crossover signal (like TradingView) - fewer, precise trades
+                </small>
+            </div>
+            
+            <div style="margin-top: 20px;">
+                <button type="submit" class="btn btn-primary">💾 Save Configuration</button>
+            </div>
         </form>
+    </div>
+</div>
+
+<!-- Data Management -->
+<div class="section-card" style="margin-top: 20px; background: linear-gradient(135deg, rgba(244, 67, 54, 0.05) 0%, rgba(255, 87, 34, 0.05) 100%); border-color: rgba(244, 67, 54, 0.2);">
+    <div class="section-header">
+        <h2>🗑️ Data Management</h2>
+    </div>
+    <div style="padding: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+        <button class="btn btn-warning" onclick="clearPotentialCoins()">
+            🗑️ Clear Potential Coins
+        </button>
+        <button class="btn btn-warning" onclick="clearOpenTrades()">
+            🗑️ Clear Open Trades
+        </button>
+        <button class="btn btn-warning" onclick="clearTradeHistory()">
+            🗑️ Clear Trade History
+        </button>
+        <button class="btn btn-danger" onclick="clearAllUTBotData()">
+            ⚠️ Clear ALL UT Bot Data
+        </button>
     </div>
 </div>
 
@@ -444,6 +492,10 @@
 .section-header h2 { margin: 0; font-size: 1.1em; }
 .settings-form .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px; }
 .settings-form .form-group label { display: block; margin-bottom: 5px; color: var(--text-secondary); }
+.btn-warning { background: #ff9800; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
+.btn-warning:hover { background: #f57c00; }
+.btn-danger { background: #f44336; color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
+.btn-danger:hover { background: #d32f2f; }
 </style>
 
 <script>
@@ -468,7 +520,10 @@ document.getElementById('ut-config-form').addEventListener('submit', async funct
         atr_multiplier: parseFloat(formData.get('atr_multiplier')),
         use_heikin_ashi: formData.get('use_heikin_ashi') === 'on',
         enabled: formData.get('enabled') === 'on',
-        max_monitored_coins: parseInt(formData.get('max_monitored_coins')) || 1
+        max_monitored_coins: parseInt(formData.get('max_monitored_coins')) || 3,
+        position_size_usdt: parseInt(formData.get('position_size_usdt')) || 100,
+        max_open_trades: parseInt(formData.get('max_open_trades')) || 3,
+        allow_first_entry: formData.get('allow_first_entry') === 'on'
     };
     
     try {
@@ -479,16 +534,85 @@ document.getElementById('ut-config-form').addEventListener('submit', async funct
         });
         
         if (response.ok) {
-            alert('Configuration saved!');
+            alert('✅ Configuration saved!');
             location.reload();
         } else {
             const err = await response.json();
-            alert('Error: ' + (err.error || 'Unknown error'));
+            alert('❌ Error: ' + (err.error || 'Unknown error'));
         }
     } catch (err) {
-        alert('Error: ' + err.message);
+        alert('❌ Error: ' + err.message);
     }
 });
+
+// Data management functions
+async function clearPotentialCoins() {
+    if (!confirm('Clear all potential coins? This will remove all coins from monitoring list.')) return;
+    
+    try {
+        const response = await fetch('/api/ut_bot/clear/potential_coins', { method: 'POST' });
+        const result = await response.json();
+        if (result.success) {
+            alert('✅ Potential coins cleared');
+            location.reload();
+        } else {
+            alert('❌ Error: ' + (result.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function clearOpenTrades() {
+    if (!confirm('Clear all OPEN trades? These trades will be marked as CANCELLED.')) return;
+    
+    try {
+        const response = await fetch('/api/ut_bot/clear/open_trades', { method: 'POST' });
+        const result = await response.json();
+        if (result.success) {
+            alert('✅ Open trades cleared');
+            location.reload();
+        } else {
+            alert('❌ Error: ' + (result.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function clearTradeHistory() {
+    if (!confirm('Clear trade history? This will delete all CLOSED trades.')) return;
+    
+    try {
+        const response = await fetch('/api/ut_bot/clear/trade_history', { method: 'POST' });
+        const result = await response.json();
+        if (result.success) {
+            alert('✅ Trade history cleared');
+            location.reload();
+        } else {
+            alert('❌ Error: ' + (result.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function clearAllUTBotData() {
+    if (!confirm('⚠️ CLEAR ALL UT BOT DATA?\n\nThis will delete:\n- All potential coins\n- All open trades\n- All trade history\n\nThis cannot be undone!')) return;
+    
+    try {
+        const response = await fetch('/api/ut_bot/clear/all', { method: 'POST' });
+        const result = await response.json();
+        if (result.success) {
+            alert('✅ All UT Bot data cleared');
+            location.reload();
+        } else {
+            alert('❌ Error: ' + (result.error || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
 
 // Add coin form
 document.getElementById('add-coin-form').addEventListener('submit', async function(e) {
