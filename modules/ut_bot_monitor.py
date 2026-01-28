@@ -175,44 +175,50 @@ class UTBotMonitor:
         try:
             # Load each setting
             tf = self.db.get_setting('ut_bot_timeframe', self.config['timeframe'])
-            self.config['timeframe'] = tf
+            if tf:
+                self.config['timeframe'] = str(tf)
             
-            atr_p = self.db.get_setting('ut_bot_atr_period', str(self.config['atr_period']))
-            self.config['atr_period'] = int(atr_p) if atr_p else 10
+            atr_p = self.db.get_setting('ut_bot_atr_period', self.config['atr_period'])
+            if atr_p is not None:
+                self.config['atr_period'] = int(atr_p)
             
-            atr_m = self.db.get_setting('ut_bot_atr_mult', str(self.config['atr_multiplier']))
-            if not atr_m:
-                atr_m = self.db.get_setting('ut_bot_atr_multiplier', str(self.config['atr_multiplier']))
-            self.config['atr_multiplier'] = float(atr_m) if atr_m else 1.0
+            atr_m = self.db.get_setting('ut_bot_atr_mult', None)
+            if atr_m is None:
+                atr_m = self.db.get_setting('ut_bot_atr_multiplier', self.config['atr_multiplier'])
+            if atr_m is not None:
+                self.config['atr_multiplier'] = float(atr_m)
             
-            # Load booleans - support both '1'/'0' and 'true'/'false'
-            ha = self.db.get_setting('ut_bot_heikin_ashi', '0')
-            if not ha or ha == '0':
-                ha = self.db.get_setting('ut_bot_use_heikin_ashi', '0')  # Fallback
-            self.config['use_heikin_ashi'] = ha in ('1', 'true', 'True', True)
+            # Load booleans - DB returns Python boolean from json.loads
+            ha = self.db.get_setting('ut_bot_heikin_ashi', None)
+            if ha is None:
+                ha = self.db.get_setting('ut_bot_use_heikin_ashi', False)
+            self.config['use_heikin_ashi'] = bool(ha)
             
-            enabled = self.db.get_setting('module_ut_bot', '1')
-            if not enabled or enabled == '0':
-                enabled = self.db.get_setting('ut_bot_enabled', '1')  # Fallback
-            self.config['enabled'] = enabled in ('1', 'true', 'True', True)
+            enabled = self.db.get_setting('module_ut_bot', None)
+            if enabled is None:
+                enabled = self.db.get_setting('ut_bot_enabled', True)
+            self.config['enabled'] = bool(enabled)
             
             # Load max_monitored_coins
-            max_coins = self.db.get_setting('ut_bot_max_coins', str(self.config['max_monitored_coins']))
-            if not max_coins:
-                max_coins = self.db.get_setting('ut_bot_max_monitored_coins', str(self.config['max_monitored_coins']))
-            self.config['max_monitored_coins'] = int(max_coins) if max_coins else 3
+            max_coins = self.db.get_setting('ut_bot_max_coins', None)
+            if max_coins is None:
+                max_coins = self.db.get_setting('ut_bot_max_monitored_coins', self.config['max_monitored_coins'])
+            if max_coins is not None:
+                self.config['max_monitored_coins'] = int(max_coins)
             
             # Load position size
-            pos_size = self.db.get_setting('ut_bot_position_size', str(self.config['position_size_usdt']))
-            self.config['position_size_usdt'] = float(pos_size) if pos_size else 100.0
+            pos_size = self.db.get_setting('ut_bot_position_size', self.config['position_size_usdt'])
+            if pos_size is not None:
+                self.config['position_size_usdt'] = float(pos_size)
             
             # Load max trades
-            max_trades = self.db.get_setting('ut_bot_max_trades', str(self.config['max_open_trades']))
-            self.config['max_open_trades'] = int(max_trades) if max_trades else 3
+            max_trades = self.db.get_setting('ut_bot_max_trades', self.config['max_open_trades'])
+            if max_trades is not None:
+                self.config['max_open_trades'] = int(max_trades)
             
             # Load FIRST ENTRY option (default: ON for more trades)
-            first_entry = self.db.get_setting('ut_bot_first_entry', '1')
-            self.config['allow_first_entry'] = first_entry in ('1', 'true', 'True', True)
+            first_entry = self.db.get_setting('ut_bot_first_entry', True)
+            self.config['allow_first_entry'] = bool(first_entry)
             
             # Update UT Bot filter with new settings
             self.ut_bot.set_config('key_value', self.config['atr_multiplier'])
@@ -220,9 +226,11 @@ class UTBotMonitor:
             self.ut_bot.set_config('use_heikin_ashi', self.config['use_heikin_ashi'])
             self.ut_bot.set_config('timeframe', self.config['timeframe'])
             
-            print(f"[UT BOT] Loaded config from DB: TF={self.config['timeframe']}, ATR={self.config['atr_period']}/{self.config['atr_multiplier']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}, max_coins={self.config['max_monitored_coins']}, first_entry={self.config['allow_first_entry']}")
+            print(f"[UT BOT] Loaded config: TF={self.config['timeframe']}, ATR={self.config['atr_period']}/{self.config['atr_multiplier']}, HA={self.config['use_heikin_ashi']}, enabled={self.config['enabled']}, max_coins={self.config['max_monitored_coins']}, first_entry={self.config['allow_first_entry']}")
         except Exception as e:
             print(f"[UT BOT] Config load error (using defaults): {e}")
+            import traceback
+            traceback.print_exc()
     
     def update_from_sleepers(self, sleepers: List[Dict]) -> int:
         """

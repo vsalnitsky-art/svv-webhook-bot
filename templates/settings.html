@@ -601,7 +601,7 @@
                 <div class="form-group" style="margin-top: 15px;">
                     <label class="checkbox-label" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
                         <input type="checkbox" id="ut_bot_heikin_ashi" name="ut_bot_heikin_ashi" 
-                               {% if settings.ut_bot_heikin_ashi == '1' or settings.ut_bot_heikin_ashi == 'true' %}checked{% endif %}>
+                               {% if settings.ut_bot_heikin_ashi == true or settings.ut_bot_heikin_ashi == 'true' or settings.ut_bot_heikin_ashi == '1' or settings.ut_bot_heikin_ashi == 1 %}checked{% endif %}>
                         <span>📊 Use Heikin Ashi Candles</span>
                     </label>
                     <small style="margin-left: 25px;">Smoother signals, less noise (matches TradingView setting)</small>
@@ -610,7 +610,7 @@
                 <div class="form-group" style="margin-top: 10px; padding: 12px; background: rgba(255, 193, 7, 0.1); border-radius: 8px; border: 1px solid rgba(255, 193, 7, 0.3);">
                     <label class="checkbox-label" style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
                         <input type="checkbox" id="ut_bot_first_entry" name="ut_bot_first_entry" 
-                               {% if settings.ut_bot_first_entry == '1' or settings.ut_bot_first_entry == 'true' or settings.ut_bot_first_entry is not defined %}checked{% endif %}>
+                               {% if settings.ut_bot_first_entry == true or settings.ut_bot_first_entry == 'true' or settings.ut_bot_first_entry == '1' or settings.ut_bot_first_entry == 1 or settings.ut_bot_first_entry is not defined %}checked{% endif %}>
                         <span>🚀 <b>Allow First Entry</b></span>
                     </label>
                     <small style="margin-left: 25px; display: block; margin-top: 5px;">
