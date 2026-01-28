@@ -182,42 +182,48 @@ class UTBotMonitor:
             if atr_p is not None:
                 self.config['atr_period'] = int(atr_p)
             
-            atr_m = self.db.get_setting('ut_bot_atr_mult', None)
+            atr_m = self.db.get_setting('ut_bot_atr_multiplier', None)
             if atr_m is None:
-                atr_m = self.db.get_setting('ut_bot_atr_multiplier', self.config['atr_multiplier'])
+                atr_m = self.db.get_setting('ut_bot_atr_mult', self.config['atr_multiplier'])
             if atr_m is not None:
                 self.config['atr_multiplier'] = float(atr_m)
             
             # Load booleans - DB returns Python boolean from json.loads
-            ha = self.db.get_setting('ut_bot_heikin_ashi', None)
+            ha = self.db.get_setting('ut_bot_use_heikin_ashi', None)
             if ha is None:
-                ha = self.db.get_setting('ut_bot_use_heikin_ashi', False)
+                ha = self.db.get_setting('ut_bot_heikin_ashi', False)
             self.config['use_heikin_ashi'] = bool(ha)
             
-            enabled = self.db.get_setting('module_ut_bot', None)
+            enabled = self.db.get_setting('ut_bot_enabled', None)
             if enabled is None:
-                enabled = self.db.get_setting('ut_bot_enabled', True)
+                enabled = self.db.get_setting('module_ut_bot', True)
             self.config['enabled'] = bool(enabled)
             
             # Load max_monitored_coins
-            max_coins = self.db.get_setting('ut_bot_max_coins', None)
+            max_coins = self.db.get_setting('ut_bot_max_monitored_coins', None)
             if max_coins is None:
-                max_coins = self.db.get_setting('ut_bot_max_monitored_coins', self.config['max_monitored_coins'])
+                max_coins = self.db.get_setting('ut_bot_max_coins', self.config['max_monitored_coins'])
             if max_coins is not None:
                 self.config['max_monitored_coins'] = int(max_coins)
             
             # Load position size
-            pos_size = self.db.get_setting('ut_bot_position_size', self.config['position_size_usdt'])
+            pos_size = self.db.get_setting('ut_bot_position_size_usdt', None)
+            if pos_size is None:
+                pos_size = self.db.get_setting('ut_bot_position_size', self.config['position_size_usdt'])
             if pos_size is not None:
                 self.config['position_size_usdt'] = float(pos_size)
             
             # Load max trades
-            max_trades = self.db.get_setting('ut_bot_max_trades', self.config['max_open_trades'])
+            max_trades = self.db.get_setting('ut_bot_max_open_trades', None)
+            if max_trades is None:
+                max_trades = self.db.get_setting('ut_bot_max_trades', self.config['max_open_trades'])
             if max_trades is not None:
                 self.config['max_open_trades'] = int(max_trades)
             
             # Load FIRST ENTRY option (default: OFF for pure TradingView crossover logic)
-            first_entry = self.db.get_setting('ut_bot_first_entry', False)
+            first_entry = self.db.get_setting('ut_bot_allow_first_entry', None)
+            if first_entry is None:
+                first_entry = self.db.get_setting('ut_bot_first_entry', False)
             self.config['allow_first_entry'] = bool(first_entry)
             
             # Update UT Bot filter with new settings
