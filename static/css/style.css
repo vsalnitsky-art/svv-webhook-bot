@@ -338,7 +338,10 @@ body {
 .state-badge.watching { background: rgba(88, 166, 255, 0.2); color: var(--accent-blue); }
 .state-badge.building { background: rgba(210, 153, 34, 0.2); color: var(--accent-yellow); }
 .state-badge.ready { background: rgba(63, 185, 80, 0.2); color: var(--accent-green); }
+.state-badge.stalking { background: rgba(136, 87, 44, 0.3); color: #d4a574; }  /* v8.1: Leopard */
+.state-badge.entry_found { background: rgba(255, 215, 0, 0.3); color: gold; font-weight: bold; }  /* v8.1: Entry! */
 .state-badge.triggered { background: rgba(163, 113, 247, 0.2); color: var(--accent-purple); }
+.state-badge.position { background: rgba(88, 166, 255, 0.3); color: var(--accent-blue); }
 
 /* Direction */
 .direction {
@@ -724,6 +727,10 @@ body {
 /* Trade rows */
 .ready-row { background: rgba(63, 185, 80, 0.1); }
 .building-row { background: rgba(210, 153, 34, 0.1); }
+.stalking-row { background: rgba(136, 87, 44, 0.15); }  /* v8.1: Leopard hunting */
+.entry-row { background: rgba(255, 215, 0, 0.2); border-left: 3px solid gold; }  /* v8.1: Entry found! */
+.triggered-row { background: rgba(88, 166, 255, 0.15); }
+.position-row { background: rgba(88, 166, 255, 0.2); }
 .open-trade { background: rgba(88, 166, 255, 0.1); }
 .win-trade { background: rgba(63, 185, 80, 0.05); }
 .loss-trade { background: rgba(248, 81, 73, 0.05); }

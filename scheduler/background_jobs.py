@@ -16,6 +16,7 @@ from detection.sleeper_scanner import get_sleeper_scanner
 from detection.sleeper_scanner_v3 import get_sleeper_scanner_v3
 from detection.ob_scanner import get_ob_scanner
 from detection.signal_merger import get_signal_merger
+from detection.smc_signal_processor import get_smc_processor  # v8.1 SMC Entry
 from trading.position_tracker import get_position_tracker
 from storage.db_operations import get_db
 from alerts.telegram_notifier import get_notifier
@@ -228,6 +229,16 @@ class BackgroundJobs:
             IntervalTrigger(minutes=5),
             id='intensive_ready_monitor',
             name='Intensive READY Monitor',
+            replace_existing=True
+        )
+        
+        # 9. SMC Entry Checker - кожні 5 хвилин (v8.1)
+        # Перевіряє STALKING монети та шукає ENTRY_FOUND
+        self.scheduler.add_job(
+            self._job_smc_entry_check,
+            IntervalTrigger(minutes=5),
+            id='smc_entry_check',
+            name='SMC Entry Checker',
             replace_existing=True
         )
     
@@ -730,6 +741,55 @@ class BackgroundJobs:
         # Check if intensive alerts are enabled
         if self.notifier.is_alert_enabled('intensive'):
             self.notifier.send_sync(message.strip())
+    
+    def _job_smc_entry_check(self):
+        """
+        v8.1: SMC Entry Checker - перевіряє STALKING/READY монети
+        
+        Логіка "Мисливця":
+        1. Отримуємо всі READY та STALKING sleepers
+        2. Для кожного перевіряємо: чи ціна вже відкотилась до OB?
+        3. Якщо так → ENTRY_FOUND + Alert!
+        4. Якщо timeout (>24h) → скасовуємо полювання
+        """
+        if not self._is_module_enabled('sleepers'):
+            return
+        
+        start = time.time()
+        
+        try:
+            # Отримуємо SMC Signal Processor
+            smc_processor = get_smc_processor()
+            
+            # Обробляємо всі READY/STALKING sleepers
+            results = smc_processor.process_ready_sleepers()
+            
+            # Підраховуємо статистику
+            entries_found = sum(1 for r in results if r.action == "EXECUTE")
+            stalking_count = smc_processor.get_stalking_count()
+            
+            duration = time.time() - start
+            
+            if entries_found > 0:
+                symbols = [r.symbol for r in results if r.action == "EXECUTE"]
+                self._log_job_execution(
+                    'smc_entry_check',
+                    True,
+                    duration,
+                    f"🎯 ENTRIES FOUND: {symbols} | Stalking: {stalking_count}"
+                )
+            else:
+                self._log_job_execution(
+                    'smc_entry_check',
+                    True,
+                    duration,
+                    f"Stalking: {stalking_count} symbols"
+                )
+                
+        except Exception as e:
+            duration = time.time() - start
+            self._log_job_execution('smc_entry_check', False, duration, str(e))
+            print(f"[SCHEDULER ERROR] SMC Entry Check: {e}")
     
     # ===== Manual Triggers =====
     

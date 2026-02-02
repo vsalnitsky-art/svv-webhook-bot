@@ -40,7 +40,7 @@
         </thead>
         <tbody>
             {% for s in sleepers %}
-            <tr class="{% if s.state == 'READY' %}ready-row{% elif s.state == 'BUILDING' %}building-row{% elif s.state == 'TRIGGERED' %}triggered-row{% endif %}">
+            <tr class="{% if s.state == 'READY' %}ready-row{% elif s.state == 'BUILDING' %}building-row{% elif s.state == 'TRIGGERED' %}triggered-row{% elif s.state == 'STALKING' %}stalking-row{% elif s.state == 'ENTRY_FOUND' %}entry-row{% endif %}">
                 <td class="symbol">
                     <a href="https://www.tradingview.com/chart/?symbol=BINANCE:{{ s.symbol }}.P" target="_blank">
                         {{ s.symbol }}
@@ -48,7 +48,7 @@
                 </td>
                 <td>
                     <span class="state-badge {{ s.state|lower }}">
-                        {% if s.state == 'IDLE' %}⚪{% elif s.state == 'WATCHING' %}👀{% elif s.state == 'BUILDING' %}🔨{% elif s.state == 'READY' %}🎯{% elif s.state == 'TRIGGERED' %}🚀{% endif %}
+                        {% if s.state == 'IDLE' %}⚪{% elif s.state == 'WATCHING' %}👀{% elif s.state == 'BUILDING' %}🔨{% elif s.state == 'READY' %}🎯{% elif s.state == 'STALKING' %}🐆{% elif s.state == 'ENTRY_FOUND' %}⚡{% elif s.state == 'TRIGGERED' %}🚀{% elif s.state == 'POSITION' %}📈{% endif %}
                         {{ s.state }}
                     </span>
                 </td>

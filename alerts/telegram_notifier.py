@@ -28,6 +28,10 @@ class NotificationType(Enum):
     # v5.0 - Additional types
     INTENSIVE_ALERT = "intensive_alert"
     DAILY_SUMMARY = "daily_summary"
+    # v8.0 - SMC types
+    SMC_CHOCH = "smc_choch"            # CHoCH detected
+    SMC_STALKING = "smc_stalking"       # Waiting pullback
+    SMC_ENTRY = "smc_entry"             # Entry signal
 
 
 # Default alert settings (all enabled by default)
@@ -40,6 +44,10 @@ DEFAULT_ALERT_SETTINGS = {
     'alert_intensive': True,          # Intensive monitoring (volume spikes)
     'alert_daily_summary': True,      # Денний звіт
     'alert_system': True,             # Системні повідомлення
+    # v8.0 - SMC alerts
+    'alert_smc_choch': True,          # CHoCH detected
+    'alert_smc_stalking': True,       # Stalking mode
+    'alert_smc_entry': True,          # Entry found
 }
 
 
@@ -67,6 +75,10 @@ class TelegramNotifier:
             NotificationType.VOLUME_SPIKE: "📊💥",
             NotificationType.INTENSIVE_ALERT: "👀📊",
             NotificationType.DAILY_SUMMARY: "📋",
+            # v8.0 - SMC emojis
+            NotificationType.SMC_CHOCH: "🔄🎯",
+            NotificationType.SMC_STALKING: "🐆",
+            NotificationType.SMC_ENTRY: "⚡💰",
         }
     
     def load_alert_settings(self, db):
@@ -370,6 +382,185 @@ class TelegramNotifier:
 • Triggered: {stats.get('obs_triggered', 0)}
 
 ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M')}
+"""
+        return self.send_sync(text.strip())
+    
+    def send_smc_signal(self, data: Dict[str, Any]) -> bool:
+        """
+        Надсилає SMC сигнал українською
+        
+        v8.0: Повний SMC звіт з CHoCH, Order Blocks, Entry/SL/TP
+        
+        Args:
+            data: Словник з полями:
+                - symbol: str
+                - direction: str (LONG/SHORT)
+                - state: str (READY/STALKING/ENTRY_FOUND)
+                - confidence: float (0-100)
+                - smc_signal: str (BULLISH_CHOCH, etc.)
+                - price_zone: str (DISCOUNT/PREMIUM/EQUILIBRIUM)
+                - zone_level: float (0-1)
+                - at_ob: bool
+                - htf_bias: str
+                - entry_price: float
+                - stop_loss: float
+                - take_profit: float
+                - risk_reward: float
+                - reasons: list
+        """
+        if not self.is_alert_enabled('signal'):
+            return False
+        
+        # Емодзі напрямку
+        if data.get('direction') == "LONG":
+            dir_emoji = "🟢 LONG"
+            arrow = "📈"
+        elif data.get('direction') == "SHORT":
+            dir_emoji = "🔴 SHORT"
+            arrow = "📉"
+        else:
+            dir_emoji = "⚪ NEUTRAL"
+            arrow = "⏸️"
+        
+        # Переклад SMC сигналів
+        signals_map = {
+            "BULLISH_CHOCH": "🔄 CHoCH Бичачий (розворот!)",
+            "BEARISH_CHOCH": "🔄 CHoCH Ведмежий (розворот!)",
+            "BULLISH_BOS": "📈 BOS Бичачий",
+            "BEARISH_BOS": "📉 BOS Ведмежий",
+            "NONE": "😴 Консолідація"
+        }
+        smc_signal = data.get('smc_signal', 'NONE')
+        struct_text = signals_map.get(smc_signal, smc_signal)
+        
+        # Переклад зон
+        zones_map = {
+            "DISCOUNT": "🟢 Знижка (дешево)",
+            "PREMIUM": "🔴 Преміум (дорого)",
+            "EQUILIBRIUM": "⚪ Рівновага"
+        }
+        zone_text = zones_map.get(data.get('price_zone', 'EQUILIBRIUM'), 'N/A')
+        
+        # Переклад станів
+        states_map = {
+            "READY": "🎯 ГОТОВИЙ",
+            "STALKING": "🐆 ПОЛЮЄМО (чекаємо відкат)",
+            "ENTRY_FOUND": "⚡ ВХІД ЗНАЙДЕНО!",
+            "WATCHING": "👀 Спостерігаємо",
+            "POSITION": "📈 Позиція відкрита"
+        }
+        state_text = states_map.get(data.get('state', 'WATCHING'), data.get('state'))
+        
+        # HTF bias
+        htf_bias = data.get('htf_bias', 'NEUTRAL')
+        htf_text = "🐂 БИЧАЧИЙ" if htf_bias == "BULLISH" else "🐻 ВЕДМЕЖИЙ" if htf_bias == "BEARISH" else "⚖️ НЕЙТРАЛЬНИЙ"
+        htf_aligned = "✅" if data.get('htf_aligned', False) else "⚠️"
+        
+        # Order Block
+        at_ob_text = "✅ ТАК" if data.get('at_ob', False) else "❌ НІ"
+        
+        # R/R
+        rr = data.get('risk_reward', 0)
+        rr_emoji = "🔥" if rr >= 3 else "✅" if rr >= 2 else "⚠️"
+        
+        # Формуємо повідомлення
+        entry = data.get('entry_price', 0)
+        sl = data.get('stop_loss', 0)
+        tp = data.get('take_profit', 0)
+        
+        msg_lines = [
+            f"🎯 <b>SMC СИГНАЛ: {data.get('symbol', 'N/A')}</b>",
+            f"━━━━━━━━━━━━━━━━━",
+            f"",
+            f"{arrow} Напрямок: <b>{dir_emoji}</b>",
+            f"📊 Статус: <b>{state_text}</b>",
+            f"💪 Впевненість: <code>{data.get('confidence', 0):.0f}%</code>",
+            f"",
+            f"🧠 <b>SMC Аналіз (1H):</b>",
+            f"├ Сигнал: {struct_text}",
+            f"├ Зона: {zone_text} ({data.get('zone_level', 0.5):.2f})",
+            f"└ В Order Block: {at_ob_text}",
+            f"",
+            f"🌍 <b>HTF Контекст (4H):</b>",
+            f"├ Тренд: {htf_text}",
+            f"└ Збігається: {htf_aligned}",
+        ]
+        
+        # Рівні входу (якщо є)
+        if entry > 0:
+            msg_lines.extend([
+                f"",
+                f"📊 <b>Рівні для входу:</b>",
+                f"├ Вхід: <code>{entry:.6f}</code>",
+                f"├ Стоп-лосс: <code>{sl:.6f}</code>",
+                f"├ Тейк-профіт: <code>{tp:.6f}</code>",
+                f"└ R/R: {rr_emoji} <b>{rr:.1f}</b>",
+            ])
+        
+        # Причини (якщо є)
+        reasons = data.get('reasons', [])
+        if reasons:
+            msg_lines.append(f"")
+            msg_lines.append(f"💡 <b>Причини:</b>")
+            for r in reasons[:3]:  # Макс 3 причини
+                msg_lines.append(f"  • {r}")
+        
+        msg_lines.extend([
+            f"",
+            f"━━━━━━━━━━━━━━━━━",
+            f"🔗 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{data.get('symbol', 'BTCUSDT')}.P'>TradingView</a>",
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+        ])
+        
+        text = "\n".join(msg_lines)
+        return self.send_sync(text)
+    
+    def send_stalking_alert(self, symbol: str, direction: str, target_price: float, ob_range: str) -> bool:
+        """
+        Сповіщення про початок полювання (STALKING)
+        """
+        dir_emoji = "🟢" if direction == "LONG" else "🔴"
+        
+        text = f"""
+🐆 <b>ПОЛЮВАННЯ РОЗПОЧАТО</b>
+
+{dir_emoji} <b>{symbol}</b> {direction}
+
+📍 CHoCH виявлено! Чекаємо відкат.
+
+🎯 Цільова зона входу:
+• Order Block: <code>{ob_range}</code>
+• Target Price: <code>{target_price:.6f}</code>
+
+⏳ Макс. час очікування: 24 години
+
+🔗 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}.P'>TradingView</a>
+"""
+        return self.send_sync(text.strip())
+    
+    def send_entry_alert(self, symbol: str, direction: str, entry: float, sl: float, tp: float, rr: float) -> bool:
+        """
+        Сповіщення про знайдений вхід (ENTRY_FOUND)
+        """
+        dir_emoji = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
+        rr_emoji = "🔥" if rr >= 3 else "✅"
+        
+        text = f"""
+⚡⚡⚡ <b>ВХІД ЗНАЙДЕНО!</b> ⚡⚡⚡
+
+{dir_emoji} <b>{symbol}</b>
+
+✅ Відкат до Order Block завершено!
+
+📊 <b>Параметри угоди:</b>
+├ Вхід: <code>{entry:.6f}</code>
+├ Стоп-лосс: <code>{sl:.6f}</code>
+├ Тейк-профіт: <code>{tp:.6f}</code>
+└ R/R: {rr_emoji} <b>{rr:.1f}</b>
+
+⚡ Час діяти!
+
+🔗 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}.P'>TradingView</a>
 """
         return self.send_sync(text.strip())
     

@@ -18,8 +18,11 @@ class SleeperState(Enum):
     IDLE = "IDLE"
     WATCHING = "WATCHING"
     BUILDING = "BUILDING"
-    READY = "READY"
+    READY = "READY"           # CHoCH detected, готовий до полювання
+    STALKING = "STALKING"     # v8.1: Чекаємо відкат до OB
+    ENTRY_FOUND = "ENTRY_FOUND"  # v8.1: Ціна в зоні OB - час входити!
     TRIGGERED = "TRIGGERED"
+    POSITION = "POSITION"     # v8.1: Позиція відкрита
 
 class OBStatus(Enum):
     ACTIVE = "ACTIVE"

@@ -8,6 +8,8 @@ from .direction_engine import DirectionEngine, Direction, DirectionResult, get_d
 from .direction_engine_v7 import DirectionEngineV7, DirectionResultV7, get_direction_engine_v7
 from .direction_engine_v8 import DirectionEngineV8, DirectionResultV8, get_direction_engine_v8
 from .smc_analyzer import SMCAnalyzer, SMCAnalysisResult, get_smc_analyzer, StructureSignal, MarketBias, PriceZone
+from .entry_manager import EntryManager, EntrySetup, EntryState, StopLossMode, get_entry_manager
+from .smc_signal_processor import SMCSignalProcessor, SMCSignalResult, get_smc_processor
 
 __all__ = [
     # Sleeper Scanner (legacy)
@@ -21,7 +23,11 @@ __all__ = [
     # Direction Engine v8 (SMC integrated)
     'DirectionEngineV8', 'DirectionResultV8', 'get_direction_engine_v8',
     # SMC Analyzer
-    'SMCAnalyzer', 'SMCAnalysisResult', 'get_smc_analyzer', 'StructureSignal', 'MarketBias', 'PriceZone',
+    'SMCAnalyzer', 'SMCAnalysisResult', 'get_smc_analyzer', 'StructureSignal', 'MarkerBias', 'PriceZone',
+    # Entry Manager v8
+    'EntryManager', 'EntrySetup', 'EntryState', 'StopLossMode', 'get_entry_manager',
+    # SMC Signal Processor v8.1
+    'SMCSignalProcessor', 'SMCSignalResult', 'get_smc_processor',
     # Other scanners
     'OBScanner', 'get_ob_scanner',
     'SignalMerger', 'get_signal_merger',
