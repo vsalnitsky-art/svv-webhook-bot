@@ -7,7 +7,8 @@ from typing import Dict, List, Optional
 from sqlalchemy import desc, and_, or_
 from storage.db_models import (
     get_session, init_db,
-    SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog
+    SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
+    SymbolBlacklist
 )
 from config import DEFAULT_SETTINGS
 
@@ -545,6 +546,129 @@ class DBOperations:
             return 0
         finally:
             session.close()
+    
+    # ==========================================
+    # BLACKLIST OPERATIONS (v8.2.2)
+    # ==========================================
+    
+    def add_to_blacklist(self, symbol: str, reason: str = 'MANUAL', 
+                         volatility: float = 0, note: str = None) -> bool:
+        """
+        Додає монету в чорний список
+        
+        Args:
+            symbol: Торгова пара (BTCUSDT)
+            reason: LOW_VOLATILITY / STABLECOIN / MANUAL / DELISTED
+            volatility: Поточна волатильність (%) коли додавали
+            note: Нотатка
+        """
+        session = get_session()
+        try:
+            existing = session.query(SymbolBlacklist).filter_by(symbol=symbol).first()
+            if existing:
+                return False  # Already in blacklist
+            
+            entry = SymbolBlacklist(
+                symbol=symbol,
+                reason=reason,
+                volatility_24h=volatility,
+                note=note
+            )
+            session.add(entry)
+            session.commit()
+            print(f"[BLACKLIST] Added {symbol} ({reason})")
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[BLACKLIST] Error adding {symbol}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def remove_from_blacklist(self, symbol: str) -> bool:
+        """Видаляє монету з чорного списку"""
+        session = get_session()
+        try:
+            deleted = session.query(SymbolBlacklist).filter_by(symbol=symbol).delete()
+            session.commit()
+            if deleted:
+                print(f"[BLACKLIST] Removed {symbol}")
+            return deleted > 0
+        except:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def get_blacklist(self) -> List[str]:
+        """Повертає список заблокованих символів"""
+        session = get_session()
+        try:
+            entries = session.query(SymbolBlacklist).all()
+            return [e.symbol for e in entries]
+        finally:
+            session.close()
+    
+    def get_blacklist_full(self) -> List[Dict]:
+        """Повертає повний список з деталями"""
+        session = get_session()
+        try:
+            entries = session.query(SymbolBlacklist).order_by(
+                SymbolBlacklist.added_at.desc()
+            ).all()
+            return [e.to_dict() for e in entries]
+        finally:
+            session.close()
+    
+    def is_blacklisted(self, symbol: str) -> bool:
+        """Перевіряє чи монета в чорному списку"""
+        session = get_session()
+        try:
+            exists = session.query(SymbolBlacklist).filter_by(symbol=symbol).first()
+            return exists is not None
+        finally:
+            session.close()
+    
+    def clear_blacklist(self) -> int:
+        """Очищає весь чорний список"""
+        session = get_session()
+        try:
+            count = session.query(SymbolBlacklist).delete()
+            session.commit()
+            print(f"[BLACKLIST] Cleared {count} entries")
+            return count
+        except:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+    
+    def auto_blacklist_low_volatility(self, symbols: List[str], 
+                                       volatility_data: Dict[str, float],
+                                       min_volatility: float = 3.0) -> int:
+        """
+        Автоматично додає "важкі" монети в blacklist
+        
+        Args:
+            symbols: Список символів для перевірки
+            volatility_data: {symbol: volatility_24h_pct}
+            min_volatility: Мінімальна волатильність (%) щоб НЕ потрапити в blacklist
+        
+        Returns:
+            Кількість доданих в blacklist
+        """
+        added = 0
+        for symbol in symbols:
+            vol = volatility_data.get(symbol, 0)
+            if vol < min_volatility and vol > 0:  # Exclude zero (no data)
+                if self.add_to_blacklist(
+                    symbol=symbol,
+                    reason='LOW_VOLATILITY',
+                    volatility=vol,
+                    note=f'Auto-blacklisted: {vol:.1f}% < {min_volatility}%'
+                ):
+                    added += 1
+        return added
 
 
 # Singleton instance

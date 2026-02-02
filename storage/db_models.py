@@ -416,6 +416,36 @@ class EventLog(Base):
         }
 
 
+class SymbolBlacklist(Base):
+    """
+    Blacklist - v8.2: Монети виключені з аналізу
+    
+    Причини для blacklist:
+    - LOW_VOLATILITY: Рухається < 3% на день
+    - STABLECOIN: USDC, BUSD, etc.
+    - MANUAL: Вручну додано користувачем
+    - DELISTED: Монета видалена з біржі
+    """
+    __tablename__ = f'{TABLE_PREFIX}symbol_blacklist'
+    
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), unique=True, nullable=False, index=True)
+    reason = Column(String(50), default='MANUAL')  # LOW_VOLATILITY/STABLECOIN/MANUAL/DELISTED
+    added_at = Column(DateTime, default=datetime.utcnow)
+    volatility_24h = Column(Float, default=0)  # % руху за добу коли було додано
+    note = Column(String(200))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'reason': self.reason,
+            'added_at': self.added_at.isoformat() if self.added_at else None,
+            'volatility_24h': self.volatility_24h,
+            'note': self.note,
+        }
+
+
 # Engine and session factory with connection pool settings
 engine = create_engine(
     DATABASE_URL, 

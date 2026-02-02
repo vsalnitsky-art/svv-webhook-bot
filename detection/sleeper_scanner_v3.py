@@ -150,13 +150,53 @@ class SleeperScannerV3:
         
         # 1. Get top symbols by volume (limited to prevent API abuse)
         symbols = self.fetcher.get_top_symbols(
-            limit=self.max_symbols,
+            limit=self.max_symbols * 2,  # v8.2: Get more to account for filtering
             min_volume=self.min_volume
         )
         
         if not symbols:
             print("[SLEEPER v8.2] No symbols found")
             return []
+        
+        # === v8.2: BLACKLIST + VOLATILITY FILTER ===
+        blacklist = self.db.get_blacklist()
+        min_volatility = self.db.get_setting('min_volatility_pct', 3.0)
+        
+        filtered_symbols = []
+        blacklisted_count = 0
+        low_vol_count = 0
+        
+        for sym_data in symbols:
+            symbol = sym_data['symbol'] if isinstance(sym_data, dict) else sym_data
+            
+            # 1. Check blacklist
+            if symbol in blacklist:
+                blacklisted_count += 1
+                continue
+            
+            # 2. Check 24h volatility (price range %)
+            try:
+                if isinstance(sym_data, dict):
+                    high_24h = float(sym_data.get('high_24h', 0) or sym_data.get('highPrice24h', 0))
+                    low_24h = float(sym_data.get('low_24h', 0) or sym_data.get('lowPrice24h', 0))
+                    if low_24h > 0:
+                        volatility_24h = ((high_24h - low_24h) / low_24h) * 100
+                        if volatility_24h < min_volatility:
+                            low_vol_count += 1
+                            continue
+            except (KeyError, TypeError, ValueError):
+                pass  # If can't calculate, don't filter
+            
+            filtered_symbols.append(sym_data)
+            
+            if len(filtered_symbols) >= self.max_symbols:
+                break
+        
+        if blacklisted_count > 0 or low_vol_count > 0:
+            print(f"[SLEEPER v8.2] Filtered: {blacklisted_count} blacklisted, {low_vol_count} low volatility (<{min_volatility}%)")
+        
+        symbols = filtered_symbols
+        # === END BLACKLIST + VOLATILITY FILTER ===
         
         print(f"[SLEEPER v8.2] Analyzing {len(symbols)} symbols (batch_size={self.batch_size}, delay={self.batch_delay}s)...")
         

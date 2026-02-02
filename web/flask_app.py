@@ -524,6 +524,108 @@ def register_api_routes(app):
             'removed': count
         })
     
+    # ==========================================
+    # BLACKLIST API (v8.2.2)
+    # ==========================================
+    
+    @app.route('/api/blacklist', methods=['GET'])
+    def api_get_blacklist():
+        """Отримати список заблокованих монет"""
+        db = get_db()
+        entries = db.get_blacklist_full()
+        return jsonify({
+            'success': True,
+            'count': len(entries),
+            'data': entries
+        })
+    
+    @app.route('/api/blacklist/add', methods=['POST'])
+    def api_add_to_blacklist():
+        """Додати монету в blacklist"""
+        db = get_db()
+        data = request.json or {}
+        
+        symbol = data.get('symbol', '').upper().strip()
+        reason = data.get('reason', 'MANUAL')
+        note = data.get('note', '')
+        
+        if not symbol:
+            return jsonify({'success': False, 'error': 'Symbol required'}), 400
+        
+        if not symbol.endswith('USDT'):
+            symbol = symbol + 'USDT'
+        
+        success = db.add_to_blacklist(symbol, reason=reason, note=note)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'{symbol} added to blacklist'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'{symbol} already in blacklist'
+            }), 400
+    
+    @app.route('/api/blacklist/remove', methods=['POST'])
+    def api_remove_from_blacklist():
+        """Видалити монету з blacklist"""
+        db = get_db()
+        data = request.json or {}
+        
+        symbol = data.get('symbol', '').upper().strip()
+        if not symbol:
+            return jsonify({'success': False, 'error': 'Symbol required'}), 400
+        
+        success = db.remove_from_blacklist(symbol)
+        
+        return jsonify({
+            'success': success,
+            'message': f'{symbol} removed from blacklist' if success else f'{symbol} not found'
+        })
+    
+    @app.route('/api/blacklist/clear', methods=['POST'])
+    def api_clear_blacklist():
+        """Очистити весь blacklist"""
+        db = get_db()
+        count = db.clear_blacklist()
+        return jsonify({
+            'success': True,
+            'message': f'Cleared {count} entries',
+            'removed': count
+        })
+    
+    @app.route('/api/blacklist/init-defaults', methods=['POST'])
+    def api_init_default_blacklist():
+        """Ініціалізувати стандартний blacklist (stablecoins, wrapped tokens)"""
+        db = get_db()
+        
+        # Default blacklist entries
+        defaults = [
+            ('USDCUSDT', 'STABLECOIN', 'USD Coin stablecoin'),
+            ('FDUSDUSDT', 'STABLECOIN', 'First Digital USD stablecoin'),
+            ('TUSDUSDT', 'STABLECOIN', 'TrueUSD stablecoin'),
+            ('USDPUSDT', 'STABLECOIN', 'Pax Dollar stablecoin'),
+            ('DAIUSDT', 'STABLECOIN', 'DAI stablecoin'),
+            ('EURUSDT', 'STABLECOIN', 'Euro stablecoin'),
+        ]
+        
+        added = 0
+        for symbol, reason, note in defaults:
+            if db.add_to_blacklist(symbol, reason=reason, note=note):
+                added += 1
+        
+        return jsonify({
+            'success': True,
+            'message': f'Added {added} default entries',
+            'added': added
+        })
+    
+    # ==========================================
+    # END BLACKLIST API
+    # ==========================================
+    
     @app.route('/api/scan/full', methods=['POST'])
     def api_full_scan():
         """Run full scan cycle: Sleepers → OBs → Signals"""

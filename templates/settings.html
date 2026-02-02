@@ -719,6 +719,51 @@
                     </button>
                 </div>
             </div>
+            
+            <!-- BLACKLIST SECTION (v8.2.2) -->
+            <div class="settings-section">
+                <h2>🚫 Symbol Blacklist</h2>
+                <p class="section-desc">Exclude low-volatility coins from scanning. Stablecoins & "heavy" assets waste API calls.</p>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Minimum 24h Volatility %</label>
+                        <input type="number" name="min_volatility_pct" 
+                               value="{{ settings.min_volatility_pct | default(3.0) }}"
+                               min="0" max="50" step="0.5" class="form-control">
+                        <small>Coins with less volatility will be skipped (not blacklisted)</small>
+                    </div>
+                </div>
+                
+                <div class="blacklist-controls">
+                    <div class="input-group" style="margin-bottom: 15px;">
+                        <input type="text" id="blacklist_symbol" placeholder="Symbol (e.g. BTC)" class="form-control">
+                        <button type="button" class="btn btn-danger" onclick="addToBlacklist()">
+                            ➕ Add to Blacklist
+                        </button>
+                    </div>
+                    
+                    <div class="action-buttons">
+                        <button type="button" class="btn btn-secondary" onclick="initDefaultBlacklist()">
+                            📋 Add Default Stablecoins
+                        </button>
+                        <button type="button" class="btn btn-warning" onclick="clearBlacklist()">
+                            🗑️ Clear Blacklist
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="loadBlacklist()">
+                            🔄 Refresh
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="blacklist-container" style="margin-top: 15px;">
+                    <div id="blacklist-count" class="count-badge">Loading...</div>
+                    <div id="blacklist-items" class="blacklist-grid">
+                        <!-- Blacklist items will be loaded here -->
+                    </div>
+                </div>
+            </div>
+            <!-- END BLACKLIST SECTION -->
         </div>
 
         <div class="form-actions">
@@ -1000,6 +1045,61 @@
     display: flex;
     gap: 15px;
     flex-wrap: wrap;
+}
+
+/* Blacklist styles (v8.2.2) */
+.blacklist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.blacklist-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--bg-secondary, #1a1a1a);
+    border-radius: 6px;
+    border: 1px solid var(--border, #333);
+}
+
+.blacklist-item .symbol {
+    font-weight: bold;
+    color: var(--text-primary, #fff);
+}
+
+.blacklist-item .reason {
+    font-size: 0.75rem;
+    color: var(--text-secondary, #888);
+    margin-left: 8px;
+}
+
+.blacklist-item .btn-sm {
+    padding: 2px 8px;
+    font-size: 0.8rem;
+    background: transparent;
+    border: 1px solid #dc3545;
+    color: #dc3545;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.blacklist-item .btn-sm:hover {
+    background: #dc3545;
+    color: white;
+}
+
+.blacklist-controls {
+    margin-top: 15px;
+}
+
+.count-badge.warning {
+    background: #ffc107;
+    color: #000;
 }
 </style>
 
@@ -1378,5 +1478,120 @@ function showToast(msg) {
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 3000);
 }
+
+// ==========================================
+// BLACKLIST FUNCTIONS (v8.2.2)
+// ==========================================
+
+async function loadBlacklist() {
+    try {
+        const response = await fetch('/api/blacklist');
+        const result = await response.json();
+        
+        const countEl = document.getElementById('blacklist-count');
+        const itemsEl = document.getElementById('blacklist-items');
+        
+        if (result.success) {
+            countEl.textContent = `${result.count} symbols blacklisted`;
+            countEl.className = result.count > 0 ? 'count-badge warning' : 'count-badge';
+            
+            if (result.data.length === 0) {
+                itemsEl.innerHTML = '<p class="text-muted">No symbols in blacklist</p>';
+            } else {
+                itemsEl.innerHTML = result.data.map(item => `
+                    <div class="blacklist-item">
+                        <span class="symbol">${item.symbol}</span>
+                        <span class="reason">${item.reason}</span>
+                        <button class="btn-sm btn-danger" onclick="removeFromBlacklist('${item.symbol}')">✕</button>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch (e) {
+        console.error('Error loading blacklist:', e);
+    }
+}
+
+async function addToBlacklist() {
+    const input = document.getElementById('blacklist_symbol');
+    let symbol = input.value.trim().toUpperCase();
+    
+    if (!symbol) {
+        showToast('❌ Enter a symbol');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/blacklist/add', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol, reason: 'MANUAL'})
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(`✅ ${symbol} added to blacklist`);
+            input.value = '';
+            loadBlacklist();
+        } else {
+            showToast(`❌ ${result.error || 'Error'}`);
+        }
+    } catch (e) {
+        showToast('❌ Error adding to blacklist');
+    }
+}
+
+async function removeFromBlacklist(symbol) {
+    try {
+        const response = await fetch('/api/blacklist/remove', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol})
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(`✅ ${symbol} removed`);
+            loadBlacklist();
+        }
+    } catch (e) {
+        showToast('❌ Error removing');
+    }
+}
+
+async function initDefaultBlacklist() {
+    if (!confirm('Add default stablecoins to blacklist?')) return;
+    
+    try {
+        const response = await fetch('/api/blacklist/init-defaults', {method: 'POST'});
+        const result = await response.json();
+        
+        showToast(`✅ Added ${result.added} stablecoins`);
+        loadBlacklist();
+    } catch (e) {
+        showToast('❌ Error');
+    }
+}
+
+async function clearBlacklist() {
+    if (!confirm('Clear entire blacklist? All symbols will be scanned again.')) return;
+    
+    try {
+        const response = await fetch('/api/blacklist/clear', {method: 'POST'});
+        const result = await response.json();
+        
+        showToast(`✅ Cleared ${result.removed} entries`);
+        loadBlacklist();
+    } catch (e) {
+        showToast('❌ Error');
+    }
+}
+
+// Load blacklist on page load (if maintenance tab)
+document.addEventListener('DOMContentLoaded', function() {
+    if (document.getElementById('blacklist-items')) {
+        loadBlacklist();
+    }
+});
 </script>
 {% endblock %}
