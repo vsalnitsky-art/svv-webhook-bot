@@ -140,13 +140,13 @@ class SleeperScannerV3:
         - BTC correlation check (warn if BTC volatile)
         - Batch processing with delays
         """
-        print(f"\n[SLEEPER v4] Starting 5-day strategy scan...")
+        print(f"\n[SLEEPER v8] Starting SMC strategy scan...")
         start_time = time.time()
         
         # === BTC CORRELATION CHECK (v4) ===
         btc_warning = self._check_btc_volatility()
         if btc_warning:
-            print(f"[SLEEPER v4] ⚠️ {btc_warning}")
+            print(f"[SLEEPER v8] ⚠️ {btc_warning}")
         
         # 1. Get top symbols by volume (limited to prevent API abuse)
         symbols = self.fetcher.get_top_symbols(
@@ -155,10 +155,10 @@ class SleeperScannerV3:
         )
         
         if not symbols:
-            print("[SLEEPER v4] No symbols found")
+            print("[SLEEPER v8] No symbols found")
             return []
         
-        print(f"[SLEEPER v4] Analyzing {len(symbols)} symbols (batch_size={self.batch_size}, delay={self.batch_delay}s)...")
+        print(f"[SLEEPER v8] Analyzing {len(symbols)} symbols (batch_size={self.batch_size}, delay={self.batch_delay}s)...")
         
         candidates = []
         errors = 0
@@ -228,20 +228,20 @@ class SleeperScannerV3:
                 
                 # Progress every 10 symbols
                 if (i + 1) % 10 == 0:
-                    print(f"[SLEEPER v4] Progress: {i+1}/{len(symbols)} ({len(candidates)} candidates)")
+                    print(f"[SLEEPER v8] Progress: {i+1}/{len(symbols)} ({len(candidates)} candidates)")
                 
                 # Rate limiting between individual symbols
                 time.sleep(API_LIMITS.get('rate_limit_delay', 0.5))
                 
                 # Batch delay - longer pause every batch_size symbols
                 if (i + 1) % self.batch_size == 0:
-                    print(f"[SLEEPER v4] Batch complete, waiting {self.batch_delay}s...")
+                    print(f"[SLEEPER v8] Batch complete, waiting {self.batch_delay}s...")
                     time.sleep(self.batch_delay)
                 
             except Exception as e:
                 errors += 1
                 if errors <= 3:
-                    print(f"[SLEEPER v4] Error analyzing {sym_data.get('symbol')}: {e}")
+                    print(f"[SLEEPER v8] Error analyzing {sym_data.get('symbol')}: {e}")
         
         # Update HP for existing sleepers
         self._update_hp_scores(candidates)
@@ -249,18 +249,18 @@ class SleeperScannerV3:
         # Remove dead sleepers
         removed = self.db.remove_dead_sleepers()
         if removed > 0:
-            print(f"[SLEEPER v4] Removed {removed} dead sleepers (HP=0)")
+            print(f"[SLEEPER v8] Removed {removed} dead sleepers (HP=0)")
         
         elapsed = time.time() - start_time
-        print(f"\n[SLEEPER v4] Scan complete in {elapsed:.1f}s")
-        print(f"[SLEEPER v4] Results: {len(candidates)} candidates from {len(symbols)} symbols")
+        print(f"\n[SLEEPER v8] Scan complete in {elapsed:.1f}s")
+        print(f"[SLEEPER v8] Results: {len(candidates)} candidates from {len(symbols)} symbols")
         
         # Count by state
         by_state = {}
         for c in candidates:
             state = c.get('state', 'UNKNOWN')
             by_state[state] = by_state.get(state, 0) + 1
-        print(f"[SLEEPER v4] States: {by_state}")
+        print(f"[SLEEPER v8] States: {by_state}")
         
         # v4 Summary
         special_flags = []
@@ -272,7 +272,7 @@ class SleeperScannerV3:
             special_flags.append(f"🎯POC:{poc_count}")
         
         if special_flags:
-            print(f"[SLEEPER v4] Special: {' | '.join(special_flags)}")
+            print(f"[SLEEPER v8] Special: {' | '.join(special_flags)}")
         
         return candidates
     
@@ -317,7 +317,7 @@ class SleeperScannerV3:
             return None
             
         except Exception as e:
-            print(f"[SLEEPER v4] BTC check error: {e}")
+            print(f"[SLEEPER v8] BTC check error: {e}")
             return None
     
     def _analyze_symbol_5day(self, symbol_data: Dict) -> Optional[Dict]:
