@@ -70,11 +70,10 @@ class BackgroundJobs:
         - signals: Trade signal generation
         - positions: Position monitoring
         - intensive: Real-time monitoring of READY sleepers
-        - ut_bot: UT Bot trading module (enabled by default)
         """
         setting_key = f'module_{module_name}'
-        # Default enabled: sleepers, ut_bot
-        default_enabled = ['sleepers', 'ut_bot']
+        # Default enabled: sleepers
+        default_enabled = ['sleepers']
         default_value = '1' if module_name in default_enabled else '0'
         value = self.db.get_setting(setting_key, default_value)
         return value in ('1', 'true', True, 1)
@@ -115,7 +114,7 @@ class BackgroundJobs:
         print("[SCHEDULER] Started background jobs")
         
         # Log enabled modules
-        modules = ['sleepers', 'orderblocks', 'signals', 'positions', 'intensive', 'ut_bot']
+        modules = ['sleepers', 'orderblocks', 'signals', 'positions', 'intensive']
         enabled = [m for m in modules if self._is_module_enabled(m)]
         disabled = [m for m in modules if not self._is_module_enabled(m)]
         print(f"[SCHEDULER] Enabled modules: {', '.join(enabled) if enabled else 'none'}")
@@ -229,24 +228,6 @@ class BackgroundJobs:
             IntervalTrigger(minutes=5),
             id='intensive_ready_monitor',
             name='Intensive READY Monitor',
-            replace_existing=True
-        )
-        
-        # 9. UT Bot Update - оновлення з Sleepers кожні 5 хвилин
-        self.scheduler.add_job(
-            self._job_ut_bot_update,
-            IntervalTrigger(minutes=5),
-            id='ut_bot_update',
-            name='UT Bot Update from Sleepers',
-            replace_existing=True
-        )
-        
-        # 10. UT Bot Signal Check - перевірка сигналів кожну хвилину
-        self.scheduler.add_job(
-            self._job_ut_bot_signals,
-            IntervalTrigger(minutes=1),
-            id='ut_bot_signals',
-            name='UT Bot Signal Check',
             replace_existing=True
         )
     
@@ -751,103 +732,6 @@ class BackgroundJobs:
             self.notifier.send_sync(message.strip())
     
     # ===== Manual Triggers =====
-    
-    # ============================================
-    # UT BOT JOBS
-    # ============================================
-    
-    def _job_ut_bot_update(self):
-        """Update UT Bot potential coins from Sleeper Scanner"""
-        # Check if module is enabled
-        if not self._is_module_enabled('ut_bot'):
-            return
-        
-        start = time.time()
-        try:
-            from modules.ut_bot_monitor import get_ut_bot_monitor
-            
-            monitor = get_ut_bot_monitor()
-            
-            # Get current sleepers
-            sleepers = self.db.get_sleepers()
-            
-            # Update monitor
-            updated = monitor.update_from_sleepers(sleepers)
-            
-            duration = time.time() - start
-            self._log_job_execution(
-                'ut_bot_update',
-                True,
-                duration,
-                f"Updated {updated} coins from {len(sleepers)} sleepers"
-            )
-        except Exception as e:
-            duration = time.time() - start
-            self._log_job_execution('ut_bot_update', False, duration, str(e))
-            print(f"[SCHEDULER ERROR] UT Bot Update: {e}")
-    
-    def _job_ut_bot_signals(self):
-        """Check UT Bot signals for potential coins"""
-        # Check if module is enabled
-        if not self._is_module_enabled('ut_bot'):
-            return
-        
-        start = time.time()
-        try:
-            from modules.ut_bot_monitor import get_ut_bot_monitor
-            
-            monitor = get_ut_bot_monitor()
-            
-            # Check signals
-            events = monitor.check_signals()
-            
-            # Notify on trade events
-            for event in events:
-                event_type = event.get('type', '')
-                trade = event.get('trade', {})
-                signal = event.get('signal', {})
-                
-                if event_type == 'TRADE_OPENED':
-                    direction_emoji = "🟢" if trade.get('direction') == 'LONG' else "🔴"
-                    self.notifier.send_message(
-                        f"🤖 <b>UT BOT: Paper Trade OPENED</b>\n\n"
-                        f"{direction_emoji} <b>{trade.get('symbol')}</b> {trade.get('direction')}\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"📍 Entry: <code>{trade.get('entry_price', 0):.6f}</code>\n"
-                        f"🛡️ ATR Stop: <code>{trade.get('atr_stop', 0):.6f}</code>\n"
-                        f"📊 Signal: pos {signal.get('prev_position', '?')} → {signal.get('position', '?')}\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"⏰ {datetime.now().strftime('%H:%M:%S UTC')}",
-                        alert_type='ut_bot'
-                    )
-                elif event_type == 'TRADE_CLOSED':
-                    pnl = trade.get('pnl_usdt', 0)
-                    pnl_pct = trade.get('pnl_percent', 0)
-                    emoji = "✅" if pnl >= 0 else "❌"
-                    direction_emoji = "🟢" if trade.get('direction') == 'LONG' else "🔴"
-                    self.notifier.send_message(
-                        f"🤖 <b>UT BOT: Paper Trade CLOSED</b>\n\n"
-                        f"{direction_emoji} <b>{trade.get('symbol')}</b> {trade.get('direction')}\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"📍 Entry: <code>{trade.get('entry_price', 0):.6f}</code>\n"
-                        f"📍 Exit: <code>{trade.get('exit_price', 0):.6f}</code>\n"
-                        f"{emoji} PnL: <b>${pnl:+.2f}</b> ({pnl_pct:+.2f}%)\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"⏰ {datetime.now().strftime('%H:%M:%S UTC')}",
-                        alert_type='ut_bot'
-                    )
-            
-            duration = time.time() - start
-            self._log_job_execution(
-                'ut_bot_signals',
-                True,
-                duration,
-                f"{len(events)} events"
-            )
-        except Exception as e:
-            duration = time.time() - start
-            self._log_job_execution('ut_bot_signals', False, duration, str(e))
-            print(f"[SCHEDULER ERROR] UT Bot Signals: {e}")
     
     def trigger_job(self, job_id: str) -> bool:
         """Ручний запуск задачі"""

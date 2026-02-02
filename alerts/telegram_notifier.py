@@ -40,7 +40,6 @@ DEFAULT_ALERT_SETTINGS = {
     'alert_intensive': True,          # Intensive monitoring (volume spikes)
     'alert_daily_summary': True,      # Денний звіт
     'alert_system': True,             # Системні повідомлення
-    'alert_ut_bot': True,             # UT Bot signals (paper trading)
 }
 
 

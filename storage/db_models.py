@@ -416,81 +416,6 @@ class EventLog(Base):
         }
 
 
-class UTBotPotentialCoin(Base):
-    """UT Bot potential coins for trading"""
-    __tablename__ = f'{TABLE_PREFIX}ut_potential_coins'
-    
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), unique=True, nullable=False, index=True)
-    direction = Column(String(10), nullable=False)  # LONG/SHORT
-    sleeper_score = Column(Float, default=0)
-    confidence = Column(Float, default=0)
-    priority = Column(Float, default=0)
-    source = Column(String(50), default='SLEEPER')  # SLEEPER/STRUCTURE_HIGH/STRUCTURE_LOW/MSS/MANUAL
-    structure_type = Column(String(50))  # e.g. STRUCTURE_HIGH:MARKUP
-    is_near_extreme = Column(Boolean, default=False)
-    added_at = Column(DateTime, default=datetime.utcnow)
-    last_check = Column(DateTime)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    def to_dict(self):
-        return {
-            'symbol': self.symbol,
-            'direction': self.direction,
-            'sleeper_score': round(self.sleeper_score, 1) if self.sleeper_score else 0,
-            'confidence': round(self.confidence, 1) if self.confidence else 0,
-            'priority': round(self.priority, 2) if self.priority else 0,
-            'source': self.source,
-            'structure_type': self.structure_type,
-            'is_near_extreme': self.is_near_extreme,
-            'added_at': self.added_at.isoformat() if self.added_at else None,
-            'last_check': self.last_check.isoformat() if self.last_check else None,
-        }
-
-
-class UTBotPaperTrade(Base):
-    """UT Bot paper trades"""
-    __tablename__ = f'{TABLE_PREFIX}ut_paper_trades'
-    
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), nullable=False, index=True)
-    direction = Column(String(10), nullable=False)  # LONG/SHORT
-    status = Column(String(20), default='OPEN', index=True)  # OPEN/CLOSED/CANCELLED
-    
-    entry_price = Column(Float, nullable=False)
-    exit_price = Column(Float)
-    current_price = Column(Float)
-    atr_stop = Column(Float)
-    highest_price = Column(Float)
-    lowest_price = Column(Float)
-    
-    entry_signal = Column(Text)  # JSON
-    exit_signal = Column(Text)   # JSON
-    
-    opened_at = Column(DateTime, default=datetime.utcnow)
-    closed_at = Column(DateTime)
-    
-    pnl_usdt = Column(Float, default=0)
-    pnl_percent = Column(Float, default=0)
-    
-    def to_dict(self):
-        import json
-        return {
-            'id': self.id,
-            'symbol': self.symbol,
-            'direction': self.direction,
-            'status': self.status,
-            'entry_price': round(self.entry_price, 8) if self.entry_price else None,
-            'exit_price': round(self.exit_price, 8) if self.exit_price else None,
-            'current_price': round(self.current_price, 8) if self.current_price else None,
-            'atr_stop': round(self.atr_stop, 8) if self.atr_stop else None,
-            'pnl_usdt': round(self.pnl_usdt, 2) if self.pnl_usdt else 0,
-            'pnl_percent': round(self.pnl_percent, 2) if self.pnl_percent else 0,
-            'opened_at': self.opened_at.isoformat() if self.opened_at else None,
-            'closed_at': self.closed_at.isoformat() if self.closed_at else None,
-        }
-
-
 # Engine and session factory with connection pool settings
 engine = create_engine(
     DATABASE_URL, 
@@ -502,11 +427,57 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(bind=engine)
 
+
+def cleanup_ut_bot_data():
+    """Remove UT Bot module data from database (one-time cleanup v8.0)"""
+    from sqlalchemy import text
+    
+    with engine.connect() as conn:
+        # Check if cleanup already done
+        check_sql = text(f"""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = '{TABLE_PREFIX}ut_potential_coins'
+            );
+        """)
+        result = conn.execute(check_sql)
+        if not result.scalar():
+            return  # Already cleaned up
+        
+        print("[DB CLEANUP] Removing UT Bot module data...")
+        
+        try:
+            # Drop UT Bot tables
+            conn.execute(text(f"DROP TABLE IF EXISTS {TABLE_PREFIX}ut_potential_coins CASCADE;"))
+            conn.execute(text(f"DROP TABLE IF EXISTS {TABLE_PREFIX}ut_paper_trades CASCADE;"))
+            conn.commit()
+            print("[DB CLEANUP] ✓ Dropped UT Bot tables")
+        except Exception as e:
+            print(f"[DB CLEANUP] Error dropping tables: {e}")
+            conn.rollback()
+        
+        try:
+            # Remove UT Bot settings
+            conn.execute(text(f"DELETE FROM {TABLE_PREFIX}settings WHERE key LIKE 'ut_bot_%';"))
+            conn.execute(text(f"DELETE FROM {TABLE_PREFIX}settings WHERE key = 'module_ut_bot';"))
+            conn.execute(text(f"DELETE FROM {TABLE_PREFIX}settings WHERE key = 'alert_ut_bot';"))
+            conn.commit()
+            print("[DB CLEANUP] ✓ Removed UT Bot settings")
+        except Exception as e:
+            print(f"[DB CLEANUP] Error removing settings: {e}")
+            conn.rollback()
+        
+        print("[DB CLEANUP] UT Bot cleanup complete")
+
+
 def init_db():
     """Initialize database tables (creates only if not exist)"""
     print("[DB] Creating tables if not exist...")
     Base.metadata.create_all(bind=engine)
     print("[DB] Tables ready")
+    
+    # Cleanup old UT Bot data (one-time migration)
+    cleanup_ut_bot_data()
     
     # Run migrations for new columns
     migrate_sleeper_candidates_v3()
@@ -617,56 +588,7 @@ def migrate_sleeper_candidates_v3():
                     print(f"[DB MIGRATE] Error adding {col_name}: {e}")
                 conn.rollback()
     
-    # Migrate UT Bot table column sizes
-    migrate_ut_bot_columns()
-    
     print("[DB MIGRATE] Migration complete")
-
-
-def migrate_ut_bot_columns():
-    """Migrate UT Bot columns to larger sizes"""
-    from sqlalchemy import text
-    
-    table_name = f'{TABLE_PREFIX}ut_potential_coins'
-    
-    # Column alterations (name, new_type)
-    alterations = [
-        ("source", "VARCHAR(50)"),
-        ("structure_type", "VARCHAR(50)"),
-    ]
-    
-    with engine.connect() as conn:
-        # Check if table exists first
-        check_sql = text(f"""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = '{table_name}'
-            );
-        """)
-        result = conn.execute(check_sql)
-        if not result.scalar():
-            return  # Table doesn't exist yet
-        
-        for col_name, col_type in alterations:
-            try:
-                sql = text(f"""
-                    DO $$ 
-                    BEGIN 
-                        IF EXISTS (
-                            SELECT 1 FROM information_schema.columns 
-                            WHERE table_name = '{table_name}' AND column_name = '{col_name}'
-                        ) THEN 
-                            ALTER TABLE {table_name} ALTER COLUMN {col_name} TYPE {col_type};
-                        END IF;
-                    END $$;
-                """)
-                conn.execute(sql)
-                conn.commit()
-            except Exception as e:
-                error_str = str(e)
-                if 'nothing to alter' not in error_str.lower():
-                    print(f"[DB MIGRATE] Note: {col_name} alteration: {e}")
-                conn.rollback()
 
 
 def get_session():
