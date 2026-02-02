@@ -495,12 +495,20 @@ class DirectionEngineV8:
         Стратегія "Пробудження Сплячого" з SMC:
         - LONG: CHoCH/BOS бичачий + Discount Zone + (опційно) біля Bullish OB
         - SHORT: CHoCH/BOS ведмежий + Premium Zone + (опційно) біля Bearish OB
+        
+        v8.1: Додано "м'який" напрямок для sleepers без CHoCH
+        - Базується на market bias та price zone
+        - Показує потенційний напрямок до появи CHoCH
         """
         direction = BiasDirection.NEUTRAL
         should_trade = False
         confidence = 0.0
         
-        # LONG умови
+        # ============================================
+        # СИЛЬНІ СИГНАЛИ (з CHoCH/BOS)
+        # ============================================
+        
+        # LONG з CHoCH/BOS
         if total_bias >= self.BIAS_THRESHOLD_LONG:
             direction = BiasDirection.LONG
             confidence = min(95, 50 + abs(total_bias) * 50)
@@ -524,7 +532,7 @@ class DirectionEngineV8:
             elif near_support and structure.dominant_structure in [StructureType.HIGHER_HIGHS, StructureType.HIGHER_LOWS]:
                 should_trade = True
         
-        # SHORT умови
+        # SHORT з CHoCH/BOS
         elif total_bias <= self.BIAS_THRESHOLD_SHORT:
             direction = BiasDirection.SHORT
             confidence = min(95, 50 + abs(total_bias) * 50)
@@ -544,6 +552,62 @@ class DirectionEngineV8:
                 should_trade = True
             elif near_resistance and structure.dominant_structure in [StructureType.LOWER_HIGHS, StructureType.LOWER_LOWS]:
                 should_trade = True
+        
+        # ============================================
+        # v8.1: М'ЯКИЙ НАПРЯМОК ДЛЯ SLEEPERS (без CHoCH)
+        # Показує потенційний напрямок на основі структури
+        # ============================================
+        else:
+            # Визначаємо потенційний напрямок на основі комбінації факторів
+            bullish_signals = 0
+            bearish_signals = 0
+            
+            # Market Bias
+            if smc_result.market_bias == MarketBias.BULLISH:
+                bullish_signals += 2
+            elif smc_result.market_bias == MarketBias.BEARISH:
+                bearish_signals += 2
+            
+            # Price Zone
+            if smc_result.price_zone == PriceZone.DISCOUNT:
+                bullish_signals += 1
+            elif smc_result.price_zone == PriceZone.PREMIUM:
+                bearish_signals += 1
+            
+            # Order Block proximity
+            if smc_result.price_at_bullish_ob or smc_result.nearest_bullish_ob:
+                bullish_signals += 1
+            if smc_result.price_at_bearish_ob or smc_result.nearest_bearish_ob:
+                bearish_signals += 1
+            
+            # Structure pattern (HH/HL vs LH/LL)
+            if structure.dominant_structure == StructureType.HIGHER_HIGHS:
+                bullish_signals += 1
+            elif structure.dominant_structure == StructureType.HIGHER_LOWS:
+                bullish_signals += 1
+            elif structure.dominant_structure == StructureType.LOWER_HIGHS:
+                bearish_signals += 1
+            elif structure.dominant_structure == StructureType.LOWER_LOWS:
+                bearish_signals += 1
+            
+            # Position bias
+            if structure.is_near_low:
+                bullish_signals += 1
+            if structure.is_near_high:
+                bearish_signals += 1
+            
+            # Визначаємо м'який напрямок (мінімум 2 сигнали перевага)
+            signal_diff = bullish_signals - bearish_signals
+            
+            if signal_diff >= 2:
+                direction = BiasDirection.LONG
+                confidence = min(60, 30 + signal_diff * 5)  # Низька впевненість (30-60%)
+                # should_trade = False - не торгуємо без CHoCH!
+            elif signal_diff <= -2:
+                direction = BiasDirection.SHORT
+                confidence = min(60, 30 + abs(signal_diff) * 5)
+                # should_trade = False - не торгуємо без CHoCH!
+            # else: залишаємо NEUTRAL
         
         return direction, should_trade, confidence
     

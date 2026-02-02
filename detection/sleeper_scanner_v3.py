@@ -217,7 +217,7 @@ class SleeperScannerV3:
                         elif mss_bias == 'short':
                             mss_str = f" MSS:↓{result.get('lower_highs_count', 0)}LH"
                         
-                        print(f"[SLEEPER v6] {state_emoji}{vc_flag}{adx_flag}{poc_flag}{dir_flag} {result['symbol']}: "
+                        print(f"[SLEEPER v8] {state_emoji}{vc_flag}{adx_flag}{poc_flag}{dir_flag} {result['symbol']}: "
                               f"Score={result['total_score']:.1f}{bonus_str} "
                               f"Dir={dir_str}{mss_str} "
                               f"(VC:{result['volatility_compression']:.0f} "
