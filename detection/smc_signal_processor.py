@@ -34,6 +34,7 @@ from detection.entry_manager import (
     EntryManager, EntrySetup, EntryState, StopLossMode, get_entry_manager
 )
 from alerts.telegram_notifier import get_notifier
+from trading.risk_calculator import RiskCalculator
 
 
 @dataclass
@@ -543,7 +544,7 @@ class SMCSignalProcessor:
         print(f"[SMC] {symbol}: Stalking invalidated - {reason}")
     
     def _send_alert_if_needed(self, result: SMCSignalResult, sleeper: Dict):
-        """Надсилає Telegram alert якщо потрібно"""
+        """Надсилає Telegram alert якщо потрібно + розрахунок позиції"""
         
         old_state = sleeper.get('state', 'WATCHING')
         new_state = result.state
@@ -559,13 +560,46 @@ class SMCSignalProcessor:
         
         # Alert при ENTRY_FOUND
         elif new_state == "ENTRY_FOUND":
+            # v8.2: Розраховуємо розмір позиції
+            position_data = None
+            try:
+                risk_calc = RiskCalculator()
+                
+                # OB boundaries (entry is at OB edge, SL is beyond OB)
+                if result.direction == "LONG":
+                    ob_high = result.entry_price
+                    ob_low = result.stop_loss * 1.002  # Remove buffer to get OB low
+                else:
+                    ob_high = result.stop_loss * 0.998
+                    ob_low = result.entry_price
+                
+                position_data = risk_calc.calculate_ob_position(
+                    symbol=result.symbol,
+                    direction=result.direction,
+                    entry_price=result.entry_price,
+                    ob_high=ob_high,
+                    ob_low=ob_low,
+                    swing_target=result.take_profit
+                )
+                
+                if position_data.get('success'):
+                    print(f"[SMC] {result.symbol}: Position calculated - "
+                          f"Size: ${position_data['position_value']:.0f}, "
+                          f"Risk: ${position_data['risk_amount']:.0f}, "
+                          f"R/R: {position_data['rr_ratio']:.1f}")
+                          
+            except Exception as e:
+                print(f"[SMC] {result.symbol}: Position calc error: {e}")
+            
+            # Send alert with position data
             self.notifier.send_entry_alert(
                 symbol=result.symbol,
                 direction=result.direction,
                 entry=result.entry_price,
                 sl=result.stop_loss,
                 tp=result.take_profit,
-                rr=result.risk_reward
+                rr=result.risk_reward,
+                position_data=position_data
             )
             
             # Також надсилаємо повний SMC сигнал

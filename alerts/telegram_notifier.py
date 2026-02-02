@@ -563,31 +563,60 @@ class TelegramNotifier:
 """
         return self.send_sync(text.strip())
     
-    def send_entry_alert(self, symbol: str, direction: str, entry: float, sl: float, tp: float, rr: float) -> bool:
+    def send_entry_alert(self, symbol: str, direction: str, entry: float, sl: float, tp: float, rr: float,
+                         position_data: Dict = None) -> bool:
         """
         Сповіщення про знайдений вхід (ENTRY_FOUND)
+        
+        Args:
+            position_data: Опційно - результат від RiskCalculator.calculate_ob_position()
         """
         dir_emoji = "🟢 LONG" if direction == "LONG" else "🔴 SHORT"
-        rr_emoji = "🔥" if rr >= 3 else "✅"
+        rr_emoji = "🔥" if rr >= 3 else "✅" if rr >= 2 else "⚠️"
         
-        text = f"""
-⚡⚡⚡ <b>ВХІД ЗНАЙДЕНО!</b> ⚡⚡⚡
-
-{dir_emoji} <b>{symbol}</b>
-
-✅ Відкат до Order Block завершено!
-
-📊 <b>Параметри угоди:</b>
-├ Вхід: <code>{entry:.6f}</code>
-├ Стоп-лосс: <code>{sl:.6f}</code>
-├ Тейк-профіт: <code>{tp:.6f}</code>
-└ R/R: {rr_emoji} <b>{rr:.1f}</b>
-
-⚡ Час діяти!
-
-🔗 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}.P'>TradingView</a>
-"""
-        return self.send_sync(text.strip())
+        # Base message
+        lines = [
+            f"⚡⚡⚡ <b>ВХІД ЗНАЙДЕНО!</b> ⚡⚡⚡",
+            f"",
+            f"{dir_emoji} <b>{symbol}</b>",
+            f"",
+            f"✅ Відкат до Order Block завершено!",
+            f"",
+            f"📊 <b>Параметри угоди:</b>",
+            f"├ Вхід: <code>{entry:.6f}</code>",
+            f"├ Стоп: <code>{sl:.6f}</code>",
+            f"├ Тейк: <code>{tp:.6f}</code>",
+            f"└ R/R: {rr_emoji} <b>{rr:.1f}</b>",
+        ]
+        
+        # Add position sizing if available
+        if position_data and position_data.get('success'):
+            stop_pct = position_data.get('stop_pct', 0)
+            reward_pct = position_data.get('reward_pct', 0)
+            pos_value = position_data.get('position_value', 0)
+            margin = position_data.get('margin_required', 0)
+            risk_amount = position_data.get('risk_amount', 0)
+            risk_pct = position_data.get('risk_pct', 1)
+            leverage = position_data.get('leverage', 10)
+            
+            lines.extend([
+                f"",
+                f"💰 <b>Рекомендований розмір:</b>",
+                f"├ Об'єм: <b>{pos_value:.0f}</b> USD",
+                f"├ Маржа: {margin:.0f} USD (x{leverage})",
+                f"├ Стоп: {stop_pct:.1f}%",
+                f"└ Ризик: <b>{risk_amount:.0f}</b> USD ({risk_pct}% депо)",
+            ])
+        
+        lines.extend([
+            f"",
+            f"⚡ Час діяти!",
+            f"",
+            f"🔗 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}.P'>TradingView</a>",
+        ])
+        
+        text = "\n".join(lines)
+        return self.send_sync(text)
     
     def send_confirmation_request(self, signal_id: str, signal: Dict[str, Any]) -> bool:
         """Запит на підтвердження сигналу (для SEMI_AUTO режиму)"""

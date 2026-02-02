@@ -1,29 +1,227 @@
 """
-Risk Calculator - Position sizing and risk management
+Risk Calculator v8.2 - OB Based Position Sizing
 Торгівля на Bybit - використовуємо Bybit для всіх даних
+
+v8.2: Розрахунок позиції на основі Order Block:
+- Entry: Верхня межа OB (Long) / Нижня межа OB (Short)
+- Stop Loss: За межею OB + buffer (0.2%)
+- Take Profit: 1:3 R/R або до протилежного OB
 """
 from typing import Dict, Optional, Tuple
 from config import TRADING_CONSTANTS
 from core import get_connector  # Bybit для торгівлі
 from storage import get_db
 
+
 class RiskCalculator:
     """
-    Risk Management Module
+    Risk Management Module v8.2
     
     Calculates:
-    - Position size based on risk %
-    - Stop loss levels
-    - Take profit levels
+    - Position size based on risk % and OB distance
+    - Stop loss from Order Block boundaries
+    - Take profit with minimum 1:3 R/R
     - Max position limits
     
     NOTE: Використовує Bybit для всіх даних (торгівля на Bybit)
     """
     
+    # Default settings
+    DEFAULT_RISK_PCT = 1.0      # 1% ризику на угоду
+    DEFAULT_LEVERAGE = 10       # Плече x10
+    MIN_RR_RATIO = 3.0          # Мінімальний R/R
+    MIN_STOP_PCT = 0.002        # Мін стоп 0.2% (захист від шуму)
+    SL_BUFFER_PCT = 0.002       # Буфер за OB 0.2%
+    
     def __init__(self):
         self.db = get_db()
         self.connector = get_connector()  # Bybit
         self.constants = TRADING_CONSTANTS
+    
+    def calculate_ob_position(self, 
+                              symbol: str,
+                              direction: str,
+                              entry_price: float,
+                              ob_high: float,
+                              ob_low: float,
+                              swing_target: float = None,
+                              balance: float = None) -> Dict:
+        """
+        v8.2: Розрахунок позиції на основі Order Block
+        
+        Args:
+            symbol: Торгова пара (BTCUSDT)
+            direction: LONG або SHORT
+            entry_price: Поточна ціна або ціна входу
+            ob_high: Верхня межа Order Block
+            ob_low: Нижня межа Order Block
+            swing_target: Цільовий swing high/low для TP (опційно)
+            balance: Баланс (якщо None - береться з налаштувань)
+        
+        Returns:
+            Dict з усіма параметрами угоди
+        """
+        # Get settings
+        risk_pct = self.db.get_setting('max_risk_per_trade', self.DEFAULT_RISK_PCT)
+        leverage = self.db.get_setting('default_leverage', self.DEFAULT_LEVERAGE)
+        min_rr = self.db.get_setting('min_rr_ratio', self.MIN_RR_RATIO)
+        
+        # Get balance
+        if balance is None:
+            is_paper = self.db.get_setting('paper_trading', True)
+            if is_paper:
+                balance = self.db.get_setting('paper_balance', 1000)
+            else:
+                wallet = self.connector.get_wallet_balance()
+                balance = wallet.get('available_balance', 0)
+        
+        if balance <= 0:
+            return self._error_result('Insufficient balance')
+        
+        # === CALCULATE ENTRY, SL, TP ===
+        
+        if direction == 'LONG':
+            # LONG: Entry at OB high, SL below OB low
+            final_entry = ob_high
+            stop_loss = ob_low * (1 - self.SL_BUFFER_PCT)  # 0.2% buffer
+            
+            # TP: swing target or 1:3 R/R
+            risk = final_entry - stop_loss
+            if swing_target and swing_target > final_entry:
+                take_profit = swing_target
+            else:
+                take_profit = final_entry + (risk * min_rr)
+            
+        else:  # SHORT
+            # SHORT: Entry at OB low, SL above OB high
+            final_entry = ob_low
+            stop_loss = ob_high * (1 + self.SL_BUFFER_PCT)
+            
+            risk = stop_loss - final_entry
+            if swing_target and swing_target < final_entry:
+                take_profit = swing_target
+            else:
+                take_profit = final_entry - (risk * min_rr)
+        
+        # === CALCULATE RISK METRICS ===
+        
+        # Distance to stop loss
+        if direction == 'LONG':
+            stop_dist_pct = (final_entry - stop_loss) / final_entry
+            reward_dist_pct = (take_profit - final_entry) / final_entry
+        else:
+            stop_dist_pct = (stop_loss - final_entry) / final_entry
+            reward_dist_pct = (final_entry - take_profit) / final_entry
+        
+        # Enforce minimum stop
+        if stop_dist_pct < self.MIN_STOP_PCT:
+            stop_dist_pct = self.MIN_STOP_PCT
+            if direction == 'LONG':
+                stop_loss = final_entry * (1 - self.MIN_STOP_PCT)
+            else:
+                stop_loss = final_entry * (1 + self.MIN_STOP_PCT)
+        
+        # Actual R/R
+        actual_rr = reward_dist_pct / stop_dist_pct if stop_dist_pct > 0 else 0
+        
+        # === POSITION SIZING ===
+        
+        # Risk amount in USDT
+        risk_amount = balance * (risk_pct / 100)
+        
+        # Position size that risks exactly risk_amount
+        position_value = risk_amount / stop_dist_pct
+        
+        # Apply leverage
+        margin_required = position_value / leverage
+        
+        # Check max position
+        max_pos_pct = self.constants.get('max_position_size_pct', 50)
+        max_position_value = balance * (max_pos_pct / 100) * leverage
+        position_value = min(position_value, max_position_value)
+        
+        # Position size in crypto
+        position_size = position_value / final_entry
+        
+        # Round to symbol precision
+        symbol_info = self.connector.get_instrument_info(symbol)
+        if symbol_info:
+            lot_filter = symbol_info.get('lotSizeFilter', {})
+            qty_step = float(lot_filter.get('qtyStep', 0.001))
+            min_qty = float(lot_filter.get('minOrderQty', 0.001))
+            position_size = round(position_size / qty_step) * qty_step
+            position_size = max(position_size, min_qty)
+        
+        # Recalculate final values
+        final_value = position_size * final_entry
+        
+        return {
+            'success': True,
+            'symbol': symbol,
+            'direction': direction,
+            
+            # Entry/SL/TP
+            'entry_price': round(final_entry, 8),
+            'stop_loss': round(stop_loss, 8),
+            'take_profit': round(take_profit, 8),
+            
+            # Risk metrics
+            'stop_pct': round(stop_dist_pct * 100, 2),
+            'reward_pct': round(reward_dist_pct * 100, 2),
+            'rr_ratio': round(actual_rr, 2),
+            
+            # Position sizing
+            'position_size': round(position_size, 6),
+            'position_value': round(final_value, 2),
+            'risk_amount': round(risk_amount, 2),
+            'risk_pct': risk_pct,
+            'leverage': leverage,
+            'margin_required': round(margin_required, 2),
+            'balance': balance,
+            
+            # OB info
+            'ob_high': round(ob_high, 8),
+            'ob_low': round(ob_low, 8),
+        }
+    
+    def _error_result(self, error: str) -> Dict:
+        """Return error result"""
+        return {
+            'success': False,
+            'error': error,
+            'position_size': 0,
+            'position_value': 0,
+            'risk_amount': 0,
+        }
+    
+    def format_signal_message(self, calc_result: Dict) -> str:
+        """
+        Форматує результат розрахунку для Telegram
+        
+        Returns:
+            Formatted Ukrainian message
+        """
+        if not calc_result.get('success'):
+            return f"❌ Помилка: {calc_result.get('error', 'Unknown')}"
+        
+        direction_emoji = "🟢 LONG" if calc_result['direction'] == 'LONG' else "🔴 SHORT"
+        rr_emoji = "🔥" if calc_result['rr_ratio'] >= 3 else "✅" if calc_result['rr_ratio'] >= 2 else "⚠️"
+        
+        msg = f"""
+{direction_emoji} <b>{calc_result['symbol']}</b>
+
+📊 <b>Параметри угоди:</b>
+├ Вхід: <code>{calc_result['entry_price']:.6f}</code>
+├ Стоп: <code>{calc_result['stop_loss']:.6f}</code> ({calc_result['stop_pct']:.1f}%)
+├ Тейк: <code>{calc_result['take_profit']:.6f}</code> ({calc_result['reward_pct']:.1f}%)
+└ R/R: {rr_emoji} <b>{calc_result['rr_ratio']:.1f}</b>
+
+💰 <b>Розмір позиції:</b>
+├ Об'єм: <b>{calc_result['position_value']:.0f}</b> USD
+├ Маржа: {calc_result['margin_required']:.0f} USD (x{calc_result['leverage']})
+└ Ризик: {calc_result['risk_amount']:.0f} USD ({calc_result['risk_pct']}% депо)
+"""
+        return msg.strip()
     
     def calculate_position_size(self, symbol: str, entry_price: float, 
                                 stop_loss: float, direction: str) -> Dict:
