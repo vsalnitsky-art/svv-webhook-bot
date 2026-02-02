@@ -762,6 +762,15 @@
                             🔄 Refresh
                         </button>
                     </div>
+                    
+                    <div class="action-buttons" style="margin-top: 10px;">
+                        <button type="button" class="btn btn-primary" onclick="cleanupBlacklistedSleepers()">
+                            🧹 Remove Blacklisted Sleepers
+                        </button>
+                        <button type="button" class="btn btn-primary" onclick="cleanupDuplicateSleepers()">
+                            🔄 Remove Duplicate Sleepers
+                        </button>
+                    </div>
                 </div>
                 
                 <div id="blacklist-container" style="margin-top: 15px;">
@@ -1590,6 +1599,32 @@ async function clearBlacklist() {
         
         showToast(`✅ Cleared ${result.removed} entries`);
         loadBlacklist();
+    } catch (e) {
+        showToast('❌ Error');
+    }
+}
+
+async function cleanupBlacklistedSleepers() {
+    if (!confirm('Remove all sleepers that are in the blacklist?')) return;
+    
+    try {
+        const response = await fetch('/api/sleepers/cleanup-blacklisted', {method: 'POST'});
+        const result = await response.json();
+        
+        showToast(`✅ Removed ${result.removed} blacklisted sleepers`);
+    } catch (e) {
+        showToast('❌ Error');
+    }
+}
+
+async function cleanupDuplicateSleepers() {
+    if (!confirm('Remove duplicate sleepers (keep newest)?')) return;
+    
+    try {
+        const response = await fetch('/api/sleepers/cleanup-duplicates', {method: 'POST'});
+        const result = await response.json();
+        
+        showToast(`✅ Removed ${result.removed} duplicate sleepers`);
     } catch (e) {
         showToast('❌ Error');
     }

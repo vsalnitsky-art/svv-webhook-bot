@@ -577,11 +577,75 @@ class DBOperations:
             session.add(entry)
             session.commit()
             print(f"[BLACKLIST] Added {symbol} ({reason})")
+            
+            # v8.2.3: Auto-remove from sleepers when added to blacklist
+            self.remove_sleeper(symbol)
+            
             return True
         except Exception as e:
             session.rollback()
             print(f"[BLACKLIST] Error adding {symbol}: {e}")
             return False
+        finally:
+            session.close()
+    
+    def remove_sleeper(self, symbol: str) -> bool:
+        """Видаляє sleeper за символом"""
+        session = get_session()
+        try:
+            deleted = session.query(SleeperCandidate).filter_by(symbol=symbol).delete()
+            session.commit()
+            if deleted:
+                print(f"[DB] Removed sleeper: {symbol}")
+            return deleted > 0
+        except:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def remove_blacklisted_sleepers(self) -> int:
+        """Видаляє всі sleepers які є в blacklist"""
+        blacklist = self.get_blacklist()
+        removed = 0
+        for symbol in blacklist:
+            if self.remove_sleeper(symbol):
+                removed += 1
+        if removed > 0:
+            print(f"[DB] Removed {removed} blacklisted sleepers")
+        return removed
+    
+    def remove_duplicate_sleepers(self) -> int:
+        """Видаляє дублікати sleepers (залишає найновіший)"""
+        session = get_session()
+        try:
+            # Знаходимо дублікати
+            from sqlalchemy import func
+            duplicates = session.query(
+                SleeperCandidate.symbol,
+                func.count(SleeperCandidate.id).label('count')
+            ).group_by(SleeperCandidate.symbol).having(func.count(SleeperCandidate.id) > 1).all()
+            
+            removed = 0
+            for symbol, count in duplicates:
+                # Залишаємо найновіший (найбільший id)
+                sleepers = session.query(SleeperCandidate).filter_by(
+                    symbol=symbol
+                ).order_by(SleeperCandidate.id.desc()).all()
+                
+                # Видаляємо всі крім першого (найновішого)
+                for s in sleepers[1:]:
+                    session.delete(s)
+                    removed += 1
+            
+            session.commit()
+            if removed > 0:
+                print(f"[DB] Removed {removed} duplicate sleepers")
+            return removed
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] Error removing duplicates: {e}")
+            return 0
         finally:
             session.close()
     
@@ -606,6 +670,10 @@ class DBOperations:
         try:
             entries = session.query(SymbolBlacklist).all()
             return [e.symbol for e in entries]
+        except Exception as e:
+            # Table might not exist yet
+            print(f"[BLACKLIST] Warning: Could not get blacklist: {e}")
+            return []
         finally:
             session.close()
     
@@ -617,6 +685,9 @@ class DBOperations:
                 SymbolBlacklist.added_at.desc()
             ).all()
             return [e.to_dict() for e in entries]
+        except Exception as e:
+            print(f"[BLACKLIST] Warning: Could not get blacklist: {e}")
+            return []
         finally:
             session.close()
     

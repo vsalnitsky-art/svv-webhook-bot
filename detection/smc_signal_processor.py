@@ -175,8 +175,13 @@ class SMCSignalProcessor:
         if not klines_4h or not klines_1h or len(klines_1h) < 50:
             return None
         
-        # Поточна ціна
-        current_price = float(klines_1h[-1][4])  # Close price
+        # Поточна ціна (klines is List[Dict] with keys: open, high, low, close, volume, etc.)
+        last_candle = klines_1h[-1]
+        if isinstance(last_candle, dict):
+            current_price = float(last_candle.get('close', 0))
+        else:
+            # Fallback for list format [timestamp, open, high, low, close, volume]
+            current_price = float(last_candle[4])
         
         # SMC аналіз на 1H з HTF bias від 4H
         smc_result = self.smc_analyzer.analyze(klines_1h, htf_klines=klines_4h)

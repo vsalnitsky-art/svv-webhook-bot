@@ -622,6 +622,28 @@ def register_api_routes(app):
             'added': added
         })
     
+    @app.route('/api/sleepers/cleanup-blacklisted', methods=['POST'])
+    def api_cleanup_blacklisted_sleepers():
+        """Видалити sleepers що є в blacklist"""
+        db = get_db()
+        removed = db.remove_blacklisted_sleepers()
+        return jsonify({
+            'success': True,
+            'message': f'Removed {removed} blacklisted sleepers',
+            'removed': removed
+        })
+    
+    @app.route('/api/sleepers/cleanup-duplicates', methods=['POST'])
+    def api_cleanup_duplicate_sleepers():
+        """Видалити дублікати sleepers"""
+        db = get_db()
+        removed = db.remove_duplicate_sleepers()
+        return jsonify({
+            'success': True,
+            'message': f'Removed {removed} duplicate sleepers',
+            'removed': removed
+        })
+    
     # ==========================================
     # END BLACKLIST API
     # ==========================================
