@@ -168,8 +168,8 @@ class SMCSignalProcessor:
             return None
         
         # Отримуємо свіжі дані
-        klines_4h = self.fetcher.get_klines_cached(symbol, '4h', 100)
-        klines_1h = self.fetcher.get_klines_cached(symbol, '1h', 100)
+        klines_4h = self.fetcher.get_klines(symbol, '4h', 100)
+        klines_1h = self.fetcher.get_klines(symbol, '1h', 100)
         
         if not klines_4h or not klines_1h or len(klines_1h) < 50:
             return None
