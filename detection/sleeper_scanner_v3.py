@@ -598,33 +598,27 @@ class SleeperScannerV3:
             'exhaustion_score': round(exhaustion_score, 2),
             'direction_reason': primary_reason,
             
-            # v5: Structure data
-            'price_change_5d': round(direction_result.structure.price_change_5d, 2),
-            'price_change_20d': round(direction_result.structure.price_change_20d, 2),
-            'distance_from_high': round(direction_result.structure.distance_from_high, 1),
-            'distance_from_low': round(direction_result.structure.distance_from_low, 1),
-            'support_level': round(direction_result.structure.support_level, 6),
-            'resistance_level': round(direction_result.structure.resistance_level, 6),
+            # v8: SMC Structure data
+            'smc_signal': structure.smc_signal.value if structure else 'NONE',
+            'smc_market_bias': structure.market_bias.value if structure else 'NEUTRAL',
+            'smc_price_zone': structure.price_zone.value if structure else 'EQUILIBRIUM',
+            'smc_zone_level': round(structure.zone_level, 3) if structure else 0.5,
+            'smc_score': round(structure.smc_score, 3) if structure else 0,
+            'price_at_bullish_ob': structure.price_at_bullish_ob if structure else False,
+            'price_at_bearish_ob': structure.price_at_bearish_ob if structure else False,
             
-            # v5: Exhaustion signals
-            'rsi_divergence': direction_result.exhaustion.rsi_divergence,
-            'at_support': direction_result.exhaustion.at_support,
-            'at_resistance': direction_result.exhaustion.at_resistance,
+            # v8: Structure counts
+            'hh_count': structure.hh_count if structure else 0,
+            'hl_count': structure.hl_count if structure else 0,
+            'lh_count': structure.lh_count if structure else 0,
+            'll_count': structure.ll_count if structure else 0,
+            'dominant_structure': structure.dominant_structure.value if structure else 'UNKNOWN',
             
-            # v6: Market Structure Shift (MSS)
-            'mss_bias': direction_result.structure.mss_bias,
-            'higher_lows_count': direction_result.structure.higher_lows_count,
-            'lower_highs_count': direction_result.structure.lower_highs_count,
-            'mss_strength': round(direction_result.structure.mss_strength, 2),
-            
-            # v6: OI + Volume Delta
-            'oi_delta_bias': direction_result.structure.oi_delta_bias,
-            'oi_growing': direction_result.structure.oi_growing,
-            'volume_delta': round(direction_result.structure.volume_delta, 2),
-            
-            # v6: POC Positioning
-            'poc_bias': direction_result.structure.poc_bias,
-            'price_vs_poc': round(direction_result.structure.price_vs_poc, 2),
+            # v8: Position in range
+            'is_near_high': structure.is_near_high if structure else False,
+            'is_near_low': structure.is_near_low if structure else False,
+            'is_in_middle': structure.is_in_middle if structure else True,
+            'price_vs_vwap_pct': round(structure.price_vs_vwap_pct, 2) if structure else 0,
             
             # v4: ADX data
             'adx_value': round(adx_value, 1),
