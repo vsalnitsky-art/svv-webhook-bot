@@ -48,10 +48,12 @@ from config.bot_settings import SleeperState
 from core.market_data import get_fetcher
 from core.tech_indicators import get_indicators
 from storage import get_db
-from detection.direction_engine_v5 import (
-    get_direction_engine_v5, DirectionResultV5, 
-    Direction, MarketPhase, PhaseMaturity
+
+# v8: SMC Integration
+from detection.direction_engine_v8 import (
+    get_direction_engine_v8, DirectionResultV8, BiasDirection
 )
+from detection.smc_analyzer import StructureSignal, MarketBias, PriceZone
 
 
 class SleeperScannerV3:
@@ -120,7 +122,9 @@ class SleeperScannerV3:
         
         # Get trading style from settings
         self.trading_style = self.db.get_setting('trading_mode', 'SWING')
-        self.direction_engine = get_direction_engine_v5(self.trading_style)  # v5: Professional with exhaustion detection
+        
+        # v8: SMC-integrated Direction Engine
+        self.direction_engine = get_direction_engine_v8()
         
         # Scan settings from DB (reduced defaults for Binance rate limit protection)
         self.max_symbols = min(self.db.get_setting('sleeper_max_symbols', 30), 50)  # Max 50
@@ -452,32 +456,68 @@ class SleeperScannerV3:
             # Use higher of standard or adjusted score
             total_score = max(total_score, adjusted_score)
         
-        # === 7. DETERMINE DIRECTION (v6: Professional with MSS, OI+Delta, POC) ===
+        # === 7. DETERMINE DIRECTION (v8: SMC-integrated) ===
         
-        # v6 Direction Engine uses HTF and MTF data + OB Imbalance + POC
-        # For SWING: HTF=1d, MTF=4h - we have both!
-        # For SCALPING: HTF=1h, MTF=15m - use 4h as HTF approximation
-        direction_result = self.direction_engine.resolve(
+        # v8 Direction Engine uses 4H (HTF) and 1H (LTF) + SMC Analysis
+        # klines_4h = HTF for global bias, klines_1d used as additional HTF
+        direction_result = self.direction_engine.analyze(
             symbol=symbol,
-            klines_htf=klines_1d,      # HTF data (1D for SWING, approximation for SCALPING)
-            klines_mtf=klines_4h,      # MTF data (4H)
-            oi_change=oi_data['growth_pct'],
+            klines_4h=klines_4h,           # HTF data (4H)
+            klines_1h=klines_1d,           # LTF data (use 1D as longer term context)
+            oi_change_pct=oi_data['growth_pct'],
             funding_rate=funding_rate,
-            # v6: Additional signals
-            ob_imbalance=ob_data['imbalance'],     # Order Book imbalance as proxy for volume delta
-            poc_price=poc_data.get('poc_price', 0)  # Point of Control from Volume Profile
+            ob_imbalance=ob_data['imbalance'],
+            poc_price=poc_data.get('poc_price', 0)
         )
         
         direction = direction_result.direction.value  # LONG, SHORT, or NEUTRAL
-        direction_score = direction_result.score
-        direction_confidence = direction_result.confidence
+        direction_score = direction_result.bias_score  # v8: bias_score
         
-        # v5: Extract phase and exhaustion info
-        market_phase = direction_result.market_phase.value
-        phase_maturity = direction_result.phase_maturity.value
-        is_reversal_setup = direction_result.is_reversal_setup
-        exhaustion_score = direction_result.exhaustion.exhaustion_score
-        primary_reason = direction_result.primary_reason
+        # v8: Convert confidence float (0-100) to string
+        conf_value = direction_result.confidence
+        if conf_value >= 75:
+            direction_confidence = "HIGH"
+        elif conf_value >= 50:
+            direction_confidence = "MEDIUM"
+        else:
+            direction_confidence = "LOW"
+        
+        # v8: Extract SMC info (mapped to v5-compatible format)
+        smc_result = direction_result.smc_result
+        structure = direction_result.structure
+        
+        # Map SMC market_bias to market_phase
+        if smc_result and smc_result.market_bias == MarketBias.BULLISH:
+            market_phase = "MARKUP"
+        elif smc_result and smc_result.market_bias == MarketBias.BEARISH:
+            market_phase = "MARKDOWN"
+        else:
+            market_phase = "ACCUMULATION"  # Neutral = potential accumulation
+        
+        # Map SMC price_zone to phase_maturity
+        if structure:
+            if structure.price_zone == PriceZone.PREMIUM:
+                phase_maturity = "LATE" if market_phase == "MARKUP" else "EARLY"
+            elif structure.price_zone == PriceZone.DISCOUNT:
+                phase_maturity = "EARLY" if market_phase == "MARKUP" else "LATE"
+            else:
+                phase_maturity = "MIDDLE"
+        else:
+            phase_maturity = "MIDDLE"
+        
+        # v8: Detect reversal setup via CHoCH signal
+        is_reversal_setup = False
+        if smc_result:
+            is_reversal_setup = smc_result.structure_signal in [
+                StructureSignal.BULLISH_CHOCH, 
+                StructureSignal.BEARISH_CHOCH
+            ]
+        
+        # v8: Use SMC score as exhaustion proxy (higher SMC = stronger signal)
+        exhaustion_score = abs(smc_result.smc_score) if smc_result else 0.0
+        
+        # Build primary reason from SMC
+        primary_reason = " | ".join(smc_result.reasons[:3]) if smc_result else "SMC Analysis"
         
         # === 8. DETERMINE STATE (v5: with phase-aware logic) ===
         
@@ -496,7 +536,7 @@ class SleeperScannerV3:
             direction=direction,
             direction_score=direction_score,
             direction_confidence=direction_confidence,
-            # v5: Phase params
+            # v5: Phase params (mapped from SMC)
             market_phase=market_phase,
             phase_maturity=phase_maturity,
             is_reversal_setup=is_reversal_setup,
