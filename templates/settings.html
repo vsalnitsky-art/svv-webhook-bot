@@ -646,9 +646,17 @@
                                 <span class="alert-name">System Messages</span>
                                 <span class="alert-desc">Bot start/stop, errors</span>
                             </label>
-                    <button type="button" class="btn btn-secondary" onclick="toggleAllAlerts(false)">
-                        ❌ Disable All
-                    </button>
+                        </div>
+                    </div>
+                    
+                    <div style="grid-column: 1 / -1; margin-top: 15px;">
+                        <button type="button" class="btn btn-primary" onclick="toggleAllAlerts(true)">
+                            ✅ Enable All
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="toggleAllAlerts(false)">
+                            ❌ Disable All
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
