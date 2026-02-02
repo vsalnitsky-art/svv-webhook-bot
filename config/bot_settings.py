@@ -83,6 +83,10 @@ DEFAULT_SETTINGS = {
     'sleeper_max_symbols': 200,
     'sleeper_min_volume': 20000000,
     
+    # v8.2: Multi-timeframe settings
+    'htf_timeframe': '4h',             # HTF for global bias (4H)
+    'ltf_timeframe': '15m',            # LTF for entry signals (15M for fast markets)
+    
     # Sleeper component weights
     'sleeper_weight_flatness': 0.30,
     'sleeper_weight_volume': 0.25,

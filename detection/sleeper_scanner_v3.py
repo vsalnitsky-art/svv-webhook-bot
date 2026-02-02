@@ -140,13 +140,13 @@ class SleeperScannerV3:
         - BTC correlation check (warn if BTC volatile)
         - Batch processing with delays
         """
-        print(f"\n[SLEEPER v8] Starting SMC strategy scan...")
+        print(f"\n[SLEEPER v8.2] Starting SMC strategy scan (4H+15M)...")
         start_time = time.time()
         
         # === BTC CORRELATION CHECK (v4) ===
         btc_warning = self._check_btc_volatility()
         if btc_warning:
-            print(f"[SLEEPER v8] ⚠️ {btc_warning}")
+            print(f"[SLEEPER v8.2] ⚠️ {btc_warning}")
         
         # 1. Get top symbols by volume (limited to prevent API abuse)
         symbols = self.fetcher.get_top_symbols(
@@ -155,10 +155,10 @@ class SleeperScannerV3:
         )
         
         if not symbols:
-            print("[SLEEPER v8] No symbols found")
+            print("[SLEEPER v8.2] No symbols found")
             return []
         
-        print(f"[SLEEPER v8] Analyzing {len(symbols)} symbols (batch_size={self.batch_size}, delay={self.batch_delay}s)...")
+        print(f"[SLEEPER v8.2] Analyzing {len(symbols)} symbols (batch_size={self.batch_size}, delay={self.batch_delay}s)...")
         
         candidates = []
         errors = 0
@@ -217,7 +217,7 @@ class SleeperScannerV3:
                         elif mss_bias == 'short':
                             mss_str = f" MSS:↓{result.get('lower_highs_count', 0)}LH"
                         
-                        print(f"[SLEEPER v8] {state_emoji}{vc_flag}{adx_flag}{poc_flag}{dir_flag} {result['symbol']}: "
+                        print(f"[SLEEPER v8.2] {state_emoji}{vc_flag}{adx_flag}{poc_flag}{dir_flag} {result['symbol']}: "
                               f"Score={result['total_score']:.1f}{bonus_str} "
                               f"Dir={dir_str}{mss_str} "
                               f"(VC:{result['volatility_compression']:.0f} "
@@ -228,20 +228,20 @@ class SleeperScannerV3:
                 
                 # Progress every 10 symbols
                 if (i + 1) % 10 == 0:
-                    print(f"[SLEEPER v8] Progress: {i+1}/{len(symbols)} ({len(candidates)} candidates)")
+                    print(f"[SLEEPER v8.2] Progress: {i+1}/{len(symbols)} ({len(candidates)} candidates)")
                 
                 # Rate limiting between individual symbols
                 time.sleep(API_LIMITS.get('rate_limit_delay', 0.5))
                 
                 # Batch delay - longer pause every batch_size symbols
                 if (i + 1) % self.batch_size == 0:
-                    print(f"[SLEEPER v8] Batch complete, waiting {self.batch_delay}s...")
+                    print(f"[SLEEPER v8.2] Batch complete, waiting {self.batch_delay}s...")
                     time.sleep(self.batch_delay)
                 
             except Exception as e:
                 errors += 1
                 if errors <= 3:
-                    print(f"[SLEEPER v8] Error analyzing {sym_data.get('symbol')}: {e}")
+                    print(f"[SLEEPER v8.2] Error analyzing {sym_data.get('symbol')}: {e}")
         
         # Update HP for existing sleepers
         self._update_hp_scores(candidates)
@@ -249,18 +249,18 @@ class SleeperScannerV3:
         # Remove dead sleepers
         removed = self.db.remove_dead_sleepers()
         if removed > 0:
-            print(f"[SLEEPER v8] Removed {removed} dead sleepers (HP=0)")
+            print(f"[SLEEPER v8.2] Removed {removed} dead sleepers (HP=0)")
         
         elapsed = time.time() - start_time
-        print(f"\n[SLEEPER v8] Scan complete in {elapsed:.1f}s")
-        print(f"[SLEEPER v8] Results: {len(candidates)} candidates from {len(symbols)} symbols")
+        print(f"\n[SLEEPER v8.2] Scan complete in {elapsed:.1f}s")
+        print(f"[SLEEPER v8.2] Results: {len(candidates)} candidates from {len(symbols)} symbols")
         
         # Count by state
         by_state = {}
         for c in candidates:
             state = c.get('state', 'UNKNOWN')
             by_state[state] = by_state.get(state, 0) + 1
-        print(f"[SLEEPER v8] States: {by_state}")
+        print(f"[SLEEPER v8.2] States: {by_state}")
         
         # v4 Summary
         special_flags = []
@@ -272,7 +272,7 @@ class SleeperScannerV3:
             special_flags.append(f"🎯POC:{poc_count}")
         
         if special_flags:
-            print(f"[SLEEPER v8] Special: {' | '.join(special_flags)}")
+            print(f"[SLEEPER v8.2] Special: {' | '.join(special_flags)}")
         
         return candidates
     
@@ -317,7 +317,7 @@ class SleeperScannerV3:
             return None
             
         except Exception as e:
-            print(f"[SLEEPER v8] BTC check error: {e}")
+            print(f"[SLEEPER v8.2] BTC check error: {e}")
             return None
     
     def _analyze_symbol_5day(self, symbol_data: Dict) -> Optional[Dict]:
@@ -339,12 +339,18 @@ class SleeperScannerV3:
         
         # === 1. GET 5-DAY DATA ===
         
-        # 4H klines for 5 days (30 candles)
+        # 4H klines for 5 days (30 candles) - HTF for global bias
         klines_4h = self.fetcher.get_klines(symbol, '4h', limit=self.KLINES_5D)
         if len(klines_4h) < 20:
             return None
         
-        # Daily klines for context
+        # v8.2: LTF data for entry signals (15M instead of 1D)
+        # 15M gives 4x more detail than 1H for faster markets (ADX > 40)
+        ltf_timeframe = self.db.get_setting('ltf_timeframe', '15m')
+        ltf_limit = 100 if ltf_timeframe == '15m' else 60  # ~25h of 15m or 60h of 1h
+        klines_ltf = self.fetcher.get_klines(symbol, ltf_timeframe, limit=ltf_limit)
+        
+        # Daily klines for context (still used for some metrics)
         klines_1d = self.fetcher.get_klines(symbol, '1d', limit=self.KLINES_1D)
         
         # OI history
@@ -453,12 +459,13 @@ class SleeperScannerV3:
         
         # === 7. DETERMINE DIRECTION (v8: SMC-integrated) ===
         
-        # v8 Direction Engine uses 4H (HTF) and 1H (LTF) + SMC Analysis
-        # klines_4h = HTF for global bias, klines_1d used as additional HTF
+        # v8.2: Direction Engine uses 4H (HTF) and 15M/1H (LTF) + SMC Analysis
+        # klines_4h = HTF for global bias
+        # klines_ltf = LTF for entry signals (15M by default for fast markets)
         direction_result = self.direction_engine.analyze(
             symbol=symbol,
             klines_4h=klines_4h,           # HTF data (4H)
-            klines_1h=klines_1d,           # LTF data (use 1D as longer term context)
+            klines_1h=klines_ltf,          # LTF data (15M or 1H based on setting)
             oi_change_pct=oi_data['growth_pct'],
             funding_rate=funding_rate,
             ob_imbalance=ob_data['imbalance'],
