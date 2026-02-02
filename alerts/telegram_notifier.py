@@ -250,67 +250,92 @@ class TelegramNotifier:
         return self.send_sync(text.strip())
     
     def notify_sleeper_ready(self, sleeper: Dict[str, Any]) -> bool:
-        """Сповіщення про готовий Sleeper - v5 з phase/exhaustion інформацією"""
+        """
+        Сповіщення про готовий Sleeper - v8 SMC Edition
+        
+        Показує:
+        - SMC Signal (CHoCH/BOS)
+        - Price Zone (Discount/Premium)
+        - Order Block proximity
+        - Entry/SL/TP якщо доступні
+        """
         if not self.is_alert_enabled('sleeper_ready'):
             return False
         
         emoji = self.emoji[NotificationType.SLEEPER_READY]
         direction = sleeper.get('direction', 'NEUTRAL')
-        direction_emoji = "🟢" if direction == 'LONG' else ("🔴" if direction == 'SHORT' else "⚪")
+        direction_emoji = "🟢 LONG" if direction == 'LONG' else ("🔴 SHORT" if direction == 'SHORT' else "⚪ WAIT")
         
-        # v5: Phase and reversal info
-        market_phase = sleeper.get('market_phase', 'UNKNOWN')
-        phase_maturity = sleeper.get('phase_maturity', 'MIDDLE')
-        is_reversal = sleeper.get('is_reversal_setup', False)
-        exhaustion_score = sleeper.get('exhaustion_score', 0)
+        # SMC Signal translation
+        smc_signal = sleeper.get('smc_signal', 'NONE')
+        smc_map = {
+            "BULLISH_CHOCH": "🔄 CHoCH Бичачий (розворот!)",
+            "BEARISH_CHOCH": "🔄 CHoCH Ведмежий (розворот!)",
+            "BULLISH_BOS": "📈 BOS Бичачий",
+            "BEARISH_BOS": "📉 BOS Ведмежий",
+            "NONE": "😴 Консолідація"
+        }
+        smc_text = smc_map.get(smc_signal, smc_signal)
         
-        # Phase emoji
-        phase_emoji = {
-            'ACCUMULATION': '📥',  # Buying at bottom
-            'MARKUP': '📈',        # Uptrend
-            'DISTRIBUTION': '📤', # Selling at top
-            'MARKDOWN': '📉',      # Downtrend
-            'UNKNOWN': '❓'
-        }.get(market_phase, '❓')
+        # Price Zone translation (field name is smc_price_zone in sleeper data)
+        price_zone = sleeper.get('smc_price_zone', sleeper.get('price_zone', 'EQUILIBRIUM'))
+        zone_map = {
+            "DISCOUNT": "🟢 Знижка (дешево)",
+            "PREMIUM": "🔴 Преміум (дорого)",
+            "EQUILIBRIUM": "⚪ Рівновага"
+        }
+        zone_text = zone_map.get(price_zone, price_zone)
         
-        # Maturity indicator
-        maturity_indicator = {
-            'EARLY': '🌱',
-            'MIDDLE': '🌿',
-            'LATE': '🍂',
-            'EXHAUSTED': '💀'
-        }.get(phase_maturity, '❓')
+        # OB proximity (check multiple field names)
+        at_ob = (sleeper.get('at_ob', False) or 
+                 sleeper.get('price_at_bullish_ob', False) or 
+                 sleeper.get('price_at_bearish_ob', False))
         
-        # Reversal badge
-        reversal_badge = "🔄 REVERSAL SETUP!" if is_reversal else ""
+        # Entry levels
+        entry_price = sleeper.get('entry_price', 0)
+        stop_loss = sleeper.get('stop_loss', 0)
+        take_profit = sleeper.get('take_profit', 0)
+        risk_reward = sleeper.get('risk_reward', 0)
         
         # Build message
-        text = f"""
-{emoji} <b>SLEEPER ГОТОВИЙ!</b>
-{reversal_badge}
-
-{direction_emoji} <b>{sleeper.get('symbol')}</b>
-
-📊 <b>Scores:</b>
-• Total: {sleeper.get('total_score', 0):.1f}/100
-• Direction Score: {sleeper.get('direction_score', 0):+.2f}
-• Confidence: {sleeper.get('direction_confidence', 'LOW')}
-
-{phase_emoji} <b>Phase:</b> {market_phase} {maturity_indicator}
-• Maturity: {phase_maturity}
-• Exhaustion: {exhaustion_score*100:.0f}%
-
-📍 <b>Position:</b>
-• From High: -{sleeper.get('distance_from_high', 0):.1f}%
-• From Low: +{sleeper.get('distance_from_low', 0):.1f}%
-
-❤️ HP: {sleeper.get('hp', 5)}/10
-🎯 Direction: <b>{direction}</b>
-💡 {sleeper.get('direction_reason', 'No specific reason')[:50]}
-
-⏰ {datetime.now().strftime('%H:%M:%S')}
-"""
-        return self.send_sync(text.strip())
+        msg_lines = [
+            f"{emoji} <b>SLEEPER ГОТОВИЙ!</b> {emoji}",
+            f"",
+            f"{direction_emoji} <b>{sleeper.get('symbol')}</b>",
+            f"",
+            f"📊 <b>Метрики:</b>",
+            f"├ Score: <b>{sleeper.get('total_score', 0):.0f}</b>/100",
+            f"├ Direction: {sleeper.get('direction_score', 0):+.2f}",
+            f"├ BB Squeeze: {sleeper.get('bb_compression_pct', 0):.0f}%",
+            f"└ HP: {sleeper.get('hp', 5)}/10",
+            f"",
+            f"🧠 <b>SMC Аналіз:</b>",
+            f"├ Сигнал: {smc_text}",
+            f"├ Зона: {zone_text}",
+            f"└ Біля OB: {'✅' if at_ob else '❌'}",
+        ]
+        
+        # Add entry levels if available
+        if entry_price > 0:
+            rr_emoji = "🔥" if risk_reward >= 3 else "✅" if risk_reward >= 2 else "⚠️"
+            msg_lines.extend([
+                f"",
+                f"📊 <b>Рівні входу:</b>",
+                f"├ Entry: <code>{entry_price:.6f}</code>",
+                f"├ Stop: <code>{stop_loss:.6f}</code>",
+                f"├ Target: <code>{take_profit:.6f}</code>",
+                f"└ R/R: {rr_emoji} <b>{risk_reward:.1f}</b>",
+            ])
+        
+        msg_lines.extend([
+            f"",
+            f"━━━━━━━━━━━━━━━━━",
+            f"🔗 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{sleeper.get('symbol')}.P'>TradingView</a>",
+            f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+        ])
+        
+        text = "\n".join(msg_lines)
+        return self.send_sync(text)
     
     def notify_ob_formed(self, ob: Dict[str, Any]) -> bool:
         """Сповіщення про новий Order Block"""
