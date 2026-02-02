@@ -1,39 +1,34 @@
 """
-Sleeper Scanner v5.0 - Professional Strategy with Phase-Aware Direction Engine
+Sleeper Scanner v8.0 - SMC (Smart Money Concepts) Strategy
 
-ВЕРСІЯ v5.0 КРИТИЧНІ ЗМІНИ:
-- Direction Engine v5 з exhaustion detection
-- Phase-aware state machine (не шортимо на дні, не лонгаємо на топі!)
-- Reversal setup detection (розвороти на S/R рівнях)
-- Wyckoff-inspired market phases (Accumulation/Markup/Distribution/Markdown)
+ВЕРСІЯ v8.0 КЛЮЧОВІ ЗМІНИ:
+- Direction Engine v8 з SMC інтеграцією
+- BOS/CHoCH detection (Break of Structure / Change of Character)
+- Order Blocks detection (Bullish/Bearish zones)
+- Premium/Discount Zone analysis
+- Multi-timeframe структура (4H/1H)
 
-КЛЮЧОВА ЛОГІКА v5:
-- На ДНІ (LATE/EXHAUSTED MARKDOWN) → шукаємо LONG, блокуємо SHORT
-- На ТОПІ (LATE/EXHAUSTED MARKUP) → шукаємо SHORT, блокуємо LONG
-- В середині тренду → торгуємо з трендом
-- При вичерпанні тренду → шукаємо розворот
+SMC КОМПОНЕНТИ:
+1. Market Structure - HH/HL/LH/LL detection
+2. BOS/CHoCH Signals - структурні зламі
+3. Order Blocks - інституційні зони
+4. Premium/Discount - зони відносно свінгу
 
-DIRECTION ENGINE v5 КОМПОНЕНТИ:
-1. Phase Detection - визначає фазу ринку за Вайкоффом
-2. Exhaustion Detection - бачить коли тренд закінчується
-3. Reversal Signals - RSI divergence + S/R levels + volume exhaustion
-4. Support/Resistance - автоматичний розрахунок рівнів
+DIRECTION ENGINE v8 ВАГИ:
+- SMC Score: 40% (головний компонент)
+- Structure: 20%
+- Momentum: 20%
+- Derivatives: 20%
 
-STATE MACHINE v5:
-- REVERSAL SETUP → автоматично READY (високий пріоритет)
-- EXHAUSTED phase + direction → READY для розвороту
-- LATE phase → блокуємо сигнали В НАПРЯМКУ тренду
-- EARLY/MIDDLE phase → торгуємо з трендом
-
-PATHS TO READY (v5):
-1. Reversal Setup: is_reversal_setup = True + exhaustion > 50%
-2. Exhausted Phase: phase_maturity = EXHAUSTED + clear direction
-3. Classic: Score > 65, VC > 50%
-4. Direction-based: Score > 75 + HIGH confidence
+PATHS TO READY (v8):
+1. CHoCH + Discount Zone → найсильніший сигнал LONG
+2. CHoCH + Premium Zone → найсильніший сигнал SHORT
+3. BOS + Order Block → підтвердження напрямку
+4. Classic: Score > 65, Direction confidence HIGH
 
 DATA REQUIREMENTS:
-- HTF (1D/1H): 100 candles - for phase/structure analysis
-- MTF (4H/15m): 100 candles - for momentum/exhaustion
+- HTF (4H): 100 candles - for global bias & SMC HTF
+- LTF (1H): 100 candles - for signals & CHoCH detection
 - Cache TTL: 3 minutes (reduced API calls)
 - Batch delay: 5 seconds (rate limit protection)
 """

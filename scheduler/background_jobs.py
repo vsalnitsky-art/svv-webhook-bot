@@ -270,7 +270,7 @@ class BackgroundJobs:
     # ===== Job Implementations =====
     
     def _job_sleeper_scan(self):
-        """Сканування Sleepers (5-Day Strategy v3)"""
+        """Сканування Sleepers (SMC Strategy v8)"""
         # Check if module is enabled
         if not self._is_module_enabled('sleepers'):
             return
@@ -320,7 +320,7 @@ class BackgroundJobs:
                 states[state] = states.get(state, 0) + 1
             
             duration = time.time() - start
-            version = "v3 (5-Day)" if self.use_v3_scanner else "v2"
+            version = "v8 (SMC)" if self.use_v3_scanner else "v2"
             self._log_job_execution(
                 'sleeper_scan', 
                 True, 
