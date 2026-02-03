@@ -50,6 +50,9 @@ from detection.direction_engine_v8 import (
 )
 from detection.smc_analyzer import StructureSignal, MarketBias, PriceZone
 
+# v8.2.5: Trend Filter Integration
+from detection.trend_analyzer import TrendAnalyzer, TrendRegime
+
 
 class SleeperScannerV3:
     """
@@ -65,22 +68,15 @@ class SleeperScannerV3:
     # === КОНФІГУРАЦІЯ v4 ===
     
     # Scoring weights (must sum to 100)
-    WEIGHTS = {
-        'volatility_compression': 40,
-        'volume_suppression': 25,
-        'oi_growth': 20,
-        'order_book_imbalance': 15,
-    }
+    # === v8.2.5: Score Weights та Thresholds читаються з UI налаштувань ===
+    # Дивись __init__ метод
+    # WEIGHTS читаються з: weight_fuel, weight_volatility, weight_price, weight_liquidity
+    # MIN_SCORE_* читаються з: sleeper_min_score, sleeper_building_score, sleeper_ready_score
     
-    # Data requirements
+    # Data requirements (константи)
     KLINES_5D = 60   # 60 x 4H = 10 days (enough for EMA20 + direction analysis)
     KLINES_1D = 60   # 60 days for EMA50 + structural analysis
     OI_PERIODS = 30  # 30 hours of OI data
-    
-    # Score thresholds
-    MIN_SCORE_WATCHING = 40
-    MIN_SCORE_BUILDING = 55
-    MIN_SCORE_READY = 65
     
     # Transition conditions (v4.1.2: relaxed for earlier signals)
     COMPRESSION_BUILDING = 35   # % BB compression for BUILDING (was 50)
@@ -126,9 +122,101 @@ class SleeperScannerV3:
         self.min_volume = self.db.get_setting('sleeper_min_volume', 75_000_000)  # Increased to 75M
         self.scan_interval = self.db.get_setting('sleeper_scan_interval', 240)  # 4H
         
+        # === v8.2.5: ЧИТАЄМО НАЛАШТУВАННЯ З UI ===
+        
+        # Score Thresholds (Settings → Sleeper Detection → Score Thresholds)
+        self.MIN_SCORE_WATCHING = int(self.db.get_setting('sleeper_min_score', 40))
+        self.MIN_SCORE_BUILDING = int(self.db.get_setting('sleeper_building_score', 50))
+        self.MIN_SCORE_READY = int(self.db.get_setting('sleeper_ready_score', 60))
+        
+        # Score Weights (Settings → Sleeper Detection → Score Weights)
+        # UI: Fuel=OI Growth, Volatility=BB Squeeze, Price=Range Position, Liquidity=Volume Profile
+        weight_fuel = int(self.db.get_setting('weight_fuel', 30))
+        weight_volatility = int(self.db.get_setting('weight_volatility', 25))
+        weight_price = int(self.db.get_setting('weight_price', 25))
+        weight_liquidity = int(self.db.get_setting('weight_liquidity', 20))
+        
+        # Normalize weights to 100% if needed
+        total_weight = weight_fuel + weight_volatility + weight_price + weight_liquidity
+        if total_weight != 100 and total_weight > 0:
+            weight_fuel = round(weight_fuel * 100 / total_weight)
+            weight_volatility = round(weight_volatility * 100 / total_weight)
+            weight_price = round(weight_price * 100 / total_weight)
+            weight_liquidity = 100 - weight_fuel - weight_volatility - weight_price
+        
+        self.WEIGHTS = {
+            'oi_growth': weight_fuel,                    # Fuel (%) = OI Growth
+            'volatility_compression': weight_volatility,  # Volatility (%) = BB Squeeze
+            'volume_suppression': weight_price,           # Price (%) = Range Position
+            'order_book_imbalance': weight_liquidity,     # Liquidity (%) = Volume Profile
+        }
+        
+        # Trend Context Filter (Settings → Trend Context)
+        self.use_trend_filter = self.db.get_setting('use_trend_filter', True)
+        if isinstance(self.use_trend_filter, str):
+            self.use_trend_filter = self.use_trend_filter.lower() in ('1', 'true', 'yes')
+        self.min_trend_score = int(self.db.get_setting('min_trend_score', 65))
+        
+        # Log loaded settings
+        print(f"[SLEEPER v8.2.5] Loaded UI settings:")
+        print(f"  Score Thresholds: WATCH={self.MIN_SCORE_WATCHING}, BUILD={self.MIN_SCORE_BUILDING}, READY={self.MIN_SCORE_READY}")
+        print(f"  Weights: Fuel={self.WEIGHTS['oi_growth']}%, Vol={self.WEIGHTS['volatility_compression']}%, Price={self.WEIGHTS['volume_suppression']}%, Liq={self.WEIGHTS['order_book_imbalance']}%")
+        print(f"  Trend Filter: {'ON' if self.use_trend_filter else 'OFF'} (min={self.min_trend_score})")
+        
+        # v8.2.5: Trend Analyzer для 4H Context Filter
+        self.trend_analyzer = TrendAnalyzer()
+        self.trend_timeframe = self.db.get_setting('trend_timeframe', '240')  # 4H default
+        self.allow_signals_without_trend = self.db.get_setting('allow_signals_without_trend', False)
+        if isinstance(self.allow_signals_without_trend, str):
+            self.allow_signals_without_trend = self.allow_signals_without_trend.lower() in ('1', 'true', 'yes')
+        
         # Batch processing settings (v4.1: increased delay for more data)
         self.batch_size = 5   # Process 5 symbols at a time
         self.batch_delay = 5  # 5 seconds between batches (was 3)
+    
+    def _reload_settings(self):
+        """
+        v8.2.5: Перечитуємо налаштування з UI перед кожним сканом.
+        Це дозволяє змінювати налаштування без перезапуску бота.
+        """
+        # Score Thresholds
+        self.MIN_SCORE_WATCHING = int(self.db.get_setting('sleeper_min_score', 40))
+        self.MIN_SCORE_BUILDING = int(self.db.get_setting('sleeper_building_score', 50))
+        self.MIN_SCORE_READY = int(self.db.get_setting('sleeper_ready_score', 60))
+        
+        # Score Weights
+        weight_fuel = int(self.db.get_setting('weight_fuel', 30))
+        weight_volatility = int(self.db.get_setting('weight_volatility', 25))
+        weight_price = int(self.db.get_setting('weight_price', 25))
+        weight_liquidity = int(self.db.get_setting('weight_liquidity', 20))
+        
+        # Normalize to 100%
+        total_weight = weight_fuel + weight_volatility + weight_price + weight_liquidity
+        if total_weight != 100 and total_weight > 0:
+            weight_fuel = round(weight_fuel * 100 / total_weight)
+            weight_volatility = round(weight_volatility * 100 / total_weight)
+            weight_price = round(weight_price * 100 / total_weight)
+            weight_liquidity = 100 - weight_fuel - weight_volatility - weight_price
+        
+        self.WEIGHTS = {
+            'oi_growth': weight_fuel,
+            'volatility_compression': weight_volatility,
+            'volume_suppression': weight_price,
+            'order_book_imbalance': weight_liquidity,
+        }
+        
+        # Trend Filter
+        self.use_trend_filter = self.db.get_setting('use_trend_filter', True)
+        if isinstance(self.use_trend_filter, str):
+            self.use_trend_filter = self.use_trend_filter.lower() in ('1', 'true', 'yes')
+        self.min_trend_score = int(self.db.get_setting('min_trend_score', 65))
+        self.allow_signals_without_trend = self.db.get_setting('allow_signals_without_trend', False)
+        if isinstance(self.allow_signals_without_trend, str):
+            self.allow_signals_without_trend = self.allow_signals_without_trend.lower() in ('1', 'true', 'yes')
+        
+        # Scan parameters
+        self.max_symbols = min(int(self.db.get_setting('sleeper_max_symbols', 30)), 50)
+        self.min_volume = int(self.db.get_setting('sleeper_min_volume', 75_000_000))
     
     def run_scan(self) -> List[Dict]:
         """
@@ -140,7 +228,10 @@ class SleeperScannerV3:
         - BTC correlation check (warn if BTC volatile)
         - Batch processing with delays
         """
-        print(f"\n[SLEEPER v8.2] Starting SMC strategy scan (4H+15M)...")
+        # === v8.2.5: Перечитуємо налаштування з UI перед кожним сканом ===
+        self._reload_settings()
+        
+        print(f"\n[SLEEPER v8.2.5] Starting SMC strategy scan (4H+15M)...")
         start_time = time.time()
         
         # === BTC CORRELATION CHECK (v4) ===
@@ -515,6 +606,47 @@ class SleeperScannerV3:
         direction = direction_result.direction.value  # LONG, SHORT, or NEUTRAL
         direction_score = direction_result.bias_score  # v8: bias_score
         
+        # === v8.2.5: TREND FILTER (4H Context) ===
+        trend_aligned = True
+        trend_info = ""
+        
+        if self.use_trend_filter:
+            try:
+                trend_result = self.trend_analyzer.analyze(symbol, self.trend_timeframe)
+                
+                if trend_result:
+                    trend_regime = trend_result.regime
+                    trend_score_value = trend_result.total_score
+                    trend_info = f"[Trend:{trend_regime.value}({trend_score_value:.0f})]"
+                    
+                    # Перевіряємо мінімальний score
+                    if trend_score_value >= self.min_trend_score:
+                        # Якщо direction=NEUTRAL, спробуємо визначити з trend
+                        if direction == 'NEUTRAL':
+                            if trend_regime == TrendRegime.BULLISH:
+                                direction = 'LONG'
+                                direction_score = 0.15  # Fallback score
+                            elif trend_regime == TrendRegime.BEARISH:
+                                direction = 'SHORT'
+                                direction_score = -0.15
+                        else:
+                            # Перевіряємо alignment
+                            if trend_regime == TrendRegime.BULLISH and direction == 'SHORT':
+                                trend_aligned = False
+                            elif trend_regime == TrendRegime.BEARISH and direction == 'LONG':
+                                trend_aligned = False
+                            elif trend_regime == TrendRegime.NO_TRADE:
+                                trend_aligned = False
+                    else:
+                        # Score низький - не надійний trend
+                        trend_aligned = self.allow_signals_without_trend
+                else:
+                    # Немає даних тренду
+                    trend_aligned = self.allow_signals_without_trend
+            except Exception as e:
+                # Помилка аналізу - продовжуємо без trend filter
+                pass
+        
         # v8: Convert confidence float (0-100) to string
         conf_value = direction_result.confidence
         if conf_value >= 75:
@@ -584,6 +716,12 @@ class SleeperScannerV3:
             is_reversal_setup=is_reversal_setup,
             exhaustion_score=exhaustion_score
         )
+        
+        # === v8.2.5: TREND FILTER STATE ADJUSTMENT ===
+        # Якщо trend_aligned=False і Trend Filter увімкнений, не дозволяємо READY
+        if self.use_trend_filter and not trend_aligned and state == 'READY':
+            state = 'BUILDING'  # Понижуємо до BUILDING - чекаємо кращий момент
+            print(f"[SLEEPER v8.2.5] {symbol}: READY→BUILDING (trend not aligned)")
         
         # Minimum score filter (but keep VC-extreme candidates)
         if state == 'IDLE' and total_score < self.MIN_SCORE_WATCHING and not vc_extreme:
@@ -680,6 +818,10 @@ class SleeperScannerV3:
             'is_reversal_setup': is_reversal_setup,
             'exhaustion_score': round(exhaustion_score, 2),
             'direction_reason': primary_reason,
+            
+            # v8.2.5: Trend Filter data
+            'trend_aligned': trend_aligned,
+            'trend_info': trend_info,
             
             # v8: SMC Structure data
             'smc_signal': structure.smc_signal.value if structure else 'NONE',

@@ -340,9 +340,9 @@ def register_api_routes(app):
         additional_defaults = {
             # Sleeper detection
             'sleeper_min_score': 40,
-            'sleeper_building_score': 55,
-            'sleeper_ready_score': 70,
-            'sleeper_min_volume': 20000000,
+            'sleeper_building_score': 50,
+            'sleeper_ready_score': 60,
+            'sleeper_min_volume': 75000000,
             'sleeper_timeframe': '240',
             'weight_fuel': 30,
             'weight_volatility': 25,

@@ -340,7 +340,7 @@ class BackgroundJobs:
                 states[state] = states.get(state, 0) + 1
             
             duration = time.time() - start
-            version = "v8.2.5 (SMC Fallback+Lock)" if self.use_v3_scanner else "v2"
+            version = "v8.2.6 (UI Settings Integration)" if self.use_v3_scanner else "v2"
             self._log_job_execution(
                 'sleeper_scan', 
                 True, 
