@@ -145,8 +145,8 @@ class DirectionEngineV8:
     MAX_ADX_FOR_SLEEPER = 25
     
     # Пороги bias для прийняття рішень
-    BIAS_THRESHOLD_LONG = 0.30
-    BIAS_THRESHOLD_SHORT = -0.30
+    BIAS_THRESHOLD_LONG = 0.15   # v8.2.4: Знижено з 0.30 для кращої детекції
+    BIAS_THRESHOLD_SHORT = -0.15  # v8.2.4: Знижено з -0.30
     
     # Ваги компонентів (оновлені для v8)
     # SMC отримує більшу вагу, оскільки це головний фокус
@@ -160,8 +160,8 @@ class DirectionEngineV8:
         
         if config:
             self.MAX_ADX_FOR_SLEEPER = config.get('max_adx', 25)
-            self.BIAS_THRESHOLD_LONG = config.get('bias_threshold_long', 0.30)
-            self.BIAS_THRESHOLD_SHORT = config.get('bias_threshold_short', -0.30)
+            self.BIAS_THRESHOLD_LONG = config.get('bias_threshold_long', 0.15)
+            self.BIAS_THRESHOLD_SHORT = config.get('bias_threshold_short', -0.15)
             self.WEIGHT_SMC = config.get('weight_smc', 0.40)
             self.WEIGHT_STRUCTURE = config.get('weight_structure', 0.20)
             self.WEIGHT_MOMENTUM = config.get('weight_momentum', 0.20)

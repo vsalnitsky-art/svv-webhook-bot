@@ -163,7 +163,7 @@ class BackgroundJobs:
         # 1. Sleeper Scan - кожні 30 хвилин (збільшено для захисту від бану)
         self.scheduler.add_job(
             self._job_sleeper_scan,
-            IntervalTrigger(minutes=30),
+            IntervalTrigger(minutes=15),  # v8.2.4: Зменшено з 30 хв для швидшої детекції
             id='sleeper_scan',
             name='Sleeper Scanner',
             replace_existing=True
@@ -331,7 +331,7 @@ class BackgroundJobs:
                 states[state] = states.get(state, 0) + 1
             
             duration = time.time() - start
-            version = "v8.2 (SMC 4H+15M)" if self.use_v3_scanner else "v2"
+            version = "v8.2.4 (SMC MTF+LowThreshold)" if self.use_v3_scanner else "v2"
             self._log_job_execution(
                 'sleeper_scan', 
                 True, 
@@ -478,15 +478,12 @@ class BackgroundJobs:
         """Денний звіт"""
         start = time.time()
         try:
-            # Статистика за сьогодні
-            today = datetime.now().date()
-            stats = self.db.get_trade_stats(
-                from_date=datetime.combine(today, datetime.min.time())
-            )
+            # Статистика за сьогодні (days=1)
+            stats = self.db.get_trade_stats(days=1)
             
             # Додаткова статистика
             sleepers = self.db.get_sleepers()
-            ready_sleepers = [s for s in sleepers if s.state == 'READY']
+            ready_sleepers = [s for s in sleepers if s.get('state') == 'READY']
             
             stats['sleepers_scanned'] = len(sleepers)
             stats['sleepers_ready'] = len(ready_sleepers)

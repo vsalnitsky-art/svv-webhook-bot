@@ -143,6 +143,11 @@ class SMCSignalProcessor:
         # 3. Обробляємо кожен
         all_sleepers = ready_sleepers + stalking_sleepers
         
+        # v8.2.4: Логування для діагностики
+        if all_sleepers:
+            with_direction = [s for s in all_sleepers if s.get('direction') not in ['NEUTRAL', 'WAIT', None, '']]
+            print(f"[SMC] Ready: {len(ready_sleepers)}, Stalking: {len(stalking_sleepers)}, With direction: {len(with_direction)}")
+        
         for sleeper in all_sleepers:
             try:
                 result = self._process_single_sleeper(sleeper)
@@ -165,7 +170,8 @@ class SMCSignalProcessor:
         current_state = sleeper.get('state', 'WATCHING')
         direction = sleeper.get('direction', 'NEUTRAL')
         
-        if direction == 'NEUTRAL':
+        # v8.2.4: WAIT та NEUTRAL не обробляються - потрібен чіткий напрямок
+        if direction in ['NEUTRAL', 'WAIT', None, '']:
             return None
         
         # Отримуємо свіжі дані
