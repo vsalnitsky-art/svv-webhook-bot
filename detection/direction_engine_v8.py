@@ -167,6 +167,35 @@ class DirectionEngineV8:
             self.WEIGHT_MOMENTUM = config.get('weight_momentum', 0.20)
             self.WEIGHT_DERIVATIVES = config.get('weight_derivatives', 0.20)
     
+    def reload_from_db(self, db) -> None:
+        """
+        v8.2.6: Перечитуємо налаштування Direction Engine з UI.
+        Викликається перед кожним сканом для застосування змін без перезапуску.
+        """
+        # Direction Engine Weights (Settings → Trend Context → Direction Weights)
+        weight_smc = int(db.get_setting('dir_weight_smc', 40))
+        weight_structure = int(db.get_setting('dir_weight_structure', 20))
+        weight_momentum = int(db.get_setting('dir_weight_momentum', 20))
+        weight_derivatives = int(db.get_setting('dir_weight_derivatives', 20))
+        
+        # Normalize to 100%
+        total = weight_smc + weight_structure + weight_momentum + weight_derivatives
+        if total != 100 and total > 0:
+            weight_smc = round(weight_smc * 100 / total)
+            weight_structure = round(weight_structure * 100 / total)
+            weight_momentum = round(weight_momentum * 100 / total)
+            weight_derivatives = 100 - weight_smc - weight_structure - weight_momentum
+        
+        # Convert to 0-1 range
+        self.WEIGHT_SMC = weight_smc / 100
+        self.WEIGHT_STRUCTURE = weight_structure / 100
+        self.WEIGHT_MOMENTUM = weight_momentum / 100
+        self.WEIGHT_DERIVATIVES = weight_derivatives / 100
+        
+        # Bias thresholds
+        self.BIAS_THRESHOLD_LONG = float(db.get_setting('bias_threshold_long', 0.10))
+        self.BIAS_THRESHOLD_SHORT = float(db.get_setting('bias_threshold_short', -0.10))
+    
     def analyze(self, 
                 symbol: str,
                 klines_4h: List[Dict],

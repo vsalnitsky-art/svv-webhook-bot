@@ -13,8 +13,8 @@
     </div>
 
     <div class="info-box">
-        <strong>Sleeper Detector v8.2 (SMC Multi-Timeframe)</strong><br>
-        Direction = SMC (40%) + Structure (20%) + Momentum (20%) + Derivatives (20%) | 
+        <strong>Sleeper Detector v8.2.6 (SMC Multi-Timeframe)</strong><br>
+        Direction = SMC + Structure + Momentum + Derivatives (⚙️ <a href="/settings" style="color: #00c853;">configure weights</a>) | 
         🟢LONG ≥ +0.1 | 🔴SHORT ≤ -0.1 | ⚪WAIT = don't trade<br>
         <small>MTF: 4H (Bias) + 15M (Entry) | SMC: BOS/CHoCH, Order Blocks, Premium/Discount</small>
     </div>
@@ -146,13 +146,15 @@
         </details>
         
         <details>
-            <summary><h3>🧭 Direction Engine v4.1</h3></summary>
+            <summary><h3>🧭 Direction Engine v8.2.6</h3></summary>
             <ul>
-                <li>HTF Bias (50%): 1D structure + 4H EMA</li>
-                <li>LTF Momentum (30%): RSI + BB position</li>
-                <li>Derivatives (20%): OI + Funding</li>
+                <li>SMC: Market Bias + Price Zone (⚙️ configurable)</li>
+                <li>Structure: HH/HL/LH/LL pattern</li>
+                <li>Momentum: RSI + MACD signals</li>
+                <li>Derivatives: OI + Funding + OrderBook</li>
                 <li>🟢 LONG ≥ +0.1 | 🔴 SHORT ≤ -0.1 | ⚪ WAIT</li>
                 <li><strong>READY + WAIT = Don't trade</strong></li>
+                <li><a href="/settings" style="color: #00c853;">Configure weights in Settings → Trend Context</a></li>
             </ul>
         </details>
         

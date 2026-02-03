@@ -158,9 +158,7 @@ class SleeperScannerV3:
         self.min_trend_score = int(self.db.get_setting('min_trend_score', 65))
         
         # Log loaded settings
-        print(f"[SLEEPER v8.2.5] Loaded UI settings:")
-        print(f"  Score Thresholds: WATCH={self.MIN_SCORE_WATCHING}, BUILD={self.MIN_SCORE_BUILDING}, READY={self.MIN_SCORE_READY}")
-        print(f"  Weights: Fuel={self.WEIGHTS['oi_growth']}%, Vol={self.WEIGHTS['volatility_compression']}%, Price={self.WEIGHTS['volume_suppression']}%, Liq={self.WEIGHTS['order_book_imbalance']}%")
+        print(f"[SLEEPER v8.2.7] Initialized with UI settings")
         print(f"  Trend Filter: {'ON' if self.use_trend_filter else 'OFF'} (min={self.min_trend_score})")
         
         # v8.2.5: Trend Analyzer для 4H Context Filter
@@ -169,6 +167,17 @@ class SleeperScannerV3:
         self.allow_signals_without_trend = self.db.get_setting('allow_signals_without_trend', False)
         if isinstance(self.allow_signals_without_trend, str):
             self.allow_signals_without_trend = self.allow_signals_without_trend.lower() in ('1', 'true', 'yes')
+        
+        # v8.2.7: Primary Timeframe for sleeper analysis
+        self.htf_timeframe = self.db.get_setting('sleeper_timeframe', '240')
+        if self.htf_timeframe == '240':
+            self.htf_timeframe_api = '4h'
+        elif self.htf_timeframe == '60':
+            self.htf_timeframe_api = '1h'
+        elif self.htf_timeframe == 'D':
+            self.htf_timeframe_api = '1d'
+        else:
+            self.htf_timeframe_api = '4h'
         
         # Batch processing settings (v4.1: increased delay for more data)
         self.batch_size = 5   # Process 5 symbols at a time
@@ -213,10 +222,26 @@ class SleeperScannerV3:
         self.allow_signals_without_trend = self.db.get_setting('allow_signals_without_trend', False)
         if isinstance(self.allow_signals_without_trend, str):
             self.allow_signals_without_trend = self.allow_signals_without_trend.lower() in ('1', 'true', 'yes')
+        self.trend_timeframe = self.db.get_setting('trend_timeframe', '240')  # v8.2.7: Added to reload
         
         # Scan parameters
         self.max_symbols = min(int(self.db.get_setting('sleeper_max_symbols', 30)), 50)
         self.min_volume = int(self.db.get_setting('sleeper_min_volume', 75_000_000))
+        
+        # v8.2.7: Primary Timeframe for sleeper analysis
+        self.htf_timeframe = self.db.get_setting('sleeper_timeframe', '240')  # 4H default
+        # Convert to API format
+        if self.htf_timeframe == '240':
+            self.htf_timeframe_api = '4h'
+        elif self.htf_timeframe == '60':
+            self.htf_timeframe_api = '1h'
+        elif self.htf_timeframe == 'D':
+            self.htf_timeframe_api = '1d'
+        else:
+            self.htf_timeframe_api = '4h'
+        
+        # v8.2.6: Оновлюємо Direction Engine з UI налаштувань
+        self.direction_engine.reload_from_db(self.db)
     
     def run_scan(self) -> List[Dict]:
         """
@@ -231,7 +256,13 @@ class SleeperScannerV3:
         # === v8.2.5: Перечитуємо налаштування з UI перед кожним сканом ===
         self._reload_settings()
         
-        print(f"\n[SLEEPER v8.2.5] Starting SMC strategy scan (4H+15M)...")
+        # v8.2.7: Логуємо поточні налаштування
+        print(f"\n[SLEEPER v8.2.7] Starting SMC strategy scan ({self.htf_timeframe_api.upper()}+LTF)...")
+        print(f"  Score: WATCH≥{self.MIN_SCORE_WATCHING}, BUILD≥{self.MIN_SCORE_BUILDING}, READY≥{self.MIN_SCORE_READY}")
+        print(f"  Weights: Fuel={self.WEIGHTS['oi_growth']}%, Vol={self.WEIGHTS['volatility_compression']}%, Price={self.WEIGHTS['volume_suppression']}%, Liq={self.WEIGHTS['order_book_imbalance']}%")
+        print(f"  Direction: SMC={int(self.direction_engine.WEIGHT_SMC*100)}%, Struct={int(self.direction_engine.WEIGHT_STRUCTURE*100)}%, Mom={int(self.direction_engine.WEIGHT_MOMENTUM*100)}%, Deriv={int(self.direction_engine.WEIGHT_DERIVATIVES*100)}%")
+        print(f"  Bias: LONG≥{self.direction_engine.BIAS_THRESHOLD_LONG}, SHORT≤{self.direction_engine.BIAS_THRESHOLD_SHORT}")
+        print(f"  Trend Filter: {'ON' if self.use_trend_filter else 'OFF'} (min={self.min_trend_score})")
         start_time = time.time()
         
         # === BTC CORRELATION CHECK (v4) ===
@@ -470,8 +501,8 @@ class SleeperScannerV3:
         
         # === 1. GET 5-DAY DATA ===
         
-        # 4H klines for 5 days (30 candles) - HTF for global bias
-        klines_4h = self.fetcher.get_klines(symbol, '4h', limit=self.KLINES_5D)
+        # v8.2.7: HTF klines for sleeper analysis (configurable via UI)
+        klines_4h = self.fetcher.get_klines(symbol, self.htf_timeframe_api, limit=self.KLINES_5D)
         if len(klines_4h) < 20:
             return None
         

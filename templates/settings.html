@@ -152,6 +152,65 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Direction Engine Weights (NEW v8.2.6) -->
+            <div class="settings-section">
+                <h2>⚖️ Direction Engine Weights</h2>
+                <p class="section-desc">Configure weights for LONG/SHORT direction detection (must sum to 100%)</p>
+                
+                <div class="form-row four-col">
+                    <div class="form-group">
+                        <label for="dir_weight_smc">SMC (%)</label>
+                        <input type="number" id="dir_weight_smc" name="dir_weight_smc" 
+                               value="{{ settings.dir_weight_smc | default(40) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Market Bias + Price Zone</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="dir_weight_structure">Structure (%)</label>
+                        <input type="number" id="dir_weight_structure" name="dir_weight_structure" 
+                               value="{{ settings.dir_weight_structure | default(20) }}" step="5" min="0" max="100" class="form-control">
+                        <small>HH/HL/LH/LL pattern</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="dir_weight_momentum">Momentum (%)</label>
+                        <input type="number" id="dir_weight_momentum" name="dir_weight_momentum" 
+                               value="{{ settings.dir_weight_momentum | default(20) }}" step="5" min="0" max="100" class="form-control">
+                        <small>RSI + MACD signals</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="dir_weight_derivatives">Derivatives (%)</label>
+                        <input type="number" id="dir_weight_derivatives" name="dir_weight_derivatives" 
+                               value="{{ settings.dir_weight_derivatives | default(20) }}" step="5" min="0" max="100" class="form-control">
+                        <small>OI + Funding + OrderBook</small>
+                    </div>
+                </div>
+                
+                <div class="weight-total-bar" id="dir-weight-total" style="margin-top: 10px; padding: 10px; background: rgba(0, 200, 83, 0.2); border-radius: 8px; text-align: center;">
+                    Total: <span id="dir-total-value">100</span>%
+                </div>
+                
+                <div class="info-box" style="margin-top: 15px;">
+                    <h4>Bias Thresholds:</h4>
+                    <div class="form-row two-col">
+                        <div class="form-group">
+                            <label for="bias_threshold_long">LONG Threshold</label>
+                            <input type="number" id="bias_threshold_long" name="bias_threshold_long" 
+                                   value="{{ settings.bias_threshold_long | default(0.10) }}" step="0.05" min="0" max="0.5" class="form-control">
+                            <small>Bias ≥ this → LONG (default: 0.10)</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="bias_threshold_short">SHORT Threshold</label>
+                            <input type="number" id="bias_threshold_short" name="bias_threshold_short" 
+                                   value="{{ settings.bias_threshold_short | default(-0.10) }}" step="0.05" min="-0.5" max="0" class="form-control">
+                            <small>Bias ≤ this → SHORT (default: -0.10)</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Sleeper Detection Tab -->
@@ -1144,11 +1203,34 @@ function updateWeightTotal() {
     el.classList.toggle('error', total !== 100);
 }
 
+// v8.2.6: Direction Engine Weights validation
+function updateDirWeightTotal() {
+    const smc = parseInt(document.getElementById('dir_weight_smc').value) || 0;
+    const structure = parseInt(document.getElementById('dir_weight_structure').value) || 0;
+    const momentum = parseInt(document.getElementById('dir_weight_momentum').value) || 0;
+    const derivatives = parseInt(document.getElementById('dir_weight_derivatives').value) || 0;
+    const total = smc + structure + momentum + derivatives;
+    
+    const el = document.getElementById('dir-weight-total');
+    const valueEl = document.getElementById('dir-total-value');
+    if (valueEl) valueEl.textContent = total;
+    if (el) {
+        el.style.background = total === 100 ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 82, 82, 0.2)';
+    }
+}
+
 ['weight_fuel', 'weight_volatility', 'weight_price', 'weight_liquidity'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateWeightTotal);
 });
 updateWeightTotal();
+
+// Direction Engine Weights listeners
+['dir_weight_smc', 'dir_weight_structure', 'dir_weight_momentum', 'dir_weight_derivatives'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateDirWeightTotal);
+});
+updateDirWeightTotal();
 
 // Form submission
 document.getElementById('settings-form').addEventListener('submit', async (e) => {
@@ -1181,6 +1263,14 @@ document.getElementById('settings-form').addEventListener('submit', async (e) =>
                        (settings.weight_price || 0) + (settings.weight_liquidity || 0);
     if (weightTotal !== 100) {
         alert('⚠️ Score weights must sum to 100%!');
+        return;
+    }
+    
+    // Validate Direction Engine weights
+    const dirWeightTotal = (settings.dir_weight_smc || 0) + (settings.dir_weight_structure || 0) + 
+                          (settings.dir_weight_momentum || 0) + (settings.dir_weight_derivatives || 0);
+    if (dirWeightTotal !== 100) {
+        alert('⚠️ Direction Engine weights must sum to 100%!');
         return;
     }
     

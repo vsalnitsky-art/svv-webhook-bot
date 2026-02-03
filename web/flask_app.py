@@ -383,6 +383,19 @@ def register_api_routes(app):
         for key, value in trend_defaults.items():
             db.set_setting(key, value)
         
+        # v8.2.6: Direction Engine defaults
+        direction_defaults = {
+            'dir_weight_smc': 40,
+            'dir_weight_structure': 20,
+            'dir_weight_momentum': 20,
+            'dir_weight_derivatives': 20,
+            'bias_threshold_long': 0.10,
+            'bias_threshold_short': -0.10,
+        }
+        
+        for key, value in direction_defaults.items():
+            db.set_setting(key, value)
+        
         db.log_event(
             message='Settings reset to defaults',
             level='INFO',
