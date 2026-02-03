@@ -241,6 +241,33 @@
                         <small>Score for READY state 🔥</small>
                     </div>
                 </div>
+                
+                <!-- v8.2.8: Additional State Conditions -->
+                <h3 style="margin-top: 20px; font-size: 1em; color: #888;">📊 Additional State Conditions (optional)</h3>
+                <p class="section-desc" style="font-size: 0.85em;">Set to 0 to use only Score for state transitions</p>
+                
+                <div class="form-row three-col">
+                    <div class="form-group">
+                        <label for="compression_ready">BB% for READY</label>
+                        <input type="number" id="compression_ready" name="compression_ready" 
+                               value="{{ settings.compression_ready | default(0) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Min BB compression % (0=disabled)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="compression_building">BB% for BUILDING</label>
+                        <input type="number" id="compression_building" name="compression_building" 
+                               value="{{ settings.compression_building | default(0) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Min BB compression % (0=disabled)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="suppression_building">Vol Supp% for BUILDING</label>
+                        <input type="number" id="suppression_building" name="suppression_building" 
+                               value="{{ settings.suppression_building | default(0) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Min volume suppression % (0=disabled)</small>
+                    </div>
+                </div>
             </div>
 
             <div class="settings-section">

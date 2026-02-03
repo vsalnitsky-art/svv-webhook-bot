@@ -78,10 +78,9 @@ class SleeperScannerV3:
     KLINES_1D = 60   # 60 days for EMA50 + structural analysis
     OI_PERIODS = 30  # 30 hours of OI data
     
-    # Transition conditions (v4.1.2: relaxed for earlier signals)
-    COMPRESSION_BUILDING = 35   # % BB compression for BUILDING (was 50)
-    COMPRESSION_READY = 50      # % BB compression for READY (was 70)
-    VOLUME_SUPPRESSION_MIN = 40 # % volume suppression for BUILDING (was 60)
+    # v8.2.8: Transition conditions читаються з UI
+    # compression_ready, compression_building, suppression_building
+    # Default = 0 (disabled, only Score determines state)
     
     # Trigger conditions
     VOLUME_SPIKE_THRESHOLD = 200  # % of average for trigger
@@ -128,6 +127,11 @@ class SleeperScannerV3:
         self.MIN_SCORE_WATCHING = int(self.db.get_setting('sleeper_min_score', 40))
         self.MIN_SCORE_BUILDING = int(self.db.get_setting('sleeper_building_score', 50))
         self.MIN_SCORE_READY = int(self.db.get_setting('sleeper_ready_score', 60))
+        
+        # v8.2.8: Additional State Conditions (0 = disabled, only Score determines state)
+        self.COMPRESSION_READY = int(self.db.get_setting('compression_ready', 0))
+        self.COMPRESSION_BUILDING = int(self.db.get_setting('compression_building', 0))
+        self.VOLUME_SUPPRESSION_MIN = int(self.db.get_setting('suppression_building', 0))
         
         # Score Weights (Settings → Sleeper Detection → Score Weights)
         # UI: Fuel=OI Growth, Volatility=BB Squeeze, Price=Range Position, Liquidity=Volume Profile
@@ -192,6 +196,11 @@ class SleeperScannerV3:
         self.MIN_SCORE_WATCHING = int(self.db.get_setting('sleeper_min_score', 40))
         self.MIN_SCORE_BUILDING = int(self.db.get_setting('sleeper_building_score', 50))
         self.MIN_SCORE_READY = int(self.db.get_setting('sleeper_ready_score', 60))
+        
+        # v8.2.8: Additional State Conditions (0 = disabled)
+        self.COMPRESSION_READY = int(self.db.get_setting('compression_ready', 0))
+        self.COMPRESSION_BUILDING = int(self.db.get_setting('compression_building', 0))
+        self.VOLUME_SUPPRESSION_MIN = int(self.db.get_setting('suppression_building', 0))
         
         # Score Weights
         weight_fuel = int(self.db.get_setting('weight_fuel', 30))
@@ -263,6 +272,11 @@ class SleeperScannerV3:
         print(f"  Direction: SMC={int(self.direction_engine.WEIGHT_SMC*100)}%, Struct={int(self.direction_engine.WEIGHT_STRUCTURE*100)}%, Mom={int(self.direction_engine.WEIGHT_MOMENTUM*100)}%, Deriv={int(self.direction_engine.WEIGHT_DERIVATIVES*100)}%")
         print(f"  Bias: LONG≥{self.direction_engine.BIAS_THRESHOLD_LONG}, SHORT≤{self.direction_engine.BIAS_THRESHOLD_SHORT}")
         print(f"  Trend Filter: {'ON' if self.use_trend_filter else 'OFF'} (min={self.min_trend_score})")
+        # v8.2.8: Log additional conditions
+        if self.COMPRESSION_READY == 0 and self.COMPRESSION_BUILDING == 0:
+            print(f"  State Mode: SCORE-ONLY (BB%/VS% conditions disabled)")
+        else:
+            print(f"  State Conditions: BB%≥{self.COMPRESSION_READY} for READY, BB%≥{self.COMPRESSION_BUILDING}+VS%≥{self.VOLUME_SUPPRESSION_MIN} for BUILDING")
         start_time = time.time()
         
         # === BTC CORRELATION CHECK (v4) ===
@@ -1345,8 +1359,9 @@ class SleeperScannerV3:
         # ============================================
         
         # === READY (Classic) ===
-        if (total_score >= self.MIN_SCORE_READY and 
-            compression_pct >= self.COMPRESSION_READY):
+        # v8.2.8: If COMPRESSION_READY = 0, only Score determines READY state
+        compression_ok_ready = (self.COMPRESSION_READY == 0 or compression_pct >= self.COMPRESSION_READY)
+        if total_score >= self.MIN_SCORE_READY and compression_ok_ready:
             return (SleeperState.READY.value, vc_extreme)
         
         # === READY (Accelerated) ===
@@ -1369,9 +1384,10 @@ class SleeperScannerV3:
             return (SleeperState.BUILDING.value, vc_extreme)
         
         # === BUILDING (Classic) ===
-        if (total_score >= self.MIN_SCORE_BUILDING and 
-            compression_pct >= self.COMPRESSION_BUILDING and
-            suppression_pct >= self.VOLUME_SUPPRESSION_MIN):
+        # v8.2.8: If conditions = 0, only Score determines BUILDING state
+        compression_ok_building = (self.COMPRESSION_BUILDING == 0 or compression_pct >= self.COMPRESSION_BUILDING)
+        suppression_ok = (self.VOLUME_SUPPRESSION_MIN == 0 or suppression_pct >= self.VOLUME_SUPPRESSION_MIN)
+        if total_score >= self.MIN_SCORE_BUILDING and compression_ok_building and suppression_ok:
             return (SleeperState.BUILDING.value, vc_extreme)
         
         # === BUILDING (Accelerated) ===
@@ -1434,8 +1450,9 @@ class SleeperScannerV3:
         
         # === READY ===
         # High compression, ready for breakout
-        if (total_score >= self.MIN_SCORE_READY and 
-            compression_pct >= self.COMPRESSION_READY):
+        # v8.2.8: If COMPRESSION_READY = 0, only Score determines READY
+        compression_ok_ready2 = (self.COMPRESSION_READY == 0 or compression_pct >= self.COMPRESSION_READY)
+        if total_score >= self.MIN_SCORE_READY and compression_ok_ready2:
             return (SleeperState.READY.value, vc_extreme)
         
         # === ACCELERATED PATH TO READY ===
@@ -1453,9 +1470,10 @@ class SleeperScannerV3:
         
         # === BUILDING (Classic Path) ===
         # Good compression + volume suppressed
-        if (total_score >= self.MIN_SCORE_BUILDING and 
-            compression_pct >= self.COMPRESSION_BUILDING and
-            suppression_pct >= self.VOLUME_SUPPRESSION_MIN):
+        # v8.2.8: If conditions = 0, only Score determines BUILDING
+        compression_ok_building2 = (self.COMPRESSION_BUILDING == 0 or compression_pct >= self.COMPRESSION_BUILDING)
+        suppression_ok2 = (self.VOLUME_SUPPRESSION_MIN == 0 or suppression_pct >= self.VOLUME_SUPPRESSION_MIN)
+        if total_score >= self.MIN_SCORE_BUILDING and compression_ok_building2 and suppression_ok2:
             return (SleeperState.BUILDING.value, vc_extreme)
         
         # === BUILDING (Accelerated Path) ===
