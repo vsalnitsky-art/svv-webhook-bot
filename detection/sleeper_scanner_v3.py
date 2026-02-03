@@ -612,6 +612,42 @@ class SleeperScannerV3:
         if is_reversal_setup:
             hp = min(self.HP_MAX, hp + 2)
         
+        # === v8.2.5: FALLBACK DIRECTION для READY без напрямку ===
+        # Якщо state=READY але direction=NEUTRAL, визначаємо fallback на основі SMC
+        if state == 'READY' and direction == 'NEUTRAL' and structure:
+            market_bias = structure.market_bias.value if structure.market_bias else 'NEUTRAL'
+            price_zone = structure.price_zone.value if structure.price_zone else 'EQUILIBRIUM'
+            smc_signal = structure.smc_signal.value if structure.smc_signal else 'NONE'
+            
+            # CHoCH має найвищий пріоритет
+            if 'BULLISH_CHOCH' in smc_signal:
+                direction = 'LONG'
+                print(f"[SLEEPER v8.2.5] {symbol}: Fallback LONG (CHoCH)")
+            elif 'BEARISH_CHOCH' in smc_signal:
+                direction = 'SHORT'
+                print(f"[SLEEPER v8.2.5] {symbol}: Fallback SHORT (CHoCH)")
+            # BOS + market bias
+            elif 'BULLISH_BOS' in smc_signal and market_bias != 'BEARISH':
+                direction = 'LONG'
+                print(f"[SLEEPER v8.2.5] {symbol}: Fallback LONG (BOS+bias)")
+            elif 'BEARISH_BOS' in smc_signal and market_bias != 'BULLISH':
+                direction = 'SHORT'
+                print(f"[SLEEPER v8.2.5] {symbol}: Fallback SHORT (BOS+bias)")
+            # Market bias + zone alignment
+            elif market_bias == 'BULLISH' and price_zone in ['DISCOUNT', 'EQUILIBRIUM']:
+                direction = 'LONG'
+                print(f"[SLEEPER v8.2.5] {symbol}: Fallback LONG (bias={market_bias}, zone={price_zone})")
+            elif market_bias == 'BEARISH' and price_zone in ['PREMIUM', 'EQUILIBRIUM']:
+                direction = 'SHORT'
+                print(f"[SLEEPER v8.2.5] {symbol}: Fallback SHORT (bias={market_bias}, zone={price_zone})")
+            # Останній варіант: тільки zone
+            elif price_zone == 'DISCOUNT':
+                direction = 'LONG'
+                print(f"[SLEEPER v8.2.5] {symbol}: Fallback LONG (zone={price_zone})")
+            elif price_zone == 'PREMIUM':
+                direction = 'SHORT'
+                print(f"[SLEEPER v8.2.5] {symbol}: Fallback SHORT (zone={price_zone})")
+        
         # === 10. BUILD RESULT ===
         
         return {

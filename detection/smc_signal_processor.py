@@ -169,17 +169,35 @@ class SMCSignalProcessor:
         symbol = sleeper.get('symbol')
         current_state = sleeper.get('state', 'WATCHING')
         direction = sleeper.get('direction', 'NEUTRAL')
+        score = sleeper.get('total_score', 0)
         
-        # v8.2.4: WAIT та NEUTRAL не обробляються - потрібен чіткий напрямок
-        if direction in ['NEUTRAL', 'WAIT', None, '']:
-            return None
-        
-        # Отримуємо свіжі дані
+        # Отримуємо свіжі дані (потрібні для fallback)
         klines_4h = self.fetcher.get_klines(symbol, '4h', 100)
         klines_1h = self.fetcher.get_klines(symbol, '1h', 100)
         
         if not klines_4h or not klines_1h or len(klines_1h) < 50:
             return None
+        
+        # SMC аналіз на 1H з HTF bias від 4H
+        smc_result = self.smc_analyzer.analyze(klines_1h, htf_klines=klines_4h)
+        
+        if not smc_result:
+            return None
+        
+        # v8.2.5: FALLBACK DIRECTION для READY sleepers без напрямку
+        if direction in ['NEUTRAL', 'WAIT', None, '']:
+            # Якщо READY з високим score - спробувати визначити напрямок
+            if current_state == 'READY' and score >= 65:
+                fallback_dir = self._get_fallback_direction(smc_result)
+                if fallback_dir:
+                    direction = fallback_dir
+                    print(f"[SMC] {symbol}: Fallback direction → {direction} (bias={smc_result.market_bias.value}, zone={smc_result.price_zone.value})")
+                    # Оновити direction в БД
+                    self.db.update_sleeper_state(symbol, current_state, direction=direction)
+                else:
+                    return None
+            else:
+                return None
         
         # Поточна ціна (klines is List[Dict] with keys: open, high, low, close, volume, etc.)
         last_candle = klines_1h[-1]
@@ -188,12 +206,6 @@ class SMCSignalProcessor:
         else:
             # Fallback for list format [timestamp, open, high, low, close, volume]
             current_price = float(last_candle[4])
-        
-        # SMC аналіз на 1H з HTF bias від 4H
-        smc_result = self.smc_analyzer.analyze(klines_1h, htf_klines=klines_4h)
-        
-        if not smc_result:
-            return None
         
         # Визначаємо HTF bias
         htf_bias = "NEUTRAL"
@@ -228,6 +240,42 @@ class SMCSignalProcessor:
                 symbol, current_price, smc_result, htf_bias, htf_aligned,
                 swing_high, swing_low, current_state, sleeper
             )
+        
+        return None
+    
+    def _get_fallback_direction(self, smc_result: SMCAnalysisResult) -> Optional[str]:
+        """
+        v8.2.5: Визначає fallback напрямок для READY sleepers без direction
+        
+        Логіка:
+        - BULLISH bias + DISCOUNT zone → LONG
+        - BEARISH bias + PREMIUM zone → SHORT
+        - Інакше → None (не можемо визначити)
+        """
+        from detection.smc_analyzer import MarketBias, PriceZone
+        
+        bias = smc_result.market_bias
+        zone = smc_result.price_zone
+        
+        # LONG: Бичачий bias + Discount zone (хороша ціна для покупки)
+        if bias == MarketBias.BULLISH and zone in [PriceZone.DISCOUNT, PriceZone.EQUILIBRIUM]:
+            return "LONG"
+        
+        # SHORT: Ведмежий bias + Premium zone (хороша ціна для продажу)
+        if bias == MarketBias.BEARISH and zone in [PriceZone.PREMIUM, PriceZone.EQUILIBRIUM]:
+            return "SHORT"
+        
+        # Додаткові умови на основі structure signal
+        from detection.smc_analyzer import StructureSignal
+        
+        if smc_result.structure_signal == StructureSignal.BULLISH_CHOCH:
+            return "LONG"
+        elif smc_result.structure_signal == StructureSignal.BEARISH_CHOCH:
+            return "SHORT"
+        elif smc_result.structure_signal == StructureSignal.BULLISH_BOS and bias != MarketBias.BEARISH:
+            return "LONG"
+        elif smc_result.structure_signal == StructureSignal.BEARISH_BOS and bias != MarketBias.BULLISH:
+            return "SHORT"
         
         return None
     

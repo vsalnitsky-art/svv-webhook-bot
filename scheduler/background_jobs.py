@@ -46,6 +46,9 @@ class BackgroundJobs:
         # Статистика виконання
         self.job_stats: Dict[str, Dict[str, Any]] = {}
         
+        # v8.2.5: Lock для запобігання паралельним сканам
+        self._scan_in_progress = False
+        
         # ===== ANTI-SPAM: Cooldown tracking =====
         # Format: {'symbol': datetime_of_last_alert}
         self._sleeper_ready_sent: Dict[str, datetime] = {}  # Cooldown 2 hours
@@ -286,6 +289,12 @@ class BackgroundJobs:
         if not self._is_module_enabled('sleepers'):
             return
         
+        # v8.2.5: Запобігаємо паралельним сканам
+        if self._scan_in_progress:
+            print("[SLEEPER] ⚠️ Scan already in progress, skipping...")
+            return
+        
+        self._scan_in_progress = True
         start = time.time()
         try:
             # Use v3 scanner (5-day strategy) by default
@@ -331,7 +340,7 @@ class BackgroundJobs:
                 states[state] = states.get(state, 0) + 1
             
             duration = time.time() - start
-            version = "v8.2.4 (SMC MTF+LowThreshold)" if self.use_v3_scanner else "v2"
+            version = "v8.2.5 (SMC Fallback+Lock)" if self.use_v3_scanner else "v2"
             self._log_job_execution(
                 'sleeper_scan', 
                 True, 
@@ -342,6 +351,9 @@ class BackgroundJobs:
             duration = time.time() - start
             self._log_job_execution('sleeper_scan', False, duration, str(e))
             print(f"[SCHEDULER ERROR] Sleeper scan: {e}")
+        finally:
+            # v8.2.5: Завжди знімаємо lock
+            self._scan_in_progress = False
     
     def _job_ob_scan(self):
         """Сканування Order Blocks для готових Sleepers"""
