@@ -1099,6 +1099,219 @@ def register_api_routes(app):
         })
     
     
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CTR SCANNER ROUTES
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    @app.route('/ctr')
+    def ctr_page():
+        """CTR Scanner page"""
+        from scheduler.ctr_job import get_ctr_job
+        import json
+        
+        # Get watchlist
+        watchlist_str = db.get_setting('ctr_watchlist', '')
+        watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
+        
+        # Get scan results
+        scan_results_str = db.get_setting('ctr_last_scan', '[]')
+        try:
+            scan_results = json.loads(scan_results_str)
+        except:
+            scan_results = []
+        
+        # Get last scan time
+        last_scan_time = db.get_setting('ctr_last_scan_time', None)
+        if last_scan_time:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(last_scan_time.replace('Z', '+00:00'))
+                last_scan_time = dt.strftime('%H:%M:%S')
+            except:
+                pass
+        
+        # Count statuses
+        oversold_count = sum(1 for r in scan_results if r.get('status') == 'Oversold')
+        overbought_count = sum(1 for r in scan_results if r.get('status') == 'Overbought')
+        
+        # Check if running
+        ctr_job = get_ctr_job()
+        ctr_running = ctr_job.is_running() if ctr_job else False
+        
+        # Check CTR Only mode
+        ctr_only_mode = db.get_setting('ctr_only_mode', '0')
+        if isinstance(ctr_only_mode, str):
+            ctr_only_mode = ctr_only_mode in ('1', 'true', 'yes')
+        
+        # Get settings
+        settings = {
+            'ctr_timeframe': db.get_setting('ctr_timeframe', '15m'),
+            'ctr_fast_length': db.get_setting('ctr_fast_length', 21),
+            'ctr_slow_length': db.get_setting('ctr_slow_length', 50),
+            'ctr_cycle_length': db.get_setting('ctr_cycle_length', 10),
+            'ctr_upper': db.get_setting('ctr_upper', 75),
+            'ctr_lower': db.get_setting('ctr_lower', 25),
+        }
+        
+        return render_template('ctr.html',
+            watchlist=watchlist,
+            scan_results=scan_results,
+            last_scan_time=last_scan_time,
+            oversold_count=oversold_count,
+            overbought_count=overbought_count,
+            signals_today=0,  # TODO: implement
+            ctr_running=ctr_running,
+            ctr_only_mode=ctr_only_mode,
+            settings=settings
+        )
+    
+    @app.route('/api/ctr/watchlist/add', methods=['POST'])
+    def api_ctr_watchlist_add():
+        """Add symbol to CTR watchlist"""
+        data = request.get_json()
+        symbol = data.get('symbol', '').strip().upper()
+        
+        if not symbol:
+            return jsonify({'success': False, 'error': 'Symbol required'})
+        
+        if not symbol.endswith('USDT'):
+            return jsonify({'success': False, 'error': 'Symbol must end with USDT'})
+        
+        # Get current watchlist
+        watchlist_str = db.get_setting('ctr_watchlist', '')
+        watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
+        
+        if symbol in watchlist:
+            return jsonify({'success': False, 'error': 'Symbol already in watchlist'})
+        
+        # Validate symbol exists on Binance
+        try:
+            from core.binance_connector import get_binance_connector
+            fetcher = get_binance_connector()
+            ticker = fetcher.get_ticker(symbol)
+            if not ticker:
+                return jsonify({'success': False, 'error': f'Symbol {symbol} not found on Binance'})
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Validation error: {str(e)}'})
+        
+        # Add to watchlist
+        watchlist.append(symbol)
+        db.set_setting('ctr_watchlist', ','.join(watchlist))
+        
+        return jsonify({'success': True, 'watchlist': watchlist})
+    
+    @app.route('/api/ctr/watchlist/remove', methods=['POST'])
+    def api_ctr_watchlist_remove():
+        """Remove symbol from CTR watchlist"""
+        data = request.get_json()
+        symbol = data.get('symbol', '').strip().upper()
+        
+        if not symbol:
+            return jsonify({'success': False, 'error': 'Symbol required'})
+        
+        # Get current watchlist
+        watchlist_str = db.get_setting('ctr_watchlist', '')
+        watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
+        
+        if symbol not in watchlist:
+            return jsonify({'success': False, 'error': 'Symbol not in watchlist'})
+        
+        # Remove from watchlist
+        watchlist.remove(symbol)
+        db.set_setting('ctr_watchlist', ','.join(watchlist))
+        
+        return jsonify({'success': True, 'watchlist': watchlist})
+    
+    @app.route('/api/ctr/settings', methods=['POST'])
+    def api_ctr_settings():
+        """Save CTR settings"""
+        data = request.get_json()
+        
+        # Save all CTR settings
+        ctr_settings = [
+            'ctr_timeframe', 'ctr_fast_length', 'ctr_slow_length',
+            'ctr_cycle_length', 'ctr_upper', 'ctr_lower'
+        ]
+        
+        for key in ctr_settings:
+            if key in data:
+                db.set_setting(key, data[key])
+        
+        # Reload scanner settings
+        from detection.ctr_scanner import get_ctr_scanner
+        scanner = get_ctr_scanner(db)
+        scanner.reload_settings()
+        
+        return jsonify({'success': True})
+    
+    @app.route('/api/ctr/start', methods=['POST'])
+    def api_ctr_start():
+        """Start CTR scanner"""
+        from scheduler.ctr_job import start_ctr_job
+        
+        try:
+            job = start_ctr_job(db)
+            return jsonify({'success': True, 'running': job.is_running()})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/ctr/stop', methods=['POST'])
+    def api_ctr_stop():
+        """Stop CTR scanner"""
+        from scheduler.ctr_job import stop_ctr_job
+        
+        try:
+            stop_ctr_job()
+            return jsonify({'success': True, 'running': False})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/ctr/scan', methods=['POST'])
+    def api_ctr_scan():
+        """Run CTR scan manually"""
+        from detection.ctr_scanner import get_ctr_scanner
+        import json
+        
+        # Get watchlist
+        watchlist_str = db.get_setting('ctr_watchlist', '')
+        watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
+        
+        if not watchlist:
+            return jsonify({'success': False, 'error': 'Watchlist is empty'})
+        
+        # Run scan
+        scanner = get_ctr_scanner(db)
+        results, signals = scanner.scan_watchlist(watchlist)
+        
+        # Store results
+        from datetime import datetime, timezone
+        db.set_setting('ctr_last_scan', json.dumps(results))
+        db.set_setting('ctr_last_scan_time', datetime.now(timezone.utc).isoformat())
+        
+        # Send signals to Telegram
+        if signals:
+            from alerts.telegram_notifier import get_notifier
+            notifier = get_notifier()
+            for signal in signals:
+                message = scanner.format_telegram_signal(signal)
+                notifier.send_message(message)
+        
+        return jsonify({
+            'success': True,
+            'results_count': len(results),
+            'signals_count': len(signals)
+        })
+    
+    @app.route('/api/ctr/only-mode', methods=['POST'])
+    def api_ctr_only_mode():
+        """Toggle CTR Only mode (disables other scans)"""
+        data = request.get_json()
+        enabled = data.get('enabled', False)
+        
+        db.set_setting('ctr_only_mode', '1' if enabled else '0')
+        
+        return jsonify({'success': True, 'enabled': enabled})
+    
     # End of register_api_routes
 
 

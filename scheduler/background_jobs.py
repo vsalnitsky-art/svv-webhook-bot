@@ -285,6 +285,14 @@ class BackgroundJobs:
     
     def _job_sleeper_scan(self):
         """Сканування Sleepers (SMC Strategy v8)"""
+        # v8.2.8: Check if CTR Only mode is active
+        ctr_only_mode = self.db.get_setting('ctr_only_mode', False)
+        if isinstance(ctr_only_mode, str):
+            ctr_only_mode = ctr_only_mode.lower() in ('1', 'true', 'yes')
+        if ctr_only_mode:
+            print("[SLEEPER] ⏸️ CTR Only mode active, sleeper scan disabled")
+            return
+        
         # Check if module is enabled
         if not self._is_module_enabled('sleepers'):
             return
@@ -340,7 +348,7 @@ class BackgroundJobs:
                 states[state] = states.get(state, 0) + 1
             
             duration = time.time() - start
-            version = "v8.2.8 (Score-Only Mode)" if self.use_v3_scanner else "v2"
+            version = "v8.3.0 (CTR Scanner)" if self.use_v3_scanner else "v2"
             self._log_job_execution(
                 'sleeper_scan', 
                 True, 
@@ -357,6 +365,13 @@ class BackgroundJobs:
     
     def _job_ob_scan(self):
         """Сканування Order Blocks для готових Sleepers"""
+        # v8.2.8: Check if CTR Only mode is active
+        ctr_only_mode = self.db.get_setting('ctr_only_mode', False)
+        if isinstance(ctr_only_mode, str):
+            ctr_only_mode = ctr_only_mode.lower() in ('1', 'true', 'yes')
+        if ctr_only_mode:
+            return
+        
         # Check if module is enabled
         if not self._is_module_enabled('orderblocks'):
             return

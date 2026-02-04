@@ -1,0 +1,630 @@
+{% extends "base.html" %}
+{% block title %}CTR Scanner{% endblock %}
+
+{% block content %}
+<style>
+    .ctr-container {
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+    
+    .ctr-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+        gap: 15px;
+    }
+    
+    .ctr-title h1 {
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .status-badge {
+        padding: 5px 12px;
+        border-radius: 20px;
+        font-size: 0.8em;
+        font-weight: bold;
+    }
+    
+    .status-running {
+        background: rgba(0, 200, 83, 0.2);
+        color: #00c853;
+        animation: pulse 2s infinite;
+    }
+    
+    .status-stopped {
+        background: rgba(255, 82, 82, 0.2);
+        color: #ff5252;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+    }
+    
+    .ctr-controls {
+        display: flex;
+        gap: 10px;
+    }
+    
+    .ctr-grid {
+        display: grid;
+        grid-template-columns: 350px 1fr;
+        gap: 20px;
+    }
+    
+    @media (max-width: 900px) {
+        .ctr-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+    
+    .ctr-panel {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 20px;
+    }
+    
+    .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .panel-header h2 {
+        margin: 0;
+        font-size: 1.1em;
+    }
+    
+    /* Watchlist */
+    .watchlist-input {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 15px;
+    }
+    
+    .watchlist-input input {
+        flex: 1;
+        padding: 10px 15px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.3);
+        color: white;
+        text-transform: uppercase;
+    }
+    
+    .watchlist-items {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .watchlist-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 12px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+    
+    .watchlist-item:hover {
+        background: rgba(0, 0, 0, 0.4);
+    }
+    
+    .watchlist-symbol {
+        font-weight: bold;
+        font-family: monospace;
+    }
+    
+    .watchlist-remove {
+        background: rgba(255, 82, 82, 0.2);
+        border: none;
+        color: #ff5252;
+        padding: 5px 10px;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+    
+    .watchlist-remove:hover {
+        background: rgba(255, 82, 82, 0.4);
+    }
+    
+    /* Results Table */
+    .results-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    
+    .results-table th,
+    .results-table td {
+        padding: 12px 15px;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .results-table th {
+        background: rgba(0, 0, 0, 0.3);
+        font-weight: 600;
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .results-table tbody tr:hover {
+        background: rgba(255, 255, 255, 0.05);
+    }
+    
+    .stc-value {
+        font-family: monospace;
+        font-weight: bold;
+    }
+    
+    .stc-oversold {
+        color: #00c853;
+    }
+    
+    .stc-overbought {
+        color: #ff5252;
+    }
+    
+    .stc-neutral {
+        color: #888;
+    }
+    
+    .signal-badge {
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 0.85em;
+        font-weight: bold;
+    }
+    
+    .signal-buy {
+        background: rgba(0, 200, 83, 0.2);
+        color: #00c853;
+    }
+    
+    .signal-sell {
+        background: rgba(255, 82, 82, 0.2);
+        color: #ff5252;
+    }
+    
+    /* Settings Panel */
+    .settings-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
+    }
+    
+    .setting-item {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+    
+    .setting-item label {
+        font-size: 0.85em;
+        color: #888;
+    }
+    
+    .setting-item input,
+    .setting-item select {
+        padding: 8px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.3);
+        color: white;
+    }
+    
+    /* Stats */
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+    
+    .stat-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        padding: 15px;
+        text-align: center;
+    }
+    
+    .stat-value {
+        font-size: 1.8em;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    
+    .stat-label {
+        font-size: 0.85em;
+        color: #888;
+    }
+    
+    /* Empty state */
+    .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: #888;
+    }
+    
+    .empty-state i {
+        font-size: 3em;
+        margin-bottom: 15px;
+        opacity: 0.5;
+    }
+</style>
+
+<div class="ctr-container">
+    <div class="ctr-header">
+        <div class="ctr-title">
+            <h1>📊 CTR Scanner</h1>
+            <span class="status-badge {{ 'status-running' if ctr_running else 'status-stopped' }}" id="ctr-status">
+                {{ '● RUNNING' if ctr_running else '○ STOPPED' }}
+            </span>
+        </div>
+        <div class="ctr-controls">
+            <label class="checkbox-label" style="display: flex; align-items: center; gap: 5px; margin-right: 15px; background: rgba(255,200,0,0.1); padding: 5px 12px; border-radius: 6px;">
+                <input type="checkbox" id="ctr-only-mode" {{ 'checked' if ctr_only_mode else '' }} onchange="toggleCTROnlyMode(this)">
+                <span style="font-size: 0.9em;">CTR Only Mode</span>
+            </label>
+            <button class="btn btn-success" onclick="startCTR()" id="btn-start" {{ 'disabled' if ctr_running else '' }}>
+                ▶️ Start
+            </button>
+            <button class="btn btn-danger" onclick="stopCTR()" id="btn-stop" {{ 'disabled' if not ctr_running else '' }}>
+                ⏹️ Stop
+            </button>
+            <button class="btn btn-primary" onclick="scanNow()">
+                🔄 Scan Now
+            </button>
+        </div>
+    </div>
+    
+    <!-- Stats Row -->
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-value" id="stat-watchlist">{{ watchlist|length }}</div>
+            <div class="stat-label">Symbols</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stc-oversold" id="stat-oversold">{{ oversold_count }}</div>
+            <div class="stat-label">Oversold</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value stc-overbought" id="stat-overbought">{{ overbought_count }}</div>
+            <div class="stat-label">Overbought</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="stat-signals">{{ signals_today }}</div>
+            <div class="stat-label">Signals Today</div>
+        </div>
+    </div>
+    
+    <div class="ctr-grid">
+        <!-- Left Panel: Watchlist + Settings -->
+        <div>
+            <!-- Watchlist -->
+            <div class="ctr-panel" style="margin-bottom: 20px;">
+                <div class="panel-header">
+                    <h2>📋 Watchlist</h2>
+                    <span id="watchlist-count">{{ watchlist|length }} symbols</span>
+                </div>
+                
+                <div class="watchlist-input">
+                    <input type="text" id="new-symbol" placeholder="BTCUSDT" 
+                           onkeypress="if(event.key==='Enter')addSymbol()">
+                    <button class="btn btn-primary" onclick="addSymbol()">+ Add</button>
+                </div>
+                
+                <div class="watchlist-items" id="watchlist-items">
+                    {% if watchlist %}
+                        {% for symbol in watchlist %}
+                        <div class="watchlist-item" data-symbol="{{ symbol }}">
+                            <span class="watchlist-symbol">{{ symbol }}</span>
+                            <button class="watchlist-remove" onclick="removeSymbol('{{ symbol }}')">✕</button>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-state">
+                            <p>No symbols in watchlist</p>
+                            <small>Add symbols above to start monitoring</small>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- Settings -->
+            <div class="ctr-panel">
+                <div class="panel-header">
+                    <h2>⚙️ Settings</h2>
+                    <button class="btn btn-sm btn-secondary" onclick="saveSettings()">Save</button>
+                </div>
+                
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label>Timeframe</label>
+                        <select id="ctr_timeframe">
+                            <option value="1m" {{ 'selected' if settings.ctr_timeframe == '1m' else '' }}>1m</option>
+                            <option value="5m" {{ 'selected' if settings.ctr_timeframe == '5m' else '' }}>5m</option>
+                            <option value="15m" {{ 'selected' if settings.ctr_timeframe == '15m' or not settings.ctr_timeframe else '' }}>15m</option>
+                            <option value="1h" {{ 'selected' if settings.ctr_timeframe == '1h' else '' }}>1h</option>
+                            <option value="4h" {{ 'selected' if settings.ctr_timeframe == '4h' else '' }}>4h</option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Fast EMA</label>
+                        <input type="number" id="ctr_fast_length" value="{{ settings.ctr_fast_length or 21 }}" min="5" max="50">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Slow EMA</label>
+                        <input type="number" id="ctr_slow_length" value="{{ settings.ctr_slow_length or 50 }}" min="20" max="100">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Cycle Length</label>
+                        <input type="number" id="ctr_cycle_length" value="{{ settings.ctr_cycle_length or 10 }}" min="5" max="30">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Upper Level</label>
+                        <input type="number" id="ctr_upper" value="{{ settings.ctr_upper or 75 }}" min="60" max="95">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Lower Level</label>
+                        <input type="number" id="ctr_lower" value="{{ settings.ctr_lower or 25 }}" min="5" max="40">
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <small style="color: #888;">
+                        <b>CTR Algorithm:</b> Schaff Trend Cycle<br>
+                        BUY: STC crosses above {{ settings.ctr_lower or 25 }}<br>
+                        SELL: STC crosses below {{ settings.ctr_upper or 75 }}
+                    </small>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Panel: Scan Results -->
+        <div class="ctr-panel">
+            <div class="panel-header">
+                <h2>📈 Scan Results</h2>
+                <span id="last-scan-time">{{ last_scan_time or 'Never' }}</span>
+            </div>
+            
+            {% if scan_results %}
+            <table class="results-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>STC</th>
+                        <th>Status</th>
+                        <th>Signal</th>
+                    </tr>
+                </thead>
+                <tbody id="results-body">
+                    {% for r in scan_results %}
+                    <tr>
+                        <td><b>{{ r.symbol }}</b></td>
+                        <td>${{ "%.8f"|format(r.price) if r.price < 1 else "%.4f"|format(r.price) if r.price < 100 else "%.2f"|format(r.price) }}</td>
+                        <td class="stc-value {{ 'stc-oversold' if r.stc <= 25 else 'stc-overbought' if r.stc >= 75 else 'stc-neutral' }}">
+                            {{ "%.2f"|format(r.stc) }}
+                        </td>
+                        <td>
+                            {% if r.status == 'Oversold' %}
+                                <span style="color: #00c853;">🟢 Oversold</span>
+                            {% elif r.status == 'Overbought' %}
+                                <span style="color: #ff5252;">🔴 Overbought</span>
+                            {% else %}
+                                <span style="color: #888;">⚪ Neutral</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if r.buy_signal %}
+                                <span class="signal-badge signal-buy">🟢 BUY</span>
+                            {% elif r.sell_signal %}
+                                <span class="signal-badge signal-sell">🔴 SELL</span>
+                            {% else %}
+                                <span style="color: #666;">—</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <div style="font-size: 3em; opacity: 0.5;">📊</div>
+                <p>No scan results yet</p>
+                <small>Add symbols to watchlist and click "Scan Now"</small>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+async function toggleCTROnlyMode(checkbox) {
+    const enabled = checkbox.checked;
+    
+    try {
+        const res = await fetch('/api/ctr/only-mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(enabled ? '🔒 CTR Only Mode enabled - other scans disabled' : '🔓 CTR Only Mode disabled');
+        } else {
+            checkbox.checked = !enabled;
+            alert(data.error || 'Failed to toggle mode');
+        }
+    } catch (e) {
+        checkbox.checked = !enabled;
+        alert('Error: ' + e.message);
+    }
+}
+
+async function addSymbol() {
+    const input = document.getElementById('new-symbol');
+    const symbol = input.value.trim().toUpperCase();
+    
+    if (!symbol) return;
+    if (!symbol.endsWith('USDT')) {
+        alert('Symbol must end with USDT');
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/ctr/watchlist/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol })
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            input.value = '';
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to add symbol');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function removeSymbol(symbol) {
+    if (!confirm(`Remove ${symbol} from watchlist?`)) return;
+    
+    try {
+        const res = await fetch('/api/ctr/watchlist/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol })
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to remove symbol');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function saveSettings() {
+    const settings = {
+        ctr_timeframe: document.getElementById('ctr_timeframe').value,
+        ctr_fast_length: parseInt(document.getElementById('ctr_fast_length').value),
+        ctr_slow_length: parseInt(document.getElementById('ctr_slow_length').value),
+        ctr_cycle_length: parseInt(document.getElementById('ctr_cycle_length').value),
+        ctr_upper: parseInt(document.getElementById('ctr_upper').value),
+        ctr_lower: parseInt(document.getElementById('ctr_lower').value),
+    };
+    
+    try {
+        const res = await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast('✅ Settings saved!');
+        } else {
+            alert(data.error || 'Failed to save settings');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function startCTR() {
+    try {
+        const res = await fetch('/api/ctr/start', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to start');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function stopCTR() {
+    try {
+        const res = await fetch('/api/ctr/stop', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to stop');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function scanNow() {
+    showToast('🔄 Scanning...');
+    
+    try {
+        const res = await fetch('/api/ctr/scan', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || 'Scan failed');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+function showToast(message) {
+    // Simple toast notification
+    const toast = document.createElement('div');
+    toast.style.cssText = 'position: fixed; bottom: 20px; right: 20px; background: #333; color: white; padding: 15px 25px; border-radius: 8px; z-index: 9999;';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// Auto-refresh every 30 seconds if running
+{% if ctr_running %}
+setInterval(() => {
+    location.reload();
+}, 30000);
+{% endif %}
+</script>
+{% endblock %}
