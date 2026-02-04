@@ -1137,9 +1137,17 @@ def register_api_routes(app):
         oversold_count = sum(1 for r in scan_results if r.get('status') == 'Oversold')
         overbought_count = sum(1 for r in scan_results if r.get('status') == 'Overbought')
         
-        # Check if running
-        ctr_job = get_ctr_job()
-        ctr_running = ctr_job.is_running() if ctr_job else False
+        # Check if running and get status
+        try:
+            ctr_job = get_ctr_job(db)
+            ctr_running = ctr_job.is_running()
+            ctr_status = ctr_job.get_status()
+            ws_connected = ctr_status.get('ws_connected', False)
+            stats = ctr_status.get('stats', {})
+        except:
+            ctr_running = False
+            ws_connected = False
+            stats = {}
         
         # Check CTR Only mode
         ctr_only_mode = db.get_setting('ctr_only_mode', '0')
@@ -1162,10 +1170,12 @@ def register_api_routes(app):
             last_scan_time=last_scan_time,
             oversold_count=oversold_count,
             overbought_count=overbought_count,
-            signals_today=0,  # TODO: implement
+            signals_today=stats.get('signals_sent', 0),
             ctr_running=ctr_running,
+            ws_connected=ws_connected,
             ctr_only_mode=ctr_only_mode,
-            settings=settings
+            settings=settings,
+            stats=stats
         )
     
     @app.route('/api/ctr/watchlist/add', methods=['POST'])
@@ -1243,10 +1253,13 @@ def register_api_routes(app):
             if key in data:
                 db.set_setting(key, data[key])
         
-        # Reload scanner settings
-        from detection.ctr_scanner import get_ctr_scanner
-        scanner = get_ctr_scanner(db)
-        scanner.reload_settings()
+        # Reload scanner settings (if running)
+        from scheduler.ctr_job import get_ctr_job
+        try:
+            job = get_ctr_job(db)
+            job.reload_settings()
+        except:
+            pass  # Scanner not initialized yet
         
         return jsonify({'success': True})
     
@@ -1276,38 +1289,21 @@ def register_api_routes(app):
     @app.route('/api/ctr/scan', methods=['POST'])
     def api_ctr_scan():
         """Run CTR scan manually"""
-        from detection.ctr_scanner import get_ctr_scanner
-        import json
+        from scheduler.ctr_job import get_ctr_job
         db = get_db()
         
-        # Get watchlist
-        watchlist_str = db.get_setting('ctr_watchlist', '')
-        watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
+        job = get_ctr_job(db)
         
-        if not watchlist:
-            return jsonify({'success': False, 'error': 'Watchlist is empty'})
+        if not job.is_running():
+            return jsonify({'success': False, 'error': 'CTR Scanner is not running. Start it first.'})
         
         # Run scan
-        scanner = get_ctr_scanner(db)
-        results, signals = scanner.scan_watchlist(watchlist)
-        
-        # Store results
-        from datetime import datetime, timezone
-        db.set_setting('ctr_last_scan', json.dumps(results))
-        db.set_setting('ctr_last_scan_time', datetime.now(timezone.utc).isoformat())
-        
-        # Send signals to Telegram
-        if signals:
-            from alerts.telegram_notifier import get_notifier
-            notifier = get_notifier()
-            for signal in signals:
-                message = scanner.format_telegram_signal(signal)
-                notifier.send_message(message)
+        results = job.scan_now()
         
         return jsonify({
             'success': True,
             'results_count': len(results),
-            'signals_count': len(signals)
+            'signals_count': 0  # Signals are sent automatically
         })
     
     @app.route('/api/ctr/only-mode', methods=['POST'])

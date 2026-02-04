@@ -269,10 +269,15 @@
 <div class="ctr-container">
     <div class="ctr-header">
         <div class="ctr-title">
-            <h1>📊 CTR Scanner</h1>
+            <h1>📊 CTR Scanner <small style="font-size:0.5em; color:#888;">v2.0 Fast</small></h1>
             <span class="status-badge {{ 'status-running' if ctr_running else 'status-stopped' }}" id="ctr-status">
                 {{ '● RUNNING' if ctr_running else '○ STOPPED' }}
             </span>
+            {% if ctr_running %}
+            <span class="status-badge {{ 'status-running' if ws_connected else 'status-stopped' }}" id="ws-status" style="margin-left: 5px;">
+                {{ '🔗 WS' if ws_connected else '⚠️ WS' }}
+            </span>
+            {% endif %}
         </div>
         <div class="ctr-controls">
             <label class="checkbox-label" style="display: flex; align-items: center; gap: 5px; margin-right: 15px; background: rgba(255,200,0,0.1); padding: 5px 12px; border-radius: 6px;">
