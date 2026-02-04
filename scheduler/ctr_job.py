@@ -15,7 +15,7 @@ from typing import List, Dict, Set
 
 from detection.ctr_scanner import get_ctr_scanner
 from alerts.telegram_notifier import get_notifier
-from storage.db_operations import DatabaseOperations
+from storage.db_operations import DBOperations
 
 
 class CTRBackgroundJob:
@@ -23,7 +23,7 @@ class CTRBackgroundJob:
     Background job for CTR signal monitoring
     """
     
-    def __init__(self, db: DatabaseOperations):
+    def __init__(self, db: DBOperations):
         self.db = db
         self.scanner = get_ctr_scanner(db)
         self.notifier = get_notifier()
@@ -196,14 +196,14 @@ from datetime import timedelta
 # Singleton
 _job = None
 
-def get_ctr_job(db: DatabaseOperations = None) -> CTRBackgroundJob:
+def get_ctr_job(db: DBOperations = None) -> CTRBackgroundJob:
     """Get CTR Background Job instance (singleton)"""
     global _job
     if _job is None and db is not None:
         _job = CTRBackgroundJob(db)
     return _job
 
-def start_ctr_job(db: DatabaseOperations):
+def start_ctr_job(db: DBOperations):
     """Start CTR background job"""
     job = get_ctr_job(db)
     job.start()
