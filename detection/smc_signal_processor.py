@@ -219,9 +219,9 @@ class SMCSignalProcessor:
             (direction == "SHORT" and htf_bias in ["BEARISH", "NEUTRAL"])
         )
         
-        # Отримуємо swing points для TP/SL
-        swing_high = smc_result.last_hh if smc_result.last_hh else None
-        swing_low = smc_result.last_ll if smc_result.last_ll else None
+        # Отримуємо swing points для TP/SL (витягуємо .price з SwingPoint)
+        swing_high = smc_result.last_hh.price if smc_result.last_hh else None
+        swing_low = smc_result.last_ll.price if smc_result.last_ll else None
         
         # ============================================
         # ЛОГІКА СТАНІВ

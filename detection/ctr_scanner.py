@@ -144,14 +144,22 @@ class CTRScanner:
                 result[i] = 50.0
             else:
                 window = data[i - length + 1:i + 1]
-                lowest = np.nanmin(window)
-                highest = np.nanmax(window)
+                
+                # Handle NaN values in window
+                valid_window = window[~np.isnan(window)]
+                if len(valid_window) < 2:
+                    result[i] = 50.0
+                    continue
+                
+                lowest = np.min(valid_window)
+                highest = np.max(valid_window)
                 denominator = highest - lowest
                 
-                if denominator == 0:
+                current_val = data[i]
+                if np.isnan(current_val) or denominator == 0:
                     result[i] = 50.0
                 else:
-                    result[i] = (data[i] - lowest) / denominator * 100
+                    result[i] = (current_val - lowest) / denominator * 100
         
         return result
     
@@ -212,9 +220,16 @@ class CTRScanner:
         current_stc = stc[-1]
         prev_stc = stc[-2] if len(stc) > 1 else current_stc
         
+        # Handle NaN values
+        if np.isnan(current_stc):
+            return False, False, 50.0, "Недостатньо даних"
+        if np.isnan(prev_stc):
+            prev_stc = current_stc
+        
         # Crossover detection (matching ta.crossover / ta.crossunder)
-        buy_signal = prev_stc <= self.lower and current_stc > self.lower
-        sell_signal = prev_stc >= self.upper and current_stc < self.upper
+        # Convert to Python bool for JSON serialization
+        buy_signal = bool(prev_stc <= self.lower and current_stc > self.lower)
+        sell_signal = bool(prev_stc >= self.upper and current_stc < self.upper)
         
         # Status
         if current_stc >= self.upper:
@@ -224,7 +239,7 @@ class CTRScanner:
         else:
             status = "Neutral"
         
-        return buy_signal, sell_signal, current_stc, status
+        return buy_signal, sell_signal, float(current_stc), status
     
     # ========================================
     # DATA FETCHING
@@ -299,12 +314,12 @@ class CTRScanner:
         
         result = {
             'symbol': symbol,
-            'stc': round(stc_value, 2),
-            'prev_stc': round(prev_stc, 2),
+            'stc': round(float(stc_value), 2) if not np.isnan(stc_value) else 50.0,
+            'prev_stc': round(float(prev_stc), 2) if not np.isnan(prev_stc) else 50.0,
             'status': status,
-            'price': current_price,
-            'buy_signal': buy_signal,
-            'sell_signal': sell_signal,
+            'price': float(current_price),
+            'buy_signal': bool(buy_signal),
+            'sell_signal': bool(sell_signal),
             'timeframe': self.timeframe,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
