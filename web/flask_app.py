@@ -1107,7 +1107,10 @@ def register_api_routes(app):
     def ctr_page():
         """CTR Scanner page"""
         from scheduler.ctr_job import get_ctr_job
+        from storage.db_operations import get_db
         import json
+        
+        db = get_db()
         
         # Get watchlist
         watchlist_str = db.get_setting('ctr_watchlist', '')
@@ -1168,6 +1171,7 @@ def register_api_routes(app):
     @app.route('/api/ctr/watchlist/add', methods=['POST'])
     def api_ctr_watchlist_add():
         """Add symbol to CTR watchlist"""
+        db = get_db()
         data = request.get_json()
         symbol = data.get('symbol', '').strip().upper()
         
@@ -1203,6 +1207,7 @@ def register_api_routes(app):
     @app.route('/api/ctr/watchlist/remove', methods=['POST'])
     def api_ctr_watchlist_remove():
         """Remove symbol from CTR watchlist"""
+        db = get_db()
         data = request.get_json()
         symbol = data.get('symbol', '').strip().upper()
         
@@ -1225,6 +1230,7 @@ def register_api_routes(app):
     @app.route('/api/ctr/settings', methods=['POST'])
     def api_ctr_settings():
         """Save CTR settings"""
+        db = get_db()
         data = request.get_json()
         
         # Save all CTR settings
@@ -1248,6 +1254,7 @@ def register_api_routes(app):
     def api_ctr_start():
         """Start CTR scanner"""
         from scheduler.ctr_job import start_ctr_job
+        db = get_db()
         
         try:
             job = start_ctr_job(db)
@@ -1271,6 +1278,7 @@ def register_api_routes(app):
         """Run CTR scan manually"""
         from detection.ctr_scanner import get_ctr_scanner
         import json
+        db = get_db()
         
         # Get watchlist
         watchlist_str = db.get_setting('ctr_watchlist', '')
@@ -1305,6 +1313,7 @@ def register_api_routes(app):
     @app.route('/api/ctr/only-mode', methods=['POST'])
     def api_ctr_only_mode():
         """Toggle CTR Only mode (disables other scans)"""
+        db = get_db()
         data = request.get_json()
         enabled = data.get('enabled', False)
         
