@@ -1155,6 +1155,9 @@ def register_api_routes(app):
             ctr_only_mode = ctr_only_mode in ('1', 'true', 'yes')
         
         # Get settings
+        smc_enabled_str = db.get_setting('ctr_smc_filter_enabled', '0')
+        smc_filter_enabled = smc_enabled_str in ('1', 'true', 'True', 'yes')
+        
         settings = {
             'ctr_timeframe': db.get_setting('ctr_timeframe', '15m'),
             'ctr_fast_length': db.get_setting('ctr_fast_length', 21),
@@ -1162,7 +1165,14 @@ def register_api_routes(app):
             'ctr_cycle_length': db.get_setting('ctr_cycle_length', 10),
             'ctr_upper': db.get_setting('ctr_upper', 75),
             'ctr_lower': db.get_setting('ctr_lower', 25),
+            # SMC Filter
+            'ctr_smc_filter_enabled': smc_filter_enabled,
+            'ctr_smc_swing_length': db.get_setting('ctr_smc_swing_length', 50),
+            'ctr_smc_zone_threshold': db.get_setting('ctr_smc_zone_threshold', 1.0),
         }
+        
+        # Статистика фільтрації
+        signals_filtered = stats.get('signals_filtered', 0)
         
         return render_template('ctr.html',
             watchlist=watchlist,
@@ -1171,8 +1181,10 @@ def register_api_routes(app):
             oversold_count=oversold_count,
             overbought_count=overbought_count,
             signals_today=stats.get('signals_sent', 0),
+            signals_filtered=signals_filtered,
             ctr_running=ctr_running,
             ws_connected=ws_connected,
+            smc_filter_enabled=smc_filter_enabled,
             ctr_only_mode=ctr_only_mode,
             settings=settings,
             stats=stats
@@ -1246,12 +1258,14 @@ def register_api_routes(app):
         # Save all CTR settings
         ctr_settings = [
             'ctr_timeframe', 'ctr_fast_length', 'ctr_slow_length',
-            'ctr_cycle_length', 'ctr_upper', 'ctr_lower'
+            'ctr_cycle_length', 'ctr_upper', 'ctr_lower',
+            # SMC Filter settings
+            'ctr_smc_filter_enabled', 'ctr_smc_swing_length', 'ctr_smc_zone_threshold'
         ]
         
         for key in ctr_settings:
             if key in data:
-                db.set_setting(key, data[key])
+                db.set_setting(key, str(data[key]))
         
         # Reload scanner settings (if running)
         from scheduler.ctr_job import get_ctr_job

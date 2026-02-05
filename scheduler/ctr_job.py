@@ -1,7 +1,8 @@
 """
-CTR Background Job v2.0 - Fast Edition
+CTR Background Job v2.1 - Fast Edition + SMC Filter
 
 Інтеграція з CTRFastScanner для максимальної швидкості сигналів.
++ SMC Structure Filter для фільтрації сигналів.
 """
 
 import threading
@@ -21,6 +22,7 @@ class CTRFastJob:
     Особливості:
     - Використовує WebSocket для real-time даних
     - Сигнали за 1-5 секунд
+    - SMC Structure Filter для фільтрації
     - Автоматичне збереження результатів в БД
     """
     
@@ -44,6 +46,12 @@ class CTRFastJob:
         self.upper = float(self.db.get_setting('ctr_upper', '75'))
         self.lower = float(self.db.get_setting('ctr_lower', '25'))
         
+        # SMC Filter settings
+        smc_enabled_str = self.db.get_setting('ctr_smc_filter_enabled', '0')
+        self.smc_filter_enabled = smc_enabled_str in ('1', 'true', 'True', 'yes')
+        self.smc_swing_length = int(self.db.get_setting('ctr_smc_swing_length', '50'))
+        self.smc_zone_threshold = float(self.db.get_setting('ctr_smc_zone_threshold', '1.0'))
+        
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
         self.watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
@@ -59,7 +67,8 @@ class CTRFastJob:
             # Збереження в БД
             self._save_signal(signal)
             
-            print(f"[CTR Job] 📨 Signal sent: {signal['symbol']} {signal['type']}")
+            smc_tag = " [SMC✓]" if signal.get('smc_filtered') else ""
+            print(f"[CTR Job] 📨 Signal sent: {signal['symbol']} {signal['type']}{smc_tag}")
             
         except Exception as e:
             print(f"[CTR Job] Signal callback error: {e}")
@@ -76,6 +85,7 @@ class CTRFastJob:
                 'price': signal['price'],
                 'stc': signal['stc'],
                 'timeframe': signal['timeframe'],
+                'smc_filtered': signal.get('smc_filtered', False),
                 'timestamp': datetime.now(timezone.utc).isoformat()
             })
             
@@ -127,7 +137,7 @@ class CTRFastJob:
                 print("[CTR Job] ❌ Watchlist is empty")
                 return False
             
-            # Create scanner
+            # Create scanner with SMC filter
             self._scanner = CTRFastScanner(
                 timeframe=self.timeframe,
                 fast_length=self.fast_length,
@@ -137,7 +147,11 @@ class CTRFastJob:
                 d2_length=self.d2_length,
                 upper=self.upper,
                 lower=self.lower,
-                on_signal=self._on_signal
+                on_signal=self._on_signal,
+                # SMC Filter
+                smc_filter_enabled=self.smc_filter_enabled,
+                smc_swing_length=self.smc_swing_length,
+                smc_zone_threshold=self.smc_zone_threshold,
             )
             
             # Start scanner
@@ -147,7 +161,8 @@ class CTRFastJob:
             # Start results saver thread
             self._start_results_saver()
             
-            print(f"[CTR Job] ✅ Started with {len(self.watchlist)} symbols")
+            smc_status = "SMC✓" if self.smc_filter_enabled else ""
+            print(f"[CTR Job] ✅ Started with {len(self.watchlist)} symbols {smc_status}")
             return True
     
     def stop(self):
@@ -234,7 +249,11 @@ class CTRFastJob:
                 'upper': self.upper,
                 'lower': self.lower,
                 'fast_length': self.fast_length,
-                'slow_length': self.slow_length
+                'slow_length': self.slow_length,
+                # SMC settings
+                'smc_filter_enabled': self.smc_filter_enabled,
+                'smc_swing_length': self.smc_swing_length,
+                'smc_zone_threshold': self.smc_zone_threshold,
             })
     
     def scan_now(self) -> List[Dict]:

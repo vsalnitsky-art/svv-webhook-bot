@@ -348,7 +348,7 @@ class BackgroundJobs:
                 states[state] = states.get(state, 0) + 1
             
             duration = time.time() - start
-            version = "v8.4.0 (CTR Fast WebSocket)" if self.use_v3_scanner else "v2"
+            version = "v8.5.0 (CTR Fast + SMC Filter)" if self.use_v3_scanner else "v2"
             self._log_job_execution(
                 'sleeper_scan', 
                 True, 

@@ -394,6 +394,40 @@
                     </div>
                 </div>
                 
+                <!-- SMC Filter Section -->
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        📊 SMC Structure Filter
+                        <span class="status-badge {{ 'status-running' if smc_filter_enabled else 'status-stopped' }}" style="font-size: 0.7em;">
+                            {{ 'ON' if smc_filter_enabled else 'OFF' }}
+                        </span>
+                    </h4>
+                    
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_smc_filter_enabled" {{ 'checked' if settings.ctr_smc_filter_enabled else '' }} onchange="saveSettings()">
+                            Enable SMC Filter
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Swing Length</label>
+                        <input type="number" id="ctr_smc_swing_length" value="{{ settings.ctr_smc_swing_length or 50 }}" min="10" max="100">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Zone Threshold (%)</label>
+                        <input type="number" id="ctr_smc_zone_threshold" value="{{ settings.ctr_smc_zone_threshold or 1.0 }}" min="0.5" max="5" step="0.1">
+                    </div>
+                    
+                    <small style="color: #888; display: block; margin-top: 10px;">
+                        <b>SMC Filter:</b> Validates signals at key structure levels<br>
+                        • BUY: Near Strong Low or HL (Higher Low)<br>
+                        • SELL: Near Weak High or LH (Lower High)<br>
+                        {% if signals_filtered %}<span style="color: #ff9800;">Filtered: {{ signals_filtered }} signals</span>{% endif %}
+                    </small>
+                </div>
+                
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
                     <small style="color: #888;">
                         <b>CTR Algorithm:</b> Schaff Trend Cycle<br>
@@ -548,6 +582,10 @@ async function saveSettings() {
         ctr_cycle_length: parseInt(document.getElementById('ctr_cycle_length').value),
         ctr_upper: parseInt(document.getElementById('ctr_upper').value),
         ctr_lower: parseInt(document.getElementById('ctr_lower').value),
+        // SMC Filter
+        ctr_smc_filter_enabled: document.getElementById('ctr_smc_filter_enabled').checked ? '1' : '0',
+        ctr_smc_swing_length: parseInt(document.getElementById('ctr_smc_swing_length').value),
+        ctr_smc_zone_threshold: parseFloat(document.getElementById('ctr_smc_zone_threshold').value),
     };
     
     try {
