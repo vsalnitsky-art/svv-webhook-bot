@@ -426,18 +426,43 @@ class CTRFastScanner:
     def preload_watchlist(self, symbols: List[str]) -> int:
         """
         Попереднє завантаження даних для всіх символів
+        з повторною спробою для невдалих
         
         Returns: кількість успішно завантажених
         """
-        print(f"[CTR Fast] Preloading {len(symbols)} symbols...")
+        print(f"[CTR Fast] Preloading {len(symbols)} symbols: {symbols}")
         
         loaded = 0
+        failed = []
+        
+        # Перша спроба
         for symbol in symbols:
             if self._load_history(symbol):
                 loaded += 1
-            time.sleep(0.1)  # Невелика затримка між запитами
+            else:
+                failed.append(symbol)
+            time.sleep(0.2)  # Затримка між запитами
         
-        print(f"[CTR Fast] Preloaded {loaded}/{len(symbols)} symbols")
+        # Повторна спроба для невдалих (через 2 секунди)
+        if failed:
+            print(f"[CTR Fast] Retrying failed symbols in 2 seconds: {failed}")
+            time.sleep(2)
+            
+            retry_failed = []
+            for symbol in failed:
+                if self._load_history(symbol):
+                    loaded += 1
+                    print(f"[CTR Fast] ✅ Retry successful: {symbol}")
+                else:
+                    retry_failed.append(symbol)
+                time.sleep(0.3)
+            
+            failed = retry_failed
+        
+        print(f"[CTR Fast] ✅ Preloaded {loaded}/{len(symbols)} symbols")
+        if failed:
+            print(f"[CTR Fast] ⚠️ Failed to load after retry: {failed}")
+        
         return loaded
     
     # ========================================
@@ -768,18 +793,24 @@ STC: {stc_value:.2f}
             print("[CTR Fast] Already running")
             return
         
-        self._watchlist = [s.upper() for s in watchlist]
+        requested_symbols = [s.upper() for s in watchlist]
         
-        print(f"[CTR Fast] Starting with {len(self._watchlist)} symbols...")
+        print(f"[CTR Fast] Starting with {len(requested_symbols)} symbols: {requested_symbols}")
         
         # 1. Завантажити історію
-        loaded = self.preload_watchlist(self._watchlist)
+        loaded = self.preload_watchlist(requested_symbols)
         
         if loaded == 0:
             print("[CTR Fast] ❌ Failed to load any symbols")
             return
         
-        # 2. Запустити WebSocket
+        # 2. Оновлюємо watchlist тільки до успішно завантажених символів
+        with self._lock:
+            self._watchlist = list(self._cache.keys())
+        
+        print(f"[CTR Fast] Active watchlist: {self._watchlist}")
+        
+        # 3. Запустити WebSocket
         self._start_websocket()
         
         # Чекаємо підключення
@@ -788,7 +819,7 @@ STC: {stc_value:.2f}
                 break
             time.sleep(0.5)
         
-        # 3. Запустити сканування
+        # 4. Запустити сканування
         self._running = True
         self._scan_thread = threading.Thread(target=self._scan_loop, daemon=True)
         self._scan_thread.start()

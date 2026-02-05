@@ -493,6 +493,53 @@
                 <small>Add symbols to watchlist and click "Scan Now"</small>
             </div>
             {% endif %}
+            
+            <!-- Executed Signals History -->
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <div class="panel-header">
+                    <h2>🎯 Executed Signals</h2>
+                    <span>Last 20</span>
+                </div>
+                
+                {% if ctr_signals %}
+                <table class="results-table">
+                    <thead>
+                        <tr>
+                            <th>Date/Time</th>
+                            <th>Symbol</th>
+                            <th>Signal</th>
+                            <th>Price</th>
+                            <th>STC</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sig in ctr_signals %}
+                        <tr>
+                            <td style="font-family: monospace; font-size: 0.85em;">
+                                {{ sig.timestamp[:19].replace('T', ' ') if sig.timestamp else '—' }}
+                            </td>
+                            <td><b>{{ sig.symbol }}</b></td>
+                            <td>
+                                {% if sig.type == 'BUY' %}
+                                    <span class="signal-badge signal-buy">🟢 LONG</span>
+                                {% else %}
+                                    <span class="signal-badge signal-sell">🔴 SHORT</span>
+                                {% endif %}
+                            </td>
+                            <td>${{ "%.8f"|format(sig.price) if sig.price < 1 else "%.4f"|format(sig.price) if sig.price < 100 else "%.2f"|format(sig.price) }}</td>
+                            <td class="stc-value {{ 'stc-oversold' if sig.stc <= 25 else 'stc-overbought' if sig.stc >= 75 else 'stc-neutral' }}">
+                                {{ "%.2f"|format(sig.stc) }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state" style="padding: 20px;">
+                    <p style="margin: 0; color: #666;">No signals yet</p>
+                </div>
+                {% endif %}
+            </div>
         </div>
     </div>
 </div>

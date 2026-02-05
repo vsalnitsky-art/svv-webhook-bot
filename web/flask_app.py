@@ -1174,6 +1174,15 @@ def register_api_routes(app):
         # Статистика фільтрації
         signals_filtered = stats.get('signals_filtered', 0)
         
+        # Get executed signals history
+        signals_str = db.get_setting('ctr_signals', '[]')
+        try:
+            ctr_signals = json.loads(signals_str)
+            # Sort by timestamp descending (newest first)
+            ctr_signals = sorted(ctr_signals, key=lambda x: x.get('timestamp', ''), reverse=True)[:20]
+        except:
+            ctr_signals = []
+        
         return render_template('ctr.html',
             watchlist=watchlist,
             scan_results=scan_results,
@@ -1187,7 +1196,8 @@ def register_api_routes(app):
             smc_filter_enabled=smc_filter_enabled,
             ctr_only_mode=ctr_only_mode,
             settings=settings,
-            stats=stats
+            stats=stats,
+            ctr_signals=ctr_signals
         )
     
     @app.route('/api/ctr/watchlist/add', methods=['POST'])

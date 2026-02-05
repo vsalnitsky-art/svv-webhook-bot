@@ -418,6 +418,13 @@ class BackgroundJobs:
     
     def _job_signal_check(self):
         """Перевірка та обробка сигналів"""
+        # v8.2.9: Check if CTR Only mode is active
+        ctr_only_mode = self.db.get_setting('ctr_only_mode', '0')
+        if isinstance(ctr_only_mode, str):
+            ctr_only_mode = ctr_only_mode.lower() in ('1', 'true', 'yes')
+        if ctr_only_mode:
+            return  # Skip when CTR Only mode is active
+        
         # Check if module is enabled
         if not self._is_module_enabled('signals'):
             return
@@ -445,6 +452,13 @@ class BackgroundJobs:
     
     def _job_position_monitor(self):
         """Моніторинг відкритих позицій"""
+        # v8.2.9: Check if CTR Only mode is active
+        ctr_only_mode = self.db.get_setting('ctr_only_mode', '0')
+        if isinstance(ctr_only_mode, str):
+            ctr_only_mode = ctr_only_mode.lower() in ('1', 'true', 'yes')
+        if ctr_only_mode:
+            return  # Skip when CTR Only mode is active
+        
         # Check if module is enabled
         if not self._is_module_enabled('positions'):
             return
@@ -527,6 +541,13 @@ class BackgroundJobs:
     
     def _job_hp_update(self):
         """Оновлення HP для sleepers (integrated in v3 scan)"""
+        # v8.2.9: Check if CTR Only mode is active
+        ctr_only_mode = self.db.get_setting('ctr_only_mode', '0')
+        if isinstance(ctr_only_mode, str):
+            ctr_only_mode = ctr_only_mode.lower() in ('1', 'true', 'yes')
+        if ctr_only_mode:
+            return  # Skip when CTR Only mode is active
+        
         start = time.time()
         try:
             # In v3, HP updates are handled during the scan
@@ -569,6 +590,13 @@ class BackgroundJobs:
         
         Sends HIGH priority alerts when conditions met
         """
+        # v8.2.9: Check if CTR Only mode is active
+        ctr_only_mode = self.db.get_setting('ctr_only_mode', '0')
+        if isinstance(ctr_only_mode, str):
+            ctr_only_mode = ctr_only_mode.lower() in ('1', 'true', 'yes')
+        if ctr_only_mode:
+            return  # Skip when CTR Only mode is active
+        
         # Check if module is enabled
         if not self._is_module_enabled('intensive'):
             return
@@ -776,6 +804,13 @@ class BackgroundJobs:
         3. Якщо так → ENTRY_FOUND + Alert!
         4. Якщо timeout (>24h) → скасовуємо полювання
         """
+        # v8.2.9: Check if CTR Only mode is active
+        ctr_only_mode = self.db.get_setting('ctr_only_mode', '0')
+        if isinstance(ctr_only_mode, str):
+            ctr_only_mode = ctr_only_mode.lower() in ('1', 'true', 'yes')
+        if ctr_only_mode:
+            return  # Skip when CTR Only mode is active
+        
         if not self._is_module_enabled('sleepers'):
             return
         
