@@ -1,11 +1,8 @@
 """
 CTR Database Operations - Additional methods for CTR Scanner v8.3.0
-
-Add these methods to the DBOperations class in db_operations.py
 """
 
-# Add to imports at the top of db_operations.py:
-# from storage.db_models import CTRWatchlistItem, CTRSignal, CTRKlineCache
+from typing import List, Optional, Dict
 
 # ==========================================
 # CTR WATCHLIST OPERATIONS (v8.3.0)
