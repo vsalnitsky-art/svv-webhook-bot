@@ -1373,6 +1373,209 @@ def register_api_routes(app):
         
         return jsonify({'success': True, 'enabled': enabled})
     
+    # ========================================
+    # QM Zone Hunter Routes
+    # ========================================
+    
+    @app.route('/qm')
+    def qm_page():
+        """QM Zone Hunter page"""
+        from scheduler.qm_job import get_qm_job, QM_SETTINGS_DEFAULTS
+        import json
+        
+        db = get_db()
+        
+        # Watchlist
+        watchlist_str = db.get_setting('qm_watchlist', '')
+        if not watchlist_str:
+            watchlist_str = db.get_setting('ctr_watchlist', '')
+        watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
+        
+        # Settings (з дефолтами)
+        settings = {}
+        for key, default in QM_SETTINGS_DEFAULTS.items():
+            settings[key] = db.get_setting(key, default)
+        
+        # Scan results
+        scan_results_str = db.get_setting('qm_last_scan', '[]')
+        try:
+            scan_results = json.loads(scan_results_str)
+        except:
+            scan_results = []
+        
+        # Last scan time
+        last_scan_time = db.get_setting('qm_last_scan_time', None)
+        if last_scan_time:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(last_scan_time.replace('Z', '+00:00'))
+                last_scan_time = dt.strftime('%H:%M:%S')
+            except:
+                pass
+        
+        # Status
+        try:
+            qm_job = get_qm_job(db)
+            qm_running = qm_job.is_running()
+            status = qm_job.get_status()
+            stats = status.get('stats', {})
+        except:
+            qm_running = False
+            stats = {}
+        
+        # Signals
+        signals_str = db.get_setting('qm_signals', '[]')
+        try:
+            qm_signals = json.loads(signals_str)
+            qm_signals = sorted(qm_signals, key=lambda x: x.get('timestamp', ''), reverse=True)[:20]
+        except:
+            qm_signals = []
+        
+        return render_template('qm.html',
+            watchlist=watchlist,
+            scan_results=scan_results,
+            last_scan_time=last_scan_time,
+            qm_running=qm_running,
+            zones_active=stats.get('zones_active', 0),
+            signals_sent=stats.get('signals_sent', 0),
+            settings=settings,
+            qm_signals=qm_signals,
+        )
+    
+    @app.route('/api/qm/start', methods=['POST'])
+    def api_qm_start():
+        from scheduler.qm_job import get_qm_job
+        db = get_db()
+        try:
+            job = get_qm_job(db)
+            ok = job.start()
+            return jsonify({'ok': ok})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+    
+    @app.route('/api/qm/stop', methods=['POST'])
+    def api_qm_stop():
+        from scheduler.qm_job import get_qm_job
+        db = get_db()
+        try:
+            job = get_qm_job(db)
+            job.stop()
+            return jsonify({'ok': True})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+    
+    @app.route('/api/qm/scan', methods=['POST'])
+    def api_qm_scan():
+        from scheduler.qm_job import get_qm_job
+        db = get_db()
+        try:
+            job = get_qm_job(db)
+            results = job.scan_now()
+            return jsonify({'ok': True, 'signals': len(results)})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+    
+    @app.route('/api/qm/results')
+    def api_qm_results():
+        from scheduler.qm_job import get_qm_job
+        import json
+        db = get_db()
+        try:
+            job = get_qm_job(db)
+            status = job.get_status()
+            stats = status.get('stats', {})
+            scan_time = db.get_setting('qm_last_scan_time', '')
+            if scan_time:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(scan_time.replace('Z', '+00:00'))
+                    scan_time = dt.strftime('%H:%M:%S')
+                except:
+                    pass
+            return jsonify({
+                'scan_time': scan_time,
+                'zones_active': stats.get('zones_active', 0),
+                'signals_sent': stats.get('signals_sent', 0),
+            })
+        except:
+            return jsonify({})
+    
+    @app.route('/api/qm/watchlist/add', methods=['POST'])
+    def api_qm_watchlist_add():
+        from scheduler.qm_job import get_qm_job
+        db = get_db()
+        data = request.get_json()
+        symbol = data.get('symbol', '').strip().upper()
+        if not symbol:
+            return jsonify({'ok': False, 'error': 'Empty symbol'})
+        if not symbol.endswith('USDT'):
+            symbol += 'USDT'
+        try:
+            job = get_qm_job(db)
+            job.add_symbol(symbol)
+            return jsonify({'ok': True})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+    
+    @app.route('/api/qm/watchlist/remove', methods=['POST'])
+    def api_qm_watchlist_remove():
+        from scheduler.qm_job import get_qm_job
+        db = get_db()
+        data = request.get_json()
+        symbol = data.get('symbol', '').strip().upper()
+        try:
+            job = get_qm_job(db)
+            job.remove_symbol(symbol)
+            return jsonify({'ok': True})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+    
+    @app.route('/api/qm/settings', methods=['POST'])
+    def api_qm_settings():
+        from scheduler.qm_job import get_qm_job, QM_SETTINGS_DEFAULTS
+        db = get_db()
+        data = request.get_json()
+        
+        saved = 0
+        for key in QM_SETTINGS_DEFAULTS:
+            if key in data:
+                db.set_setting(key, str(data[key]))
+                saved += 1
+        
+        try:
+            job = get_qm_job(db)
+            job.reload_settings()
+        except:
+            pass
+        
+        return jsonify({'ok': True, 'saved': saved})
+    
+    @app.route('/api/qm/signals/delete', methods=['POST'])
+    def api_qm_signals_delete():
+        from scheduler.qm_job import get_qm_job
+        db = get_db()
+        data = request.get_json()
+        timestamp = data.get('timestamp')
+        if not timestamp:
+            return jsonify({'ok': False})
+        try:
+            job = get_qm_job(db)
+            ok = job.delete_signal(timestamp)
+            return jsonify({'ok': ok})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+    
+    @app.route('/api/qm/signals/clear', methods=['POST'])
+    def api_qm_signals_clear():
+        from scheduler.qm_job import get_qm_job
+        db = get_db()
+        try:
+            job = get_qm_job(db)
+            count = job.clear_signals()
+            return jsonify({'ok': True, 'cleared': count})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)})
+    
     # End of register_api_routes
 
 

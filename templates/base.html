@@ -17,6 +17,7 @@
             <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}">Dashboard</a>
             <a href="{{ url_for('sleepers_page') }}" class="nav-link {% if request.endpoint == 'sleepers_page' %}active{% endif %}">Sleepers</a>
             <a href="{{ url_for('ctr_page') }}" class="nav-link {% if request.endpoint == 'ctr_page' %}active{% endif %}">CTR</a>
+            <a href="{{ url_for('qm_page') }}" class="nav-link {% if request.endpoint == 'qm_page' %}active{% endif %}">QM</a>
             <a href="{{ url_for('orderblocks_page') }}" class="nav-link {% if request.endpoint == 'orderblocks_page' %}active{% endif %}">Order Blocks</a>
             <a href="{{ url_for('signals_page') }}" class="nav-link {% if request.endpoint == 'signals_page' %}active{% endif %}">Signals</a>
             <a href="{{ url_for('trades_page') }}" class="nav-link {% if request.endpoint == 'trades_page' %}active{% endif %}">Trades</a>
