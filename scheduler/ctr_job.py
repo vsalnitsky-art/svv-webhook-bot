@@ -1,10 +1,8 @@
 """
-CTR Background Job v2.2 - Fast Edition + SMC Filter + Signal Deduplication
+CTR Background Job v2.1 - Fast Edition + SMC Filter
 
 Інтеграція з CTRFastScanner для максимальної швидкості сигналів.
 + SMC Structure Filter для фільтрації сигналів.
-+ Signal deduplication - не відправляє повторні сигнали в тому ж напрямку.
-+ Zone detection - Premium/Discount/Equilibrium
 """
 
 import threading
@@ -25,8 +23,6 @@ class CTRFastJob:
     - Використовує WebSocket для real-time даних
     - Сигнали за 1-5 секунд
     - SMC Structure Filter для фільтрації
-    - Signal deduplication - ігнорує повторні сигнали
-    - Zone detection - показує зону ціни
     - Автоматичне збереження результатів в БД
     """
     
@@ -35,9 +31,6 @@ class CTRFastJob:
         self._scanner: Optional[CTRFastScanner] = None
         self._running = False
         self._lock = threading.Lock()
-        
-        # Last signals cache for deduplication
-        self._last_signals: Dict[str, str] = {}  # symbol -> last_signal_type
         
         # Load settings
         self._load_settings()
@@ -59,152 +52,30 @@ class CTRFastJob:
         self.smc_swing_length = int(self.db.get_setting('ctr_smc_swing_length', '50'))
         self.smc_zone_threshold = float(self.db.get_setting('ctr_smc_zone_threshold', '1.0'))
         
-        # Watchlist - try DB first, fallback to settings
-        try:
-            watchlist = self._get_watchlist_from_db()
-            if not watchlist:
-                # Fallback to old setting
-                watchlist_str = self.db.get_setting('ctr_watchlist', '')
-                watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
-        except:
-            watchlist_str = self.db.get_setting('ctr_watchlist', '')
-            watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
-        
-        self.watchlist = watchlist
-        
-        # Load last signals from DB for deduplication
-        self._load_last_signals()
-    
-    def _get_watchlist_from_db(self) -> List[str]:
-        """Get watchlist from CTR watchlist table"""
-        try:
-            return self.db.get_ctr_watchlist()
-        except AttributeError:
-            # Method doesn't exist yet
-            return []
-    
-    def _load_last_signals(self):
-        """Load last signal for each symbol from DB"""
-        try:
-            signals = self.db.get_ctr_signals(limit=100)
-            for s in signals:
-                symbol = s.get('symbol')
-                if symbol and symbol not in self._last_signals:
-                    self._last_signals[symbol] = s.get('type')
-            print(f"[CTR Job] Loaded last signals for {len(self._last_signals)} symbols")
-        except Exception as e:
-            print(f"[CTR Job] Could not load last signals: {e}")
-    
-    def _is_duplicate_signal(self, symbol: str, signal_type: str) -> bool:
-        """
-        Check if this signal is a duplicate.
-        Returns True if last signal for this symbol has the same direction.
-        """
-        last_type = self._last_signals.get(symbol)
-        if last_type == signal_type:
-            return True
-        return False
-    
-    def _get_zone(self, price: float, smc_status: Dict) -> str:
-        """
-        Determine price zone: PREMIUM / DISCOUNT / EQUILIBRIUM
-        Based on SMC trailing high/low
-        """
-        if not smc_status:
-            return 'NEUTRAL'
-        
-        trailing_top = smc_status.get('trailing_top', 0)
-        trailing_bottom = smc_status.get('trailing_bottom', 0)
-        
-        if not trailing_top or not trailing_bottom or trailing_top <= trailing_bottom:
-            return 'NEUTRAL'
-        
-        range_size = trailing_top - trailing_bottom
-        equilibrium = trailing_bottom + range_size * 0.5
-        
-        # Premium zone: above 50% (upper half)
-        # Discount zone: below 50% (lower half)
-        premium_threshold = trailing_bottom + range_size * 0.618  # ~61.8%
-        discount_threshold = trailing_bottom + range_size * 0.382  # ~38.2%
-        
-        if price >= premium_threshold:
-            return 'PREMIUM'
-        elif price <= discount_threshold:
-            return 'DISCOUNT'
-        else:
-            return 'EQUILIBRIUM'
+        # Watchlist
+        watchlist_str = self.db.get_setting('ctr_watchlist', '')
+        self.watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
     
     def _on_signal(self, signal: Dict):
         """Callback при отриманні сигналу"""
         try:
-            symbol = signal['symbol']
-            signal_type = signal['type']
-            
-            # Check for duplicate signal
-            if self._is_duplicate_signal(symbol, signal_type):
-                print(f"[CTR Job] ⏭️ Skipping duplicate signal: {symbol} {signal_type}")
-                # Still save to DB but don't notify
-                self._save_signal(signal, notified=False)
-                return
-            
-            # Get zone if SMC enabled
-            zone = 'NEUTRAL'
-            smc_trend = None
-            if self._scanner and self.smc_filter_enabled:
-                smc_status = self._scanner.get_smc_status(symbol)
-                if smc_status:
-                    zone = self._get_zone(signal['price'], smc_status)
-                    smc_trend = smc_status.get('trend_bias', 'NEUTRAL')
-            
-            # Update last signal cache
-            self._last_signals[symbol] = signal_type
-            
-            # Build message with zone info
-            zone_emoji = {'PREMIUM': '🔴', 'DISCOUNT': '🟢', 'EQUILIBRIUM': '⚪'}.get(zone, '⚪')
-            zone_text = f" | Zone: {zone_emoji} {zone}" if zone != 'NEUTRAL' else ""
-            
-            message = signal['message']
-            if zone_text and zone_text not in message:
-                # Add zone info to message
-                message = message.rstrip() + zone_text
-            
-            # Send notification
+            # Відправка в Telegram
             notifier = get_notifier()
             if notifier:
-                notifier.send_message(message)
+                notifier.send_message(signal['message'])
             
-            # Save to DB with additional info
-            signal['zone'] = zone
-            signal['smc_trend'] = smc_trend
-            self._save_signal(signal, notified=True)
+            # Збереження в БД
+            self._save_signal(signal)
             
             smc_tag = " [SMC✓]" if signal.get('smc_filtered') else ""
-            print(f"[CTR Job] 📨 Signal sent: {symbol} {signal_type}{smc_tag} | Zone: {zone}")
+            print(f"[CTR Job] 📨 Signal sent: {signal['symbol']} {signal['type']}{smc_tag}")
             
         except Exception as e:
             print(f"[CTR Job] Signal callback error: {e}")
     
-    def _save_signal(self, signal: Dict, notified: bool = True):
+    def _save_signal(self, signal: Dict):
         """Зберегти сигнал в БД"""
         try:
-            # Try new DB method first
-            try:
-                self.db.add_ctr_signal(
-                    symbol=signal['symbol'],
-                    signal_type=signal['type'],
-                    price=signal['price'],
-                    stc=signal.get('stc'),
-                    timeframe=signal.get('timeframe'),
-                    smc_filtered=signal.get('smc_filtered', False),
-                    smc_trend=signal.get('smc_trend'),
-                    zone=signal.get('zone'),
-                    notified=notified
-                )
-                return
-            except AttributeError:
-                pass
-            
-            # Fallback to old method (settings-based)
             signals_str = self.db.get_setting('ctr_signals', '[]')
             signals = json.loads(signals_str)
             
@@ -212,16 +83,13 @@ class CTRFastJob:
                 'symbol': signal['symbol'],
                 'type': signal['type'],
                 'price': signal['price'],
-                'stc': signal.get('stc'),
-                'timeframe': signal.get('timeframe'),
+                'stc': signal['stc'],
+                'timeframe': signal['timeframe'],
                 'smc_filtered': signal.get('smc_filtered', False),
-                'smc_trend': signal.get('smc_trend'),
-                'zone': signal.get('zone'),
-                'notified': notified,
                 'timestamp': datetime.now(timezone.utc).isoformat()
             })
             
-            # Keep last 100 signals
+            # Зберігаємо останні 100 сигналів
             signals = signals[-100:]
             
             self.db.set_setting('ctr_signals', json.dumps(signals))
@@ -237,29 +105,16 @@ class CTRFastJob:
         try:
             results = self._scanner.get_results()
             
-            # Add zone to results
+            # Конвертуємо для JSON
             json_results = []
             for r in results:
-                zone = 'NEUTRAL'
-                smc_trend = None
-                
-                if self.smc_filter_enabled and r.get('smc'):
-                    smc = r['smc']
-                    zone = self._get_zone(r['price'], {
-                        'trailing_top': smc.get('swing_high'),
-                        'trailing_bottom': smc.get('swing_low')
-                    })
-                    smc_trend = smc.get('trend', 'NEUTRAL')
-                
                 json_results.append({
                     'symbol': r['symbol'],
                     'price': float(r['price']),
                     'stc': float(r['stc']),
                     'prev_stc': float(r['prev_stc']),
                     'status': r['status'],
-                    'timeframe': r['timeframe'],
-                    'zone': zone,
-                    'smc_trend': smc_trend
+                    'timeframe': r['timeframe']
                 })
             
             self.db.set_setting('ctr_last_scan', json.dumps(json_results))
@@ -329,7 +184,7 @@ class CTRFastJob:
             import time
             while self._running:
                 self._save_results()
-                time.sleep(30)  # Save every 30 seconds
+                time.sleep(30)  # Зберігаємо кожні 30 секунд
         
         thread = threading.Thread(target=saver_loop, daemon=True)
         thread.start()
@@ -358,73 +213,31 @@ class CTRFastJob:
         """Додати символ до watchlist"""
         symbol = symbol.upper()
         
-        # Update in DB (new method)
-        try:
-            self.db.add_ctr_watchlist_item(symbol)
-        except AttributeError:
-            pass
-        
-        # Update in settings (old method - for compatibility)
+        # Оновити в БД
         if symbol not in self.watchlist:
             self.watchlist.append(symbol)
             self.db.set_setting('ctr_watchlist', ','.join(self.watchlist))
         
-        # Add to scanner
+        # Додати до сканера
         if self._scanner and self._running:
             return self._scanner.add_symbol(symbol)
         
         return True
     
     def remove_symbol(self, symbol: str) -> bool:
-        """Видалити символ з watchlist та всі пов'язані дані"""
+        """Видалити символ з watchlist"""
         symbol = symbol.upper()
         
-        # Remove from DB with all data
-        try:
-            self.db.remove_ctr_watchlist_item(symbol, delete_data=True)
-        except AttributeError:
-            pass
-        
-        # Remove from settings (old method)
+        # Оновити в БД
         if symbol in self.watchlist:
             self.watchlist.remove(symbol)
             self.db.set_setting('ctr_watchlist', ','.join(self.watchlist))
         
-        # Remove from last signals cache
-        if symbol in self._last_signals:
-            del self._last_signals[symbol]
-        
-        # Remove from scanner
+        # Видалити зі сканера
         if self._scanner and self._running:
             return self._scanner.remove_symbol(symbol)
         
         return True
-    
-    def clear_signals(self, symbol: str = None) -> int:
-        """Clear all signals or for specific symbol"""
-        try:
-            count = self.db.clear_ctr_signals(symbol)
-            
-            # Clear from cache
-            if symbol:
-                if symbol in self._last_signals:
-                    del self._last_signals[symbol]
-            else:
-                self._last_signals.clear()
-            
-            return count
-        except AttributeError:
-            # Fallback to old method
-            self.db.set_setting('ctr_signals', '[]')
-            self._last_signals.clear()
-            return 0
-    
-    def delete_signal(self, signal_id: int) -> bool:
-        """Delete a specific signal"""
-        try:
-            return self.db.delete_ctr_signal(signal_id)
-        except AttributeError:
-            return False
     
     def reload_settings(self):
         """Перезавантажити налаштування"""

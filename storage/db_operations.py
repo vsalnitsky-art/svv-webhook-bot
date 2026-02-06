@@ -331,7 +331,7 @@ class DBOperations:
             if timeframe:
                 query = query.filter(OrderBlock.timeframe == timeframe)
             
-            query = query.order_by(desc(OrderBlock.ob_strength))
+            query = query.order_by(desc(OrderBlock.quality_score))
             obs = query.limit(limit).all()
             return [ob.to_dict() for ob in obs]
         finally:
@@ -406,7 +406,7 @@ class DBOperations:
             if symbol:
                 query = query.filter(Trade.symbol == symbol)
             
-            query = query.order_by(desc(Trade.opened_at))
+            query = query.order_by(desc(Trade.entry_time))
             trades = query.limit(limit).all()
             return [t.to_dict() for t in trades]
         finally:
@@ -436,17 +436,18 @@ class DBOperations:
             session.close()
     
     def close_trade(self, trade_id: int, exit_price: float, exit_reason: str,
-                    pnl_usdt: float, pnl_percent: float = 0, fees: float = 0) -> bool:
+                    pnl_usdt: float, pnl_percent: float, fees: float = 0) -> bool:
         """Close a trade"""
         session = get_session()
         try:
             trade = session.query(Trade).filter_by(id=trade_id).first()
             if trade:
                 trade.exit_price = exit_price
-                trade.closed_at = datetime.utcnow()
+                trade.exit_time = datetime.utcnow()
                 trade.exit_reason = exit_reason
-                trade.realized_pnl = pnl_usdt
-                trade.fee = fees
+                trade.pnl_usdt = pnl_usdt
+                trade.pnl_percent = pnl_percent
+                trade.fees_paid = fees
                 trade.status = 'CLOSED'
                 session.commit()
                 return True
@@ -465,7 +466,7 @@ class DBOperations:
             trades = session.query(Trade).filter(
                 and_(
                     Trade.status == 'CLOSED',
-                    Trade.opened_at >= cutoff
+                    Trade.entry_time >= cutoff
                 )
             ).all()
             
@@ -476,30 +477,21 @@ class DBOperations:
                     'profit_factor': 0
                 }
             
-            # Use realized_pnl field (correct field name from model)
-            winners = [t for t in trades if (t.realized_pnl or 0) > 0]
-            losers = [t for t in trades if (t.realized_pnl or 0) <= 0]
+            winners = [t for t in trades if t.pnl_usdt > 0]
+            losers = [t for t in trades if t.pnl_usdt <= 0]
             
-            total_wins = sum((t.realized_pnl or 0) for t in winners)
-            total_losses = abs(sum((t.realized_pnl or 0) for t in losers))
+            total_wins = sum(t.pnl_usdt for t in winners)
+            total_losses = abs(sum(t.pnl_usdt for t in losers))
             
             return {
                 'total_trades': len(trades),
                 'winning_trades': len(winners),
                 'losing_trades': len(losers),
                 'win_rate': (len(winners) / len(trades) * 100) if trades else 0,
-                'total_pnl': sum((t.realized_pnl or 0) for t in trades),
+                'total_pnl': sum(t.pnl_usdt for t in trades),
                 'avg_win': total_wins / len(winners) if winners else 0,
                 'avg_loss': total_losses / len(losers) if losers else 0,
                 'profit_factor': total_wins / total_losses if total_losses > 0 else 0
-            }
-        except Exception as e:
-            # If table has wrong columns or other issues, return empty stats
-            print(f"[DB] get_trade_stats error (possibly migration needed): {e}")
-            return {
-                'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0,
-                'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0,
-                'profit_factor': 0
             }
         finally:
             session.close()
@@ -748,17 +740,6 @@ class DBOperations:
                 ):
                     added += 1
         return added
-
-
-# ==========================================
-# Integrate CTR DB methods into DBOperations
-# ==========================================
-from storage import ctr_db_methods as _ctr
-import inspect as _inspect
-
-for _name, _method in _inspect.getmembers(_ctr, predicate=_inspect.isfunction):
-    if not _name.startswith('_'):
-        setattr(DBOperations, _name, _method)
 
 
 # Singleton instance
