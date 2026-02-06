@@ -108,7 +108,18 @@ class BinanceConnector:
     
     def _convert_timeframe(self, interval: str) -> str:
         """Конвертує таймфрейм з Bybit формату в Binance"""
-        return self.TIMEFRAME_MAP.get(interval, interval)
+        interval = str(interval).strip()
+        # Try exact match first
+        result = self.TIMEFRAME_MAP.get(interval)
+        if result:
+            return result
+        # Try case-insensitive match (e.g. '4H' → '4h')
+        lower = interval.lower()
+        result = self.TIMEFRAME_MAP.get(lower)
+        if result:
+            return result
+        print(f"[BINANCE] ⚠️ Unknown interval '{interval}', passing as-is")
+        return interval
     
     def _make_request(self, endpoint: str, params: dict = None, base_url: str = None) -> Optional[Dict]:
         """Виконує HTTP запит до API"""
@@ -220,6 +231,12 @@ class BinanceConnector:
         """
         try:
             binance_interval = self._convert_timeframe(interval)
+            
+            # Debug: log first call per interval to help trace Invalid interval errors
+            _debug_key = f"_logged_{binance_interval}"
+            if not getattr(self, _debug_key, False):
+                print(f"[BINANCE] get_klines interval: '{interval}' → '{binance_interval}'")
+                setattr(self, _debug_key, True)
             
             if self._use_library:
                 klines = self.client.futures_klines(

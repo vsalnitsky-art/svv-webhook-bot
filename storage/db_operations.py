@@ -331,7 +331,7 @@ class DBOperations:
             if timeframe:
                 query = query.filter(OrderBlock.timeframe == timeframe)
             
-            query = query.order_by(desc(OrderBlock.quality_score))
+            query = query.order_by(desc(OrderBlock.ob_strength))
             obs = query.limit(limit).all()
             return [ob.to_dict() for ob in obs]
         finally:
@@ -748,6 +748,17 @@ class DBOperations:
                 ):
                     added += 1
         return added
+
+
+# ==========================================
+# Integrate CTR DB methods into DBOperations
+# ==========================================
+from storage import ctr_db_methods as _ctr
+import inspect as _inspect
+
+for _name, _method in _inspect.getmembers(_ctr, predicate=_inspect.isfunction):
+    if not _name.startswith('_'):
+        setattr(DBOperations, _name, _method)
 
 
 # Singleton instance
