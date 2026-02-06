@@ -1,8 +1,9 @@
 """
 Database Models - SQLAlchemy models for Sleeper OB Bot
+v8.3.0 - Added CTR Scanner models
 """
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import DATABASE_URL
@@ -12,6 +13,7 @@ Base = declarative_base()
 
 # Table prefix to avoid conflicts with other bots
 TABLE_PREFIX = 'sob_'  # sleeper_ob_bot
+
 
 class SleeperCandidate(Base):
     """Sleeper detector candidates - 5-Day Strategy v3.0"""
@@ -187,56 +189,37 @@ class SleeperCandidate(Base):
             'volume_spike_detected': self.volume_spike_detected,
             'oi_jump_detected': self.oi_jump_detected,
             'breakout_detected': self.breakout_detected,
-            'vc_extreme_detected': self.vc_extreme_detected,  # v3.1
-            # Legacy metrics
-            'funding_rate': self.funding_rate,
-            'oi_change_4h': self.oi_change_4h,
-            'bb_width': self.bb_width or self.bb_width_current,
-            'volume_24h': self.volume_24h,
-            'rsi': self.rsi,
-            # Timestamps
+            'vc_extreme_detected': self.vc_extreme_detected,
+            # Tracking
             'added_at': self.added_at.isoformat() if self.added_at else None,
-            'last_update': self.last_update.isoformat() if self.last_update else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'checks_count': self.checks_count,
         }
 
 
 class OrderBlock(Base):
-    """Detected order blocks"""
+    """Order Block entries"""
     __tablename__ = f'{TABLE_PREFIX}order_blocks'
     
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), nullable=False, index=True)
-    timeframe = Column(String(5), nullable=False)  # 15m/5m/1m
+    timeframe = Column(String(10), default='15m')
     
-    # OB Parameters
-    ob_type = Column(String(10), nullable=False)  # BULLISH/BEARISH
-    ob_high = Column(Float, nullable=False)
-    ob_low = Column(Float, nullable=False)
-    ob_mid = Column(Float, nullable=False)
-    
-    # Quality
-    quality_score = Column(Float, default=0)
-    volume_ratio = Column(Float, default=1.0)
-    impulse_pct = Column(Float, default=0)
+    # OB Data
+    ob_type = Column(String(10))  # BULLISH/BEARISH
+    ob_high = Column(Float)
+    ob_low = Column(Float)
+    ob_volume = Column(Float)
+    ob_strength = Column(Float, default=0)  # 0-100
     
     # Status
-    status = Column(String(20), default='ACTIVE', index=True)  # ACTIVE/TOUCHED/MITIGATED/EXPIRED
-    touch_count = Column(Integer, default=0)
+    status = Column(String(20), default='ACTIVE', index=True)  # ACTIVE/MITIGATED/EXPIRED
+    entry_price = Column(Float)
+    sl_price = Column(Float)
+    tp_price = Column(Float)
     
-    # Related sleeper
-    sleeper_symbol = Column(String(20))
-    sleeper_score = Column(Float)
-    
-    # Timing
-    created_at = Column(DateTime, default=datetime.utcnow)
-    touched_at = Column(DateTime)
-    expires_at = Column(DateTime)
-    
-    __table_args__ = (
-        Index('idx_ob_symbol_status', 'symbol', 'status'),
-    )
+    # Tracking
+    detected_at = Column(DateTime, default=datetime.utcnow)
+    mitigated_at = Column(DateTime)
     
     def to_dict(self):
         return {
@@ -246,101 +229,62 @@ class OrderBlock(Base):
             'ob_type': self.ob_type,
             'ob_high': self.ob_high,
             'ob_low': self.ob_low,
-            'ob_mid': self.ob_mid,
-            # Aliases for OB scanner compatibility
-            'top': self.ob_high,
-            'bottom': self.ob_low,
-            'quality': self.quality_score,
-            # Original fields
-            'quality_score': self.quality_score,
-            'volume_ratio': self.volume_ratio,
-            'impulse_pct': self.impulse_pct,
+            'ob_strength': self.ob_strength,
             'status': self.status,
-            'touch_count': self.touch_count,
-            # Keep as datetime for template compatibility
-            'created_at': self.created_at,
-            'expires_at': self.expires_at,
+            'entry_price': self.entry_price,
+            'sl_price': self.sl_price,
+            'tp_price': self.tp_price,
+            'detected_at': self.detected_at.isoformat() if self.detected_at else None,
         }
 
 
 class Trade(Base):
-    """Trade records"""
+    """Trade history"""
     __tablename__ = f'{TABLE_PREFIX}trades'
     
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), nullable=False, index=True)
     
-    # Entry
-    direction = Column(String(10), nullable=False)  # LONG/SHORT
-    entry_price = Column(Float, nullable=False)
-    entry_time = Column(DateTime, default=datetime.utcnow)
-    
-    # Position
-    position_size = Column(Float, nullable=False)
-    position_value = Column(Float)
+    # Trade data
+    side = Column(String(10))  # LONG/SHORT
+    entry_price = Column(Float)
+    exit_price = Column(Float)
+    quantity = Column(Float)
     leverage = Column(Integer, default=1)
     
-    # Levels
-    stop_loss = Column(Float, nullable=False)
-    take_profit_1 = Column(Float)
-    take_profit_2 = Column(Float)
-    take_profit_3 = Column(Float)
-    
-    # Exit
-    exit_price = Column(Float)
-    exit_time = Column(DateTime)
-    exit_reason = Column(String(50))  # TP1/TP2/TP3/SL/MANUAL/TRAILING
-    
-    # P&L
-    pnl_usdt = Column(Float, default=0)
-    pnl_percent = Column(Float, default=0)
-    fees_paid = Column(Float, default=0)
-    
-    # Meta
-    sleeper_score = Column(Float)
-    ob_quality = Column(Float)
-    signal_confidence = Column(Float)
-    
-    # Mode
-    is_paper = Column(Boolean, default=True)
-    execution_mode = Column(String(20))  # AUTO/SEMI_AUTO/MANUAL
+    # PnL
+    realized_pnl = Column(Float)
+    fee = Column(Float, default=0)
     
     # Status
     status = Column(String(20), default='OPEN', index=True)  # OPEN/CLOSED/CANCELLED
+    exit_reason = Column(String(50))  # TP/SL/MANUAL/SIGNAL
     
-    # Notes
-    notes = Column(Text)
+    # Timestamps
+    opened_at = Column(DateTime, default=datetime.utcnow)
+    closed_at = Column(DateTime)
     
-    __table_args__ = (
-        Index('idx_trade_symbol_status', 'symbol', 'status'),
-        Index('idx_trade_entry_time', 'entry_time'),
-    )
+    # Metadata
+    order_block_id = Column(Integer)
+    sleeper_symbol = Column(String(20))
+    strategy = Column(String(50))
     
     def to_dict(self):
         return {
             'id': self.id,
             'symbol': self.symbol,
-            'direction': self.direction,
+            'side': self.side,
             'entry_price': self.entry_price,
-            'entry_time': self.entry_time.isoformat() if self.entry_time else None,
-            'position_size': self.position_size,
-            'position_value': self.position_value,
-            'leverage': self.leverage,
-            'stop_loss': self.stop_loss,
-            'take_profit_1': self.take_profit_1,
-            'take_profit_2': self.take_profit_2,
-            'take_profit_3': self.take_profit_3,
             'exit_price': self.exit_price,
-            'exit_time': self.exit_time.isoformat() if self.exit_time else None,
-            'exit_reason': self.exit_reason,
-            'pnl_usdt': self.pnl_usdt,
-            'pnl_percent': self.pnl_percent,
-            'fees_paid': self.fees_paid,
-            'sleeper_score': self.sleeper_score,
-            'ob_quality': self.ob_quality,
-            'is_paper': self.is_paper,
-            'execution_mode': self.execution_mode,
+            'quantity': self.quantity,
+            'leverage': self.leverage,
+            'realized_pnl': self.realized_pnl,
+            'fee': self.fee,
             'status': self.status,
+            'exit_reason': self.exit_reason,
+            'opened_at': self.opened_at.isoformat() if self.opened_at else None,
+            'closed_at': self.closed_at.isoformat() if self.closed_at else None,
+            'strategy': self.strategy,
         }
 
 
@@ -349,61 +293,55 @@ class PerformanceStats(Base):
     __tablename__ = f'{TABLE_PREFIX}performance_stats'
     
     id = Column(Integer, primary_key=True)
-    date = Column(DateTime, unique=True, nullable=False, index=True)
+    date = Column(String(10), unique=True, index=True)  # YYYY-MM-DD
     
-    # Counts
+    # Trade stats
     total_trades = Column(Integer, default=0)
     winning_trades = Column(Integer, default=0)
     losing_trades = Column(Integer, default=0)
     
-    # P&L
-    total_pnl_usdt = Column(Float, default=0)
-    total_pnl_percent = Column(Float, default=0)
-    max_drawdown = Column(Float, default=0)
+    # PnL
+    gross_pnl = Column(Float, default=0)
+    fees = Column(Float, default=0)
+    net_pnl = Column(Float, default=0)
     
-    # Rates
-    win_rate = Column(Float, default=0)
-    avg_win = Column(Float, default=0)
-    avg_loss = Column(Float, default=0)
-    profit_factor = Column(Float, default=0)
-    
-    # Sleeper stats
-    sleeper_signals = Column(Integer, default=0)
-    ob_signals = Column(Integer, default=0)
+    # Best/Worst
+    best_trade_pnl = Column(Float)
+    worst_trade_pnl = Column(Float)
     
     def to_dict(self):
         return {
-            'date': self.date.isoformat() if self.date else None,
+            'date': self.date,
             'total_trades': self.total_trades,
             'winning_trades': self.winning_trades,
             'losing_trades': self.losing_trades,
-            'total_pnl_usdt': self.total_pnl_usdt,
-            'win_rate': self.win_rate,
-            'avg_win': self.avg_win,
-            'avg_loss': self.avg_loss,
-            'profit_factor': self.profit_factor,
+            'gross_pnl': self.gross_pnl,
+            'fees': self.fees,
+            'net_pnl': self.net_pnl,
+            'win_rate': (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0,
         }
 
 
 class BotSetting(Base):
     """Bot settings storage"""
-    __tablename__ = f'{TABLE_PREFIX}bot_settings'
+    __tablename__ = f'{TABLE_PREFIX}settings'
     
-    key = Column(String(50), primary_key=True)
+    id = Column(Integer, primary_key=True)
+    key = Column(String(100), unique=True, nullable=False, index=True)
     value = Column(Text)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class EventLog(Base):
-    """Event log for dashboard"""
-    __tablename__ = f'{TABLE_PREFIX}event_logs'
+    """Event log for debugging and monitoring"""
+    __tablename__ = f'{TABLE_PREFIX}events'
     
     id = Column(Integer, primary_key=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    level = Column(String(10), default='INFO')  # INFO/WARN/ERROR/SUCCESS
-    category = Column(String(20))  # SLEEPER/OB/TRADE/SYSTEM
+    level = Column(String(10), index=True)  # INFO/WARNING/ERROR
+    category = Column(String(50), index=True)  # TRADE/SIGNAL/SYSTEM/etc
     message = Column(Text)
-    symbol = Column(String(20))
+    data = Column(Text)  # JSON extra data
     
     def to_dict(self):
         return {
@@ -412,28 +350,19 @@ class EventLog(Base):
             'level': self.level,
             'category': self.category,
             'message': self.message,
-            'symbol': self.symbol,
         }
 
 
 class SymbolBlacklist(Base):
-    """
-    Blacklist - v8.2: Монети виключені з аналізу
-    
-    Причини для blacklist:
-    - LOW_VOLATILITY: Рухається < 3% на день
-    - STABLECOIN: USDC, BUSD, etc.
-    - MANUAL: Вручну додано користувачем
-    - DELISTED: Монета видалена з біржі
-    """
+    """Blacklisted symbols - excluded from scanning"""
     __tablename__ = f'{TABLE_PREFIX}symbol_blacklist'
     
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), unique=True, nullable=False, index=True)
-    reason = Column(String(50), default='MANUAL')  # LOW_VOLATILITY/STABLECOIN/MANUAL/DELISTED
+    reason = Column(String(50))  # LOW_VOLATILITY / STABLECOIN / MANUAL / DELISTED
+    volatility_24h = Column(Float)  # Volatility when added
     added_at = Column(DateTime, default=datetime.utcnow)
-    volatility_24h = Column(Float, default=0)  # % руху за добу коли було додано
-    note = Column(String(200))
+    note = Column(String(200))  # Optional note
     
     def to_dict(self):
         return {
@@ -443,6 +372,91 @@ class SymbolBlacklist(Base):
             'added_at': self.added_at.isoformat() if self.added_at else None,
             'volatility_24h': self.volatility_24h,
             'note': self.note,
+        }
+
+
+# ============================================
+# CTR SCANNER MODELS (v8.3.0)
+# ============================================
+
+class CTRWatchlistItem(Base):
+    """CTR Scanner watchlist items stored in database"""
+    __tablename__ = f'{TABLE_PREFIX}ctr_watchlist'
+    
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), unique=True, nullable=False, index=True)
+    added_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'added_at': self.added_at.isoformat() if self.added_at else None,
+            'is_active': self.is_active,
+        }
+
+
+class CTRSignal(Base):
+    """CTR Scanner executed signals"""
+    __tablename__ = f'{TABLE_PREFIX}ctr_signals'
+    
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    signal_type = Column(String(10), nullable=False)  # BUY/SELL
+    price = Column(Float, nullable=False)
+    stc = Column(Float)
+    timeframe = Column(String(10))
+    smc_filtered = Column(Boolean, default=False)
+    smc_trend = Column(String(20))  # BULLISH/BEARISH/NEUTRAL
+    zone = Column(String(20))  # PREMIUM/DISCOUNT/EQUILIBRIUM
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    notified = Column(Boolean, default=True)  # Was notification sent?
+    
+    # Index for fast lookups
+    __table_args__ = (
+        Index(f'ix_{TABLE_PREFIX}ctr_signals_symbol_time', 'symbol', 'timestamp'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'type': self.signal_type,
+            'price': self.price,
+            'stc': self.stc,
+            'timeframe': self.timeframe,
+            'smc_filtered': self.smc_filtered,
+            'smc_trend': self.smc_trend,
+            'zone': self.zone,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'notified': self.notified,
+        }
+
+
+class CTRKlineCache(Base):
+    """CTR Scanner kline cache - persisted between restarts"""
+    __tablename__ = f'{TABLE_PREFIX}ctr_kline_cache'
+    
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(20), nullable=False, index=True)
+    timeframe = Column(String(10), nullable=False)
+    klines_data = Column(Text)  # JSON serialized klines
+    candles_count = Column(Integer, default=0)
+    last_update = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Composite unique constraint
+    __table_args__ = (
+        Index(f'ix_{TABLE_PREFIX}ctr_kline_cache_symbol_tf', 'symbol', 'timeframe', unique=True),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'candles_count': self.candles_count,
+            'last_update': self.last_update.isoformat() if self.last_update else None,
         }
 
 
@@ -511,6 +525,9 @@ def init_db():
     
     # Run migrations for new columns
     migrate_sleeper_candidates_v3()
+    
+    # Run CTR migrations
+    migrate_ctr_tables()
 
 
 def migrate_sleeper_candidates_v3():
@@ -542,7 +559,7 @@ def migrate_sleeper_candidates_v3():
         ("volume_spike_detected", "BOOLEAN DEFAULT FALSE"),
         ("oi_jump_detected", "BOOLEAN DEFAULT FALSE"),
         ("breakout_detected", "BOOLEAN DEFAULT FALSE"),
-        ("vc_extreme_detected", "BOOLEAN DEFAULT FALSE"),  # v3.1: VC > 95% + VOL < 1.2x
+        ("vc_extreme_detected", "BOOLEAN DEFAULT FALSE"),
         # State transition tracking
         ("watching_since", "TIMESTAMP"),
         ("building_since", "TIMESTAMP"),
@@ -595,8 +612,6 @@ def migrate_sleeper_candidates_v3():
     with engine.connect() as conn:
         for col_name, col_type in new_columns:
             try:
-                # PostgreSQL-compatible: use DO block to add column if not exists
-                # This avoids race conditions and works reliably
                 sql = text(f"""
                     DO $$ 
                     BEGIN 
@@ -612,13 +627,48 @@ def migrate_sleeper_candidates_v3():
                 conn.execute(sql)
                 conn.commit()
             except Exception as e:
-                # Log error but continue with other columns
                 error_str = str(e)
                 if 'already exists' not in error_str.lower():
                     print(f"[DB MIGRATE] Error adding {col_name}: {e}")
                 conn.rollback()
     
-    print("[DB MIGRATE] Migration complete")
+    print("[DB MIGRATE] Sleeper migration complete")
+
+
+def migrate_ctr_tables():
+    """Migrate CTR tables - add new columns v8.3.0"""
+    from sqlalchemy import text
+    
+    # CTR Signals new columns
+    signals_table = f"{TABLE_PREFIX}ctr_signals"
+    new_columns = [
+        ("smc_trend", "VARCHAR(20)"),
+        ("zone", "VARCHAR(20)"),
+        ("notified", "BOOLEAN DEFAULT TRUE"),
+    ]
+    
+    with engine.connect() as conn:
+        for col_name, col_type in new_columns:
+            try:
+                sql = text(f"""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = '{signals_table}' AND column_name = '{col_name}'
+                        ) THEN 
+                            ALTER TABLE {signals_table} ADD COLUMN {col_name} {col_type};
+                        END IF;
+                    END $$;
+                """)
+                conn.execute(sql)
+                conn.commit()
+            except Exception as e:
+                if 'already exists' not in str(e).lower():
+                    print(f"[DB MIGRATE CTR] Error adding {col_name}: {e}")
+                conn.rollback()
+    
+    print("[DB MIGRATE] CTR migration complete")
 
 
 def get_session():

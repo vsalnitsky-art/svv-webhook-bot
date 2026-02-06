@@ -198,6 +198,34 @@
         color: #ff5252;
     }
     
+    /* Zone badges */
+    .zone-badge {
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 0.8em;
+        font-weight: bold;
+    }
+    
+    .zone-premium {
+        background: rgba(255, 82, 82, 0.15);
+        color: #ff5252;
+    }
+    
+    .zone-discount {
+        background: rgba(0, 200, 83, 0.15);
+        color: #00c853;
+    }
+    
+    .zone-equilibrium {
+        background: rgba(255, 193, 7, 0.15);
+        color: #ffc107;
+    }
+    
+    .zone-neutral {
+        background: rgba(128, 128, 128, 0.15);
+        color: #888;
+    }
+    
     /* Settings Panel */
     .settings-grid {
         display: grid;
@@ -264,12 +292,41 @@
         margin-bottom: 15px;
         opacity: 0.5;
     }
+    
+    /* Delete button */
+    .btn-delete {
+        background: rgba(255, 82, 82, 0.1);
+        border: none;
+        color: #ff5252;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.85em;
+    }
+    
+    .btn-delete:hover {
+        background: rgba(255, 82, 82, 0.3);
+    }
+    
+    .btn-clear-all {
+        background: rgba(255, 82, 82, 0.2);
+        border: none;
+        color: #ff5252;
+        padding: 6px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85em;
+    }
+    
+    .btn-clear-all:hover {
+        background: rgba(255, 82, 82, 0.4);
+    }
 </style>
 
 <div class="ctr-container">
     <div class="ctr-header">
         <div class="ctr-title">
-            <h1>📊 CTR Scanner <small style="font-size:0.5em; color:#888;">v2.0 Fast</small></h1>
+            <h1>📊 CTR Scanner <small style="font-size:0.5em; color:#888;">v2.2</small></h1>
             <span class="status-badge {{ 'status-running' if ctr_running else 'status-stopped' }}" id="ctr-status">
                 {{ '● RUNNING' if ctr_running else '○ STOPPED' }}
             </span>
@@ -279,73 +336,65 @@
             </span>
             {% endif %}
         </div>
+        
         <div class="ctr-controls">
-            <label class="checkbox-label" style="display: flex; align-items: center; gap: 5px; margin-right: 15px; background: rgba(255,200,0,0.1); padding: 5px 12px; border-radius: 6px;">
-                <input type="checkbox" id="ctr-only-mode" {{ 'checked' if ctr_only_mode else '' }} onchange="toggleCTROnlyMode(this)">
-                <span style="font-size: 0.9em;">CTR Only Mode</span>
-            </label>
-            <button class="btn btn-success" onclick="startCTR()" id="btn-start" {{ 'disabled' if ctr_running else '' }}>
-                ▶️ Start
-            </button>
-            <button class="btn btn-danger" onclick="stopCTR()" id="btn-stop" {{ 'disabled' if not ctr_running else '' }}>
-                ⏹️ Stop
-            </button>
-            <button class="btn btn-primary" onclick="scanNow()">
-                🔄 Scan Now
-            </button>
+            {% if ctr_running %}
+            <button class="btn btn-danger" onclick="stopCTR()">⏹ Stop</button>
+            {% else %}
+            <button class="btn btn-success" onclick="startCTR()">▶ Start</button>
+            {% endif %}
+            <button class="btn btn-primary" onclick="scanNow()">🔍 Scan Now</button>
         </div>
     </div>
     
     <!-- Stats Row -->
+    {% if ctr_running and stats %}
     <div class="stats-row">
         <div class="stat-card">
-            <div class="stat-value" id="stat-watchlist">{{ watchlist|length }}</div>
-            <div class="stat-label">Symbols</div>
+            <div class="stat-value">{{ stats.get('scan_count', 0) }}</div>
+            <div class="stat-label">Scans</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value stc-oversold" id="stat-oversold">{{ oversold_count }}</div>
-            <div class="stat-label">Oversold</div>
+            <div class="stat-value">{{ stats.get('signal_count', 0) }}</div>
+            <div class="stat-label">Signals</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value stc-overbought" id="stat-overbought">{{ overbought_count }}</div>
-            <div class="stat-label">Overbought</div>
+            <div class="stat-value">{{ stats.get('ws_messages', 0) }}</div>
+            <div class="stat-label">WS Messages</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value" id="stat-signals">{{ signals_today }}</div>
-            <div class="stat-label">Signals Today</div>
+            <div class="stat-value">{{ "%.1f"|format(stats.get('avg_scan_time', 0) * 1000) }}ms</div>
+            <div class="stat-label">Avg Scan Time</div>
         </div>
     </div>
+    {% endif %}
     
     <div class="ctr-grid">
-        <!-- Left Panel: Watchlist + Settings -->
+        <!-- Left Panel: Watchlist & Settings -->
         <div>
             <!-- Watchlist -->
             <div class="ctr-panel" style="margin-bottom: 20px;">
                 <div class="panel-header">
                     <h2>📋 Watchlist</h2>
-                    <span id="watchlist-count">{{ watchlist|length }} symbols</span>
+                    <span>{{ watchlist|length }} symbols</span>
                 </div>
                 
                 <div class="watchlist-input">
-                    <input type="text" id="new-symbol" placeholder="BTCUSDT" 
-                           onkeypress="if(event.key==='Enter')addSymbol()">
-                    <button class="btn btn-primary" onclick="addSymbol()">+ Add</button>
+                    <input type="text" id="new-symbol" placeholder="BTCUSDT" onkeypress="if(event.key==='Enter')addSymbol()">
+                    <button class="btn btn-primary" onclick="addSymbol()">+</button>
                 </div>
                 
-                <div class="watchlist-items" id="watchlist-items">
-                    {% if watchlist %}
-                        {% for symbol in watchlist %}
-                        <div class="watchlist-item" data-symbol="{{ symbol }}">
-                            <span class="watchlist-symbol">{{ symbol }}</span>
-                            <button class="watchlist-remove" onclick="removeSymbol('{{ symbol }}')">✕</button>
-                        </div>
-                        {% endfor %}
+                <div class="watchlist-items">
+                    {% for symbol in watchlist %}
+                    <div class="watchlist-item">
+                        <span class="watchlist-symbol">{{ symbol }}</span>
+                        <button class="watchlist-remove" onclick="removeSymbol('{{ symbol }}')">✕</button>
+                    </div>
                     {% else %}
-                        <div class="empty-state">
-                            <p>No symbols in watchlist</p>
-                            <small>Add symbols above to start monitoring</small>
-                        </div>
-                    {% endif %}
+                    <div class="empty-state" style="padding: 20px;">
+                        <p style="margin: 0;">No symbols added</p>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
             
@@ -353,92 +402,85 @@
             <div class="ctr-panel">
                 <div class="panel-header">
                     <h2>⚙️ Settings</h2>
-                    <button class="btn btn-sm btn-secondary" onclick="saveSettings()">Save</button>
+                </div>
+                
+                <!-- CTR Only Mode Toggle -->
+                <div style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                    <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                        <input type="checkbox" id="ctr_only_mode" {{ 'checked' if ctr_only_mode else '' }} onchange="toggleCTROnlyMode(this)">
+                        <span>🔒 CTR Only Mode</span>
+                    </label>
+                    <small style="color: #888; display: block; margin-top: 5px;">Disable SLEEPERS scanning</small>
                 </div>
                 
                 <div class="settings-grid">
                     <div class="setting-item">
                         <label>Timeframe</label>
                         <select id="ctr_timeframe">
-                            <option value="1m" {{ 'selected' if settings.ctr_timeframe == '1m' else '' }}>1m</option>
-                            <option value="5m" {{ 'selected' if settings.ctr_timeframe == '5m' else '' }}>5m</option>
-                            <option value="15m" {{ 'selected' if settings.ctr_timeframe == '15m' or not settings.ctr_timeframe else '' }}>15m</option>
-                            <option value="1h" {{ 'selected' if settings.ctr_timeframe == '1h' else '' }}>1h</option>
-                            <option value="4h" {{ 'selected' if settings.ctr_timeframe == '4h' else '' }}>4h</option>
+                            <option value="1m" {{ 'selected' if settings.ctr_timeframe == '1m' }}>1m</option>
+                            <option value="3m" {{ 'selected' if settings.ctr_timeframe == '3m' }}>3m</option>
+                            <option value="5m" {{ 'selected' if settings.ctr_timeframe == '5m' }}>5m</option>
+                            <option value="15m" {{ 'selected' if settings.ctr_timeframe == '15m' }}>15m</option>
+                            <option value="30m" {{ 'selected' if settings.ctr_timeframe == '30m' }}>30m</option>
+                            <option value="1h" {{ 'selected' if settings.ctr_timeframe == '1h' }}>1h</option>
+                            <option value="4h" {{ 'selected' if settings.ctr_timeframe == '4h' }}>4h</option>
                         </select>
                     </div>
                     
                     <div class="setting-item">
-                        <label>Fast EMA</label>
-                        <input type="number" id="ctr_fast_length" value="{{ settings.ctr_fast_length or 21 }}" min="5" max="50">
+                        <label>Fast Length</label>
+                        <input type="number" id="ctr_fast_length" value="{{ settings.ctr_fast_length }}" min="5" max="50">
                     </div>
                     
                     <div class="setting-item">
-                        <label>Slow EMA</label>
-                        <input type="number" id="ctr_slow_length" value="{{ settings.ctr_slow_length or 50 }}" min="20" max="100">
+                        <label>Slow Length</label>
+                        <input type="number" id="ctr_slow_length" value="{{ settings.ctr_slow_length }}" min="20" max="100">
                     </div>
                     
                     <div class="setting-item">
                         <label>Cycle Length</label>
-                        <input type="number" id="ctr_cycle_length" value="{{ settings.ctr_cycle_length or 10 }}" min="5" max="30">
+                        <input type="number" id="ctr_cycle_length" value="{{ settings.ctr_cycle_length }}" min="5" max="20">
                     </div>
                     
                     <div class="setting-item">
-                        <label>Upper Level</label>
-                        <input type="number" id="ctr_upper" value="{{ settings.ctr_upper or 75 }}" min="60" max="95">
+                        <label>Upper (Overbought)</label>
+                        <input type="number" id="ctr_upper" value="{{ settings.ctr_upper }}" min="60" max="90">
                     </div>
                     
                     <div class="setting-item">
-                        <label>Lower Level</label>
-                        <input type="number" id="ctr_lower" value="{{ settings.ctr_lower or 25 }}" min="5" max="40">
+                        <label>Lower (Oversold)</label>
+                        <input type="number" id="ctr_lower" value="{{ settings.ctr_lower }}" min="10" max="40">
                     </div>
                 </div>
                 
-                <!-- SMC Filter Section -->
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
-                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                        📊 SMC Structure Filter
-                        <span class="status-badge {{ 'status-running' if smc_filter_enabled else 'status-stopped' }}" style="font-size: 0.7em;">
-                            {{ 'ON' if smc_filter_enabled else 'OFF' }}
-                        </span>
-                    </h4>
-                    
-                    <div class="setting-item">
-                        <label style="display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" id="ctr_smc_filter_enabled" {{ 'checked' if settings.ctr_smc_filter_enabled else '' }} onchange="saveSettings()">
-                            Enable SMC Filter
+                <!-- SMC Filter Settings -->
+                <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" id="ctr_smc_filter_enabled" {{ 'checked' if settings.ctr_smc_filter_enabled else '' }}>
+                            <span>🔧 SMC Structure Filter</span>
                         </label>
+                        <small style="color: #888; display: block; margin-top: 5px;">Filter signals based on market structure</small>
                     </div>
                     
-                    <div class="setting-item">
-                        <label>Swing Length</label>
-                        <input type="number" id="ctr_smc_swing_length" value="{{ settings.ctr_smc_swing_length or 50 }}" min="10" max="100">
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label>Swing Length</label>
+                            <input type="number" id="ctr_smc_swing_length" value="{{ settings.ctr_smc_swing_length }}" min="10" max="100">
+                        </div>
+                        
+                        <div class="setting-item">
+                            <label>Zone Threshold %</label>
+                            <input type="number" id="ctr_smc_zone_threshold" value="{{ settings.ctr_smc_zone_threshold }}" min="0.5" max="5" step="0.1">
+                        </div>
                     </div>
-                    
-                    <div class="setting-item">
-                        <label>Zone Threshold (%)</label>
-                        <input type="number" id="ctr_smc_zone_threshold" value="{{ settings.ctr_smc_zone_threshold or 1.0 }}" min="0.5" max="5" step="0.1">
-                    </div>
-                    
-                    <small style="color: #888; display: block; margin-top: 10px;">
-                        <b>SMC Filter:</b> Validates signals at key structure levels<br>
-                        • BUY: Near Strong Low or HL (Higher Low)<br>
-                        • SELL: Near Weak High or LH (Lower High)<br>
-                        {% if signals_filtered %}<span style="color: #ff9800;">Filtered: {{ signals_filtered }} signals</span>{% endif %}
-                    </small>
                 </div>
                 
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
-                    <small style="color: #888;">
-                        <b>CTR Algorithm:</b> Schaff Trend Cycle<br>
-                        BUY: STC crosses above {{ settings.ctr_lower or 25 }}<br>
-                        SELL: STC crosses below {{ settings.ctr_upper or 75 }}
-                    </small>
-                </div>
+                <button class="btn btn-primary" style="width: 100%; margin-top: 20px;" onclick="saveSettings()">💾 Save Settings</button>
             </div>
         </div>
         
-        <!-- Right Panel: Scan Results -->
+        <!-- Right Panel: Results -->
         <div class="ctr-panel">
             <div class="panel-header">
                 <h2>📈 Scan Results</h2>
@@ -453,6 +495,7 @@
                         <th>Price</th>
                         <th>STC</th>
                         <th>Status</th>
+                        <th>Zone</th>
                         <th>Signal</th>
                     </tr>
                 </thead>
@@ -471,6 +514,18 @@
                                 <span style="color: #ff5252;">🔴 Overbought</span>
                             {% else %}
                                 <span style="color: #888;">⚪ Neutral</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% set zone = r.get('zone', 'NEUTRAL') %}
+                            {% if zone == 'PREMIUM' %}
+                                <span class="zone-badge zone-premium">🔴 Premium</span>
+                            {% elif zone == 'DISCOUNT' %}
+                                <span class="zone-badge zone-discount">🟢 Discount</span>
+                            {% elif zone == 'EQUILIBRIUM' %}
+                                <span class="zone-badge zone-equilibrium">🟡 Equilib</span>
+                            {% else %}
+                                <span class="zone-badge zone-neutral">— —</span>
                             {% endif %}
                         </td>
                         <td>
@@ -498,7 +553,12 @@
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
                 <div class="panel-header">
                     <h2>🎯 Executed Signals</h2>
-                    <span>Last 20</span>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <span>Last 20</span>
+                        {% if ctr_signals %}
+                        <button class="btn-clear-all" onclick="clearAllSignals()">🗑️ Clear All</button>
+                        {% endif %}
+                    </div>
                 </div>
                 
                 {% if ctr_signals %}
@@ -509,12 +569,14 @@
                             <th>Symbol</th>
                             <th>Signal</th>
                             <th>Price</th>
+                            <th>Zone</th>
                             <th>STC</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for sig in ctr_signals %}
-                        <tr>
+                        <tr id="signal-row-{{ sig.id or loop.index }}">
                             <td style="font-family: monospace; font-size: 0.85em;">
                                 {{ sig.timestamp[:19].replace('T', ' ') if sig.timestamp else '—' }}
                             </td>
@@ -525,10 +587,30 @@
                                 {% else %}
                                     <span class="signal-badge signal-sell">🔴 SHORT</span>
                                 {% endif %}
+                                {% if sig.notified == false %}
+                                    <span style="color: #888; font-size: 0.8em;">(dup)</span>
+                                {% endif %}
                             </td>
                             <td>${{ "%.8f"|format(sig.price) if sig.price < 1 else "%.4f"|format(sig.price) if sig.price < 100 else "%.2f"|format(sig.price) }}</td>
+                            <td>
+                                {% set zone = sig.get('zone', 'NEUTRAL') %}
+                                {% if zone == 'PREMIUM' %}
+                                    <span class="zone-badge zone-premium">🔴 P</span>
+                                {% elif zone == 'DISCOUNT' %}
+                                    <span class="zone-badge zone-discount">🟢 D</span>
+                                {% elif zone == 'EQUILIBRIUM' %}
+                                    <span class="zone-badge zone-equilibrium">🟡 E</span>
+                                {% else %}
+                                    <span style="color: #666;">—</span>
+                                {% endif %}
+                            </td>
                             <td class="stc-value {{ 'stc-oversold' if sig.stc <= 25 else 'stc-overbought' if sig.stc >= 75 else 'stc-neutral' }}">
-                                {{ "%.2f"|format(sig.stc) }}
+                                {{ "%.2f"|format(sig.stc) if sig.stc else '—' }}
+                            </td>
+                            <td>
+                                {% if sig.id %}
+                                <button class="btn-delete" onclick="deleteSignal({{ sig.id }})">✕</button>
+                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}
@@ -600,7 +682,7 @@ async function addSymbol() {
 }
 
 async function removeSymbol(symbol) {
-    if (!confirm(`Remove ${symbol} from watchlist?`)) return;
+    if (!confirm(`Remove ${symbol} from watchlist?\nThis will also delete all signals and cached data for this symbol.`)) return;
     
     try {
         const res = await fetch('/api/ctr/watchlist/remove', {
@@ -615,6 +697,51 @@ async function removeSymbol(symbol) {
             location.reload();
         } else {
             alert(data.error || 'Failed to remove symbol');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function deleteSignal(signalId) {
+    if (!confirm('Delete this signal?')) return;
+    
+    try {
+        const res = await fetch(`/api/ctr/signals/delete/${signalId}`, {
+            method: 'POST'
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            const row = document.getElementById(`signal-row-${signalId}`);
+            if (row) row.remove();
+            showToast('✅ Signal deleted');
+        } else {
+            alert(data.error || 'Failed to delete signal');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function clearAllSignals() {
+    if (!confirm('Clear ALL signals? This cannot be undone.')) return;
+    
+    try {
+        const res = await fetch('/api/ctr/signals/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Cleared ${data.cleared || 'all'} signals`);
+            location.reload();
+        } else {
+            alert(data.error || 'Failed to clear signals');
         }
     } catch (e) {
         alert('Error: ' + e.message);
