@@ -168,6 +168,7 @@ class SleeperScannerV3:
         # v8.2.5: Trend Analyzer для 4H Context Filter
         self.trend_analyzer = TrendAnalyzer()
         self.trend_timeframe = self.db.get_setting('trend_timeframe', '240')  # 4H default
+        print(f"  Trend TF: '{self.trend_timeframe}' (type={type(self.trend_timeframe).__name__})")
         self.allow_signals_without_trend = self.db.get_setting('allow_signals_without_trend', False)
         if isinstance(self.allow_signals_without_trend, str):
             self.allow_signals_without_trend = self.allow_signals_without_trend.lower() in ('1', 'true', 'yes')

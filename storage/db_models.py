@@ -531,6 +531,9 @@ def init_db():
     
     # Run CTR migrations
     migrate_ctr_tables()
+    
+    # Run Order Blocks migration
+    migrate_orderblocks_table()
 
 
 def migrate_sleeper_candidates_v3():
@@ -721,6 +724,44 @@ def migrate_trades_table():
                 conn.rollback()
     
     print("[DB MIGRATE] Trades migration complete")
+
+
+def migrate_orderblocks_table():
+    """Add missing columns to order_blocks table"""
+    from sqlalchemy import text
+    
+    new_columns = [
+        ("ob_volume", "FLOAT DEFAULT 0"),
+        ("ob_strength", "FLOAT DEFAULT 0"),
+        ("mitigated_at", "TIMESTAMP"),
+    ]
+    
+    table_name = f"{TABLE_PREFIX}order_blocks"
+    
+    with engine.connect() as conn:
+        for col_name, col_type in new_columns:
+            try:
+                sql = text(f"""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = '{table_name}' AND column_name = '{col_name}'
+                        ) THEN 
+                            ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type};
+                            RAISE NOTICE 'Added column: {col_name}';
+                        END IF;
+                    END $$;
+                """)
+                conn.execute(sql)
+                conn.commit()
+            except Exception as e:
+                error_str = str(e)
+                if 'already exists' not in error_str.lower():
+                    print(f"[DB MIGRATE] Error adding {col_name}: {e}")
+                conn.rollback()
+    
+    print("[DB MIGRATE] OrderBlocks migration complete")
 
 
 def get_session():

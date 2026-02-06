@@ -232,10 +232,10 @@ class BinanceConnector:
         try:
             binance_interval = self._convert_timeframe(interval)
             
-            # Debug: log first call per interval to help trace Invalid interval errors
+            # Debug: log first call per interval to trace Invalid interval errors
             _debug_key = f"_logged_{binance_interval}"
             if not getattr(self, _debug_key, False):
-                print(f"[BINANCE] get_klines interval: '{interval}' → '{binance_interval}'")
+                print(f"[BINANCE] get_klines interval: '{interval}' (type={type(interval).__name__}) → '{binance_interval}'", flush=True)
                 setattr(self, _debug_key, True)
             
             if self._use_library:
