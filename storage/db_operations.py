@@ -493,6 +493,14 @@ class DBOperations:
                 'avg_loss': total_losses / len(losers) if losers else 0,
                 'profit_factor': total_wins / total_losses if total_losses > 0 else 0
             }
+        except Exception as e:
+            # If table has wrong columns or other issues, return empty stats
+            print(f"[DB] get_trade_stats error (possibly migration needed): {e}")
+            return {
+                'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0,
+                'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0,
+                'profit_factor': 0
+            }
         finally:
             session.close()
     

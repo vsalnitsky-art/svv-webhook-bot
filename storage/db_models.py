@@ -526,6 +526,9 @@ def init_db():
     # Run migrations for new columns
     migrate_sleeper_candidates_v3()
     
+    # Run trades table migration
+    migrate_trades_table()
+    
     # Run CTR migrations
     migrate_ctr_tables()
 
@@ -669,6 +672,55 @@ def migrate_ctr_tables():
                 conn.rollback()
     
     print("[DB MIGRATE] CTR migration complete")
+
+
+def migrate_trades_table():
+    """Migrate trades table - add missing columns v8.3.0"""
+    from sqlalchemy import text
+    
+    trades_table = f"{TABLE_PREFIX}trades"
+    
+    # Columns that should exist in trades table
+    new_columns = [
+        ("side", "VARCHAR(10)"),
+        ("entry_price", "FLOAT"),
+        ("exit_price", "FLOAT"),
+        ("quantity", "FLOAT"),
+        ("leverage", "INTEGER DEFAULT 1"),
+        ("realized_pnl", "FLOAT"),
+        ("fee", "FLOAT DEFAULT 0"),
+        ("status", "VARCHAR(20) DEFAULT 'OPEN'"),
+        ("exit_reason", "VARCHAR(50)"),
+        ("opened_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+        ("closed_at", "TIMESTAMP"),
+        ("order_block_id", "INTEGER"),
+        ("sleeper_symbol", "VARCHAR(20)"),
+        ("strategy", "VARCHAR(50)"),
+    ]
+    
+    with engine.connect() as conn:
+        for col_name, col_type in new_columns:
+            try:
+                sql = text(f"""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = '{trades_table}' AND column_name = '{col_name}'
+                        ) THEN 
+                            ALTER TABLE {trades_table} ADD COLUMN {col_name} {col_type};
+                            RAISE NOTICE 'Added column: {col_name}';
+                        END IF;
+                    END $$;
+                """)
+                conn.execute(sql)
+                conn.commit()
+            except Exception as e:
+                if 'already exists' not in str(e).lower():
+                    print(f"[DB MIGRATE TRADES] Error adding {col_name}: {e}")
+                conn.rollback()
+    
+    print("[DB MIGRATE] Trades migration complete")
 
 
 def get_session():
