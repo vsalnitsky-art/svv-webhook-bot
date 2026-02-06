@@ -32,8 +32,14 @@ class CTRFastJob:
         self._running = False
         self._lock = threading.Lock()
         
+        # Last signal direction per symbol for deduplication
+        self._last_signal_direction: Dict[str, str] = {}  # symbol -> 'BUY'/'SELL'
+        
         # Load settings
         self._load_settings()
+        
+        # Load last signal directions from DB for persistence across restarts
+        self._load_last_directions()
     
     def _load_settings(self):
         """Завантажити налаштування з БД"""
@@ -56,9 +62,62 @@ class CTRFastJob:
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
         self.watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
     
+    def _load_last_directions(self):
+        """Завантажити останні напрямки сигналів з БД для дедуплікації"""
+        try:
+            signals_str = self.db.get_setting('ctr_signals', '[]')
+            signals = json.loads(signals_str)
+            
+            # Будуємо map: symbol -> останній напрямок
+            # Сигнали зберігаються хронологічно, тому останній = правильний
+            for sig in signals:
+                symbol = sig.get('symbol')
+                sig_type = sig.get('type')
+                if symbol and sig_type:
+                    self._last_signal_direction[symbol] = sig_type
+            
+            if self._last_signal_direction:
+                print(f"[CTR Job] 📋 Loaded last directions for {len(self._last_signal_direction)} symbols")
+                for sym, direction in self._last_signal_direction.items():
+                    print(f"  {sym}: {direction}")
+        except Exception as e:
+            print(f"[CTR Job] Error loading last directions: {e}")
+    
+    def _is_duplicate_signal(self, symbol: str, signal_type: str) -> bool:
+        """
+        Перевіряє чи сигнал дублікат останнього.
+        
+        Логіка: якщо останній сигнал для монети мав такий же напрямок,
+        то це дублікат і його не треба відправляти. Чекаємо на протилежний.
+        
+        BUY → BUY = ДУБЛІКАТ (ігноруємо)
+        BUY → SELL = НОВИЙ (відправляємо)
+        SELL → SELL = ДУБЛІКАТ (ігноруємо)
+        SELL → BUY = НОВИЙ (відправляємо)
+        None → будь-який = НОВИЙ (перший сигнал)
+        """
+        last_direction = self._last_signal_direction.get(symbol)
+        
+        if last_direction is None:
+            return False  # Перший сигнал для цієї монети
+        
+        return last_direction == signal_type
+    
     def _on_signal(self, signal: Dict):
         """Callback при отриманні сигналу"""
         try:
+            symbol = signal['symbol']
+            signal_type = signal['type']
+            
+            # === ДЕДУПЛІКАЦІЯ: перевіряємо чи змінився напрямок ===
+            if self._is_duplicate_signal(symbol, signal_type):
+                print(f"[CTR Job] ⏭️ Duplicate signal skipped: {symbol} {signal_type} "
+                      f"(last was also {signal_type}, waiting for opposite)")
+                return
+            
+            # Оновлюємо останній напрямок
+            self._last_signal_direction[symbol] = signal_type
+            
             # Відправка в Telegram
             notifier = get_notifier()
             if notifier:
@@ -68,7 +127,8 @@ class CTRFastJob:
             self._save_signal(signal)
             
             smc_tag = " [SMC✓]" if signal.get('smc_filtered') else ""
-            print(f"[CTR Job] 📨 Signal sent: {signal['symbol']} {signal['type']}{smc_tag}")
+            last_dir = self._last_signal_direction.get(symbol, 'NEW')
+            print(f"[CTR Job] 📨 Signal sent: {symbol} {signal_type}{smc_tag} (direction changed)")
             
         except Exception as e:
             print(f"[CTR Job] Signal callback error: {e}")
@@ -98,7 +158,7 @@ class CTRFastJob:
             print(f"[CTR Job] Error saving signal: {e}")
     
     def _save_results(self):
-        """Зберегти поточні результати в БД"""
+        """Зберегти поточні результати в БД (включаючи SMC дані)"""
         if not self._scanner:
             return
         
@@ -108,14 +168,27 @@ class CTRFastJob:
             # Конвертуємо для JSON
             json_results = []
             for r in results:
-                json_results.append({
+                item = {
                     'symbol': r['symbol'],
                     'price': float(r['price']),
                     'stc': float(r['stc']),
                     'prev_stc': float(r['prev_stc']),
                     'status': r['status'],
                     'timeframe': r['timeframe']
-                })
+                }
+                
+                # Додаємо SMC дані якщо є
+                smc = r.get('smc')
+                if smc:
+                    item['smc_trend'] = smc.get('trend', 'N/A')
+                    item['smc_swing_high'] = smc.get('swing_high')
+                    item['smc_swing_low'] = smc.get('swing_low')
+                    item['smc_last_hh'] = smc.get('last_hh')
+                    item['smc_last_hl'] = smc.get('last_hl')
+                    item['smc_last_lh'] = smc.get('last_lh')
+                    item['smc_last_ll'] = smc.get('last_ll')
+                
+                json_results.append(item)
             
             self.db.set_setting('ctr_last_scan', json.dumps(json_results))
             self.db.set_setting('ctr_last_scan_time', datetime.now(timezone.utc).isoformat())
@@ -255,6 +328,50 @@ class CTRFastJob:
                 'smc_swing_length': self.smc_swing_length,
                 'smc_zone_threshold': self.smc_zone_threshold,
             })
+    
+    def delete_signal(self, timestamp: str) -> bool:
+        """Видалити конкретний сигнал за timestamp"""
+        try:
+            signals_str = self.db.get_setting('ctr_signals', '[]')
+            signals = json.loads(signals_str)
+            
+            # Шукаємо за timestamp
+            original_len = len(signals)
+            signals = [s for s in signals if s.get('timestamp') != timestamp]
+            
+            if len(signals) < original_len:
+                self.db.set_setting('ctr_signals', json.dumps(signals))
+                print(f"[CTR Job] 🗑️ Signal deleted (ts={timestamp[:19]})")
+                return True
+            
+            return False
+        except Exception as e:
+            print(f"[CTR Job] Error deleting signal: {e}")
+            return False
+    
+    def clear_signals(self) -> int:
+        """Очистити всі сигнали"""
+        try:
+            signals_str = self.db.get_setting('ctr_signals', '[]')
+            signals = json.loads(signals_str)
+            count = len(signals)
+            
+            self.db.set_setting('ctr_signals', '[]')
+            
+            # Також очищуємо кеш напрямків
+            self._last_signal_direction.clear()
+            
+            print(f"[CTR Job] 🗑️ Cleared {count} signals + direction cache")
+            return count
+        except Exception as e:
+            print(f"[CTR Job] Error clearing signals: {e}")
+            return 0
+    
+    def reset_signal_direction(self, symbol: str):
+        """Скинути останній напрямок для монети (дозволяє повторний сигнал)"""
+        if symbol in self._last_signal_direction:
+            old = self._last_signal_direction.pop(symbol)
+            print(f"[CTR Job] 🔄 Reset direction for {symbol} (was {old})")
     
     def scan_now(self) -> List[Dict]:
         """Примусове сканування"""

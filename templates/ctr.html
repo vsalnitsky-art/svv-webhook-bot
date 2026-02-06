@@ -453,6 +453,7 @@
                         <th>Price</th>
                         <th>STC</th>
                         <th>Status</th>
+                        <th>SMC Trend</th>
                         <th>Signal</th>
                     </tr>
                 </thead>
@@ -471,6 +472,19 @@
                                 <span style="color: #ff5252;">🔴 Overbought</span>
                             {% else %}
                                 <span style="color: #888;">⚪ Neutral</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if r.smc_trend %}
+                                {% if r.smc_trend == 'BULLISH' %}
+                                    <span style="color: #00c853; font-weight: bold;" title="HH: {{ r.smc_last_hh or '—' }} | HL: {{ r.smc_last_hl or '—' }}">🟢 BULLISH</span>
+                                {% elif r.smc_trend == 'BEARISH' %}
+                                    <span style="color: #ff5252; font-weight: bold;" title="LH: {{ r.smc_last_lh or '—' }} | LL: {{ r.smc_last_ll or '—' }}">🔴 BEARISH</span>
+                                {% else %}
+                                    <span style="color: #ff9800; font-weight: bold;">⚪ {{ r.smc_trend }}</span>
+                                {% endif %}
+                            {% else %}
+                                <span style="color: #444;">—</span>
                             {% endif %}
                         </td>
                         <td>
@@ -498,7 +512,14 @@
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
                 <div class="panel-header">
                     <h2>🎯 Executed Signals</h2>
-                    <span>Last 20</span>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span>Last 20</span>
+                        {% if ctr_signals %}
+                        <button class="btn btn-sm" style="background: rgba(255,82,82,0.2); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8em;" onclick="clearAllSignals()">
+                            🗑️ Clear All
+                        </button>
+                        {% endif %}
+                    </div>
                 </div>
                 
                 {% if ctr_signals %}
@@ -510,11 +531,12 @@
                             <th>Signal</th>
                             <th>Price</th>
                             <th>STC</th>
+                            <th style="width: 40px;"></th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="signals-body">
                         {% for sig in ctr_signals %}
-                        <tr>
+                        <tr id="signal-row-{{ loop.index0 }}">
                             <td style="font-family: monospace; font-size: 0.85em;">
                                 {{ sig.timestamp[:19].replace('T', ' ') if sig.timestamp else '—' }}
                             </td>
@@ -529,6 +551,9 @@
                             <td>${{ "%.8f"|format(sig.price) if sig.price < 1 else "%.4f"|format(sig.price) if sig.price < 100 else "%.2f"|format(sig.price) }}</td>
                             <td class="stc-value {{ 'stc-oversold' if sig.stc <= 25 else 'stc-overbought' if sig.stc >= 75 else 'stc-neutral' }}">
                                 {{ "%.2f"|format(sig.stc) }}
+                            </td>
+                            <td>
+                                <button class="watchlist-remove" onclick="deleteSignal('{{ sig.timestamp }}', {{ loop.index0 }})" title="Видалити">✕</button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -716,5 +741,53 @@ setInterval(() => {
     location.reload();
 }, 30000);
 {% endif %}
+
+async function deleteSignal(timestamp, rowIndex) {
+    try {
+        const res = await fetch('/api/ctr/signals/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timestamp })
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            const row = document.getElementById(`signal-row-${rowIndex}`);
+            if (row) {
+                row.style.transition = 'opacity 0.3s';
+                row.style.opacity = '0';
+                setTimeout(() => row.remove(), 300);
+            }
+            showToast('🗑️ Signal deleted');
+        } else {
+            alert(data.error || 'Failed to delete signal');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function clearAllSignals() {
+    if (!confirm('Видалити ВСІ сигнали? Це також скине кеш напрямків (дедуплікацію).')) return;
+    
+    try {
+        const res = await fetch('/api/ctr/signals/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`🗑️ Cleared ${data.cleared} signals`);
+            setTimeout(() => location.reload(), 500);
+        } else {
+            alert(data.error || 'Failed to clear signals');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
 </script>
 {% endblock %}

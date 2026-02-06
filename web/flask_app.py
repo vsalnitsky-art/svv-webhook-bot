@@ -1330,6 +1330,38 @@ def register_api_routes(app):
             'signals_count': 0  # Signals are sent automatically
         })
     
+    @app.route('/api/ctr/signals/delete', methods=['POST'])
+    def api_ctr_signal_delete():
+        """Delete a specific CTR signal by timestamp"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        
+        data = request.get_json()
+        timestamp = data.get('timestamp')
+        
+        if not timestamp:
+            return jsonify({'success': False, 'error': 'Missing signal timestamp'})
+        
+        try:
+            job = get_ctr_job(db)
+            success = job.delete_signal(timestamp)
+            return jsonify({'success': success})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/ctr/signals/clear', methods=['POST'])
+    def api_ctr_signals_clear():
+        """Clear all CTR signals"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        
+        try:
+            job = get_ctr_job(db)
+            count = job.clear_signals()
+            return jsonify({'success': True, 'cleared': count})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
     @app.route('/api/ctr/only-mode', methods=['POST'])
     def api_ctr_only_mode():
         """Toggle CTR Only mode (disables other scans)"""
