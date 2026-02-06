@@ -406,7 +406,7 @@ class DBOperations:
             if symbol:
                 query = query.filter(Trade.symbol == symbol)
             
-            query = query.order_by(desc(Trade.entry_time))
+            query = query.order_by(desc(Trade.opened_at))
             trades = query.limit(limit).all()
             return [t.to_dict() for t in trades]
         finally:
@@ -436,18 +436,17 @@ class DBOperations:
             session.close()
     
     def close_trade(self, trade_id: int, exit_price: float, exit_reason: str,
-                    pnl_usdt: float, pnl_percent: float, fees: float = 0) -> bool:
+                    pnl_usdt: float, pnl_percent: float = 0, fees: float = 0) -> bool:
         """Close a trade"""
         session = get_session()
         try:
             trade = session.query(Trade).filter_by(id=trade_id).first()
             if trade:
                 trade.exit_price = exit_price
-                trade.exit_time = datetime.utcnow()
+                trade.closed_at = datetime.utcnow()
                 trade.exit_reason = exit_reason
-                trade.pnl_usdt = pnl_usdt
-                trade.pnl_percent = pnl_percent
-                trade.fees_paid = fees
+                trade.realized_pnl = pnl_usdt
+                trade.fee = fees
                 trade.status = 'CLOSED'
                 session.commit()
                 return True
@@ -466,7 +465,7 @@ class DBOperations:
             trades = session.query(Trade).filter(
                 and_(
                     Trade.status == 'CLOSED',
-                    Trade.entry_time >= cutoff
+                    Trade.opened_at >= cutoff
                 )
             ).all()
             
@@ -477,18 +476,19 @@ class DBOperations:
                     'profit_factor': 0
                 }
             
-            winners = [t for t in trades if t.pnl_usdt > 0]
-            losers = [t for t in trades if t.pnl_usdt <= 0]
+            # Use realized_pnl field (correct field name from model)
+            winners = [t for t in trades if (t.realized_pnl or 0) > 0]
+            losers = [t for t in trades if (t.realized_pnl or 0) <= 0]
             
-            total_wins = sum(t.pnl_usdt for t in winners)
-            total_losses = abs(sum(t.pnl_usdt for t in losers))
+            total_wins = sum((t.realized_pnl or 0) for t in winners)
+            total_losses = abs(sum((t.realized_pnl or 0) for t in losers))
             
             return {
                 'total_trades': len(trades),
                 'winning_trades': len(winners),
                 'losing_trades': len(losers),
                 'win_rate': (len(winners) / len(trades) * 100) if trades else 0,
-                'total_pnl': sum(t.pnl_usdt for t in trades),
+                'total_pnl': sum((t.realized_pnl or 0) for t in trades),
                 'avg_win': total_wins / len(winners) if winners else 0,
                 'avg_loss': total_losses / len(losers) if losers else 0,
                 'profit_factor': total_wins / total_losses if total_losses > 0 else 0
