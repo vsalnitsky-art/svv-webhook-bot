@@ -306,6 +306,7 @@ class CTRFastScanner:
         smc_filter_enabled: bool = False,
         smc_swing_length: int = 50,
         smc_zone_threshold: float = 1.0,
+        smc_require_trend: bool = True,
     ):
         self.timeframe = timeframe
         self.on_signal = on_signal  # Callback для сигналів
@@ -320,6 +321,7 @@ class CTRFastScanner:
         self.smc_filter_enabled = smc_filter_enabled and SMC_AVAILABLE
         self.smc_swing_length = smc_swing_length
         self.smc_zone_threshold = smc_zone_threshold
+        self.smc_require_trend = smc_require_trend
         
         # In-memory cache
         self._cache: Dict[str, SymbolCache] = {}
@@ -363,7 +365,8 @@ class CTRFastScanner:
         
         return SMCSignalFilter(
             swing_length=self.smc_swing_length,
-            zone_threshold_percent=self.smc_zone_threshold
+            zone_threshold_percent=self.smc_zone_threshold,
+            require_trend_for_zones=self.smc_require_trend,
         )
     
     def _load_history(self, symbol: str) -> bool:
