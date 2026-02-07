@@ -1169,6 +1169,7 @@ def register_api_routes(app):
             'ctr_smc_filter_enabled': smc_filter_enabled,
             'ctr_smc_swing_length': db.get_setting('ctr_smc_swing_length', 50),
             'ctr_smc_zone_threshold': db.get_setting('ctr_smc_zone_threshold', 1.0),
+            'ctr_smc_require_trend': db.get_setting('ctr_smc_require_trend', '1') in ('1', 'true', 'True', 'yes'),
         }
         
         # Статистика фільтрації
@@ -1270,7 +1271,8 @@ def register_api_routes(app):
             'ctr_timeframe', 'ctr_fast_length', 'ctr_slow_length',
             'ctr_cycle_length', 'ctr_upper', 'ctr_lower',
             # SMC Filter settings
-            'ctr_smc_filter_enabled', 'ctr_smc_swing_length', 'ctr_smc_zone_threshold'
+            'ctr_smc_filter_enabled', 'ctr_smc_swing_length', 'ctr_smc_zone_threshold',
+            'ctr_smc_require_trend'
         ]
         
         for key in ctr_settings:
@@ -1492,10 +1494,18 @@ def register_api_routes(app):
                     scan_time = dt.strftime('%H:%M:%S')
                 except:
                     pass
+            
+            # Per-symbol scan results
+            scan_results = job.get_results() if job.is_running() else []
+            
             return jsonify({
                 'scan_time': scan_time,
                 'zones_active': stats.get('zones_active', 0),
                 'signals_sent': stats.get('signals_sent', 0),
+                'scans': stats.get('scans', 0),
+                'patterns_found': stats.get('patterns_found', 0),
+                'last_scan_ms': stats.get('last_scan_ms', 0),
+                'scan_results': scan_results,
             })
         except:
             return jsonify({})

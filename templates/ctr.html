@@ -420,6 +420,14 @@
                         <input type="number" id="ctr_smc_zone_threshold" value="{{ settings.ctr_smc_zone_threshold or 1.0 }}" min="0.5" max="5" step="0.1">
                     </div>
                     
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_smc_require_trend" {{ 'checked' if settings.ctr_smc_require_trend else '' }} onchange="saveSettings()">
+                            Require Trend for Zones
+                        </label>
+                        <small style="color:#666;margin-left:26px;">Premium → SELL only if bearish, Discount → BUY only if bullish</small>
+                    </div>
+                    
                     <small style="color: #888; display: block; margin-top: 10px;">
                         <b>SMC Filter:</b> Validates signals at key structure levels<br>
                         • BUY: Near Strong Low or HL (Higher Low)<br>
@@ -658,6 +666,7 @@ async function saveSettings() {
         ctr_smc_filter_enabled: document.getElementById('ctr_smc_filter_enabled').checked ? '1' : '0',
         ctr_smc_swing_length: parseInt(document.getElementById('ctr_smc_swing_length').value),
         ctr_smc_zone_threshold: parseFloat(document.getElementById('ctr_smc_zone_threshold').value),
+        ctr_smc_require_trend: document.getElementById('ctr_smc_require_trend').checked ? '1' : '0',
     };
     
     try {

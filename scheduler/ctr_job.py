@@ -57,6 +57,8 @@ class CTRFastJob:
         self.smc_filter_enabled = smc_enabled_str in ('1', 'true', 'True', 'yes')
         self.smc_swing_length = int(self.db.get_setting('ctr_smc_swing_length', '50'))
         self.smc_zone_threshold = float(self.db.get_setting('ctr_smc_zone_threshold', '1.0'))
+        smc_require_trend_str = self.db.get_setting('ctr_smc_require_trend', '1')
+        self.smc_require_trend = smc_require_trend_str in ('1', 'true', 'True', 'yes')
         
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
@@ -225,6 +227,7 @@ class CTRFastJob:
                 smc_filter_enabled=self.smc_filter_enabled,
                 smc_swing_length=self.smc_swing_length,
                 smc_zone_threshold=self.smc_zone_threshold,
+                smc_require_trend=self.smc_require_trend,
             )
             
             # Start scanner
@@ -327,6 +330,7 @@ class CTRFastJob:
                 'smc_filter_enabled': self.smc_filter_enabled,
                 'smc_swing_length': self.smc_swing_length,
                 'smc_zone_threshold': self.smc_zone_threshold,
+                'smc_require_trend': self.smc_require_trend,
             })
     
     def delete_signal(self, timestamp: str) -> bool:

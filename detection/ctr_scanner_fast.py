@@ -363,11 +363,18 @@ class CTRFastScanner:
         if not self.smc_filter_enabled or not SMC_AVAILABLE:
             return None
         
-        return SMCSignalFilter(
-            swing_length=self.smc_swing_length,
-            zone_threshold_percent=self.smc_zone_threshold,
-            require_trend_for_zones=self.smc_require_trend,
-        )
+        try:
+            return SMCSignalFilter(
+                swing_length=self.smc_swing_length,
+                zone_threshold_percent=self.smc_zone_threshold,
+                require_trend_for_zones=self.smc_require_trend,
+            )
+        except TypeError:
+            # Fallback: старий SMCSignalFilter без require_trend_for_zones
+            return SMCSignalFilter(
+                swing_length=self.smc_swing_length,
+                zone_threshold_percent=self.smc_zone_threshold,
+            )
     
     def _load_history(self, symbol: str) -> bool:
         """Завантажити історичні дані для символу"""

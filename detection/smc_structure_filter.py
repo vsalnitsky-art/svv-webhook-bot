@@ -357,16 +357,19 @@ class SMCSignalFilter:
         swing_length: int = 50,
         zone_threshold_percent: float = 1.0,  # Відсоток відхилення від рівня
         use_premium_discount: bool = True,    # Використовувати зони преміум/дисконт
+        require_trend_for_zones: bool = True,  # Вимагати тренд для Premium/Discount зон
     ):
         """
         Args:
             swing_length: Довжина свінга для SMC
             zone_threshold_percent: % від ціни для визначення "біля рівня"
             use_premium_discount: Чи використовувати логіку преміум/дисконт
+            require_trend_for_zones: Вимагати підтвердження тренду для Premium/Discount зон
         """
         self.detector = SMCStructureDetector(swing_length=swing_length)
         self.zone_threshold_percent = zone_threshold_percent
         self.use_premium_discount = use_premium_discount
+        self.require_trend_for_zones = require_trend_for_zones
         self._enabled = True
     
     @property
@@ -452,6 +455,8 @@ class SMCSignalFilter:
             # Тренд має бути бичим для покупки в дисконті
             if structure.trend_bias == TrendBias.BULLISH:
                 return True, "In Discount Zone + Bullish Trend"
+            elif not self.require_trend_for_zones:
+                return True, f"In Discount Zone (trend: {structure.trend_bias.name})"
             else:
                 reasons.append("In Discount Zone (but not bullish trend)")
         
@@ -493,6 +498,8 @@ class SMCSignalFilter:
         if self._is_near_level(current_price, levels['strong_high']):
             if structure.trend_bias == TrendBias.BEARISH:
                 return True, f"Near Strong High + Bearish Trend ({levels['strong_high']:.4f})"
+            elif not self.require_trend_for_zones:
+                return True, f"Near Strong High (trend: {structure.trend_bias.name}) ({levels['strong_high']:.4f})"
             else:
                 reasons.append(f"Near Strong High but not bearish trend")
         
@@ -505,6 +512,8 @@ class SMCSignalFilter:
             # Тренд має бути ведмежим для продажу в преміумі
             if structure.trend_bias == TrendBias.BEARISH:
                 return True, "In Premium Zone + Bearish Trend"
+            elif not self.require_trend_for_zones:
+                return True, f"In Premium Zone (trend: {structure.trend_bias.name})"
             else:
                 reasons.append("In Premium Zone (but not bearish trend)")
         
@@ -522,6 +531,7 @@ class SMCSignalFilter:
         return {
             'enabled': self._enabled,
             'trend_bias': structure.trend_bias.name,
+            'require_trend_for_zones': self.require_trend_for_zones,
             'swing_high': levels['swing_high'],
             'swing_low': levels['swing_low'],
             'trailing_top': levels['trailing_top'],

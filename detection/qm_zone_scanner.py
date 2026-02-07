@@ -535,6 +535,8 @@ class QMZoneScanner:
         
         refresh_counter = 0
         refresh_every = max(1, 60 // self.scan_interval)  # Оновлювати свічки раз на хвилину
+        log_every = max(1, 120 // self.scan_interval)  # Лог кожні ~2 хвилини
+        log_counter = 0
         
         while self._running:
             try:
@@ -556,6 +558,19 @@ class QMZoneScanner:
                 elapsed = (time.time() - start) * 1000
                 self._stats['last_scan_ms'] = elapsed
                 self._stats['scans'] += 1
+                
+                # Періодичний лог прогресу
+                log_counter += 1
+                if log_counter >= log_every:
+                    log_counter = 0
+                    zones = self._active_zones
+                    zone_info = ', '.join(f"{s}={z.level_name}" for s, z in zones.items()) if zones else 'none'
+                    print(f"[QM Scanner] 📊 Scan #{self._stats['scans']}: "
+                          f"{len(self._watchlist)} symbols, "
+                          f"{len(zones)} in zones [{zone_info}], "
+                          f"patterns={self._stats['patterns_found']}, "
+                          f"signals={self._stats['signals_sent']}, "
+                          f"{elapsed:.0f}ms")
                 
                 # Чекаємо до наступного сканування
                 sleep_time = max(1, self.scan_interval - (time.time() - start))
@@ -584,6 +599,14 @@ class QMZoneScanner:
                 active_zones += 1
         
         self._stats['zones_active'] = active_zones
+        
+        # Лог першого сканування
+        if self._stats['scans'] == 0:
+            zones = self._active_zones
+            zone_info = ', '.join(f"{s}={z.level_name}" for s, z in zones.items()) if zones else 'none'
+            print(f"[QM Scanner] ✅ First scan complete: "
+                  f"{len(self._watchlist)} symbols, "
+                  f"{active_zones} in zones [{zone_info}]")
         
         return results
     
