@@ -199,6 +199,50 @@
     }
     
     /* Settings Panel */
+    
+    /* Trade Toggle in Watchlist */
+    .trade-toggle {
+        display: flex; align-items: center; gap: 3px;
+        cursor: pointer; font-size: 0.75em; padding: 2px 6px;
+        border-radius: 4px; transition: all 0.2s;
+        user-select: none;
+    }
+    .trade-toggle.active {
+        background: rgba(0,200,83,0.2); color: #00c853;
+    }
+    .trade-toggle.inactive {
+        background: rgba(255,255,255,0.05); color: #666;
+    }
+    .trade-toggle:hover { opacity: 0.8; }
+    
+    /* Trade Settings Panel */
+    .trade-panel { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); }
+    .trade-toggle-main {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 12px; border-radius: 8px; margin-bottom: 12px;
+        transition: all 0.2s;
+    }
+    .trade-toggle-main.enabled { background: rgba(0,200,83,0.15); border: 1px solid rgba(0,200,83,0.3); }
+    .trade-toggle-main.disabled { background: rgba(255,82,82,0.1); border: 1px solid rgba(255,82,82,0.2); }
+    
+    /* Switch toggle */
+    .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+              background-color: #555; transition: .3s; border-radius: 24px; }
+    .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+                     background-color: white; transition: .3s; border-radius: 50%; }
+    input:checked + .slider { background-color: #00c853; }
+    input:checked + .slider:before { transform: translateX(20px); }
+    
+    /* Position card */
+    .position-card {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 8px 10px; margin-bottom: 6px; border-radius: 6px;
+        font-size: 0.85em;
+    }
+    .position-card.long { background: rgba(0,200,83,0.1); border-left: 3px solid #00c853; }
+    .position-card.short { background: rgba(255,82,82,0.1); border-left: 3px solid #ff5252; }
     .settings-grid {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
@@ -337,7 +381,14 @@
                         {% for symbol in watchlist %}
                         <div class="watchlist-item" data-symbol="{{ symbol }}">
                             <span class="watchlist-symbol">{{ symbol }}</span>
-                            <button class="watchlist-remove" onclick="removeSymbol('{{ symbol }}')">✕</button>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <span class="trade-toggle {{ 'active' if symbol in trade_settings.trade_symbols else 'inactive' }}"
+                                      onclick="toggleTradeSymbol('{{ symbol }}', this)"
+                                      title="Увімкнути торгівлю по {{ symbol }}">
+                                    💰 {{ 'Trade' if symbol in trade_settings.trade_symbols else 'Off' }}
+                                </span>
+                                <button class="watchlist-remove" onclick="removeSymbol('{{ symbol }}')">✕</button>
+                            </div>
                         </div>
                         {% endfor %}
                     {% else %}
@@ -441,6 +492,65 @@
                         <b>CTR Algorithm:</b> Schaff Trend Cycle<br>
                         BUY: STC crosses above {{ settings.ctr_lower or 25 }}<br>
                         SELL: STC crosses below {{ settings.ctr_upper or 75 }}
+                    </small>
+                </div>
+                
+                <!-- Trade Settings -->
+                <div class="trade-panel">
+                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        💰 Auto-Trade (Bybit Futures)
+                        <span class="status-badge {{ 'status-running' if trade_settings.enabled else 'status-stopped' }}" style="font-size: 0.7em;">
+                            {{ 'ON' if trade_settings.enabled else 'OFF' }}
+                        </span>
+                    </h4>
+                    
+                    <div class="trade-toggle-main {{ 'enabled' if trade_settings.enabled else 'disabled' }}" id="trade-toggle-bar">
+                        <span style="font-size:0.9em;">
+                            {{ '🟢 Автоторгівля увімкнена' if trade_settings.enabled else '🔴 Автоторгівля вимкнена' }}
+                        </span>
+                        <label class="switch">
+                            <input type="checkbox" id="trade-enabled" {{ 'checked' if trade_settings.enabled else '' }}
+                                   onchange="toggleAutoTrade(this)">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label>Leverage</label>
+                            <input type="number" id="trade_leverage" value="{{ trade_settings.leverage }}" min="1" max="100">
+                        </div>
+                        <div class="setting-item">
+                            <label>Deposit %</label>
+                            <input type="number" id="trade_deposit_pct" value="{{ trade_settings.deposit_pct }}" min="0.1" max="50" step="0.5">
+                        </div>
+                        <div class="setting-item">
+                            <label>TP %</label>
+                            <input type="number" id="trade_tp_pct" value="{{ trade_settings.tp_pct }}" min="0" max="100" step="0.5">
+                        </div>
+                        <div class="setting-item">
+                            <label>SL %</label>
+                            <input type="number" id="trade_sl_pct" value="{{ trade_settings.sl_pct }}" min="0" max="50" step="0.5">
+                        </div>
+                        <div class="setting-item">
+                            <label>Max Positions</label>
+                            <input type="number" id="trade_max_positions" value="{{ trade_settings.max_positions }}" min="1" max="20">
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-sm btn-secondary" onclick="saveTradeSettings()" style="margin-top:10px;width:100%;">
+                        💾 Зберегти Trade Settings
+                    </button>
+                    
+                    <!-- Active Positions -->
+                    <div id="trade-positions" style="margin-top:12px;">
+                        <small style="color:#888;">Позиції завантажуються...</small>
+                    </div>
+                    
+                    <small style="color: #888; display: block; margin-top: 10px;">
+                        <b>Isolated margin</b> • Market orders<br>
+                        Відмітьте 💰 біля символу в Watchlist для торгівлі<br>
+                        <span style="color:#ff9800;">⚠️ Реальні гроші! Перевірте налаштування.</span>
                     </small>
                 </div>
             </div>
@@ -802,5 +912,140 @@ async function clearAllSignals() {
         alert('Error: ' + e.message);
     }
 }
+
+// ================================
+// AUTO-TRADE FUNCTIONS
+// ================================
+
+async function toggleAutoTrade(checkbox) {
+    const enabled = checkbox.checked;
+    
+    if (enabled && !confirm('⚠️ Увімкнути автоторгівлю?\nЦе РЕАЛЬНІ гроші на Bybit Futures!')) {
+        checkbox.checked = false;
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/ctr/trade/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(enabled ? '🟢 Auto-Trade ENABLED' : '🔴 Auto-Trade DISABLED');
+            setTimeout(() => location.reload(), 500);
+        } else {
+            checkbox.checked = !enabled;
+            alert(data.error || 'Failed');
+        }
+    } catch (e) {
+        checkbox.checked = !enabled;
+        alert('Error: ' + e.message);
+    }
+}
+
+async function toggleTradeSymbol(symbol, el) {
+    const isActive = el.classList.contains('active');
+    const newState = !isActive;
+    
+    try {
+        const res = await fetch('/api/ctr/trade/symbol', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol, enabled: newState })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            el.classList.toggle('active', newState);
+            el.classList.toggle('inactive', !newState);
+            el.innerHTML = '💰 ' + (newState ? 'Trade' : 'Off');
+            showToast(`${symbol}: торгівля ${newState ? 'ON ✅' : 'OFF ❌'}`);
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function saveTradeSettings() {
+    const settings = {
+        leverage: parseInt(document.getElementById('trade_leverage').value),
+        deposit_pct: parseFloat(document.getElementById('trade_deposit_pct').value),
+        tp_pct: parseFloat(document.getElementById('trade_tp_pct').value),
+        sl_pct: parseFloat(document.getElementById('trade_sl_pct').value),
+        max_positions: parseInt(document.getElementById('trade_max_positions').value),
+    };
+    
+    try {
+        const res = await fetch('/api/ctr/trade/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast('✅ Trade settings saved!');
+        } else {
+            alert('Failed to save trade settings');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function loadTradePositions() {
+    try {
+        const res = await fetch('/api/ctr/trade/status');
+        const data = await res.json();
+        const container = document.getElementById('trade-positions');
+        
+        if (!data.available) {
+            container.innerHTML = '<small style="color:#888;">Bybit не підключений</small>';
+            return;
+        }
+        
+        let html = '';
+        
+        if (data.balance > 0) {
+            html += `<div style="font-size:0.85em;margin-bottom:8px;color:#ccc;">
+                Balance: <b>$${data.balance.toFixed(2)}</b> USDT
+                | Positions: ${data.positions_count}/${data.max_positions}
+            </div>`;
+        }
+        
+        if (data.positions && data.positions.length > 0) {
+            data.positions.forEach(p => {
+                const isLong = p.side === 'Buy';
+                const pnlColor = p.unrealized_pnl >= 0 ? '#00c853' : '#ff5252';
+                html += `<div class="position-card ${isLong ? 'long' : 'short'}">
+                    <div>
+                        <b>${p.symbol}</b>
+                        <span style="color:${isLong ? '#00c853' : '#ff5252'}">${isLong ? 'LONG' : 'SHORT'}</span>
+                    </div>
+                    <div style="text-align:right;">
+                        <span style="color:${pnlColor}">${p.unrealized_pnl >= 0 ? '+' : ''}$${p.unrealized_pnl.toFixed(4)}</span>
+                        <br><small style="color:#888;">${p.leverage}x | $${p.position_value.toFixed(2)}</small>
+                    </div>
+                </div>`;
+            });
+        } else if (data.enabled) {
+            html += '<small style="color:#888;">Немає відкритих позицій</small>';
+        }
+        
+        container.innerHTML = html || '<small style="color:#888;">—</small>';
+    } catch (e) {
+        document.getElementById('trade-positions').innerHTML =
+            '<small style="color:#ff5252;">Помилка завантаження</small>';
+    }
+}
+
+// Load positions on page load and refresh periodically
+loadTradePositions();
+{% if ctr_running %}
+setInterval(loadTradePositions, 30000);
+{% endif %}
 </script>
 {% endblock %}

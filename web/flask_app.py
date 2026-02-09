@@ -1184,6 +1184,21 @@ def register_api_routes(app):
         except:
             ctr_signals = []
         
+        # Trade settings
+        trade_settings = {
+            'enabled': False,
+            'leverage': 10,
+            'deposit_pct': 5,
+            'tp_pct': 0,
+            'sl_pct': 0,
+            'max_positions': 5,
+            'trade_symbols': [],
+        }
+        try:
+            trade_settings = ctr_job.get_trade_settings()
+        except:
+            pass
+        
         return render_template('ctr.html',
             watchlist=watchlist,
             scan_results=scan_results,
@@ -1198,7 +1213,8 @@ def register_api_routes(app):
             ctr_only_mode=ctr_only_mode,
             settings=settings,
             stats=stats,
-            ctr_signals=ctr_signals
+            ctr_signals=ctr_signals,
+            trade_settings=trade_settings
         )
     
     @app.route('/api/ctr/watchlist/add', methods=['POST'])
@@ -1374,6 +1390,78 @@ def register_api_routes(app):
         db.set_setting('ctr_only_mode', '1' if enabled else '0')
         
         return jsonify({'success': True, 'enabled': enabled})
+    
+    # === CTR TRADE API ===
+    
+    @app.route('/api/ctr/trade/settings', methods=['GET'])
+    def api_ctr_trade_settings_get():
+        """Отримати налаштування торгівлі"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        return jsonify(job.get_trade_settings())
+    
+    @app.route('/api/ctr/trade/settings', methods=['POST'])
+    def api_ctr_trade_settings_save():
+        """Зберегти налаштування торгівлі"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        data = request.get_json()
+        
+        success = job.save_trade_settings(data)
+        return jsonify({'success': success, 'settings': job.get_trade_settings()})
+    
+    @app.route('/api/ctr/trade/toggle', methods=['POST'])
+    def api_ctr_trade_toggle():
+        """Увімкнути/вимкнути Auto-Trade"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        data = request.get_json()
+        
+        enabled = data.get('enabled', False)
+        success = job.save_trade_settings({'enabled': enabled})
+        
+        status = "ENABLED ✅" if enabled else "DISABLED ❌"
+        print(f"[CTR Trade] Auto-Trade {status}")
+        
+        return jsonify({'success': success, 'enabled': enabled})
+    
+    @app.route('/api/ctr/trade/symbol', methods=['POST'])
+    def api_ctr_trade_symbol():
+        """Позначити/зняти символ для торгівлі"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        data = request.get_json()
+        
+        symbol = data.get('symbol', '').upper()
+        enabled = data.get('enabled', False)
+        
+        if not symbol:
+            return jsonify({'success': False, 'error': 'Symbol required'})
+        
+        trade_symbols = job.toggle_trade_symbol(symbol, enabled)
+        return jsonify({'success': True, 'symbol': symbol, 'enabled': enabled,
+                        'trade_symbols': trade_symbols})
+    
+    @app.route('/api/ctr/trade/status', methods=['GET'])
+    def api_ctr_trade_status():
+        """Статус торгівлі: баланс, позиції"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        return jsonify(job.get_trade_status())
+    
+    @app.route('/api/ctr/trade/log', methods=['GET'])
+    def api_ctr_trade_log():
+        """Історія торгів"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        limit = request.args.get('limit', 50, type=int)
+        return jsonify({'log': job.get_trade_log(limit)})
     
     # ========================================
     # QM Zone Hunter Routes

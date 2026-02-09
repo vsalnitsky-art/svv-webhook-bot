@@ -1,14 +1,13 @@
 """
-CTR Background Job v2.4 - Fast Edition + Smart Reversal Handling
+CTR Background Job v2.5 - Fast Edition + Auto-Trade
 
-Integration with CTRFastScanner v2.4 for maximum signal speed.
-+ SMC Structure Filter for signal filtering.
-+ Trend Guard support for V-reversal detection.
+Integration with CTRFastScanner v2.5 + Bybit Futures Trading.
 
-Changes from v2.1:
-- Signal callback now receives 'reason' field from scanner
-- Deduplication allows direction-changing signals AND Trend Guard priority signals
-- All production features preserved (delete_signal, clear_signals, etc.)
+Changes from v2.4:
+- Trade Executor integration: auto-trade on Bybit Linear Futures
+- Trade symbols management: mark individual watchlist symbols for trading
+- Trade settings: leverage, deposit %, TP/SL, max positions
+- Trade log: all operations saved in DB
 """
 
 import threading
@@ -19,6 +18,14 @@ from typing import Dict, List, Optional
 from detection.ctr_scanner_fast import CTRFastScanner
 from alerts.telegram_notifier import get_notifier
 from storage.db_operations import DBOperations
+
+# Trade executor (optional — works without Bybit keys)
+try:
+    from trading.ctr_trade_executor import CTRTradeExecutor
+    TRADE_AVAILABLE = True
+except ImportError:
+    TRADE_AVAILABLE = False
+    print("[CTR Job] ⚠️ Trade executor not available")
 
 
 class CTRFastJob:
@@ -42,11 +49,27 @@ class CTRFastJob:
         # Last signal direction per symbol for deduplication
         self._last_signal_direction: Dict[str, str] = {}  # symbol -> 'BUY'/'SELL'
         
+        # Trade executor (Bybit Futures)
+        self._trade_executor: Optional['CTRTradeExecutor'] = None
+        if TRADE_AVAILABLE:
+            self._init_trade_executor()
+        
         # Load settings
         self._load_settings()
         
         # Load last signal directions from DB for persistence across restarts
         self._load_last_directions()
+    
+    def _init_trade_executor(self):
+        """Ініціалізувати торговий модуль"""
+        try:
+            from core.bybit_connector import get_connector
+            connector = get_connector()
+            self._trade_executor = CTRTradeExecutor(self.db, connector)
+            print("[CTR Job] ✅ Trade executor initialized")
+        except Exception as e:
+            print(f"[CTR Job] ⚠️ Trade executor init failed: {e}")
+            self._trade_executor = None
     
     def _load_settings(self):
         """Завантажити налаштування з БД"""
@@ -138,6 +161,35 @@ class CTRFastJob:
             smc_tag = " [SMC✓]" if signal.get('smc_filtered') else ""
             reason_tag = f" [{reason}]" if reason else ""
             print(f"[CTR Job] 📨 Signal sent: {symbol} {signal_type}{smc_tag}{reason_tag}")
+            
+            # === AUTO-TRADE ===
+            if self._trade_executor:
+                try:
+                    trade_result = self._trade_executor.execute_signal(
+                        symbol=symbol,
+                        signal_type=signal_type,
+                        price=signal.get('price', 0),
+                        reason=reason
+                    )
+                    
+                    if trade_result['success']:
+                        trade_msg = f"[CTR Job] 💰 Trade executed: {symbol} {trade_result['action']} — {trade_result['details']}"
+                        print(trade_msg)
+                        
+                        # Notify via Telegram about trade
+                        if notifier:
+                            emoji = "💰" if trade_result['action'] == 'opened' else "🔄"
+                            notifier.send_message(
+                                f"{emoji} AUTO-TRADE: {symbol}\n"
+                                f"Action: {trade_result['action'].upper()}\n"
+                                f"Signal: {signal_type}\n"
+                                f"OrderID: {trade_result.get('order_id', 'N/A')}"
+                            )
+                    elif trade_result['action'] != 'none':
+                        print(f"[CTR Job] ⚠️ Trade skipped: {symbol} — {trade_result['details']}")
+                        
+                except Exception as e:
+                    print(f"[CTR Job] ❌ Trade execution error: {e}")
             
         except Exception as e:
             print(f"[CTR Job] Signal callback error: {e}")
@@ -373,6 +425,71 @@ class CTRFastJob:
             self._save_results()
             return results
         return []
+    
+    # =============================================
+    # TRADE EXECUTOR ACCESS
+    # =============================================
+    
+    def get_trade_executor(self) -> Optional['CTRTradeExecutor']:
+        """Отримати торговий модуль"""
+        return self._trade_executor
+    
+    def get_trade_settings(self) -> Dict:
+        """Отримати налаштування торгівлі"""
+        if self._trade_executor:
+            return self._trade_executor.get_settings()
+        return {
+            'enabled': False,
+            'leverage': 10,
+            'deposit_pct': 5,
+            'tp_pct': 0,
+            'sl_pct': 0,
+            'max_positions': 5,
+            'trade_symbols': [],
+        }
+    
+    def save_trade_settings(self, settings: Dict) -> bool:
+        """Зберегти налаштування торгівлі"""
+        if self._trade_executor:
+            return self._trade_executor.save_settings(settings)
+        return False
+    
+    def toggle_trade_symbol(self, symbol: str, enabled: bool) -> List[str]:
+        """Додати/видалити символ з торгового списку"""
+        if self._trade_executor:
+            return self._trade_executor.set_trade_symbol(symbol, enabled)
+        return []
+    
+    def get_trade_log(self, limit: int = 50) -> List[Dict]:
+        """Отримати історію торгів"""
+        if self._trade_executor:
+            return self._trade_executor.get_trade_log(limit)
+        return []
+    
+    def get_trade_status(self) -> Dict:
+        """Повний статус торгівлі (позиції + баланс)"""
+        if not self._trade_executor:
+            return {'available': False}
+        
+        try:
+            settings = self._trade_executor.get_settings()
+            positions = self._trade_executor.get_open_positions()
+            balance = self._trade_executor.get_balance()
+            
+            return {
+                'available': True,
+                'enabled': settings['enabled'],
+                'balance': balance,
+                'positions_count': len(positions),
+                'max_positions': settings['max_positions'],
+                'positions': positions,
+                'leverage': settings['leverage'],
+                'deposit_pct': settings['deposit_pct'],
+                'trade_symbols': settings['trade_symbols'],
+            }
+        except Exception as e:
+            print(f"[CTR Job] Trade status error: {e}")
+            return {'available': True, 'error': str(e)}
 
 
 # ============================================
