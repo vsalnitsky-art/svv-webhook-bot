@@ -40,9 +40,54 @@ class TradeStatus(Enum):
 BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY', '')
 BINANCE_API_SECRET = os.environ.get('BINANCE_API_SECRET', '')
 
-# Bybit - для торгівлі
-BYBIT_API_KEY = os.environ.get('BYBIT_API_KEY', '')
-BYBIT_API_SECRET = os.environ.get('BYBIT_API_SECRET', '')
+# === Bybit API Keys with encryption support ===
+def _decrypt_key(encrypted_value: str, encryption_key: str) -> str:
+    """Дешифрувати Fernet-зашифрований ключ"""
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(encryption_key.encode() if isinstance(encryption_key, str) else encryption_key)
+        decrypted = f.decrypt(encrypted_value.encode() if isinstance(encrypted_value, str) else encrypted_value)
+        return decrypted.decode()
+    except Exception as e:
+        print(f"[CONFIG] ⚠️ Decryption failed: {e}")
+        return ''
+
+def _resolve_bybit_keys():
+    """Визначити Bybit ключі: plain або зашифровані"""
+    enc_key = os.environ.get('ENCRYPTION_KEY', '')
+    
+    # Варіант 1: Спробувати ENCRYPTED версії
+    api_key_enc = os.environ.get('BYBIT_API_KEY_ENCRYPTED', '')
+    api_secret_enc = os.environ.get('BYBIT_API_SECRET_ENCRYPTED', '')
+    
+    if api_key_enc and api_secret_enc and enc_key:
+        api_key = _decrypt_key(api_key_enc, enc_key)
+        api_secret = _decrypt_key(api_secret_enc, enc_key)
+        if api_key and api_secret:
+            print(f"[CONFIG] ✅ Bybit keys decrypted from _ENCRYPTED vars")
+            return api_key, api_secret
+    
+    # Варіант 2: Plain ключі (або зашифровані без суфікса _ENCRYPTED)
+    api_key = os.environ.get('BYBIT_API_KEY', '')
+    api_secret = os.environ.get('BYBIT_API_SECRET', '')
+    
+    # Якщо вони виглядають зашифрованими (gAAAA...) — спробувати дешифрувати
+    if api_key.startswith('gAAAA') and enc_key:
+        api_key = _decrypt_key(api_key, enc_key)
+        api_secret = _decrypt_key(api_secret, enc_key)
+        if api_key and api_secret:
+            print(f"[CONFIG] ✅ Bybit keys decrypted from BYBIT_API_KEY/SECRET")
+            return api_key, api_secret
+        else:
+            print(f"[CONFIG] ❌ Bybit key decryption failed — check ENCRYPTION_KEY")
+            return '', ''
+    
+    # Plain ключі
+    if api_key:
+        print(f"[CONFIG] ✅ Bybit keys loaded (plain)")
+    return api_key, api_secret
+
+BYBIT_API_KEY, BYBIT_API_SECRET = _resolve_bybit_keys()
 
 # Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')

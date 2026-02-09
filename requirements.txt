@@ -22,6 +22,9 @@ websocket-client>=1.6.0
 # Bybit API (для торгівлі)
 pybit>=5.6.0
 
+# Encryption (для API ключів)
+cryptography>=41.0.0
+
 # Binance API (для сканування/аналізу)
 python-binance>=1.0.19
 
