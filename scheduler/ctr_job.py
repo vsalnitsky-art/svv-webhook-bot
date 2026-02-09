@@ -159,8 +159,8 @@ class CTRFastJob:
                 'timestamp': datetime.now(timezone.utc).isoformat()
             })
             
-            # Зберігаємо останні 100 сигналів
-            signals = signals[-100:]
+            # Зберігаємо останні 500 сигналів
+            signals = signals[-500:]
             
             self.db.set_setting('ctr_signals', json.dumps(signals))
             

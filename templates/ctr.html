@@ -521,7 +521,7 @@
                 <div class="panel-header">
                     <h2>🎯 Executed Signals</h2>
                     <div style="display: flex; align-items: center; gap: 10px;">
-                        <span>Last 20</span>
+                        <span>{{ ctr_signals|length }} signals</span>
                         {% if ctr_signals %}
                         <button class="btn btn-sm" style="background: rgba(255,82,82,0.2); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8em;" onclick="clearAllSignals()">
                             🗑️ Clear All
@@ -539,6 +539,7 @@
                             <th>Signal</th>
                             <th>Price</th>
                             <th>STC</th>
+                            <th>Reason</th>
                             <th style="width: 40px;"></th>
                         </tr>
                     </thead>
@@ -559,6 +560,9 @@
                             <td>${{ "%.8f"|format(sig.price) if sig.price < 1 else "%.4f"|format(sig.price) if sig.price < 100 else "%.2f"|format(sig.price) }}</td>
                             <td class="stc-value {{ 'stc-oversold' if sig.stc <= 25 else 'stc-overbought' if sig.stc >= 75 else 'stc-neutral' }}">
                                 {{ "%.2f"|format(sig.stc) }}
+                            </td>
+                            <td style="font-size: 0.8em; color: {{ '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
+                                {{ sig.reason|default('Crossover') }}
                             </td>
                             <td>
                                 <button class="watchlist-remove" onclick="deleteSignal('{{ sig.timestamp }}', {{ loop.index0 }})" title="Видалити">✕</button>

@@ -1180,7 +1180,7 @@ def register_api_routes(app):
         try:
             ctr_signals = json.loads(signals_str)
             # Sort by timestamp descending (newest first)
-            ctr_signals = sorted(ctr_signals, key=lambda x: x.get('timestamp', ''), reverse=True)[:20]
+            ctr_signals = sorted(ctr_signals, key=lambda x: x.get('timestamp', ''), reverse=True)
         except:
             ctr_signals = []
         
