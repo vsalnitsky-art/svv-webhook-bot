@@ -62,8 +62,46 @@ class CTRTradeExecutor:
         self._status_cache_ttl = 60  # seconds
         
         # Auth error tracking — stops calling private API after 401
-        self._auth_ok = True  # assume OK until proven otherwise
+        self._auth_ok = None  # None = not tested yet
         self._auth_error_msg = ""
+        
+        # Test auth on init
+        self._test_auth()
+    
+    def _test_auth(self):
+        """Пряма перевірка API авторизації через session (обходить connector error handling)"""
+        if not self.bybit.api_key:
+            self._auth_ok = False
+            self._auth_error_msg = "API keys not configured"
+            print("[CTR Trade] ⚠️ Bybit API keys not configured")
+            return
+        
+        try:
+            # Call session directly to catch 401
+            response = self.bybit.session.get_wallet_balance(accountType="UNIFIED")
+            if response.get('retCode') == 0:
+                result = response.get('result', {})
+                balance = 0.0
+                for acc in result.get('list', []):
+                    for coin in acc.get('coin', []):
+                        if coin['coin'] == 'USDT':
+                            balance = float(coin.get('walletBalance', 0))
+                self._auth_ok = True
+                print(f"[CTR Trade] ✅ Bybit auth OK — Balance: ${balance:.2f} USDT")
+            else:
+                self._auth_ok = False
+                self._auth_error_msg = f"API error: {response.get('retMsg', 'unknown')}"
+                print(f"[CTR Trade] ❌ Bybit auth failed: {self._auth_error_msg}")
+        except Exception as e:
+            err_str = str(e)
+            self._auth_ok = False
+            if '401' in err_str or 'Unauthorized' in err_str:
+                self._auth_error_msg = "Invalid API keys (401 Unauthorized)"
+            elif '403' in err_str:
+                self._auth_error_msg = "API key forbidden (403) — check IP whitelist"
+            else:
+                self._auth_error_msg = str(e)
+            print(f"[CTR Trade] ❌ Bybit auth failed: {self._auth_error_msg}")
         
     # =============================================
     # SETTINGS
@@ -188,11 +226,8 @@ class CTRTradeExecutor:
         if not self._auth_ok:
             return 0.0
         try:
-            balance = self.bybit.get_wallet_balance()
-            self._auth_ok = True
-            return balance
+            return self.bybit.get_wallet_balance()
         except Exception as e:
-            self._check_auth_error(e)
             print(f"[CTR Trade] Error getting balance: {e}")
             return 0.0
     
@@ -201,11 +236,8 @@ class CTRTradeExecutor:
         if not self._auth_ok:
             return []
         try:
-            positions = self.bybit.get_positions()
-            self._auth_ok = True
-            return positions
+            return self.bybit.get_positions()
         except Exception as e:
-            self._check_auth_error(e)
             print(f"[CTR Trade] Error getting positions: {e}")
             return []
     
@@ -215,24 +247,12 @@ class CTRTradeExecutor:
             return None
         try:
             positions = self.bybit.get_positions(symbol=symbol)
-            self._auth_ok = True
             if positions:
                 return positions[0]
             return None
         except Exception as e:
-            self._check_auth_error(e)
             print(f"[CTR Trade] Error getting position for {symbol}: {e}")
             return None
-    
-    def _check_auth_error(self, error):
-        """Перевірити чи помилка авторизації — зупинити подальші виклики"""
-        err_str = str(error)
-        if '401' in err_str or 'Unauthorized' in err_str or '10003' in err_str:
-            if self._auth_ok:  # log once
-                print(f"[CTR Trade] ❌ API AUTH FAILED — stopping private API calls")
-                print(f"[CTR Trade]   Fix API keys and restart to resume trading")
-            self._auth_ok = False
-            self._auth_error_msg = "API keys invalid (401 Unauthorized)"
     
     def get_cached_status(self) -> Dict:
         """Отримати статус з кешем (не спамити API при рефреші)"""

@@ -66,20 +66,12 @@ def create_app():
         else:
             print("[APP] ⚠ Bybit API returned empty tickers list")
         
-        # Test Private API (balance) — requires valid API keys
+        # Private API check happens in CTR Trade Executor init
+        # (it calls session directly to properly detect 401)
         if connector.api_key:
-            try:
-                balance = connector.get_wallet_balance()
-                print(f"[APP] ✓ Bybit Private API working: Balance = ${balance:.2f} USDT")
-            except Exception as e:
-                err_str = str(e)
-                if '401' in err_str or 'Unauthorized' in err_str:
-                    print(f"[APP] ✗ Bybit Private API FAILED: Invalid API keys (401 Unauthorized)")
-                    print(f"[APP]   → Auto-Trade will NOT work until keys are fixed")
-                else:
-                    print(f"[APP] ✗ Bybit Private API error: {e}")
+            print(f"[APP]   Bybit API key configured — auth will be tested by Trade Executor")
         else:
-            print("[APP] ⚠ Bybit API keys not configured — Auto-Trade disabled")
+            print(f"[APP] ⚠ Bybit API keys not configured — trading disabled")
     except Exception as e:
         print(f"[APP] ✗ Bybit API test failed: {e}")
     
