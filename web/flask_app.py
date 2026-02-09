@@ -62,9 +62,24 @@ def create_app():
         connector = get_connector()
         tickers = connector.get_tickers()
         if tickers:
-            print(f"[APP] ✓ Bybit API working: {len(tickers)} tickers available")
+            print(f"[APP] ✓ Bybit Public API working: {len(tickers)} tickers available")
         else:
             print("[APP] ⚠ Bybit API returned empty tickers list")
+        
+        # Test Private API (balance) — requires valid API keys
+        if connector.api_key:
+            try:
+                balance = connector.get_wallet_balance()
+                print(f"[APP] ✓ Bybit Private API working: Balance = ${balance:.2f} USDT")
+            except Exception as e:
+                err_str = str(e)
+                if '401' in err_str or 'Unauthorized' in err_str:
+                    print(f"[APP] ✗ Bybit Private API FAILED: Invalid API keys (401 Unauthorized)")
+                    print(f"[APP]   → Auto-Trade will NOT work until keys are fixed")
+                else:
+                    print(f"[APP] ✗ Bybit Private API error: {e}")
+        else:
+            print("[APP] ⚠ Bybit API keys not configured — Auto-Trade disabled")
     except Exception as e:
         print(f"[APP] ✗ Bybit API test failed: {e}")
     

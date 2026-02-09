@@ -56,6 +56,15 @@ class CTRTradeExecutor:
         self._cache_ttl = 3600  # 1 hour
         self._cache_time = {}
         
+        # Status cache — prevents API spam on page refresh
+        self._status_cache = None
+        self._status_cache_time = 0
+        self._status_cache_ttl = 60  # seconds
+        
+        # Auth error tracking — stops calling private API after 401
+        self._auth_ok = True  # assume OK until proven otherwise
+        self._auth_error_msg = ""
+        
     # =============================================
     # SETTINGS
     # =============================================
@@ -176,30 +185,103 @@ class CTRTradeExecutor:
     
     def get_balance(self) -> float:
         """Отримати баланс USDT"""
+        if not self._auth_ok:
+            return 0.0
         try:
-            return self.bybit.get_wallet_balance()
+            balance = self.bybit.get_wallet_balance()
+            self._auth_ok = True
+            return balance
         except Exception as e:
+            self._check_auth_error(e)
             print(f"[CTR Trade] Error getting balance: {e}")
             return 0.0
     
     def get_open_positions(self) -> List[Dict]:
         """Отримати всі відкриті позиції"""
+        if not self._auth_ok:
+            return []
         try:
-            return self.bybit.get_positions()
+            positions = self.bybit.get_positions()
+            self._auth_ok = True
+            return positions
         except Exception as e:
+            self._check_auth_error(e)
             print(f"[CTR Trade] Error getting positions: {e}")
             return []
     
     def get_position_for_symbol(self, symbol: str) -> Optional[Dict]:
         """Отримати позицію для конкретного символу"""
+        if not self._auth_ok:
+            return None
         try:
             positions = self.bybit.get_positions(symbol=symbol)
+            self._auth_ok = True
             if positions:
                 return positions[0]
             return None
         except Exception as e:
+            self._check_auth_error(e)
             print(f"[CTR Trade] Error getting position for {symbol}: {e}")
             return None
+    
+    def _check_auth_error(self, error):
+        """Перевірити чи помилка авторизації — зупинити подальші виклики"""
+        err_str = str(error)
+        if '401' in err_str or 'Unauthorized' in err_str or '10003' in err_str:
+            if self._auth_ok:  # log once
+                print(f"[CTR Trade] ❌ API AUTH FAILED — stopping private API calls")
+                print(f"[CTR Trade]   Fix API keys and restart to resume trading")
+            self._auth_ok = False
+            self._auth_error_msg = "API keys invalid (401 Unauthorized)"
+    
+    def get_cached_status(self) -> Dict:
+        """Отримати статус з кешем (не спамити API при рефреші)"""
+        now = time.time()
+        
+        # Return cache if fresh
+        if self._status_cache and (now - self._status_cache_time) < self._status_cache_ttl:
+            return self._status_cache
+        
+        # Auth failed — return error without calling API
+        if not self._auth_ok:
+            self._status_cache = {
+                'available': True,
+                'auth_ok': False,
+                'error': self._auth_error_msg,
+                'enabled': self.get_settings()['enabled'],
+                'balance': 0,
+                'positions_count': 0,
+                'max_positions': self.get_settings()['max_positions'],
+                'positions': [],
+                'trade_symbols': self.get_settings()['trade_symbols'],
+            }
+            self._status_cache_time = now
+            return self._status_cache
+        
+        # Fetch fresh data
+        try:
+            settings = self.get_settings()
+            positions = self.get_open_positions()
+            balance = self.get_balance()
+            
+            self._status_cache = {
+                'available': True,
+                'auth_ok': self._auth_ok,
+                'balance': balance,
+                'positions_count': len(positions),
+                'max_positions': settings['max_positions'],
+                'positions': positions,
+                'leverage': settings['leverage'],
+                'deposit_pct': settings['deposit_pct'],
+                'trade_symbols': settings['trade_symbols'],
+                'enabled': settings['enabled'],
+            }
+            self._status_cache_time = now
+            return self._status_cache
+            
+        except Exception as e:
+            print(f"[CTR Trade] Status error: {e}")
+            return {'available': True, 'auth_ok': False, 'error': str(e)}
     
     # =============================================
     # POSITION SIZING
@@ -404,6 +486,12 @@ class CTRTradeExecutor:
             # 2. Check if trading enabled
             if not settings['enabled']:
                 result['details'] = 'Auto-Trade disabled'
+                return result
+            
+            # 2b. Check API auth
+            if not self._auth_ok:
+                result['details'] = f'API auth failed: {self._auth_error_msg}'
+                print(f"[CTR Trade] ⚠️ {symbol}: skipped — {self._auth_error_msg}")
                 return result
             
             # 3. Check if symbol marked for trading

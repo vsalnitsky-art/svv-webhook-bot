@@ -467,29 +467,11 @@ class CTRFastJob:
         return []
     
     def get_trade_status(self) -> Dict:
-        """Повний статус торгівлі (позиції + баланс)"""
+        """Повний статус торгівлі (позиції + баланс) — з кешем"""
         if not self._trade_executor:
             return {'available': False}
         
-        try:
-            settings = self._trade_executor.get_settings()
-            positions = self._trade_executor.get_open_positions()
-            balance = self._trade_executor.get_balance()
-            
-            return {
-                'available': True,
-                'enabled': settings['enabled'],
-                'balance': balance,
-                'positions_count': len(positions),
-                'max_positions': settings['max_positions'],
-                'positions': positions,
-                'leverage': settings['leverage'],
-                'deposit_pct': settings['deposit_pct'],
-                'trade_symbols': settings['trade_symbols'],
-            }
-        except Exception as e:
-            print(f"[CTR Job] Trade status error: {e}")
-            return {'available': True, 'error': str(e)}
+        return self._trade_executor.get_cached_status()
 
 
 # ============================================

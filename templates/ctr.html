@@ -1007,6 +1007,15 @@ async function loadTradePositions() {
             return;
         }
         
+        // Auth error
+        if (data.auth_ok === false) {
+            container.innerHTML = `<div style="padding:8px;background:rgba(255,82,82,0.1);border-radius:6px;border-left:3px solid #ff5252;">
+                <small style="color:#ff5252;">⚠️ Bybit API: ${data.error || 'Auth failed'}</small><br>
+                <small style="color:#888;">Перевірте API ключі та перезапустіть</small>
+            </div>`;
+            return;
+        }
+        
         let html = '';
         
         if (data.balance > 0) {
