@@ -1,7 +1,10 @@
 """
-CTR Fast Scanner v2.4 - Production Release (Smart Reversal Detection)
+CTR Fast Scanner v2.5 - Production Release (Anti-Oscillation Fix)
 
-Based on v2.1 (Stable Production) + v2.4 (Logic Hardening)
+Based on v2.4 + v2.5 fixes:
+- Trend Guard grace period (5 min after signal)
+- Minimum cycle travel requirement for Trend Guard
+- Standard cooldown 60s → 300s
 
 Changes from v2.1:
 1. High-Water Mark: Cycle extremes tracking (cycle_high/cycle_low) to detect
@@ -102,6 +105,7 @@ class SymbolCache:
     last_stc: float = 50.0
     prev_stc: float = 50.0
     last_calc_time: float = 0.0  # CPU throttle timestamp
+    last_signal_time: float = 0.0  # When last signal was generated (for grace period)
     
     # Cycle Memory (High-Water Mark) — v2.4
     cycle_high: float = 0.0    # Max STC since last signal reset
@@ -287,9 +291,12 @@ class CTRFastScanner:
         self._scan_thread: Optional[threading.Thread] = None
         self._watchlist: List[str] = []
         
-        # Signal tracking — v2.4: 60s cooldown (was 3600 in v2.1)
+        # Signal tracking — v2.5: 300s cooldown (was 60 in v2.4)
         self._last_signals: Dict[str, Tuple[str, float]] = {}
-        self._signal_cooldown = 60
+        self._signal_cooldown = 300
+        # Trend Guard anti-oscillation: grace period + min travel
+        self._trend_guard_grace = 300  # seconds before TG can fire after any signal
+        self._trend_guard_min_travel = 0.30  # STC must travel 30% of range before TG triggers
         
         # Statistics
         self._stats = {
@@ -302,7 +309,7 @@ class CTRFastScanner:
         }
         
         smc_status = "ON" if self.smc_filter_enabled else "OFF"
-        print(f"[CTR Fast v2.4] Initialized: TF={timeframe}, Upper={upper}, Lower={lower}, SMC={smc_status}")
+        print(f"[CTR Fast v2.5] Initialized: TF={timeframe}, Upper={upper}, Lower={lower}, SMC={smc_status}")
     
     # ========================================
     # DATA LOADING
@@ -538,21 +545,34 @@ class CTRFastScanner:
         gap_buy = (not buy_cross) and (cache.cycle_low <= self.stc.lower) and (current_stc > self.stc.lower)
         
         # === 3. Trend Guard (Emergency Exit) ===
-        # Only trigger if in a trade AND target zone was NOT reached
+        # v2.5: Added grace period + minimum travel requirement to prevent oscillation
+        # Trend Guard only triggers if:
+        #   a) Enough time passed since last signal (grace period)
+        #   b) STC actually traveled meaningfully before reversing (min travel)
+        
+        now = time.time()
+        tg_range = self.stc.upper - self.stc.lower  # e.g. 75 - 25 = 50
+        tg_min_high = self.stc.lower + tg_range * self._trend_guard_min_travel  # e.g. 25 + 15 = 40
+        tg_max_low = self.stc.upper - tg_range * self._trend_guard_min_travel   # e.g. 75 - 15 = 60
+        tg_grace_ok = (now - cache.last_signal_time) >= self._trend_guard_grace
         
         trend_fail_sell = False
         # After BUY: expected to reach UPPER. If fell back below LOWER without reaching UPPER → exit
         if cache.last_signal_type == 'BUY' and current_stc < self.stc.lower:
             if cache.prev_stc > self.stc.lower:  # Just crossed down
                 if cache.cycle_high < self.stc.upper:  # Never reached target
-                    trend_fail_sell = True
+                    # v2.5: Only if STC traveled above midpoint AND grace period passed
+                    if cache.cycle_high >= tg_min_high and tg_grace_ok:
+                        trend_fail_sell = True
         
         trend_fail_buy = False
         # After SELL: expected to reach LOWER. If rose back above UPPER without reaching LOWER → exit
         if cache.last_signal_type == 'SELL' and current_stc > self.stc.upper:
             if cache.prev_stc < self.stc.upper:  # Just crossed up
                 if cache.cycle_low > self.stc.lower:  # Never reached target
-                    trend_fail_buy = True
+                    # v2.5: Only if STC traveled below midpoint AND grace period passed
+                    if cache.cycle_low <= tg_max_low and tg_grace_ok:
+                        trend_fail_buy = True
         
         # === Combine ===
         final_buy = buy_cross or gap_buy or trend_fail_buy
@@ -618,6 +638,7 @@ class CTRFastScanner:
                 signal_type = 'BUY' if buy else 'SELL'
                 # State update inside lock
                 cache.last_signal_type = signal_type
+                cache.last_signal_time = time.time()
                 cache.reset_cycle_extremes(signal_type)
                 
                 signal_data = {
@@ -687,6 +708,7 @@ class CTRFastScanner:
                 if buy or sell:
                     signal_type = 'BUY' if buy else 'SELL'
                     cache.last_signal_type = signal_type
+                    cache.last_signal_time = time.time()
                     cache.reset_cycle_extremes(signal_type)
                     signal_data = {
                         'symbol': symbol,
@@ -734,16 +756,28 @@ class CTRFastScanner:
         """
         now = time.time()
         
-        # Priority: Trend Guard bypasses cooldown and SMC filter
+        # Priority: Trend Guard bypasses SMC filter but NOT cooldown
         is_priority = "Trend Guard" in reason
         
-        # Cooldown check
+        # Cooldown check — v2.5: per-symbol cooldown for ANY signal type
         last = self._last_signals.get(symbol)
         if last:
             last_type, last_time = last
-            if last_type == signal_type and not is_priority:
-                if (now - last_time) < self._signal_cooldown:
+            time_since = now - last_time
+            
+            if is_priority:
+                # Trend Guard: needs its own grace period (same as _trend_guard_grace)
+                if time_since < self._trend_guard_grace:
                     return
+            else:
+                # Regular signals: same-type blocked by cooldown
+                if last_type == signal_type:
+                    if time_since < self._signal_cooldown:
+                        return
+                # Different-type: minimum 30s gap to prevent rapid flip-flop
+                else:
+                    if time_since < 30:
+                        return
         
         # SMC Filter check (Trend Guard bypasses)
         smc_info = ""
