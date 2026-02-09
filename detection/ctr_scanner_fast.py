@@ -1,20 +1,25 @@
 """
-CTR Fast Scanner v2.1 - Maximum Speed Edition + SMC Filter
+CTR Fast Scanner v2.4 - Production Release (Smart Reversal Detection)
 
-Архітектура для максимальної швидкості:
-1. Попереднє завантаження історії при старті (1000 свічок)
-2. WebSocket для real-time оновлення свічок
-3. In-memory кеш - без затримок на I/O
-4. Сканування кожні 5 секунд
-5. Миттєві сигнали в Telegram
+Based on v2.1 (Stable Production) + v2.4 (Logic Hardening)
 
-+ SMC Structure Filter:
-- Фільтрація сигналів на основі HH/HL/LH/LL
-- Strong/Weak High/Low визначення
-- Premium/Discount зони
+Changes from v2.1:
+1. High-Water Mark: Cycle extremes tracking (cycle_high/cycle_low) to detect
+   hidden peaks between 5-second scan intervals.
+2. Gap Detection: If STC crossed upper/lower between scans, signal is generated
+   retroactively with auto-reset to prevent infinite loops.
+3. Trend Guard: Emergency exit when trend fails mid-cycle (STC returns to entry
+   zone without reaching target). Only triggers if target zone WAS NOT reached.
+4. CPU Optimization: STC calculation throttled to max 1/sec per symbol on WS ticks.
+5. Thread Safety: State mutations inside locks, I/O outside locks.
+6. Cooldown: 60s standard, Trend Guard bypasses cooldowns and SMC filter.
 
-Результат: Сигнали за 1-5 секунд після формування свічки
-(vs 30-60 секунд у старій версії)
+Architecture:
+1. Preload 1000 candles at startup
+2. WebSocket for real-time candle updates
+3. In-memory cache - zero I/O latency
+4. Scan every 5 seconds + immediate on candle close
+5. Smart signal detection with gap/trend guard logic
 """
 
 import numpy as np
@@ -92,25 +97,32 @@ class SymbolCache:
     timeframe: str
     klines: List[Kline] = field(default_factory=list)
     last_update: float = 0
+    
+    # STC State
     last_stc: float = 50.0
     prev_stc: float = 50.0
+    last_calc_time: float = 0.0  # CPU throttle timestamp
+    
+    # Cycle Memory (High-Water Mark) — v2.4
+    cycle_high: float = 0.0    # Max STC since last signal reset
+    cycle_low: float = 100.0   # Min STC since last signal reset
+    
+    # Trend State — v2.4
+    last_signal_type: Optional[str] = None  # 'BUY' or 'SELL'
+    
     is_ready: bool = False
-    smc_filter: Optional['SMCSignalFilter'] = None  # SMC фільтр для цього символу
+    smc_filter: Optional['SMCSignalFilter'] = None
     
     def get_closes(self) -> np.ndarray:
-        """Отримати масив close prices"""
         return np.array([k.close for k in self.klines])
     
     def get_highs(self) -> np.ndarray:
-        """Отримати масив high prices"""
         return np.array([k.high for k in self.klines])
     
     def get_lows(self) -> np.ndarray:
-        """Отримати масив low prices"""
         return np.array([k.low for k in self.klines])
     
     def get_ohlc(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Отримати OHLC масиви"""
         opens = np.array([k.open for k in self.klines])
         highs = np.array([k.high for k in self.klines])
         lows = np.array([k.low for k in self.klines])
@@ -118,22 +130,30 @@ class SymbolCache:
         return opens, highs, lows, closes
     
     def update_kline(self, kline: Kline):
-        """Оновити або додати свічку"""
         if not self.klines:
             self.klines.append(kline)
             return
         
-        # Якщо це та сама свічка - оновити
         if self.klines[-1].open_time == kline.open_time:
             self.klines[-1] = kline
-        # Якщо нова свічка - додати
         elif kline.open_time > self.klines[-1].open_time:
             self.klines.append(kline)
-            # Обмежуємо розмір кешу
             if len(self.klines) > 1500:
                 self.klines = self.klines[-1000:]
         
         self.last_update = time.time()
+    
+    def update_cycle_extremes(self, current_stc: float):
+        """Track STC peaks between scans"""
+        self.cycle_high = max(self.cycle_high, current_stc)
+        self.cycle_low = min(self.cycle_low, current_stc)
+    
+    def reset_cycle_extremes(self, signal_type: str):
+        """Reset extremes after signal is confirmed"""
+        if signal_type == 'BUY':
+            self.cycle_high = 0.0
+        elif signal_type == 'SELL':
+            self.cycle_low = 100.0
 
 
 # ============================================
@@ -141,11 +161,7 @@ class SymbolCache:
 # ============================================
 
 class STCCalculator:
-    """
-    Оптимізований розрахунок STC (Schaff Trend Cycle)
-    
-    Використовує векторизовані операції numpy для швидкості.
-    """
+    """Оптимізований розрахунок STC (Schaff Trend Cycle)"""
     
     def __init__(
         self,
@@ -164,105 +180,50 @@ class STCCalculator:
         self.d2_length = d2_length
         self.upper = upper
         self.lower = lower
-        
-        # Мінімальна кількість свічок для стабільного розрахунку
         self.min_candles = slow_length + cycle_length * 2 + d1_length + d2_length + 100
     
     def _ema(self, data: np.ndarray, period: int) -> np.ndarray:
-        """Exponential Moving Average - векторизована версія"""
         if len(data) < period:
             return np.full(len(data), np.nan)
-        
         alpha = 2 / (period + 1)
         ema = np.zeros(len(data))
-        
-        # SMA для першого значення
         ema[period-1] = np.mean(data[:period])
-        
-        # EMA для решти
         for i in range(period, len(data)):
             ema[i] = alpha * data[i] + (1 - alpha) * ema[i-1]
-        
         ema[:period-1] = np.nan
         return ema
     
     def _stochastic(self, data: np.ndarray, length: int) -> np.ndarray:
-        """Stochastic oscillator"""
         result = np.full(len(data), 50.0)
-        
         for i in range(length - 1, len(data)):
             window = data[i - length + 1:i + 1]
             valid = window[~np.isnan(window)]
-            
             if len(valid) < 2:
                 continue
-            
             lowest = np.min(valid)
             highest = np.max(valid)
             denom = highest - lowest
-            
             if denom > 0 and not np.isnan(data[i]):
                 result[i] = (data[i] - lowest) / denom * 100
-        
         return result
     
     def calculate(self, closes: np.ndarray) -> Tuple[float, float]:
-        """
-        Розрахувати STC для останніх двох значень
-        
-        Returns:
-            (current_stc, prev_stc)
-        """
+        """Returns: (current_stc, prev_stc)"""
         if len(closes) < self.min_candles:
             return 50.0, 50.0
         
-        # MACD
         fast_ema = self._ema(closes, self.fast_length)
         slow_ema = self._ema(closes, self.slow_length)
         macd = fast_ema - slow_ema
-        
-        # Перший стохастик
         k = self._stochastic(macd, self.cycle_length)
-        
-        # Перше згладжування (D1)
         d = self._ema(k, self.d1_length)
-        
-        # Другий стохастик
         kd = self._stochastic(d, self.cycle_length)
-        
-        # Друге згладжування (D2) = STC
         stc = self._ema(kd, self.d2_length)
-        
-        # Clamp to 0-100
         stc = np.clip(stc, 0, 100)
         
         current = stc[-1] if not np.isnan(stc[-1]) else 50.0
         prev = stc[-2] if len(stc) > 1 and not np.isnan(stc[-2]) else current
-        
         return float(current), float(prev)
-    
-    def detect_signal(self, closes: np.ndarray) -> Tuple[bool, bool, float, str]:
-        """
-        Детекція сигналів crossover/crossunder
-        
-        Returns:
-            (buy_signal, sell_signal, current_stc, status)
-        """
-        current_stc, prev_stc = self.calculate(closes)
-        
-        # Crossover/Crossunder detection
-        buy_signal = prev_stc <= self.lower and current_stc > self.lower
-        sell_signal = prev_stc >= self.upper and current_stc < self.upper
-        
-        # Status
-        if current_stc >= self.upper:
-            status = "Overbought"
-        elif current_stc <= self.lower:
-            status = "Oversold"
-        else:
-            status = "Neutral"
-        
-        return buy_signal, sell_signal, current_stc, status
 
 
 # ============================================
@@ -270,21 +231,10 @@ class STCCalculator:
 # ============================================
 
 class CTRFastScanner:
-    """
-    Швидкий CTR Scanner з WebSocket та in-memory кешем
+    """Швидкий CTR Scanner з WebSocket та Smart Reversal Detection"""
     
-    Особливості:
-    - Попереднє завантаження історії
-    - Real-time оновлення через WebSocket
-    - Сканування без API запитів
-    - Сигнали за 1-5 секунд
-    """
-    
-    # Binance WebSocket endpoints
     WS_BASE_URL = "wss://stream.binance.com:9443/ws"
     REST_BASE_URL = "https://api.binance.com/api/v3"
-    
-    # Timeframe to Binance interval mapping
     TIMEFRAME_MAP = {
         '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m',
         '30m': '30m', '1h': '1h', '2h': '2h', '4h': '4h',
@@ -309,7 +259,7 @@ class CTRFastScanner:
         smc_require_trend: bool = True,
     ):
         self.timeframe = timeframe
-        self.on_signal = on_signal  # Callback для сигналів
+        self.on_signal = on_signal
         
         # STC Calculator
         self.stc = STCCalculator(
@@ -337,22 +287,22 @@ class CTRFastScanner:
         self._scan_thread: Optional[threading.Thread] = None
         self._watchlist: List[str] = []
         
-        # Signal tracking (deduplication)
-        self._last_signals: Dict[str, Tuple[str, float]] = {}  # symbol -> (signal_type, timestamp)
-        self._signal_cooldown = 3600  # 1 година між однаковими сигналами
+        # Signal tracking — v2.4: 60s cooldown (was 3600 in v2.1)
+        self._last_signals: Dict[str, Tuple[str, float]] = {}
+        self._signal_cooldown = 60
         
         # Statistics
         self._stats = {
             'scans': 0,
             'signals_sent': 0,
-            'signals_filtered': 0,  # Відфільтровані SMC
+            'signals_filtered': 0,
             'ws_messages': 0,
             'last_scan_time': 0,
             'avg_scan_ms': 0
         }
         
         smc_status = "ON" if self.smc_filter_enabled else "OFF"
-        print(f"[CTR Fast v2.1] Initialized: TF={timeframe}, Upper={upper}, Lower={lower}, SMC={smc_status}")
+        print(f"[CTR Fast v2.4] Initialized: TF={timeframe}, Upper={upper}, Lower={lower}, SMC={smc_status}")
     
     # ========================================
     # DATA LOADING
@@ -400,13 +350,9 @@ class CTRFastScanner:
                 print(f"[CTR Fast] ❌ No data for {symbol}")
                 return False
             
-            # Parse klines
             klines = [Kline.from_binance(k) for k in data]
-            
-            # Create SMC filter for this symbol
             smc_filter = self._create_smc_filter()
             
-            # Create cache entry
             with self._lock:
                 cache = SymbolCache(
                     symbol=symbol,
@@ -418,15 +364,14 @@ class CTRFastScanner:
                 )
                 self._cache[symbol] = cache
                 
-                # Ініціалізуємо SMC структуру з історичними даними
                 if smc_filter and len(klines) > 100:
                     highs = cache.get_highs()
                     lows = cache.get_lows()
                     closes = cache.get_closes()
                     smc_filter.update_structure(highs, lows, closes)
             
-            smc_status = "SMC✓" if smc_filter else ""
-            print(f"[CTR Fast] ✅ Loaded {symbol}: {len(klines)} candles {smc_status}")
+            smc_tag = "SMC✓" if smc_filter else ""
+            print(f"[CTR Fast] ✅ Loaded {symbol}: {len(klines)} candles {smc_tag}")
             return True
             
         except Exception as e:
@@ -434,26 +379,19 @@ class CTRFastScanner:
             return False
     
     def preload_watchlist(self, symbols: List[str]) -> int:
-        """
-        Попереднє завантаження даних для всіх символів
-        з повторною спробою для невдалих
-        
-        Returns: кількість успішно завантажених
-        """
+        """Попереднє завантаження з повторною спробою"""
         print(f"[CTR Fast] Preloading {len(symbols)} symbols: {symbols}")
         
         loaded = 0
         failed = []
         
-        # Перша спроба
         for symbol in symbols:
             if self._load_history(symbol):
                 loaded += 1
             else:
                 failed.append(symbol)
-            time.sleep(0.2)  # Затримка між запитами
+            time.sleep(0.2)
         
-        # Повторна спроба для невдалих (через 2 секунди)
         if failed:
             print(f"[CTR Fast] Retrying failed symbols in 2 seconds: {failed}")
             time.sleep(2)
@@ -480,7 +418,6 @@ class CTRFastScanner:
     # ========================================
     
     def _get_ws_url(self, symbols: List[str]) -> str:
-        """Створити WebSocket URL для підписки на кілька символів"""
         streams = [f"{s.lower()}@kline_{self.timeframe}" for s in symbols]
         return f"{self.WS_BASE_URL}/{'/'.join(streams)}"
     
@@ -489,15 +426,9 @@ class CTRFastScanner:
         try:
             data = json.loads(message)
             
-            # Визначаємо формат повідомлення
-            if 'stream' in data:
-                # Combined stream format
-                stream_data = data['data']
-            else:
-                # Single stream format
-                stream_data = data
+            stream_data = data['data'] if 'stream' in data else data
             
-            if 'e' not in stream_data or stream_data['e'] != 'kline':
+            if stream_data.get('e') != 'kline':
                 return
             
             symbol = stream_data['s']
@@ -505,38 +436,43 @@ class CTRFastScanner:
             
             with self._lock:
                 if symbol in self._cache:
-                    self._cache[symbol].update_kline(kline)
+                    cache = self._cache[symbol]
+                    cache.update_kline(kline)
                     self._stats['ws_messages'] += 1
                     
-                    # Якщо свічка закрилась - негайно сканувати
+                    # v2.4: CPU-throttled STC calc for cycle extreme tracking
+                    # Max 1 calc per second per symbol (saves 30-75x CPU)
+                    now = time.time()
+                    if cache.is_ready and (now - cache.last_calc_time >= 1.0 or kline.is_closed):
+                        closes = cache.get_closes()
+                        curr_stc, _ = self.stc.calculate(closes)
+                        cache.update_cycle_extremes(curr_stc)
+                        cache.last_calc_time = now
+                    
+                    # Негайне сканування при закритті свічки
                     if kline.is_closed:
                         self._scan_symbol_immediate(symbol)
                         
         except Exception as e:
-            logger.error(f"[CTR Fast] WS message error: {e}")
+            pass  # WS messages come fast, don't spam logs
     
     def _on_ws_error(self, ws, error):
-        """Обробка WebSocket помилки"""
-        print(f"[CTR Fast] WS Error: {error}")
         self._ws_connected = False
+        print(f"[CTR Fast] WS Error: {error}")
     
     def _on_ws_close(self, ws, close_status, close_msg):
-        """Обробка закриття WebSocket"""
-        print(f"[CTR Fast] WS Closed: {close_status} {close_msg}")
         self._ws_connected = False
+        print(f"[CTR Fast] WS Closed: {close_status} {close_msg}")
         
-        # Автоматичне перепідключення
         if self._running:
             print("[CTR Fast] Reconnecting WebSocket in 5 seconds...")
             time.sleep(5)
             self._start_websocket()
     
     def _on_ws_open(self, ws):
-        """Обробка відкриття WebSocket"""
-        print(f"[CTR Fast] ✅ WebSocket connected")
         self._ws_connected = True
+        print(f"[CTR Fast] ✅ WebSocket connected")
         
-        # Підписка на символи (для combined stream)
         if len(self._watchlist) > 1:
             subscribe_msg = {
                 "method": "SUBSCRIBE",
@@ -550,7 +486,6 @@ class CTRFastScanner:
         if not self._watchlist:
             return
         
-        # Для кількох символів використовуємо combined stream
         if len(self._watchlist) > 1:
             streams = "/".join([f"{s.lower()}@kline_{self.timeframe}" for s in self._watchlist])
             ws_url = f"wss://stream.binance.com:9443/stream?streams={streams}"
@@ -565,54 +500,141 @@ class CTRFastScanner:
             on_open=self._on_ws_open
         )
         
-        self._ws_thread = threading.Thread(
-            target=self._ws.run_forever,
-            daemon=True
-        )
+        self._ws_thread = threading.Thread(target=self._ws.run_forever, daemon=True)
         self._ws_thread.start()
     
     def _stop_websocket(self):
         """Зупинити WebSocket"""
         if self._ws:
             self._ws.close()
-            self._ws = None
-        self._ws_connected = False
+        self._ws = None
+    
+    # ========================================
+    # SMART SIGNAL DETECTION — v2.4
+    # ========================================
+    
+    def _detect_smart_signals(self, symbol: str, cache: SymbolCache) -> Tuple[bool, bool, float, str, str]:
+        """
+        Smart detection v2.4:
+        1. Standard crossover (prev_stc crosses upper/lower)
+        2. Gap detection (cycle_high/low crossed between scans)
+        3. Trend Guard (emergency exit if target NOT reached)
+        
+        Returns: (buy_signal, sell_signal, current_stc, status, reason)
+        """
+        closes = cache.get_closes()
+        if len(closes) < self.stc.min_candles:
+            return False, False, 50.0, "Loading", ""
+        
+        current_stc, prev_stc = self.stc.calculate(closes)
+        
+        # === 1. Standard Crossover ===
+        buy_cross = prev_stc <= self.stc.lower and current_stc > self.stc.lower
+        sell_cross = prev_stc >= self.stc.upper and current_stc < self.stc.upper
+        
+        # === 2. Gap Detection (Hidden Peak) ===
+        # STC crossed upper/lower between scans but we missed the crossover
+        gap_sell = (not sell_cross) and (cache.cycle_high >= self.stc.upper) and (current_stc < self.stc.upper)
+        gap_buy = (not buy_cross) and (cache.cycle_low <= self.stc.lower) and (current_stc > self.stc.lower)
+        
+        # === 3. Trend Guard (Emergency Exit) ===
+        # Only trigger if in a trade AND target zone was NOT reached
+        
+        trend_fail_sell = False
+        # After BUY: expected to reach UPPER. If fell back below LOWER without reaching UPPER → exit
+        if cache.last_signal_type == 'BUY' and current_stc < self.stc.lower:
+            if cache.prev_stc > self.stc.lower:  # Just crossed down
+                if cache.cycle_high < self.stc.upper:  # Never reached target
+                    trend_fail_sell = True
+        
+        trend_fail_buy = False
+        # After SELL: expected to reach LOWER. If rose back above UPPER without reaching LOWER → exit
+        if cache.last_signal_type == 'SELL' and current_stc > self.stc.upper:
+            if cache.prev_stc < self.stc.upper:  # Just crossed up
+                if cache.cycle_low > self.stc.lower:  # Never reached target
+                    trend_fail_buy = True
+        
+        # === Combine ===
+        final_buy = buy_cross or gap_buy or trend_fail_buy
+        final_sell = sell_cross or gap_sell or trend_fail_sell
+        
+        # Determine reason
+        reason = ""
+        if final_buy:
+            if buy_cross: reason = "Crossover"
+            elif gap_buy: reason = "Gap Fill (Rapid Dip)"
+            elif trend_fail_buy: reason = "Trend Guard (Short Fail)"
+        elif final_sell:
+            if sell_cross: reason = "Crossunder"
+            elif gap_sell: reason = "Gap Fill (Rapid Pump)"
+            elif trend_fail_sell: reason = "Trend Guard (Long Fail)"
+        
+        # Status string
+        if current_stc >= self.stc.upper:
+            status = "Overbought"
+        elif current_stc <= self.stc.lower:
+            status = "Oversold"
+        else:
+            status = "Neutral"
+        
+        # Loop Protection: reset immediately after gap detection
+        # Prevents infinite loop if SMC filters the resulting signal
+        if gap_sell:
+            cache.cycle_high = 0.0
+        if gap_buy:
+            cache.cycle_low = 100.0
+        
+        return final_buy, final_sell, current_stc, status, reason
     
     # ========================================
     # SCANNING
     # ========================================
     
     def _scan_symbol_immediate(self, symbol: str):
-        """Негайне сканування символу (при закритті свічки)"""
+        """Негайне сканування при закритті свічки (thread-safe)"""
+        signal_data = None
+        
         with self._lock:
             cache = self._cache.get(symbol)
             if not cache or not cache.is_ready:
                 return
             
+            # Update cycle extremes on candle close
             closes = cache.get_closes()
-        
-        if len(closes) < self.stc.min_candles:
-            return
-        
-        buy, sell, stc_value, status = self.stc.detect_signal(closes)
-        
-        # Оновлюємо STC в кеші
-        with self._lock:
+            stc_val, _ = self.stc.calculate(closes)
+            cache.update_cycle_extremes(stc_val)
             cache.prev_stc = cache.last_stc
-            cache.last_stc = stc_value
+            cache.last_stc = stc_val
             
-            # Оновлюємо SMC структуру
+            buy, sell, _, status, reason = self._detect_smart_signals(symbol, cache)
+            
+            # Update SMC structure
             if cache.smc_filter:
                 highs = cache.get_highs()
                 lows = cache.get_lows()
                 cache.smc_filter.update_structure(highs, lows, closes)
+            
+            if buy or sell:
+                signal_type = 'BUY' if buy else 'SELL'
+                # State update inside lock
+                cache.last_signal_type = signal_type
+                cache.reset_cycle_extremes(signal_type)
+                
+                signal_data = {
+                    'symbol': symbol,
+                    'signal_type': signal_type,
+                    'stc_value': stc_val,
+                    'price': closes[-1],
+                    'cache': cache,
+                    'reason': reason
+                }
         
-        # Перевіряємо сигнал
-        if buy or sell:
-            self._process_signal(symbol, 'BUY' if buy else 'SELL', stc_value, closes[-1], cache)
+        # I/O outside lock
+        if signal_data:
+            self._process_signal(**signal_data)
     
     def _scan_all(self):
-        """Сканування всіх символів"""
+        """Регулярне сканування всіх символів"""
         start_time = time.time()
         
         with self._lock:
@@ -621,59 +643,70 @@ class CTRFastScanner:
         results = []
         
         for symbol in symbols:
+            signal_data = None
+            
             with self._lock:
                 cache = self._cache.get(symbol)
                 if not cache or not cache.is_ready:
                     continue
-                closes = cache.get_closes()
-                highs = cache.get_highs()
-                lows = cache.get_lows()
-                smc_filter = cache.smc_filter
-            
-            if len(closes) < self.stc.min_candles:
-                continue
-            
-            buy, sell, stc_value, status = self.stc.detect_signal(closes)
-            
-            # Оновлюємо кеш та SMC структуру
-            with self._lock:
-                cache.prev_stc = cache.last_stc
-                cache.last_stc = stc_value
                 
-                # Оновлюємо SMC структуру
-                if smc_filter:
-                    smc_filter.update_structure(highs, lows, closes)
+                buy, sell, stc_val, status, reason = self._detect_smart_signals(symbol, cache)
+                
+                # Update cache state
+                cache.prev_stc = cache.last_stc
+                cache.last_stc = stc_val
+                cache.update_cycle_extremes(stc_val)
+                
+                # Update SMC structure
+                if cache.smc_filter:
+                    highs = cache.get_highs()
+                    lows = cache.get_lows()
+                    closes = cache.get_closes()
+                    cache.smc_filter.update_structure(highs, lows, closes)
+                
+                # SMC info for results
+                smc_status = None
+                if cache.smc_filter:
+                    smc_data = cache.smc_filter.get_status()
+                    smc_status = {
+                        'trend': smc_data['trend_bias'],
+                        'near_support': self._is_near_smc_level(cache.get_closes()[-1], smc_data, 'support'),
+                        'near_resistance': self._is_near_smc_level(cache.get_closes()[-1], smc_data, 'resistance'),
+                    }
+                
+                results.append({
+                    'symbol': symbol,
+                    'stc': round(stc_val, 2),
+                    'status': status,
+                    'price': cache.get_closes()[-1],
+                    'buy_signal': buy,
+                    'sell_signal': sell,
+                    'smc': smc_status
+                })
+                
+                if buy or sell:
+                    signal_type = 'BUY' if buy else 'SELL'
+                    cache.last_signal_type = signal_type
+                    cache.reset_cycle_extremes(signal_type)
+                    signal_data = {
+                        'symbol': symbol,
+                        'signal_type': signal_type,
+                        'stc_value': stc_val,
+                        'price': cache.get_closes()[-1],
+                        'cache': cache,
+                        'reason': reason
+                    }
             
-            # Отримуємо SMC статус
-            smc_status = None
-            if smc_filter:
-                smc_data = smc_filter.get_status()
-                smc_status = {
-                    'trend': smc_data['trend_bias'],
-                    'near_support': self._is_near_smc_level(closes[-1], smc_data, 'support'),
-                    'near_resistance': self._is_near_smc_level(closes[-1], smc_data, 'resistance'),
-                }
-            
-            results.append({
-                'symbol': symbol,
-                'stc': round(stc_value, 2),
-                'status': status,
-                'price': closes[-1],
-                'buy_signal': buy,
-                'sell_signal': sell,
-                'smc': smc_status
-            })
-            
-            # Обробка сигналу
-            if buy or sell:
-                self._process_signal(symbol, 'BUY' if buy else 'SELL', stc_value, closes[-1], cache)
+            # I/O outside lock
+            if signal_data:
+                self._process_signal(**signal_data)
         
-        # Статистика
+        # Statistics
         scan_time = (time.time() - start_time) * 1000
         self._stats['scans'] += 1
         self._stats['last_scan_time'] = scan_time
         self._stats['avg_scan_ms'] = (
-            (self._stats['avg_scan_ms'] * (self._stats['scans'] - 1) + scan_time) 
+            (self._stats['avg_scan_ms'] * (self._stats['scans'] - 1) + scan_time)
             / self._stats['scans']
         )
         
@@ -685,7 +718,7 @@ class CTRFastScanner:
         
         if level_type == 'support':
             levels = [smc_data.get('strong_low'), smc_data.get('last_hl'), smc_data.get('swing_low')]
-        else:  # resistance
+        else:
             levels = [smc_data.get('weak_high'), smc_data.get('last_lh'), smc_data.get('swing_high')]
         
         for level in levels:
@@ -693,44 +726,59 @@ class CTRFastScanner:
                 return True
         return False
     
-    def _process_signal(self, symbol: str, signal_type: str, stc_value: float, price: float, cache: SymbolCache = None):
-        """Обробка та відправка сигналу"""
+    def _process_signal(self, symbol: str, signal_type: str, stc_value: float,
+                        price: float, cache: SymbolCache = None, reason: str = ""):
+        """
+        Process and send signal notification.
+        State updates happen in caller (inside lock). This method is purely I/O.
+        """
         now = time.time()
         
-        # Перевірка дедуплікації
+        # Priority: Trend Guard bypasses cooldown and SMC filter
+        is_priority = "Trend Guard" in reason
+        
+        # Cooldown check
         last = self._last_signals.get(symbol)
         if last:
             last_type, last_time = last
-            if last_type == signal_type and (now - last_time) < self._signal_cooldown:
-                return  # Пропускаємо дублікат
+            if last_type == signal_type and not is_priority:
+                if (now - last_time) < self._signal_cooldown:
+                    return
         
-        # SMC Filter перевірка
+        # SMC Filter check (Trend Guard bypasses)
         smc_info = ""
         if cache and cache.smc_filter and self.smc_filter_enabled:
             if signal_type == "BUY":
-                is_valid, reason = cache.smc_filter.validate_buy_signal(price)
+                is_valid, smc_reason = cache.smc_filter.validate_buy_signal(price)
             else:
-                is_valid, reason = cache.smc_filter.validate_sell_signal(price)
+                is_valid, smc_reason = cache.smc_filter.validate_sell_signal(price)
             
-            if not is_valid:
+            if not is_valid and not is_priority:
                 self._stats['signals_filtered'] += 1
                 print(f"[CTR Fast] 🚫 Signal FILTERED by SMC: {symbol} {signal_type}")
-                print(f"           Reason: {reason}")
-                return  # Сигнал не пройшов SMC фільтр
+                print(f"           Reason: {smc_reason}")
+                return
             
-            # Додаємо SMC інформацію до повідомлення
             smc_status = cache.smc_filter.get_status()
             trend = smc_status['trend_bias']
-            smc_info = f"\n\n📊 SMC Filter: ✅ PASSED\nTrend: {trend}\nReason: {reason}"
+            smc_info = f"\n\n📊 SMC Filter: ✅ PASSED\nTrend: {trend}\nReason: {smc_reason}"
         
-        # Зберігаємо сигнал
+        # Update signal tracking
         self._last_signals[symbol] = (signal_type, now)
         self._stats['signals_sent'] += 1
         
-        # Формуємо повідомлення
+        # Format message
         emoji = "🟢" if signal_type == "BUY" else "🔴"
         action = "ПОКУПКА" if signal_type == "BUY" else "ПРОДАЖ"
-        cross = f"STC перетнув {self.stc.lower} знизу" if signal_type == "BUY" else f"STC перетнув {self.stc.upper} зверху"
+        
+        if "Gap Fill" in reason:
+            cross_desc = f"⚠️ Швидкий розворот! (Hidden Peak)\nSTC перетнув рівні миттєво"
+        elif "Trend Guard" in reason:
+            cross_desc = f"🛡️ Trend Guard (Stop Loss)\nТренд не дійшов до цілі, аварійний вихід!"
+        else:
+            level = self.stc.lower if signal_type == "BUY" else self.stc.upper
+            direction = "знизу" if signal_type == "BUY" else "зверху"
+            cross_desc = f"STC перетнув {level} {direction}"
         
         message = f"""{emoji} CTR: Сигнал {action}
 
@@ -739,7 +787,7 @@ class CTRFastScanner:
 STC: {stc_value:.2f}
 Таймфрейм: {self.timeframe}
 
-{cross}{smc_info}
+{cross_desc}{smc_info}
 
 ⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"""
         
@@ -757,7 +805,8 @@ STC: {stc_value:.2f}
                     'stc': stc_value,
                     'timeframe': self.timeframe,
                     'message': message,
-                    'smc_filtered': self.smc_filter_enabled
+                    'smc_filtered': self.smc_filter_enabled,
+                    'reason': reason
                 })
             except Exception as e:
                 print(f"[CTR Fast] Signal callback error: {e}")
@@ -766,16 +815,15 @@ STC: {stc_value:.2f}
         """Головний цикл сканування"""
         print("[CTR Fast] Scan loop started")
         
-        scan_interval = 5  # Сканування кожні 5 секунд
+        scan_interval = 5
         
         while self._running:
             try:
                 results = self._scan_all()
                 
-                # Логування
+                # Periodic logging
                 ready_count = sum(1 for r in results if r['status'] != 'Neutral')
-                if ready_count > 0 or self._stats['scans'] % 12 == 0:  # Кожну хвилину
-                    filtered = self._stats['signals_filtered']
+                if ready_count > 0 or self._stats['scans'] % 12 == 0:
                     print(f"[CTR Fast] Scan #{self._stats['scans']}: "
                           f"{len(results)} symbols, "
                           f"{self._stats['last_scan_time']:.1f}ms, "
@@ -793,12 +841,7 @@ STC: {stc_value:.2f}
     # ========================================
     
     def start(self, watchlist: List[str]):
-        """
-        Запустити сканер
-        
-        Args:
-            watchlist: список символів для моніторингу
-        """
+        """Запустити сканер"""
         if self._running:
             print("[CTR Fast] Already running")
             return
@@ -807,29 +850,24 @@ STC: {stc_value:.2f}
         
         print(f"[CTR Fast] Starting with {len(requested_symbols)} symbols: {requested_symbols}")
         
-        # 1. Завантажити історію
         loaded = self.preload_watchlist(requested_symbols)
         
         if loaded == 0:
             print("[CTR Fast] ❌ Failed to load any symbols")
             return
         
-        # 2. Оновлюємо watchlist тільки до успішно завантажених символів
         with self._lock:
             self._watchlist = list(self._cache.keys())
         
         print(f"[CTR Fast] Active watchlist: {self._watchlist}")
         
-        # 3. Запустити WebSocket
         self._start_websocket()
         
-        # Чекаємо підключення
         for _ in range(10):
             if self._ws_connected:
                 break
             time.sleep(0.5)
         
-        # 4. Запустити сканування
         self._running = True
         self._scan_thread = threading.Thread(target=self._scan_loop, daemon=True)
         self._scan_thread.start()
@@ -849,43 +887,28 @@ STC: {stc_value:.2f}
         print("[CTR Fast] ✅ Stopped")
     
     def add_symbol(self, symbol: str) -> bool:
-        """Додати символ до watchlist"""
         symbol = symbol.upper()
-        
         if symbol in self._watchlist:
             return False
-        
-        # Завантажити дані
         if not self._load_history(symbol):
             return False
-        
         self._watchlist.append(symbol)
-        
-        # Перепідключити WebSocket з новим символом
         if self._ws_connected:
             self._stop_websocket()
             self._start_websocket()
-        
         return True
     
     def remove_symbol(self, symbol: str) -> bool:
-        """Видалити символ з watchlist"""
         symbol = symbol.upper()
-        
         if symbol not in self._watchlist:
             return False
-        
         self._watchlist.remove(symbol)
-        
         with self._lock:
             if symbol in self._cache:
                 del self._cache[symbol]
-        
-        # Перепідключити WebSocket
         if self._ws_connected and self._watchlist:
             self._stop_websocket()
             self._start_websocket()
-        
         return True
     
     def get_status(self) -> Dict:
@@ -923,7 +946,6 @@ STC: {stc_value:.2f}
                 if len(closes) < 2:
                     continue
                 
-                # Визначаємо статус
                 stc = cache.last_stc
                 if stc >= self.stc.upper:
                     status = "Overbought"
@@ -942,7 +964,7 @@ STC: {stc_value:.2f}
                     'timeframe': self.timeframe
                 }
                 
-                # Додаємо SMC дані якщо є
+                # Full SMC data (preserved from production v2.1)
                 if cache.smc_filter:
                     smc_status = cache.smc_filter.get_status()
                     result['smc'] = {
@@ -965,7 +987,6 @@ STC: {stc_value:.2f}
             new_tf = settings['timeframe']
             if new_tf != self.timeframe:
                 self.timeframe = new_tf
-                # Потрібно перезавантажити дані
                 if self._running:
                     self.stop()
                     self.start(self._watchlist)
@@ -982,7 +1003,6 @@ STC: {stc_value:.2f}
         # SMC Filter settings
         if 'smc_filter_enabled' in settings:
             self.smc_filter_enabled = bool(settings['smc_filter_enabled']) and SMC_AVAILABLE
-            # Оновлюємо фільтри для всіх символів
             with self._lock:
                 for cache in self._cache.values():
                     if self.smc_filter_enabled and cache.smc_filter is None:
@@ -1035,7 +1055,7 @@ def get_ctr_fast_scanner(
 
 
 def reset_ctr_fast_scanner():
-    """Скинути singleton (для тестів)"""
+    """Скинути singleton"""
     global _ctr_fast_instance
     
     with _ctr_fast_lock:

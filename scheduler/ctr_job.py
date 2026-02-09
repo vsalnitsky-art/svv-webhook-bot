@@ -1,8 +1,14 @@
 """
-CTR Background Job v2.1 - Fast Edition + SMC Filter
+CTR Background Job v2.4 - Fast Edition + Smart Reversal Handling
 
-Інтеграція з CTRFastScanner для максимальної швидкості сигналів.
-+ SMC Structure Filter для фільтрації сигналів.
+Integration with CTRFastScanner v2.4 for maximum signal speed.
++ SMC Structure Filter for signal filtering.
++ Trend Guard support for V-reversal detection.
+
+Changes from v2.1:
+- Signal callback now receives 'reason' field from scanner
+- Deduplication allows direction-changing signals AND Trend Guard priority signals
+- All production features preserved (delete_signal, clear_signals, etc.)
 """
 
 import threading
@@ -23,6 +29,7 @@ class CTRFastJob:
     - Використовує WebSocket для real-time даних
     - Сигнали за 1-5 секунд
     - SMC Structure Filter для фільтрації
+    - Smart Reversal Detection (Gap Fill + Trend Guard)
     - Автоматичне збереження результатів в БД
     """
     
@@ -70,8 +77,6 @@ class CTRFastJob:
             signals_str = self.db.get_setting('ctr_signals', '[]')
             signals = json.loads(signals_str)
             
-            # Будуємо map: symbol -> останній напрямок
-            # Сигнали зберігаються хронологічно, тому останній = правильний
             for sig in signals:
                 symbol = sig.get('symbol')
                 sig_type = sig.get('type')
@@ -89,9 +94,6 @@ class CTRFastJob:
         """
         Перевіряє чи сигнал дублікат останнього.
         
-        Логіка: якщо останній сигнал для монети мав такий же напрямок,
-        то це дублікат і його не треба відправляти. Чекаємо на протилежний.
-        
         BUY → BUY = ДУБЛІКАТ (ігноруємо)
         BUY → SELL = НОВИЙ (відправляємо)
         SELL → SELL = ДУБЛІКАТ (ігноруємо)
@@ -106,13 +108,18 @@ class CTRFastJob:
         return last_direction == signal_type
     
     def _on_signal(self, signal: Dict):
-        """Callback при отриманні сигналу"""
+        """Callback при отриманні сигналу від сканера"""
         try:
             symbol = signal['symbol']
             signal_type = signal['type']
+            reason = signal.get('reason', '')
             
-            # === ДЕДУПЛІКАЦІЯ: перевіряємо чи змінився напрямок ===
-            if self._is_duplicate_signal(symbol, signal_type):
+            # v2.4: Trend Guard signals are priority — they bypass dedup
+            # because the scanner already handles the logic of when to fire them
+            is_priority = "Trend Guard" in reason
+            
+            # === ДЕДУПЛІКАЦІЯ ===
+            if not is_priority and self._is_duplicate_signal(symbol, signal_type):
                 print(f"[CTR Job] ⏭️ Duplicate signal skipped: {symbol} {signal_type} "
                       f"(last was also {signal_type}, waiting for opposite)")
                 return
@@ -129,8 +136,8 @@ class CTRFastJob:
             self._save_signal(signal)
             
             smc_tag = " [SMC✓]" if signal.get('smc_filtered') else ""
-            last_dir = self._last_signal_direction.get(symbol, 'NEW')
-            print(f"[CTR Job] 📨 Signal sent: {symbol} {signal_type}{smc_tag} (direction changed)")
+            reason_tag = f" [{reason}]" if reason else ""
+            print(f"[CTR Job] 📨 Signal sent: {symbol} {signal_type}{smc_tag}{reason_tag}")
             
         except Exception as e:
             print(f"[CTR Job] Signal callback error: {e}")
@@ -148,6 +155,7 @@ class CTRFastJob:
                 'stc': signal['stc'],
                 'timeframe': signal['timeframe'],
                 'smc_filtered': signal.get('smc_filtered', False),
+                'reason': signal.get('reason', 'Crossover'),
                 'timestamp': datetime.now(timezone.utc).isoformat()
             })
             
@@ -167,7 +175,6 @@ class CTRFastJob:
         try:
             results = self._scanner.get_results()
             
-            # Конвертуємо для JSON
             json_results = []
             for r in results:
                 item = {
@@ -260,17 +267,15 @@ class CTRFastJob:
             import time
             while self._running:
                 self._save_results()
-                time.sleep(30)  # Зберігаємо кожні 30 секунд
+                time.sleep(30)
         
         thread = threading.Thread(target=saver_loop, daemon=True)
         thread.start()
     
     def is_running(self) -> bool:
-        """Перевірити чи працює сканер"""
         return self._running
     
     def get_status(self) -> Dict:
-        """Отримати статус сканера"""
         if self._scanner:
             return self._scanner.get_status()
         return {
@@ -280,39 +285,26 @@ class CTRFastJob:
         }
     
     def get_results(self) -> List[Dict]:
-        """Отримати результати сканування"""
         if self._scanner:
             return self._scanner.get_results()
         return []
     
     def add_symbol(self, symbol: str) -> bool:
-        """Додати символ до watchlist"""
         symbol = symbol.upper()
-        
-        # Оновити в БД
         if symbol not in self.watchlist:
             self.watchlist.append(symbol)
             self.db.set_setting('ctr_watchlist', ','.join(self.watchlist))
-        
-        # Додати до сканера
         if self._scanner and self._running:
             return self._scanner.add_symbol(symbol)
-        
         return True
     
     def remove_symbol(self, symbol: str) -> bool:
-        """Видалити символ з watchlist"""
         symbol = symbol.upper()
-        
-        # Оновити в БД
         if symbol in self.watchlist:
             self.watchlist.remove(symbol)
             self.db.set_setting('ctr_watchlist', ','.join(self.watchlist))
-        
-        # Видалити зі сканера
         if self._scanner and self._running:
             return self._scanner.remove_symbol(symbol)
-        
         return True
     
     def reload_settings(self):
@@ -339,7 +331,6 @@ class CTRFastJob:
             signals_str = self.db.get_setting('ctr_signals', '[]')
             signals = json.loads(signals_str)
             
-            # Шукаємо за timestamp
             original_len = len(signals)
             signals = [s for s in signals if s.get('timestamp') != timestamp]
             
@@ -361,8 +352,6 @@ class CTRFastJob:
             count = len(signals)
             
             self.db.set_setting('ctr_signals', '[]')
-            
-            # Також очищуємо кеш напрямків
             self._last_signal_direction.clear()
             
             print(f"[CTR Job] 🗑️ Cleared {count} signals + direction cache")
