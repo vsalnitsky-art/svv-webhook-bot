@@ -90,6 +90,15 @@ class CTRFastJob:
         smc_require_trend_str = self.db.get_setting('ctr_smc_require_trend', '1')
         self.smc_require_trend = smc_require_trend_str in ('1', 'true', 'True', 'yes')
         
+        # Optional signal filters (OFF = 100% Pine Script original)
+        tg_str = self.db.get_setting('ctr_use_trend_guard', '0')
+        self.use_trend_guard = tg_str in ('1', 'true', 'True', 'yes')
+        gd_str = self.db.get_setting('ctr_use_gap_detection', '0')
+        self.use_gap_detection = gd_str in ('1', 'true', 'True', 'yes')
+        cd_str = self.db.get_setting('ctr_use_cooldown', '1')
+        self.use_cooldown = cd_str in ('1', 'true', 'True', 'yes')
+        self.cooldown_seconds = int(self.db.get_setting('ctr_cooldown_seconds', '300'))
+        
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
         self.watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
@@ -271,7 +280,7 @@ class CTRFastJob:
                 print("[CTR Job] ❌ Watchlist is empty")
                 return False
             
-            # Create scanner with SMC filter
+            # Create scanner with filters
             self._scanner = CTRFastScanner(
                 timeframe=self.timeframe,
                 fast_length=self.fast_length,
@@ -282,6 +291,11 @@ class CTRFastJob:
                 upper=self.upper,
                 lower=self.lower,
                 on_signal=self._on_signal,
+                # Optional signal filters
+                use_trend_guard=self.use_trend_guard,
+                use_gap_detection=self.use_gap_detection,
+                use_cooldown=self.use_cooldown,
+                cooldown_seconds=self.cooldown_seconds,
                 # SMC Filter
                 smc_filter_enabled=self.smc_filter_enabled,
                 smc_swing_length=self.smc_swing_length,
@@ -370,6 +384,11 @@ class CTRFastJob:
                 'lower': self.lower,
                 'fast_length': self.fast_length,
                 'slow_length': self.slow_length,
+                # Optional signal filters
+                'use_trend_guard': self.use_trend_guard,
+                'use_gap_detection': self.use_gap_detection,
+                'use_cooldown': self.use_cooldown,
+                'cooldown_seconds': self.cooldown_seconds,
                 # SMC settings
                 'smc_filter_enabled': self.smc_filter_enabled,
                 'smc_swing_length': self.smc_swing_length,

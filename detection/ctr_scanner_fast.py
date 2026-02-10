@@ -423,6 +423,11 @@ class CTRFastScanner:
         upper: float = 75,
         lower: float = 25,
         on_signal: Callable = None,
+        # Optional signal filters (OFF = 100% Pine Script original)
+        use_trend_guard: bool = False,
+        use_gap_detection: bool = False,
+        use_cooldown: bool = True,
+        cooldown_seconds: int = 300,
         # SMC Filter settings
         smc_filter_enabled: bool = False,
         smc_swing_length: int = 50,
@@ -437,6 +442,11 @@ class CTRFastScanner:
             fast_length, slow_length, cycle_length,
             d1_length, d2_length, upper, lower
         )
+        
+        # Optional signal filters
+        self.use_trend_guard = use_trend_guard
+        self.use_gap_detection = use_gap_detection
+        self.use_cooldown = use_cooldown
         
         # SMC Filter settings
         self.smc_filter_enabled = smc_filter_enabled and SMC_AVAILABLE
@@ -458,9 +468,9 @@ class CTRFastScanner:
         self._scan_thread: Optional[threading.Thread] = None
         self._watchlist: List[str] = []
         
-        # Signal tracking — v2.5: 300s cooldown
+        # Signal tracking
         self._last_signals: Dict[str, Tuple[str, float]] = {}
-        self._signal_cooldown = 300
+        self._signal_cooldown = cooldown_seconds
         self._trend_guard_grace = 300
         self._trend_guard_min_travel = 0.30
         
@@ -474,8 +484,14 @@ class CTRFastScanner:
             'avg_scan_ms': 0
         }
         
-        smc_status = "ON" if self.smc_filter_enabled else "OFF"
-        print(f"[CTR Fast v2.6] Initialized: TF={timeframe}, Upper={upper}, Lower={lower}, SMC={smc_status}")
+        # Log filter state
+        filters = []
+        if self.use_trend_guard: filters.append("TG")
+        if self.use_gap_detection: filters.append("GAP")
+        if self.use_cooldown: filters.append(f"CD={cooldown_seconds}s")
+        if self.smc_filter_enabled: filters.append("SMC")
+        filter_str = "+".join(filters) if filters else "ORIGINAL (no filters)"
+        print(f"[CTR Fast v2.6] Initialized: TF={timeframe}, Upper={upper}, Lower={lower}, Filters: {filter_str}")
     
     # ========================================
     # DATA LOADING
@@ -703,47 +719,56 @@ class CTRFastScanner:
         self._ws = None
     
     # ========================================
-    # SMART SIGNAL DETECTION — v2.4/v2.5/v2.6
+    # SIGNAL DETECTION — v2.6 (Original + Optional Filters)
     # ========================================
     
     def _detect_signals(self, symbol: str, cache: SymbolCache) -> Tuple[bool, bool, float, str, str]:
         """
-        v2.6: Signal detection using cached STC values (ZERO recalculation).
-        STC is already computed by WS handler or _scan_all.
+        v2.6: Signal detection — Primary = 100% Pine Script crossover/crossunder.
+        Gap Detection, Trend Guard — only when enabled via flags.
+        STC is already computed by WS handler (ZERO recalculation).
         
         Returns: (buy_signal, sell_signal, current_stc, status, reason)
         """
         current_stc = cache.last_stc
         prev_stc = cache.prev_stc
         
-        # === 1. Standard Crossover ===
+        # === PRIMARY: Standard Crossover (100% Pine Script original) ===
+        # ta.crossover(stc, lower): prev <= lower AND current > lower
+        # ta.crossunder(stc, upper): prev >= upper AND current < upper
         buy_cross = prev_stc <= self.stc.lower and current_stc > self.stc.lower
         sell_cross = prev_stc >= self.stc.upper and current_stc < self.stc.upper
         
-        # === 2. Gap Detection (Hidden Peak) ===
-        gap_sell = (not sell_cross) and (cache.cycle_high >= self.stc.upper) and (current_stc < self.stc.upper)
-        gap_buy = (not buy_cross) and (cache.cycle_low <= self.stc.lower) and (current_stc > self.stc.lower)
+        # === OPTIONAL FILTER: Gap Detection ===
+        gap_sell = False
+        gap_buy = False
+        if self.use_gap_detection:
+            gap_sell = (not sell_cross) and (cache.cycle_high >= self.stc.upper) and (current_stc < self.stc.upper)
+            gap_buy = (not buy_cross) and (cache.cycle_low <= self.stc.lower) and (current_stc > self.stc.lower)
         
-        # === 3. Trend Guard (Emergency Exit) ===
-        now = time.time()
-        tg_range = self.stc.upper - self.stc.lower
-        tg_min_high = self.stc.lower + tg_range * self._trend_guard_min_travel
-        tg_max_low = self.stc.upper - tg_range * self._trend_guard_min_travel
-        tg_grace_ok = (now - cache.last_signal_time) >= self._trend_guard_grace
-        
+        # === OPTIONAL FILTER: Trend Guard ===
         trend_fail_sell = False
-        if cache.last_signal_type == 'BUY' and current_stc < self.stc.lower:
-            if prev_stc > self.stc.lower:
-                if cache.cycle_high < self.stc.upper:
-                    if cache.cycle_high >= tg_min_high and tg_grace_ok:
-                        trend_fail_sell = True
-        
         trend_fail_buy = False
-        if cache.last_signal_type == 'SELL' and current_stc > self.stc.upper:
-            if prev_stc < self.stc.upper:
-                if cache.cycle_low > self.stc.lower:
-                    if cache.cycle_low <= tg_max_low and tg_grace_ok:
-                        trend_fail_buy = True
+        if self.use_trend_guard:
+            now = time.time()
+            tg_range = self.stc.upper - self.stc.lower
+            tg_min_high = self.stc.lower + tg_range * self._trend_guard_min_travel
+            tg_max_low = self.stc.upper - tg_range * self._trend_guard_min_travel
+            tg_grace_ok = (now - cache.last_signal_time) >= self._trend_guard_grace
+            
+            # After BUY: STC fell back below lower without reaching upper
+            if cache.last_signal_type == 'BUY' and current_stc < self.stc.lower:
+                if prev_stc > self.stc.lower:
+                    if cache.cycle_high < self.stc.upper:
+                        if cache.cycle_high >= tg_min_high and tg_grace_ok:
+                            trend_fail_sell = True
+            
+            # After SELL: STC rose back above upper without reaching lower
+            if cache.last_signal_type == 'SELL' and current_stc > self.stc.upper:
+                if prev_stc < self.stc.upper:
+                    if cache.cycle_low > self.stc.lower:
+                        if cache.cycle_low <= tg_max_low and tg_grace_ok:
+                            trend_fail_buy = True
         
         # === Combine ===
         final_buy = buy_cross or gap_buy or trend_fail_buy
@@ -768,7 +793,7 @@ class CTRFastScanner:
         else:
             status = "Neutral"
         
-        # Loop Protection
+        # Loop Protection (only relevant when gap detection is on)
         if gap_sell:
             cache.cycle_high = 0.0
         if gap_buy:
@@ -917,27 +942,28 @@ class CTRFastScanner:
     
     def _process_signal(self, symbol: str, signal_type: str, stc_value: float,
                         price: float, cache: SymbolCache = None, reason: str = ""):
-        """Process and send signal notification (unchanged from v2.5)"""
+        """Process and send signal notification. Cooldown is optional (v2.6)."""
         now = time.time()
         
         is_priority = "Trend Guard" in reason
         
-        # Cooldown check
-        last = self._last_signals.get(symbol)
-        if last:
-            last_type, last_time = last
-            time_since = now - last_time
-            
-            if is_priority:
-                if time_since < self._trend_guard_grace:
-                    return
-            else:
-                if last_type == signal_type:
-                    if time_since < self._signal_cooldown:
+        # OPTIONAL: Cooldown check (OFF = Pine Script original, no cooldown)
+        if self.use_cooldown:
+            last = self._last_signals.get(symbol)
+            if last:
+                last_type, last_time = last
+                time_since = now - last_time
+                
+                if is_priority:
+                    if time_since < self._trend_guard_grace:
                         return
                 else:
-                    if time_since < 30:
-                        return
+                    if last_type == signal_type:
+                        if time_since < self._signal_cooldown:
+                            return
+                    else:
+                        if time_since < 30:
+                            return
         
         # SMC Filter check
         smc_info = ""
@@ -1216,6 +1242,16 @@ STC: {stc_value:.2f}
                         cache.is_ready = state.ready
             print(f"[CTR Fast] STC params changed — full recalculation done for all symbols")
         
+        # Optional signal filter settings
+        if 'use_trend_guard' in settings:
+            self.use_trend_guard = bool(settings['use_trend_guard'])
+        if 'use_gap_detection' in settings:
+            self.use_gap_detection = bool(settings['use_gap_detection'])
+        if 'use_cooldown' in settings:
+            self.use_cooldown = bool(settings['use_cooldown'])
+        if 'cooldown_seconds' in settings:
+            self._signal_cooldown = int(settings['cooldown_seconds'])
+        
         # SMC Filter settings — v2.6: recreate filters with new params
         smc_changed = False
         if 'smc_filter_enabled' in settings:
@@ -1256,9 +1292,14 @@ STC: {stc_value:.2f}
                         cache.smc_filter = None
             print(f"[CTR Fast] SMC filters recreated with new params")
         
-        smc_status = "ON" if self.smc_filter_enabled else "OFF"
+        filters = []
+        if self.use_trend_guard: filters.append("TG")
+        if self.use_gap_detection: filters.append("GAP")
+        if self.use_cooldown: filters.append(f"CD={self._signal_cooldown}s")
+        if self.smc_filter_enabled: filters.append("SMC")
+        filter_str = "+".join(filters) if filters else "ORIGINAL"
         print(f"[CTR Fast] Settings reloaded: TF={self.timeframe}, "
-              f"Upper={self.stc.upper}, Lower={self.stc.lower}, SMC={smc_status}")
+              f"Upper={self.stc.upper}, Lower={self.stc.lower}, Filters: {filter_str}")
     
     def get_smc_status(self, symbol: str) -> Optional[Dict]:
         with self._lock:

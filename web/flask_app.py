@@ -1172,6 +1172,11 @@ def register_api_routes(app):
             'ctr_cycle_length': db.get_setting('ctr_cycle_length', 10),
             'ctr_upper': db.get_setting('ctr_upper', 75),
             'ctr_lower': db.get_setting('ctr_lower', 25),
+            # Optional signal filters
+            'ctr_use_trend_guard': db.get_setting('ctr_use_trend_guard', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_use_gap_detection': db.get_setting('ctr_use_gap_detection', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_use_cooldown': db.get_setting('ctr_use_cooldown', '1') in ('1', 'true', 'True', 'yes'),
+            'ctr_cooldown_seconds': db.get_setting('ctr_cooldown_seconds', 300),
             # SMC Filter
             'ctr_smc_filter_enabled': smc_filter_enabled,
             'ctr_smc_swing_length': db.get_setting('ctr_smc_swing_length', 50),
@@ -1293,6 +1298,9 @@ def register_api_routes(app):
         ctr_settings = [
             'ctr_timeframe', 'ctr_fast_length', 'ctr_slow_length',
             'ctr_cycle_length', 'ctr_upper', 'ctr_lower',
+            # Optional signal filters
+            'ctr_use_trend_guard', 'ctr_use_gap_detection',
+            'ctr_use_cooldown', 'ctr_cooldown_seconds',
             # SMC Filter settings
             'ctr_smc_filter_enabled', 'ctr_smc_swing_length', 'ctr_smc_zone_threshold',
             'ctr_smc_require_trend'

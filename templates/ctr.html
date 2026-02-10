@@ -445,6 +445,43 @@
                     </div>
                 </div>
                 
+                <!-- Signal Filters Section (v2.6) -->
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <h4 style="margin-bottom: 10px;">🔧 Фільтри сигналів</h4>
+                    <small style="color: #888; display: block; margin-bottom: 10px;">
+                        Всі OFF = 100% оригінал Pine Script (тільки crossover/crossunder)
+                    </small>
+                    
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_use_trend_guard" {{ 'checked' if settings.ctr_use_trend_guard else '' }} onchange="saveSettings()">
+                            🛡️ Trend Guard
+                        </label>
+                        <small style="color:#666;margin-left:26px;">Аварійний вихід коли STC не досягає цілі</small>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_use_gap_detection" {{ 'checked' if settings.ctr_use_gap_detection else '' }} onchange="saveSettings()">
+                            ⚡ Gap Detection
+                        </label>
+                        <small style="color:#666;margin-left:26px;">Пропущені crossover між сканами (Hidden Peak)</small>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_use_cooldown" {{ 'checked' if settings.ctr_use_cooldown else '' }} onchange="toggleCooldownVisibility()">
+                            ⏱️ Cooldown
+                        </label>
+                        <small style="color:#666;margin-left:26px;">Мінімальний інтервал між сигналами</small>
+                    </div>
+                    
+                    <div class="setting-item" id="cooldown_seconds_row" style="display: {{ 'block' if settings.ctr_use_cooldown else 'none' }};">
+                        <label>Cooldown (сек)</label>
+                        <input type="number" id="ctr_cooldown_seconds" value="{{ settings.ctr_cooldown_seconds or 300 }}" min="10" max="3600" step="10">
+                    </div>
+                </div>
+                
                 <!-- SMC Filter Section -->
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
                     <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
@@ -776,6 +813,11 @@ async function saveSettings() {
         ctr_cycle_length: parseInt(document.getElementById('ctr_cycle_length').value),
         ctr_upper: parseInt(document.getElementById('ctr_upper').value),
         ctr_lower: parseInt(document.getElementById('ctr_lower').value),
+        // Signal Filters
+        ctr_use_trend_guard: document.getElementById('ctr_use_trend_guard').checked ? '1' : '0',
+        ctr_use_gap_detection: document.getElementById('ctr_use_gap_detection').checked ? '1' : '0',
+        ctr_use_cooldown: document.getElementById('ctr_use_cooldown').checked ? '1' : '0',
+        ctr_cooldown_seconds: parseInt(document.getElementById('ctr_cooldown_seconds').value),
         // SMC Filter
         ctr_smc_filter_enabled: document.getElementById('ctr_smc_filter_enabled').checked ? '1' : '0',
         ctr_smc_swing_length: parseInt(document.getElementById('ctr_smc_swing_length').value),
@@ -800,6 +842,12 @@ async function saveSettings() {
     } catch (e) {
         alert('Error: ' + e.message);
     }
+}
+
+function toggleCooldownVisibility() {
+    const checked = document.getElementById('ctr_use_cooldown').checked;
+    document.getElementById('cooldown_seconds_row').style.display = checked ? 'block' : 'none';
+    saveSettings();
 }
 
 async function startCTR() {
