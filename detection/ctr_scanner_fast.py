@@ -433,12 +433,14 @@ class SMCTrendFilter:
         swing_length_1h: int = 50,
         mode: str = "both",
         refresh_interval: int = 900,  # 15 хв
+        block_neutral: bool = False,  # Block ALL signals when trend is NEUTRAL
     ):
         self.enabled = enabled and SMC_AVAILABLE
         self.swing_length_4h = swing_length_4h
         self.swing_length_1h = swing_length_1h
         self.mode = mode  # both / any / 4h / 1h
         self.refresh_interval = refresh_interval
+        self.block_neutral = block_neutral
         
         # Per-symbol: { symbol: { '4h': TrendBias.name, '1h': TrendBias.name } }
         self._trends: Dict[str, Dict[str, str]] = {}
@@ -459,9 +461,10 @@ class SMCTrendFilter:
         }
         
         if self.enabled:
+            bn = ", block_neutral=ON" if self.block_neutral else ""
             print(f"[SMC Trend] ✅ Initialized: mode={mode}, "
                   f"4h_swing={swing_length_4h}, 1h_swing={swing_length_1h}, "
-                  f"refresh={refresh_interval}s")
+                  f"refresh={refresh_interval}s{bn}")
     
     # ---- DATA LOADING ----
     
@@ -608,8 +611,8 @@ class SMCTrendFilter:
         """
         Перевірити чи сигнал відповідає HTF тренду.
         
-        BUY дозволений: тренд BULLISH або NEUTRAL
-        SELL дозволений: тренд BEARISH або NEUTRAL
+        block_neutral=False: BUY при BULLISH або NEUTRAL, SELL при BEARISH або NEUTRAL
+        block_neutral=True:  BUY ТІЛЬКИ при BULLISH, SELL ТІЛЬКИ при BEARISH
         
         Returns: (is_valid, reason)
         """
@@ -630,6 +633,9 @@ class SMCTrendFilter:
             if t4h == opposite:
                 self._stats['signals_blocked'] += 1
                 return False, f"4h trend is {t4h} — {signal_type} blocked"
+            if self.block_neutral and t4h == 'NEUTRAL':
+                self._stats['signals_blocked'] += 1
+                return False, f"4h trend is NEUTRAL — {signal_type} blocked (block_neutral)"
             self._stats['signals_passed'] += 1
             return True, f"4h={t4h}"
         
@@ -637,27 +643,42 @@ class SMCTrendFilter:
             if t1h == opposite:
                 self._stats['signals_blocked'] += 1
                 return False, f"1h trend is {t1h} — {signal_type} blocked"
+            if self.block_neutral and t1h == 'NEUTRAL':
+                self._stats['signals_blocked'] += 1
+                return False, f"1h trend is NEUTRAL — {signal_type} blocked (block_neutral)"
             self._stats['signals_passed'] += 1
             return True, f"1h={t1h}"
         
         elif self.mode == 'both':
-            # Обидва мають бути НЕ протилежними
-            # Якщо хоча б один = opposite → блок
+            # Блок якщо хоча б один = opposite
             if t4h == opposite or t1h == opposite:
                 blocked_by = []
                 if t4h == opposite: blocked_by.append(f"4h={t4h}")
                 if t1h == opposite: blocked_by.append(f"1h={t1h}")
                 self._stats['signals_blocked'] += 1
                 return False, f"{', '.join(blocked_by)} — {signal_type} blocked"
+            # Блок якщо хоча б один = NEUTRAL (при block_neutral)
+            if self.block_neutral and (t4h == 'NEUTRAL' or t1h == 'NEUTRAL'):
+                neutral_by = []
+                if t4h == 'NEUTRAL': neutral_by.append("4h=NEUTRAL")
+                if t1h == 'NEUTRAL': neutral_by.append("1h=NEUTRAL")
+                self._stats['signals_blocked'] += 1
+                return False, f"{', '.join(neutral_by)} — {signal_type} blocked (block_neutral)"
             self._stats['signals_passed'] += 1
             return True, f"4h={t4h}, 1h={t1h}"
         
         elif self.mode == 'any':
-            # Достатньо щоб хоча б один був required або NEUTRAL
             # Блокуємо тільки якщо ОБИДВА = opposite
             if t4h == opposite and t1h == opposite:
                 self._stats['signals_blocked'] += 1
                 return False, f"Both 4h={t4h}, 1h={t1h} — {signal_type} blocked"
+            # При block_neutral: блокуємо якщо ОБИДВА = opposite або NEUTRAL (жоден не required)
+            if self.block_neutral:
+                t4h_ok = (t4h == required)
+                t1h_ok = (t1h == required)
+                if not t4h_ok and not t1h_ok:
+                    self._stats['signals_blocked'] += 1
+                    return False, f"4h={t4h}, 1h={t1h} — no {required} trend (block_neutral)"
             self._stats['signals_passed'] += 1
             return True, f"4h={t4h}, 1h={t1h}"
         
@@ -678,6 +699,7 @@ class SMCTrendFilter:
         return {
             'enabled': self.enabled,
             'mode': self.mode,
+            'block_neutral': self.block_neutral,
             'swing_length_4h': self.swing_length_4h,
             'swing_length_1h': self.swing_length_1h,
             'refresh_interval': self.refresh_interval,
@@ -728,6 +750,9 @@ class SMCTrendFilter:
                     self.stop_refresh()
                     if self.enabled and self._watchlist:
                         self.start_refresh(self._watchlist)
+        
+        if 'block_neutral' in kwargs:
+            self.block_neutral = bool(kwargs['block_neutral'])
         
         # Reload data if structure params changed
         if need_reload and self.enabled and self._watchlist:
@@ -785,6 +810,7 @@ class CTRFastScanner:
         smc_trend_swing_1h: int = 50,
         smc_trend_mode: str = "both",
         smc_trend_refresh: int = 900,
+        smc_trend_block_neutral: bool = False,
     ):
         self.timeframe = timeframe
         self.on_signal = on_signal
@@ -813,6 +839,7 @@ class CTRFastScanner:
             swing_length_1h=smc_trend_swing_1h,
             mode=smc_trend_mode,
             refresh_interval=smc_trend_refresh,
+            block_neutral=smc_trend_block_neutral,
         )
         
         # In-memory cache
@@ -1697,10 +1724,10 @@ STC: {stc_value:.2f}
         # SMC Trend Filter settings — hot-reload
         smc_trend_kwargs = {}
         for key in ('smc_trend_enabled', 'smc_trend_swing_4h', 'smc_trend_swing_1h', 
-                     'smc_trend_mode', 'smc_trend_refresh'):
+                     'smc_trend_mode', 'smc_trend_refresh', 'smc_trend_block_neutral'):
             if key in settings:
                 mapped = key.replace('smc_trend_', '')
-                if mapped == 'enabled':
+                if mapped in ('enabled', 'block_neutral'):
                     smc_trend_kwargs[mapped] = bool(settings[key])
                 elif mapped == 'mode':
                     smc_trend_kwargs[mapped] = str(settings[key])

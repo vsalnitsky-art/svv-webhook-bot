@@ -566,12 +566,20 @@
                         <input type="number" id="ctr_smc_trend_refresh" value="{{ settings.ctr_smc_trend_refresh or 900 }}" min="60" max="7200" step="60">
                     </div>
                     
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_smc_trend_block_neutral" {{ 'checked' if settings.ctr_smc_trend_block_neutral else '' }} onchange="saveSettings()">
+                            🚫 Блокувати при NEUTRAL
+                        </label>
+                        <small style="color:#666;margin-left:26px;">Сигнали тільки при чіткому BULLISH/BEARISH тренді</small>
+                    </div>
+                    
                     <small style="color: #888; display: block; margin-top: 10px;">
                         <b>Режими:</b><br>
                         • Both — жоден TF не може бути протилежним<br>
                         • Any — блокує тільки якщо обидва протилежні<br>
                         • 4H/1H Only — тільки один TF<br>
-                        • NEUTRAL тренд = пропускає (не блокує)
+                        • 🚫 Block NEUTRAL — блокує ВСЕ якщо тренд не визначений
                     </small>
                 </div>
                 
@@ -887,6 +895,7 @@ async function saveSettings() {
         ctr_smc_trend_swing_1h: parseInt(document.getElementById('ctr_smc_trend_swing_1h').value),
         ctr_smc_trend_mode: document.getElementById('ctr_smc_trend_mode').value,
         ctr_smc_trend_refresh: parseInt(document.getElementById('ctr_smc_trend_refresh').value),
+        ctr_smc_trend_block_neutral: document.getElementById('ctr_smc_trend_block_neutral').checked ? '1' : '0',
     };
     
     try {

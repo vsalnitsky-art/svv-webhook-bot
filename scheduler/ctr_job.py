@@ -109,6 +109,7 @@ class CTRFastJob:
         self.smc_trend_swing_1h = int(self.db.get_setting('ctr_smc_trend_swing_1h', '50'))
         self.smc_trend_mode = self.db.get_setting('ctr_smc_trend_mode', 'both')
         self.smc_trend_refresh = int(self.db.get_setting('ctr_smc_trend_refresh', '900'))
+        self.smc_trend_block_neutral = _b('ctr_smc_trend_block_neutral', '0')
         
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
@@ -323,6 +324,7 @@ class CTRFastJob:
                 smc_trend_swing_1h=self.smc_trend_swing_1h,
                 smc_trend_mode=self.smc_trend_mode,
                 smc_trend_refresh=self.smc_trend_refresh,
+                smc_trend_block_neutral=self.smc_trend_block_neutral,
             )
             
             # Start scanner (SMC Trend Filter is created internally by scanner)
@@ -422,6 +424,7 @@ class CTRFastJob:
                 'smc_trend_swing_1h': self.smc_trend_swing_1h,
                 'smc_trend_mode': self.smc_trend_mode,
                 'smc_trend_refresh': self.smc_trend_refresh,
+                'smc_trend_block_neutral': self.smc_trend_block_neutral,
             })
     
     def delete_signal(self, timestamp: str) -> bool:

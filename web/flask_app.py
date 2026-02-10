@@ -1188,6 +1188,7 @@ def register_api_routes(app):
             'ctr_smc_trend_swing_1h': db.get_setting('ctr_smc_trend_swing_1h', 50),
             'ctr_smc_trend_mode': db.get_setting('ctr_smc_trend_mode', 'both'),
             'ctr_smc_trend_refresh': db.get_setting('ctr_smc_trend_refresh', 900),
+            'ctr_smc_trend_block_neutral': db.get_setting('ctr_smc_trend_block_neutral', '0') in ('1', 'true', 'True', 'yes'),
         }
         
         # Статистика фільтрації
@@ -1312,7 +1313,7 @@ def register_api_routes(app):
             'ctr_smc_require_trend',
             # SMC Trend Filter (HTF direction)
             'ctr_smc_trend_enabled', 'ctr_smc_trend_swing_4h', 'ctr_smc_trend_swing_1h',
-            'ctr_smc_trend_mode', 'ctr_smc_trend_refresh',
+            'ctr_smc_trend_mode', 'ctr_smc_trend_refresh', 'ctr_smc_trend_block_neutral',
         ]
         
         for key in ctr_settings:
