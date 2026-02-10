@@ -37,11 +37,15 @@ logger = logging.getLogger(__name__)
 
 # SMC Filter import
 try:
-    from detection.smc_structure_filter import SMCSignalFilter, TrendBias
+    from detection.smc_structure_filter import SMCSignalFilter, SMCStructureDetector, TrendBias
     SMC_AVAILABLE = True
 except ImportError:
-    SMC_AVAILABLE = False
-    print("[CTR Fast] Warning: SMC Structure Filter not available")
+    try:
+        from smc_structure_filter import SMCSignalFilter, SMCStructureDetector, TrendBias
+        SMC_AVAILABLE = True
+    except ImportError:
+        SMC_AVAILABLE = False
+        print("[CTR Fast] Warning: SMC Structure Filter not available")
 
 
 # ============================================
@@ -398,6 +402,348 @@ class STCCalculator:
 
 
 # ============================================
+# SMC TREND FILTER (HTF 4h / 1h)
+# ============================================
+
+class SMCTrendFilter:
+    """
+    SMC Trend Filter — самостійний фільтр тренду на HTF (4h і 1h).
+    
+    Окремо завантажує свічки з Binance REST API для кожного TF.
+    Визначає тренд через HH/HL/LH/LL + BOS/CHoCH (SMCStructureDetector).
+    Фільтрує CTR сигнали: BUY тільки при BULLISH, SELL тільки при BEARISH.
+    
+    Режими (mode):
+        both  — обидва TF мають підтвердити напрямок
+        any   — достатньо одного TF
+        4h    — тільки 4h тренд
+        1h    — тільки 1h тренд
+    
+    NEUTRAL тренд на будь-якому TF = пропускає сигнал (не блокує).
+    """
+    
+    REST_BASE_URL = "https://api.binance.com/api/v3"
+    CANDLES_4H = 500   # 500 × 4h ≈ 83 дні — достатньо для swing_length=50
+    CANDLES_1H = 500   # 500 × 1h ≈ 21 день
+    
+    def __init__(
+        self,
+        enabled: bool = False,
+        swing_length_4h: int = 50,
+        swing_length_1h: int = 50,
+        mode: str = "both",
+        refresh_interval: int = 900,  # 15 хв
+    ):
+        self.enabled = enabled and SMC_AVAILABLE
+        self.swing_length_4h = swing_length_4h
+        self.swing_length_1h = swing_length_1h
+        self.mode = mode  # both / any / 4h / 1h
+        self.refresh_interval = refresh_interval
+        
+        # Per-symbol: { symbol: { '4h': TrendBias.name, '1h': TrendBias.name } }
+        self._trends: Dict[str, Dict[str, str]] = {}
+        self._detectors: Dict[str, Dict[str, SMCStructureDetector]] = {}
+        self._lock = threading.RLock()
+        
+        # Background refresh
+        self._refresh_thread: Optional[threading.Thread] = None
+        self._refresh_running = False
+        self._watchlist: List[str] = []
+        
+        # Stats
+        self._stats = {
+            'signals_passed': 0,
+            'signals_blocked': 0,
+            'last_refresh_ms': 0,
+            'symbols_loaded': 0,
+        }
+        
+        if self.enabled:
+            print(f"[SMC Trend] ✅ Initialized: mode={mode}, "
+                  f"4h_swing={swing_length_4h}, 1h_swing={swing_length_1h}, "
+                  f"refresh={refresh_interval}s")
+    
+    # ---- DATA LOADING ----
+    
+    def _fetch_klines(self, symbol: str, interval: str, limit: int) -> Optional[tuple]:
+        """
+        Завантажити свічки з Binance REST API.
+        Returns: (highs, lows, closes) numpy arrays або None при помилці.
+        """
+        import requests as req
+        try:
+            url = f"{self.REST_BASE_URL}/klines"
+            params = {'symbol': symbol, 'interval': interval, 'limit': limit}
+            resp = req.get(url, params=params, timeout=15)
+            if resp.status_code != 200:
+                print(f"[SMC Trend] ❌ {symbol} {interval}: HTTP {resp.status_code}")
+                return None
+            data = resp.json()
+            if not data or len(data) < 100:
+                print(f"[SMC Trend] ❌ {symbol} {interval}: only {len(data)} candles")
+                return None
+            highs = np.array([float(k[2]) for k in data])
+            lows = np.array([float(k[3]) for k in data])
+            closes = np.array([float(k[4]) for k in data])
+            return highs, lows, closes
+        except Exception as e:
+            print(f"[SMC Trend] ❌ {symbol} {interval}: {e}")
+            return None
+    
+    def _detect_trend(self, highs: np.ndarray, lows: np.ndarray, 
+                      closes: np.ndarray, swing_length: int) -> str:
+        """
+        Повний bar-by-bar аналіз SMC структури для точного визначення тренду.
+        Обробляє кожен бар послідовно (як Pine Script), не тільки останній.
+        Returns: 'BULLISH' / 'BEARISH' / 'NEUTRAL'
+        """
+        detector = SMCStructureDetector(swing_length=swing_length)
+        start_idx = swing_length + 10
+        
+        # Прогоняємо всі бари послідовно для точного визначення
+        for i in range(start_idx, len(highs)):
+            detector.update(highs[:i+1], lows[:i+1], closes[:i+1])
+        
+        return detector.structure.trend_bias.name, detector
+    
+    def load_symbol(self, symbol: str) -> bool:
+        """Завантажити 4h і 1h дані для одного символу"""
+        if not self.enabled or not SMC_AVAILABLE:
+            return False
+        
+        trends = {}
+        detectors = {}
+        
+        # 4h
+        if self.mode in ('both', 'any', '4h'):
+            data_4h = self._fetch_klines(symbol, '4h', self.CANDLES_4H)
+            if data_4h:
+                trend_4h, det_4h = self._detect_trend(*data_4h, self.swing_length_4h)
+                trends['4h'] = trend_4h
+                detectors['4h'] = det_4h
+            else:
+                trends['4h'] = 'NEUTRAL'
+                detectors['4h'] = None
+        
+        # 1h
+        if self.mode in ('both', 'any', '1h'):
+            data_1h = self._fetch_klines(symbol, '1h', self.CANDLES_1H)
+            if data_1h:
+                trend_1h, det_1h = self._detect_trend(*data_1h, self.swing_length_1h)
+                trends['1h'] = trend_1h
+                detectors['1h'] = det_1h
+            else:
+                trends['1h'] = 'NEUTRAL'
+                detectors['1h'] = None
+        
+        with self._lock:
+            self._trends[symbol] = trends
+            self._detectors[symbol] = detectors
+        
+        t4 = trends.get('4h', '-')
+        t1 = trends.get('1h', '-')
+        print(f"[SMC Trend] {symbol}: 4h={t4}, 1h={t1}")
+        return True
+    
+    def load_symbols(self, symbols: List[str]):
+        """Завантажити дані для всіх символів"""
+        start = time.time()
+        loaded = 0
+        for symbol in symbols:
+            if self.load_symbol(symbol):
+                loaded += 1
+            time.sleep(0.15)  # Rate limit
+        
+        elapsed = (time.time() - start) * 1000
+        self._stats['symbols_loaded'] = loaded
+        self._stats['last_refresh_ms'] = elapsed
+        print(f"[SMC Trend] ✅ Loaded {loaded}/{len(symbols)} symbols in {elapsed:.0f}ms")
+    
+    def remove_symbol(self, symbol: str):
+        with self._lock:
+            self._trends.pop(symbol, None)
+            self._detectors.pop(symbol, None)
+    
+    # ---- BACKGROUND REFRESH ----
+    
+    def _refresh_loop(self):
+        """Фоновий потік оновлення HTF даних"""
+        while self._refresh_running:
+            time.sleep(self.refresh_interval)
+            if not self._refresh_running:
+                break
+            
+            start = time.time()
+            symbols = list(self._watchlist)
+            for symbol in symbols:
+                if not self._refresh_running:
+                    break
+                self.load_symbol(symbol)
+                time.sleep(0.15)
+            
+            elapsed = (time.time() - start) * 1000
+            self._stats['last_refresh_ms'] = elapsed
+            print(f"[SMC Trend] 🔄 Refreshed {len(symbols)} symbols in {elapsed:.0f}ms")
+    
+    def start_refresh(self, watchlist: List[str]):
+        """Запустити фоновий потік оновлення"""
+        self._watchlist = list(watchlist)
+        if self._refresh_thread and self._refresh_thread.is_alive():
+            return
+        self._refresh_running = True
+        self._refresh_thread = threading.Thread(target=self._refresh_loop, daemon=True)
+        self._refresh_thread.start()
+        print(f"[SMC Trend] 🔄 Background refresh started (every {self.refresh_interval}s)")
+    
+    def stop_refresh(self):
+        """Зупинити фоновий потік"""
+        self._refresh_running = False
+        if self._refresh_thread:
+            self._refresh_thread.join(timeout=5)
+        self._refresh_thread = None
+    
+    # ---- SIGNAL VALIDATION ----
+    
+    def validate_signal(self, symbol: str, signal_type: str) -> Tuple[bool, str]:
+        """
+        Перевірити чи сигнал відповідає HTF тренду.
+        
+        BUY дозволений: тренд BULLISH або NEUTRAL
+        SELL дозволений: тренд BEARISH або NEUTRAL
+        
+        Returns: (is_valid, reason)
+        """
+        with self._lock:
+            trends = self._trends.get(symbol)
+        
+        if not trends:
+            return True, "No HTF data — passed"
+        
+        t4h = trends.get('4h', 'NEUTRAL')
+        t1h = trends.get('1h', 'NEUTRAL')
+        
+        # Визначаємо допустимий напрямок
+        required = 'BULLISH' if signal_type == 'BUY' else 'BEARISH'
+        opposite = 'BEARISH' if signal_type == 'BUY' else 'BULLISH'
+        
+        if self.mode == '4h':
+            if t4h == opposite:
+                self._stats['signals_blocked'] += 1
+                return False, f"4h trend is {t4h} — {signal_type} blocked"
+            self._stats['signals_passed'] += 1
+            return True, f"4h={t4h}"
+        
+        elif self.mode == '1h':
+            if t1h == opposite:
+                self._stats['signals_blocked'] += 1
+                return False, f"1h trend is {t1h} — {signal_type} blocked"
+            self._stats['signals_passed'] += 1
+            return True, f"1h={t1h}"
+        
+        elif self.mode == 'both':
+            # Обидва мають бути НЕ протилежними
+            # Якщо хоча б один = opposite → блок
+            if t4h == opposite or t1h == opposite:
+                blocked_by = []
+                if t4h == opposite: blocked_by.append(f"4h={t4h}")
+                if t1h == opposite: blocked_by.append(f"1h={t1h}")
+                self._stats['signals_blocked'] += 1
+                return False, f"{', '.join(blocked_by)} — {signal_type} blocked"
+            self._stats['signals_passed'] += 1
+            return True, f"4h={t4h}, 1h={t1h}"
+        
+        elif self.mode == 'any':
+            # Достатньо щоб хоча б один був required або NEUTRAL
+            # Блокуємо тільки якщо ОБИДВА = opposite
+            if t4h == opposite and t1h == opposite:
+                self._stats['signals_blocked'] += 1
+                return False, f"Both 4h={t4h}, 1h={t1h} — {signal_type} blocked"
+            self._stats['signals_passed'] += 1
+            return True, f"4h={t4h}, 1h={t1h}"
+        
+        return True, "Unknown mode — passed"
+    
+    def get_symbol_trends(self, symbol: str) -> Dict[str, str]:
+        """Отримати тренди для символу"""
+        with self._lock:
+            return dict(self._trends.get(symbol, {'4h': 'N/A', '1h': 'N/A'}))
+    
+    def get_all_trends(self) -> Dict[str, Dict[str, str]]:
+        """Отримати тренди для всіх символів"""
+        with self._lock:
+            return {s: dict(t) for s, t in self._trends.items()}
+    
+    def get_status(self) -> Dict:
+        """Повний статус фільтра"""
+        return {
+            'enabled': self.enabled,
+            'mode': self.mode,
+            'swing_length_4h': self.swing_length_4h,
+            'swing_length_1h': self.swing_length_1h,
+            'refresh_interval': self.refresh_interval,
+            'symbols_loaded': self._stats['symbols_loaded'],
+            'signals_passed': self._stats['signals_passed'],
+            'signals_blocked': self._stats['signals_blocked'],
+            'last_refresh_ms': self._stats['last_refresh_ms'],
+            'trends': self.get_all_trends(),
+        }
+    
+    def update_settings(self, **kwargs):
+        """Оновити налаштування (hot-reload)"""
+        need_reload = False
+        
+        if 'enabled' in kwargs:
+            new_val = bool(kwargs['enabled']) and SMC_AVAILABLE
+            if new_val != self.enabled:
+                self.enabled = new_val
+                if new_val and self._watchlist:
+                    need_reload = True
+                elif not new_val:
+                    self.stop_refresh()
+        
+        if 'swing_length_4h' in kwargs:
+            new_val = int(kwargs['swing_length_4h'])
+            if new_val != self.swing_length_4h:
+                self.swing_length_4h = new_val
+                need_reload = True
+        
+        if 'swing_length_1h' in kwargs:
+            new_val = int(kwargs['swing_length_1h'])
+            if new_val != self.swing_length_1h:
+                self.swing_length_1h = new_val
+                need_reload = True
+        
+        if 'mode' in kwargs:
+            new_val = str(kwargs['mode'])
+            if new_val != self.mode:
+                self.mode = new_val
+                need_reload = True
+        
+        if 'refresh_interval' in kwargs:
+            new_val = int(kwargs['refresh_interval'])
+            if new_val != self.refresh_interval:
+                self.refresh_interval = new_val
+                # Restart refresh thread with new interval
+                if self._refresh_running:
+                    self.stop_refresh()
+                    if self.enabled and self._watchlist:
+                        self.start_refresh(self._watchlist)
+        
+        # Reload data if structure params changed
+        if need_reload and self.enabled and self._watchlist:
+            threading.Thread(
+                target=self._reload_all_data, daemon=True
+            ).start()
+    
+    def _reload_all_data(self):
+        """Перезавантажити дані у фоновому потоці"""
+        print(f"[SMC Trend] 🔄 Reloading data after settings change...")
+        self.load_symbols(self._watchlist)
+        if not self._refresh_running:
+            self.start_refresh(self._watchlist)
+
+
+# ============================================
 # FAST CTR SCANNER
 # ============================================
 
@@ -428,11 +774,17 @@ class CTRFastScanner:
         use_gap_detection: bool = False,
         use_cooldown: bool = True,
         cooldown_seconds: int = 300,
-        # SMC Filter settings
+        # SMC Filter settings (per-symbol structure levels)
         smc_filter_enabled: bool = False,
         smc_swing_length: int = 50,
         smc_zone_threshold: float = 1.0,
         smc_require_trend: bool = True,
+        # SMC Trend Filter (HTF direction — 4h/1h)
+        smc_trend_enabled: bool = False,
+        smc_trend_swing_4h: int = 50,
+        smc_trend_swing_1h: int = 50,
+        smc_trend_mode: str = "both",
+        smc_trend_refresh: int = 900,
     ):
         self.timeframe = timeframe
         self.on_signal = on_signal
@@ -448,11 +800,20 @@ class CTRFastScanner:
         self.use_gap_detection = use_gap_detection
         self.use_cooldown = use_cooldown
         
-        # SMC Filter settings
+        # SMC Filter settings (existing — per-symbol structure levels)
         self.smc_filter_enabled = smc_filter_enabled and SMC_AVAILABLE
         self.smc_swing_length = smc_swing_length
         self.smc_zone_threshold = smc_zone_threshold
         self.smc_require_trend = smc_require_trend
+        
+        # SMC Trend Filter (HTF 4h/1h)
+        self._smc_trend_filter = SMCTrendFilter(
+            enabled=smc_trend_enabled,
+            swing_length_4h=smc_trend_swing_4h,
+            swing_length_1h=smc_trend_swing_1h,
+            mode=smc_trend_mode,
+            refresh_interval=smc_trend_refresh,
+        )
         
         # In-memory cache
         self._cache: Dict[str, SymbolCache] = {}
@@ -490,6 +851,7 @@ class CTRFastScanner:
         if self.use_gap_detection: filters.append("GAP")
         if self.use_cooldown: filters.append(f"CD={cooldown_seconds}s")
         if self.smc_filter_enabled: filters.append("SMC")
+        if self._smc_trend_filter.enabled: filters.append(f"SMC-Trend({smc_trend_mode})")
         filter_str = "+".join(filters) if filters else "ORIGINAL (no filters)"
         print(f"[CTR Fast v2.6] Initialized: TF={timeframe}, Upper={upper}, Lower={lower}, Filters: {filter_str}")
     
@@ -888,6 +1250,11 @@ class CTRFastScanner:
                         'near_resistance': self._is_near_smc_level(price, smc_data, 'resistance'),
                     }
                 
+                # SMC Trend info for results
+                smc_trend = None
+                if self._smc_trend_filter and self._smc_trend_filter.enabled:
+                    smc_trend = self._smc_trend_filter.get_symbol_trends(symbol)
+                
                 results.append({
                     'symbol': symbol,
                     'stc': round(stc_val, 2),
@@ -895,7 +1262,8 @@ class CTRFastScanner:
                     'price': cache.klines[-1].close if cache.klines else 0,
                     'buy_signal': buy,
                     'sell_signal': sell,
-                    'smc': smc_status
+                    'smc': smc_status,
+                    'smc_trend': smc_trend
                 })
                 
                 if buy or sell:
@@ -983,6 +1351,20 @@ class CTRFastScanner:
             trend = smc_status['trend_bias']
             smc_info = f"\n\n📊 SMC Filter: ✅ PASSED\nTrend: {trend}\nReason: {smc_reason}"
         
+        # SMC Trend Filter (HTF direction — 4h/1h)
+        smc_trend_info = ""
+        if self._smc_trend_filter and self._smc_trend_filter.enabled:
+            trend_valid, trend_reason = self._smc_trend_filter.validate_signal(symbol, signal_type)
+            
+            if not trend_valid and not is_priority:
+                self._stats['signals_filtered'] += 1
+                print(f"[CTR Fast] 🚫 Signal FILTERED by SMC Trend: {symbol} {signal_type}")
+                print(f"           Reason: {trend_reason}")
+                return
+            
+            trends = self._smc_trend_filter.get_symbol_trends(symbol)
+            smc_trend_info = f"\n\n🔭 SMC Trend: ✅ PASSED\n4h: {trends.get('4h','N/A')} | 1h: {trends.get('1h','N/A')}"
+        
         # Update signal tracking
         self._last_signals[symbol] = (signal_type, now)
         self._stats['signals_sent'] += 1
@@ -1007,7 +1389,7 @@ class CTRFastScanner:
 STC: {stc_value:.2f}
 Таймфрейм: {self.timeframe}
 
-{cross_desc}{smc_info}
+{cross_desc}{smc_info}{smc_trend_info}
 
 ⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"""
         
@@ -1026,6 +1408,7 @@ STC: {stc_value:.2f}
                     'timeframe': self.timeframe,
                     'message': message,
                     'smc_filtered': self.smc_filter_enabled,
+                    'smc_trend_filtered': bool(self._smc_trend_filter and self._smc_trend_filter.enabled),
                     'reason': reason
                 })
             except Exception as e:
@@ -1058,6 +1441,10 @@ STC: {stc_value:.2f}
     # PUBLIC API
     # ========================================
     
+    def get_smc_trend_filter(self) -> 'SMCTrendFilter':
+        """Отримати SMC Trend Filter для зовнішнього доступу (API/UI)"""
+        return self._smc_trend_filter
+    
     def start(self, watchlist: List[str]):
         if self._running:
             print("[CTR Fast] Already running")
@@ -1078,6 +1465,12 @@ STC: {stc_value:.2f}
         
         print(f"[CTR Fast] Active watchlist: {self._watchlist}")
         
+        # SMC Trend Filter: load HTF data and start refresh
+        if self._smc_trend_filter and self._smc_trend_filter.enabled:
+            print(f"[SMC Trend] Loading HTF data for {len(self._watchlist)} symbols...")
+            self._smc_trend_filter.load_symbols(self._watchlist)
+            self._smc_trend_filter.start_refresh(self._watchlist)
+        
         self._start_websocket()
         
         for _ in range(10):
@@ -1097,6 +1490,9 @@ STC: {stc_value:.2f}
         self._stop_websocket()
         if self._scan_thread:
             self._scan_thread.join(timeout=5)
+        # Stop SMC Trend refresh
+        if self._smc_trend_filter:
+            self._smc_trend_filter.stop_refresh()
         print("[CTR Fast] ✅ Stopped")
     
     def add_symbol(self, symbol: str) -> bool:
@@ -1106,6 +1502,9 @@ STC: {stc_value:.2f}
         if not self._load_history(symbol):
             return False
         self._watchlist.append(symbol)
+        # Load SMC Trend data for new symbol
+        if self._smc_trend_filter and self._smc_trend_filter.enabled:
+            self._smc_trend_filter.load_symbol(symbol)
         if self._ws_connected:
             self._stop_websocket()
             self._start_websocket()
@@ -1119,6 +1518,9 @@ STC: {stc_value:.2f}
         with self._lock:
             if symbol in self._cache:
                 del self._cache[symbol]
+        # Cleanup SMC Trend data
+        if self._smc_trend_filter:
+            self._smc_trend_filter.remove_symbol(symbol)
         if self._ws_connected and self._watchlist:
             self._stop_websocket()
             self._start_websocket()
@@ -1292,11 +1694,30 @@ STC: {stc_value:.2f}
                         cache.smc_filter = None
             print(f"[CTR Fast] SMC filters recreated with new params")
         
+        # SMC Trend Filter settings — hot-reload
+        smc_trend_kwargs = {}
+        for key in ('smc_trend_enabled', 'smc_trend_swing_4h', 'smc_trend_swing_1h', 
+                     'smc_trend_mode', 'smc_trend_refresh'):
+            if key in settings:
+                mapped = key.replace('smc_trend_', '')
+                if mapped == 'enabled':
+                    smc_trend_kwargs[mapped] = bool(settings[key])
+                elif mapped == 'mode':
+                    smc_trend_kwargs[mapped] = str(settings[key])
+                else:
+                    smc_trend_kwargs[mapped] = int(settings[key])
+        
+        if smc_trend_kwargs and self._smc_trend_filter:
+            self._smc_trend_filter.update_settings(**smc_trend_kwargs)
+            print(f"[CTR Fast] SMC Trend settings updated: {smc_trend_kwargs}")
+        
         filters = []
         if self.use_trend_guard: filters.append("TG")
         if self.use_gap_detection: filters.append("GAP")
         if self.use_cooldown: filters.append(f"CD={self._signal_cooldown}s")
         if self.smc_filter_enabled: filters.append("SMC")
+        if self._smc_trend_filter and self._smc_trend_filter.enabled: 
+            filters.append(f"SMC-Trend({self._smc_trend_filter.mode})")
         filter_str = "+".join(filters) if filters else "ORIGINAL"
         print(f"[CTR Fast] Settings reloaded: TF={self.timeframe}, "
               f"Upper={self.stc.upper}, Lower={self.stc.lower}, Filters: {filter_str}")

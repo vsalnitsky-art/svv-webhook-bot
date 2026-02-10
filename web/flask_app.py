@@ -1182,6 +1182,12 @@ def register_api_routes(app):
             'ctr_smc_swing_length': db.get_setting('ctr_smc_swing_length', 50),
             'ctr_smc_zone_threshold': db.get_setting('ctr_smc_zone_threshold', 1.0),
             'ctr_smc_require_trend': db.get_setting('ctr_smc_require_trend', '1') in ('1', 'true', 'True', 'yes'),
+            # SMC Trend Filter (HTF direction)
+            'ctr_smc_trend_enabled': db.get_setting('ctr_smc_trend_enabled', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_smc_trend_swing_4h': db.get_setting('ctr_smc_trend_swing_4h', 50),
+            'ctr_smc_trend_swing_1h': db.get_setting('ctr_smc_trend_swing_1h', 50),
+            'ctr_smc_trend_mode': db.get_setting('ctr_smc_trend_mode', 'both'),
+            'ctr_smc_trend_refresh': db.get_setting('ctr_smc_trend_refresh', 900),
         }
         
         # Статистика фільтрації
@@ -1303,7 +1309,10 @@ def register_api_routes(app):
             'ctr_use_cooldown', 'ctr_cooldown_seconds',
             # SMC Filter settings
             'ctr_smc_filter_enabled', 'ctr_smc_swing_length', 'ctr_smc_zone_threshold',
-            'ctr_smc_require_trend'
+            'ctr_smc_require_trend',
+            # SMC Trend Filter (HTF direction)
+            'ctr_smc_trend_enabled', 'ctr_smc_trend_swing_4h', 'ctr_smc_trend_swing_1h',
+            'ctr_smc_trend_mode', 'ctr_smc_trend_refresh',
         ]
         
         for key in ctr_settings:
@@ -1362,6 +1371,18 @@ def register_api_routes(app):
             'results_count': len(results),
             'signals_count': 0  # Signals are sent automatically
         })
+    
+    @app.route('/api/ctr/smc-trend', methods=['GET'])
+    def api_ctr_smc_trend():
+        """Get SMC Trend Filter status for all symbols"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        
+        try:
+            job = get_ctr_job(db)
+            return jsonify(job.get_smc_trend_status())
+        except Exception as e:
+            return jsonify({'enabled': False, 'error': str(e)})
     
     @app.route('/api/ctr/signals/delete', methods=['POST'])
     def api_ctr_signal_delete():

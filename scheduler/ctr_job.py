@@ -27,6 +27,8 @@ except ImportError:
     TRADE_AVAILABLE = False
     print("[CTR Job] ⚠️ Trade executor not available")
 
+# SMCTrendFilter is now built-in to CTRFastScanner (no separate import needed)
+
 
 class CTRFastJob:
     """
@@ -54,6 +56,7 @@ class CTRFastJob:
         if TRADE_AVAILABLE:
             self._init_trade_executor()
         
+        # SMC Trend Filter (HTF)
         # Load settings
         self._load_settings()
         
@@ -98,6 +101,14 @@ class CTRFastJob:
         cd_str = self.db.get_setting('ctr_use_cooldown', '1')
         self.use_cooldown = cd_str in ('1', 'true', 'True', 'yes')
         self.cooldown_seconds = int(self.db.get_setting('ctr_cooldown_seconds', '300'))
+        
+        # SMC Trend Filter (HTF direction — 4h/1h)
+        _b = lambda k, d='0': self.db.get_setting(k, d) in ('1', 'true', 'True', 'yes')
+        self.smc_trend_enabled = _b('ctr_smc_trend_enabled', '0')
+        self.smc_trend_swing_4h = int(self.db.get_setting('ctr_smc_trend_swing_4h', '50'))
+        self.smc_trend_swing_1h = int(self.db.get_setting('ctr_smc_trend_swing_1h', '50'))
+        self.smc_trend_mode = self.db.get_setting('ctr_smc_trend_mode', 'both')
+        self.smc_trend_refresh = int(self.db.get_setting('ctr_smc_trend_refresh', '900'))
         
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
@@ -247,7 +258,7 @@ class CTRFastJob:
                     'timeframe': r['timeframe']
                 }
                 
-                # Додаємо SMC дані якщо є
+                # Додаємо SMC дані якщо є (per-symbol structure filter)
                 smc = r.get('smc')
                 if smc:
                     item['smc_trend'] = smc.get('trend', 'N/A')
@@ -257,6 +268,11 @@ class CTRFastJob:
                     item['smc_last_hl'] = smc.get('last_hl')
                     item['smc_last_lh'] = smc.get('last_lh')
                     item['smc_last_ll'] = smc.get('last_ll')
+                
+                # HTF Trend (4h/1h) — overwrites smc_trend if available
+                htf = r.get('smc_trend')
+                if htf and isinstance(htf, dict):
+                    item['smc_trend'] = htf  # {'4h': 'BULLISH', '1h': 'BEARISH'}
                 
                 json_results.append(item)
             
@@ -301,9 +317,15 @@ class CTRFastJob:
                 smc_swing_length=self.smc_swing_length,
                 smc_zone_threshold=self.smc_zone_threshold,
                 smc_require_trend=self.smc_require_trend,
+                # SMC Trend Filter (HTF)
+                smc_trend_enabled=self.smc_trend_enabled,
+                smc_trend_swing_4h=self.smc_trend_swing_4h,
+                smc_trend_swing_1h=self.smc_trend_swing_1h,
+                smc_trend_mode=self.smc_trend_mode,
+                smc_trend_refresh=self.smc_trend_refresh,
             )
             
-            # Start scanner
+            # Start scanner (SMC Trend Filter is created internally by scanner)
             self._scanner.start(self.watchlist)
             self._running = True
             
@@ -394,6 +416,12 @@ class CTRFastJob:
                 'smc_swing_length': self.smc_swing_length,
                 'smc_zone_threshold': self.smc_zone_threshold,
                 'smc_require_trend': self.smc_require_trend,
+                # SMC Trend Filter (HTF)
+                'smc_trend_enabled': self.smc_trend_enabled,
+                'smc_trend_swing_4h': self.smc_trend_swing_4h,
+                'smc_trend_swing_1h': self.smc_trend_swing_1h,
+                'smc_trend_mode': self.smc_trend_mode,
+                'smc_trend_refresh': self.smc_trend_refresh,
             })
     
     def delete_signal(self, timestamp: str) -> bool:
@@ -491,6 +519,33 @@ class CTRFastJob:
             return {'available': False}
         
         return self._trade_executor.get_cached_status()
+    
+    # =============================================
+    # SMC TREND FILTER ACCESS
+    # =============================================
+    
+    def get_smc_trend_filter(self):
+        """Отримати SMC Trend Filter (з scanner)"""
+        if self._scanner:
+            return self._scanner.get_smc_trend_filter()
+        return None
+    
+    def get_smc_trend_status(self) -> Dict:
+        """Повний статус SMC Trend Filter"""
+        tf = self.get_smc_trend_filter()
+        if tf:
+            return tf.get_status()
+        return {
+            'enabled': False,
+            'symbols_loaded': 0,
+        }
+    
+    def get_smc_trend_for_symbol(self, symbol: str) -> Dict:
+        """Тренд конкретного символу"""
+        tf = self.get_smc_trend_filter()
+        if tf and tf.enabled:
+            return tf.get_symbol_trends(symbol)
+        return {'4h': 'N/A', '1h': 'N/A'}
 
 
 # ============================================

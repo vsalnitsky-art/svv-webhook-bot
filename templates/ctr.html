@@ -524,6 +524,57 @@
                     </small>
                 </div>
                 
+                <!-- SMC Trend Filter (HTF 4h/1h) -->
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        🔭 SMC Trend Filter (HTF)
+                        <span class="status-badge {{ 'status-running' if settings.ctr_smc_trend_enabled else 'status-stopped' }}" style="font-size: 0.7em;">
+                            {{ 'ON' if settings.ctr_smc_trend_enabled else 'OFF' }}
+                        </span>
+                    </h4>
+                    
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_smc_trend_enabled" {{ 'checked' if settings.ctr_smc_trend_enabled else '' }} onchange="saveSettings()">
+                            Фільтрувати по HTF тренду
+                        </label>
+                        <small style="color:#666;margin-left:26px;">BUY тільки при BULLISH, SELL тільки при BEARISH</small>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Режим</label>
+                        <select id="ctr_smc_trend_mode" onchange="saveSettings()">
+                            <option value="both" {{ 'selected' if settings.ctr_smc_trend_mode == 'both' else '' }}>Both (обидва TF)</option>
+                            <option value="any" {{ 'selected' if settings.ctr_smc_trend_mode == 'any' else '' }}>Any (хоча б один)</option>
+                            <option value="4h" {{ 'selected' if settings.ctr_smc_trend_mode == '4h' else '' }}>4H Only</option>
+                            <option value="1h" {{ 'selected' if settings.ctr_smc_trend_mode == '1h' else '' }}>1H Only</option>
+                        </select>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>4H Swing Length</label>
+                        <input type="number" id="ctr_smc_trend_swing_4h" value="{{ settings.ctr_smc_trend_swing_4h or 50 }}" min="10" max="200">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>1H Swing Length</label>
+                        <input type="number" id="ctr_smc_trend_swing_1h" value="{{ settings.ctr_smc_trend_swing_1h or 50 }}" min="10" max="200">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Оновлення (сек)</label>
+                        <input type="number" id="ctr_smc_trend_refresh" value="{{ settings.ctr_smc_trend_refresh or 900 }}" min="60" max="7200" step="60">
+                    </div>
+                    
+                    <small style="color: #888; display: block; margin-top: 10px;">
+                        <b>Режими:</b><br>
+                        • Both — жоден TF не може бути протилежним<br>
+                        • Any — блокує тільки якщо обидва протилежні<br>
+                        • 4H/1H Only — тільки один TF<br>
+                        • NEUTRAL тренд = пропускає (не блокує)
+                    </small>
+                </div>
+                
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
                     <small style="color: #888;">
                         <b>CTR Algorithm:</b> Schaff Trend Cycle<br>
@@ -630,13 +681,20 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if r.smc_trend %}
+                            {% if r.smc_trend and r.smc_trend is mapping %}
+                                {% set t4h = r.smc_trend.get('4h', 'N/A') %}
+                                {% set t1h = r.smc_trend.get('1h', 'N/A') %}
+                                <span title="4h: {{ t4h }} | 1h: {{ t1h }}">
+                                    <small style="color: {{ '#00c853' if t4h == 'BULLISH' else '#ff5252' if t4h == 'BEARISH' else '#888' }};">4h:{{ '🟢' if t4h == 'BULLISH' else '🔴' if t4h == 'BEARISH' else '⚪' }}</small>
+                                    <small style="color: {{ '#00c853' if t1h == 'BULLISH' else '#ff5252' if t1h == 'BEARISH' else '#888' }};">1h:{{ '🟢' if t1h == 'BULLISH' else '🔴' if t1h == 'BEARISH' else '⚪' }}</small>
+                                </span>
+                            {% elif r.smc_trend and r.smc_trend is string %}
                                 {% if r.smc_trend == 'BULLISH' %}
-                                    <span style="color: #00c853; font-weight: bold;" title="HH: {{ r.smc_last_hh or '—' }} | HL: {{ r.smc_last_hl or '—' }}">🟢 BULLISH</span>
+                                    <span style="color: #00c853; font-weight: bold;">🟢 BULL</span>
                                 {% elif r.smc_trend == 'BEARISH' %}
-                                    <span style="color: #ff5252; font-weight: bold;" title="LH: {{ r.smc_last_lh or '—' }} | LL: {{ r.smc_last_ll or '—' }}">🔴 BEARISH</span>
+                                    <span style="color: #ff5252; font-weight: bold;">🔴 BEAR</span>
                                 {% else %}
-                                    <span style="color: #ff9800; font-weight: bold;">⚪ {{ r.smc_trend }}</span>
+                                    <span style="color: #888;">⚪ {{ r.smc_trend }}</span>
                                 {% endif %}
                             {% else %}
                                 <span style="color: #444;">—</span>
@@ -823,6 +881,12 @@ async function saveSettings() {
         ctr_smc_swing_length: parseInt(document.getElementById('ctr_smc_swing_length').value),
         ctr_smc_zone_threshold: parseFloat(document.getElementById('ctr_smc_zone_threshold').value),
         ctr_smc_require_trend: document.getElementById('ctr_smc_require_trend').checked ? '1' : '0',
+        // SMC Trend Filter (HTF)
+        ctr_smc_trend_enabled: document.getElementById('ctr_smc_trend_enabled').checked ? '1' : '0',
+        ctr_smc_trend_swing_4h: parseInt(document.getElementById('ctr_smc_trend_swing_4h').value),
+        ctr_smc_trend_swing_1h: parseInt(document.getElementById('ctr_smc_trend_swing_1h').value),
+        ctr_smc_trend_mode: document.getElementById('ctr_smc_trend_mode').value,
+        ctr_smc_trend_refresh: parseInt(document.getElementById('ctr_smc_trend_refresh').value),
     };
     
     try {
