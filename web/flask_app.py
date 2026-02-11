@@ -87,6 +87,28 @@ def create_app():
         except Exception as e:
             print(f"[APP] Failed to start scheduler: {e}")
     
+    # Auto-start CTR Scanner if it was running before restart
+    try:
+        db = get_db()
+        if db.get_setting('ctr_auto_start', '0') == '1':
+            import threading
+            def _auto_start_ctr():
+                import time
+                time.sleep(3)  # Wait for app to fully initialize
+                try:
+                    from scheduler.ctr_job import start_ctr_job
+                    job = start_ctr_job(get_db())
+                    if job.is_running():
+                        print("[CTR Job] ✅ Auto-started after server restart")
+                    else:
+                        print("[CTR Job] ⚠️ Auto-start failed — scanner not running")
+                except Exception as e:
+                    print(f"[CTR Job] ❌ Auto-start error: {e}")
+            threading.Thread(target=_auto_start_ctr, daemon=True).start()
+            print("[APP] CTR Scanner auto-start scheduled (3s delay)")
+    except Exception as e:
+        print(f"[APP] CTR auto-start check failed: {e}")
+    
     return app
 
 
@@ -1338,6 +1360,8 @@ def register_api_routes(app):
         
         try:
             job = start_ctr_job(db)
+            # Remember state for auto-start after restart
+            db.set_setting('ctr_auto_start', '1')
             return jsonify({'success': True, 'running': job.is_running()})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
@@ -1349,6 +1373,9 @@ def register_api_routes(app):
         
         try:
             stop_ctr_job()
+            # Clear auto-start flag
+            db = get_db()
+            db.set_setting('ctr_auto_start', '0')
             return jsonify({'success': True, 'running': False})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
