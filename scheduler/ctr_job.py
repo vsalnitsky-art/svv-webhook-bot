@@ -113,6 +113,9 @@ class CTRFastJob:
         self.smc_trend_early_warning = _b('ctr_smc_trend_early_warning', '0')
         self.smc_trend_swing_15m = int(self.db.get_setting('ctr_smc_trend_swing_15m', '20'))
         
+        # Telegram notification mode: 'all' or 'trade_only'
+        self.telegram_mode = self.db.get_setting('ctr_telegram_mode', 'all')
+        
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
         self.watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
@@ -173,9 +176,23 @@ class CTRFastJob:
             # Оновлюємо останній напрямок
             self._last_signal_direction[symbol] = signal_type
             
-            # Відправка в Telegram
+            # Відправка в Telegram (з урахуванням telegram_mode)
             notifier = get_notifier()
+            send_telegram = False
             if notifier:
+                if self.telegram_mode == 'trade_only':
+                    # Тільки символи з увімкненим Trade
+                    trade_symbols = []
+                    if self._trade_executor:
+                        trade_symbols = self._trade_executor.get_trade_symbols()
+                    if symbol in trade_symbols:
+                        send_telegram = True
+                    else:
+                        print(f"[CTR Job] 📵 Telegram skipped: {symbol} {signal_type} (not in trade list)")
+                else:
+                    send_telegram = True
+            
+            if send_telegram and notifier:
                 notifier.send_message(signal['message'])
             
             # Збереження в БД

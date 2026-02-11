@@ -482,6 +482,22 @@
                     </div>
                 </div>
                 
+                <!-- Telegram Notifications Section -->
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <h4 style="margin-bottom: 10px;">📬 Telegram нотифікації</h4>
+                    <div class="setting-item">
+                        <label>Режим відправки</label>
+                        <select id="ctr_telegram_mode" onchange="saveSettings()">
+                            <option value="all" {{ 'selected' if settings.ctr_telegram_mode == 'all' else '' }}>📢 Всі сигнали</option>
+                            <option value="trade_only" {{ 'selected' if settings.ctr_telegram_mode == 'trade_only' else '' }}>💰 Тільки Trade-enabled</option>
+                        </select>
+                        <small style="color:#666;">
+                            📢 Всі — кожен BUY/SELL по всіх монетах<br>
+                            💰 Trade-only — тільки монети з увімкненим Trade у Watchlist
+                        </small>
+                    </div>
+                </div>
+                
                 <!-- SMC Filter Section -->
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
                     <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
@@ -897,6 +913,8 @@ async function saveSettings() {
         ctr_use_gap_detection: document.getElementById('ctr_use_gap_detection').checked ? '1' : '0',
         ctr_use_cooldown: document.getElementById('ctr_use_cooldown').checked ? '1' : '0',
         ctr_cooldown_seconds: parseInt(document.getElementById('ctr_cooldown_seconds').value),
+        // Telegram mode
+        ctr_telegram_mode: document.getElementById('ctr_telegram_mode').value,
         // SMC Filter
         ctr_smc_filter_enabled: document.getElementById('ctr_smc_filter_enabled').checked ? '1' : '0',
         ctr_smc_swing_length: parseInt(document.getElementById('ctr_smc_swing_length').value),

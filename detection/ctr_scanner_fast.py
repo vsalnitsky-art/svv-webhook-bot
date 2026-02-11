@@ -1757,6 +1757,10 @@ STC: {stc_value:.2f}
                         'last_ll': round(smc_status['last_ll'], 4) if smc_status['last_ll'] else None,
                     }
                 
+                # SMC Trend Filter (HTF 4h/1h)
+                if self._smc_trend_filter and self._smc_trend_filter.enabled:
+                    result['smc_trend'] = self._smc_trend_filter.get_symbol_trends(symbol)
+                
                 results.append(result)
         
         return sorted(results, key=lambda x: x['symbol'])
