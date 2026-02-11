@@ -574,12 +574,25 @@
                         <small style="color:#666;margin-left:26px;">Сигнали тільки при чіткому BULLISH/BEARISH тренді</small>
                     </div>
                     
+                    <div class="setting-item" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.05);">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_smc_trend_early_warning" {{ 'checked' if settings.ctr_smc_trend_early_warning else '' }} onchange="saveSettings()">
+                            ⚠️ Early Warning (15m)
+                        </label>
+                        <small style="color:#666;margin-left:26px;">Telegram нотифікація при зміні HTF тренду або 15m дивергенції</small>
+                    </div>
+                    <div class="setting-item" id="swing_15m_row" style="margin-left: 26px;">
+                        <label>Swing Length 15m</label>
+                        <input type="number" id="ctr_smc_trend_swing_15m" value="{{ settings.ctr_smc_trend_swing_15m or 20 }}" min="5" max="50" step="5">
+                    </div>
+                    
                     <small style="color: #888; display: block; margin-top: 10px;">
                         <b>Режими:</b><br>
                         • Both — жоден TF не може бути протилежним<br>
                         • Any — блокує тільки якщо обидва протилежні<br>
                         • 4H/1H Only — тільки один TF<br>
-                        • 🚫 Block NEUTRAL — блокує ВСЕ якщо тренд не визначений
+                        • 🚫 Block NEUTRAL — блокує ВСЕ якщо тренд не визначений<br>
+                        • ⚠️ Early Warning — 🔄 зміна HTF тренду + 15m протилежна структура
                     </small>
                 </div>
                 
@@ -896,6 +909,8 @@ async function saveSettings() {
         ctr_smc_trend_mode: document.getElementById('ctr_smc_trend_mode').value,
         ctr_smc_trend_refresh: parseInt(document.getElementById('ctr_smc_trend_refresh').value),
         ctr_smc_trend_block_neutral: document.getElementById('ctr_smc_trend_block_neutral').checked ? '1' : '0',
+        ctr_smc_trend_early_warning: document.getElementById('ctr_smc_trend_early_warning').checked ? '1' : '0',
+        ctr_smc_trend_swing_15m: document.getElementById('ctr_smc_trend_swing_15m').value,
     };
     
     try {

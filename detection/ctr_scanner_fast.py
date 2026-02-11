@@ -425,6 +425,7 @@ class SMCTrendFilter:
     REST_BASE_URL = "https://api.binance.com/api/v3"
     CANDLES_4H = 500   # 500 × 4h ≈ 83 дні — достатньо для swing_length=50
     CANDLES_1H = 500   # 500 × 1h ≈ 21 день
+    CANDLES_15M = 300  # 300 × 15m ≈ 3 дні — достатньо для swing_length=20
     
     def __init__(
         self,
@@ -434,23 +435,33 @@ class SMCTrendFilter:
         mode: str = "both",
         refresh_interval: int = 900,  # 15 хв
         block_neutral: bool = False,  # Block ALL signals when trend is NEUTRAL
+        early_warning: bool = False,  # Detect 15m divergence from HTF
+        swing_length_15m: int = 20,   # Swing length for 15m structure
     ):
         self.enabled = enabled and SMC_AVAILABLE
         self.swing_length_4h = swing_length_4h
         self.swing_length_1h = swing_length_1h
+        self.swing_length_15m = swing_length_15m
         self.mode = mode  # both / any / 4h / 1h
         self.refresh_interval = refresh_interval
         self.block_neutral = block_neutral
+        self.early_warning = early_warning
         
         # Per-symbol: { symbol: { '4h': TrendBias.name, '1h': TrendBias.name } }
         self._trends: Dict[str, Dict[str, str]] = {}
         self._detectors: Dict[str, Dict[str, SMCStructureDetector]] = {}
         self._lock = threading.RLock()
         
+        # Previous trends for change detection
+        self._prev_trends: Dict[str, Dict[str, str]] = {}
+        
         # Background refresh
         self._refresh_thread: Optional[threading.Thread] = None
         self._refresh_running = False
         self._watchlist: List[str] = []
+        
+        # Telegram notifier (lazy init)
+        self._notifier = None
         
         # Stats
         self._stats = {
@@ -458,13 +469,16 @@ class SMCTrendFilter:
             'signals_blocked': 0,
             'last_refresh_ms': 0,
             'symbols_loaded': 0,
+            'trend_changes': 0,
+            'early_warnings': 0,
         }
         
         if self.enabled:
             bn = ", block_neutral=ON" if self.block_neutral else ""
+            ew = ", early_warning=ON" if self.early_warning else ""
             print(f"[SMC Trend] ✅ Initialized: mode={mode}, "
                   f"4h_swing={swing_length_4h}, 1h_swing={swing_length_1h}, "
-                  f"refresh={refresh_interval}s{bn}")
+                  f"refresh={refresh_interval}s{bn}{ew}")
     
     # ---- DATA LOADING ----
     
@@ -570,11 +584,15 @@ class SMCTrendFilter:
     # ---- BACKGROUND REFRESH ----
     
     def _refresh_loop(self):
-        """Фоновий потік оновлення HTF даних"""
+        """Фоновий потік оновлення HTF даних + early warning"""
         while self._refresh_running:
             time.sleep(self.refresh_interval)
             if not self._refresh_running:
                 break
+            
+            # Save previous trends for change detection
+            with self._lock:
+                prev = {s: dict(t) for s, t in self._trends.items()}
             
             start = time.time()
             symbols = list(self._watchlist)
@@ -587,6 +605,114 @@ class SMCTrendFilter:
             elapsed = (time.time() - start) * 1000
             self._stats['last_refresh_ms'] = elapsed
             print(f"[SMC Trend] 🔄 Refreshed {len(symbols)} symbols in {elapsed:.0f}ms")
+            
+            # Detect HTF trend changes
+            self._detect_htf_changes(prev, symbols)
+            
+            # Early warning: 15m divergence from HTF
+            if self.early_warning:
+                self._check_early_warnings(symbols)
+    
+    def _get_notifier(self):
+        """Lazy-init Telegram notifier"""
+        if self._notifier is None:
+            try:
+                from alerts.telegram_notifier import get_notifier
+                self._notifier = get_notifier()
+            except:
+                self._notifier = False  # Mark as unavailable
+        return self._notifier if self._notifier else None
+    
+    def _send_notification(self, message: str):
+        """Send Telegram notification"""
+        notifier = self._get_notifier()
+        if notifier:
+            try:
+                notifier.send_message(message)
+            except Exception as e:
+                print(f"[SMC Trend] ❌ Notification error: {e}")
+    
+    def _detect_htf_changes(self, prev_trends: Dict, symbols: List[str]):
+        """Detect and notify about HTF trend changes"""
+        for symbol in symbols:
+            prev = prev_trends.get(symbol, {})
+            curr = self._trends.get(symbol, {})
+            
+            if not prev or not curr:
+                continue
+            
+            changes = []
+            for tf in ('4h', '1h'):
+                old_t = prev.get(tf)
+                new_t = curr.get(tf)
+                if old_t and new_t and old_t != new_t and old_t != 'N/A':
+                    emoji_map = {'BULLISH': '🟢', 'BEARISH': '🔴', 'NEUTRAL': '⚪'}
+                    old_e = emoji_map.get(old_t, '❓')
+                    new_e = emoji_map.get(new_t, '❓')
+                    changes.append(f"  {tf}: {old_e}{old_t} → {new_e}{new_t}")
+            
+            if changes:
+                self._stats['trend_changes'] += 1
+                msg = (
+                    f"🔄 HTF TREND CHANGE: {symbol}\n"
+                    + "\n".join(changes)
+                )
+                print(f"[SMC Trend] {msg}")
+                self._send_notification(msg)
+    
+    def _check_early_warnings(self, symbols: List[str]):
+        """
+        Fetch 15m structure and check for divergence with HTF trend.
+        If 15m trend contradicts HTF → early warning notification.
+        """
+        for symbol in symbols:
+            if not self._refresh_running:
+                break
+            
+            htf = self._trends.get(symbol, {})
+            t4h = htf.get('4h', 'NEUTRAL')
+            t1h = htf.get('1h', 'NEUTRAL')
+            
+            # Determine dominant HTF trend
+            if t4h == t1h and t4h in ('BULLISH', 'BEARISH'):
+                htf_dominant = t4h
+            elif self.mode == '4h' and t4h in ('BULLISH', 'BEARISH'):
+                htf_dominant = t4h
+            elif self.mode == '1h' and t1h in ('BULLISH', 'BEARISH'):
+                htf_dominant = t1h
+            elif t4h in ('BULLISH', 'BEARISH') and t1h == 'NEUTRAL':
+                htf_dominant = t4h
+            elif t1h in ('BULLISH', 'BEARISH') and t4h == 'NEUTRAL':
+                htf_dominant = t1h
+            else:
+                # No clear HTF trend or conflicting → skip
+                continue
+            
+            # Fetch 15m klines
+            data_15m = self._fetch_klines(symbol, '15m', self.CANDLES_15M)
+            if not data_15m:
+                continue
+            
+            trend_15m, _ = self._detect_trend(*data_15m, self.swing_length_15m)
+            
+            # Check divergence: 15m opposite to HTF dominant
+            if (htf_dominant == 'BULLISH' and trend_15m == 'BEARISH') or \
+               (htf_dominant == 'BEARISH' and trend_15m == 'BULLISH'):
+                self._stats['early_warnings'] += 1
+                
+                htf_emoji = '🟢' if htf_dominant == 'BULLISH' else '🔴'
+                m15_emoji = '🟢' if trend_15m == 'BULLISH' else '🔴'
+                
+                msg = (
+                    f"⚠️ EARLY WARNING: {symbol}\n"
+                    f"  HTF: {htf_emoji}{htf_dominant} (4h={t4h}, 1h={t1h})\n"
+                    f"  15m: {m15_emoji}{trend_15m} ← структура протилежна!\n"
+                    f"  Потенційна зміна тренду"
+                )
+                print(f"[SMC Trend] {msg}")
+                self._send_notification(msg)
+            
+            time.sleep(0.15)  # Rate limit
     
     def start_refresh(self, watchlist: List[str]):
         """Запустити фоновий потік оновлення"""
@@ -700,12 +826,16 @@ class SMCTrendFilter:
             'enabled': self.enabled,
             'mode': self.mode,
             'block_neutral': self.block_neutral,
+            'early_warning': self.early_warning,
             'swing_length_4h': self.swing_length_4h,
             'swing_length_1h': self.swing_length_1h,
+            'swing_length_15m': self.swing_length_15m,
             'refresh_interval': self.refresh_interval,
             'symbols_loaded': self._stats['symbols_loaded'],
             'signals_passed': self._stats['signals_passed'],
             'signals_blocked': self._stats['signals_blocked'],
+            'trend_changes': self._stats['trend_changes'],
+            'early_warnings': self._stats['early_warnings'],
             'last_refresh_ms': self._stats['last_refresh_ms'],
             'trends': self.get_all_trends(),
         }
@@ -753,6 +883,14 @@ class SMCTrendFilter:
         
         if 'block_neutral' in kwargs:
             self.block_neutral = bool(kwargs['block_neutral'])
+        
+        if 'early_warning' in kwargs:
+            self.early_warning = bool(kwargs['early_warning'])
+        
+        if 'swing_length_15m' in kwargs:
+            new_val = int(kwargs['swing_length_15m'])
+            if new_val != self.swing_length_15m:
+                self.swing_length_15m = new_val
         
         # Reload data if structure params changed
         if need_reload and self.enabled and self._watchlist:
@@ -811,6 +949,8 @@ class CTRFastScanner:
         smc_trend_mode: str = "both",
         smc_trend_refresh: int = 900,
         smc_trend_block_neutral: bool = False,
+        smc_trend_early_warning: bool = False,
+        smc_trend_swing_15m: int = 20,
     ):
         self.timeframe = timeframe
         self.on_signal = on_signal
@@ -840,6 +980,8 @@ class CTRFastScanner:
             mode=smc_trend_mode,
             refresh_interval=smc_trend_refresh,
             block_neutral=smc_trend_block_neutral,
+            early_warning=smc_trend_early_warning,
+            swing_length_15m=smc_trend_swing_15m,
         )
         
         # In-memory cache
@@ -1724,10 +1866,11 @@ STC: {stc_value:.2f}
         # SMC Trend Filter settings — hot-reload
         smc_trend_kwargs = {}
         for key in ('smc_trend_enabled', 'smc_trend_swing_4h', 'smc_trend_swing_1h', 
-                     'smc_trend_mode', 'smc_trend_refresh', 'smc_trend_block_neutral'):
+                     'smc_trend_mode', 'smc_trend_refresh', 'smc_trend_block_neutral',
+                     'smc_trend_early_warning', 'smc_trend_swing_15m'):
             if key in settings:
                 mapped = key.replace('smc_trend_', '')
-                if mapped in ('enabled', 'block_neutral'):
+                if mapped in ('enabled', 'block_neutral', 'early_warning'):
                     smc_trend_kwargs[mapped] = bool(settings[key])
                 elif mapped == 'mode':
                     smc_trend_kwargs[mapped] = str(settings[key])
