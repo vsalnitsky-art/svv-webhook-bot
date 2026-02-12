@@ -190,9 +190,9 @@ class QMZoneScanner:
     
     # Скільки свічок завантажувати для кожного TF
     CANDLES_MAP = {
-        '1m': 500, '3m': 400, '5m': 300, '15m': 200,
-        '30m': 150, '1h': 150, '2h': 100, '4h': 100,
-        '6h': 80, '8h': 80, '12h': 60, '1d': 50
+        '1m': 500, '3m': 400, '5m': 300, '15m': 300,
+        '30m': 250, '1h': 500, '2h': 300, '4h': 300,
+        '6h': 200, '8h': 200, '12h': 150, '1d': 100
     }
 
     def __init__(
@@ -437,18 +437,31 @@ class QMZoneScanner:
                 enabled=True
             )
             
-            # Initialize SMC with HTF data
+            # Initialize SMC with HTF data (BAR-BY-BAR — як Pine Script)
             highs = np.array([k.high for k in htf_klines])
             lows = np.array([k.low for k in htf_klines])
             closes = np.array([k.close for k in htf_klines])
-            smc.update_structure(highs, lows, closes)
+            
+            start_idx = self.smc_swing_length + 10
+            for i in range(start_idx, len(highs)):
+                smc.update_structure(highs[:i+1], lows[:i+1], closes[:i+1])
+            
+            # Log detected levels
+            status = smc.get_status()
+            levels = []
+            for lname in ('strong_low', 'last_hl', 'weak_high', 'last_lh'):
+                val = status.get(lname)
+                if val:
+                    levels.append(f"{lname}={val:.4f}")
+            levels_str = ', '.join(levels) if levels else 'no levels yet'
             
             with self._lock:
                 self._htf_candles[symbol] = htf_klines
                 self._ltf_candles[symbol] = ltf_klines
                 self._smc_filters[symbol] = smc
             
-            print(f"[QM Scanner] ✅ {symbol}: HTF={len(htf_klines)}, LTF={len(ltf_klines)}")
+            print(f"[QM Scanner] ✅ {symbol}: HTF={len(htf_klines)}, LTF={len(ltf_klines)}, "
+                  f"trend={status['trend_bias']}, {levels_str}")
             return True
             
         except Exception as e:
@@ -483,16 +496,23 @@ class QMZoneScanner:
             # HTF
             new_htf = self._fetch_klines(symbol, self.htf_timeframe)
             if new_htf and len(new_htf) >= 100:
+                # Rebuild SMC structure bar-by-bar
+                smc = create_smc_filter(
+                    swing_length=self.smc_swing_length,
+                    zone_threshold_percent=self.smc_zone_threshold,
+                    enabled=True
+                )
+                highs = np.array([k.high for k in new_htf])
+                lows = np.array([k.low for k in new_htf])
+                closes = np.array([k.close for k in new_htf])
+                
+                start_idx = self.smc_swing_length + 10
+                for i in range(start_idx, len(highs)):
+                    smc.update_structure(highs[:i+1], lows[:i+1], closes[:i+1])
+                
                 with self._lock:
                     self._htf_candles[symbol] = new_htf
-                    
-                    # Оновити SMC структуру
-                    smc = self._smc_filters.get(symbol)
-                    if smc:
-                        highs = np.array([k.high for k in new_htf])
-                        lows = np.array([k.low for k in new_htf])
-                        closes = np.array([k.close for k in new_htf])
-                        smc.update_structure(highs, lows, closes)
+                    self._smc_filters[symbol] = smc
             
             # LTF (лише якщо ми в зоні або близько)
             zone = self._active_zones.get(symbol)
