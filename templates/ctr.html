@@ -667,9 +667,9 @@
                         💾 Зберегти Trade Settings
                     </button>
                     
-                    <!-- Active Positions -->
-                    <div id="trade-positions" style="margin-top:12px;">
-                        <small style="color:#888;">Позиції завантажуються...</small>
+                    <!-- Active Positions moved to main area -->
+                    <div style="margin-top:12px;">
+                        <small style="color:#888;">💰 Позиції відображаються у верхній частині сторінки</small>
                     </div>
                     
                     <small style="color: #888; display: block; margin-top: 10px;">
@@ -758,6 +758,54 @@
             </div>
             {% endif %}
             
+            <!-- 💰 Open Positions -->
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <div class="panel-header">
+                    <h2>💰 Open Positions</h2>
+                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <!-- SL Monitor Controls -->
+                        <div style="display: flex; align-items: center; gap: 6px; background: rgba(255,82,82,0.08); border: 1px solid rgba(255,82,82,0.2); border-radius: 8px; padding: 4px 10px;">
+                            <span style="font-size: 0.85em; color: #ff5252;">🛑 SL Monitor</span>
+                            <label class="switch" style="width:36px; height:20px;">
+                                <input type="checkbox" id="sl-monitor-enabled" {{ 'checked' if settings.ctr_sl_monitor_enabled else '' }}
+                                       onchange="saveSLSettings()" style="display:none;">
+                                <span class="slider" style="border-radius:20px;"></span>
+                            </label>
+                            <input type="number" id="sl-monitor-pct" value="{{ settings.ctr_sl_monitor_pct }}"
+                                   step="0.1" min="0" max="50"
+                                   style="width: 55px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 2px 5px; border-radius: 4px; font-size: 0.85em; text-align: center;"
+                                   onchange="saveSLSettings()">
+                            <span style="font-size: 0.8em; color: #aaa;">%</span>
+                        </div>
+                        <span id="positions-count" style="font-size: 0.85em; color: #888;">—</span>
+                    </div>
+                </div>
+                
+                <div id="positions-container">
+                    <table class="results-table" id="positions-table" style="display:none;">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Entry Price</th>
+                                <th>Mark Price</th>
+                                <th>PnL %</th>
+                                <th>PnL $</th>
+                                <th>Value $</th>
+                                <th>Lev</th>
+                                <th>Liq Price</th>
+                                <th>SL Dist</th>
+                                <th>Source</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positions-body"></tbody>
+                    </table>
+                    <div id="positions-empty" class="empty-state" style="padding: 15px;">
+                        <small style="color:#888;">Позиції завантажуються...</small>
+                    </div>
+                </div>
+            </div>
+            
             <!-- Executed Signals History -->
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
                 <div class="panel-header">
@@ -803,7 +851,7 @@
                             <td class="stc-value {{ 'stc-oversold' if sig.stc <= 25 else 'stc-overbought' if sig.stc >= 75 else 'stc-neutral' }}">
                                 {{ "%.2f"|format(sig.stc) }}
                             </td>
-                            <td style="font-size: 0.8em; color: {{ '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
+                            <td style="font-size: 0.8em; color: {{ '#ff5252' if 'SL' in (sig.reason|default('')) else '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
                                 {{ sig.reason|default('Crossover') }}
                             </td>
                             <td>
@@ -1150,65 +1198,181 @@ async function saveTradeSettings() {
     }
 }
 
-async function loadTradePositions() {
+// ========================================
+// SL Monitor Settings
+// ========================================
+async function saveSLSettings() {
+    const enabled = document.getElementById('sl-monitor-enabled').checked;
+    const pct = parseFloat(document.getElementById('sl-monitor-pct').value) || 0;
+    
     try {
-        const res = await fetch('/api/ctr/trade/status');
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                ctr_sl_monitor_enabled: enabled ? '1' : '0',
+                ctr_sl_monitor_pct: pct.toString()
+            })
+        });
+        console.log(`SL Monitor saved: enabled=${enabled}, pct=${pct}%`);
+    } catch (e) {
+        console.error('SL settings save error:', e);
+    }
+}
+
+// ========================================
+// Open Positions Table
+// ========================================
+function fmtPrice(p) {
+    if (!p || p <= 0) return '—';
+    if (p < 0.001) return '$' + p.toFixed(8);
+    if (p < 1) return '$' + p.toFixed(6);
+    if (p < 100) return '$' + p.toFixed(4);
+    return '$' + p.toFixed(2);
+}
+
+function fmtPnl(pct) {
+    const color = pct >= 0 ? '#00c853' : '#ff5252';
+    const sign = pct >= 0 ? '+' : '';
+    return `<span style="color:${color};font-weight:600;">${sign}${pct.toFixed(2)}%</span>`;
+}
+
+async function loadPositions() {
+    try {
+        const res = await fetch('/api/ctr/positions');
         const data = await res.json();
-        const container = document.getElementById('trade-positions');
         
-        if (!data.available) {
-            container.innerHTML = '<small style="color:#888;">Bybit не підключений</small>';
+        const tbody = document.getElementById('positions-body');
+        const table = document.getElementById('positions-table');
+        const empty = document.getElementById('positions-empty');
+        const countEl = document.getElementById('positions-count');
+        
+        // Merge virtual and bybit positions
+        const rows = [];
+        const bybitSymbols = new Set();
+        
+        // Bybit positions (real exchange data — takes priority)
+        if (data.bybit && data.bybit.length > 0) {
+            data.bybit.forEach(p => {
+                bybitSymbols.add(p.symbol);
+                const isLong = p.side === 'Buy';
+                const entryPrice = p.entry_price || 0;
+                const markPrice = p.mark_price || 0;
+                const pnlPct = entryPrice > 0 ? ((isLong ? markPrice - entryPrice : entryPrice - markPrice) / entryPrice * 100) : 0;
+                const slPct = data.sl_monitor_pct || 0;
+                const slDist = (slPct > 0 && pnlPct < 0) ? Math.max(0, slPct - Math.abs(pnlPct)) : slPct;
+                
+                rows.push({
+                    symbol: p.symbol,
+                    side: isLong ? 'LONG' : 'SHORT',
+                    sideColor: isLong ? '#00c853' : '#ff5252',
+                    entryPrice: entryPrice,
+                    markPrice: markPrice,
+                    pnlPct: pnlPct,
+                    pnlUsd: p.unrealized_pnl || 0,
+                    value: p.position_value || 0,
+                    leverage: p.leverage || 0,
+                    liqPrice: p.liq_price || 0,
+                    slPct: slPct,
+                    slDist: slDist,
+                    source: '🔗 Bybit'
+                });
+            });
+        }
+        
+        // Virtual positions (scanner signals)
+        if (data.virtual && data.virtual.length > 0) {
+            data.virtual.forEach(v => {
+                if (bybitSymbols.has(v.symbol)) return; // Bybit has priority
+                const isLong = v.direction === 'BUY';
+                const slPct = data.sl_monitor_pct || 0;
+                const slDist = (slPct > 0 && v.pnl_pct < 0) ? Math.max(0, slPct - Math.abs(v.pnl_pct)) : slPct;
+                
+                rows.push({
+                    symbol: v.symbol,
+                    side: isLong ? 'LONG' : 'SHORT',
+                    sideColor: isLong ? '#00c853' : '#ff5252',
+                    entryPrice: v.entry_price,
+                    markPrice: v.current_price,
+                    pnlPct: v.pnl_pct,
+                    pnlUsd: 0,
+                    value: 0,
+                    leverage: 0,
+                    liqPrice: 0,
+                    slPct: slPct,
+                    slDist: slDist,
+                    source: '📊 Virtual'
+                });
+            });
+        }
+        
+        // Count
+        const totalCount = rows.length;
+        const balanceStr = data.balance > 0 ? ` | Balance: $${data.balance.toFixed(2)}` : '';
+        countEl.textContent = `${totalCount} positions${balanceStr}`;
+        
+        if (totalCount === 0) {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = '<small style="color:#888;">Немає відкритих позицій</small>';
             return;
         }
         
-        // Auth error
-        if (data.auth_ok === false) {
-            container.innerHTML = `<div style="padding:8px;background:rgba(255,82,82,0.1);border-radius:6px;border-left:3px solid #ff5252;">
-                <small style="color:#ff5252;">⚠️ Bybit API: ${data.error || 'Auth failed'}</small><br>
-                <small style="color:#888;">Перевірте API ключі та перезапустіть</small>
-            </div>`;
-            return;
-        }
+        table.style.display = '';
+        empty.style.display = 'none';
+        
+        // Sort by PnL ascending (worst first)
+        rows.sort((a, b) => a.pnlPct - b.pnlPct);
         
         let html = '';
+        rows.forEach(r => {
+            const pnlColor = r.pnlPct >= 0 ? '#00c853' : '#ff5252';
+            const pnlUsdStr = r.pnlUsd !== 0 ? `<span style="color:${pnlColor}">${r.pnlUsd >= 0 ? '+' : ''}$${r.pnlUsd.toFixed(4)}</span>` : '—';
+            const valueStr = r.value > 0 ? `$${r.value.toFixed(2)}` : '—';
+            const levStr = r.leverage > 0 ? `${r.leverage}x` : '—';
+            const liqStr = r.liqPrice > 0 ? fmtPrice(r.liqPrice) : '—';
+            
+            // SL distance display
+            let slDistStr = '—';
+            if (r.slPct > 0) {
+                if (r.pnlPct < 0) {
+                    const distColor = r.slDist <= r.slPct * 0.3 ? '#ff5252' : r.slDist <= r.slPct * 0.6 ? '#ff9800' : '#aaa';
+                    slDistStr = `<span style="color:${distColor}">${r.slDist.toFixed(1)}%</span><small style="color:#666;"> / ${r.slPct}%</small>`;
+                } else {
+                    slDistStr = `<span style="color:#4caf50;">${r.slPct}%</span>`;
+                }
+            }
+            
+            // Row background based on PnL
+            const rowBg = r.pnlPct >= 0 ? 'rgba(0,200,83,0.04)' : 'rgba(255,82,82,0.04)';
+            
+            html += `<tr style="background:${rowBg};">
+                <td><b>${r.symbol}</b></td>
+                <td><span style="color:${r.sideColor};font-weight:600;">${r.side}</span></td>
+                <td style="font-family:monospace;font-size:0.85em;">${fmtPrice(r.entryPrice)}</td>
+                <td style="font-family:monospace;font-size:0.85em;">${fmtPrice(r.markPrice)}</td>
+                <td>${fmtPnl(r.pnlPct)}</td>
+                <td>${pnlUsdStr}</td>
+                <td>${valueStr}</td>
+                <td>${levStr}</td>
+                <td style="font-size:0.85em;">${liqStr}</td>
+                <td>${slDistStr}</td>
+                <td><small style="color:#888;">${r.source}</small></td>
+            </tr>`;
+        });
         
-        if (data.balance > 0) {
-            html += `<div style="font-size:0.85em;margin-bottom:8px;color:#ccc;">
-                Balance: <b>$${data.balance.toFixed(2)}</b> USDT
-                | Positions: ${data.positions_count}/${data.max_positions}
-            </div>`;
-        }
+        tbody.innerHTML = html;
         
-        if (data.positions && data.positions.length > 0) {
-            data.positions.forEach(p => {
-                const isLong = p.side === 'Buy';
-                const pnlColor = p.unrealized_pnl >= 0 ? '#00c853' : '#ff5252';
-                html += `<div class="position-card ${isLong ? 'long' : 'short'}">
-                    <div>
-                        <b>${p.symbol}</b>
-                        <span style="color:${isLong ? '#00c853' : '#ff5252'}">${isLong ? 'LONG' : 'SHORT'}</span>
-                    </div>
-                    <div style="text-align:right;">
-                        <span style="color:${pnlColor}">${p.unrealized_pnl >= 0 ? '+' : ''}$${p.unrealized_pnl.toFixed(4)}</span>
-                        <br><small style="color:#888;">${p.leverage}x | $${p.position_value.toFixed(2)}</small>
-                    </div>
-                </div>`;
-            });
-        } else if (data.enabled) {
-            html += '<small style="color:#888;">Немає відкритих позицій</small>';
-        }
-        
-        container.innerHTML = html || '<small style="color:#888;">—</small>';
     } catch (e) {
-        document.getElementById('trade-positions').innerHTML =
-            '<small style="color:#ff5252;">Помилка завантаження</small>';
+        console.error('Positions load error:', e);
+        document.getElementById('positions-empty').innerHTML = '<small style="color:#ff5252;">Помилка завантаження</small>';
     }
 }
 
 // Load positions on page load and refresh periodically
-loadTradePositions();
+loadPositions();
 {% if ctr_running %}
-setInterval(loadTradePositions, 30000);
+setInterval(loadPositions, 10000);
 {% endif %}
 </script>
 {% endblock %}

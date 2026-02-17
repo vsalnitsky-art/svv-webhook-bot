@@ -1214,6 +1214,10 @@ def register_api_routes(app):
             'ctr_smc_trend_early_warning': db.get_setting('ctr_smc_trend_early_warning', '0') in ('1', 'true', 'True', 'yes'),
             'ctr_smc_trend_swing_15m': db.get_setting('ctr_smc_trend_swing_15m', 20),
             'ctr_telegram_mode': db.get_setting('ctr_telegram_mode', 'all'),
+            # SL Monitor
+            'ctr_sl_monitor_enabled': db.get_setting('ctr_sl_monitor_enabled', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_sl_monitor_pct': db.get_setting('ctr_sl_monitor_pct', '0'),
+            'ctr_sl_check_interval': db.get_setting('ctr_sl_check_interval', '5'),
         }
         
         # Статистика фільтрації
@@ -1342,6 +1346,8 @@ def register_api_routes(app):
             'ctr_smc_trend_early_warning', 'ctr_smc_trend_swing_15m',
             # Telegram mode
             'ctr_telegram_mode',
+            # SL Monitor
+            'ctr_sl_monitor_enabled', 'ctr_sl_monitor_pct', 'ctr_sl_check_interval',
         ]
         
         for key in ctr_settings:
@@ -1532,6 +1538,34 @@ def register_api_routes(app):
         job = get_ctr_job(db)
         limit = request.args.get('limit', 50, type=int)
         return jsonify({'log': job.get_trade_log(limit)})
+    
+    @app.route('/api/ctr/positions', methods=['GET'])
+    def api_ctr_positions():
+        """Combined positions: virtual + Bybit (if connected)"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        
+        result = {
+            'virtual': job.get_virtual_positions(),
+            'bybit': [],
+            'bybit_connected': False,
+            'balance': 0,
+            'sl_monitor_enabled': db.get_setting('ctr_sl_monitor_enabled', '0') in ('1', 'true', 'True'),
+            'sl_monitor_pct': float(db.get_setting('ctr_sl_monitor_pct', '0')),
+        }
+        
+        # Get Bybit positions if available
+        try:
+            trade_status = job.get_trade_status()
+            if trade_status.get('auth_ok'):
+                result['bybit_connected'] = True
+                result['balance'] = trade_status.get('balance', 0)
+                result['bybit'] = trade_status.get('positions', [])
+        except:
+            pass
+        
+        return jsonify(result)
     
     # ========================================
     # QM Zone Hunter Routes

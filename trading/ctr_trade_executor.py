@@ -414,7 +414,7 @@ class CTRTradeExecutor:
             return False
     
     def _open_position(self, symbol: str, signal_type: str, price: float,
-                       settings: Dict) -> Optional[Dict]:
+                       settings: Dict, skip_native_sl: bool = False) -> Optional[Dict]:
         """Відкрити нову позицію"""
         try:
             # Side: BUY signal → Buy side (Long), SELL signal → Sell side (Short)
@@ -438,7 +438,7 @@ class CTRTradeExecutor:
                 else:
                     tp_price = round(price * (1 - settings['tp_pct'] / 100), 8)
             
-            if settings['sl_pct'] > 0:
+            if settings['sl_pct'] > 0 and not skip_native_sl:
                 if signal_type == "BUY":
                     sl_price = round(price * (1 - settings['sl_pct'] / 100), 8)
                 else:
@@ -485,7 +485,7 @@ class CTRTradeExecutor:
     # =============================================
     
     def execute_signal(self, symbol: str, signal_type: str, price: float,
-                       reason: str = "") -> Dict:
+                       reason: str = "", skip_native_sl: bool = False) -> Dict:
         """
         Головна функція: обробити CTR сигнал і виконати угоду
         
@@ -556,7 +556,7 @@ class CTRTradeExecutor:
                 result['action'] = 'open_new'
             
             # 5. Open new position
-            order = self._open_position(symbol, signal_type, price, settings)
+            order = self._open_position(symbol, signal_type, price, settings, skip_native_sl)
             
             if order:
                 result['success'] = True

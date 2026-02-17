@@ -12,6 +12,7 @@ Changes from v2.4:
 
 import threading
 import json
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -51,6 +52,11 @@ class CTRFastJob:
         # Last signal direction per symbol for deduplication
         self._last_signal_direction: Dict[str, str] = {}  # symbol -> 'BUY'/'SELL'
         
+        # Virtual positions for SL tracking (works without Auto-Trade)
+        self._virtual_positions: Dict[str, Dict] = {}  # symbol -> {direction, entry_price, timestamp}
+        self._sl_cooldown: Dict[str, float] = {}  # symbol -> timestamp of last SL trigger
+        self._sl_monitor_thread: Optional[threading.Thread] = None
+        
         # Trade executor (Bybit Futures)
         self._trade_executor: Optional['CTRTradeExecutor'] = None
         if TRADE_AVAILABLE:
@@ -62,6 +68,9 @@ class CTRFastJob:
         
         # Load last signal directions from DB for persistence across restarts
         self._load_last_directions()
+        
+        # Load virtual positions from saved signals
+        self._load_virtual_positions()
     
     def _init_trade_executor(self):
         """Ініціалізувати торговий модуль"""
@@ -116,6 +125,11 @@ class CTRFastJob:
         # Telegram notification mode: 'all' or 'trade_only'
         self.telegram_mode = self.db.get_setting('ctr_telegram_mode', 'all')
         
+        # SL Monitor
+        self.sl_monitor_enabled = _b('ctr_sl_monitor_enabled', '0')
+        self.sl_monitor_pct = float(self.db.get_setting('ctr_sl_monitor_pct', '0'))
+        self.sl_check_interval = int(self.db.get_setting('ctr_sl_check_interval', '5'))
+        
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
         self.watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
@@ -138,6 +152,29 @@ class CTRFastJob:
                     print(f"  {sym}: {direction}")
         except Exception as e:
             print(f"[CTR Job] Error loading last directions: {e}")
+    
+    def _load_virtual_positions(self):
+        """Reconstruct virtual positions from saved signals for SL tracking"""
+        try:
+            signals_str = self.db.get_setting('ctr_signals', '[]')
+            signals = json.loads(signals_str)
+            
+            # Last signal per symbol = current virtual position
+            for sig in signals:
+                symbol = sig.get('symbol')
+                price = sig.get('price', 0)
+                sig_type = sig.get('type')
+                if symbol and sig_type and price > 0:
+                    self._virtual_positions[symbol] = {
+                        'direction': sig_type,
+                        'entry_price': price,
+                        'timestamp': sig.get('timestamp', '')
+                    }
+            
+            if self._virtual_positions:
+                print(f"[CTR Job] 📊 Loaded {len(self._virtual_positions)} virtual positions for SL monitor")
+        except Exception as e:
+            print(f"[CTR Job] Error loading virtual positions: {e}")
     
     def _is_duplicate_signal(self, symbol: str, signal_type: str) -> bool:
         """
@@ -164,8 +201,8 @@ class CTRFastJob:
             reason = signal.get('reason', '')
             
             # v2.4: Trend Guard signals are priority — they bypass dedup
-            # because the scanner already handles the logic of when to fire them
-            is_priority = "Trend Guard" in reason
+            # SL signals are also priority
+            is_priority = "Trend Guard" in reason or signal.get('is_sl', False)
             
             # === ДЕДУПЛІКАЦІЯ ===
             if not is_priority and self._is_duplicate_signal(symbol, signal_type):
@@ -198,6 +235,14 @@ class CTRFastJob:
             # Збереження в БД
             self._save_signal(signal)
             
+            # Оновити віртуальну позицію для SL моніторингу
+            if signal.get('price', 0) > 0:
+                self._virtual_positions[symbol] = {
+                    'direction': signal_type,
+                    'entry_price': signal['price'],
+                    'timestamp': time.time()
+                }
+            
             smc_tag = " [SMC✓]" if signal.get('smc_filtered') else ""
             reason_tag = f" [{reason}]" if reason else ""
             print(f"[CTR Job] 📨 Signal sent: {symbol} {signal_type}{smc_tag}{reason_tag}")
@@ -205,11 +250,15 @@ class CTRFastJob:
             # === AUTO-TRADE ===
             if self._trade_executor:
                 try:
+                    # When our SL monitor is active, tell executor to skip Bybit's native SL
+                    skip_native_sl = self.sl_monitor_enabled and self.sl_monitor_pct > 0
+                    
                     trade_result = self._trade_executor.execute_signal(
                         symbol=symbol,
                         signal_type=signal_type,
                         price=signal.get('price', 0),
-                        reason=reason
+                        reason=reason,
+                        skip_native_sl=skip_native_sl
                     )
                     
                     if trade_result['success']:
@@ -258,6 +307,179 @@ class CTRFastJob:
             
         except Exception as e:
             print(f"[CTR Job] Error saving signal: {e}")
+    
+    # ========================================
+    # SL MONITOR
+    # ========================================
+    
+    def _get_current_price(self, symbol: str) -> float:
+        """Get current price from scanner's WebSocket cache"""
+        if self._scanner and hasattr(self._scanner, '_caches'):
+            cache = self._scanner._caches.get(symbol)
+            if cache and cache.klines:
+                return float(cache.klines[-1].close)
+        return 0.0
+    
+    def _start_sl_monitor(self):
+        """Start SL monitoring thread"""
+        if self._sl_monitor_thread and self._sl_monitor_thread.is_alive():
+            return
+        
+        self._sl_monitor_thread = threading.Thread(
+            target=self._sl_monitor_loop, daemon=True, name="SL-Monitor"
+        )
+        self._sl_monitor_thread.start()
+        print(f"[CTR Job] 🛑 SL Monitor started: {self.sl_monitor_pct}%, interval={self.sl_check_interval}s")
+    
+    def _sl_monitor_loop(self):
+        """Main SL monitoring loop — checks every N seconds"""
+        while self._running:
+            try:
+                if self.sl_monitor_enabled and self.sl_monitor_pct > 0:
+                    self._check_sl_all_positions()
+            except Exception as e:
+                print(f"[CTR Job] SL Monitor error: {e}")
+            time.sleep(self.sl_check_interval)
+    
+    def _check_sl_all_positions(self):
+        """Check all virtual positions for SL trigger"""
+        now = time.time()
+        sl_pct = float(self.db.get_setting('ctr_sl_monitor_pct', '0'))
+        
+        if sl_pct <= 0:
+            return
+        
+        positions_copy = dict(self._virtual_positions)
+        
+        for symbol, pos in positions_copy.items():
+            # Cooldown check — 60s after last SL
+            last_sl = self._sl_cooldown.get(symbol, 0)
+            if now - last_sl < 60:
+                continue
+            
+            current_price = self._get_current_price(symbol)
+            if current_price <= 0:
+                continue
+            
+            entry_price = pos['entry_price']
+            direction = pos['direction']
+            
+            # Calculate deviation
+            if direction == 'BUY':  # LONG
+                deviation_pct = (entry_price - current_price) / entry_price * 100
+            else:  # SHORT
+                deviation_pct = (current_price - entry_price) / entry_price * 100
+            
+            # Check if SL triggered (deviation is loss percentage)
+            if deviation_pct >= sl_pct:
+                self._trigger_sl(symbol, direction, entry_price, current_price, deviation_pct, sl_pct)
+                self._sl_cooldown[symbol] = now
+    
+    def _trigger_sl(self, symbol: str, old_direction: str, entry_price: float,
+                    current_price: float, deviation_pct: float, sl_pct: float):
+        """Trigger SL: create opposite signal"""
+        new_direction = 'SELL' if old_direction == 'BUY' else 'BUY'
+        old_label = 'LONG' if old_direction == 'BUY' else 'SHORT'
+        new_label = 'SHORT' if old_direction == 'BUY' else 'LONG'
+        
+        print(f"[CTR Job] 🛑 SL TRIGGERED: {symbol} {old_label} → {new_label} "
+              f"(deviation={deviation_pct:.2f}%, SL={sl_pct}%, "
+              f"entry=${entry_price:.4f}, current=${current_price:.4f})")
+        
+        # 1. Create SL signal for Executed Signals table
+        sl_signal = {
+            'symbol': symbol,
+            'type': new_direction,
+            'price': current_price,
+            'stc': 50.0,  # Neutral STC for SL signals
+            'timeframe': self.timeframe if hasattr(self, 'timeframe') else '15m',
+            'smc_filtered': False,
+            'reason': f'🛑 SL ({sl_pct}%)',
+            'is_sl': True,
+            'sl_pct': sl_pct,
+            'sl_deviation': round(deviation_pct, 2),
+        }
+        
+        # Save to Executed Signals
+        self._save_signal(sl_signal)
+        
+        # Update virtual position to new direction
+        self._virtual_positions[symbol] = {
+            'direction': new_direction,
+            'entry_price': current_price,
+            'timestamp': time.time()
+        }
+        
+        # Update dedup direction
+        self._last_signal_direction[symbol] = new_direction
+        
+        # 2. Send Telegram notification
+        notifier = get_notifier()
+        if notifier:
+            pnl_direction = "📉" if old_direction == 'BUY' else "📈"
+            msg = (f"🛑 STOP LOSS: {symbol}\n"
+                   f"{pnl_direction} {old_label} закрито → {new_label} відкрито\n"
+                   f"Entry: ${entry_price:.4f} → Current: ${current_price:.4f}\n"
+                   f"Відхилення: -{deviation_pct:.2f}% (SL: {sl_pct}%)")
+            notifier.send_message(msg)
+        
+        # 3. Execute on Bybit if Auto-Trade is ON
+        if self._trade_executor:
+            try:
+                settings = self._trade_executor.get_settings()
+                if settings['enabled'] and symbol in settings['trade_symbols']:
+                    skip_native_sl = True  # Our SL is managing this
+                    trade_result = self._trade_executor.execute_signal(
+                        symbol=symbol,
+                        signal_type=new_direction,
+                        price=current_price,
+                        reason=f'SL ({sl_pct}%)',
+                        skip_native_sl=skip_native_sl
+                    )
+                    
+                    if trade_result['success']:
+                        print(f"[CTR Job] 💰 SL Trade executed: {symbol} {trade_result['action']}")
+                        if notifier:
+                            notifier.send_message(
+                                f"💰 SL AUTO-TRADE: {symbol}\n"
+                                f"Action: {trade_result['action'].upper()}\n"
+                                f"Signal: {new_direction}\n"
+                                f"OrderID: {trade_result.get('order_id', 'N/A')}"
+                            )
+                    else:
+                        print(f"[CTR Job] ⚠️ SL Trade failed: {symbol} — {trade_result['details']}")
+            except Exception as e:
+                print(f"[CTR Job] ❌ SL Trade execution error: {e}")
+    
+    def get_virtual_positions(self) -> List[Dict]:
+        """Get all virtual positions with current P&L for UI"""
+        result = []
+        sl_pct = float(self.db.get_setting('ctr_sl_monitor_pct', '0'))
+        
+        for symbol, pos in self._virtual_positions.items():
+            current_price = self._get_current_price(symbol)
+            entry_price = pos['entry_price']
+            direction = pos['direction']
+            
+            if current_price > 0 and entry_price > 0:
+                if direction == 'BUY':
+                    pnl_pct = (current_price - entry_price) / entry_price * 100
+                else:
+                    pnl_pct = (entry_price - current_price) / entry_price * 100
+            else:
+                pnl_pct = 0
+            
+            result.append({
+                'symbol': symbol,
+                'direction': direction,
+                'entry_price': entry_price,
+                'current_price': current_price,
+                'pnl_pct': round(pnl_pct, 2),
+                'sl_pct': sl_pct,
+                'sl_distance': round(sl_pct - abs(min(pnl_pct, 0)), 2) if sl_pct > 0 and pnl_pct < 0 else sl_pct,
+            })
+        
+        return sorted(result, key=lambda x: x['pnl_pct'])
     
     def _save_results(self):
         """Зберегти поточні результати в БД (включаючи SMC дані)"""
@@ -355,8 +577,13 @@ class CTRFastJob:
             # Start results saver thread
             self._start_results_saver()
             
+            # Start SL monitor if enabled
+            if self.sl_monitor_enabled and self.sl_monitor_pct > 0:
+                self._start_sl_monitor()
+            
             smc_status = "SMC✓" if self.smc_filter_enabled else ""
-            print(f"[CTR Job] ✅ Started with {len(self.watchlist)} symbols {smc_status}")
+            sl_status = f" SL={self.sl_monitor_pct}%" if self.sl_monitor_enabled and self.sl_monitor_pct > 0 else ""
+            print(f"[CTR Job] ✅ Started with {len(self.watchlist)} symbols {smc_status}{sl_status}")
             return True
     
     def stop(self):
@@ -449,6 +676,12 @@ class CTRFastJob:
                 'smc_trend_early_warning': self.smc_trend_early_warning,
                 'smc_trend_swing_15m': self.smc_trend_swing_15m,
             })
+        
+        # Start/restart SL monitor if settings changed
+        if self._running and self.sl_monitor_enabled and self.sl_monitor_pct > 0:
+            if not (self._sl_monitor_thread and self._sl_monitor_thread.is_alive()):
+                self._start_sl_monitor()
+            print(f"[CTR Job] 🛑 SL Monitor: {self.sl_monitor_pct}%, interval={self.sl_check_interval}s")
     
     def delete_signal(self, timestamp: str) -> bool:
         """Видалити конкретний сигнал за timestamp"""
