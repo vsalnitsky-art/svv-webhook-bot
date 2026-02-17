@@ -778,6 +778,11 @@
                             <span style="font-size: 0.8em; color: #aaa;">%</span>
                         </div>
                         <span id="positions-count" style="font-size: 0.85em; color: #888;">—</span>
+                        <button class="btn btn-sm" id="bybit-reconnect-btn"
+                                style="background: rgba(255,152,0,0.15); color: #ff9800; border: 1px solid rgba(255,152,0,0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8em; display:none;"
+                                onclick="reconnectBybit()">
+                            🔄 Reconnect Bybit
+                        </button>
                     </div>
                 </div>
                 
@@ -795,7 +800,6 @@
                                 <th>Lev</th>
                                 <th>Liq Price</th>
                                 <th>SL Dist</th>
-                                <th>Source</th>
                             </tr>
                         </thead>
                         <tbody id="positions-body"></tbody>
@@ -1221,7 +1225,7 @@ async function saveSLSettings() {
 }
 
 // ========================================
-// Open Positions Table
+// Open Positions Table (Bybit only)
 // ========================================
 function fmtPrice(p) {
     if (!p || p <= 0) return '—';
@@ -1237,6 +1241,27 @@ function fmtPnl(pct) {
     return `<span style="color:${color};font-weight:600;">${sign}${pct.toFixed(2)}%</span>`;
 }
 
+async function reconnectBybit() {
+    const btn = document.getElementById('bybit-reconnect-btn');
+    btn.textContent = '⏳ Connecting...';
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/ctr/trade/reconnect', {method: 'POST'});
+        const data = await res.json();
+        if (data.success) {
+            btn.style.display = 'none';
+            loadPositions();
+        } else {
+            btn.textContent = '❌ Failed — retry';
+            btn.disabled = false;
+            alert('Reconnect failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        btn.textContent = '❌ Error — retry';
+        btn.disabled = false;
+    }
+}
+
 async function loadPositions() {
     try {
         const res = await fetch('/api/ctr/positions');
@@ -1246,93 +1271,62 @@ async function loadPositions() {
         const table = document.getElementById('positions-table');
         const empty = document.getElementById('positions-empty');
         const countEl = document.getElementById('positions-count');
+        const reconnectBtn = document.getElementById('bybit-reconnect-btn');
         
-        // Merge virtual and bybit positions
-        const rows = [];
-        const bybitSymbols = new Set();
-        
-        // Bybit positions (real exchange data — takes priority)
-        if (data.bybit && data.bybit.length > 0) {
-            data.bybit.forEach(p => {
-                bybitSymbols.add(p.symbol);
-                const isLong = p.side === 'Buy';
-                const entryPrice = p.entry_price || 0;
-                const markPrice = p.mark_price || 0;
-                const pnlPct = entryPrice > 0 ? ((isLong ? markPrice - entryPrice : entryPrice - markPrice) / entryPrice * 100) : 0;
-                const slPct = data.sl_monitor_pct || 0;
-                const slDist = (slPct > 0 && pnlPct < 0) ? Math.max(0, slPct - Math.abs(pnlPct)) : slPct;
-                
-                rows.push({
-                    symbol: p.symbol,
-                    side: isLong ? 'LONG' : 'SHORT',
-                    sideColor: isLong ? '#00c853' : '#ff5252',
-                    entryPrice: entryPrice,
-                    markPrice: markPrice,
-                    pnlPct: pnlPct,
-                    pnlUsd: p.unrealized_pnl || 0,
-                    value: p.position_value || 0,
-                    leverage: p.leverage || 0,
-                    liqPrice: p.liq_price || 0,
-                    slPct: slPct,
-                    slDist: slDist,
-                    source: '🔗 Bybit'
-                });
-            });
-        }
-        
-        // Virtual positions (scanner signals)
-        if (data.virtual && data.virtual.length > 0) {
-            data.virtual.forEach(v => {
-                if (bybitSymbols.has(v.symbol)) return; // Bybit has priority
-                const isLong = v.direction === 'BUY';
-                const slPct = data.sl_monitor_pct || 0;
-                const slDist = (slPct > 0 && v.pnl_pct < 0) ? Math.max(0, slPct - Math.abs(v.pnl_pct)) : slPct;
-                
-                rows.push({
-                    symbol: v.symbol,
-                    side: isLong ? 'LONG' : 'SHORT',
-                    sideColor: isLong ? '#00c853' : '#ff5252',
-                    entryPrice: v.entry_price,
-                    markPrice: v.current_price,
-                    pnlPct: v.pnl_pct,
-                    pnlUsd: 0,
-                    value: 0,
-                    leverage: 0,
-                    liqPrice: 0,
-                    slPct: slPct,
-                    slDist: slDist,
-                    source: '📊 Virtual'
-                });
-            });
-        }
-        
-        // Count
-        const totalCount = rows.length;
-        const balanceStr = data.balance > 0 ? ` | Balance: $${data.balance.toFixed(2)}` : '';
-        countEl.textContent = `${totalCount} positions${balanceStr}`;
-        
-        if (totalCount === 0) {
+        // Show reconnect button if not connected
+        if (!data.bybit_connected) {
+            reconnectBtn.style.display = '';
+            reconnectBtn.textContent = '🔄 Reconnect Bybit';
+            reconnectBtn.disabled = false;
+            const errMsg = data.auth_error ? `: ${data.auth_error}` : '';
+            countEl.innerHTML = `<span style="color:#ff9800;">⚠️ Bybit не підключений${errMsg}</span>`;
             table.style.display = 'none';
             empty.style.display = 'block';
-            empty.innerHTML = '<small style="color:#888;">Немає відкритих позицій</small>';
+            empty.innerHTML = '<small style="color:#888;">Bybit API не підключений. Натисніть 🔄 Reconnect.</small>';
+            return;
+        }
+        
+        reconnectBtn.style.display = 'none';
+        
+        const positions = data.positions || [];
+        const slPct = data.sl_monitor_pct || 0;
+        const balanceStr = data.balance > 0 ? ` | Balance: $${data.balance.toFixed(2)}` : '';
+        countEl.textContent = `${positions.length} / ${data.max_positions} positions${balanceStr}`;
+        
+        if (positions.length === 0) {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = '<small style="color:#888;">Немає відкритих позицій на біржі</small>';
             return;
         }
         
         table.style.display = '';
         empty.style.display = 'none';
         
+        // Build rows
+        const rows = positions.map(p => {
+            const isLong = p.side === 'Buy';
+            const entryPrice = p.entry_price || 0;
+            const markPrice = p.mark_price || 0;
+            const pnlPct = entryPrice > 0 ? ((isLong ? markPrice - entryPrice : entryPrice - markPrice) / entryPrice * 100) : 0;
+            const slDist = (slPct > 0 && pnlPct < 0) ? Math.max(0, slPct - Math.abs(pnlPct)) : slPct;
+            return { ...p, isLong, entryPrice, markPrice, pnlPct, slPct, slDist };
+        });
+        
         // Sort by PnL ascending (worst first)
         rows.sort((a, b) => a.pnlPct - b.pnlPct);
         
         let html = '';
         rows.forEach(r => {
+            const sideColor = r.isLong ? '#00c853' : '#ff5252';
+            const sideLabel = r.isLong ? 'LONG' : 'SHORT';
             const pnlColor = r.pnlPct >= 0 ? '#00c853' : '#ff5252';
-            const pnlUsdStr = r.pnlUsd !== 0 ? `<span style="color:${pnlColor}">${r.pnlUsd >= 0 ? '+' : ''}$${r.pnlUsd.toFixed(4)}</span>` : '—';
-            const valueStr = r.value > 0 ? `$${r.value.toFixed(2)}` : '—';
+            const pnlUsd = r.unrealized_pnl || 0;
+            const pnlUsdStr = `<span style="color:${pnlColor}">${pnlUsd >= 0 ? '+' : ''}$${pnlUsd.toFixed(4)}</span>`;
+            const valueStr = r.position_value > 0 ? `$${r.position_value.toFixed(2)}` : '—';
             const levStr = r.leverage > 0 ? `${r.leverage}x` : '—';
-            const liqStr = r.liqPrice > 0 ? fmtPrice(r.liqPrice) : '—';
+            const liqStr = r.liq_price > 0 ? fmtPrice(r.liq_price) : '—';
             
-            // SL distance display
             let slDistStr = '—';
             if (r.slPct > 0) {
                 if (r.pnlPct < 0) {
@@ -1343,12 +1337,11 @@ async function loadPositions() {
                 }
             }
             
-            // Row background based on PnL
             const rowBg = r.pnlPct >= 0 ? 'rgba(0,200,83,0.04)' : 'rgba(255,82,82,0.04)';
             
             html += `<tr style="background:${rowBg};">
                 <td><b>${r.symbol}</b></td>
-                <td><span style="color:${r.sideColor};font-weight:600;">${r.side}</span></td>
+                <td><span style="color:${sideColor};font-weight:600;">${sideLabel}</span></td>
                 <td style="font-family:monospace;font-size:0.85em;">${fmtPrice(r.entryPrice)}</td>
                 <td style="font-family:monospace;font-size:0.85em;">${fmtPrice(r.markPrice)}</td>
                 <td>${fmtPnl(r.pnlPct)}</td>
@@ -1357,7 +1350,6 @@ async function loadPositions() {
                 <td>${levStr}</td>
                 <td style="font-size:0.85em;">${liqStr}</td>
                 <td>${slDistStr}</td>
-                <td><small style="color:#888;">${r.source}</small></td>
             </tr>`;
         });
         

@@ -104,6 +104,24 @@ class CTRTradeExecutor:
             print(f"[CTR Trade] ❌ Bybit auth failed: {self._auth_error_msg}")
         
     # =============================================
+    # RECONNECT
+    # =============================================
+    
+    def reconnect(self) -> Dict:
+        """Перепідключення до Bybit API"""
+        print("[CTR Trade] 🔄 Reconnecting to Bybit...")
+        self._auth_ok = None
+        self._auth_error_msg = ""
+        self._status_cache = None
+        self._status_cache_time = 0
+        self._test_auth()
+        return {
+            'success': self._auth_ok == True,
+            'auth_ok': self._auth_ok,
+            'error': self._auth_error_msg if not self._auth_ok else ''
+        }
+    
+    # =============================================
     # SETTINGS
     # =============================================
     

@@ -1541,31 +1541,50 @@ def register_api_routes(app):
     
     @app.route('/api/ctr/positions', methods=['GET'])
     def api_ctr_positions():
-        """Combined positions: virtual + Bybit (if connected)"""
+        """Bybit exchange positions only"""
         from scheduler.ctr_job import get_ctr_job
         db = get_db()
         job = get_ctr_job(db)
         
         result = {
-            'virtual': job.get_virtual_positions(),
-            'bybit': [],
+            'positions': [],
             'bybit_connected': False,
+            'auth_error': '',
             'balance': 0,
+            'max_positions': 5,
             'sl_monitor_enabled': db.get_setting('ctr_sl_monitor_enabled', '0') in ('1', 'true', 'True'),
             'sl_monitor_pct': float(db.get_setting('ctr_sl_monitor_pct', '0')),
         }
         
-        # Get Bybit positions if available
         try:
             trade_status = job.get_trade_status()
-            if trade_status.get('auth_ok'):
-                result['bybit_connected'] = True
+            if trade_status.get('available'):
+                result['bybit_connected'] = trade_status.get('auth_ok', False)
+                result['auth_error'] = trade_status.get('error', '')
                 result['balance'] = trade_status.get('balance', 0)
-                result['bybit'] = trade_status.get('positions', [])
+                result['max_positions'] = trade_status.get('max_positions', 5)
+                if trade_status.get('auth_ok'):
+                    result['positions'] = trade_status.get('positions', [])
         except:
             pass
         
         return jsonify(result)
+    
+    @app.route('/api/ctr/trade/reconnect', methods=['POST'])
+    def api_ctr_trade_reconnect():
+        """Reconnect to Bybit API"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        
+        try:
+            if hasattr(job, '_trade_executor') and job._trade_executor:
+                result = job._trade_executor.reconnect()
+                return jsonify(result)
+            else:
+                return jsonify({'success': False, 'error': 'Trade executor not initialized'})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
     
     # ========================================
     # QM Zone Hunter Routes
