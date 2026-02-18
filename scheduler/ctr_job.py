@@ -377,11 +377,15 @@ class CTRFastJob:
             else:  # SHORT
                 deviation_pct = (current_price - entry_price) / entry_price * 100
             
-            # Warning when approaching SL (>50% of threshold)
+            # Warning when approaching SL (>50% of threshold) — max once per 60s per symbol
             if deviation_pct > sl_pct * 0.5:
-                label = 'LONG' if direction == 'BUY' else 'SHORT'
-                print(f"[SL Monitor] ⚠️ {symbol} {label}: deviation={deviation_pct:.2f}% / SL={sl_pct}% "
-                      f"(entry=${entry_price:.4f}, now=${current_price:.4f})")
+                warn_key = f"warn_{symbol}"
+                last_warn = self._sl_cooldown.get(warn_key, 0)
+                if now - last_warn >= 60:
+                    label = 'LONG' if direction == 'BUY' else 'SHORT'
+                    print(f"[SL Monitor] ⚠️ {symbol} {label}: deviation={deviation_pct:.2f}% / SL={sl_pct}% "
+                          f"(entry=${entry_price:.4f}, now=${current_price:.4f})")
+                    self._sl_cooldown[warn_key] = now
             
             # Check if SL triggered (deviation is loss percentage)
             if deviation_pct >= sl_pct:
@@ -724,8 +728,10 @@ class CTRFastJob:
             
             self.db.set_setting('ctr_signals', '[]')
             self._last_signal_direction.clear()
+            self._virtual_positions.clear()
+            self._sl_cooldown.clear()
             
-            print(f"[CTR Job] 🗑️ Cleared {count} signals + direction cache")
+            print(f"[CTR Job] 🗑️ Cleared {count} signals + virtual positions + direction cache")
             return count
         except Exception as e:
             print(f"[CTR Job] Error clearing signals: {e}")
