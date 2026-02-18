@@ -314,8 +314,8 @@ class CTRFastJob:
     
     def _get_current_price(self, symbol: str) -> float:
         """Get current price from scanner's WebSocket cache"""
-        if self._scanner and hasattr(self._scanner, '_caches'):
-            cache = self._scanner._caches.get(symbol)
+        if self._scanner and hasattr(self._scanner, '_cache'):
+            cache = self._scanner._cache.get(symbol)
             if cache and cache.klines:
                 return float(cache.klines[-1].close)
         return 0.0
@@ -333,10 +333,17 @@ class CTRFastJob:
     
     def _sl_monitor_loop(self):
         """Main SL monitoring loop — checks every N seconds"""
+        check_count = 0
         while self._running:
             try:
                 if self.sl_monitor_enabled and self.sl_monitor_pct > 0:
                     self._check_sl_all_positions()
+                    check_count += 1
+                    # Log every 60 checks (~5 min at 5s interval)
+                    if check_count % 60 == 1:
+                        vp_count = len(self._virtual_positions)
+                        sl_pct = float(self.db.get_setting('ctr_sl_monitor_pct', '0'))
+                        print(f"[SL Monitor] ✅ Check #{check_count}: {vp_count} positions, SL={sl_pct}%")
             except Exception as e:
                 print(f"[CTR Job] SL Monitor error: {e}")
             time.sleep(self.sl_check_interval)
@@ -369,6 +376,12 @@ class CTRFastJob:
                 deviation_pct = (entry_price - current_price) / entry_price * 100
             else:  # SHORT
                 deviation_pct = (current_price - entry_price) / entry_price * 100
+            
+            # Warning when approaching SL (>50% of threshold)
+            if deviation_pct > sl_pct * 0.5:
+                label = 'LONG' if direction == 'BUY' else 'SHORT'
+                print(f"[SL Monitor] ⚠️ {symbol} {label}: deviation={deviation_pct:.2f}% / SL={sl_pct}% "
+                      f"(entry=${entry_price:.4f}, now=${current_price:.4f})")
             
             # Check if SL triggered (deviation is loss percentage)
             if deviation_pct >= sl_pct:
