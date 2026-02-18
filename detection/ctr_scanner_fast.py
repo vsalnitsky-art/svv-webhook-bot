@@ -1270,6 +1270,12 @@ class CTRFastScanner:
         buy_cross = prev_stc <= self.stc.lower and current_stc > self.stc.lower
         sell_cross = prev_stc >= self.stc.upper and current_stc < self.stc.upper
         
+        # Guard: prevent same signal type firing twice (race between WS and periodic scan)
+        if buy_cross and cache.last_signal_type == 'BUY':
+            buy_cross = False
+        if sell_cross and cache.last_signal_type == 'SELL':
+            sell_cross = False
+        
         # === OPTIONAL FILTER: Gap Detection ===
         gap_sell = False
         gap_buy = False
