@@ -1,19 +1,34 @@
 """
-FVG Detector v1.0 — Fair Value Gap Detection & Retest Trading
+FVG Detector v1.1 — Fair Value Gap Detection & Retest Trading
 
-Архітектура:
-1. Завантажує 15m klines з Bybit Linear Futures
-2. Знаходить нові FVG (Bullish/Bearish)
-3. Моніторить ціну в реальному часі (з WS кешу CTR Scanner)
-4. При ретесті + валідному виході → генерує торговий сигнал
+Based on TradingView "Объёмные FVG" indicator by vsalnitsky.
+Exact Pine Script logic adapted for Python.
 
-Стани FVG:
-  WAITING     → ціна ще не входила в зону після створення
-  ENTERED     → ціна всередині FVG зони
-  RETESTED    → ціна вийшла з FVG у напрямку тренду (TRADE!)
-  INVALIDATED → ціна пробила FVG наскрізь (скасовано)
-  TRADED      → угоду відкрито, FVG відпрацьований
-  EXPIRED     → час життя вичерпано
+Detection rules (Pine Script exact):
+  Bullish FVG:
+    high[2] < low         — gap exists
+    high[2] < high[1]     — middle candle is above prev
+    low[2] < low          — middle candle is above prev
+    filterFVG             — adaptive size filter (>10% of max FVG in 1000 bars)
+    
+  Bearish FVG:
+    low[2] > high         — gap exists  
+    low[2] > low[1]       — middle candle is below prev
+    high[2] > high        — middle candle is below prev
+    filterFVG             — adaptive size filter
+
+  Bullish zone: top = low (current), bottom = high[2] (2 bars ago)
+  Bearish zone: top = low[2] (2 bars ago), bottom = high (current)
+
+Mitigation (invalidation):
+  - Bullish FVG: price close < zone.bottom → invalidated
+  - Bearish FVG: price close > zone.top → invalidated
+
+State machine for retest trading:
+  WAITING     → price enters FVG zone → ENTERED
+  ENTERED     → price exits in trend direction → RETESTED (trade!)
+  ENTERED     → price punches through (mitigation) → INVALIDATED
+  WAITING     → price punches through → INVALIDATED
 """
 
 import json
@@ -21,26 +36,23 @@ import time
 import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Callable
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
+from collections import deque
 
-
-# ============================================
-# FVG DATA STRUCTURES
-# ============================================
 
 @dataclass
 class FVGZone:
     """Один Fair Value Gap"""
-    id: str                    # unique: symbol_dir_timestamp
+    id: str
     symbol: str
     direction: str             # 'bullish' / 'bearish'
-    high: float                # верхня межа FVG
-    low: float                 # нижня межа FVG
+    high: float                # top of zone
+    low: float                 # bottom of zone
     size_pct: float            # розмір у % від ціни
-    candle_time: str           # час свічки що створила FVG (ISO)
+    candle_time: str           # час середньої свічки (ISO)
     detected_at: str           # коли виявлено (ISO)
     status: str = 'waiting'    # waiting/entered/retested/invalidated/traded/expired
-    entry_price: float = 0.0   # ціна входу (після retest)
+    entry_price: float = 0.0
     sl_price: float = 0.0
     tp_price: float = 0.0
     
@@ -64,34 +76,27 @@ class FVGZone:
             return 0
 
 
-# ============================================
-# FVG DETECTOR
-# ============================================
-
 class FVGDetector:
     """
-    Детектор Fair Value Gaps з моніторингом ретестів.
+    FVG Detector — Pine Script accurate detection with retest monitoring.
     
-    Використовує Bybit Linear Futures klines для детекції,
-    WS ціни з CTR Scanner для моніторингу в реальному часі.
+    Uses Bybit Linear Futures klines + WS prices from CTR Scanner.
     """
     
-    # Bybit interval mapping
     INTERVAL_MAP = {
         '1m': '1', '3m': '3', '5m': '5', '15m': '15',
         '30m': '30', '1h': '60', '4h': '240', '1d': 'D'
     }
+    TF_MINUTES = {
+        '1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+        '1h': 60, '4h': 240, '1d': 1440
+    }
     
-    # Max klines per request (Bybit limit)
-    MAX_KLINES = 1000
-    
-    # Max age for FVG (seconds)
-    MAX_AGE = 48 * 3600  # 48 hours
-    
-    # Cleanup intervals
-    CLEANUP_INTERVAL = 1800  # 30 minutes
-    INVALIDATED_TTL = 3600   # 1 hour
-    TRADED_TTL = 86400       # 24 hours
+    # Lifecycle constants
+    MAX_AGE = 48 * 3600         # 48h
+    CLEANUP_INTERVAL = 1800     # 30 min
+    INVALIDATED_TTL = 3600      # 1h
+    TRADED_TTL = 86400          # 24h
     
     def __init__(
         self,
@@ -103,7 +108,8 @@ class FVGDetector:
         rr_ratio: float = 1.5,
         sl_buffer_pct: float = 0.2,
         check_interval: int = 5,
-        scan_interval: int = 300,  # new FVG scan every 5 min
+        scan_interval: int = 300,
+        mitigation_src: str = 'close',  # 'close' or 'highlow'
         on_signal: Optional[Callable] = None,
     ):
         self.db = db
@@ -115,30 +121,32 @@ class FVGDetector:
         self.sl_buffer_pct = sl_buffer_pct
         self.check_interval = check_interval
         self.scan_interval = scan_interval
+        self.mitigation_src = mitigation_src
         self.on_signal = on_signal
         
         # State
-        self._fvg_zones: Dict[str, FVGZone] = {}  # id -> FVGZone
+        self._fvg_zones: Dict[str, FVGZone] = {}
         self._lock = threading.Lock()
         self._running = False
         self._watchlist: List[str] = []
-        self._price_getter: Optional[Callable] = None  # callback to get current price
+        self._price_getter: Optional[Callable] = None
         
         # Threads
-        self._monitor_thread: Optional[threading.Thread] = None
-        self._scanner_thread: Optional[threading.Thread] = None
-        self._cleanup_thread: Optional[threading.Thread] = None
+        self._monitor_thread = None
+        self._scanner_thread = None
+        self._cleanup_thread = None
         
         # Stats
         self._stats = {
             'fvg_detected': 0,
             'fvg_retested': 0,
             'fvg_invalidated': 0,
+            'fvg_filtered_size': 0,
+            'fvg_filtered_overlap': 0,
             'last_scan_time': '',
             'scans': 0,
         }
         
-        # Load saved FVGs from DB
         self._load_from_db()
     
     # ========================================
@@ -146,11 +154,6 @@ class FVGDetector:
     # ========================================
     
     def start(self, watchlist: List[str], price_getter: Callable):
-        """
-        Запустити FVG Detector.
-        
-        price_getter: callback(symbol) -> float, для отримання поточної ціни з WS кешу
-        """
         if self._running:
             return
         
@@ -161,28 +164,22 @@ class FVGDetector:
         # Initial scan
         self._scan_all_symbols()
         
-        # Start monitor thread (checks retests every N seconds)
         self._monitor_thread = threading.Thread(
-            target=self._monitor_loop, daemon=True, name="FVG-Monitor"
-        )
+            target=self._monitor_loop, daemon=True, name="FVG-Monitor")
         self._monitor_thread.start()
         
-        # Start scanner thread (finds new FVGs periodically)
         self._scanner_thread = threading.Thread(
-            target=self._scanner_loop, daemon=True, name="FVG-Scanner"
-        )
+            target=self._scanner_loop, daemon=True, name="FVG-Scanner")
         self._scanner_thread.start()
         
-        # Start cleanup thread
         self._cleanup_thread = threading.Thread(
-            target=self._cleanup_loop, daemon=True, name="FVG-Cleanup"
-        )
+            target=self._cleanup_loop, daemon=True, name="FVG-Cleanup")
         self._cleanup_thread.start()
         
         active = sum(1 for f in self._fvg_zones.values() if f.status in ('waiting', 'entered'))
         print(f"[FVG] ✅ Started: {len(watchlist)} symbols, TF={self.timeframe}, "
               f"min={self.min_fvg_pct}%, R:R={self.rr_ratio}, "
-              f"active={active} FVGs")
+              f"mitigation={self.mitigation_src}, active={active} FVGs")
     
     def stop(self):
         self._running = False
@@ -193,32 +190,32 @@ class FVGDetector:
         self._watchlist = watchlist
     
     def reload_settings(self, settings: Dict):
-        """Hot reload from UI settings"""
-        if 'min_fvg_pct' in settings:
-            self.min_fvg_pct = float(settings['min_fvg_pct'])
-        if 'max_fvg_per_symbol' in settings:
-            self.max_fvg_per_symbol = int(settings['max_fvg_per_symbol'])
-        if 'rr_ratio' in settings:
-            self.rr_ratio = float(settings['rr_ratio'])
-        if 'sl_buffer_pct' in settings:
-            self.sl_buffer_pct = float(settings['sl_buffer_pct'])
-        if 'timeframe' in settings:
-            self.timeframe = settings['timeframe']
-        print(f"[FVG] 🔄 Settings reloaded: min={self.min_fvg_pct}%, "
-              f"R:R={self.rr_ratio}, buffer={self.sl_buffer_pct}%")
+        for key in ('min_fvg_pct', 'rr_ratio', 'sl_buffer_pct', 'timeframe',
+                     'max_fvg_per_symbol', 'mitigation_src'):
+            if key in settings:
+                setattr(self, key, type(getattr(self, key))(settings[key]))
+        print(f"[FVG] 🔄 Settings: min={self.min_fvg_pct}%, R:R={self.rr_ratio}, "
+              f"buffer={self.sl_buffer_pct}%, src={self.mitigation_src}")
     
     # ========================================
-    # FVG DETECTION (from klines)
+    # FVG DETECTION (Pine Script exact)
     # ========================================
     
     def _detect_fvg_from_klines(self, symbol: str, klines: List[Dict]) -> List[FVGZone]:
         """
-        Detect FVGs from candle data.
+        Pine Script exact FVG detection.
         
-        Bullish FVG: candle[i-2].high < candle[i].low (gap up)
-        Bearish FVG: candle[i-2].low > candle[i].high (gap down)
-        
-        Only detects NEW FVGs (not already in self._fvg_zones).
+        Bullish FVG (4 conditions):
+          1. high[2] < low       — gap between candle i-2 and candle i
+          2. high[2] < high[1]   — middle candle's high is above prev candle's high  
+          3. low[2] < low        — confirms upward movement
+          4. filterFVG           — adaptive size filter
+          
+        Bearish FVG (4 conditions):
+          1. low[2] > high       — gap between candle i-2 and candle i
+          2. low[2] > low[1]     — middle candle's low is below prev candle's low
+          3. high[2] > high      — confirms downward movement
+          4. filterFVG           — adaptive size filter
         """
         if len(klines) < 3:
             return []
@@ -226,114 +223,170 @@ class FVGDetector:
         new_fvgs = []
         existing_ids = set(self._fvg_zones.keys())
         
-        # Only scan recent candles (MAX_AGE worth)
-        # For 15m TF: 48h = 192 candles; for 1h: 48 candles
-        tf_minutes = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
-                      '1h': 60, '4h': 240, '1d': 1440}
-        minutes = tf_minutes.get(self.timeframe, 15)
+        # Limit scan to MAX_AGE worth of candles
+        minutes = self.TF_MINUTES.get(self.timeframe, 15)
         max_candles = min(len(klines) - 1, int(self.MAX_AGE / 60 / minutes) + 3)
-        
-        # Start from recent end, skip last candle (still forming)
         start_idx = max(2, len(klines) - max_candles)
-        scan_range = range(start_idx, len(klines) - 1)
         
-        # Get current price for immediate validation check
-        current_price = klines[-1]['close'] if klines else 0
+        # ---- Pass 1: Collect ALL FVG diff sizes for adaptive filter ----
+        all_diffs = []
+        for i in range(start_idx, len(klines) - 1):
+            h2 = klines[i - 2]['high']
+            l2 = klines[i - 2]['low']
+            lo = klines[i]['low']
+            hi = klines[i]['high']
+            c1 = klines[i - 1]['close']
+            o1 = klines[i - 1]['open']
+            
+            # Pine Script diff formula
+            if c1 > o1:  # middle candle is bullish
+                diff = (lo - h2) / lo * 100 if lo > 0 else 0
+            else:
+                diff = (l2 - hi) / hi * 100 if hi > 0 else 0
+            
+            if abs(diff) > 0.001:
+                all_diffs.append(abs(diff))
         
-        for i in scan_range:
-            c_prev2 = klines[i - 2]  # 2 candles ago
-            c_prev1 = klines[i - 1]  # 1 candle ago (middle - creates the gap)
-            c_curr = klines[i]       # current candle
+        # Percentile 100 (max) for adaptive filter
+        p100 = max(all_diffs) if all_diffs else 0
+        
+        # ---- Pass 2: Detect FVGs with full conditions ----
+        for i in range(start_idx, len(klines) - 1):
+            c_prev2 = klines[i - 2]  # Pine: [2] bars ago
+            c_mid = klines[i - 1]    # Pine: [1] bar ago (middle candle)
+            c_curr = klines[i]       # Pine: current bar
             
-            ts = str(c_prev1['timestamp'])
+            ts = str(c_mid['timestamp'])
             
-            # === Bullish FVG ===
-            if c_prev2['high'] < c_curr['low']:
+            # Pine Script diff for filter
+            if c_mid['close'] > c_mid['open']:
+                diff = (c_curr['low'] - c_prev2['high']) / c_curr['low'] * 100 if c_curr['low'] > 0 else 0
+            else:
+                diff = (c_prev2['low'] - c_curr['high']) / c_curr['high'] * 100 if c_curr['high'] > 0 else 0
+            
+            # Adaptive filter: sizeFVG = diff / p100 * 100 > 10
+            if p100 > 0:
+                size_fvg = abs(diff) / p100 * 100
+                filter_fvg = size_fvg > 10
+            else:
+                filter_fvg = abs(diff) >= self.min_fvg_pct
+            
+            # === Bullish FVG (Pine Script 4 conditions) ===
+            is_bull = (
+                c_prev2['high'] < c_curr['low'] and      # 1. gap exists
+                c_prev2['high'] < c_mid['high'] and       # 2. middle candle high above
+                c_prev2['low'] < c_curr['low'] and        # 3. confirms upward
+                filter_fvg                                 # 4. size filter
+            )
+            
+            if is_bull:
                 fvg_id = f"{symbol}_bull_{ts}"
                 if fvg_id not in existing_ids:
-                    fvg_high = c_curr['low']
-                    fvg_low = c_prev2['high']
-                    mid = (fvg_high + fvg_low) / 2
-                    size_pct = (fvg_high - fvg_low) / mid * 100 if mid > 0 else 0
+                    fvg_top = c_curr['low']
+                    fvg_bot = c_prev2['high']
+                    mid = (fvg_top + fvg_bot) / 2
+                    pct = (fvg_top - fvg_bot) / mid * 100 if mid > 0 else 0
                     
-                    if size_pct >= self.min_fvg_pct:
-                        # Skip if already invalidated: check all candles AFTER this FVG
-                        already_filled = False
-                        for j in range(i + 1, len(klines)):
-                            # Bullish FVG invalidated if any candle's low went below fvg_low
-                            if klines[j]['low'] < fvg_low:
-                                already_filled = True
-                                break
-                        
-                        if not already_filled:
-                            candle_dt = datetime.fromtimestamp(
-                                c_prev1['timestamp'] / 1000, tz=timezone.utc
-                            ).isoformat()
-                            
-                            new_fvgs.append(FVGZone(
-                                id=fvg_id,
-                                symbol=symbol,
-                                direction='bullish',
-                                high=fvg_high,
-                                low=fvg_low,
-                                size_pct=round(size_pct, 3),
-                                candle_time=candle_dt,
-                                detected_at=datetime.now(timezone.utc).isoformat(),
-                                status='waiting',
-                            ))
+                    # Already mitigated by subsequent candles?
+                    already_mitigated = False
+                    for j in range(i + 1, len(klines)):
+                        val = klines[j]['close'] if self.mitigation_src == 'close' else klines[j]['low']
+                        if val < fvg_bot:
+                            already_mitigated = True
+                            break
+                    
+                    if not already_mitigated:
+                        candle_dt = datetime.fromtimestamp(
+                            c_mid['timestamp'] / 1000, tz=timezone.utc
+                        ).isoformat()
+                        new_fvgs.append(FVGZone(
+                            id=fvg_id, symbol=symbol, direction='bullish',
+                            high=fvg_top, low=fvg_bot,
+                            size_pct=round(pct, 3),
+                            candle_time=candle_dt,
+                            detected_at=datetime.now(timezone.utc).isoformat(),
+                        ))
+                    else:
+                        self._stats['fvg_filtered_size'] += 1
             
-            # === Bearish FVG ===
-            if c_prev2['low'] > c_curr['high']:
+            # === Bearish FVG (Pine Script 4 conditions) ===
+            is_bear = (
+                c_prev2['low'] > c_curr['high'] and       # 1. gap exists
+                c_prev2['low'] > c_mid['low'] and          # 2. middle candle low below
+                c_prev2['high'] > c_curr['high'] and       # 3. confirms downward
+                filter_fvg                                  # 4. size filter
+            )
+            
+            if is_bear:
                 fvg_id = f"{symbol}_bear_{ts}"
                 if fvg_id not in existing_ids:
-                    fvg_high = c_prev2['low']
-                    fvg_low = c_curr['high']
-                    mid = (fvg_high + fvg_low) / 2
-                    size_pct = (fvg_high - fvg_low) / mid * 100 if mid > 0 else 0
+                    fvg_top = c_prev2['low']
+                    fvg_bot = c_curr['high']
+                    mid = (fvg_top + fvg_bot) / 2
+                    pct = (fvg_top - fvg_bot) / mid * 100 if mid > 0 else 0
                     
-                    if size_pct >= self.min_fvg_pct:
-                        # Skip if already invalidated: check all candles AFTER this FVG
-                        already_filled = False
-                        for j in range(i + 1, len(klines)):
-                            # Bearish FVG invalidated if any candle's high went above fvg_high
-                            if klines[j]['high'] > fvg_high:
-                                already_filled = True
-                                break
-                        
-                        if not already_filled:
-                            candle_dt = datetime.fromtimestamp(
-                                c_prev1['timestamp'] / 1000, tz=timezone.utc
-                            ).isoformat()
-                            
-                            new_fvgs.append(FVGZone(
-                                id=fvg_id,
-                                symbol=symbol,
-                                direction='bearish',
-                                high=fvg_high,
-                                low=fvg_low,
-                                size_pct=round(size_pct, 3),
-                                candle_time=candle_dt,
-                                detected_at=datetime.now(timezone.utc).isoformat(),
-                                status='waiting',
-                            ))
+                    # Already mitigated?
+                    already_mitigated = False
+                    for j in range(i + 1, len(klines)):
+                        val = klines[j]['close'] if self.mitigation_src == 'close' else klines[j]['high']
+                        if val > fvg_top:
+                            already_mitigated = True
+                            break
+                    
+                    if not already_mitigated:
+                        candle_dt = datetime.fromtimestamp(
+                            c_mid['timestamp'] / 1000, tz=timezone.utc
+                        ).isoformat()
+                        new_fvgs.append(FVGZone(
+                            id=fvg_id, symbol=symbol, direction='bearish',
+                            high=fvg_top, low=fvg_bot,
+                            size_pct=round(pct, 3),
+                            candle_time=candle_dt,
+                            detected_at=datetime.now(timezone.utc).isoformat(),
+                        ))
+                    else:
+                        self._stats['fvg_filtered_size'] += 1
+        
+        # === Overlap removal (Pine Script logic) ===
+        new_fvgs = self._remove_overlapping(new_fvgs)
         
         return new_fvgs
     
+    def _remove_overlapping(self, fvgs: List[FVGZone]) -> List[FVGZone]:
+        """
+        Pine Script overlap removal:
+        If FVG_j.top is between FVG_i.bottom and FVG_i.top → remove FVG_i
+        """
+        if len(fvgs) <= 1:
+            return fvgs
+        
+        to_remove = set()
+        for i in range(len(fvgs)):
+            if i in to_remove:
+                continue
+            for j in range(len(fvgs)):
+                if i == j or j in to_remove:
+                    continue
+                if fvgs[j].high < fvgs[i].high and fvgs[j].high > fvgs[i].low:
+                    to_remove.add(i)
+                    self._stats['fvg_filtered_overlap'] += 1
+                    break
+        
+        return [f for idx, f in enumerate(fvgs) if idx not in to_remove]
+    
+    # ========================================
+    # SCANNING
+    # ========================================
+    
     def _scan_symbol(self, symbol: str) -> int:
-        """Scan one symbol for new FVGs. Returns count of new FVGs found."""
+        """Scan one symbol for new FVGs."""
         try:
             interval = self.INTERVAL_MAP.get(self.timeframe, '15')
-            
-            # Only request enough candles for MAX_AGE
-            tf_minutes = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
-                          '1h': 60, '4h': 240, '1d': 1440}
-            minutes = tf_minutes.get(self.timeframe, 15)
-            needed = min(self.MAX_KLINES, int(self.MAX_AGE / 60 / minutes) + 10)
+            minutes = self.TF_MINUTES.get(self.timeframe, 15)
+            needed = min(1000, int(self.MAX_AGE / 60 / minutes) + 10)
             
             klines = self.bybit.get_klines(
-                symbol=symbol,
-                interval=interval,
-                limit=needed
+                symbol=symbol, interval=interval, limit=needed
             )
             
             if not klines or len(klines) < 10:
@@ -343,7 +396,6 @@ class FVGDetector:
             
             if new_fvgs:
                 with self._lock:
-                    # Count existing active FVGs for this symbol
                     active_count = sum(
                         1 for f in self._fvg_zones.values()
                         if f.symbol == symbol and f.status in ('waiting', 'entered')
@@ -361,7 +413,7 @@ class FVGDetector:
                         print(f"[FVG] 📐 {symbol}: +{added} new FVGs "
                               f"(total active: {active_count + added})")
                 
-                return len(new_fvgs)
+                return added
             return 0
             
         except Exception as e:
@@ -369,11 +421,11 @@ class FVGDetector:
             return 0
     
     def _scan_all_symbols(self):
-        """Scan all watchlist symbols for new FVGs."""
+        """Scan all watchlist symbols."""
         total_new = 0
         for symbol in self._watchlist:
             total_new += self._scan_symbol(symbol)
-            time.sleep(0.1)  # Rate limit
+            time.sleep(0.1)
         
         self._stats['scans'] += 1
         self._stats['last_scan_time'] = datetime.now(timezone.utc).strftime('%H:%M:%S')
@@ -391,14 +443,14 @@ class FVGDetector:
     
     def _check_retest(self, fvg: FVGZone, current_price: float) -> Optional[str]:
         """
-        Check FVG retest state.
+        Check FVG retest state with Pine Script mitigation rules.
         
-        Returns new status or None if unchanged.
-        
-        State machine:
-        WAITING → price enters FVG zone → ENTERED
-        ENTERED → price exits in trend direction → RETESTED (trade signal!)
-        ENTERED → price punches through FVG completely → INVALIDATED
+        Mitigation (invalidation):
+          - mitigation_src='close':  Bull → close < zone.low;  Bear → close > zone.high
+          - mitigation_src='highlow': Bull → low < zone.low;   Bear → high > zone.high
+          
+        Note: In real-time monitoring we only have last price, so 'close' mode
+        uses current price as proxy for close.
         """
         if current_price <= 0:
             return None
@@ -408,7 +460,7 @@ class FVGDetector:
         if fvg.status == 'waiting':
             if in_zone:
                 return 'entered'
-            # Check if price already blew through (invalidation without entering)
+            # Mitigation check
             if fvg.direction == 'bullish' and current_price < fvg.low:
                 return 'invalidated'
             if fvg.direction == 'bearish' and current_price > fvg.high:
@@ -417,20 +469,19 @@ class FVGDetector:
         
         elif fvg.status == 'entered':
             if in_zone:
-                return None  # Still inside
+                return None
             
-            # Exited — check direction
             if fvg.direction == 'bullish':
                 if current_price > fvg.high:
-                    return 'retested'      # Valid: bounced up from bullish FVG
+                    return 'retested'       # Bounced up → LONG
                 elif current_price < fvg.low:
-                    return 'invalidated'   # Invalid: fell through
+                    return 'invalidated'    # Mitigated
             
             elif fvg.direction == 'bearish':
                 if current_price < fvg.low:
-                    return 'retested'      # Valid: rejected down from bearish FVG
+                    return 'retested'       # Rejected down → SHORT
                 elif current_price > fvg.high:
-                    return 'invalidated'   # Invalid: broke through
+                    return 'invalidated'    # Mitigated
             
             return None
         
@@ -441,12 +492,10 @@ class FVGDetector:
         buffer = entry_price * (self.sl_buffer_pct / 100)
         
         if fvg.direction == 'bullish':
-            # LONG: SL below FVG low, TP above entry
             sl = fvg.low - buffer
             risk = entry_price - sl
             tp = entry_price + (risk * self.rr_ratio)
         else:
-            # SHORT: SL above FVG high, TP below entry
             sl = fvg.high + buffer
             risk = sl - entry_price
             tp = entry_price - (risk * self.rr_ratio)
@@ -454,7 +503,7 @@ class FVGDetector:
         return round(sl, 8), round(tp, 8)
     
     def _on_retest(self, fvg: FVGZone, current_price: float):
-        """Handle successful FVG retest — generate trade signal."""
+        """Handle successful FVG retest → generate trade signal."""
         sl_price, tp_price = self._calculate_sl_tp(fvg, current_price)
         
         fvg.status = 'traded'
@@ -464,7 +513,6 @@ class FVGDetector:
         
         signal_type = 'BUY' if fvg.direction == 'bullish' else 'SELL'
         label = 'LONG' if signal_type == 'BUY' else 'SHORT'
-        
         risk_pct = abs(current_price - sl_price) / current_price * 100
         
         print(f"[FVG] ✅ RETEST SIGNAL: {fvg.symbol} {label}\n"
@@ -474,7 +522,6 @@ class FVGDetector:
         
         self._stats['fvg_retested'] += 1
         
-        # Callback to CTR Job
         if self.on_signal:
             self.on_signal({
                 'symbol': fvg.symbol,
@@ -513,16 +560,11 @@ class FVGDetector:
                 new_status = self._check_retest(fvg, current_price)
                 
                 if new_status:
-                    old_status = fvg.status
-                    
                     if new_status == 'retested':
                         self._on_retest(fvg, current_price)
                     elif new_status == 'invalidated':
                         fvg.status = 'invalidated'
                         self._stats['fvg_invalidated'] += 1
-                        label = '🟢' if fvg.direction == 'bullish' else '🔴'
-                        print(f"[FVG] ❌ Invalidated: {fvg.symbol} {label} "
-                              f"${fvg.low:.4f}-${fvg.high:.4f}")
                     elif new_status == 'entered':
                         fvg.status = 'entered'
                         label = '🟢' if fvg.direction == 'bullish' else '🔴'
@@ -538,7 +580,6 @@ class FVGDetector:
     # ========================================
     
     def _monitor_loop(self):
-        """Retest monitoring every N seconds."""
         while self._running:
             try:
                 self._monitor_all()
@@ -547,8 +588,6 @@ class FVGDetector:
             time.sleep(self.check_interval)
     
     def _scanner_loop(self):
-        """Periodic new FVG detection."""
-        # Wait a bit before first scan (let WS connect)
         time.sleep(15)
         while self._running:
             try:
@@ -558,7 +597,6 @@ class FVGDetector:
             time.sleep(self.scan_interval)
     
     def _cleanup_loop(self):
-        """Periodic cleanup of old/invalid FVGs."""
         while self._running:
             time.sleep(self.CLEANUP_INTERVAL)
             try:
@@ -567,33 +605,18 @@ class FVGDetector:
                 print(f"[FVG] Cleanup error: {e}")
     
     def _cleanup(self):
-        """Remove expired, old, and invalid FVGs."""
-        now = time.time()
         to_remove = []
-        
         with self._lock:
             for fvg_id, fvg in self._fvg_zones.items():
                 age = fvg.age_seconds
-                
-                # Remove expired (>48h)
                 if age > self.MAX_AGE:
                     to_remove.append(fvg_id)
-                    continue
-                
-                # Remove old invalidated (>1h)
-                if fvg.status == 'invalidated' and age > self.INVALIDATED_TTL:
+                elif fvg.status == 'invalidated' and age > self.INVALIDATED_TTL:
                     to_remove.append(fvg_id)
-                    continue
-                
-                # Remove old traded (>24h)
-                if fvg.status == 'traded' and age > self.TRADED_TTL:
+                elif fvg.status == 'traded' and age > self.TRADED_TTL:
                     to_remove.append(fvg_id)
-                    continue
-                
-                # Remove old expired
-                if fvg.status == 'expired' and age > self.INVALIDATED_TTL:
+                elif fvg.status == 'expired' and age > self.INVALIDATED_TTL:
                     to_remove.append(fvg_id)
-                    continue
             
             for fvg_id in to_remove:
                 del self._fvg_zones[fvg_id]
@@ -607,7 +630,6 @@ class FVGDetector:
     # ========================================
     
     def _save_to_db(self):
-        """Save all FVGs to DB."""
         try:
             with self._lock:
                 data = [fvg.to_dict() for fvg in self._fvg_zones.values()]
@@ -617,21 +639,17 @@ class FVGDetector:
             print(f"[FVG] DB save error: {e}")
     
     def _load_from_db(self):
-        """Load FVGs from DB."""
         try:
             data_str = self.db.get_setting('fvg_zones', '[]')
             data = json.loads(data_str)
-            
             for d in data:
                 try:
                     fvg = FVGZone.from_dict(d)
-                    # Only load active ones
                     if fvg.status in ('waiting', 'entered', 'traded'):
                         self._fvg_zones[fvg.id] = fvg
                 except:
                     continue
             
-            # Load stats
             stats_str = self.db.get_setting('fvg_stats', '{}')
             saved_stats = json.loads(stats_str)
             self._stats.update(saved_stats)
@@ -642,23 +660,21 @@ class FVGDetector:
             print(f"[FVG] DB load error: {e}")
     
     # ========================================
-    # PUBLIC API (for UI / routes)
+    # PUBLIC API
     # ========================================
     
     def get_zones(self) -> List[Dict]:
-        """Get FVG zones for UI display (active + recently traded only)."""
+        """Get FVG zones for UI (active + recently traded only)."""
         with self._lock:
             zones = []
             for fvg in sorted(self._fvg_zones.values(),
                               key=lambda f: f.detected_at, reverse=True):
-                # Only show actionable zones
                 if fvg.status not in ('waiting', 'entered', 'traded', 'retested'):
                     continue
                 
                 d = fvg.to_dict()
                 d['age_min'] = round(fvg.age_seconds / 60, 1)
                 
-                # Add current price info
                 if self._price_getter:
                     try:
                         price = self._price_getter(fvg.symbol)
@@ -674,12 +690,10 @@ class FVGDetector:
             return zones
     
     def get_stats(self) -> Dict:
-        """Get detector statistics."""
         with self._lock:
             active = sum(1 for f in self._fvg_zones.values()
                         if f.status in ('waiting', 'entered'))
             total = len(self._fvg_zones)
-        
         return {
             **self._stats,
             'active_fvg': active,
@@ -689,10 +703,10 @@ class FVGDetector:
             'min_fvg_pct': self.min_fvg_pct,
             'rr_ratio': self.rr_ratio,
             'sl_buffer_pct': self.sl_buffer_pct,
+            'mitigation_src': self.mitigation_src,
         }
     
     def clear_zones(self) -> int:
-        """Clear all FVG zones."""
         with self._lock:
             count = len(self._fvg_zones)
             self._fvg_zones.clear()
@@ -701,5 +715,4 @@ class FVGDetector:
         return count
     
     def scan_now(self):
-        """Manual trigger for scanning."""
         self._scan_all_symbols()
