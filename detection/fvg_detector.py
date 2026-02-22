@@ -111,7 +111,8 @@ class FVGDetector:
         scan_interval: int = 300,
         mitigation_src: str = 'close',  # 'close' or 'highlow'
         trend_filter_enabled: bool = False,
-        trend_ema_period: int = 50,
+        trend_fast_ema: int = 5,
+        trend_slow_ema: int = 13,
         on_signal: Optional[Callable] = None,
     ):
         self.db = db
@@ -125,7 +126,8 @@ class FVGDetector:
         self.scan_interval = scan_interval
         self.mitigation_src = mitigation_src
         self.trend_filter_enabled = trend_filter_enabled
-        self.trend_ema_period = trend_ema_period
+        self.trend_fast_ema = trend_fast_ema
+        self.trend_slow_ema = trend_slow_ema
         self.on_signal = on_signal
         
         # State
@@ -135,7 +137,7 @@ class FVGDetector:
         self._watchlist: List[str] = []
         self._price_getter: Optional[Callable] = None
         
-        # Trend data per symbol: {'BTCUSDT': {'trend': 'bullish', 'ema': 67500.0, 'price': 67800.0}}
+        # Trend data per symbol: {'BTCUSDT': {'trend': 'bullish', 'fast': 67500, 'slow': 67200, 'price': 67800}}
         self._symbol_trends: Dict[str, Dict] = {}
         
         # Threads
@@ -185,7 +187,7 @@ class FVGDetector:
         self._cleanup_thread.start()
         
         active = sum(1 for f in self._fvg_zones.values() if f.status in ('waiting', 'entered'))
-        trend_tag = f", trend=EMA{self.trend_ema_period}" if self.trend_filter_enabled else ""
+        trend_tag = f", trend=EMA({self.trend_fast_ema}/{self.trend_slow_ema})" if self.trend_filter_enabled else ""
         print(f"[FVG] ✅ Started: {len(watchlist)} symbols, TF={self.timeframe}, "
               f"min={self.min_fvg_pct}%, R:R={self.rr_ratio}, "
               f"mitigation={self.mitigation_src}{trend_tag}, active={active} FVGs")
@@ -201,14 +203,14 @@ class FVGDetector:
     def reload_settings(self, settings: Dict):
         for key in ('min_fvg_pct', 'rr_ratio', 'sl_buffer_pct', 'timeframe',
                      'max_fvg_per_symbol', 'mitigation_src',
-                     'trend_filter_enabled', 'trend_ema_period'):
+                     'trend_filter_enabled', 'trend_fast_ema', 'trend_slow_ema'):
             if key in settings:
                 current = getattr(self, key)
                 if isinstance(current, bool):
                     setattr(self, key, bool(settings[key]))
                 else:
                     setattr(self, key, type(current)(settings[key]))
-        trend_tag = f", trend=EMA{self.trend_ema_period}" if self.trend_filter_enabled else ""
+        trend_tag = f", trend=EMA({self.trend_fast_ema}/{self.trend_slow_ema})" if self.trend_filter_enabled else ""
         print(f"[FVG] 🔄 Settings: min={self.min_fvg_pct}%, R:R={self.rr_ratio}, "
               f"buffer={self.sl_buffer_pct}%, src={self.mitigation_src}{trend_tag}")
     
@@ -408,33 +410,40 @@ class FVGDetector:
         return ema
     
     def _update_trend(self, symbol: str, klines: List[Dict]):
-        """Compute EMA and determine trend direction for symbol."""
-        if not self.trend_filter_enabled or len(klines) < self.trend_ema_period + 5:
+        """Compute Fast/Slow EMA crossover and determine trend direction."""
+        if not self.trend_filter_enabled:
+            return
+        
+        min_needed = max(self.trend_fast_ema, self.trend_slow_ema) + 5
+        if len(klines) < min_needed:
             return
         
         closes = [k['close'] for k in klines]
-        ema_value = self._compute_ema(closes, self.trend_ema_period)
+        fast_ema = self._compute_ema(closes, self.trend_fast_ema)
+        slow_ema = self._compute_ema(closes, self.trend_slow_ema)
         current_price = closes[-1]
         
-        if ema_value <= 0:
+        if fast_ema <= 0 or slow_ema <= 0:
             return
         
-        trend = 'bullish' if current_price > ema_value else 'bearish'
+        # Fast EMA > Slow EMA → uptrend, Fast EMA < Slow EMA → downtrend
+        trend = 'bullish' if fast_ema > slow_ema else 'bearish'
         
         self._symbol_trends[symbol] = {
             'trend': trend,
-            'ema': round(ema_value, 6),
+            'fast': round(fast_ema, 6),
+            'slow': round(slow_ema, 6),
             'price': current_price,
-            'distance_pct': round((current_price - ema_value) / ema_value * 100, 2),
+            'spread_pct': round((fast_ema - slow_ema) / slow_ema * 100, 3),
         }
     
     def _check_trend_filter(self, symbol: str, direction: str) -> bool:
         """
-        Check if FVG direction aligns with trend.
+        Check if FVG direction aligns with trend (Fast/Slow EMA crossover).
         Returns True if trade is allowed.
         
-        Bullish FVG (LONG) → allowed only in uptrend (price > EMA)
-        Bearish FVG (SHORT) → allowed only in downtrend (price < EMA)
+        Bullish FVG (LONG) → allowed only when Fast EMA > Slow EMA (uptrend)
+        Bearish FVG (SHORT) → allowed only when Fast EMA < Slow EMA (downtrend)
         """
         if not self.trend_filter_enabled:
             return True
@@ -458,7 +467,7 @@ class FVGDetector:
             
             # Ensure enough klines for EMA computation
             if self.trend_filter_enabled:
-                needed = max(needed, self.trend_ema_period + 20)
+                needed = max(needed, self.trend_slow_ema + 20)
             
             klines = self.bybit.get_klines(
                 symbol=symbol, interval=interval, limit=needed
@@ -607,11 +616,12 @@ class FVGDetector:
         if not self._check_trend_filter(fvg.symbol, fvg.direction):
             trend_data = self._symbol_trends.get(fvg.symbol, {})
             trend_dir = trend_data.get('trend', '?')
-            ema_val = trend_data.get('ema', 0)
+            fast_val = trend_data.get('fast', 0)
+            slow_val = trend_data.get('slow', 0)
             label = 'LONG' if fvg.direction == 'bullish' else 'SHORT'
             print(f"[FVG] 🚫 TREND BLOCKED: {fvg.symbol} {label} "
                   f"(FVG={fvg.direction}, trend={trend_dir}, "
-                  f"EMA{self.trend_ema_period}=${ema_val:.4f})")
+                  f"Fast={fast_val:.4f}, Slow={slow_val:.4f})")
             fvg.status = 'invalidated'
             self._stats['fvg_filtered_trend'] += 1
             return
@@ -630,7 +640,8 @@ class FVGDetector:
         trend_tag = ""
         trend_data = self._symbol_trends.get(fvg.symbol)
         if self.trend_filter_enabled and trend_data:
-            trend_tag = f"\n  Trend: {trend_data['trend'].upper()} (EMA{self.trend_ema_period}=${trend_data['ema']:.4f})"
+            trend_tag = (f"\n  Trend: {trend_data['trend'].upper()} "
+                        f"(Fast={trend_data['fast']:.4f}, Slow={trend_data['slow']:.4f})")
         
         print(f"[FVG] ✅ RETEST SIGNAL: {fvg.symbol} {label}\n"
               f"  FVG: ${fvg.low:.4f} - ${fvg.high:.4f} ({fvg.size_pct}%)\n"
@@ -822,7 +833,8 @@ class FVGDetector:
             'sl_buffer_pct': self.sl_buffer_pct,
             'mitigation_src': self.mitigation_src,
             'trend_filter_enabled': self.trend_filter_enabled,
-            'trend_ema_period': self.trend_ema_period,
+            'trend_fast_ema': self.trend_fast_ema,
+            'trend_slow_ema': self.trend_slow_ema,
             'trends': dict(self._symbol_trends),
         }
     

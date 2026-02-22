@@ -683,17 +683,25 @@
                                 <input type="checkbox" id="fvg-trend-filter" {% if settings.ctr_fvg_trend_filter %}checked{% endif %}>
                                 <span class="slider round"></span>
                             </label>
-                            <span style="color: #2196f3; font-weight: 600; font-size: 13px;">📈 Trend Filter (EMA)</span>
+                            <span style="color: #2196f3; font-weight: 600; font-size: 13px;">📈 Trend Filter (EMA crossover)</span>
                         </div>
-                        <div>
-                            <small style="color:#aaa;">EMA Period</small>
-                            <input type="number" id="fvg-trend-ema" value="{{ settings.ctr_fvg_trend_ema }}"
-                                   step="1" min="10" max="500"
-                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div>
+                                <small style="color:#aaa;">Fast EMA</small>
+                                <input type="number" id="fvg-trend-fast-ema" value="{{ settings.ctr_fvg_trend_fast_ema }}"
+                                       step="1" min="2" max="100"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <small style="color:#aaa;">Slow EMA</small>
+                                <input type="number" id="fvg-trend-slow-ema" value="{{ settings.ctr_fvg_trend_slow_ema }}"
+                                       step="1" min="5" max="500"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
                         </div>
                         <small style="color: #888; margin-top: 4px; display: block;">
-                            LONG тільки якщо price > EMA (uptrend)<br>
-                            SHORT тільки якщо price < EMA (downtrend)
+                            Fast > Slow → uptrend (LONG тільки)<br>
+                            Fast < Slow → downtrend (SHORT тільки)
                         </small>
                     </div>
                     
@@ -1509,7 +1517,8 @@ async function saveFVGSettings() {
         ctr_fvg_max_per_symbol: document.getElementById('fvg-max-per-symbol').value,
         ctr_fvg_scan_interval: document.getElementById('fvg-scan-interval').value,
         ctr_fvg_trend_filter: document.getElementById('fvg-trend-filter').checked ? '1' : '0',
-        ctr_fvg_trend_ema: document.getElementById('fvg-trend-ema').value,
+        ctr_fvg_trend_fast_ema: document.getElementById('fvg-trend-fast-ema').value,
+        ctr_fvg_trend_slow_ema: document.getElementById('fvg-trend-slow-ema').value,
     };
     try {
         await fetch('/api/ctr/settings', {
