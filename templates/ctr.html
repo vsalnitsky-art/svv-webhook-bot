@@ -676,6 +676,27 @@
                         </div>
                     </div>
                     
+                    <!-- Trend Filter -->
+                    <div style="margin-top: 12px; padding: 8px; background: rgba(33,150,243,0.08); border-radius: 8px; border: 1px solid rgba(33,150,243,0.2);">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <label class="switch" style="margin: 0;">
+                                <input type="checkbox" id="fvg-trend-filter" {% if settings.ctr_fvg_trend_filter %}checked{% endif %}>
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: #2196f3; font-weight: 600; font-size: 13px;">📈 Trend Filter (EMA)</span>
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">EMA Period</small>
+                            <input type="number" id="fvg-trend-ema" value="{{ settings.ctr_fvg_trend_ema }}"
+                                   step="1" min="10" max="500"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            LONG тільки якщо price > EMA (uptrend)<br>
+                            SHORT тільки якщо price < EMA (downtrend)
+                        </small>
+                    </div>
+                    
                     <button class="btn btn-sm btn-secondary" onclick="saveFVGSettings()" style="margin-top: 10px; width: 100%;">
                         💾 Save FVG Settings
                     </button>
@@ -1487,6 +1508,8 @@ async function saveFVGSettings() {
         ctr_fvg_sl_buffer_pct: document.getElementById('fvg-sl-buffer').value,
         ctr_fvg_max_per_symbol: document.getElementById('fvg-max-per-symbol').value,
         ctr_fvg_scan_interval: document.getElementById('fvg-scan-interval').value,
+        ctr_fvg_trend_filter: document.getElementById('fvg-trend-filter').checked ? '1' : '0',
+        ctr_fvg_trend_ema: document.getElementById('fvg-trend-ema').value,
     };
     try {
         await fetch('/api/ctr/settings', {
@@ -1516,7 +1539,8 @@ async function loadFVGZones() {
         const stats = data.stats || {};
         
         const activeCount = zones.filter(z => z.status === 'waiting' || z.status === 'entered').length;
-        countEl.textContent = `${activeCount} active / ${zones.length} total | Detected: ${stats.fvg_detected || 0} | Traded: ${stats.fvg_retested || 0}`;
+        const trendInfo = stats.trend_filter_enabled ? ` | 🚫 Trend: ${stats.fvg_filtered_trend || 0}` : '';
+        countEl.textContent = `${activeCount} active / ${zones.length} total | Detected: ${stats.fvg_detected || 0} | Traded: ${stats.fvg_retested || 0}${trendInfo}`;
         
         if (zones.length === 0) {
             table.style.display = 'none';

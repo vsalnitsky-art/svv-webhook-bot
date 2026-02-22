@@ -1226,6 +1226,8 @@ def register_api_routes(app):
             'ctr_fvg_rr_ratio': db.get_setting('ctr_fvg_rr_ratio', '1.5'),
             'ctr_fvg_sl_buffer_pct': db.get_setting('ctr_fvg_sl_buffer_pct', '0.2'),
             'ctr_fvg_scan_interval': db.get_setting('ctr_fvg_scan_interval', '300'),
+            'ctr_fvg_trend_filter': db.get_setting('ctr_fvg_trend_filter', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_fvg_trend_ema': db.get_setting('ctr_fvg_trend_ema', '50'),
         }
         
         # Статистика фільтрації
@@ -1359,7 +1361,7 @@ def register_api_routes(app):
             # FVG Detector
             'ctr_fvg_enabled', 'ctr_fvg_timeframe', 'ctr_fvg_min_pct',
             'ctr_fvg_max_per_symbol', 'ctr_fvg_rr_ratio', 'ctr_fvg_sl_buffer_pct',
-            'ctr_fvg_scan_interval',
+            'ctr_fvg_scan_interval', 'ctr_fvg_trend_filter', 'ctr_fvg_trend_ema',
         ]
         
         for key in ctr_settings:

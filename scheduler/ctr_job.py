@@ -149,6 +149,8 @@ class CTRFastJob:
         self.fvg_rr_ratio = float(self.db.get_setting('ctr_fvg_rr_ratio', '1.5'))
         self.fvg_sl_buffer_pct = float(self.db.get_setting('ctr_fvg_sl_buffer_pct', '0.2'))
         self.fvg_scan_interval = int(self.db.get_setting('ctr_fvg_scan_interval', '300'))
+        self.fvg_trend_filter = _b('ctr_fvg_trend_filter', '0')
+        self.fvg_trend_ema = int(self.db.get_setting('ctr_fvg_trend_ema', '50'))
         
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
@@ -555,6 +557,8 @@ class CTRFastJob:
                 rr_ratio=self.fvg_rr_ratio,
                 sl_buffer_pct=self.fvg_sl_buffer_pct,
                 scan_interval=self.fvg_scan_interval,
+                trend_filter_enabled=self.fvg_trend_filter,
+                trend_ema_period=self.fvg_trend_ema,
                 on_signal=self._on_signal,
             )
             
@@ -839,6 +843,8 @@ class CTRFastJob:
                         'rr_ratio': self.fvg_rr_ratio,
                         'sl_buffer_pct': self.fvg_sl_buffer_pct,
                         'timeframe': self.fvg_timeframe,
+                        'trend_filter_enabled': self.fvg_trend_filter,
+                        'trend_ema_period': self.fvg_trend_ema,
                     })
                 else:
                     self._start_fvg_detector()

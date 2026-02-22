@@ -110,6 +110,8 @@ class FVGDetector:
         check_interval: int = 5,
         scan_interval: int = 300,
         mitigation_src: str = 'close',  # 'close' or 'highlow'
+        trend_filter_enabled: bool = False,
+        trend_ema_period: int = 50,
         on_signal: Optional[Callable] = None,
     ):
         self.db = db
@@ -122,6 +124,8 @@ class FVGDetector:
         self.check_interval = check_interval
         self.scan_interval = scan_interval
         self.mitigation_src = mitigation_src
+        self.trend_filter_enabled = trend_filter_enabled
+        self.trend_ema_period = trend_ema_period
         self.on_signal = on_signal
         
         # State
@@ -130,6 +134,9 @@ class FVGDetector:
         self._running = False
         self._watchlist: List[str] = []
         self._price_getter: Optional[Callable] = None
+        
+        # Trend data per symbol: {'BTCUSDT': {'trend': 'bullish', 'ema': 67500.0, 'price': 67800.0}}
+        self._symbol_trends: Dict[str, Dict] = {}
         
         # Threads
         self._monitor_thread = None
@@ -143,6 +150,7 @@ class FVGDetector:
             'fvg_invalidated': 0,
             'fvg_filtered_size': 0,
             'fvg_filtered_overlap': 0,
+            'fvg_filtered_trend': 0,
             'last_scan_time': '',
             'scans': 0,
         }
@@ -177,9 +185,10 @@ class FVGDetector:
         self._cleanup_thread.start()
         
         active = sum(1 for f in self._fvg_zones.values() if f.status in ('waiting', 'entered'))
+        trend_tag = f", trend=EMA{self.trend_ema_period}" if self.trend_filter_enabled else ""
         print(f"[FVG] ✅ Started: {len(watchlist)} symbols, TF={self.timeframe}, "
               f"min={self.min_fvg_pct}%, R:R={self.rr_ratio}, "
-              f"mitigation={self.mitigation_src}, active={active} FVGs")
+              f"mitigation={self.mitigation_src}{trend_tag}, active={active} FVGs")
     
     def stop(self):
         self._running = False
@@ -191,11 +200,17 @@ class FVGDetector:
     
     def reload_settings(self, settings: Dict):
         for key in ('min_fvg_pct', 'rr_ratio', 'sl_buffer_pct', 'timeframe',
-                     'max_fvg_per_symbol', 'mitigation_src'):
+                     'max_fvg_per_symbol', 'mitigation_src',
+                     'trend_filter_enabled', 'trend_ema_period'):
             if key in settings:
-                setattr(self, key, type(getattr(self, key))(settings[key]))
+                current = getattr(self, key)
+                if isinstance(current, bool):
+                    setattr(self, key, bool(settings[key]))
+                else:
+                    setattr(self, key, type(current)(settings[key]))
+        trend_tag = f", trend=EMA{self.trend_ema_period}" if self.trend_filter_enabled else ""
         print(f"[FVG] 🔄 Settings: min={self.min_fvg_pct}%, R:R={self.rr_ratio}, "
-              f"buffer={self.sl_buffer_pct}%, src={self.mitigation_src}")
+              f"buffer={self.sl_buffer_pct}%, src={self.mitigation_src}{trend_tag}")
     
     # ========================================
     # FVG DETECTION (Pine Script exact)
@@ -375,6 +390,62 @@ class FVGDetector:
         return [f for idx, f in enumerate(fvgs) if idx not in to_remove]
     
     # ========================================
+    # TREND FILTER (EMA-based)
+    # ========================================
+    
+    @staticmethod
+    def _compute_ema(closes: List[float], period: int) -> float:
+        """Compute EMA (Exponential Moving Average) from close prices."""
+        if len(closes) < period:
+            return 0.0
+        
+        multiplier = 2.0 / (period + 1)
+        ema = sum(closes[:period]) / period  # SMA seed
+        
+        for price in closes[period:]:
+            ema = (price - ema) * multiplier + ema
+        
+        return ema
+    
+    def _update_trend(self, symbol: str, klines: List[Dict]):
+        """Compute EMA and determine trend direction for symbol."""
+        if not self.trend_filter_enabled or len(klines) < self.trend_ema_period + 5:
+            return
+        
+        closes = [k['close'] for k in klines]
+        ema_value = self._compute_ema(closes, self.trend_ema_period)
+        current_price = closes[-1]
+        
+        if ema_value <= 0:
+            return
+        
+        trend = 'bullish' if current_price > ema_value else 'bearish'
+        
+        self._symbol_trends[symbol] = {
+            'trend': trend,
+            'ema': round(ema_value, 6),
+            'price': current_price,
+            'distance_pct': round((current_price - ema_value) / ema_value * 100, 2),
+        }
+    
+    def _check_trend_filter(self, symbol: str, direction: str) -> bool:
+        """
+        Check if FVG direction aligns with trend.
+        Returns True if trade is allowed.
+        
+        Bullish FVG (LONG) → allowed only in uptrend (price > EMA)
+        Bearish FVG (SHORT) → allowed only in downtrend (price < EMA)
+        """
+        if not self.trend_filter_enabled:
+            return True
+        
+        trend_data = self._symbol_trends.get(symbol)
+        if not trend_data:
+            return True  # no data yet, allow
+        
+        return trend_data['trend'] == direction
+    
+    # ========================================
     # SCANNING
     # ========================================
     
@@ -385,12 +456,19 @@ class FVGDetector:
             minutes = self.TF_MINUTES.get(self.timeframe, 15)
             needed = min(1000, int(self.MAX_AGE / 60 / minutes) + 10)
             
+            # Ensure enough klines for EMA computation
+            if self.trend_filter_enabled:
+                needed = max(needed, self.trend_ema_period + 20)
+            
             klines = self.bybit.get_klines(
                 symbol=symbol, interval=interval, limit=needed
             )
             
             if not klines or len(klines) < 10:
                 return 0
+            
+            # Update trend data from klines
+            self._update_trend(symbol, klines)
             
             new_fvgs = self._detect_fvg_from_klines(symbol, klines)
             
@@ -524,6 +602,20 @@ class FVGDetector:
     
     def _on_retest(self, fvg: FVGZone, current_price: float):
         """Handle successful FVG retest → generate trade signal."""
+        
+        # === TREND FILTER ===
+        if not self._check_trend_filter(fvg.symbol, fvg.direction):
+            trend_data = self._symbol_trends.get(fvg.symbol, {})
+            trend_dir = trend_data.get('trend', '?')
+            ema_val = trend_data.get('ema', 0)
+            label = 'LONG' if fvg.direction == 'bullish' else 'SHORT'
+            print(f"[FVG] 🚫 TREND BLOCKED: {fvg.symbol} {label} "
+                  f"(FVG={fvg.direction}, trend={trend_dir}, "
+                  f"EMA{self.trend_ema_period}=${ema_val:.4f})")
+            fvg.status = 'invalidated'
+            self._stats['fvg_filtered_trend'] += 1
+            return
+        
         sl_price, tp_price = self._calculate_sl_tp(fvg, current_price)
         
         fvg.status = 'traded'
@@ -535,10 +627,15 @@ class FVGDetector:
         label = 'LONG' if signal_type == 'BUY' else 'SHORT'
         risk_pct = abs(current_price - sl_price) / current_price * 100
         
+        trend_tag = ""
+        trend_data = self._symbol_trends.get(fvg.symbol)
+        if self.trend_filter_enabled and trend_data:
+            trend_tag = f"\n  Trend: {trend_data['trend'].upper()} (EMA{self.trend_ema_period}=${trend_data['ema']:.4f})"
+        
         print(f"[FVG] ✅ RETEST SIGNAL: {fvg.symbol} {label}\n"
               f"  FVG: ${fvg.low:.4f} - ${fvg.high:.4f} ({fvg.size_pct}%)\n"
               f"  Entry: ${current_price:.4f}, SL: ${sl_price:.4f}, TP: ${tp_price:.4f}\n"
-              f"  Risk: {risk_pct:.2f}%, R:R: {self.rr_ratio}")
+              f"  Risk: {risk_pct:.2f}%, R:R: {self.rr_ratio}{trend_tag}")
         
         self._stats['fvg_retested'] += 1
         
@@ -724,6 +821,9 @@ class FVGDetector:
             'rr_ratio': self.rr_ratio,
             'sl_buffer_pct': self.sl_buffer_pct,
             'mitigation_src': self.mitigation_src,
+            'trend_filter_enabled': self.trend_filter_enabled,
+            'trend_ema_period': self.trend_ema_period,
+            'trends': dict(self._symbol_trends),
         }
     
     def clear_zones(self) -> int:
