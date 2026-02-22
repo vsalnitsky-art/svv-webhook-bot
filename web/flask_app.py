@@ -1218,6 +1218,14 @@ def register_api_routes(app):
             'ctr_sl_monitor_enabled': db.get_setting('ctr_sl_monitor_enabled', '0') in ('1', 'true', 'True', 'yes'),
             'ctr_sl_monitor_pct': db.get_setting('ctr_sl_monitor_pct', '0'),
             'ctr_sl_check_interval': db.get_setting('ctr_sl_check_interval', '5'),
+            # FVG Detector
+            'ctr_fvg_enabled': db.get_setting('ctr_fvg_enabled', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_fvg_timeframe': db.get_setting('ctr_fvg_timeframe', '15m'),
+            'ctr_fvg_min_pct': db.get_setting('ctr_fvg_min_pct', '0.1'),
+            'ctr_fvg_max_per_symbol': db.get_setting('ctr_fvg_max_per_symbol', '5'),
+            'ctr_fvg_rr_ratio': db.get_setting('ctr_fvg_rr_ratio', '1.5'),
+            'ctr_fvg_sl_buffer_pct': db.get_setting('ctr_fvg_sl_buffer_pct', '0.2'),
+            'ctr_fvg_scan_interval': db.get_setting('ctr_fvg_scan_interval', '300'),
         }
         
         # Статистика фільтрації
@@ -1348,6 +1356,10 @@ def register_api_routes(app):
             'ctr_telegram_mode',
             # SL Monitor
             'ctr_sl_monitor_enabled', 'ctr_sl_monitor_pct', 'ctr_sl_check_interval',
+            # FVG Detector
+            'ctr_fvg_enabled', 'ctr_fvg_timeframe', 'ctr_fvg_min_pct',
+            'ctr_fvg_max_per_symbol', 'ctr_fvg_rr_ratio', 'ctr_fvg_sl_buffer_pct',
+            'ctr_fvg_scan_interval',
         ]
         
         for key in ctr_settings:
@@ -1585,6 +1597,39 @@ def register_api_routes(app):
                 return jsonify({'success': False, 'error': 'Trade executor not initialized'})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
+    
+    # ========================================
+    # FVG Detector Routes
+    # ========================================
+    
+    @app.route('/api/ctr/fvg/zones', methods=['GET'])
+    def api_ctr_fvg_zones():
+        """Get all FVG zones"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        return jsonify({
+            'zones': job.get_fvg_zones(),
+            'stats': job.get_fvg_stats(),
+        })
+    
+    @app.route('/api/ctr/fvg/clear', methods=['POST'])
+    def api_ctr_fvg_clear():
+        """Clear all FVG zones"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        count = job.clear_fvg_zones()
+        return jsonify({'success': True, 'cleared': count})
+    
+    @app.route('/api/ctr/fvg/scan', methods=['POST'])
+    def api_ctr_fvg_scan():
+        """Manual FVG scan"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        job.scan_fvg_now()
+        return jsonify({'success': True})
     
     # ========================================
     # QM Zone Hunter Routes

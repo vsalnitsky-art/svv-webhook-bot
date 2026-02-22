@@ -432,7 +432,8 @@ class CTRTradeExecutor:
             return False
     
     def _open_position(self, symbol: str, signal_type: str, price: float,
-                       settings: Dict, skip_native_sl: bool = False) -> Optional[Dict]:
+                       settings: Dict, skip_native_sl: bool = False,
+                       override_sl: float = 0, override_tp: float = 0) -> Optional[Dict]:
         """Відкрити нову позицію"""
         try:
             # Side: BUY signal → Buy side (Long), SELL signal → Sell side (Short)
@@ -461,6 +462,12 @@ class CTRTradeExecutor:
                     sl_price = round(price * (1 - settings['sl_pct'] / 100), 8)
                 else:
                     sl_price = round(price * (1 + settings['sl_pct'] / 100), 8)
+            
+            # FVG overrides — use exact SL/TP prices from FVG calculation
+            if override_sl > 0:
+                sl_price = round(override_sl, 8)
+            if override_tp > 0:
+                tp_price = round(override_tp, 8)
             
             print(f"[CTR Trade] 📈 Opening {side} {symbol}: "
                   f"qty={sizing['qty']}, price≈${price:.4f}, "
@@ -503,7 +510,8 @@ class CTRTradeExecutor:
     # =============================================
     
     def execute_signal(self, symbol: str, signal_type: str, price: float,
-                       reason: str = "", skip_native_sl: bool = False) -> Dict:
+                       reason: str = "", skip_native_sl: bool = False,
+                       override_sl: float = 0, override_tp: float = 0) -> Dict:
         """
         Головна функція: обробити CTR сигнал і виконати угоду
         
@@ -574,7 +582,8 @@ class CTRTradeExecutor:
                 result['action'] = 'open_new'
             
             # 5. Open new position
-            order = self._open_position(symbol, signal_type, price, settings, skip_native_sl)
+            order = self._open_position(symbol, signal_type, price, settings, skip_native_sl,
+                                        override_sl=override_sl, override_tp=override_tp)
             
             if order:
                 result['success'] = True

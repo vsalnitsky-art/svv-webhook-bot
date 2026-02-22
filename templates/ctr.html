@@ -620,6 +620,74 @@
                     </small>
                 </div>
                 
+                <!-- FVG Detector Settings -->
+                <div class="trade-panel" style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        📐 FVG Detector
+                        <span class="status-badge {{ 'status-running' if settings.ctr_fvg_enabled else 'status-stopped' }}" style="font-size: 0.7em;">
+                            {{ 'ON' if settings.ctr_fvg_enabled else 'OFF' }}
+                        </span>
+                    </h4>
+                    
+                    <label class="switch" style="margin-bottom: 10px;">
+                        <input type="checkbox" id="fvg-enabled" {{ 'checked' if settings.ctr_fvg_enabled else '' }}>
+                        <span class="slider"></span>
+                    </label>
+                    <small style="color: #ccc; margin-left: 8px;">Enable FVG Detection</small>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px;">
+                        <div>
+                            <small style="color:#aaa;">Timeframe</small>
+                            <select id="fvg-timeframe" class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                                {% for tf in ['1m','3m','5m','15m','30m','1h','4h'] %}
+                                <option value="{{ tf }}" {{ 'selected' if settings.ctr_fvg_timeframe == tf else '' }}>{{ tf }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">R:R Ratio</small>
+                            <input type="number" id="fvg-rr-ratio" value="{{ settings.ctr_fvg_rr_ratio }}"
+                                   step="0.1" min="0.5" max="10"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">Min FVG Size %</small>
+                            <input type="number" id="fvg-min-pct" value="{{ settings.ctr_fvg_min_pct }}"
+                                   step="0.01" min="0.01" max="5"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">SL Buffer %</small>
+                            <input type="number" id="fvg-sl-buffer" value="{{ settings.ctr_fvg_sl_buffer_pct }}"
+                                   step="0.05" min="0" max="2"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">Max FVG/Symbol</small>
+                            <input type="number" id="fvg-max-per-symbol" value="{{ settings.ctr_fvg_max_per_symbol }}"
+                                   step="1" min="1" max="20"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">Scan Interval (s)</small>
+                            <input type="number" id="fvg-scan-interval" value="{{ settings.ctr_fvg_scan_interval }}"
+                                   step="60" min="60" max="3600"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-sm btn-secondary" onclick="saveFVGSettings()" style="margin-top: 10px; width: 100%;">
+                        💾 Save FVG Settings
+                    </button>
+                    
+                    <small style="color: #888; display: block; margin-top: 8px;">
+                        <b>FVG:</b> Знаходить Fair Value Gaps на Bybit Futures<br>
+                        • Bullish FVG → ціна ретестує → LONG<br>
+                        • Bearish FVG → ціна ретестує → SHORT<br>
+                        • SL на краю FVG + buffer, TP по R:R
+                    </small>
+                </div>
+                
                 <!-- Trade Settings -->
                 <div class="trade-panel">
                     <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
@@ -810,6 +878,43 @@
                 </div>
             </div>
             
+            <!-- 📐 FVG Zones -->
+            {% if settings.ctr_fvg_enabled %}
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <div class="panel-header">
+                    <h2>📐 FVG Zones</h2>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="fvg-count" style="font-size: 0.85em; color: #888;">—</span>
+                        <button class="btn btn-sm" onclick="scanFVGNow()" style="background: rgba(33,150,243,0.2); color: #2196f3; border: 1px solid rgba(33,150,243,0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8em;">
+                            🔍 Scan Now
+                        </button>
+                        <button class="btn btn-sm" onclick="clearFVGZones()" style="background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8em;">
+                            🗑️ Clear
+                        </button>
+                    </div>
+                </div>
+                
+                <table class="results-table" id="fvg-table" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Direction</th>
+                            <th>Zone</th>
+                            <th>Size %</th>
+                            <th>Status</th>
+                            <th>Age</th>
+                            <th>SL</th>
+                            <th>TP</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fvg-body"></tbody>
+                </table>
+                <div id="fvg-empty" class="empty-state" style="padding: 15px;">
+                    <small style="color:#888;">FVG зони завантажуються...</small>
+                </div>
+            </div>
+            {% endif %}
+            
             <!-- Executed Signals History -->
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
                 <div class="panel-header">
@@ -855,8 +960,11 @@
                             <td class="stc-value {{ 'stc-oversold' if sig.stc <= 25 else 'stc-overbought' if sig.stc >= 75 else 'stc-neutral' }}">
                                 {{ "%.2f"|format(sig.stc) }}
                             </td>
-                            <td style="font-size: 0.8em; color: {{ '#ff5252' if 'SL' in (sig.reason|default('')) else '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
+                            <td style="font-size: 0.8em; color: {{ '#2196f3' if 'FVG' in (sig.reason|default('')) else '#ff5252' if 'SL' in (sig.reason|default('')) else '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
                                 {{ sig.reason|default('Crossover') }}
+                                {% if sig.is_fvg is defined and sig.is_fvg %}
+                                <br><small style="color:#666;">SL: ${{ '%.4f'|format(sig.sl_price|default(0)) }} | TP: ${{ '%.4f'|format(sig.tp_price|default(0)) }} | R:R {{ sig.rr_ratio|default(0) }}</small>
+                                {% endif %}
                             </td>
                             <td>
                                 <button class="watchlist-remove" onclick="deleteSignal('{{ sig.timestamp }}', {{ loop.index0 }})" title="Видалити">✕</button>
@@ -1365,6 +1473,132 @@ async function loadPositions() {
 loadPositions();
 {% if ctr_running %}
 setInterval(loadPositions, 10000);
+{% endif %}
+
+// ========================================
+// FVG Detector
+// ========================================
+async function saveFVGSettings() {
+    const data = {
+        ctr_fvg_enabled: document.getElementById('fvg-enabled').checked ? '1' : '0',
+        ctr_fvg_timeframe: document.getElementById('fvg-timeframe').value,
+        ctr_fvg_rr_ratio: document.getElementById('fvg-rr-ratio').value,
+        ctr_fvg_min_pct: document.getElementById('fvg-min-pct').value,
+        ctr_fvg_sl_buffer_pct: document.getElementById('fvg-sl-buffer').value,
+        ctr_fvg_max_per_symbol: document.getElementById('fvg-max-per-symbol').value,
+        ctr_fvg_scan_interval: document.getElementById('fvg-scan-interval').value,
+    };
+    try {
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        alert('FVG settings saved! Restart scanner to apply.');
+    } catch (e) {
+        alert('Error saving: ' + e);
+    }
+}
+
+async function loadFVGZones() {
+    try {
+        const res = await fetch('/api/ctr/fvg/zones');
+        const data = await res.json();
+        
+        const tbody = document.getElementById('fvg-body');
+        const table = document.getElementById('fvg-table');
+        const empty = document.getElementById('fvg-empty');
+        const countEl = document.getElementById('fvg-count');
+        
+        if (!tbody) return;
+        
+        const zones = data.zones || [];
+        const stats = data.stats || {};
+        
+        const activeCount = zones.filter(z => z.status === 'waiting' || z.status === 'entered').length;
+        countEl.textContent = `${activeCount} active / ${zones.length} total | Detected: ${stats.fvg_detected || 0} | Traded: ${stats.fvg_retested || 0}`;
+        
+        if (zones.length === 0) {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = '<small style="color:#888;">Немає FVG зон' +
+                (stats.running ? '' : ' (FVG Detector вимкнений)') + '</small>';
+            return;
+        }
+        
+        table.style.display = '';
+        empty.style.display = 'none';
+        
+        let html = '';
+        zones.forEach(z => {
+            const isBull = z.direction === 'bullish';
+            const dirColor = isBull ? '#00c853' : '#ff5252';
+            const dirLabel = isBull ? '🟢 Bull' : '🔴 Bear';
+            
+            const statusColors = {
+                'waiting': '#888', 'entered': '#ff9800',
+                'retested': '#2196f3', 'traded': '#00c853',
+                'invalidated': '#ff5252', 'expired': '#666'
+            };
+            const statusEmoji = {
+                'waiting': '⏳', 'entered': '🎯',
+                'retested': '✅', 'traded': '💰',
+                'invalidated': '❌', 'expired': '⏰'
+            };
+            
+            const age = z.age_min < 60 ? `${Math.round(z.age_min)}m` :
+                        `${(z.age_min / 60).toFixed(1)}h`;
+            
+            const slStr = z.sl_price > 0 ? fmtPrice(z.sl_price) : '—';
+            const tpStr = z.tp_price > 0 ? fmtPrice(z.tp_price) : '—';
+            
+            const rowBg = z.status === 'entered' ? 'rgba(255,152,0,0.06)' :
+                          z.status === 'traded' ? 'rgba(0,200,83,0.06)' :
+                          z.status === 'invalidated' ? 'rgba(255,82,82,0.04)' : 'transparent';
+            
+            html += `<tr style="background:${rowBg};">
+                <td><b>${z.symbol}</b></td>
+                <td><span style="color:${dirColor};font-weight:600;">${dirLabel}</span></td>
+                <td style="font-family:monospace;font-size:0.82em;">${fmtPrice(z.low)} — ${fmtPrice(z.high)}</td>
+                <td>${z.size_pct}%</td>
+                <td><span style="color:${statusColors[z.status] || '#888'};">${statusEmoji[z.status] || ''} ${z.status}</span></td>
+                <td style="font-size:0.85em;color:#aaa;">${age}</td>
+                <td style="font-size:0.82em;">${slStr}</td>
+                <td style="font-size:0.82em;">${tpStr}</td>
+            </tr>`;
+        });
+        
+        tbody.innerHTML = html;
+    } catch (e) {
+        console.error('FVG load error:', e);
+    }
+}
+
+async function scanFVGNow() {
+    try {
+        await fetch('/api/ctr/fvg/scan', {method: 'POST'});
+        setTimeout(loadFVGZones, 2000);
+    } catch (e) {
+        console.error('FVG scan error:', e);
+    }
+}
+
+async function clearFVGZones() {
+    if (!confirm('Clear all FVG zones?')) return;
+    try {
+        await fetch('/api/ctr/fvg/clear', {method: 'POST'});
+        loadFVGZones();
+    } catch (e) {
+        console.error('FVG clear error:', e);
+    }
+}
+
+// Load FVG zones
+{% if settings.ctr_fvg_enabled %}
+loadFVGZones();
+{% if ctr_running %}
+setInterval(loadFVGZones, 15000);
+{% endif %}
 {% endif %}
 </script>
 {% endblock %}

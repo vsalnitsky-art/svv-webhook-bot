@@ -28,6 +28,14 @@ except ImportError:
     TRADE_AVAILABLE = False
     print("[CTR Job] ⚠️ Trade executor not available")
 
+# FVG Detector (optional)
+try:
+    from detection.fvg_detector import FVGDetector
+    FVG_AVAILABLE = True
+except ImportError:
+    FVG_AVAILABLE = False
+    print("[CTR Job] ⚠️ FVG Detector not available")
+
 # SMCTrendFilter is now built-in to CTRFastScanner (no separate import needed)
 
 
@@ -56,6 +64,9 @@ class CTRFastJob:
         self._virtual_positions: Dict[str, Dict] = {}  # symbol -> {direction, entry_price, timestamp}
         self._sl_cooldown: Dict[str, float] = {}  # symbol -> timestamp of last SL trigger
         self._sl_monitor_thread: Optional[threading.Thread] = None
+        
+        # FVG Detector
+        self._fvg_detector: Optional['FVGDetector'] = None
         
         # Trade executor (Bybit Futures)
         self._trade_executor: Optional['CTRTradeExecutor'] = None
@@ -130,6 +141,15 @@ class CTRFastJob:
         self.sl_monitor_pct = float(self.db.get_setting('ctr_sl_monitor_pct', '0'))
         self.sl_check_interval = int(self.db.get_setting('ctr_sl_check_interval', '5'))
         
+        # FVG Detector
+        self.fvg_enabled = _b('ctr_fvg_enabled', '0')
+        self.fvg_timeframe = self.db.get_setting('ctr_fvg_timeframe', '15m')
+        self.fvg_min_pct = float(self.db.get_setting('ctr_fvg_min_pct', '0.1'))
+        self.fvg_max_per_symbol = int(self.db.get_setting('ctr_fvg_max_per_symbol', '5'))
+        self.fvg_rr_ratio = float(self.db.get_setting('ctr_fvg_rr_ratio', '1.5'))
+        self.fvg_sl_buffer_pct = float(self.db.get_setting('ctr_fvg_sl_buffer_pct', '0.2'))
+        self.fvg_scan_interval = int(self.db.get_setting('ctr_fvg_scan_interval', '300'))
+        
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
         self.watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
@@ -201,8 +221,9 @@ class CTRFastJob:
             reason = signal.get('reason', '')
             
             # v2.4: Trend Guard signals are priority — they bypass dedup
-            # SL signals are also priority
-            is_priority = "Trend Guard" in reason or signal.get('is_sl', False)
+            # SL signals and FVG signals are also priority
+            is_priority = ("Trend Guard" in reason or signal.get('is_sl', False)
+                          or signal.get('is_fvg', False))
             
             # === ДЕДУПЛІКАЦІЯ ===
             if not is_priority and self._is_duplicate_signal(symbol, signal_type):
@@ -253,12 +274,22 @@ class CTRFastJob:
                     # When our SL monitor is active, tell executor to skip Bybit's native SL
                     skip_native_sl = self.sl_monitor_enabled and self.sl_monitor_pct > 0
                     
+                    # FVG signals provide their own SL/TP
+                    override_sl = signal.get('sl_price', 0) if signal.get('is_fvg') else 0
+                    override_tp = signal.get('tp_price', 0) if signal.get('is_fvg') else 0
+                    
+                    # FVG always sets its own SL on exchange
+                    if signal.get('is_fvg') and override_sl > 0:
+                        skip_native_sl = False
+                    
                     trade_result = self._trade_executor.execute_signal(
                         symbol=symbol,
                         signal_type=signal_type,
                         price=signal.get('price', 0),
                         reason=reason,
-                        skip_native_sl=skip_native_sl
+                        skip_native_sl=skip_native_sl,
+                        override_sl=override_sl,
+                        override_tp=override_tp,
                     )
                     
                     if trade_result['success']:
@@ -289,16 +320,27 @@ class CTRFastJob:
             signals_str = self.db.get_setting('ctr_signals', '[]')
             signals = json.loads(signals_str)
             
-            signals.append({
+            sig_data = {
                 'symbol': signal['symbol'],
                 'type': signal['type'],
                 'price': signal['price'],
-                'stc': signal['stc'],
-                'timeframe': signal['timeframe'],
+                'stc': signal.get('stc', 0),
+                'timeframe': signal.get('timeframe', self.timeframe if hasattr(self, 'timeframe') else '15m'),
                 'smc_filtered': signal.get('smc_filtered', False),
                 'reason': signal.get('reason', 'Crossover'),
                 'timestamp': datetime.now(timezone.utc).isoformat()
-            })
+            }
+            
+            # FVG-specific fields
+            if signal.get('is_fvg'):
+                sig_data['is_fvg'] = True
+                sig_data['sl_price'] = signal.get('sl_price', 0)
+                sig_data['tp_price'] = signal.get('tp_price', 0)
+                sig_data['fvg_high'] = signal.get('fvg_high', 0)
+                sig_data['fvg_low'] = signal.get('fvg_low', 0)
+                sig_data['rr_ratio'] = signal.get('rr_ratio', 0)
+            
+            signals.append(sig_data)
             
             # Зберігаємо останні 500 сигналів
             signals = signals[-500:]
@@ -468,6 +510,70 @@ class CTRFastJob:
             except Exception as e:
                 print(f"[CTR Job] ❌ SL Trade execution error: {e}")
     
+    # ========================================
+    # FVG DETECTOR
+    # ========================================
+    
+    def _start_fvg_detector(self):
+        """Initialize and start FVG detector using Bybit connector"""
+        try:
+            if self._fvg_detector:
+                self._fvg_detector.stop()
+            
+            # Get Bybit connector from trade executor or create new one
+            bybit = None
+            if self._trade_executor and hasattr(self._trade_executor, 'bybit'):
+                bybit = self._trade_executor.bybit
+            else:
+                try:
+                    from core.bybit_connector import get_connector
+                    bybit = get_connector()
+                except:
+                    print("[CTR Job] ⚠️ FVG: Cannot get Bybit connector")
+                    return
+            
+            self._fvg_detector = FVGDetector(
+                db=self.db,
+                bybit_connector=bybit,
+                timeframe=self.fvg_timeframe,
+                min_fvg_pct=self.fvg_min_pct,
+                max_fvg_per_symbol=self.fvg_max_per_symbol,
+                rr_ratio=self.fvg_rr_ratio,
+                sl_buffer_pct=self.fvg_sl_buffer_pct,
+                scan_interval=self.fvg_scan_interval,
+                on_signal=self._on_signal,
+            )
+            
+            self._fvg_detector.start(
+                watchlist=self.watchlist,
+                price_getter=self._get_current_price
+            )
+        except Exception as e:
+            print(f"[CTR Job] ❌ FVG Detector start error: {e}")
+    
+    def get_fvg_zones(self) -> List[Dict]:
+        """Get FVG zones for UI"""
+        if self._fvg_detector:
+            return self._fvg_detector.get_zones()
+        return []
+    
+    def get_fvg_stats(self) -> Dict:
+        """Get FVG statistics"""
+        if self._fvg_detector:
+            return self._fvg_detector.get_stats()
+        return {'running': False, 'active_fvg': 0, 'total_fvg': 0}
+    
+    def clear_fvg_zones(self) -> int:
+        """Clear all FVG zones"""
+        if self._fvg_detector:
+            return self._fvg_detector.clear_zones()
+        return 0
+    
+    def scan_fvg_now(self):
+        """Manual FVG scan trigger"""
+        if self._fvg_detector:
+            self._fvg_detector.scan_now()
+    
     def get_virtual_positions(self) -> List[Dict]:
         """Get all virtual positions with current P&L for UI"""
         result = []
@@ -598,9 +704,14 @@ class CTRFastJob:
             if self.sl_monitor_enabled and self.sl_monitor_pct > 0:
                 self._start_sl_monitor()
             
+            # Start FVG Detector if enabled
+            if self.fvg_enabled and FVG_AVAILABLE:
+                self._start_fvg_detector()
+            
             smc_status = "SMC✓" if self.smc_filter_enabled else ""
             sl_status = f" SL={self.sl_monitor_pct}%" if self.sl_monitor_enabled and self.sl_monitor_pct > 0 else ""
-            print(f"[CTR Job] ✅ Started with {len(self.watchlist)} symbols {smc_status}{sl_status}")
+            fvg_status = f" FVG={self.fvg_timeframe}" if self.fvg_enabled and FVG_AVAILABLE else ""
+            print(f"[CTR Job] ✅ Started with {len(self.watchlist)} symbols {smc_status}{sl_status}{fvg_status}")
             return True
     
     def stop(self):
@@ -612,6 +723,10 @@ class CTRFastJob:
             if self._scanner:
                 self._scanner.stop()
                 self._scanner = None
+            
+            if self._fvg_detector:
+                self._fvg_detector.stop()
+                self._fvg_detector = None
             
             self._running = False
             print("[CTR Job] ❌ Stopped")
@@ -699,6 +814,24 @@ class CTRFastJob:
             if not (self._sl_monitor_thread and self._sl_monitor_thread.is_alive()):
                 self._start_sl_monitor()
             print(f"[CTR Job] 🛑 SL Monitor: {self.sl_monitor_pct}%, interval={self.sl_check_interval}s")
+        
+        # FVG Detector reload
+        if self._running and FVG_AVAILABLE:
+            if self.fvg_enabled:
+                if self._fvg_detector:
+                    self._fvg_detector.reload_settings({
+                        'min_fvg_pct': self.fvg_min_pct,
+                        'max_fvg_per_symbol': self.fvg_max_per_symbol,
+                        'rr_ratio': self.fvg_rr_ratio,
+                        'sl_buffer_pct': self.fvg_sl_buffer_pct,
+                        'timeframe': self.fvg_timeframe,
+                    })
+                else:
+                    self._start_fvg_detector()
+            elif self._fvg_detector:
+                self._fvg_detector.stop()
+                self._fvg_detector = None
+                print("[CTR Job] 📐 FVG Detector disabled")
     
     def delete_signal(self, timestamp: str) -> bool:
         """Видалити конкретний сигнал за timestamp"""
