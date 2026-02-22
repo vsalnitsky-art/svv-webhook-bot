@@ -226,9 +226,19 @@ class FVGDetector:
         new_fvgs = []
         existing_ids = set(self._fvg_zones.keys())
         
-        # Scan last portion of klines (recent candles)
-        # Skip the last candle (it's still forming)
-        scan_range = range(2, len(klines) - 1)
+        # Only scan recent candles (MAX_AGE worth)
+        # For 15m TF: 48h = 192 candles; for 1h: 48 candles
+        tf_minutes = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+                      '1h': 60, '4h': 240, '1d': 1440}
+        minutes = tf_minutes.get(self.timeframe, 15)
+        max_candles = min(len(klines) - 1, int(self.MAX_AGE / 60 / minutes) + 3)
+        
+        # Start from recent end, skip last candle (still forming)
+        start_idx = max(2, len(klines) - max_candles)
+        scan_range = range(start_idx, len(klines) - 1)
+        
+        # Get current price for immediate validation check
+        current_price = klines[-1]['close'] if klines else 0
         
         for i in scan_range:
             c_prev2 = klines[i - 2]  # 2 candles ago
@@ -247,21 +257,30 @@ class FVGDetector:
                     size_pct = (fvg_high - fvg_low) / mid * 100 if mid > 0 else 0
                     
                     if size_pct >= self.min_fvg_pct:
-                        candle_dt = datetime.fromtimestamp(
-                            c_prev1['timestamp'] / 1000, tz=timezone.utc
-                        ).isoformat()
+                        # Skip if already invalidated: check all candles AFTER this FVG
+                        already_filled = False
+                        for j in range(i + 1, len(klines)):
+                            # Bullish FVG invalidated if any candle's low went below fvg_low
+                            if klines[j]['low'] < fvg_low:
+                                already_filled = True
+                                break
                         
-                        new_fvgs.append(FVGZone(
-                            id=fvg_id,
-                            symbol=symbol,
-                            direction='bullish',
-                            high=fvg_high,
-                            low=fvg_low,
-                            size_pct=round(size_pct, 3),
-                            candle_time=candle_dt,
-                            detected_at=datetime.now(timezone.utc).isoformat(),
-                            status='waiting',
-                        ))
+                        if not already_filled:
+                            candle_dt = datetime.fromtimestamp(
+                                c_prev1['timestamp'] / 1000, tz=timezone.utc
+                            ).isoformat()
+                            
+                            new_fvgs.append(FVGZone(
+                                id=fvg_id,
+                                symbol=symbol,
+                                direction='bullish',
+                                high=fvg_high,
+                                low=fvg_low,
+                                size_pct=round(size_pct, 3),
+                                candle_time=candle_dt,
+                                detected_at=datetime.now(timezone.utc).isoformat(),
+                                status='waiting',
+                            ))
             
             # === Bearish FVG ===
             if c_prev2['low'] > c_curr['high']:
@@ -273,21 +292,30 @@ class FVGDetector:
                     size_pct = (fvg_high - fvg_low) / mid * 100 if mid > 0 else 0
                     
                     if size_pct >= self.min_fvg_pct:
-                        candle_dt = datetime.fromtimestamp(
-                            c_prev1['timestamp'] / 1000, tz=timezone.utc
-                        ).isoformat()
+                        # Skip if already invalidated: check all candles AFTER this FVG
+                        already_filled = False
+                        for j in range(i + 1, len(klines)):
+                            # Bearish FVG invalidated if any candle's high went above fvg_high
+                            if klines[j]['high'] > fvg_high:
+                                already_filled = True
+                                break
                         
-                        new_fvgs.append(FVGZone(
-                            id=fvg_id,
-                            symbol=symbol,
-                            direction='bearish',
-                            high=fvg_high,
-                            low=fvg_low,
-                            size_pct=round(size_pct, 3),
-                            candle_time=candle_dt,
-                            detected_at=datetime.now(timezone.utc).isoformat(),
-                            status='waiting',
-                        ))
+                        if not already_filled:
+                            candle_dt = datetime.fromtimestamp(
+                                c_prev1['timestamp'] / 1000, tz=timezone.utc
+                            ).isoformat()
+                            
+                            new_fvgs.append(FVGZone(
+                                id=fvg_id,
+                                symbol=symbol,
+                                direction='bearish',
+                                high=fvg_high,
+                                low=fvg_low,
+                                size_pct=round(size_pct, 3),
+                                candle_time=candle_dt,
+                                detected_at=datetime.now(timezone.utc).isoformat(),
+                                status='waiting',
+                            ))
         
         return new_fvgs
     
@@ -295,10 +323,17 @@ class FVGDetector:
         """Scan one symbol for new FVGs. Returns count of new FVGs found."""
         try:
             interval = self.INTERVAL_MAP.get(self.timeframe, '15')
+            
+            # Only request enough candles for MAX_AGE
+            tf_minutes = {'1m': 1, '3m': 3, '5m': 5, '15m': 15, '30m': 30,
+                          '1h': 60, '4h': 240, '1d': 1440}
+            minutes = tf_minutes.get(self.timeframe, 15)
+            needed = min(self.MAX_KLINES, int(self.MAX_AGE / 60 / minutes) + 10)
+            
             klines = self.bybit.get_klines(
                 symbol=symbol,
                 interval=interval,
-                limit=self.MAX_KLINES
+                limit=needed
             )
             
             if not klines or len(klines) < 10:
@@ -611,11 +646,15 @@ class FVGDetector:
     # ========================================
     
     def get_zones(self) -> List[Dict]:
-        """Get all FVG zones for UI display."""
+        """Get FVG zones for UI display (active + recently traded only)."""
         with self._lock:
             zones = []
             for fvg in sorted(self._fvg_zones.values(),
                               key=lambda f: f.detected_at, reverse=True):
+                # Only show actionable zones
+                if fvg.status not in ('waiting', 'entered', 'traded', 'retested'):
+                    continue
+                
                 d = fvg.to_dict()
                 d['age_min'] = round(fvg.age_seconds / 60, 1)
                 
