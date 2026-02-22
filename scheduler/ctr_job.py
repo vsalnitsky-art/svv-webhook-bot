@@ -251,7 +251,21 @@ class CTRFastJob:
                     send_telegram = True
             
             if send_telegram and notifier:
-                notifier.send_message(signal['message'])
+                msg = signal.get('message', '')
+                if not msg and signal.get('is_fvg'):
+                    # Build message for FVG signal
+                    direction = '🟢 LONG' if signal_type == 'BUY' else '🔴 SHORT'
+                    msg = (f"{'=' * 40}\n"
+                           f"📐 FVG Retest Signal\n"
+                           f"Монета: {symbol}\n"
+                           f"{direction} @ ${signal.get('price', 0):.4f}\n"
+                           f"FVG: ${signal.get('fvg_low', 0):.4f} - ${signal.get('fvg_high', 0):.4f}\n"
+                           f"SL: ${signal.get('sl_price', 0):.4f}\n"
+                           f"TP: ${signal.get('tp_price', 0):.4f}\n"
+                           f"R:R: {signal.get('rr_ratio', 1.5)}\n"
+                           f"{'=' * 40}")
+                if msg:
+                    notifier.send_message(msg)
             
             # Збереження в БД
             self._save_signal(signal)

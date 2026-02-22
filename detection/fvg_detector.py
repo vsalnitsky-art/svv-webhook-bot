@@ -396,16 +396,36 @@ class FVGDetector:
             
             if new_fvgs:
                 with self._lock:
+                    # Get all existing FVGs for this symbol (any status)
+                    existing_for_symbol = [
+                        f for f in self._fvg_zones.values()
+                        if f.symbol == symbol
+                    ]
                     active_count = sum(
-                        1 for f in self._fvg_zones.values()
-                        if f.symbol == symbol and f.status in ('waiting', 'entered')
+                        1 for f in existing_for_symbol
+                        if f.status in ('waiting', 'entered')
                     )
                     
                     added = 0
                     for fvg in new_fvgs:
                         if active_count + added >= self.max_fvg_per_symbol:
                             break
+                        
+                        # Skip if overlapping zone already exists (any status)
+                        # This prevents re-detection of same gap with different timestamp
+                        zone_exists = False
+                        for existing in existing_for_symbol:
+                            if (existing.direction == fvg.direction and
+                                abs(existing.high - fvg.high) / fvg.high < 0.001 and
+                                abs(existing.low - fvg.low) / fvg.low < 0.001):
+                                zone_exists = True
+                                break
+                        
+                        if zone_exists:
+                            continue
+                        
                         self._fvg_zones[fvg.id] = fvg
+                        existing_for_symbol.append(fvg)
                         added += 1
                         self._stats['fvg_detected'] += 1
                     
