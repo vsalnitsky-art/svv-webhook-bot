@@ -1558,7 +1558,8 @@ async function loadFVGZones() {
         
         const activeCount = zones.filter(z => z.status === 'waiting' || z.status === 'entered').length;
         const trendInfo = stats.trend_filter_enabled ? ` | 🚫 Trend: ${stats.fvg_filtered_trend || 0}` : '';
-        countEl.textContent = `${activeCount} active / ${zones.length} total | Detected: ${stats.fvg_detected || 0} | Traded: ${stats.fvg_retested || 0}${trendInfo}`;
+        const klineInfo = stats.fvg_retested_kline ? ` (${stats.fvg_retested_kline} via kline)` : '';
+        countEl.textContent = `${activeCount} active / ${zones.length} total | Detected: ${stats.fvg_detected || 0} | Traded: ${stats.fvg_retested || 0}${klineInfo}${trendInfo}`;
         
         // === Trend bar ===
         const trendBar = document.getElementById('fvg-trend-bar');

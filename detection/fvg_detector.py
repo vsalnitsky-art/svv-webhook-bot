@@ -149,6 +149,7 @@ class FVGDetector:
         self._stats = {
             'fvg_detected': 0,
             'fvg_retested': 0,
+            'fvg_retested_kline': 0,  # retests caught by kline check (not tick polling)
             'fvg_invalidated': 0,
             'fvg_filtered_size': 0,
             'fvg_filtered_overlap': 0,
@@ -304,9 +305,10 @@ class FVGDetector:
                     mid = (fvg_top + fvg_bot) / 2
                     pct = (fvg_top - fvg_bot) / mid * 100 if mid > 0 else 0
                     
-                    # Already mitigated by subsequent candles?
+                    # Already mitigated by subsequent CLOSED candles?
+                    # Exclude last candle (forming/unclosed) — len(klines)-1
                     already_mitigated = False
-                    for j in range(i + 1, len(klines)):
+                    for j in range(i + 1, len(klines) - 1):
                         val = klines[j]['close'] if self.mitigation_src == 'close' else klines[j]['low']
                         if val < fvg_bot:
                             already_mitigated = True
@@ -342,9 +344,9 @@ class FVGDetector:
                     mid = (fvg_top + fvg_bot) / 2
                     pct = (fvg_top - fvg_bot) / mid * 100 if mid > 0 else 0
                     
-                    # Already mitigated?
+                    # Already mitigated by subsequent CLOSED candles?
                     already_mitigated = False
-                    for j in range(i + 1, len(klines)):
+                    for j in range(i + 1, len(klines) - 1):
                         val = klines[j]['close'] if self.mitigation_src == 'close' else klines[j]['high']
                         if val > fvg_top:
                             already_mitigated = True
@@ -459,7 +461,7 @@ class FVGDetector:
     # ========================================
     
     def _scan_symbol(self, symbol: str) -> int:
-        """Scan one symbol for new FVGs."""
+        """Scan one symbol for new FVGs + check kline retests."""
         try:
             interval = self.INTERVAL_MAP.get(self.timeframe, '15')
             minutes = self.TF_MINUTES.get(self.timeframe, 15)
@@ -479,19 +481,22 @@ class FVGDetector:
             # Update trend data from klines
             self._update_trend(symbol, klines)
             
+            # === KLINE-BASED RETEST CHECK ===
+            # This catches retests that tick-polling (5s) may miss
+            # Check last few CLOSED candles against active FVGs
+            self._check_kline_retests(symbol, klines)
+            
             new_fvgs = self._detect_fvg_from_klines(symbol, klines)
             
             if new_fvgs:
                 with self._lock:
-                    # Get all existing FVGs for this symbol (any status)
+                    # Get only ACTIVE FVGs for this symbol for dedup check
+                    # Don't block new zones at same level as traded/invalidated ones
                     existing_for_symbol = [
                         f for f in self._fvg_zones.values()
-                        if f.symbol == symbol
+                        if f.symbol == symbol and f.status in ('waiting', 'entered')
                     ]
-                    active_count = sum(
-                        1 for f in existing_for_symbol
-                        if f.status in ('waiting', 'entered')
-                    )
+                    active_count = len(existing_for_symbol)
                     
                     added = 0
                     for fvg in new_fvgs:
@@ -527,6 +532,91 @@ class FVGDetector:
             print(f"[FVG] Error scanning {symbol}: {e}")
             return 0
     
+    def _check_kline_retests(self, symbol: str, klines: List[Dict]):
+        """
+        Kline-based retest detection — catches fast retests missed by tick polling.
+        
+        TradingView checks retest on CANDLE CLOSE, not on ticks.
+        For each active FVG, check if recent CLOSED candles touched the zone
+        and closed on the correct side (= successful retest).
+        
+        Bullish FVG retest: candle wick dipped into zone (low <= zone.high)
+                           AND candle closed above zone (close > zone.high)
+        Bearish FVG retest: candle wick pierced into zone (high >= zone.low)  
+                           AND candle closed below zone (close < zone.low)
+        """
+        with self._lock:
+            active_fvgs = [
+                f for f in self._fvg_zones.values()
+                if f.symbol == symbol and f.status in ('waiting', 'entered')
+            ]
+        
+        if not active_fvgs or len(klines) < 4:
+            return
+        
+        # Check last N closed candles (exclude forming candle = last one)
+        # N = scan_interval / TF_minutes, but at least 2, at most 10
+        minutes = self.TF_MINUTES.get(self.timeframe, 15)
+        n_candles = max(2, min(10, self.scan_interval // (minutes * 60) + 2))
+        # Closed candles: klines[:-1], take last n_candles of those
+        closed_candles = klines[-(n_candles + 1):-1]
+        
+        for fvg in active_fvgs:
+            for candle in closed_candles:
+                # Skip candles formed BEFORE the FVG was detected
+                try:
+                    fvg_detected_ts = datetime.fromisoformat(
+                        fvg.detected_at.replace('Z', '+00:00')
+                    ).timestamp() * 1000
+                    if candle['timestamp'] < fvg_detected_ts:
+                        continue
+                except:
+                    pass
+                
+                c_low = candle['low']
+                c_high = candle['high']
+                c_close = candle['close']
+                
+                if fvg.direction == 'bullish':
+                    # Bullish FVG: zone is BELOW price
+                    # Retest = wick dips into zone, candle closes ABOVE zone
+                    wick_touched = c_low <= fvg.high  # wick reached into/through zone
+                    close_above = c_close > fvg.high  # closed above zone = bounce
+                    
+                    # Mitigation: closed below zone bottom
+                    if c_close < fvg.low:
+                        fvg.status = 'invalidated'
+                        self._stats['fvg_invalidated'] += 1
+                        break
+                    
+                    if wick_touched and close_above:
+                        print(f"[FVG] 📊 Kline retest detected: {symbol} BULLISH "
+                              f"(candle low=${c_low:.4f} into zone ${fvg.low:.4f}-${fvg.high:.4f}, "
+                              f"close=${c_close:.4f})")
+                        self._stats['fvg_retested_kline'] += 1
+                        self._on_retest(fvg, c_close)
+                        break
+                
+                elif fvg.direction == 'bearish':
+                    # Bearish FVG: zone is ABOVE price
+                    # Retest = wick pierces into zone, candle closes BELOW zone
+                    wick_touched = c_high >= fvg.low  # wick reached into zone
+                    close_below = c_close < fvg.low   # closed below zone = rejection
+                    
+                    # Mitigation: closed above zone top
+                    if c_close > fvg.high:
+                        fvg.status = 'invalidated'
+                        self._stats['fvg_invalidated'] += 1
+                        break
+                    
+                    if wick_touched and close_below:
+                        print(f"[FVG] 📊 Kline retest detected: {symbol} BEARISH "
+                              f"(candle high=${c_high:.4f} into zone ${fvg.low:.4f}-${fvg.high:.4f}, "
+                              f"close=${c_close:.4f})")
+                        self._stats['fvg_retested_kline'] += 1
+                        self._on_retest(fvg, c_close)
+                        break
+    
     def _scan_all_symbols(self):
         """Scan all watchlist symbols."""
         total_new = 0
@@ -550,27 +640,30 @@ class FVGDetector:
     
     def _check_retest(self, fvg: FVGZone, current_price: float) -> Optional[str]:
         """
-        Check FVG retest state with Pine Script mitigation rules.
+        Check FVG retest state machine.
         
-        Mitigation (invalidation):
-          - mitigation_src='close':  Bull → close < zone.low;  Bear → close > zone.high
-          - mitigation_src='highlow': Bull → low < zone.low;   Bear → high > zone.high
-          
-        Note: In real-time monitoring we only have last price, so 'close' mode
-        uses current price as proxy for close.
+        Two detection modes work together:
+        1. Tick-based (this method, every 5s) — catches slow retests
+        2. Kline-based (_check_kline_retests, every scan) — catches fast retests
+        
+        State machine: waiting → entered → retested (or invalidated)
         """
         if current_price <= 0:
             return None
+        
+        zone_size = fvg.high - fvg.low
+        # Mitigation buffer: price must go beyond zone by half the FVG size
+        mit_buffer = zone_size * 0.5
         
         in_zone = fvg.low <= current_price <= fvg.high
         
         if fvg.status == 'waiting':
             if in_zone:
                 return 'entered'
-            # Mitigation check
-            if fvg.direction == 'bullish' and current_price < fvg.low:
+            # Mitigation check WITH buffer
+            if fvg.direction == 'bullish' and current_price < (fvg.low - mit_buffer):
                 return 'invalidated'
-            if fvg.direction == 'bearish' and current_price > fvg.high:
+            if fvg.direction == 'bearish' and current_price > (fvg.high + mit_buffer):
                 return 'invalidated'
             return None
         
@@ -581,13 +674,13 @@ class FVGDetector:
             if fvg.direction == 'bullish':
                 if current_price > fvg.high:
                     return 'retested'       # Bounced up → LONG
-                elif current_price < fvg.low:
+                elif current_price < (fvg.low - mit_buffer):
                     return 'invalidated'    # Mitigated
             
             elif fvg.direction == 'bearish':
                 if current_price < fvg.low:
                     return 'retested'       # Rejected down → SHORT
-                elif current_price > fvg.high:
+                elif current_price > (fvg.high + mit_buffer):
                     return 'invalidated'    # Mitigated
             
             return None
@@ -612,6 +705,10 @@ class FVGDetector:
     def _on_retest(self, fvg: FVGZone, current_price: float):
         """Handle successful FVG retest → generate trade signal."""
         
+        # Guard: don't process already-traded or invalidated FVGs
+        if fvg.status not in ('waiting', 'entered'):
+            return
+        
         # === TREND FILTER ===
         if not self._check_trend_filter(fvg.symbol, fvg.direction):
             trend_data = self._symbol_trends.get(fvg.symbol, {})
@@ -622,7 +719,8 @@ class FVGDetector:
             print(f"[FVG] 🚫 TREND BLOCKED: {fvg.symbol} {label} "
                   f"(FVG={fvg.direction}, trend={trend_dir}, "
                   f"Fast={fast_val:.4f}, Slow={slow_val:.4f})")
-            fvg.status = 'invalidated'
+            # Keep FVG in 'waiting' so it can be re-entered later if trend changes
+            fvg.status = 'waiting'
             self._stats['fvg_filtered_trend'] += 1
             return
         
