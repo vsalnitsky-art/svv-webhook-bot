@@ -923,6 +923,15 @@
                     </div>
                 </div>
                 
+                <!-- Trend Filter Status -->
+                <div id="fvg-trend-bar" style="display:none; margin: 10px 0; padding: 8px 12px; background: rgba(33,150,243,0.06); border-radius: 8px; border: 1px solid rgba(33,150,243,0.15);">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                        <span style="color: #2196f3; font-weight: 600; font-size: 12px;">📈 Trend Filter</span>
+                        <span id="fvg-trend-ema-label" style="color: #888; font-size: 11px;"></span>
+                    </div>
+                    <div id="fvg-trend-chips" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
+                </div>
+                
                 <table class="results-table" id="fvg-table" style="display:none;">
                     <thead>
                         <tr>
@@ -1550,6 +1559,32 @@ async function loadFVGZones() {
         const activeCount = zones.filter(z => z.status === 'waiting' || z.status === 'entered').length;
         const trendInfo = stats.trend_filter_enabled ? ` | 🚫 Trend: ${stats.fvg_filtered_trend || 0}` : '';
         countEl.textContent = `${activeCount} active / ${zones.length} total | Detected: ${stats.fvg_detected || 0} | Traded: ${stats.fvg_retested || 0}${trendInfo}`;
+        
+        // === Trend bar ===
+        const trendBar = document.getElementById('fvg-trend-bar');
+        const trendChips = document.getElementById('fvg-trend-chips');
+        const trendLabel = document.getElementById('fvg-trend-ema-label');
+        if (trendBar && stats.trend_filter_enabled && stats.trends) {
+            trendBar.style.display = '';
+            trendLabel.textContent = `EMA(${stats.trend_fast_ema || 5}/${stats.trend_slow_ema || 13}) on ${stats.timeframe || '15m'}`;
+            const entries = Object.entries(stats.trends).sort((a, b) => a[0].localeCompare(b[0]));
+            trendChips.innerHTML = entries.map(([sym, t]) => {
+                const isBull = t.trend === 'bullish';
+                const arrow = isBull ? '▲' : '▼';
+                const clr = isBull ? '#4caf50' : '#ff5252';
+                const bg = isBull ? 'rgba(76,175,80,0.12)' : 'rgba(255,82,82,0.12)';
+                const bdr = isBull ? 'rgba(76,175,80,0.3)' : 'rgba(255,82,82,0.3)';
+                const spread = t.spread_pct !== undefined ? ` (${t.spread_pct > 0 ? '+' : ''}${t.spread_pct}%)` : '';
+                const short = sym.replace('USDT', '');
+                return `<span title="${sym}: Fast=${t.fast}, Slow=${t.slow}${spread}" `
+                     + `style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;`
+                     + `border-radius:4px;font-size:11px;font-weight:600;`
+                     + `background:${bg};border:1px solid ${bdr};color:${clr};cursor:default;">`
+                     + `${arrow} ${short}</span>`;
+            }).join('');
+        } else if (trendBar) {
+            trendBar.style.display = 'none';
+        }
         
         if (zones.length === 0) {
             table.style.display = 'none';
