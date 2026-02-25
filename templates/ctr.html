@@ -308,6 +308,19 @@
         margin-bottom: 15px;
         opacity: 0.5;
     }
+    /* Module Quick Toggles */
+    .module-chip {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 3px 8px; border-radius: 6px; cursor: pointer;
+        font-size: 11px; font-weight: 600; user-select: none;
+        background: rgba(255,82,82,0.1); border: 1px solid rgba(255,82,82,0.25); color: #ff5252;
+        transition: all 0.2s;
+    }
+    .module-chip:has(input:checked) {
+        background: rgba(76,175,80,0.15); border-color: rgba(76,175,80,0.4); color: #4caf50;
+    }
+    .module-chip input { display: none; }
+    .module-chip:hover { filter: brightness(1.2); }
 </style>
 
 <div class="ctr-container">
@@ -405,6 +418,45 @@
                 <div class="panel-header">
                     <h2>⚙️ Settings</h2>
                     <button class="btn btn-sm btn-secondary" onclick="saveSettings()">Save</button>
+                </div>
+                
+                <!-- 📡 Active Modules Quick Toggles -->
+                <div style="padding: 8px; margin-bottom: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+                        <span style="font-size: 12px; font-weight: 600; color: #aaa;">📡 Модулі</span>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                        <label class="module-chip" id="chip-smc-filter" title="SMC Structure Filter">
+                            <input type="checkbox" id="mod-smc-filter" 
+                                   {{ 'checked' if settings.ctr_smc_filter_enabled else '' }}
+                                   onchange="toggleModule('ctr_smc_filter_enabled', this.checked)">
+                            <span>📊 SMC</span>
+                        </label>
+                        <label class="module-chip" id="chip-smc-trend" title="SMC Trend Filter (HTF)">
+                            <input type="checkbox" id="mod-smc-trend"
+                                   {{ 'checked' if settings.ctr_smc_trend_enabled else '' }}
+                                   onchange="toggleModule('ctr_smc_trend_enabled', this.checked)">
+                            <span>📈 Trend</span>
+                        </label>
+                        <label class="module-chip" id="chip-early-warning" title="Early Warning (15m divergence)">
+                            <input type="checkbox" id="mod-early-warning"
+                                   {{ 'checked' if settings.ctr_smc_trend_early_warning else '' }}
+                                   onchange="toggleModule('ctr_smc_trend_early_warning', this.checked)">
+                            <span>⚡ EW</span>
+                        </label>
+                        <label class="module-chip" id="chip-fvg" title="FVG Detector">
+                            <input type="checkbox" id="mod-fvg"
+                                   {{ 'checked' if settings.ctr_fvg_enabled else '' }}
+                                   onchange="toggleModule('ctr_fvg_enabled', this.checked)">
+                            <span>📐 FVG</span>
+                        </label>
+                        <label class="module-chip" id="chip-sl-monitor" title="SL Monitor">
+                            <input type="checkbox" id="mod-sl-monitor"
+                                   {{ 'checked' if settings.ctr_sl_monitor_enabled else '' }}
+                                   onchange="toggleModule('ctr_sl_monitor_enabled', this.checked)">
+                            <span>🛑 SL</span>
+                        </label>
+                    </div>
                 </div>
                 
                 <div class="settings-grid">
@@ -1022,6 +1074,63 @@
 </div>
 
 <script>
+// ========================================
+// Module Quick Toggles
+// ========================================
+const MODULE_MAP = {
+    'ctr_smc_filter_enabled': { mod: 'mod-smc-filter', detail: 'ctr_smc_filter_enabled' },
+    'ctr_smc_trend_enabled': { mod: 'mod-smc-trend', detail: 'ctr_smc_trend_enabled' },
+    'ctr_smc_trend_early_warning': { mod: 'mod-early-warning', detail: 'ctr_smc_trend_early_warning' },
+    'ctr_fvg_enabled': { mod: 'mod-fvg', detail: 'fvg-enabled' },
+    'ctr_sl_monitor_enabled': { mod: 'mod-sl-monitor', detail: 'sl-monitor-enabled' },
+};
+
+async function toggleModule(key, enabled) {
+    // Sync to detailed checkbox
+    const map = MODULE_MAP[key];
+    if (map && map.detail) {
+        const el = document.getElementById(map.detail);
+        if (el) el.checked = enabled;
+    }
+    // Save immediately
+    try {
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ [key]: enabled ? '1' : '0' })
+        });
+        showToast(`${enabled ? '✅' : '❌'} ${key.replace('ctr_','').replace(/_/g,' ')} ${enabled ? 'ON' : 'OFF'}`);
+    } catch(e) {
+        console.error('Module toggle error:', e);
+    }
+}
+
+function syncModulesToSettings() {
+    // Module bar → detailed checkboxes
+    for (const [key, map] of Object.entries(MODULE_MAP)) {
+        const modEl = document.getElementById(map.mod);
+        const detailEl = document.getElementById(map.detail);
+        if (modEl && detailEl) detailEl.checked = modEl.checked;
+    }
+}
+
+function syncSettingsToModules() {
+    // Detailed checkboxes → module bar
+    for (const [key, map] of Object.entries(MODULE_MAP)) {
+        const modEl = document.getElementById(map.mod);
+        const detailEl = document.getElementById(map.detail);
+        if (modEl && detailEl) modEl.checked = detailEl.checked;
+    }
+}
+
+// Sync on detailed checkbox change
+document.addEventListener('change', function(e) {
+    const detailIds = Object.values(MODULE_MAP).map(m => m.detail);
+    if (detailIds.includes(e.target.id)) {
+        syncSettingsToModules();
+    }
+});
+
 async function toggleCTROnlyMode(checkbox) {
     const enabled = checkbox.checked;
     
@@ -1099,6 +1208,9 @@ async function removeSymbol(symbol) {
 }
 
 async function saveSettings() {
+    // Sync module bar → detailed checkboxes
+    syncModulesToSettings();
+    
     const settings = {
         ctr_timeframe: document.getElementById('ctr_timeframe').value,
         ctr_fast_length: parseInt(document.getElementById('ctr_fast_length').value),
@@ -1140,6 +1252,7 @@ async function saveSettings() {
         
         if (data.success) {
             showToast('✅ Settings saved!');
+            syncSettingsToModules();
         } else {
             alert(data.error || 'Failed to save settings');
         }
@@ -1364,7 +1477,10 @@ async function saveSLSettings() {
                 ctr_sl_monitor_pct: pct.toString()
             })
         });
-        console.log(`SL Monitor saved: enabled=${enabled}, pct=${pct}%`);
+        // Sync module bar
+        const modSl = document.getElementById('mod-sl-monitor');
+        if (modSl) modSl.checked = enabled;
+        showToast(`✅ SL Monitor: ${enabled ? 'ON' : 'OFF'}, ${pct}%`);
     } catch (e) {
         console.error('SL settings save error:', e);
     }
@@ -1535,7 +1651,10 @@ async function saveFVGSettings() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(data)
         });
-        alert('FVG settings saved! Restart scanner to apply.');
+        // Sync module bar
+        const modFvg = document.getElementById('mod-fvg');
+        if (modFvg) modFvg.checked = document.getElementById('fvg-enabled').checked;
+        showToast('✅ FVG settings saved!');
     } catch (e) {
         alert('Error saving: ' + e);
     }

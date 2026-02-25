@@ -144,6 +144,7 @@ class FVGDetector:
         self._monitor_thread = None
         self._scanner_thread = None
         self._cleanup_thread = None
+        self._monitor_checks = 0
         
         # Stats
         self._stats = {
@@ -622,7 +623,7 @@ class FVGDetector:
         total_new = 0
         for symbol in self._watchlist:
             total_new += self._scan_symbol(symbol)
-            time.sleep(0.1)
+            time.sleep(0.5)  # Rate limit protection (Bybit REST)
         
         self._stats['scans'] += 1
         self._stats['last_scan_time'] = datetime.now(timezone.utc).strftime('%H:%M:%S')
@@ -777,12 +778,17 @@ class FVGDetector:
                 if f.status in ('waiting', 'entered')
             ]
         
+        prices_ok = 0
+        prices_zero = 0
+        
         for fvg in active_fvgs:
             try:
                 current_price = self._price_getter(fvg.symbol)
                 if current_price <= 0:
+                    prices_zero += 1
                     continue
                 
+                prices_ok += 1
                 new_status = self._check_retest(fvg, current_price)
                 
                 if new_status:
@@ -800,6 +806,14 @@ class FVGDetector:
                     
             except Exception as e:
                 print(f"[FVG] Monitor error {fvg.symbol}: {e}")
+        
+        self._monitor_checks += 1
+        # Heartbeat every ~5 min (60 checks at 5s interval)
+        if self._monitor_checks % 60 == 1:
+            entered = sum(1 for f in active_fvgs if f.status == 'entered')
+            print(f"[FVG Monitor] ✅ Check #{self._monitor_checks}: "
+                  f"{len(active_fvgs)} active ({entered} entered), "
+                  f"prices: {prices_ok} ok / {prices_zero} zero")
     
     # ========================================
     # THREADS
