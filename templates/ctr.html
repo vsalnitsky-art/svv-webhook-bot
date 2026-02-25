@@ -426,6 +426,18 @@
                         <span style="font-size: 12px; font-weight: 600; color: #aaa;">📡 Модулі</span>
                     </div>
                     <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                        <label class="module-chip" id="chip-ctr-scanner" title="CTR Fast Scanner (STC signals)">
+                            <input type="checkbox" id="mod-ctr-scanner"
+                                   {{ 'checked' if settings.ctr_scanner_enabled else '' }}
+                                   onchange="toggleModule('ctr_scanner_enabled', this.checked)">
+                            <span>🔄 CTR</span>
+                        </label>
+                        <label class="module-chip" id="chip-ctr-ema" title="CTR EMA Trend Filter">
+                            <input type="checkbox" id="mod-ctr-ema"
+                                   {{ 'checked' if settings.ctr_ema_trend_enabled else '' }}
+                                   onchange="toggleModule('ctr_ema_trend_enabled', this.checked)">
+                            <span>📉 EMA</span>
+                        </label>
                         <label class="module-chip" id="chip-smc-filter" title="SMC Structure Filter">
                             <input type="checkbox" id="mod-smc-filter" 
                                    {{ 'checked' if settings.ctr_smc_filter_enabled else '' }}
@@ -531,6 +543,39 @@
                     <div class="setting-item" id="cooldown_seconds_row" style="display: {{ 'block' if settings.ctr_use_cooldown else 'none' }};">
                         <label>Cooldown (сек)</label>
                         <input type="number" id="ctr_cooldown_seconds" value="{{ settings.ctr_cooldown_seconds or 300 }}" min="10" max="3600" step="10">
+                    </div>
+                </div>
+                
+                <!-- CTR EMA Trend Filter Section -->
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        📉 CTR EMA Trend Filter
+                        <span class="status-badge {{ 'status-running' if settings.ctr_ema_trend_enabled else 'status-stopped' }}" style="font-size: 0.7em;">
+                            {{ 'ON' if settings.ctr_ema_trend_enabled else 'OFF' }}
+                        </span>
+                    </h4>
+                    <small style="color: #888; display: block; margin-bottom: 10px;">
+                        Блокує CTR Fast сигнали проти EMA тренду (BUY тільки в uptrend, SELL тільки в downtrend)
+                    </small>
+                    
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_ema_trend_enabled" 
+                                   {{ 'checked' if settings.ctr_ema_trend_enabled else '' }} onchange="saveSettings()">
+                            Увімкнути EMA Trend Filter
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Fast EMA</label>
+                        <input type="number" id="ctr_ema_trend_fast" 
+                               value="{{ settings.ctr_ema_trend_fast or 5 }}" min="2" max="50" step="1">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Slow EMA</label>
+                        <input type="number" id="ctr_ema_trend_slow" 
+                               value="{{ settings.ctr_ema_trend_slow or 13 }}" min="5" max="200" step="1">
                     </div>
                 </div>
                 
@@ -1078,6 +1123,8 @@
 // Module Quick Toggles
 // ========================================
 const MODULE_MAP = {
+    'ctr_scanner_enabled': { mod: 'mod-ctr-scanner', detail: null },
+    'ctr_ema_trend_enabled': { mod: 'mod-ctr-ema', detail: 'ctr_ema_trend_enabled' },
     'ctr_smc_filter_enabled': { mod: 'mod-smc-filter', detail: 'ctr_smc_filter_enabled' },
     'ctr_smc_trend_enabled': { mod: 'mod-smc-trend', detail: 'ctr_smc_trend_enabled' },
     'ctr_smc_trend_early_warning': { mod: 'mod-early-warning', detail: 'ctr_smc_trend_early_warning' },
@@ -1223,6 +1270,11 @@ async function saveSettings() {
         ctr_use_gap_detection: document.getElementById('ctr_use_gap_detection').checked ? '1' : '0',
         ctr_use_cooldown: document.getElementById('ctr_use_cooldown').checked ? '1' : '0',
         ctr_cooldown_seconds: parseInt(document.getElementById('ctr_cooldown_seconds').value),
+        // CTR Scanner + EMA Trend Filter
+        ctr_scanner_enabled: document.getElementById('mod-ctr-scanner').checked ? '1' : '0',
+        ctr_ema_trend_enabled: document.getElementById('ctr_ema_trend_enabled').checked ? '1' : '0',
+        ctr_ema_trend_fast: parseInt(document.getElementById('ctr_ema_trend_fast').value),
+        ctr_ema_trend_slow: parseInt(document.getElementById('ctr_ema_trend_slow').value),
         // Telegram mode
         ctr_telegram_mode: document.getElementById('ctr_telegram_mode').value,
         // SMC Filter

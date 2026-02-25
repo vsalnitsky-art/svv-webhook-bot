@@ -1229,6 +1229,11 @@ def register_api_routes(app):
             'ctr_fvg_trend_filter': db.get_setting('ctr_fvg_trend_filter', '0') in ('1', 'true', 'True', 'yes'),
             'ctr_fvg_trend_fast_ema': db.get_setting('ctr_fvg_trend_fast_ema', '5'),
             'ctr_fvg_trend_slow_ema': db.get_setting('ctr_fvg_trend_slow_ema', '13'),
+            # CTR Fast Scanner toggle + EMA Trend Filter
+            'ctr_scanner_enabled': db.get_setting('ctr_scanner_enabled', '1') in ('1', 'true', 'True', 'yes'),
+            'ctr_ema_trend_enabled': db.get_setting('ctr_ema_trend_enabled', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_ema_trend_fast': db.get_setting('ctr_ema_trend_fast', '5'),
+            'ctr_ema_trend_slow': db.get_setting('ctr_ema_trend_slow', '13'),
         }
         
         # Статистика фільтрації
@@ -1364,6 +1369,9 @@ def register_api_routes(app):
             'ctr_fvg_max_per_symbol', 'ctr_fvg_rr_ratio', 'ctr_fvg_sl_buffer_pct',
             'ctr_fvg_scan_interval', 'ctr_fvg_trend_filter',
             'ctr_fvg_trend_fast_ema', 'ctr_fvg_trend_slow_ema',
+            # CTR Fast Scanner toggle + EMA Trend Filter
+            'ctr_scanner_enabled', 'ctr_ema_trend_enabled',
+            'ctr_ema_trend_fast', 'ctr_ema_trend_slow',
         ]
         
         for key in ctr_settings:

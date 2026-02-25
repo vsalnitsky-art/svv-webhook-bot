@@ -153,6 +153,12 @@ class CTRFastJob:
         self.fvg_trend_fast_ema = int(self.db.get_setting('ctr_fvg_trend_fast_ema', '5'))
         self.fvg_trend_slow_ema = int(self.db.get_setting('ctr_fvg_trend_slow_ema', '13'))
         
+        # CTR Fast Scanner — enable/disable + EMA Trend Filter
+        self.ctr_scanner_enabled = _b('ctr_scanner_enabled', '1')  # ON by default
+        self.ctr_ema_trend_enabled = _b('ctr_ema_trend_enabled', '0')
+        self.ctr_ema_trend_fast = int(self.db.get_setting('ctr_ema_trend_fast', '5'))
+        self.ctr_ema_trend_slow = int(self.db.get_setting('ctr_ema_trend_slow', '13'))
+        
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
         self.watchlist = [s.strip().upper() for s in watchlist_str.split(',') if s.strip()]
@@ -216,12 +222,83 @@ class CTRFastJob:
         
         return last_direction == signal_type
     
+    # ========================================
+    # CTR EMA Trend Filter
+    # ========================================
+    
+    @staticmethod
+    def _compute_ema(closes, period: int) -> float:
+        """Compute EMA from close prices (list or numpy array)."""
+        if len(closes) < period:
+            return 0.0
+        k = 2.0 / (period + 1)
+        ema = float(closes[0])
+        for i in range(1, len(closes)):
+            ema = float(closes[i]) * k + ema * (1 - k)
+        return ema
+    
+    def _check_ctr_ema_trend(self, symbol: str, signal_type: str) -> bool:
+        """
+        EMA Trend Filter for CTR Fast signals.
+        Fast EMA > Slow EMA → uptrend → BUY allowed
+        Fast EMA < Slow EMA → downtrend → SELL allowed
+        
+        Returns True if signal is allowed, False if blocked.
+        """
+        if not self.ctr_ema_trend_enabled:
+            return True
+        
+        if not self._scanner or not hasattr(self._scanner, '_cache'):
+            return True  # no data, allow
+        
+        cache = self._scanner._cache.get(symbol)
+        if not cache or not cache.klines:
+            return True
+        
+        closes = [k.close for k in cache.klines]
+        if len(closes) < self.ctr_ema_trend_slow + 5:
+            return True
+        
+        fast_ema = self._compute_ema(closes, self.ctr_ema_trend_fast)
+        slow_ema = self._compute_ema(closes, self.ctr_ema_trend_slow)
+        
+        if fast_ema == 0 or slow_ema == 0:
+            return True
+        
+        is_uptrend = fast_ema > slow_ema
+        
+        if signal_type == 'BUY' and not is_uptrend:
+            spread = (fast_ema - slow_ema) / slow_ema * 100
+            print(f"[CTR Job] 🚫 EMA Trend BLOCKED: {symbol} BUY "
+                  f"(trend=BEARISH, Fast={fast_ema:.4f}, Slow={slow_ema:.4f}, {spread:.2f}%)")
+            return False
+        
+        if signal_type == 'SELL' and is_uptrend:
+            spread = (fast_ema - slow_ema) / slow_ema * 100
+            print(f"[CTR Job] 🚫 EMA Trend BLOCKED: {symbol} SELL "
+                  f"(trend=BULLISH, Fast={fast_ema:.4f}, Slow={slow_ema:.4f}, +{spread:.2f}%)")
+            return False
+        
+        return True
+    
     def _on_signal(self, signal: Dict):
         """Callback при отриманні сигналу від сканера"""
         try:
             symbol = signal['symbol']
             signal_type = signal['type']
             reason = signal.get('reason', '')
+            
+            # === CTR FAST FILTERS (skip for FVG/SL signals) ===
+            is_ctr_signal = not signal.get('is_fvg', False) and not signal.get('is_sl', False)
+            
+            if is_ctr_signal:
+                # CTR Scanner enabled check
+                if not self.ctr_scanner_enabled:
+                    return  # silently skip — CTR signals disabled
+                
+                # EMA Trend Filter for CTR signals
+                if not self._check_ctr_ema_trend(symbol, signal_type):
+                    return  # blocked by trend
             
             # v2.4: Trend Guard signals are priority — they bypass dedup
             # SL signals and FVG signals are also priority
