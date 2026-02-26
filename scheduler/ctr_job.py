@@ -333,15 +333,17 @@ class CTRFastJob:
             if send_telegram and notifier:
                 msg = signal.get('message', '')
                 if not msg and signal.get('is_fvg'):
-                    # Build compact message for FVG signal
+                    # Build message for FVG signal
                     direction = '🟢 LONG' if signal_type == 'BUY' else '🔴 SHORT'
-                    trend_line = ''
-                    fvg_size = signal.get('fvg_size_pct', 0)
-                    msg = (f"📐 FVG Retest | {symbol}\n"
+                    msg = (f"{'=' * 40}\n"
+                           f"📐 FVG Retest Signal\n"
+                           f"Монета: {symbol}\n"
                            f"{direction} @ ${signal.get('price', 0):.4f}\n"
-                           f"Зона: ${signal.get('fvg_low', 0):.4f}–${signal.get('fvg_high', 0):.4f} ({fvg_size:.2f}%)\n"
-                           f"SL: ${signal.get('sl_price', 0):.4f} · TP: ${signal.get('tp_price', 0):.4f}\n"
-                           f"R:R: {signal.get('rr_ratio', 1.5)}")
+                           f"FVG: ${signal.get('fvg_low', 0):.4f} - ${signal.get('fvg_high', 0):.4f}\n"
+                           f"SL: ${signal.get('sl_price', 0):.4f}\n"
+                           f"TP: ${signal.get('tp_price', 0):.4f}\n"
+                           f"R:R: {signal.get('rr_ratio', 1.5)}\n"
+                           f"{'=' * 40}")
                 if msg:
                     notifier.send_message(msg)
             

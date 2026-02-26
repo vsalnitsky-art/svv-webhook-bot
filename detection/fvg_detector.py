@@ -710,24 +710,6 @@ class FVGDetector:
         if fvg.status not in ('waiting', 'entered'):
             return
         
-        # === OPPOSITE FVG FILTER ===
-        # If a newer FVG in the opposite direction exists → skip signal
-        opposite_direction = 'bearish' if fvg.direction == 'bullish' else 'bullish'
-        opposite_fvgs = [
-            f for f in self._fvg_zones.values()
-            if (f.symbol == fvg.symbol and
-                f.direction == opposite_direction and
-                f.status in ('waiting', 'entered') and
-                f.detected_at > fvg.detected_at)
-        ]
-        if opposite_fvgs:
-            opp = opposite_fvgs[0]
-            label = 'LONG' if fvg.direction == 'bullish' else 'SHORT'
-            print(f"[FVG] 🚫 OPPOSITE FVG BLOCKED: {fvg.symbol} {label} "
-                  f"(newer {opp.direction} FVG at ${opp.low:.4f}-${opp.high:.4f})")
-            fvg.status = 'waiting'
-            return
-
         # === TREND FILTER ===
         if not self._check_trend_filter(fvg.symbol, fvg.direction):
             trend_data = self._symbol_trends.get(fvg.symbol, {})
@@ -743,32 +725,16 @@ class FVGDetector:
             self._stats['fvg_filtered_trend'] += 1
             return
         
-        # === LIVE PRICE REFRESH ===
-        # Retest may have been detected from a closed kline (up to 5 min old).
-        # Fetch the latest WS price so entry/SL/TP reflect actual market price
-        # at the moment the signal is sent, not the detection candle close.
-        kline_price = current_price
-        if self._price_getter:
-            live_price = self._price_getter(fvg.symbol)
-            if live_price > 0:
-                current_price = live_price
-
         sl_price, tp_price = self._calculate_sl_tp(fvg, current_price)
-
+        
         fvg.status = 'traded'
         fvg.entry_price = current_price
         fvg.sl_price = sl_price
         fvg.tp_price = tp_price
-
+        
         signal_type = 'BUY' if fvg.direction == 'bullish' else 'SELL'
         label = 'LONG' if signal_type == 'BUY' else 'SHORT'
         risk_pct = abs(current_price - sl_price) / current_price * 100
-        price_tag = ''
-        if kline_price > 0 and abs(current_price - kline_price) / kline_price > 0.0005:
-            price_tag = f' (kline=${kline_price:.4f} → live=${current_price:.4f})'
-        else:
-            price_tag = ''
-
         
         trend_tag = ""
         trend_data = self._symbol_trends.get(fvg.symbol)
@@ -778,7 +744,7 @@ class FVGDetector:
         
         print(f"[FVG] ✅ RETEST SIGNAL: {fvg.symbol} {label}\n"
               f"  FVG: ${fvg.low:.4f} - ${fvg.high:.4f} ({fvg.size_pct}%)\n"
-              f"  Entry: ${current_price:.4f}, SL: ${sl_price:.4f}, TP: ${tp_price:.4f}{price_tag}\n"
+              f"  Entry: ${current_price:.4f}, SL: ${sl_price:.4f}, TP: ${tp_price:.4f}\n"
               f"  Risk: {risk_pct:.2f}%, R:R: {self.rr_ratio}{trend_tag}")
         
         self._stats['fvg_retested'] += 1
