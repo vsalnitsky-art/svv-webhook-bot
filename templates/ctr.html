@@ -548,34 +548,37 @@
                 
                 <!-- CTR EMA Trend Filter Section -->
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
-                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                        📉 CTR EMA Trend Filter
-                        <span class="status-badge {{ 'status-running' if settings.ctr_ema_trend_enabled else 'status-stopped' }}" style="font-size: 0.7em;">
-                            {{ 'ON' if settings.ctr_ema_trend_enabled else 'OFF' }}
-                        </span>
-                    </h4>
-                    <small style="color: #888; display: block; margin-bottom: 10px;">
-                        Блокує CTR Fast сигнали проти EMA тренду (BUY тільки в uptrend, SELL тільки в downtrend)
-                    </small>
-                    
-                    <div class="setting-item">
-                        <label style="display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" id="ctr_ema_trend_enabled" 
-                                   {{ 'checked' if settings.ctr_ema_trend_enabled else '' }} onchange="saveSettings()">
-                            Увімкнути EMA Trend Filter
-                        </label>
-                    </div>
-                    
-                    <div class="setting-item">
-                        <label>Fast EMA</label>
-                        <input type="number" id="ctr_ema_trend_fast" 
-                               value="{{ settings.ctr_ema_trend_fast or 5 }}" min="2" max="50" step="1">
-                    </div>
-                    
-                    <div class="setting-item">
-                        <label>Slow EMA</label>
-                        <input type="number" id="ctr_ema_trend_slow" 
-                               value="{{ settings.ctr_ema_trend_slow or 13 }}" min="5" max="200" step="1">
+                    <div style="padding: 8px; background: rgba(33,150,243,0.08); border-radius: 8px; border: 1px solid rgba(33,150,243,0.2);">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <label class="switch" style="margin: 0;">
+                                <input type="checkbox" id="ctr_ema_trend_enabled"
+                                       {{ 'checked' if settings.ctr_ema_trend_enabled else '' }}
+                                       onchange="toggleModule('ctr_ema_trend_enabled', this.checked)">
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: #2196f3; font-weight: 600; font-size: 13px;">📉 CTR EMA Trend Filter (EMA crossover)</span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div>
+                                <small style="color:#aaa;">Fast EMA</small>
+                                <input type="number" id="ctr_ema_trend_fast"
+                                       value="{{ settings.ctr_ema_trend_fast or 5 }}" min="2" max="50" step="1"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <small style="color:#aaa;">Slow EMA</small>
+                                <input type="number" id="ctr_ema_trend_slow"
+                                       value="{{ settings.ctr_ema_trend_slow or 13 }}" min="5" max="200" step="1"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            Fast > Slow → uptrend (BUY тільки)<br>
+                            Fast &lt; Slow → downtrend (SELL тільки)
+                        </small>
+                        <button onclick="saveCTREMATrendSettings()" style="margin-top: 10px; width: 100%; padding: 6px; background: rgba(33,150,243,0.2); border: 1px solid rgba(33,150,243,0.4); color: #2196f3; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                            💾 Зберегти EMA Trend налаштування
+                        </button>
                     </div>
                 </div>
                 
@@ -1680,6 +1683,30 @@ loadPositions();
 {% if ctr_running %}
 setInterval(loadPositions, 10000);
 {% endif %}
+
+// ========================================
+// CTR EMA Trend Filter
+// ========================================
+async function saveCTREMATrendSettings() {
+    const data = {
+        ctr_ema_trend_enabled: document.getElementById('ctr_ema_trend_enabled').checked ? '1' : '0',
+        ctr_ema_trend_fast: parseInt(document.getElementById('ctr_ema_trend_fast').value),
+        ctr_ema_trend_slow: parseInt(document.getElementById('ctr_ema_trend_slow').value),
+    };
+    try {
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        // Sync module bar chip
+        const modEl = document.getElementById('mod-ctr-ema');
+        if (modEl) modEl.checked = data.ctr_ema_trend_enabled === '1';
+        showToast('✅ EMA Trend Filter збережено!');
+    } catch (e) {
+        alert('Error saving: ' + e);
+    }
+}
 
 // ========================================
 // FVG Detector
