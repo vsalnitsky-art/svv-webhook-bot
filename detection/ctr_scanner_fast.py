@@ -1568,9 +1568,7 @@ STC: {stc_value:.2f}
 
 ⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC"""
         
-        print(f"\n{'='*50}")
-        print(message)
-        print(f"{'='*50}\n")
+        print(f"\n{message}\n")
         
         # Callback
         if self.on_signal:

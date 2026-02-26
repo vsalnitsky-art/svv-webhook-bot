@@ -710,6 +710,24 @@ class FVGDetector:
         if fvg.status not in ('waiting', 'entered'):
             return
         
+        # === OPPOSITE FVG FILTER ===
+        # If a newer FVG in the opposite direction exists → skip signal
+        opposite_direction = 'bearish' if fvg.direction == 'bullish' else 'bullish'
+        opposite_fvgs = [
+            f for f in self._fvg_zones.values()
+            if (f.symbol == fvg.symbol and
+                f.direction == opposite_direction and
+                f.status in ('waiting', 'entered') and
+                f.detected_at > fvg.detected_at)
+        ]
+        if opposite_fvgs:
+            opp = opposite_fvgs[0]
+            label = 'LONG' if fvg.direction == 'bullish' else 'SHORT'
+            print(f"[FVG] 🚫 OPPOSITE FVG BLOCKED: {fvg.symbol} {label} "
+                  f"(newer {opp.direction} FVG at ${opp.low:.4f}-${opp.high:.4f})")
+            fvg.status = 'waiting'
+            return
+
         # === TREND FILTER ===
         if not self._check_trend_filter(fvg.symbol, fvg.direction):
             trend_data = self._symbol_trends.get(fvg.symbol, {})
