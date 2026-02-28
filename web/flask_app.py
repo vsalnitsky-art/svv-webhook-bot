@@ -1234,6 +1234,11 @@ def register_api_routes(app):
             'ctr_ema_trend_enabled': db.get_setting('ctr_ema_trend_enabled', '0') in ('1', 'true', 'True', 'yes'),
             'ctr_ema_trend_fast': db.get_setting('ctr_ema_trend_fast', '5'),
             'ctr_ema_trend_slow': db.get_setting('ctr_ema_trend_slow', '13'),
+            # FVG TP Manager
+            'fvg_tp_manager_enabled': db.get_setting('fvg_tp_manager_enabled', '0') in ('1', 'true', 'True', 'yes'),
+            'fvg_tp_trigger_pct': db.get_setting('fvg_tp_trigger_pct', '0.5'),
+            'fvg_tp_close_pct': db.get_setting('fvg_tp_close_pct', '50'),
+            'fvg_tp_be_buffer_pct': db.get_setting('fvg_tp_be_buffer_pct', '0.05'),
         }
         
         # Статистика фільтрації
@@ -1372,6 +1377,9 @@ def register_api_routes(app):
             # CTR Fast Scanner toggle + EMA Trend Filter
             'ctr_scanner_enabled', 'ctr_ema_trend_enabled',
             'ctr_ema_trend_fast', 'ctr_ema_trend_slow',
+            # FVG TP Manager
+            'fvg_tp_manager_enabled', 'fvg_tp_trigger_pct',
+            'fvg_tp_close_pct', 'fvg_tp_be_buffer_pct',
         ]
         
         for key in ctr_settings:

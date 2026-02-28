@@ -227,13 +227,16 @@
     
     /* Switch toggle */
     .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .switch.switch-sm { width: 36px; height: 20px; }
     .switch input { opacity: 0; width: 0; height: 0; }
     .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
               background-color: #555; transition: .3s; border-radius: 24px; }
     .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
                      background-color: white; transition: .3s; border-radius: 50%; }
+    .switch-sm .slider:before { height: 14px; width: 14px; left: 3px; bottom: 3px; }
     input:checked + .slider { background-color: #00c853; }
     input:checked + .slider:before { transform: translateX(20px); }
+    .switch-sm input:checked + .slider:before { transform: translateX(16px); }
     
     /* Position card */
     .position-card {
@@ -461,6 +464,12 @@
                                    {{ 'checked' if settings.ctr_fvg_enabled else '' }}
                                    onchange="toggleModule('ctr_fvg_enabled', this.checked)">
                             <span>📐 FVG</span>
+                        </label>
+                        <label class="module-chip" id="chip-fvg-tp" title="FVG TP Manager (partial close + BE)">
+                            <input type="checkbox" id="mod-fvg-tp"
+                                   {{ 'checked' if settings.fvg_tp_manager_enabled else '' }}
+                                   onchange="toggleModule('fvg_tp_manager_enabled', this.checked)">
+                            <span>🎯 TP</span>
                         </label>
                         <label class="module-chip" id="chip-sl-monitor" title="SL Monitor">
                             <input type="checkbox" id="mod-sl-monitor"
@@ -802,6 +811,34 @@
                         </small>
                     </div>
                     
+                    <!-- FVG TP Manager Settings -->
+                    <div style="margin-top: 12px; padding: 10px; background: rgba(33,150,243,0.05); border: 1px solid rgba(33,150,243,0.15); border-radius: 8px;">
+                        <span style="color: #2196f3; font-weight: 600; font-size: 13px;">🎯 TP Manager (partial close + BE)</span>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">Trigger %</label>
+                                <input type="number" id="fvg-tp-trigger-detail" value="{{ settings.fvg_tp_trigger_pct }}"
+                                       step="0.1" min="0.1" max="10"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">Close %</label>
+                                <input type="number" id="fvg-tp-close-detail" value="{{ settings.fvg_tp_close_pct }}"
+                                       step="5" min="10" max="90"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">BE buffer %</label>
+                                <input type="number" id="fvg-tp-be-buffer" value="{{ settings.fvg_tp_be_buffer_pct }}"
+                                       step="0.01" min="0" max="1"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            При +{{ settings.fvg_tp_trigger_pct }}% профіту → закриє {{ settings.fvg_tp_close_pct }}% позиції, SL → BE + {{ settings.fvg_tp_be_buffer_pct }}%
+                        </small>
+                    </div>
+                    
                     <button class="btn btn-sm btn-secondary" onclick="saveFVGSettings()" style="margin-top: 10px; width: 100%;">
                         💾 Save FVG Settings
                     </button>
@@ -960,16 +997,35 @@
                         <!-- SL Monitor Controls -->
                         <div style="display: flex; align-items: center; gap: 6px; background: rgba(255,82,82,0.08); border: 1px solid rgba(255,82,82,0.2); border-radius: 8px; padding: 4px 10px;">
                             <span style="font-size: 0.85em; color: #ff5252;">🛑 SL Monitor</span>
-                            <label class="switch" style="width:36px; height:20px;">
+                            <label class="switch switch-sm">
                                 <input type="checkbox" id="sl-monitor-enabled" {{ 'checked' if settings.ctr_sl_monitor_enabled else '' }}
-                                       onchange="saveSLSettings()" style="display:none;">
-                                <span class="slider" style="border-radius:20px;"></span>
+                                       onchange="saveSLSettings()">
+                                <span class="slider"></span>
                             </label>
                             <input type="number" id="sl-monitor-pct" value="{{ settings.ctr_sl_monitor_pct }}"
                                    step="0.1" min="0" max="50"
                                    style="width: 55px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 2px 5px; border-radius: 4px; font-size: 0.85em; text-align: center;"
                                    onchange="saveSLSettings()">
                             <span style="font-size: 0.8em; color: #aaa;">%</span>
+                        </div>
+                        <!-- FVG TP Manager Controls -->
+                        <div style="display: flex; align-items: center; gap: 6px; background: rgba(33,150,243,0.08); border: 1px solid rgba(33,150,243,0.2); border-radius: 8px; padding: 4px 10px;">
+                            <span style="font-size: 0.85em; color: #2196f3;">📐 FVG TP</span>
+                            <label class="switch switch-sm">
+                                <input type="checkbox" id="fvg-tp-enabled" {{ 'checked' if settings.fvg_tp_manager_enabled else '' }}
+                                       onchange="saveFVGTPSettings()">
+                                <span class="slider"></span>
+                            </label>
+                            <input type="number" id="fvg-tp-trigger" value="{{ settings.fvg_tp_trigger_pct }}"
+                                   step="0.1" min="0.1" max="10"
+                                   style="width: 55px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 2px 5px; border-radius: 4px; font-size: 0.85em; text-align: center;"
+                                   onchange="saveFVGTPSettings()" title="Profit trigger %">
+                            <span style="font-size: 0.8em; color: #aaa;">%→</span>
+                            <input type="number" id="fvg-tp-close" value="{{ settings.fvg_tp_close_pct }}"
+                                   step="5" min="10" max="90"
+                                   style="width: 50px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 2px 5px; border-radius: 4px; font-size: 0.85em; text-align: center;"
+                                   onchange="saveFVGTPSettings()" title="Close % of position">
+                            <span style="font-size: 0.8em; color: #aaa;">%close</span>
                         </div>
                         <span id="positions-count" style="font-size: 0.85em; color: #888;">—</span>
                         <button class="btn btn-sm" id="bybit-reconnect-btn"
@@ -1129,6 +1185,7 @@ const MODULE_MAP = {
     'ctr_smc_trend_enabled': { mod: 'mod-smc-trend', detail: 'ctr_smc_trend_enabled' },
     'ctr_smc_trend_early_warning': { mod: 'mod-early-warning', detail: 'ctr_smc_trend_early_warning' },
     'ctr_fvg_enabled': { mod: 'mod-fvg', detail: 'fvg-enabled' },
+    'fvg_tp_manager_enabled': { mod: 'mod-fvg-tp', detail: 'fvg-tp-enabled' },
     'ctr_sl_monitor_enabled': { mod: 'mod-sl-monitor', detail: 'sl-monitor-enabled' },
 };
 
@@ -1538,6 +1595,38 @@ async function saveSLSettings() {
     }
 }
 
+async function saveFVGTPSettings() {
+    const enabled = document.getElementById('fvg-tp-enabled').checked;
+    const trigger = parseFloat(document.getElementById('fvg-tp-trigger').value) || 0.5;
+    const closePct = parseFloat(document.getElementById('fvg-tp-close').value) || 50;
+    const beBuffer = parseFloat(document.getElementById('fvg-tp-be-buffer')?.value) || 0.05;
+    
+    // Sync detail fields
+    const detailTrigger = document.getElementById('fvg-tp-trigger-detail');
+    const detailClose = document.getElementById('fvg-tp-close-detail');
+    if (detailTrigger) detailTrigger.value = trigger;
+    if (detailClose) detailClose.value = closePct;
+    
+    try {
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                fvg_tp_manager_enabled: enabled ? '1' : '0',
+                fvg_tp_trigger_pct: trigger.toString(),
+                fvg_tp_close_pct: closePct.toString(),
+                fvg_tp_be_buffer_pct: beBuffer.toString()
+            })
+        });
+        // Sync module bar
+        const modTP = document.getElementById('mod-fvg-tp');
+        if (modTP) modTP.checked = enabled;
+        showToast(`✅ FVG TP: ${enabled ? 'ON' : 'OFF'}, ${trigger}% → ${closePct}% close`);
+    } catch (e) {
+        console.error('FVG TP settings save error:', e);
+    }
+}
+
 // ========================================
 // Open Positions Table (Bybit only)
 // ========================================
@@ -1696,7 +1785,17 @@ async function saveFVGSettings() {
         ctr_fvg_trend_filter: document.getElementById('fvg-trend-filter').checked ? '1' : '0',
         ctr_fvg_trend_fast_ema: document.getElementById('fvg-trend-fast-ema').value,
         ctr_fvg_trend_slow_ema: document.getElementById('fvg-trend-slow-ema').value,
+        // FVG TP Manager
+        fvg_tp_manager_enabled: document.getElementById('fvg-tp-enabled').checked ? '1' : '0',
+        fvg_tp_trigger_pct: document.getElementById('fvg-tp-trigger-detail')?.value || document.getElementById('fvg-tp-trigger').value,
+        fvg_tp_close_pct: document.getElementById('fvg-tp-close-detail')?.value || document.getElementById('fvg-tp-close').value,
+        fvg_tp_be_buffer_pct: document.getElementById('fvg-tp-be-buffer')?.value || '0.05',
     };
+    // Sync compact fields from detail
+    const t = document.getElementById('fvg-tp-trigger');
+    const c = document.getElementById('fvg-tp-close');
+    if (t && data.fvg_tp_trigger_pct) t.value = data.fvg_tp_trigger_pct;
+    if (c && data.fvg_tp_close_pct) c.value = data.fvg_tp_close_pct;
     try {
         await fetch('/api/ctr/settings', {
             method: 'POST',
