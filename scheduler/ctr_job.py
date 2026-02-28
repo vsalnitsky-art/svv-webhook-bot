@@ -340,8 +340,10 @@ class CTRFastJob:
                 else:
                     send_telegram = True
             
-            # For FVG signals: defer Telegram until after trade execution (task 3+4)
+            # For FVG signals: track actual price after trade
             is_fvg = signal.get('is_fvg', False)
+            fvg_actual_price = signal.get('price', 0)  # default to signal price
+            fvg_trade_ok = False
             
             if send_telegram and notifier and not is_fvg:
                 msg = signal.get('message', '')
@@ -392,39 +394,26 @@ class CTRFastJob:
                     )
                     
                     if trade_result['success']:
+                        fvg_trade_ok = True
                         trade_msg = f"[CTR Job] 💰 Trade executed: {symbol} {trade_result['action']} — {trade_result['details']}"
                         print(trade_msg)
                         
-                        # Get actual entry price from exchange
-                        actual_price = signal.get('price', 0)
+                        # Get actual entry price from exchange for FVG
                         if is_fvg:
                             try:
                                 time.sleep(0.3)  # Wait for position to register
                                 pos = self._trade_executor.get_position_for_symbol(symbol)
                                 if pos and pos.get('entry_price', 0) > 0:
-                                    actual_price = pos['entry_price']
-                                    print(f"[CTR Job] 📐 FVG actual entry: {symbol} ${actual_price:.4f} "
+                                    fvg_actual_price = pos['entry_price']
+                                    print(f"[CTR Job] 📐 FVG actual entry: {symbol} ${fvg_actual_price:.4f} "
                                           f"(signal was ${signal.get('price', 0):.4f})")
                             except Exception as e:
                                 print(f"[CTR Job] ⚠️ Could not fetch actual price: {e}")
                         
-                        # FVG: Send compact Telegram with actual price (task 3+4)
-                        if is_fvg and send_telegram and notifier:
-                            direction = '🟢 LONG' if signal_type == 'BUY' else '🔴 SHORT'
-                            fvg_msg = (
-                                f"📐 FVG Retest | {symbol}\n"
-                                f"{direction} @ ${actual_price:.4f}\n"
-                                f"FVG: ${signal.get('fvg_low', 0):.4f} – ${signal.get('fvg_high', 0):.4f}\n"
-                                f"SL: ${signal.get('sl_price', 0):.4f} | "
-                                f"TP: ${signal.get('tp_price', 0):.4f} | "
-                                f"R:R {signal.get('rr_ratio', 1.5)}"
-                            )
-                            notifier.send_message(fvg_msg)
-                        
                         # Register FVG position for TP manager
                         if is_fvg and self.fvg_tp_enabled:
                             self._fvg_managed[symbol] = {
-                                'entry_price': actual_price,
+                                'entry_price': fvg_actual_price,
                                 'direction': signal_type,
                                 'sl_price': signal.get('sl_price', 0),
                                 'tp_price': signal.get('tp_price', 0),
@@ -433,7 +422,7 @@ class CTRFastJob:
                                 'timestamp': time.time(),
                             }
                             print(f"[CTR Job] 📐 FVG TP Manager: tracking {symbol} "
-                                  f"{signal_type} @ ${actual_price:.4f}")
+                                  f"{signal_type} @ ${fvg_actual_price:.4f}")
                         
                         # Non-FVG trade notification
                         if not is_fvg and notifier:
@@ -447,25 +436,16 @@ class CTRFastJob:
                     elif trade_result['action'] != 'none':
                         print(f"[CTR Job] ⚠️ Trade skipped: {symbol} — {trade_result['details']}")
                         
-                        # FVG: still send signal notification even if trade skipped
-                        if is_fvg and send_telegram and notifier:
-                            direction = '🟢 LONG' if signal_type == 'BUY' else '🔴 SHORT'
-                            fvg_msg = (
-                                f"📐 FVG Signal (no trade)\n"
-                                f"{symbol} {direction} @ ${signal.get('price', 0):.4f}\n"
-                                f"FVG: ${signal.get('fvg_low', 0):.4f} – ${signal.get('fvg_high', 0):.4f}\n"
-                                f"SL: ${signal.get('sl_price', 0):.4f} | TP: ${signal.get('tp_price', 0):.4f}"
-                            )
-                            notifier.send_message(fvg_msg)
-                        
                 except Exception as e:
                     print(f"[CTR Job] ❌ Trade execution error: {e}")
-            elif is_fvg and send_telegram and notifier:
-                # No trade executor — send FVG signal notification anyway
+            
+            # === FVG TELEGRAM (always, regardless of trade status) ===
+            if is_fvg and send_telegram and notifier:
                 direction = '🟢 LONG' if signal_type == 'BUY' else '🔴 SHORT'
+                trade_tag = " ✅" if fvg_trade_ok else ""
                 fvg_msg = (
-                    f"📐 FVG Retest | {symbol}\n"
-                    f"{direction} @ ${signal.get('price', 0):.4f}\n"
+                    f"📐 FVG Retest | {symbol}{trade_tag}\n"
+                    f"{direction} @ ${fvg_actual_price:.4f}\n"
                     f"FVG: ${signal.get('fvg_low', 0):.4f} – ${signal.get('fvg_high', 0):.4f}\n"
                     f"SL: ${signal.get('sl_price', 0):.4f} | "
                     f"TP: ${signal.get('tp_price', 0):.4f} | "
