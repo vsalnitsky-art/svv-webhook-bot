@@ -1240,6 +1240,8 @@ def register_api_routes(app):
             'fvg_tp_trigger_pct': db.get_setting('fvg_tp_trigger_pct', '0.5'),
             'fvg_tp_close_pct': db.get_setting('fvg_tp_close_pct', '50'),
             'fvg_tp_be_buffer_pct': db.get_setting('fvg_tp_be_buffer_pct', '0.05'),
+            'fvg_tp_trail_pct': db.get_setting('fvg_tp_trail_pct', '0.3'),
+            'fvg_tp_trail_start_pct': db.get_setting('fvg_tp_trail_start_pct', '0.8'),
         }
         
         # Статистика фільтрації
@@ -1381,6 +1383,7 @@ def register_api_routes(app):
             # FVG TP Manager
             'fvg_tp_manager_enabled', 'fvg_tp_trigger_pct',
             'fvg_tp_close_pct', 'fvg_tp_be_buffer_pct',
+            'fvg_tp_trail_pct', 'fvg_tp_trail_start_pct',
         ]
         
         for key in ctr_settings:

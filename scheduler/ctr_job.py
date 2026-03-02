@@ -164,11 +164,13 @@ class CTRFastJob:
         self.ctr_ema_trend_fast = int(self.db.get_setting('ctr_ema_trend_fast', '5'))
         self.ctr_ema_trend_slow = int(self.db.get_setting('ctr_ema_trend_slow', '13'))
         
-        # FVG TP Manager — partial close + breakeven SL
+        # FVG TP Manager — partial close + breakeven SL + trailing stop
         self.fvg_tp_enabled = _b('fvg_tp_manager_enabled', '0')
         self.fvg_tp_trigger_pct = float(self.db.get_setting('fvg_tp_trigger_pct', '0.5'))
         self.fvg_tp_close_pct = float(self.db.get_setting('fvg_tp_close_pct', '50'))
         self.fvg_tp_be_buffer_pct = float(self.db.get_setting('fvg_tp_be_buffer_pct', '0.05'))
+        self.fvg_tp_trail_pct = float(self.db.get_setting('fvg_tp_trail_pct', '0.3'))
+        self.fvg_tp_trail_start_pct = float(self.db.get_setting('fvg_tp_trail_start_pct', '0.8'))
         
         # Watchlist
         watchlist_str = self.db.get_setting('ctr_watchlist', '')
@@ -366,6 +368,52 @@ class CTRFastJob:
             reason_tag = f" [{reason}]" if reason else ""
             print(f"[CTR Job] 📨 Signal sent: {symbol} {signal_type}{smc_tag}{reason_tag}")
             
+            # === FVG DUPLICATE CHECK ===
+            if is_fvg and self.fvg_tp_enabled and self._trade_executor and symbol in self._fvg_managed:
+                existing = self._fvg_managed[symbol]
+                if existing['direction'] == signal_type:
+                    # Same direction — ignore duplicate
+                    print(f"[FVG TP] ⏭️ {symbol}: ignoring {signal_type} — already managed in same direction")
+                    # Still send Telegram signal notification
+                    if send_telegram and notifier:
+                        direction = '🟢 LONG' if signal_type == 'BUY' else '🔴 SHORT'
+                        fvg_msg = (
+                            f"📐 FVG Retest | {symbol} (duplicate, skip)\n"
+                            f"{direction} @ ${signal.get('price', 0):.4f}\n"
+                            f"FVG: ${signal.get('fvg_low', 0):.4f} – ${signal.get('fvg_high', 0):.4f}\n"
+                            f"SL: ${signal.get('sl_price', 0):.4f} | "
+                            f"TP: ${signal.get('tp_price', 0):.4f} | "
+                            f"R:R {signal.get('rr_ratio', 1.5)}"
+                        )
+                        notifier.send_message(fvg_msg)
+                    return
+                else:
+                    # Opposite direction — close existing fully, then open new
+                    print(f"[FVG TP] 🔄 {symbol}: REVERSE — closing {existing['direction']} → opening {signal_type}")
+                    try:
+                        pos = self._trade_executor.get_position_for_symbol(symbol)
+                        if pos and pos.get('size', 0) > 0:
+                            close_result = self._trade_executor.bybit.close_position(
+                                symbol, pos['side'], pos['size']
+                            )
+                            if close_result:
+                                print(f"[FVG TP] ✅ {symbol}: closed {existing['direction']} fully (size={pos['size']})")
+                                # Telegram
+                                if notifier:
+                                    old_dir = '🟢 LONG' if existing['direction'] == 'BUY' else '🔴 SHORT'
+                                    new_dir = '🔴 SHORT' if existing['direction'] == 'BUY' else '🟢 LONG'
+                                    notifier.send_message(
+                                        f"📐 FVG Reverse | {symbol}\n"
+                                        f"❌ Closed {old_dir} → Opening {new_dir}"
+                                    )
+                            else:
+                                print(f"[FVG TP] ❌ {symbol}: failed to close existing position")
+                        self._fvg_managed.pop(symbol, None)
+                        time.sleep(0.3)  # Wait for position to clear
+                    except Exception as e:
+                        print(f"[FVG TP] ❌ {symbol}: reverse error: {e}")
+                        self._fvg_managed.pop(symbol, None)
+            
             # === AUTO-TRADE ===
             if self._trade_executor:
                 try:
@@ -539,7 +587,8 @@ class CTRFastJob:
                     if self.sl_monitor_enabled:
                         parts.append(f"SL={sl_pct}%, {vp_count} virt.pos")
                     if self.fvg_tp_enabled:
-                        parts.append(f"FVG TP: {fvg_count} managed")
+                        trailing = sum(1 for v in self._fvg_managed.values() if v.get('trail_active'))
+                        parts.append(f"FVG TP: {fvg_count} managed ({trailing} trailing)")
                     if parts:
                         print(f"[Monitor] ✅ Check #{check_count}: {', '.join(parts)}")
             except Exception as e:
@@ -670,34 +719,42 @@ class CTRFastJob:
                 print(f"[CTR Job] ❌ SL Trade execution error: {e}")
     
     # ========================================
-    # FVG TP MANAGER — Partial Close + BE SL
+    # FVG TP MANAGER — Partial Close + BE SL + Trailing Stop
     # ========================================
     
+    def _fetch_all_positions_map(self) -> Dict[str, Dict]:
+        """Fetch ALL open positions in one REST call, return as symbol→position dict."""
+        try:
+            positions = self._trade_executor.bybit.get_positions()
+            return {p['symbol']: p for p in positions} if positions else {}
+        except Exception as e:
+            print(f"[FVG TP] ❌ Batch positions error: {e}")
+            return {}
+    
     def _check_fvg_tp_all(self):
-        """Check all FVG-managed positions for partial TP trigger."""
+        """Check all FVG-managed positions: partial TP trigger + trailing stop."""
         if not self.fvg_tp_enabled or not self._trade_executor:
             return
         
         if not self._fvg_managed:
             return
         
+        # 1 REST call for ALL positions (instead of N calls per symbol)
+        all_positions = self._fetch_all_positions_map()
+        
         managed_copy = dict(self._fvg_managed)
         
         for symbol, info in managed_copy.items():
-            if info.get('partial_done'):
-                continue  # Already partially closed
-            
             try:
-                pos = self._trade_executor.get_position_for_symbol(symbol)
+                pos = all_positions.get(symbol)
                 if not pos:
                     # Position closed externally — cleanup
                     self._fvg_managed.pop(symbol, None)
                     continue
                 
                 # Verify direction matches
-                pos_side = pos['side']  # "Buy" or "Sell"
                 expected_side = "Buy" if info['direction'] == 'BUY' else "Sell"
-                if pos_side != expected_side:
+                if pos['side'] != expected_side:
                     self._fvg_managed.pop(symbol, None)
                     continue
                 
@@ -713,9 +770,13 @@ class CTRFastJob:
                 else:
                     profit_pct = (entry_price - mark_price) / entry_price * 100
                 
-                # Check if profit reached trigger threshold
-                if profit_pct >= self.fvg_tp_trigger_pct:
-                    self._execute_fvg_partial_tp(symbol, info, pos, profit_pct)
+                if not info.get('partial_done'):
+                    # Phase 1: waiting for partial TP trigger
+                    if profit_pct >= self.fvg_tp_trigger_pct:
+                        self._execute_fvg_partial_tp(symbol, info, pos, profit_pct)
+                else:
+                    # Phase 2: trailing stop on remaining position
+                    self._update_fvg_trailing_sl(symbol, info, mark_price, profit_pct)
                     
             except Exception as e:
                 print(f"[FVG TP] ❌ Error checking {symbol}: {e}")
@@ -741,8 +802,7 @@ class CTRFastJob:
                 return
             
             # 1. Partial close
-            close_side = pos['side']  # Same as position side for close_position
-            result = self._trade_executor.bybit.close_position(symbol, close_side, close_qty)
+            result = self._trade_executor.bybit.close_position(symbol, pos['side'], close_qty)
             
             if not result:
                 print(f"[FVG TP] ❌ {symbol}: partial close failed")
@@ -770,24 +830,30 @@ class CTRFastJob:
             else:
                 print(f"[FVG TP] ⚠️ {symbol}: failed to set BE SL")
             
-            # Mark as done
+            # 4. Mark as done + init trailing state
+            mark_price = pos.get('mark_price', entry_price)
             info['partial_done'] = True
             info['be_set'] = sl_set
             info['be_price'] = be_sl
+            info['current_sl'] = be_sl
+            info['max_profit_price'] = mark_price  # Track peak price for trailing
+            info['trail_active'] = False  # Trailing activates after trail_start_pct
             self._fvg_managed[symbol] = info
             
-            # 4. Telegram notification
+            # 5. Telegram notification
             notifier = get_notifier()
             if notifier:
+                remaining = round(size - close_qty, 6)
                 msg = (
                     f"📐 FVG TP Manager | {symbol}\n"
                     f"✅ Partial close: {self.fvg_tp_close_pct}% at +{profit_pct:.2f}%\n"
                     f"🛡️ SL → BE ${be_sl:.4f} ({label})\n"
-                    f"Remaining: {round(size - close_qty, 6)}"
+                    f"📏 Trailing: {self.fvg_tp_trail_pct}% (activates at +{self.fvg_tp_trail_start_pct}%)\n"
+                    f"Remaining: {remaining}"
                 )
                 notifier.send_message(msg)
             
-            # Log trade
+            # 6. Log trade
             self._trade_executor._log_trade(
                 symbol, 'PARTIAL_TP', 'Sell' if direction == 'BUY' else 'Buy',
                 close_qty, entry_price, profit_pct, result.get('order_id', ''),
@@ -798,6 +864,62 @@ class CTRFastJob:
             print(f"[FVG TP] ❌ Execute error {symbol}: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _update_fvg_trailing_sl(self, symbol: str, info: Dict, mark_price: float, profit_pct: float):
+        """Update trailing stop for remaining FVG position after partial close."""
+        direction = info['direction']
+        entry_price = info['entry_price']
+        trail_pct = self.fvg_tp_trail_pct / 100
+        trail_start = self.fvg_tp_trail_start_pct
+        
+        max_price = info.get('max_profit_price', mark_price)
+        
+        # Update max profit price
+        if direction == 'BUY' and mark_price > max_price:
+            max_price = mark_price
+            info['max_profit_price'] = max_price
+        elif direction == 'SELL' and mark_price < max_price:
+            max_price = mark_price
+            info['max_profit_price'] = max_price
+        
+        # Activate trailing after trail_start_pct profit
+        if not info.get('trail_active'):
+            if profit_pct >= trail_start:
+                info['trail_active'] = True
+                print(f"[FVG TP] 📏 {symbol}: trailing activated at +{profit_pct:.2f}% "
+                      f"(threshold: {trail_start}%)")
+            else:
+                self._fvg_managed[symbol] = info
+                return
+        
+        # Calculate new trailing SL based on max profit price
+        if direction == 'BUY':
+            new_sl = round(max_price * (1 - trail_pct), 8)
+        else:
+            new_sl = round(max_price * (1 + trail_pct), 8)
+        
+        current_sl = info.get('current_sl', 0)
+        
+        # Only move SL in favorable direction (never lower for LONG, never higher for SHORT)
+        should_update = False
+        if direction == 'BUY' and new_sl > current_sl:
+            should_update = True
+        elif direction == 'SELL' and (current_sl <= 0 or new_sl < current_sl):
+            should_update = True
+        
+        if should_update:
+            sl_set = self._trade_executor.bybit.set_trading_stop(
+                symbol=symbol,
+                stop_loss=new_sl
+            )
+            
+            if sl_set:
+                label = 'LONG' if direction == 'BUY' else 'SHORT'
+                print(f"[FVG TP] 📏 {symbol} {label}: trail SL ${current_sl:.4f} → ${new_sl:.4f} "
+                      f"(peak=${max_price:.4f}, +{profit_pct:.2f}%)")
+                info['current_sl'] = new_sl
+            
+        self._fvg_managed[symbol] = info
     
     # ========================================
     # FVG DETECTOR
@@ -1112,7 +1234,7 @@ class CTRFastJob:
             if self.sl_monitor_enabled and self.sl_monitor_pct > 0:
                 parts.append(f"SL={self.sl_monitor_pct}%")
             if self.fvg_tp_enabled:
-                parts.append(f"FVG TP: trigger={self.fvg_tp_trigger_pct}%, close={self.fvg_tp_close_pct}%")
+                parts.append(f"FVG TP: trigger={self.fvg_tp_trigger_pct}%, close={self.fvg_tp_close_pct}%, trail={self.fvg_tp_trail_pct}%@{self.fvg_tp_trail_start_pct}%")
             print(f"[CTR Job] 🛑 Monitor: {', '.join(parts)}, interval={self.sl_check_interval}s")
         
         # FVG Detector reload

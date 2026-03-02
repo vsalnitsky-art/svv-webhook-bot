@@ -819,7 +819,7 @@
                     
                     <!-- FVG TP Manager Settings -->
                     <div style="margin-top: 12px; padding: 10px; background: rgba(33,150,243,0.05); border: 1px solid rgba(33,150,243,0.15); border-radius: 8px;">
-                        <span style="color: #2196f3; font-weight: 600; font-size: 13px;">🎯 TP Manager (partial close + BE)</span>
+                        <span style="color: #2196f3; font-weight: 600; font-size: 13px;">🎯 TP Manager (partial close + trailing)</span>
                         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">
                             <div>
                                 <label style="font-size: 0.8em; color: #aaa;">Trigger %</label>
@@ -840,8 +840,22 @@
                                        class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
                             </div>
                         </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">📏 Trail distance %</label>
+                                <input type="number" id="fvg-tp-trail-pct" value="{{ settings.fvg_tp_trail_pct }}"
+                                       step="0.1" min="0.1" max="5"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">📏 Trail starts at %</label>
+                                <input type="number" id="fvg-tp-trail-start" value="{{ settings.fvg_tp_trail_start_pct }}"
+                                       step="0.1" min="0.1" max="10"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
                         <small style="color: #888; margin-top: 4px; display: block;">
-                            При +{{ settings.fvg_tp_trigger_pct }}% профіту → закриє {{ settings.fvg_tp_close_pct }}% позиції, SL → BE + {{ settings.fvg_tp_be_buffer_pct }}%
+                            +{{ settings.fvg_tp_trigger_pct }}% → close {{ settings.fvg_tp_close_pct }}%, SL→BE. Trail {{ settings.fvg_tp_trail_pct }}% від піку (старт +{{ settings.fvg_tp_trail_start_pct }}%)
                         </small>
                     </div>
                     
@@ -1606,6 +1620,8 @@ async function saveFVGTPSettings() {
     const trigger = parseFloat(document.getElementById('fvg-tp-trigger').value) || 0.5;
     const closePct = parseFloat(document.getElementById('fvg-tp-close').value) || 50;
     const beBuffer = parseFloat(document.getElementById('fvg-tp-be-buffer')?.value) || 0.05;
+    const trailPct = parseFloat(document.getElementById('fvg-tp-trail-pct')?.value) || 0.3;
+    const trailStart = parseFloat(document.getElementById('fvg-tp-trail-start')?.value) || 0.8;
     
     // Sync detail fields
     const detailTrigger = document.getElementById('fvg-tp-trigger-detail');
@@ -1621,13 +1637,15 @@ async function saveFVGTPSettings() {
                 fvg_tp_manager_enabled: enabled ? '1' : '0',
                 fvg_tp_trigger_pct: trigger.toString(),
                 fvg_tp_close_pct: closePct.toString(),
-                fvg_tp_be_buffer_pct: beBuffer.toString()
+                fvg_tp_be_buffer_pct: beBuffer.toString(),
+                fvg_tp_trail_pct: trailPct.toString(),
+                fvg_tp_trail_start_pct: trailStart.toString()
             })
         });
         // Sync module bar
         const modTP = document.getElementById('mod-fvg-tp');
         if (modTP) modTP.checked = enabled;
-        showToast(`✅ FVG TP: ${enabled ? 'ON' : 'OFF'}, ${trigger}% → ${closePct}% close`);
+        showToast(`✅ FVG TP: ${enabled ? 'ON' : 'OFF'}, ${trigger}% → ${closePct}% close, trail ${trailPct}%`);
     } catch (e) {
         console.error('FVG TP settings save error:', e);
     }
@@ -1797,6 +1815,8 @@ async function saveFVGSettings() {
         fvg_tp_trigger_pct: document.getElementById('fvg-tp-trigger-detail')?.value || document.getElementById('fvg-tp-trigger').value,
         fvg_tp_close_pct: document.getElementById('fvg-tp-close-detail')?.value || document.getElementById('fvg-tp-close').value,
         fvg_tp_be_buffer_pct: document.getElementById('fvg-tp-be-buffer')?.value || '0.05',
+        fvg_tp_trail_pct: document.getElementById('fvg-tp-trail-pct')?.value || '0.3',
+        fvg_tp_trail_start_pct: document.getElementById('fvg-tp-trail-start')?.value || '0.8',
     };
     // Sync compact fields from detail
     const t = document.getElementById('fvg-tp-trigger');
