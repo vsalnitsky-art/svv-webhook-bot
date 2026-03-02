@@ -107,8 +107,8 @@ class FVGDetector:
         max_fvg_per_symbol: int = 5,
         rr_ratio: float = 1.5,
         sl_buffer_pct: float = 0.2,
-        check_interval: int = 5,
-        scan_interval: int = 300,
+        check_interval: int = 3,
+        scan_interval: int = 60,
         mitigation_src: str = 'close',  # 'close' or 'highlow'
         trend_filter_enabled: bool = False,
         trend_fast_ema: int = 5,
@@ -139,6 +139,8 @@ class FVGDetector:
         
         # Trend data per symbol: {'BTCUSDT': {'trend': 'bullish', 'fast': 67500, 'slow': 67200, 'price': 67800}}
         self._symbol_trends: Dict[str, Dict] = {}
+        # Cached closes per symbol for live EMA updates (avoids REST calls)
+        self._symbol_closes: Dict[str, List[float]] = {}
         
         # Threads
         self._monitor_thread = None
@@ -413,7 +415,8 @@ class FVGDetector:
         return ema
     
     def _update_trend(self, symbol: str, klines: List[Dict]):
-        """Compute Fast/Slow EMA crossover and determine trend direction."""
+        """Compute Fast/Slow EMA crossover and determine trend direction.
+        Also caches closes array for live updates between scans."""
         if not self.trend_filter_enabled:
             return
         
@@ -422,6 +425,11 @@ class FVGDetector:
             return
         
         closes = [k['close'] for k in klines]
+        
+        # Cache closes for live EMA updates (keep last N needed for slow EMA + buffer)
+        cache_size = max(self.trend_fast_ema, self.trend_slow_ema) + 50
+        self._symbol_closes[symbol] = closes[-cache_size:]
+        
         fast_ema = self._compute_ema(closes, self.trend_fast_ema)
         slow_ema = self._compute_ema(closes, self.trend_slow_ema)
         current_price = closes[-1]
@@ -430,6 +438,39 @@ class FVGDetector:
             return
         
         # Fast EMA > Slow EMA → uptrend, Fast EMA < Slow EMA → downtrend
+        trend = 'bullish' if fast_ema > slow_ema else 'bearish'
+        
+        self._symbol_trends[symbol] = {
+            'trend': trend,
+            'fast': round(fast_ema, 6),
+            'slow': round(slow_ema, 6),
+            'price': current_price,
+            'spread_pct': round((fast_ema - slow_ema) / slow_ema * 100, 3),
+        }
+    
+    def _update_trend_live(self, symbol: str, current_price: float):
+        """Update EMA using cached closes + live price (no API call).
+        Called every check_interval (5s) from monitor loop."""
+        if not self.trend_filter_enabled:
+            return
+        
+        cached = self._symbol_closes.get(symbol)
+        if not cached:
+            return
+        
+        min_needed = max(self.trend_fast_ema, self.trend_slow_ema) + 5
+        if len(cached) < min_needed:
+            return
+        
+        # Replace last close with current live price
+        live_closes = cached[:-1] + [current_price]
+        
+        fast_ema = self._compute_ema(live_closes, self.trend_fast_ema)
+        slow_ema = self._compute_ema(live_closes, self.trend_slow_ema)
+        
+        if fast_ema <= 0 or slow_ema <= 0:
+            return
+        
         trend = 'bullish' if fast_ema > slow_ema else 'bearish'
         
         self._symbol_trends[symbol] = {
@@ -623,7 +664,7 @@ class FVGDetector:
         total_new = 0
         for symbol in self._watchlist:
             total_new += self._scan_symbol(symbol)
-            time.sleep(0.5)  # Rate limit protection (Bybit REST)
+            time.sleep(0.3)  # Rate limit protection (Bybit REST)
         
         self._stats['scans'] += 1
         self._stats['last_scan_time'] = datetime.now(timezone.utc).strftime('%H:%M:%S')
@@ -780,6 +821,7 @@ class FVGDetector:
         
         prices_ok = 0
         prices_zero = 0
+        trend_updated = set()  # Track which symbols already had live EMA update
         
         for fvg in active_fvgs:
             try:
@@ -789,6 +831,12 @@ class FVGDetector:
                     continue
                 
                 prices_ok += 1
+                
+                # Live EMA update (once per symbol per check cycle)
+                if fvg.symbol not in trend_updated:
+                    self._update_trend_live(fvg.symbol, current_price)
+                    trend_updated.add(fvg.symbol)
+                
                 new_status = self._check_retest(fvg, current_price)
                 
                 if new_status:
@@ -808,8 +856,8 @@ class FVGDetector:
                 print(f"[FVG] Monitor error {fvg.symbol}: {e}")
         
         self._monitor_checks += 1
-        # Heartbeat every ~5 min (60 checks at 5s interval)
-        if self._monitor_checks % 60 == 1:
+        # Heartbeat every ~5 min (100 checks at 3s interval)
+        if self._monitor_checks % 100 == 1:
             entered = sum(1 for f in active_fvgs if f.status == 'entered')
             print(f"[FVG Monitor] ✅ Check #{self._monitor_checks}: "
                   f"{len(active_fvgs)} active ({entered} entered), "

@@ -777,7 +777,13 @@
                         <div>
                             <small style="color:#aaa;">Scan Interval (s)</small>
                             <input type="number" id="fvg-scan-interval" value="{{ settings.ctr_fvg_scan_interval }}"
-                                   step="60" min="60" max="3600"
+                                   step="10" min="30" max="3600"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">Check Interval (s)</small>
+                            <input type="number" id="fvg-check-interval" value="{{ settings.ctr_fvg_check_interval }}"
+                                   step="1" min="1" max="30"
                                    class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
                         </div>
                     </div>
@@ -1782,6 +1788,7 @@ async function saveFVGSettings() {
         ctr_fvg_sl_buffer_pct: document.getElementById('fvg-sl-buffer').value,
         ctr_fvg_max_per_symbol: document.getElementById('fvg-max-per-symbol').value,
         ctr_fvg_scan_interval: document.getElementById('fvg-scan-interval').value,
+        ctr_fvg_check_interval: document.getElementById('fvg-check-interval').value,
         ctr_fvg_trend_filter: document.getElementById('fvg-trend-filter').checked ? '1' : '0',
         ctr_fvg_trend_fast_ema: document.getElementById('fvg-trend-fast-ema').value,
         ctr_fvg_trend_slow_ema: document.getElementById('fvg-trend-slow-ema').value,
