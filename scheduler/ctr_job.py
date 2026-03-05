@@ -432,6 +432,12 @@ class CTRFastJob:
                     if is_fvg and self.fvg_tp_enabled:
                         override_tp = 0  # No exchange TP — we manage partial close
                     
+                    # FVG without TP Manager: if Auto-Trade TP% is set, use it instead of R:R
+                    if is_fvg and not self.fvg_tp_enabled:
+                        at_settings = self._trade_executor.get_settings()
+                        if at_settings.get('tp_pct', 0) > 0:
+                            override_tp = 0  # Let _open_position calculate TP from tp_pct %
+                    
                     trade_result = self._trade_executor.execute_signal(
                         symbol=symbol,
                         signal_type=signal_type,
