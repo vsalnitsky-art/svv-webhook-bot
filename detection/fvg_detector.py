@@ -113,6 +113,10 @@ class FVGDetector:
         trend_filter_enabled: bool = False,
         trend_fast_ema: int = 5,
         trend_slow_ema: int = 13,
+        htf_trend_enabled: bool = False,
+        htf_timeframe: str = '1h',
+        htf_fast_ema: int = 8,
+        htf_slow_ema: int = 21,
         on_signal: Optional[Callable] = None,
     ):
         self.db = db
@@ -128,6 +132,10 @@ class FVGDetector:
         self.trend_filter_enabled = trend_filter_enabled
         self.trend_fast_ema = trend_fast_ema
         self.trend_slow_ema = trend_slow_ema
+        self.htf_trend_enabled = htf_trend_enabled
+        self.htf_timeframe = htf_timeframe
+        self.htf_fast_ema = htf_fast_ema
+        self.htf_slow_ema = htf_slow_ema
         self.on_signal = on_signal
         
         # State
@@ -141,6 +149,9 @@ class FVGDetector:
         self._symbol_trends: Dict[str, Dict] = {}
         # Cached closes per symbol for live EMA updates (avoids REST calls)
         self._symbol_closes: Dict[str, List[float]] = {}
+        # HTF trend data (separate timeframe)
+        self._symbol_trends_htf: Dict[str, Dict] = {}
+        self._symbol_closes_htf: Dict[str, List[float]] = {}
         
         # Threads
         self._monitor_thread = None
@@ -192,9 +203,10 @@ class FVGDetector:
         
         active = sum(1 for f in self._fvg_zones.values() if f.status in ('waiting', 'entered'))
         trend_tag = f", trend=EMA({self.trend_fast_ema}/{self.trend_slow_ema})" if self.trend_filter_enabled else ""
+        htf_tag = f", HTF={self.htf_timeframe} EMA({self.htf_fast_ema}/{self.htf_slow_ema})" if self.htf_trend_enabled else ""
         print(f"[FVG] ✅ Started: {len(watchlist)} symbols, TF={self.timeframe}, "
               f"min={self.min_fvg_pct}%, R:R={self.rr_ratio}, "
-              f"mitigation={self.mitigation_src}{trend_tag}, active={active} FVGs")
+              f"mitigation={self.mitigation_src}{trend_tag}{htf_tag}, active={active} FVGs")
     
     def stop(self):
         self._running = False
@@ -207,7 +219,8 @@ class FVGDetector:
     def reload_settings(self, settings: Dict):
         for key in ('min_fvg_pct', 'rr_ratio', 'sl_buffer_pct', 'timeframe',
                      'max_fvg_per_symbol', 'mitigation_src',
-                     'trend_filter_enabled', 'trend_fast_ema', 'trend_slow_ema'):
+                     'trend_filter_enabled', 'trend_fast_ema', 'trend_slow_ema',
+                     'htf_trend_enabled', 'htf_timeframe', 'htf_fast_ema', 'htf_slow_ema'):
             if key in settings:
                 current = getattr(self, key)
                 if isinstance(current, bool):
@@ -215,8 +228,9 @@ class FVGDetector:
                 else:
                     setattr(self, key, type(current)(settings[key]))
         trend_tag = f", trend=EMA({self.trend_fast_ema}/{self.trend_slow_ema})" if self.trend_filter_enabled else ""
+        htf_tag = f", HTF={self.htf_timeframe} EMA({self.htf_fast_ema}/{self.htf_slow_ema})" if self.htf_trend_enabled else ""
         print(f"[FVG] 🔄 Settings: min={self.min_fvg_pct}%, R:R={self.rr_ratio}, "
-              f"buffer={self.sl_buffer_pct}%, src={self.mitigation_src}{trend_tag}")
+              f"buffer={self.sl_buffer_pct}%, src={self.mitigation_src}{trend_tag}{htf_tag}")
     
     # ========================================
     # FVG DETECTION (Pine Script exact)
@@ -481,22 +495,105 @@ class FVGDetector:
             'spread_pct': round((fast_ema - slow_ema) / slow_ema * 100, 3),
         }
     
-    def _check_trend_filter(self, symbol: str, direction: str) -> bool:
+    # ========================================
+    # HTF TREND FILTER (Higher Timeframe)
+    # ========================================
+    
+    def _update_trend_htf_from_rest(self, symbol: str):
+        """Fetch HTF klines and compute EMA trend (called during REST scan)."""
+        if not self.htf_trend_enabled:
+            return
+        
+        try:
+            htf_interval = self.INTERVAL_MAP.get(self.htf_timeframe, '60')
+            needed = max(self.htf_fast_ema, self.htf_slow_ema) + 20
+            
+            klines = self.bybit.get_klines(
+                symbol=symbol, interval=htf_interval, limit=needed
+            )
+            
+            if not klines or len(klines) < needed:
+                return
+            
+            closes = [k['close'] for k in klines]
+            
+            # Cache for live updates
+            cache_size = max(self.htf_fast_ema, self.htf_slow_ema) + 50
+            self._symbol_closes_htf[symbol] = closes[-cache_size:]
+            
+            fast_ema = self._compute_ema(closes, self.htf_fast_ema)
+            slow_ema = self._compute_ema(closes, self.htf_slow_ema)
+            
+            if fast_ema <= 0 or slow_ema <= 0:
+                return
+            
+            trend = 'bullish' if fast_ema > slow_ema else 'bearish'
+            
+            self._symbol_trends_htf[symbol] = {
+                'trend': trend,
+                'fast': round(fast_ema, 6),
+                'slow': round(slow_ema, 6),
+                'price': closes[-1],
+                'spread_pct': round((fast_ema - slow_ema) / slow_ema * 100, 3),
+            }
+        except Exception as e:
+            pass  # Silently skip — don't block main scan
+    
+    def _update_trend_htf_live(self, symbol: str, current_price: float):
+        """Update HTF EMA using cached closes + live price (no API call)."""
+        if not self.htf_trend_enabled:
+            return
+        
+        cached = self._symbol_closes_htf.get(symbol)
+        if not cached:
+            return
+        
+        min_needed = max(self.htf_fast_ema, self.htf_slow_ema) + 5
+        if len(cached) < min_needed:
+            return
+        
+        live_closes = cached[:-1] + [current_price]
+        
+        fast_ema = self._compute_ema(live_closes, self.htf_fast_ema)
+        slow_ema = self._compute_ema(live_closes, self.htf_slow_ema)
+        
+        if fast_ema <= 0 or slow_ema <= 0:
+            return
+        
+        trend = 'bullish' if fast_ema > slow_ema else 'bearish'
+        
+        self._symbol_trends_htf[symbol] = {
+            'trend': trend,
+            'fast': round(fast_ema, 6),
+            'slow': round(slow_ema, 6),
+            'price': current_price,
+            'spread_pct': round((fast_ema - slow_ema) / slow_ema * 100, 3),
+        }
+    
+    # ========================================
+    # COMBINED TREND CHECK
+    # ========================================
+    
+    def _check_trend_filter(self, symbol: str, direction: str) -> tuple:
         """
-        Check if FVG direction aligns with trend (Fast/Slow EMA crossover).
-        Returns True if trade is allowed.
+        Check if FVG direction aligns with trend on all enabled timeframes.
+        Returns (allowed: bool, block_reason: str).
         
-        Bullish FVG (LONG) → allowed only when Fast EMA > Slow EMA (uptrend)
-        Bearish FVG (SHORT) → allowed only when Fast EMA < Slow EMA (downtrend)
+        Both LTF and HTF must agree with FVG direction when enabled.
         """
-        if not self.trend_filter_enabled:
-            return True
+        # LTF check
+        if self.trend_filter_enabled:
+            ltf = self._symbol_trends.get(symbol)
+            if ltf and ltf['trend'] != direction:
+                return False, 'ltf'
         
-        trend_data = self._symbol_trends.get(symbol)
-        if not trend_data:
-            return True  # no data yet, allow
+        # HTF check
+        if self.htf_trend_enabled:
+            htf = self._symbol_trends_htf.get(symbol)
+            if htf and htf['trend'] != direction:
+                return False, 'htf'
         
-        return trend_data['trend'] == direction
+        return True, ''
     
     # ========================================
     # SCANNING
@@ -522,6 +619,10 @@ class FVGDetector:
             
             # Update trend data from klines
             self._update_trend(symbol, klines)
+            
+            # Fetch HTF klines for higher timeframe trend (separate REST call)
+            if self.htf_trend_enabled:
+                self._update_trend_htf_from_rest(symbol)
             
             # === KLINE-BASED RETEST CHECK ===
             # This catches retests that tick-polling (5s) may miss
@@ -751,16 +852,17 @@ class FVGDetector:
         if fvg.status not in ('waiting', 'entered'):
             return
         
-        # === TREND FILTER ===
-        if not self._check_trend_filter(fvg.symbol, fvg.direction):
-            trend_data = self._symbol_trends.get(fvg.symbol, {})
-            trend_dir = trend_data.get('trend', '?')
-            fast_val = trend_data.get('fast', 0)
-            slow_val = trend_data.get('slow', 0)
+        # === TREND FILTER (LTF + HTF) ===
+        allowed, block_src = self._check_trend_filter(fvg.symbol, fvg.direction)
+        if not allowed:
             label = 'LONG' if fvg.direction == 'bullish' else 'SHORT'
-            print(f"[FVG] 🚫 TREND BLOCKED: {fvg.symbol} {label} "
-                  f"(FVG={fvg.direction}, trend={trend_dir}, "
-                  f"Fast={fast_val:.4f}, Slow={slow_val:.4f})")
+            ltf = self._symbol_trends.get(fvg.symbol, {})
+            htf = self._symbol_trends_htf.get(fvg.symbol, {})
+            tf_label = self.timeframe if block_src == 'ltf' else self.htf_timeframe
+            src_data = ltf if block_src == 'ltf' else htf
+            print(f"[FVG] 🚫 TREND BLOCKED [{tf_label}]: {fvg.symbol} {label} "
+                  f"(FVG={fvg.direction}, {tf_label}={src_data.get('trend', '?')}, "
+                  f"Fast={src_data.get('fast', 0):.4f}, Slow={src_data.get('slow', 0):.4f})")
             # Keep FVG in 'waiting' so it can be re-entered later if trend changes
             fvg.status = 'waiting'
             self._stats['fvg_filtered_trend'] += 1
@@ -779,9 +881,13 @@ class FVGDetector:
         
         trend_tag = ""
         trend_data = self._symbol_trends.get(fvg.symbol)
+        htf_data = self._symbol_trends_htf.get(fvg.symbol)
         if self.trend_filter_enabled and trend_data:
-            trend_tag = (f"\n  Trend: {trend_data['trend'].upper()} "
+            trend_tag = (f"\n  Trend {self.timeframe}: {trend_data['trend'].upper()} "
                         f"(Fast={trend_data['fast']:.4f}, Slow={trend_data['slow']:.4f})")
+        if self.htf_trend_enabled and htf_data:
+            trend_tag += (f"\n  Trend {self.htf_timeframe}: {htf_data['trend'].upper()} "
+                         f"(Fast={htf_data['fast']:.4f}, Slow={htf_data['slow']:.4f})")
         
         print(f"[FVG] ✅ RETEST SIGNAL: {fvg.symbol} {label}\n"
               f"  FVG: ${fvg.low:.4f} - ${fvg.high:.4f} ({fvg.size_pct}%)\n"
@@ -835,6 +941,7 @@ class FVGDetector:
                 # Live EMA update (once per symbol per check cycle)
                 if fvg.symbol not in trend_updated:
                     self._update_trend_live(fvg.symbol, current_price)
+                    self._update_trend_htf_live(fvg.symbol, current_price)
                     trend_updated.add(fvg.symbol)
                 
                 new_status = self._check_retest(fvg, current_price)
@@ -996,6 +1103,11 @@ class FVGDetector:
             'trend_fast_ema': self.trend_fast_ema,
             'trend_slow_ema': self.trend_slow_ema,
             'trends': dict(self._symbol_trends),
+            'htf_trend_enabled': self.htf_trend_enabled,
+            'htf_timeframe': self.htf_timeframe,
+            'htf_fast_ema': self.htf_fast_ema,
+            'htf_slow_ema': self.htf_slow_ema,
+            'trends_htf': dict(self._symbol_trends_htf),
         }
     
     def clear_zones(self) -> int:

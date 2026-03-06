@@ -817,6 +817,42 @@
                         </small>
                     </div>
                     
+                    <!-- HTF Trend Filter -->
+                    <div style="margin-top: 8px; padding: 8px; background: rgba(156,39,176,0.08); border-radius: 8px; border: 1px solid rgba(156,39,176,0.2);">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <label class="switch" style="margin: 0;">
+                                <input type="checkbox" id="fvg-htf-trend" {% if settings.ctr_fvg_htf_trend %}checked{% endif %}>
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: #ba68c8; font-weight: 600; font-size: 13px;">📊 HTF Trend Filter</span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                            <div>
+                                <small style="color:#aaa;">Timeframe</small>
+                                <select id="fvg-htf-timeframe" class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                                    {% for tf in ['30m','1h','2h','4h'] %}
+                                    <option value="{{ tf }}" {% if settings.ctr_fvg_htf_timeframe == tf %}selected{% endif %}>{{ tf }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <small style="color:#aaa;">Fast EMA</small>
+                                <input type="number" id="fvg-htf-fast-ema" value="{{ settings.ctr_fvg_htf_fast_ema }}"
+                                       step="1" min="2" max="100"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <small style="color:#aaa;">Slow EMA</small>
+                                <input type="number" id="fvg-htf-slow-ema" value="{{ settings.ctr_fvg_htf_slow_ema }}"
+                                       step="1" min="5" max="500"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            Обидва TF повинні збігатись для сигналу
+                        </small>
+                    </div>
+                    
                     <!-- FVG TP Manager Settings -->
                     <div style="margin-top: 12px; padding: 10px; background: rgba(33,150,243,0.05); border: 1px solid rgba(33,150,243,0.15); border-radius: 8px;">
                         <span style="color: #2196f3; font-weight: 600; font-size: 13px;">🎯 TP Manager (partial close + trailing)</span>
@@ -1103,6 +1139,15 @@
                         <span id="fvg-trend-ema-label" style="color: #888; font-size: 11px;"></span>
                     </div>
                     <div id="fvg-trend-chips" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
+                </div>
+                
+                <!-- HTF Trend Filter Status -->
+                <div id="fvg-htf-trend-bar" style="display:none; margin: 4px 0 10px; padding: 8px 12px; background: rgba(156,39,176,0.06); border-radius: 8px; border: 1px solid rgba(156,39,176,0.15);">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                        <span style="color: #ba68c8; font-weight: 600; font-size: 12px;">📊 HTF Trend</span>
+                        <span id="fvg-htf-ema-label" style="color: #888; font-size: 11px;"></span>
+                    </div>
+                    <div id="fvg-htf-trend-chips" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
                 </div>
                 
                 <table class="results-table" id="fvg-table" style="display:none;">
@@ -1810,6 +1855,10 @@ async function saveFVGSettings() {
         ctr_fvg_trend_filter: document.getElementById('fvg-trend-filter').checked ? '1' : '0',
         ctr_fvg_trend_fast_ema: document.getElementById('fvg-trend-fast-ema').value,
         ctr_fvg_trend_slow_ema: document.getElementById('fvg-trend-slow-ema').value,
+        ctr_fvg_htf_trend: document.getElementById('fvg-htf-trend').checked ? '1' : '0',
+        ctr_fvg_htf_timeframe: document.getElementById('fvg-htf-timeframe').value,
+        ctr_fvg_htf_fast_ema: document.getElementById('fvg-htf-fast-ema').value,
+        ctr_fvg_htf_slow_ema: document.getElementById('fvg-htf-slow-ema').value,
         // FVG TP Manager
         fvg_tp_manager_enabled: document.getElementById('fvg-tp-enabled').checked ? '1' : '0',
         fvg_tp_trigger_pct: document.getElementById('fvg-tp-trigger-detail')?.value || document.getElementById('fvg-tp-trigger').value,
@@ -1882,6 +1931,41 @@ async function loadFVGZones() {
             }).join('');
         } else if (trendBar) {
             trendBar.style.display = 'none';
+        }
+        
+        // === HTF Trend bar ===
+        const htfBar = document.getElementById('fvg-htf-trend-bar');
+        const htfChips = document.getElementById('fvg-htf-trend-chips');
+        const htfLabel = document.getElementById('fvg-htf-ema-label');
+        if (htfBar && stats.htf_trend_enabled && stats.trends_htf) {
+            htfBar.style.display = '';
+            htfLabel.textContent = `EMA(${stats.htf_fast_ema || 8}/${stats.htf_slow_ema || 21}) on ${stats.htf_timeframe || '1h'}`;
+            const htfEntries = Object.entries(stats.trends_htf).sort((a, b) => a[0].localeCompare(b[0]));
+            // Get LTF trends for comparison
+            const ltfTrends = stats.trends || {};
+            htfChips.innerHTML = htfEntries.map(([sym, t]) => {
+                const isBull = t.trend === 'bullish';
+                const arrow = isBull ? '▲' : '▼';
+                // Check if LTF agrees — highlight with gold border if both match
+                const ltf = ltfTrends[sym];
+                const bothMatch = ltf && ltf.trend === t.trend;
+                const clr = isBull ? '#4caf50' : '#ff5252';
+                const bg = isBull ? 'rgba(76,175,80,0.12)' : 'rgba(255,82,82,0.12)';
+                const bdr = bothMatch
+                    ? (isBull ? 'rgba(76,175,80,0.8)' : 'rgba(255,82,82,0.8)')
+                    : 'rgba(255,193,7,0.5)';
+                const matchIcon = bothMatch ? '✓' : '✗';
+                const spread = t.spread_pct !== undefined ? ` (${t.spread_pct > 0 ? '+' : ''}${t.spread_pct}%)` : '';
+                const short = sym.replace('USDT', '');
+                const ltfDir = ltf ? ltf.trend : '?';
+                return `<span title="${sym} HTF: Fast=${t.fast}, Slow=${t.slow}${spread} | LTF=${ltfDir} ${matchIcon}" `
+                     + `style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;`
+                     + `border-radius:4px;font-size:11px;font-weight:600;`
+                     + `background:${bg};border:1.5px solid ${bdr};color:${clr};cursor:default;">`
+                     + `${arrow} ${short} ${matchIcon}</span>`;
+            }).join('');
+        } else if (htfBar) {
+            htfBar.style.display = 'none';
         }
         
         if (zones.length === 0) {
