@@ -227,13 +227,16 @@
     
     /* Switch toggle */
     .switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .switch.switch-sm { width: 36px; height: 20px; }
     .switch input { opacity: 0; width: 0; height: 0; }
     .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
               background-color: #555; transition: .3s; border-radius: 24px; }
     .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
                      background-color: white; transition: .3s; border-radius: 50%; }
+    .switch-sm .slider:before { height: 14px; width: 14px; left: 3px; bottom: 3px; }
     input:checked + .slider { background-color: #00c853; }
     input:checked + .slider:before { transform: translateX(20px); }
+    .switch-sm input:checked + .slider:before { transform: translateX(16px); }
     
     /* Position card */
     .position-card {
@@ -308,6 +311,19 @@
         margin-bottom: 15px;
         opacity: 0.5;
     }
+    /* Module Quick Toggles */
+    .module-chip {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 3px 8px; border-radius: 6px; cursor: pointer;
+        font-size: 11px; font-weight: 600; user-select: none;
+        background: rgba(255,82,82,0.1); border: 1px solid rgba(255,82,82,0.25); color: #ff5252;
+        transition: all 0.2s;
+    }
+    .module-chip:has(input:checked) {
+        background: rgba(76,175,80,0.15); border-color: rgba(76,175,80,0.4); color: #4caf50;
+    }
+    .module-chip input { display: none; }
+    .module-chip:hover { filter: brightness(1.2); }
 </style>
 
 <div class="ctr-container">
@@ -407,6 +423,63 @@
                     <button class="btn btn-sm btn-secondary" onclick="saveSettings()">Save</button>
                 </div>
                 
+                <!-- 📡 Active Modules Quick Toggles -->
+                <div style="padding: 8px; margin-bottom: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+                        <span style="font-size: 12px; font-weight: 600; color: #aaa;">📡 Модулі</span>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                        <label class="module-chip" id="chip-ctr-scanner" title="CTR Fast Scanner (STC signals)">
+                            <input type="checkbox" id="mod-ctr-scanner"
+                                   {{ 'checked' if settings.ctr_scanner_enabled else '' }}
+                                   onchange="toggleModule('ctr_scanner_enabled', this.checked)">
+                            <span>🔄 CTR</span>
+                        </label>
+                        <label class="module-chip" id="chip-ctr-ema" title="CTR EMA Trend Filter">
+                            <input type="checkbox" id="mod-ctr-ema"
+                                   {{ 'checked' if settings.ctr_ema_trend_enabled else '' }}
+                                   onchange="toggleModule('ctr_ema_trend_enabled', this.checked)">
+                            <span>📉 EMA</span>
+                        </label>
+                        <label class="module-chip" id="chip-smc-filter" title="SMC Structure Filter">
+                            <input type="checkbox" id="mod-smc-filter" 
+                                   {{ 'checked' if settings.ctr_smc_filter_enabled else '' }}
+                                   onchange="toggleModule('ctr_smc_filter_enabled', this.checked)">
+                            <span>📊 SMC</span>
+                        </label>
+                        <label class="module-chip" id="chip-smc-trend" title="SMC Trend Filter (HTF)">
+                            <input type="checkbox" id="mod-smc-trend"
+                                   {{ 'checked' if settings.ctr_smc_trend_enabled else '' }}
+                                   onchange="toggleModule('ctr_smc_trend_enabled', this.checked)">
+                            <span>📈 Trend</span>
+                        </label>
+                        <label class="module-chip" id="chip-early-warning" title="Early Warning (15m divergence)">
+                            <input type="checkbox" id="mod-early-warning"
+                                   {{ 'checked' if settings.ctr_smc_trend_early_warning else '' }}
+                                   onchange="toggleModule('ctr_smc_trend_early_warning', this.checked)">
+                            <span>⚡ EW</span>
+                        </label>
+                        <label class="module-chip" id="chip-fvg" title="FVG Detector">
+                            <input type="checkbox" id="mod-fvg"
+                                   {{ 'checked' if settings.ctr_fvg_enabled else '' }}
+                                   onchange="toggleModule('ctr_fvg_enabled', this.checked)">
+                            <span>📐 FVG</span>
+                        </label>
+                        <label class="module-chip" id="chip-fvg-tp" title="FVG TP Manager (partial close + BE)">
+                            <input type="checkbox" id="mod-fvg-tp"
+                                   {{ 'checked' if settings.fvg_tp_manager_enabled else '' }}
+                                   onchange="toggleModule('fvg_tp_manager_enabled', this.checked)">
+                            <span>🎯 TP</span>
+                        </label>
+                        <label class="module-chip" id="chip-sl-monitor" title="SL Monitor">
+                            <input type="checkbox" id="mod-sl-monitor"
+                                   {{ 'checked' if settings.ctr_sl_monitor_enabled else '' }}
+                                   onchange="toggleModule('ctr_sl_monitor_enabled', this.checked)">
+                            <span>🛑 SL</span>
+                        </label>
+                    </div>
+                </div>
+                
                 <div class="settings-grid">
                     <div class="setting-item">
                         <label>Timeframe</label>
@@ -479,6 +552,39 @@
                     <div class="setting-item" id="cooldown_seconds_row" style="display: {{ 'block' if settings.ctr_use_cooldown else 'none' }};">
                         <label>Cooldown (сек)</label>
                         <input type="number" id="ctr_cooldown_seconds" value="{{ settings.ctr_cooldown_seconds or 300 }}" min="10" max="3600" step="10">
+                    </div>
+                </div>
+                
+                <!-- CTR EMA Trend Filter Section -->
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        📉 CTR EMA Trend Filter
+                        <span class="status-badge {{ 'status-running' if settings.ctr_ema_trend_enabled else 'status-stopped' }}" style="font-size: 0.7em;">
+                            {{ 'ON' if settings.ctr_ema_trend_enabled else 'OFF' }}
+                        </span>
+                    </h4>
+                    <small style="color: #888; display: block; margin-bottom: 10px;">
+                        Блокує CTR Fast сигнали проти EMA тренду (BUY тільки в uptrend, SELL тільки в downtrend)
+                    </small>
+                    
+                    <div class="setting-item">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="ctr_ema_trend_enabled" 
+                                   {{ 'checked' if settings.ctr_ema_trend_enabled else '' }} onchange="saveSettings()">
+                            Увімкнути EMA Trend Filter
+                        </label>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Fast EMA</label>
+                        <input type="number" id="ctr_ema_trend_fast" 
+                               value="{{ settings.ctr_ema_trend_fast or 5 }}" min="2" max="50" step="1">
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label>Slow EMA</label>
+                        <input type="number" id="ctr_ema_trend_slow" 
+                               value="{{ settings.ctr_ema_trend_slow or 13 }}" min="5" max="200" step="1">
                     </div>
                 </div>
                 
@@ -620,6 +726,187 @@
                     </small>
                 </div>
                 
+                <!-- FVG Detector Settings -->
+                <div class="trade-panel" style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+                    <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        📐 FVG Detector
+                        <span class="status-badge {{ 'status-running' if settings.ctr_fvg_enabled else 'status-stopped' }}" style="font-size: 0.7em;">
+                            {{ 'ON' if settings.ctr_fvg_enabled else 'OFF' }}
+                        </span>
+                    </h4>
+                    
+                    <label class="switch" style="margin-bottom: 10px;">
+                        <input type="checkbox" id="fvg-enabled" {{ 'checked' if settings.ctr_fvg_enabled else '' }}>
+                        <span class="slider"></span>
+                    </label>
+                    <small style="color: #ccc; margin-left: 8px;">Enable FVG Detection</small>
+                    
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px;">
+                        <div>
+                            <small style="color:#aaa;">Timeframe</small>
+                            <select id="fvg-timeframe" class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                                {% for tf in ['1m','3m','5m','15m','30m','1h','4h'] %}
+                                <option value="{{ tf }}" {{ 'selected' if settings.ctr_fvg_timeframe == tf else '' }}>{{ tf }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">R:R Ratio</small>
+                            <input type="number" id="fvg-rr-ratio" value="{{ settings.ctr_fvg_rr_ratio }}"
+                                   step="0.1" min="0.5" max="10"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">Min FVG Size %</small>
+                            <input type="number" id="fvg-min-pct" value="{{ settings.ctr_fvg_min_pct }}"
+                                   step="0.01" min="0.01" max="5"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">SL Buffer %</small>
+                            <input type="number" id="fvg-sl-buffer" value="{{ settings.ctr_fvg_sl_buffer_pct }}"
+                                   step="0.05" min="0" max="2"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">Max FVG/Symbol</small>
+                            <input type="number" id="fvg-max-per-symbol" value="{{ settings.ctr_fvg_max_per_symbol }}"
+                                   step="1" min="1" max="20"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">Scan Interval (s)</small>
+                            <input type="number" id="fvg-scan-interval" value="{{ settings.ctr_fvg_scan_interval }}"
+                                   step="10" min="30" max="3600"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                        <div>
+                            <small style="color:#aaa;">Check Interval (s)</small>
+                            <input type="number" id="fvg-check-interval" value="{{ settings.ctr_fvg_check_interval }}"
+                                   step="1" min="1" max="30"
+                                   class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                        </div>
+                    </div>
+                    
+                    <!-- Trend Filter -->
+                    <div style="margin-top: 12px; padding: 8px; background: rgba(33,150,243,0.08); border-radius: 8px; border: 1px solid rgba(33,150,243,0.2);">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <label class="switch" style="margin: 0;">
+                                <input type="checkbox" id="fvg-trend-filter" {% if settings.ctr_fvg_trend_filter %}checked{% endif %}>
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: #2196f3; font-weight: 600; font-size: 13px;">📈 Trend Filter (EMA crossover)</span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div>
+                                <small style="color:#aaa;">Fast EMA</small>
+                                <input type="number" id="fvg-trend-fast-ema" value="{{ settings.ctr_fvg_trend_fast_ema }}"
+                                       step="1" min="2" max="100"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <small style="color:#aaa;">Slow EMA</small>
+                                <input type="number" id="fvg-trend-slow-ema" value="{{ settings.ctr_fvg_trend_slow_ema }}"
+                                       step="1" min="5" max="500"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            Fast > Slow → uptrend (LONG тільки)<br>
+                            Fast < Slow → downtrend (SHORT тільки)
+                        </small>
+                    </div>
+                    
+                    <!-- HTF Trend Filter -->
+                    <div style="margin-top: 8px; padding: 8px; background: rgba(156,39,176,0.08); border-radius: 8px; border: 1px solid rgba(156,39,176,0.2);">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <label class="switch" style="margin: 0;">
+                                <input type="checkbox" id="fvg-htf-trend" {% if settings.ctr_fvg_htf_trend %}checked{% endif %}>
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: #ba68c8; font-weight: 600; font-size: 13px;">📊 HTF Trend Filter</span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                            <div>
+                                <small style="color:#aaa;">Timeframe</small>
+                                <select id="fvg-htf-timeframe" class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                                    {% for tf in ['30m','1h','2h','4h'] %}
+                                    <option value="{{ tf }}" {% if settings.ctr_fvg_htf_timeframe == tf %}selected{% endif %}>{{ tf }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <small style="color:#aaa;">Fast EMA</small>
+                                <input type="number" id="fvg-htf-fast-ema" value="{{ settings.ctr_fvg_htf_fast_ema }}"
+                                       step="1" min="2" max="100"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <small style="color:#aaa;">Slow EMA</small>
+                                <input type="number" id="fvg-htf-slow-ema" value="{{ settings.ctr_fvg_htf_slow_ema }}"
+                                       step="1" min="5" max="500"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            Обидва TF повинні збігатись для сигналу
+                        </small>
+                    </div>
+                    
+                    <!-- FVG TP Manager Settings -->
+                    <div style="margin-top: 12px; padding: 10px; background: rgba(33,150,243,0.05); border: 1px solid rgba(33,150,243,0.15); border-radius: 8px;">
+                        <span style="color: #2196f3; font-weight: 600; font-size: 13px;">🎯 TP Manager (partial close + trailing)</span>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px;">
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">Trigger %</label>
+                                <input type="number" id="fvg-tp-trigger-detail" value="{{ settings.fvg_tp_trigger_pct }}"
+                                       step="0.1" min="0.1" max="10"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">Close %</label>
+                                <input type="number" id="fvg-tp-close-detail" value="{{ settings.fvg_tp_close_pct }}"
+                                       step="5" min="10" max="90"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">BE buffer %</label>
+                                <input type="number" id="fvg-tp-be-buffer" value="{{ settings.fvg_tp_be_buffer_pct }}"
+                                       step="0.01" min="0" max="1"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">📏 Trail distance %</label>
+                                <input type="number" id="fvg-tp-trail-pct" value="{{ settings.fvg_tp_trail_pct }}"
+                                       step="0.1" min="0.1" max="5"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.8em; color: #aaa;">📏 Trail starts at %</label>
+                                <input type="number" id="fvg-tp-trail-start" value="{{ settings.fvg_tp_trail_start_pct }}"
+                                       step="0.1" min="0.1" max="10"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            +{{ settings.fvg_tp_trigger_pct }}% → close {{ settings.fvg_tp_close_pct }}%, SL→BE. Trail {{ settings.fvg_tp_trail_pct }}% від піку (старт +{{ settings.fvg_tp_trail_start_pct }}%)
+                        </small>
+                    </div>
+                    
+                    <button class="btn btn-sm btn-secondary" onclick="saveFVGSettings()" style="margin-top: 10px; width: 100%;">
+                        💾 Save FVG Settings
+                    </button>
+                    
+                    <small style="color: #888; display: block; margin-top: 8px;">
+                        <b>FVG:</b> Знаходить Fair Value Gaps на Bybit Futures<br>
+                        • Bullish FVG → ціна ретестує → LONG<br>
+                        • Bearish FVG → ціна ретестує → SHORT<br>
+                        • SL на краю FVG + buffer, TP по R:R
+                    </small>
+                </div>
+                
                 <!-- Trade Settings -->
                 <div class="trade-panel">
                     <h4 style="margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
@@ -678,9 +965,9 @@
                         💾 Зберегти Trade Settings
                     </button>
                     
-                    <!-- Active Positions -->
-                    <div id="trade-positions" style="margin-top:12px;">
-                        <small style="color:#888;">Позиції завантажуються...</small>
+                    <!-- Active Positions moved to main area -->
+                    <div style="margin-top:12px;">
+                        <small style="color:#888;">💰 Позиції відображаються у верхній частині сторінки</small>
                     </div>
                     
                     <small style="color: #888; display: block; margin-top: 10px;">
@@ -769,6 +1056,132 @@
             </div>
             {% endif %}
             
+            <!-- 💰 Open Positions -->
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <div class="panel-header">
+                    <h2>💰 Open Positions</h2>
+                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <!-- SL Monitor Controls -->
+                        <div style="display: flex; align-items: center; gap: 6px; background: rgba(255,82,82,0.08); border: 1px solid rgba(255,82,82,0.2); border-radius: 8px; padding: 4px 10px;">
+                            <span style="font-size: 0.85em; color: #ff5252;">🛑 SL Monitor</span>
+                            <label class="switch switch-sm">
+                                <input type="checkbox" id="sl-monitor-enabled" {{ 'checked' if settings.ctr_sl_monitor_enabled else '' }}
+                                       onchange="saveSLSettings()">
+                                <span class="slider"></span>
+                            </label>
+                            <input type="number" id="sl-monitor-pct" value="{{ settings.ctr_sl_monitor_pct }}"
+                                   step="0.1" min="0" max="50"
+                                   style="width: 55px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 2px 5px; border-radius: 4px; font-size: 0.85em; text-align: center;"
+                                   onchange="saveSLSettings()">
+                            <span style="font-size: 0.8em; color: #aaa;">%</span>
+                        </div>
+                        <!-- FVG TP Manager Controls -->
+                        <div style="display: flex; align-items: center; gap: 6px; background: rgba(33,150,243,0.08); border: 1px solid rgba(33,150,243,0.2); border-radius: 8px; padding: 4px 10px;">
+                            <span style="font-size: 0.85em; color: #2196f3;">📐 FVG TP</span>
+                            <label class="switch switch-sm">
+                                <input type="checkbox" id="fvg-tp-enabled" {{ 'checked' if settings.fvg_tp_manager_enabled else '' }}
+                                       onchange="saveFVGTPSettings()">
+                                <span class="slider"></span>
+                            </label>
+                            <input type="number" id="fvg-tp-trigger" value="{{ settings.fvg_tp_trigger_pct }}"
+                                   step="0.1" min="0.1" max="10"
+                                   style="width: 55px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 2px 5px; border-radius: 4px; font-size: 0.85em; text-align: center;"
+                                   onchange="saveFVGTPSettings()" title="Profit trigger %">
+                            <span style="font-size: 0.8em; color: #aaa;">%→</span>
+                            <input type="number" id="fvg-tp-close" value="{{ settings.fvg_tp_close_pct }}"
+                                   step="5" min="10" max="90"
+                                   style="width: 50px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #fff; padding: 2px 5px; border-radius: 4px; font-size: 0.85em; text-align: center;"
+                                   onchange="saveFVGTPSettings()" title="Close % of position">
+                            <span style="font-size: 0.8em; color: #aaa;">%close</span>
+                        </div>
+                        <span id="positions-count" style="font-size: 0.85em; color: #888;">—</span>
+                        <button class="btn btn-sm" id="bybit-reconnect-btn"
+                                style="background: rgba(255,152,0,0.15); color: #ff9800; border: 1px solid rgba(255,152,0,0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8em; display:none;"
+                                onclick="reconnectBybit()">
+                            🔄 Reconnect Bybit
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="positions-container">
+                    <table class="results-table" id="positions-table" style="display:none;">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Entry Price</th>
+                                <th>Mark Price</th>
+                                <th>PnL %</th>
+                                <th>PnL $</th>
+                                <th>Value $</th>
+                                <th>Lev</th>
+                                <th>Liq Price</th>
+                                <th>SL Dist</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positions-body"></tbody>
+                    </table>
+                    <div id="positions-empty" class="empty-state" style="padding: 15px;">
+                        <small style="color:#888;">Позиції завантажуються...</small>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 📐 FVG Zones -->
+            {% if settings.ctr_fvg_enabled %}
+            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <div class="panel-header">
+                    <h2>📐 FVG Zones</h2>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span id="fvg-count" style="font-size: 0.85em; color: #888;">—</span>
+                        <button class="btn btn-sm" onclick="scanFVGNow()" style="background: rgba(33,150,243,0.2); color: #2196f3; border: 1px solid rgba(33,150,243,0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8em;">
+                            🔍 Scan Now
+                        </button>
+                        <button class="btn btn-sm" onclick="clearFVGZones()" style="background: rgba(255,82,82,0.15); color: #ff5252; border: 1px solid rgba(255,82,82,0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8em;">
+                            🗑️ Clear
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Trend Filter Status -->
+                <div id="fvg-trend-bar" style="display:none; margin: 10px 0; padding: 8px 12px; background: rgba(33,150,243,0.06); border-radius: 8px; border: 1px solid rgba(33,150,243,0.15);">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                        <span style="color: #2196f3; font-weight: 600; font-size: 12px;">📈 Trend Filter</span>
+                        <span id="fvg-trend-ema-label" style="color: #888; font-size: 11px;"></span>
+                    </div>
+                    <div id="fvg-trend-chips" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
+                </div>
+                
+                <!-- HTF Trend Filter Status -->
+                <div id="fvg-htf-trend-bar" style="display:none; margin: 4px 0 10px; padding: 8px 12px; background: rgba(156,39,176,0.06); border-radius: 8px; border: 1px solid rgba(156,39,176,0.15);">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                        <span style="color: #ba68c8; font-weight: 600; font-size: 12px;">📊 HTF Trend</span>
+                        <span id="fvg-htf-ema-label" style="color: #888; font-size: 11px;"></span>
+                    </div>
+                    <div id="fvg-htf-trend-chips" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
+                </div>
+                
+                <table class="results-table" id="fvg-table" style="display:none;">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Direction</th>
+                            <th>Zone</th>
+                            <th>Size %</th>
+                            <th>Status</th>
+                            <th>Age</th>
+                            <th>SL</th>
+                            <th>TP</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fvg-body"></tbody>
+                </table>
+                <div id="fvg-empty" class="empty-state" style="padding: 15px;">
+                    <small style="color:#888;">FVG зони завантажуються...</small>
+                </div>
+            </div>
+            {% endif %}
+            
             <!-- Executed Signals History -->
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
                 <div class="panel-header">
@@ -814,8 +1227,11 @@
                             <td class="stc-value {{ 'stc-oversold' if sig.stc <= 25 else 'stc-overbought' if sig.stc >= 75 else 'stc-neutral' }}">
                                 {{ "%.2f"|format(sig.stc) }}
                             </td>
-                            <td style="font-size: 0.8em; color: {{ '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
+                            <td style="font-size: 0.8em; color: {{ '#2196f3' if 'FVG' in (sig.reason|default('')) else '#ff5252' if 'SL' in (sig.reason|default('')) else '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
                                 {{ sig.reason|default('Crossover') }}
+                                {% if sig.is_fvg is defined and sig.is_fvg %}
+                                <br><small style="color:#666;">SL: ${{ '%.4f'|format(sig.sl_price|default(0)) }} | TP: ${{ '%.4f'|format(sig.tp_price|default(0)) }} | R:R {{ sig.rr_ratio|default(0) }}</small>
+                                {% endif %}
                             </td>
                             <td>
                                 <button class="watchlist-remove" onclick="deleteSignal('{{ sig.timestamp }}', {{ loop.index0 }})" title="Видалити">✕</button>
@@ -835,6 +1251,66 @@
 </div>
 
 <script>
+// ========================================
+// Module Quick Toggles
+// ========================================
+const MODULE_MAP = {
+    'ctr_scanner_enabled': { mod: 'mod-ctr-scanner', detail: null },
+    'ctr_ema_trend_enabled': { mod: 'mod-ctr-ema', detail: 'ctr_ema_trend_enabled' },
+    'ctr_smc_filter_enabled': { mod: 'mod-smc-filter', detail: 'ctr_smc_filter_enabled' },
+    'ctr_smc_trend_enabled': { mod: 'mod-smc-trend', detail: 'ctr_smc_trend_enabled' },
+    'ctr_smc_trend_early_warning': { mod: 'mod-early-warning', detail: 'ctr_smc_trend_early_warning' },
+    'ctr_fvg_enabled': { mod: 'mod-fvg', detail: 'fvg-enabled' },
+    'fvg_tp_manager_enabled': { mod: 'mod-fvg-tp', detail: 'fvg-tp-enabled' },
+    'ctr_sl_monitor_enabled': { mod: 'mod-sl-monitor', detail: 'sl-monitor-enabled' },
+};
+
+async function toggleModule(key, enabled) {
+    // Sync to detailed checkbox
+    const map = MODULE_MAP[key];
+    if (map && map.detail) {
+        const el = document.getElementById(map.detail);
+        if (el) el.checked = enabled;
+    }
+    // Save immediately
+    try {
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ [key]: enabled ? '1' : '0' })
+        });
+        showToast(`${enabled ? '✅' : '❌'} ${key.replace('ctr_','').replace(/_/g,' ')} ${enabled ? 'ON' : 'OFF'}`);
+    } catch(e) {
+        console.error('Module toggle error:', e);
+    }
+}
+
+function syncModulesToSettings() {
+    // Module bar → detailed checkboxes
+    for (const [key, map] of Object.entries(MODULE_MAP)) {
+        const modEl = document.getElementById(map.mod);
+        const detailEl = document.getElementById(map.detail);
+        if (modEl && detailEl) detailEl.checked = modEl.checked;
+    }
+}
+
+function syncSettingsToModules() {
+    // Detailed checkboxes → module bar
+    for (const [key, map] of Object.entries(MODULE_MAP)) {
+        const modEl = document.getElementById(map.mod);
+        const detailEl = document.getElementById(map.detail);
+        if (modEl && detailEl) modEl.checked = detailEl.checked;
+    }
+}
+
+// Sync on detailed checkbox change
+document.addEventListener('change', function(e) {
+    const detailIds = Object.values(MODULE_MAP).map(m => m.detail);
+    if (detailIds.includes(e.target.id)) {
+        syncSettingsToModules();
+    }
+});
+
 async function toggleCTROnlyMode(checkbox) {
     const enabled = checkbox.checked;
     
@@ -912,6 +1388,9 @@ async function removeSymbol(symbol) {
 }
 
 async function saveSettings() {
+    // Sync module bar → detailed checkboxes
+    syncModulesToSettings();
+    
     const settings = {
         ctr_timeframe: document.getElementById('ctr_timeframe').value,
         ctr_fast_length: parseInt(document.getElementById('ctr_fast_length').value),
@@ -924,6 +1403,11 @@ async function saveSettings() {
         ctr_use_gap_detection: document.getElementById('ctr_use_gap_detection').checked ? '1' : '0',
         ctr_use_cooldown: document.getElementById('ctr_use_cooldown').checked ? '1' : '0',
         ctr_cooldown_seconds: parseInt(document.getElementById('ctr_cooldown_seconds').value),
+        // CTR Scanner + EMA Trend Filter
+        ctr_scanner_enabled: document.getElementById('mod-ctr-scanner').checked ? '1' : '0',
+        ctr_ema_trend_enabled: document.getElementById('ctr_ema_trend_enabled').checked ? '1' : '0',
+        ctr_ema_trend_fast: parseInt(document.getElementById('ctr_ema_trend_fast').value),
+        ctr_ema_trend_slow: parseInt(document.getElementById('ctr_ema_trend_slow').value),
         // Telegram mode
         ctr_telegram_mode: document.getElementById('ctr_telegram_mode').value,
         // SMC Filter
@@ -953,6 +1437,7 @@ async function saveSettings() {
         
         if (data.success) {
             showToast('✅ Settings saved!');
+            syncSettingsToModules();
         } else {
             alert(data.error || 'Failed to save settings');
         }
@@ -1172,65 +1657,420 @@ async function saveTradeSettings() {
     }
 }
 
-async function loadTradePositions() {
+// ========================================
+// SL Monitor Settings
+// ========================================
+async function saveSLSettings() {
+    const enabled = document.getElementById('sl-monitor-enabled').checked;
+    const pct = parseFloat(document.getElementById('sl-monitor-pct').value) || 0;
+    
     try {
-        const res = await fetch('/api/ctr/trade/status');
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                ctr_sl_monitor_enabled: enabled ? '1' : '0',
+                ctr_sl_monitor_pct: pct.toString()
+            })
+        });
+        // Sync module bar
+        const modSl = document.getElementById('mod-sl-monitor');
+        if (modSl) modSl.checked = enabled;
+        showToast(`✅ SL Monitor: ${enabled ? 'ON' : 'OFF'}, ${pct}%`);
+    } catch (e) {
+        console.error('SL settings save error:', e);
+    }
+}
+
+async function saveFVGTPSettings() {
+    const enabled = document.getElementById('fvg-tp-enabled').checked;
+    const trigger = parseFloat(document.getElementById('fvg-tp-trigger').value) || 0.5;
+    const closePct = parseFloat(document.getElementById('fvg-tp-close').value) || 50;
+    const beBuffer = parseFloat(document.getElementById('fvg-tp-be-buffer')?.value) || 0.05;
+    const trailPct = parseFloat(document.getElementById('fvg-tp-trail-pct')?.value) || 0.3;
+    const trailStart = parseFloat(document.getElementById('fvg-tp-trail-start')?.value) || 0.8;
+    
+    // Sync detail fields
+    const detailTrigger = document.getElementById('fvg-tp-trigger-detail');
+    const detailClose = document.getElementById('fvg-tp-close-detail');
+    if (detailTrigger) detailTrigger.value = trigger;
+    if (detailClose) detailClose.value = closePct;
+    
+    try {
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                fvg_tp_manager_enabled: enabled ? '1' : '0',
+                fvg_tp_trigger_pct: trigger.toString(),
+                fvg_tp_close_pct: closePct.toString(),
+                fvg_tp_be_buffer_pct: beBuffer.toString(),
+                fvg_tp_trail_pct: trailPct.toString(),
+                fvg_tp_trail_start_pct: trailStart.toString()
+            })
+        });
+        // Sync module bar
+        const modTP = document.getElementById('mod-fvg-tp');
+        if (modTP) modTP.checked = enabled;
+        showToast(`✅ FVG TP: ${enabled ? 'ON' : 'OFF'}, ${trigger}% → ${closePct}% close, trail ${trailPct}%`);
+    } catch (e) {
+        console.error('FVG TP settings save error:', e);
+    }
+}
+
+// ========================================
+// Open Positions Table (Bybit only)
+// ========================================
+function fmtPrice(p) {
+    if (!p || p <= 0) return '—';
+    if (p < 0.001) return '$' + p.toFixed(8);
+    if (p < 1) return '$' + p.toFixed(6);
+    if (p < 100) return '$' + p.toFixed(4);
+    return '$' + p.toFixed(2);
+}
+
+function fmtPnl(pct) {
+    const color = pct >= 0 ? '#00c853' : '#ff5252';
+    const sign = pct >= 0 ? '+' : '';
+    return `<span style="color:${color};font-weight:600;">${sign}${pct.toFixed(2)}%</span>`;
+}
+
+async function reconnectBybit() {
+    const btn = document.getElementById('bybit-reconnect-btn');
+    btn.textContent = '⏳ Connecting...';
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/ctr/trade/reconnect', {method: 'POST'});
         const data = await res.json();
-        const container = document.getElementById('trade-positions');
+        if (data.success) {
+            btn.style.display = 'none';
+            loadPositions();
+        } else {
+            btn.textContent = '❌ Failed — retry';
+            btn.disabled = false;
+            alert('Reconnect failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        btn.textContent = '❌ Error — retry';
+        btn.disabled = false;
+    }
+}
+
+async function loadPositions() {
+    try {
+        const res = await fetch('/api/ctr/positions');
+        const data = await res.json();
         
-        if (!data.available) {
-            container.innerHTML = '<small style="color:#888;">Bybit не підключений</small>';
+        const tbody = document.getElementById('positions-body');
+        const table = document.getElementById('positions-table');
+        const empty = document.getElementById('positions-empty');
+        const countEl = document.getElementById('positions-count');
+        const reconnectBtn = document.getElementById('bybit-reconnect-btn');
+        
+        // Show reconnect button if not connected
+        if (!data.bybit_connected) {
+            reconnectBtn.style.display = '';
+            reconnectBtn.textContent = '🔄 Reconnect Bybit';
+            reconnectBtn.disabled = false;
+            const errMsg = data.auth_error ? `: ${data.auth_error}` : '';
+            countEl.innerHTML = `<span style="color:#ff9800;">⚠️ Bybit не підключений${errMsg}</span>`;
+            table.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = '<small style="color:#888;">Bybit API не підключений. Натисніть 🔄 Reconnect.</small>';
             return;
         }
         
-        // Auth error
-        if (data.auth_ok === false) {
-            container.innerHTML = `<div style="padding:8px;background:rgba(255,82,82,0.1);border-radius:6px;border-left:3px solid #ff5252;">
-                <small style="color:#ff5252;">⚠️ Bybit API: ${data.error || 'Auth failed'}</small><br>
-                <small style="color:#888;">Перевірте API ключі та перезапустіть</small>
-            </div>`;
+        reconnectBtn.style.display = 'none';
+        
+        const positions = data.positions || [];
+        const slPct = data.sl_monitor_pct || 0;
+        const balanceStr = data.balance > 0 ? ` | Balance: $${data.balance.toFixed(2)}` : '';
+        countEl.textContent = `${positions.length} / ${data.max_positions} positions${balanceStr}`;
+        
+        if (positions.length === 0) {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = '<small style="color:#888;">Немає відкритих позицій на біржі</small>';
             return;
         }
+        
+        table.style.display = '';
+        empty.style.display = 'none';
+        
+        // Build rows
+        const rows = positions.map(p => {
+            const isLong = p.side === 'Buy';
+            const entryPrice = p.entry_price || 0;
+            const markPrice = p.mark_price || 0;
+            const pnlPct = entryPrice > 0 ? ((isLong ? markPrice - entryPrice : entryPrice - markPrice) / entryPrice * 100) : 0;
+            const slDist = (slPct > 0 && pnlPct < 0) ? Math.max(0, slPct - Math.abs(pnlPct)) : slPct;
+            return { ...p, isLong, entryPrice, markPrice, pnlPct, slPct, slDist };
+        });
+        
+        // Sort by PnL ascending (worst first)
+        rows.sort((a, b) => a.pnlPct - b.pnlPct);
         
         let html = '';
+        rows.forEach(r => {
+            const sideColor = r.isLong ? '#00c853' : '#ff5252';
+            const sideLabel = r.isLong ? 'LONG' : 'SHORT';
+            const pnlColor = r.pnlPct >= 0 ? '#00c853' : '#ff5252';
+            const pnlUsd = r.unrealized_pnl || 0;
+            const pnlUsdStr = `<span style="color:${pnlColor}">${pnlUsd >= 0 ? '+' : ''}$${pnlUsd.toFixed(4)}</span>`;
+            const valueStr = r.position_value > 0 ? `$${r.position_value.toFixed(2)}` : '—';
+            const levStr = r.leverage > 0 ? `${r.leverage}x` : '—';
+            const liqStr = r.liq_price > 0 ? fmtPrice(r.liq_price) : '—';
+            
+            let slDistStr = '—';
+            if (r.slPct > 0) {
+                if (r.pnlPct < 0) {
+                    const distColor = r.slDist <= r.slPct * 0.3 ? '#ff5252' : r.slDist <= r.slPct * 0.6 ? '#ff9800' : '#aaa';
+                    slDistStr = `<span style="color:${distColor}">${r.slDist.toFixed(1)}%</span><small style="color:#666;"> / ${r.slPct}%</small>`;
+                } else {
+                    slDistStr = `<span style="color:#4caf50;">${r.slPct}%</span>`;
+                }
+            }
+            
+            const rowBg = r.pnlPct >= 0 ? 'rgba(0,200,83,0.04)' : 'rgba(255,82,82,0.04)';
+            
+            html += `<tr style="background:${rowBg};">
+                <td><b>${r.symbol}</b></td>
+                <td><span style="color:${sideColor};font-weight:600;">${sideLabel}</span></td>
+                <td style="font-family:monospace;font-size:0.85em;">${fmtPrice(r.entryPrice)}</td>
+                <td style="font-family:monospace;font-size:0.85em;">${fmtPrice(r.markPrice)}</td>
+                <td>${fmtPnl(r.pnlPct)}</td>
+                <td>${pnlUsdStr}</td>
+                <td>${valueStr}</td>
+                <td>${levStr}</td>
+                <td style="font-size:0.85em;">${liqStr}</td>
+                <td>${slDistStr}</td>
+            </tr>`;
+        });
         
-        if (data.balance > 0) {
-            html += `<div style="font-size:0.85em;margin-bottom:8px;color:#ccc;">
-                Balance: <b>$${data.balance.toFixed(2)}</b> USDT
-                | Positions: ${data.positions_count}/${data.max_positions}
-            </div>`;
-        }
+        tbody.innerHTML = html;
         
-        if (data.positions && data.positions.length > 0) {
-            data.positions.forEach(p => {
-                const isLong = p.side === 'Buy';
-                const pnlColor = p.unrealized_pnl >= 0 ? '#00c853' : '#ff5252';
-                html += `<div class="position-card ${isLong ? 'long' : 'short'}">
-                    <div>
-                        <b>${p.symbol}</b>
-                        <span style="color:${isLong ? '#00c853' : '#ff5252'}">${isLong ? 'LONG' : 'SHORT'}</span>
-                    </div>
-                    <div style="text-align:right;">
-                        <span style="color:${pnlColor}">${p.unrealized_pnl >= 0 ? '+' : ''}$${p.unrealized_pnl.toFixed(4)}</span>
-                        <br><small style="color:#888;">${p.leverage}x | $${p.position_value.toFixed(2)}</small>
-                    </div>
-                </div>`;
-            });
-        } else if (data.enabled) {
-            html += '<small style="color:#888;">Немає відкритих позицій</small>';
-        }
-        
-        container.innerHTML = html || '<small style="color:#888;">—</small>';
     } catch (e) {
-        document.getElementById('trade-positions').innerHTML =
-            '<small style="color:#ff5252;">Помилка завантаження</small>';
+        console.error('Positions load error:', e);
+        document.getElementById('positions-empty').innerHTML = '<small style="color:#ff5252;">Помилка завантаження</small>';
     }
 }
 
 // Load positions on page load and refresh periodically
-loadTradePositions();
+loadPositions();
 {% if ctr_running %}
-setInterval(loadTradePositions, 30000);
+setInterval(loadPositions, 10000);
+{% endif %}
+
+// ========================================
+// FVG Detector
+// ========================================
+async function saveFVGSettings() {
+    const data = {
+        ctr_fvg_enabled: document.getElementById('fvg-enabled').checked ? '1' : '0',
+        ctr_fvg_timeframe: document.getElementById('fvg-timeframe').value,
+        ctr_fvg_rr_ratio: document.getElementById('fvg-rr-ratio').value,
+        ctr_fvg_min_pct: document.getElementById('fvg-min-pct').value,
+        ctr_fvg_sl_buffer_pct: document.getElementById('fvg-sl-buffer').value,
+        ctr_fvg_max_per_symbol: document.getElementById('fvg-max-per-symbol').value,
+        ctr_fvg_scan_interval: document.getElementById('fvg-scan-interval').value,
+        ctr_fvg_check_interval: document.getElementById('fvg-check-interval').value,
+        ctr_fvg_trend_filter: document.getElementById('fvg-trend-filter').checked ? '1' : '0',
+        ctr_fvg_trend_fast_ema: document.getElementById('fvg-trend-fast-ema').value,
+        ctr_fvg_trend_slow_ema: document.getElementById('fvg-trend-slow-ema').value,
+        ctr_fvg_htf_trend: document.getElementById('fvg-htf-trend').checked ? '1' : '0',
+        ctr_fvg_htf_timeframe: document.getElementById('fvg-htf-timeframe').value,
+        ctr_fvg_htf_fast_ema: document.getElementById('fvg-htf-fast-ema').value,
+        ctr_fvg_htf_slow_ema: document.getElementById('fvg-htf-slow-ema').value,
+        // FVG TP Manager
+        fvg_tp_manager_enabled: document.getElementById('fvg-tp-enabled').checked ? '1' : '0',
+        fvg_tp_trigger_pct: document.getElementById('fvg-tp-trigger-detail')?.value || document.getElementById('fvg-tp-trigger').value,
+        fvg_tp_close_pct: document.getElementById('fvg-tp-close-detail')?.value || document.getElementById('fvg-tp-close').value,
+        fvg_tp_be_buffer_pct: document.getElementById('fvg-tp-be-buffer')?.value || '0.05',
+        fvg_tp_trail_pct: document.getElementById('fvg-tp-trail-pct')?.value || '0.3',
+        fvg_tp_trail_start_pct: document.getElementById('fvg-tp-trail-start')?.value || '0.8',
+    };
+    // Sync compact fields from detail
+    const t = document.getElementById('fvg-tp-trigger');
+    const c = document.getElementById('fvg-tp-close');
+    if (t && data.fvg_tp_trigger_pct) t.value = data.fvg_tp_trigger_pct;
+    if (c && data.fvg_tp_close_pct) c.value = data.fvg_tp_close_pct;
+    try {
+        await fetch('/api/ctr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        // Sync module bar
+        const modFvg = document.getElementById('mod-fvg');
+        if (modFvg) modFvg.checked = document.getElementById('fvg-enabled').checked;
+        showToast('✅ FVG settings saved!');
+    } catch (e) {
+        alert('Error saving: ' + e);
+    }
+}
+
+async function loadFVGZones() {
+    try {
+        const res = await fetch('/api/ctr/fvg/zones');
+        const data = await res.json();
+        
+        const tbody = document.getElementById('fvg-body');
+        const table = document.getElementById('fvg-table');
+        const empty = document.getElementById('fvg-empty');
+        const countEl = document.getElementById('fvg-count');
+        
+        if (!tbody) return;
+        
+        const zones = data.zones || [];
+        const stats = data.stats || {};
+        
+        const activeCount = zones.filter(z => z.status === 'waiting' || z.status === 'entered').length;
+        const trendInfo = stats.trend_filter_enabled ? ` | 🚫 Trend: ${stats.fvg_filtered_trend || 0}` : '';
+        const klineInfo = stats.fvg_retested_kline ? ` (${stats.fvg_retested_kline} via kline)` : '';
+        countEl.textContent = `${activeCount} active / ${zones.length} total | Detected: ${stats.fvg_detected || 0} | Traded: ${stats.fvg_retested || 0}${klineInfo}${trendInfo}`;
+        
+        // === Trend bar ===
+        const trendBar = document.getElementById('fvg-trend-bar');
+        const trendChips = document.getElementById('fvg-trend-chips');
+        const trendLabel = document.getElementById('fvg-trend-ema-label');
+        if (trendBar && stats.trend_filter_enabled && stats.trends) {
+            trendBar.style.display = '';
+            trendLabel.textContent = `EMA(${stats.trend_fast_ema || 5}/${stats.trend_slow_ema || 13}) on ${stats.timeframe || '15m'}`;
+            const entries = Object.entries(stats.trends).sort((a, b) => a[0].localeCompare(b[0]));
+            trendChips.innerHTML = entries.map(([sym, t]) => {
+                const isBull = t.trend === 'bullish';
+                const arrow = isBull ? '▲' : '▼';
+                const clr = isBull ? '#4caf50' : '#ff5252';
+                const bg = isBull ? 'rgba(76,175,80,0.12)' : 'rgba(255,82,82,0.12)';
+                const bdr = isBull ? 'rgba(76,175,80,0.3)' : 'rgba(255,82,82,0.3)';
+                const spread = t.spread_pct !== undefined ? ` (${t.spread_pct > 0 ? '+' : ''}${t.spread_pct}%)` : '';
+                const short = sym.replace('USDT', '');
+                return `<span title="${sym}: Fast=${t.fast}, Slow=${t.slow}${spread}" `
+                     + `style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;`
+                     + `border-radius:4px;font-size:11px;font-weight:600;`
+                     + `background:${bg};border:1px solid ${bdr};color:${clr};cursor:default;">`
+                     + `${arrow} ${short}</span>`;
+            }).join('');
+        } else if (trendBar) {
+            trendBar.style.display = 'none';
+        }
+        
+        // === HTF Trend bar ===
+        const htfBar = document.getElementById('fvg-htf-trend-bar');
+        const htfChips = document.getElementById('fvg-htf-trend-chips');
+        const htfLabel = document.getElementById('fvg-htf-ema-label');
+        if (htfBar && stats.htf_trend_enabled && stats.trends_htf) {
+            htfBar.style.display = '';
+            htfLabel.textContent = `EMA(${stats.htf_fast_ema || 8}/${stats.htf_slow_ema || 21}) on ${stats.htf_timeframe || '1h'}`;
+            const htfEntries = Object.entries(stats.trends_htf).sort((a, b) => a[0].localeCompare(b[0]));
+            // Get LTF trends for comparison
+            const ltfTrends = stats.trends || {};
+            htfChips.innerHTML = htfEntries.map(([sym, t]) => {
+                const isBull = t.trend === 'bullish';
+                const arrow = isBull ? '▲' : '▼';
+                // Check if LTF agrees — highlight with gold border if both match
+                const ltf = ltfTrends[sym];
+                const bothMatch = ltf && ltf.trend === t.trend;
+                const clr = isBull ? '#4caf50' : '#ff5252';
+                const bg = isBull ? 'rgba(76,175,80,0.12)' : 'rgba(255,82,82,0.12)';
+                const bdr = bothMatch
+                    ? (isBull ? 'rgba(76,175,80,0.8)' : 'rgba(255,82,82,0.8)')
+                    : 'rgba(255,193,7,0.5)';
+                const matchIcon = bothMatch ? '✓' : '✗';
+                const spread = t.spread_pct !== undefined ? ` (${t.spread_pct > 0 ? '+' : ''}${t.spread_pct}%)` : '';
+                const short = sym.replace('USDT', '');
+                const ltfDir = ltf ? ltf.trend : '?';
+                return `<span title="${sym} HTF: Fast=${t.fast}, Slow=${t.slow}${spread} | LTF=${ltfDir} ${matchIcon}" `
+                     + `style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;`
+                     + `border-radius:4px;font-size:11px;font-weight:600;`
+                     + `background:${bg};border:1.5px solid ${bdr};color:${clr};cursor:default;">`
+                     + `${arrow} ${short} ${matchIcon}</span>`;
+            }).join('');
+        } else if (htfBar) {
+            htfBar.style.display = 'none';
+        }
+        
+        if (zones.length === 0) {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = '<small style="color:#888;">Немає FVG зон' +
+                (stats.running ? '' : ' (FVG Detector вимкнений)') + '</small>';
+            return;
+        }
+        
+        table.style.display = '';
+        empty.style.display = 'none';
+        
+        let html = '';
+        zones.forEach(z => {
+            const isBull = z.direction === 'bullish';
+            const dirColor = isBull ? '#00c853' : '#ff5252';
+            const dirLabel = isBull ? '🟢 Bull' : '🔴 Bear';
+            
+            const statusColors = {
+                'waiting': '#888', 'entered': '#ff9800',
+                'retested': '#2196f3', 'traded': '#00c853',
+                'invalidated': '#ff5252', 'expired': '#666'
+            };
+            const statusEmoji = {
+                'waiting': '⏳', 'entered': '🎯',
+                'retested': '✅', 'traded': '💰',
+                'invalidated': '❌', 'expired': '⏰'
+            };
+            
+            const age = z.age_min < 60 ? `${Math.round(z.age_min)}m` :
+                        `${(z.age_min / 60).toFixed(1)}h`;
+            
+            const slStr = z.sl_price > 0 ? fmtPrice(z.sl_price) : '—';
+            const tpStr = z.tp_price > 0 ? fmtPrice(z.tp_price) : '—';
+            
+            const rowBg = z.status === 'entered' ? 'rgba(255,152,0,0.06)' :
+                          z.status === 'traded' ? 'rgba(0,200,83,0.06)' :
+                          z.status === 'invalidated' ? 'rgba(255,82,82,0.04)' : 'transparent';
+            
+            html += `<tr style="background:${rowBg};">
+                <td><b>${z.symbol}</b></td>
+                <td><span style="color:${dirColor};font-weight:600;">${dirLabel}</span></td>
+                <td style="font-family:monospace;font-size:0.82em;">${fmtPrice(z.low)} — ${fmtPrice(z.high)}</td>
+                <td>${z.size_pct}%</td>
+                <td><span style="color:${statusColors[z.status] || '#888'};">${statusEmoji[z.status] || ''} ${z.status}</span></td>
+                <td style="font-size:0.85em;color:#aaa;">${age}</td>
+                <td style="font-size:0.82em;">${slStr}</td>
+                <td style="font-size:0.82em;">${tpStr}</td>
+            </tr>`;
+        });
+        
+        tbody.innerHTML = html;
+    } catch (e) {
+        console.error('FVG load error:', e);
+    }
+}
+
+async function scanFVGNow() {
+    try {
+        await fetch('/api/ctr/fvg/scan', {method: 'POST'});
+        setTimeout(loadFVGZones, 2000);
+    } catch (e) {
+        console.error('FVG scan error:', e);
+    }
+}
+
+async function clearFVGZones() {
+    if (!confirm('Clear all FVG zones?')) return;
+    try {
+        await fetch('/api/ctr/fvg/clear', {method: 'POST'});
+        loadFVGZones();
+    } catch (e) {
+        console.error('FVG clear error:', e);
+    }
+}
+
+// Load FVG zones
+{% if settings.ctr_fvg_enabled %}
+loadFVGZones();
+{% if ctr_running %}
+setInterval(loadFVGZones, 15000);
+{% endif %}
 {% endif %}
 </script>
 {% endblock %}
