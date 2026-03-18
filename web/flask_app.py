@@ -1214,38 +1214,6 @@ def register_api_routes(app):
             'ctr_smc_trend_early_warning': db.get_setting('ctr_smc_trend_early_warning', '0') in ('1', 'true', 'True', 'yes'),
             'ctr_smc_trend_swing_15m': db.get_setting('ctr_smc_trend_swing_15m', 20),
             'ctr_telegram_mode': db.get_setting('ctr_telegram_mode', 'all'),
-            # SL Monitor
-            'ctr_sl_monitor_enabled': db.get_setting('ctr_sl_monitor_enabled', '0') in ('1', 'true', 'True', 'yes'),
-            'ctr_sl_monitor_pct': db.get_setting('ctr_sl_monitor_pct', '0'),
-            'ctr_sl_check_interval': db.get_setting('ctr_sl_check_interval', '5'),
-            # FVG Detector
-            'ctr_fvg_enabled': db.get_setting('ctr_fvg_enabled', '0') in ('1', 'true', 'True', 'yes'),
-            'ctr_fvg_timeframe': db.get_setting('ctr_fvg_timeframe', '15m'),
-            'ctr_fvg_min_pct': db.get_setting('ctr_fvg_min_pct', '0.1'),
-            'ctr_fvg_max_per_symbol': db.get_setting('ctr_fvg_max_per_symbol', '5'),
-            'ctr_fvg_rr_ratio': db.get_setting('ctr_fvg_rr_ratio', '1.5'),
-            'ctr_fvg_sl_buffer_pct': db.get_setting('ctr_fvg_sl_buffer_pct', '0.2'),
-            'ctr_fvg_scan_interval': db.get_setting('ctr_fvg_scan_interval', '60'),
-            'ctr_fvg_check_interval': db.get_setting('ctr_fvg_check_interval', '3'),
-            'ctr_fvg_trend_filter': db.get_setting('ctr_fvg_trend_filter', '0') in ('1', 'true', 'True', 'yes'),
-            'ctr_fvg_trend_fast_ema': db.get_setting('ctr_fvg_trend_fast_ema', '5'),
-            'ctr_fvg_trend_slow_ema': db.get_setting('ctr_fvg_trend_slow_ema', '13'),
-            'ctr_fvg_htf_trend': db.get_setting('ctr_fvg_htf_trend', '0') in ('1', 'true', 'True', 'yes'),
-            'ctr_fvg_htf_timeframe': db.get_setting('ctr_fvg_htf_timeframe', '1h'),
-            'ctr_fvg_htf_fast_ema': db.get_setting('ctr_fvg_htf_fast_ema', '8'),
-            'ctr_fvg_htf_slow_ema': db.get_setting('ctr_fvg_htf_slow_ema', '21'),
-            # CTR Fast Scanner toggle + EMA Trend Filter
-            'ctr_scanner_enabled': db.get_setting('ctr_scanner_enabled', '1') in ('1', 'true', 'True', 'yes'),
-            'ctr_ema_trend_enabled': db.get_setting('ctr_ema_trend_enabled', '0') in ('1', 'true', 'True', 'yes'),
-            'ctr_ema_trend_fast': db.get_setting('ctr_ema_trend_fast', '5'),
-            'ctr_ema_trend_slow': db.get_setting('ctr_ema_trend_slow', '13'),
-            # FVG TP Manager
-            'fvg_tp_manager_enabled': db.get_setting('fvg_tp_manager_enabled', '0') in ('1', 'true', 'True', 'yes'),
-            'fvg_tp_trigger_pct': db.get_setting('fvg_tp_trigger_pct', '0.5'),
-            'fvg_tp_close_pct': db.get_setting('fvg_tp_close_pct', '50'),
-            'fvg_tp_be_buffer_pct': db.get_setting('fvg_tp_be_buffer_pct', '0.05'),
-            'fvg_tp_trail_pct': db.get_setting('fvg_tp_trail_pct', '0.3'),
-            'fvg_tp_trail_start_pct': db.get_setting('fvg_tp_trail_start_pct', '0.8'),
         }
         
         # Статистика фільтрації
@@ -1265,6 +1233,8 @@ def register_api_routes(app):
             'enabled': False,
             'leverage': 10,
             'deposit_pct': 5,
+            'sizing_mode': 'percent',
+            'fixed_margin': 10,
             'tp_pct': 0,
             'sl_pct': 0,
             'max_positions': 5,
@@ -1374,22 +1344,6 @@ def register_api_routes(app):
             'ctr_smc_trend_early_warning', 'ctr_smc_trend_swing_15m',
             # Telegram mode
             'ctr_telegram_mode',
-            # SL Monitor
-            'ctr_sl_monitor_enabled', 'ctr_sl_monitor_pct', 'ctr_sl_check_interval',
-            # FVG Detector
-            'ctr_fvg_enabled', 'ctr_fvg_timeframe', 'ctr_fvg_min_pct',
-            'ctr_fvg_max_per_symbol', 'ctr_fvg_rr_ratio', 'ctr_fvg_sl_buffer_pct',
-            'ctr_fvg_scan_interval', 'ctr_fvg_check_interval', 'ctr_fvg_trend_filter',
-            'ctr_fvg_trend_fast_ema', 'ctr_fvg_trend_slow_ema',
-            'ctr_fvg_htf_trend', 'ctr_fvg_htf_timeframe',
-            'ctr_fvg_htf_fast_ema', 'ctr_fvg_htf_slow_ema',
-            # CTR Fast Scanner toggle + EMA Trend Filter
-            'ctr_scanner_enabled', 'ctr_ema_trend_enabled',
-            'ctr_ema_trend_fast', 'ctr_ema_trend_slow',
-            # FVG TP Manager
-            'fvg_tp_manager_enabled', 'fvg_tp_trigger_pct',
-            'fvg_tp_close_pct', 'fvg_tp_be_buffer_pct',
-            'fvg_tp_trail_pct', 'fvg_tp_trail_start_pct',
         ]
         
         for key in ctr_settings:
@@ -1580,86 +1534,6 @@ def register_api_routes(app):
         job = get_ctr_job(db)
         limit = request.args.get('limit', 50, type=int)
         return jsonify({'log': job.get_trade_log(limit)})
-    
-    @app.route('/api/ctr/positions', methods=['GET'])
-    def api_ctr_positions():
-        """Bybit exchange positions only"""
-        from scheduler.ctr_job import get_ctr_job
-        db = get_db()
-        job = get_ctr_job(db)
-        
-        result = {
-            'positions': [],
-            'bybit_connected': False,
-            'auth_error': '',
-            'balance': 0,
-            'max_positions': 5,
-            'sl_monitor_enabled': db.get_setting('ctr_sl_monitor_enabled', '0') in ('1', 'true', 'True'),
-            'sl_monitor_pct': float(db.get_setting('ctr_sl_monitor_pct', '0')),
-        }
-        
-        try:
-            trade_status = job.get_trade_status()
-            if trade_status.get('available'):
-                result['bybit_connected'] = trade_status.get('auth_ok', False)
-                result['auth_error'] = trade_status.get('error', '')
-                result['balance'] = trade_status.get('balance', 0)
-                result['max_positions'] = trade_status.get('max_positions', 5)
-                if trade_status.get('auth_ok'):
-                    result['positions'] = trade_status.get('positions', [])
-        except:
-            pass
-        
-        return jsonify(result)
-    
-    @app.route('/api/ctr/trade/reconnect', methods=['POST'])
-    def api_ctr_trade_reconnect():
-        """Reconnect to Bybit API"""
-        from scheduler.ctr_job import get_ctr_job
-        db = get_db()
-        job = get_ctr_job(db)
-        
-        try:
-            if hasattr(job, '_trade_executor') and job._trade_executor:
-                result = job._trade_executor.reconnect()
-                return jsonify(result)
-            else:
-                return jsonify({'success': False, 'error': 'Trade executor not initialized'})
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)})
-    
-    # ========================================
-    # FVG Detector Routes
-    # ========================================
-    
-    @app.route('/api/ctr/fvg/zones', methods=['GET'])
-    def api_ctr_fvg_zones():
-        """Get all FVG zones"""
-        from scheduler.ctr_job import get_ctr_job
-        db = get_db()
-        job = get_ctr_job(db)
-        return jsonify({
-            'zones': job.get_fvg_zones(),
-            'stats': job.get_fvg_stats(),
-        })
-    
-    @app.route('/api/ctr/fvg/clear', methods=['POST'])
-    def api_ctr_fvg_clear():
-        """Clear all FVG zones"""
-        from scheduler.ctr_job import get_ctr_job
-        db = get_db()
-        job = get_ctr_job(db)
-        count = job.clear_fvg_zones()
-        return jsonify({'success': True, 'cleared': count})
-    
-    @app.route('/api/ctr/fvg/scan', methods=['POST'])
-    def api_ctr_fvg_scan():
-        """Manual FVG scan"""
-        from scheduler.ctr_job import get_ctr_job
-        db = get_db()
-        job = get_ctr_job(db)
-        job.scan_fvg_now()
-        return jsonify({'success': True})
     
     # ========================================
     # QM Zone Hunter Routes

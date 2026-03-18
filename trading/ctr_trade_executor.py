@@ -33,6 +33,8 @@ class CTRTradeExecutor:
         'enabled': 'ctr_trade_enabled',
         'leverage': 'ctr_trade_leverage',
         'deposit_pct': 'ctr_trade_deposit_pct',
+        'sizing_mode': 'ctr_trade_sizing_mode',
+        'fixed_margin': 'ctr_trade_fixed_margin',
         'tp_pct': 'ctr_trade_tp_pct',
         'sl_pct': 'ctr_trade_sl_pct',
         'max_positions': 'ctr_trade_max_positions',
@@ -43,6 +45,8 @@ class CTRTradeExecutor:
         'enabled': '0',
         'leverage': '10',
         'deposit_pct': '5',
+        'sizing_mode': 'percent',
+        'fixed_margin': '10',
         'tp_pct': '0',
         'sl_pct': '0',
         'max_positions': '5',
@@ -104,24 +108,6 @@ class CTRTradeExecutor:
             print(f"[CTR Trade] ❌ Bybit auth failed: {self._auth_error_msg}")
         
     # =============================================
-    # RECONNECT
-    # =============================================
-    
-    def reconnect(self) -> Dict:
-        """Перепідключення до Bybit API"""
-        print("[CTR Trade] 🔄 Reconnecting to Bybit...")
-        self._auth_ok = None
-        self._auth_error_msg = ""
-        self._status_cache = None
-        self._status_cache_time = 0
-        self._test_auth()
-        return {
-            'success': self._auth_ok == True,
-            'auth_ok': self._auth_ok,
-            'error': self._auth_error_msg if not self._auth_ok else ''
-        }
-    
-    # =============================================
     # SETTINGS
     # =============================================
     
@@ -135,6 +121,8 @@ class CTRTradeExecutor:
             'enabled': settings['enabled'] in ('1', 'true', 'True'),
             'leverage': int(settings['leverage']),
             'deposit_pct': float(settings['deposit_pct']),
+            'sizing_mode': settings['sizing_mode'],
+            'fixed_margin': float(settings['fixed_margin']),
             'tp_pct': float(settings['tp_pct']),
             'sl_pct': float(settings['sl_pct']),
             'max_positions': int(settings['max_positions']),
@@ -153,6 +141,12 @@ class CTRTradeExecutor:
             if 'deposit_pct' in settings:
                 pct = max(0.1, min(50, float(settings['deposit_pct'])))
                 self.db.set_setting(self.SETTINGS_KEYS['deposit_pct'], str(pct))
+            if 'sizing_mode' in settings:
+                mode = settings['sizing_mode'] if settings['sizing_mode'] in ('percent', 'fixed') else 'percent'
+                self.db.set_setting(self.SETTINGS_KEYS['sizing_mode'], mode)
+            if 'fixed_margin' in settings:
+                fm = max(1, min(100000, float(settings['fixed_margin'])))
+                self.db.set_setting(self.SETTINGS_KEYS['fixed_margin'], str(fm))
             if 'tp_pct' in settings:
                 tp = max(0, min(100, float(settings['tp_pct'])))
                 self.db.set_setting(self.SETTINGS_KEYS['tp_pct'], str(tp))
@@ -329,7 +323,8 @@ class CTRTradeExecutor:
         """
         Розрахунок розміру позиції
         
-        deposit_pct% від балансу × leverage = notional value
+        percent mode: deposit_pct% від балансу × leverage = notional
+        fixed mode:   fixed_margin × leverage = notional
         notional / price = qty
         
         Returns: {qty, notional, margin, leverage} або None
@@ -344,10 +339,17 @@ class CTRTradeExecutor:
             return None
         
         leverage = settings['leverage']
-        deposit_pct = settings['deposit_pct']
+        sizing_mode = settings.get('sizing_mode', 'percent')
         
-        # Margin = balance * deposit_pct%
-        margin = balance * (deposit_pct / 100)
+        # Calculate margin based on mode
+        if sizing_mode == 'fixed':
+            margin = settings.get('fixed_margin', 10)
+            if margin > balance:
+                print(f"[CTR Trade] ⚠️ Fixed margin ${margin:.2f} > balance ${balance:.2f}, using balance")
+                margin = balance
+        else:
+            deposit_pct = settings['deposit_pct']
+            margin = balance * (deposit_pct / 100)
         
         # Notional = margin * leverage
         notional = margin * leverage
@@ -432,8 +434,7 @@ class CTRTradeExecutor:
             return False
     
     def _open_position(self, symbol: str, signal_type: str, price: float,
-                       settings: Dict, skip_native_sl: bool = False,
-                       override_sl: float = 0, override_tp: float = 0) -> Optional[Dict]:
+                       settings: Dict) -> Optional[Dict]:
         """Відкрити нову позицію"""
         try:
             # Side: BUY signal → Buy side (Long), SELL signal → Sell side (Short)
@@ -457,17 +458,11 @@ class CTRTradeExecutor:
                 else:
                     tp_price = round(price * (1 - settings['tp_pct'] / 100), 8)
             
-            if settings['sl_pct'] > 0 and not skip_native_sl:
+            if settings['sl_pct'] > 0:
                 if signal_type == "BUY":
                     sl_price = round(price * (1 - settings['sl_pct'] / 100), 8)
                 else:
                     sl_price = round(price * (1 + settings['sl_pct'] / 100), 8)
-            
-            # FVG overrides — use exact SL/TP prices from FVG calculation
-            if override_sl > 0:
-                sl_price = round(override_sl, 8)
-            if override_tp > 0:
-                tp_price = round(override_tp, 8)
             
             print(f"[CTR Trade] 📈 Opening {side} {symbol}: "
                   f"qty={sizing['qty']}, price≈${price:.4f}, "
@@ -510,8 +505,7 @@ class CTRTradeExecutor:
     # =============================================
     
     def execute_signal(self, symbol: str, signal_type: str, price: float,
-                       reason: str = "", skip_native_sl: bool = False,
-                       override_sl: float = 0, override_tp: float = 0) -> Dict:
+                       reason: str = "") -> Dict:
         """
         Головна функція: обробити CTR сигнал і виконати угоду
         
@@ -582,8 +576,7 @@ class CTRTradeExecutor:
                 result['action'] = 'open_new'
             
             # 5. Open new position
-            order = self._open_position(symbol, signal_type, price, settings, skip_native_sl,
-                                        override_sl=override_sl, override_tp=override_tp)
+            order = self._open_position(symbol, signal_type, price, settings)
             
             if order:
                 result['success'] = True
