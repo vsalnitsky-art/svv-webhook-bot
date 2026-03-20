@@ -1158,22 +1158,9 @@
                     </div>
                 </div>
                 
-                <!-- Trend Filter Status -->
-                <div id="fvg-trend-bar" style="display:none; margin: 10px 0; padding: 8px 12px; background: rgba(33,150,243,0.06); border-radius: 8px; border: 1px solid rgba(33,150,243,0.15);">
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                        <span style="color: #2196f3; font-weight: 600; font-size: 12px;">📈 Trend Filter</span>
-                        <span id="fvg-trend-ema-label" style="color: #888; font-size: 11px;"></span>
-                    </div>
-                    <div id="fvg-trend-chips" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
-                </div>
-                
-                <!-- HTF Trend Filter Status -->
-                <div id="fvg-htf-trend-bar" style="display:none; margin: 4px 0 10px; padding: 8px 12px; background: rgba(156,39,176,0.06); border-radius: 8px; border: 1px solid rgba(156,39,176,0.15);">
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                        <span style="color: #ba68c8; font-weight: 600; font-size: 12px;">📊 HTF Trend</span>
-                        <span id="fvg-htf-ema-label" style="color: #888; font-size: 11px;"></span>
-                    </div>
-                    <div id="fvg-htf-trend-chips" style="display: flex; flex-wrap: wrap; gap: 4px;"></div>
+                <!-- Trend Filter Status (unified grid) -->
+                <div id="fvg-trend-bar" style="display:none; margin: 10px 0;">
+                    <div id="fvg-trend-grid"></div>
                 </div>
                 
                 <table class="results-table" id="fvg-table" style="display:none;">
@@ -1946,65 +1933,73 @@ async function loadFVGZones() {
         const klineInfo = stats.fvg_retested_kline ? ` (${stats.fvg_retested_kline} via kline)` : '';
         countEl.textContent = `${activeCount} active / ${zones.length} total | Detected: ${stats.fvg_detected || 0} | Traded: ${stats.fvg_retested || 0}${klineInfo}${trendInfo}`;
         
-        // === Trend bar ===
+        // === Unified Trend Grid ===
         const trendBar = document.getElementById('fvg-trend-bar');
-        const trendChips = document.getElementById('fvg-trend-chips');
-        const trendLabel = document.getElementById('fvg-trend-ema-label');
-        if (trendBar && stats.trend_filter_enabled && stats.trends) {
+        const trendGrid = document.getElementById('fvg-trend-grid');
+        const hasLTF = stats.trend_filter_enabled && stats.trends;
+        const hasHTF = stats.htf_trend_enabled && stats.trends_htf;
+        
+        if (trendBar && (hasLTF || hasHTF)) {
             trendBar.style.display = '';
-            trendLabel.textContent = `EMA(${stats.trend_fast_ema || 5}/${stats.trend_slow_ema || 13}) on ${stats.timeframe || '15m'}`;
-            const entries = Object.entries(stats.trends).sort((a, b) => a[0].localeCompare(b[0]));
-            trendChips.innerHTML = entries.map(([sym, t]) => {
-                const isBull = t.trend === 'bullish';
-                const arrow = isBull ? '▲' : '▼';
-                const clr = isBull ? '#4caf50' : '#ff5252';
-                const bg = isBull ? 'rgba(76,175,80,0.12)' : 'rgba(255,82,82,0.12)';
-                const bdr = isBull ? 'rgba(76,175,80,0.3)' : 'rgba(255,82,82,0.3)';
-                const spread = t.spread_pct !== undefined ? ` (${t.spread_pct > 0 ? '+' : ''}${t.spread_pct}%)` : '';
-                const short = sym.replace('USDT', '');
-                return `<span title="${sym}: Fast=${t.fast}, Slow=${t.slow}${spread}" `
-                     + `style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;`
-                     + `border-radius:4px;font-size:11px;font-weight:600;`
-                     + `background:${bg};border:1px solid ${bdr};color:${clr};cursor:default;">`
-                     + `${arrow} ${short}</span>`;
-            }).join('');
+            
+            // Collect all symbols (union of LTF + HTF)
+            const allSyms = new Set();
+            if (hasLTF) Object.keys(stats.trends).forEach(s => allSyms.add(s));
+            if (hasHTF) Object.keys(stats.trends_htf).forEach(s => allSyms.add(s));
+            const symbols = [...allSyms].sort();
+            
+            const ltfLabel = `${stats.timeframe || '15m'} EMA(${stats.trend_fast_ema || 8}/${stats.trend_slow_ema || 21})`;
+            const htfLabel = `${stats.htf_timeframe || '1h'} EMA(${stats.htf_fast_ema || 9}/${stats.htf_slow_ema || 21})`;
+            
+            function cell(t, sym, tf) {
+                if (!t) return `<div style="width:56px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:rgba(255,255,255,0.03);color:#555;font-size:10px;">—</div>`;
+                const bull = t.trend === 'bullish';
+                const arrow = bull ? '▲' : '▼';
+                const clr = bull ? '#4caf50' : '#ff5252';
+                const bg = bull ? 'rgba(76,175,80,0.15)' : 'rgba(255,82,82,0.15)';
+                const sp = t.spread_pct !== undefined ? `${t.spread_pct > 0 ? '+' : ''}${t.spread_pct}%` : '';
+                return `<div title="${sym} ${tf}: F=${t.fast} S=${t.slow} ${sp}" style="width:56px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:${bg};color:${clr};font-size:12px;font-weight:700;cursor:default;">${arrow}</div>`;
+            }
+            
+            function matchCell(ltfT, htfT) {
+                if (!ltfT || !htfT) return `<div style="width:56px;height:18px;display:flex;align-items:center;justify-content:center;font-size:9px;color:#555;">—</div>`;
+                const match = ltfT.trend === htfT.trend;
+                const icon = match ? '✓ match' : '✗ conflict';
+                const clr = match ? '#4caf50' : '#ff9800';
+                const bg = match ? 'rgba(76,175,80,0.08)' : 'rgba(255,193,7,0.08)';
+                return `<div style="width:56px;height:18px;display:flex;align-items:center;justify-content:center;border-radius:3px;background:${bg};font-size:9px;font-weight:600;color:${clr};">${icon}</div>`;
+            }
+            
+            let html = `<div style="display:grid;grid-template-columns:90px repeat(${symbols.length}, 56px);gap:3px;align-items:center;">`;
+            
+            // Header row — symbol names
+            html += `<div style="font-size:10px;color:#666;text-align:right;padding-right:4px;">Symbol</div>`;
+            symbols.forEach(sym => {
+                html += `<div style="text-align:center;font-size:11px;font-weight:700;color:#ccc;">${sym.replace('USDT','')}</div>`;
+            });
+            
+            // LTF row
+            if (hasLTF) {
+                html += `<div style="font-size:10px;color:#2196f3;text-align:right;padding-right:4px;font-weight:600;">📈 ${ltfLabel}</div>`;
+                symbols.forEach(sym => { html += cell(stats.trends[sym], sym, stats.timeframe); });
+            }
+            
+            // Match row (only if both enabled)
+            if (hasLTF && hasHTF) {
+                html += `<div style="font-size:9px;color:#666;text-align:right;padding-right:4px;"></div>`;
+                symbols.forEach(sym => { html += matchCell(stats.trends[sym], stats.trends_htf[sym]); });
+            }
+            
+            // HTF row
+            if (hasHTF) {
+                html += `<div style="font-size:10px;color:#ba68c8;text-align:right;padding-right:4px;font-weight:600;">📊 ${htfLabel}</div>`;
+                symbols.forEach(sym => { html += cell(stats.trends_htf[sym], sym, stats.htf_timeframe); });
+            }
+            
+            html += '</div>';
+            trendGrid.innerHTML = html;
         } else if (trendBar) {
             trendBar.style.display = 'none';
-        }
-        
-        // === HTF Trend bar ===
-        const htfBar = document.getElementById('fvg-htf-trend-bar');
-        const htfChips = document.getElementById('fvg-htf-trend-chips');
-        const htfLabel = document.getElementById('fvg-htf-ema-label');
-        if (htfBar && stats.htf_trend_enabled && stats.trends_htf) {
-            htfBar.style.display = '';
-            htfLabel.textContent = `EMA(${stats.htf_fast_ema || 8}/${stats.htf_slow_ema || 21}) on ${stats.htf_timeframe || '1h'}`;
-            const htfEntries = Object.entries(stats.trends_htf).sort((a, b) => a[0].localeCompare(b[0]));
-            // Get LTF trends for comparison
-            const ltfTrends = stats.trends || {};
-            htfChips.innerHTML = htfEntries.map(([sym, t]) => {
-                const isBull = t.trend === 'bullish';
-                const arrow = isBull ? '▲' : '▼';
-                // Check if LTF agrees — highlight with gold border if both match
-                const ltf = ltfTrends[sym];
-                const bothMatch = ltf && ltf.trend === t.trend;
-                const clr = isBull ? '#4caf50' : '#ff5252';
-                const bg = isBull ? 'rgba(76,175,80,0.12)' : 'rgba(255,82,82,0.12)';
-                const bdr = bothMatch
-                    ? (isBull ? 'rgba(76,175,80,0.8)' : 'rgba(255,82,82,0.8)')
-                    : 'rgba(255,193,7,0.5)';
-                const matchIcon = bothMatch ? '✓' : '✗';
-                const spread = t.spread_pct !== undefined ? ` (${t.spread_pct > 0 ? '+' : ''}${t.spread_pct}%)` : '';
-                const short = sym.replace('USDT', '');
-                const ltfDir = ltf ? ltf.trend : '?';
-                return `<span title="${sym} HTF: Fast=${t.fast}, Slow=${t.slow}${spread} | LTF=${ltfDir} ${matchIcon}" `
-                     + `style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;`
-                     + `border-radius:4px;font-size:11px;font-weight:600;`
-                     + `background:${bg};border:1.5px solid ${bdr};color:${clr};cursor:default;">`
-                     + `${arrow} ${short} ${matchIcon}</span>`;
-            }).join('');
-        } else if (htfBar) {
-            htfBar.style.display = 'none';
         }
         
         if (zones.length === 0) {
