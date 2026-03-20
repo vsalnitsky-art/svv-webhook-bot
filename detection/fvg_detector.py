@@ -117,6 +117,8 @@ class FVGDetector:
         htf_timeframe: str = '1h',
         htf_fast_ema: int = 8,
         htf_slow_ema: int = 21,
+        retest_enabled: bool = True,
+        instant_enabled: bool = False,
         on_signal: Optional[Callable] = None,
     ):
         self.db = db
@@ -136,6 +138,8 @@ class FVGDetector:
         self.htf_timeframe = htf_timeframe
         self.htf_fast_ema = htf_fast_ema
         self.htf_slow_ema = htf_slow_ema
+        self.retest_enabled = retest_enabled
+        self.instant_enabled = instant_enabled
         self.on_signal = on_signal
         
         # State
@@ -175,6 +179,7 @@ class FVGDetector:
             'fvg_filtered_size': 0,
             'fvg_filtered_overlap': 0,
             'fvg_filtered_trend': 0,
+            'fvg_instant': 0,
             'last_scan_time': '',
             'scans': 0,
         }
@@ -227,7 +232,8 @@ class FVGDetector:
         for key in ('min_fvg_pct', 'rr_ratio', 'sl_buffer_pct', 'timeframe',
                      'max_fvg_per_symbol', 'mitigation_src',
                      'trend_filter_enabled', 'trend_fast_ema', 'trend_slow_ema',
-                     'htf_trend_enabled', 'htf_timeframe', 'htf_fast_ema', 'htf_slow_ema'):
+                     'htf_trend_enabled', 'htf_timeframe', 'htf_fast_ema', 'htf_slow_ema',
+                     'retest_enabled', 'instant_enabled'):
             if key in settings:
                 current = getattr(self, key)
                 if isinstance(current, bool):
@@ -650,6 +656,7 @@ class FVGDetector:
                     active_count = len(existing_for_symbol)
                     
                     added = 0
+                    added_fvgs = []  # Track for instant signals
                     for fvg in new_fvgs:
                         if active_count + added >= self.max_fvg_per_symbol:
                             break
@@ -670,11 +677,18 @@ class FVGDetector:
                         self._fvg_zones[fvg.id] = fvg
                         existing_for_symbol.append(fvg)
                         added += 1
+                        added_fvgs.append(fvg)
                         self._stats['fvg_detected'] += 1
                     
                     if added:
                         print(f"[FVG] 📐 {symbol}: +{added} new FVGs "
                               f"(total active: {active_count + added})")
+                
+                # Instant signals — fire outside the lock
+                if self.instant_enabled and added_fvgs:
+                    last_close = klines[-1]['close'] if klines else 0
+                    for fvg in added_fvgs:
+                        self._on_instant_signal(fvg, last_close)
                 
                 return added
             return 0
@@ -756,7 +770,8 @@ class FVGDetector:
                               f"(candle low=${c_low:.4f} into zone ${fvg.low:.4f}-${fvg.high:.4f}, "
                               f"close=${c_close:.4f})")
                         self._stats['fvg_retested_kline'] += 1
-                        self._on_retest(fvg, c_close)
+                        if self.retest_enabled:
+                            self._on_retest(fvg, c_close)
                         break
                 
                 elif fvg.direction == 'bearish':
@@ -782,7 +797,8 @@ class FVGDetector:
                               f"(candle high=${c_high:.4f} into zone ${fvg.low:.4f}-${fvg.high:.4f}, "
                               f"close=${c_close:.4f})")
                         self._stats['fvg_retested_kline'] += 1
-                        self._on_retest(fvg, c_close)
+                        if self.retest_enabled:
+                            self._on_retest(fvg, c_close)
                         break
     
     def _scan_all_symbols(self):
@@ -945,6 +961,65 @@ class FVGDetector:
         
         self._save_to_db()
     
+    def _on_instant_signal(self, fvg: FVGZone, entry_price: float):
+        """Handle new FVG detection → generate instant trade signal."""
+        if not self.instant_enabled:
+            return
+        
+        # Trend filter check
+        allowed, block_src = self._check_trend_filter(fvg.symbol, fvg.direction)
+        if not allowed:
+            label = 'LONG' if fvg.direction == 'bullish' else 'SHORT'
+            tf_label = self.timeframe if block_src == 'ltf' else self.htf_timeframe
+            print(f"[FVG] 🚫 INSTANT BLOCKED [{tf_label}]: {fvg.symbol} {label}")
+            return
+        
+        sl_price, tp_price = self._calculate_sl_tp(fvg, entry_price)
+        
+        signal_type = 'BUY' if fvg.direction == 'bullish' else 'SELL'
+        label = 'LONG' if signal_type == 'BUY' else 'SHORT'
+        risk_pct = abs(entry_price - sl_price) / entry_price * 100
+        
+        # Mark as traded only if retest is off — otherwise keep for retest monitoring
+        if not self.retest_enabled:
+            fvg.status = 'traded'
+            fvg.entry_price = entry_price
+            fvg.sl_price = sl_price
+            fvg.tp_price = tp_price
+        
+        trend_tag = ""
+        trend_data = self._symbol_trends.get(fvg.symbol)
+        htf_data = self._symbol_trends_htf.get(fvg.symbol)
+        if self.trend_filter_enabled and trend_data:
+            trend_tag = (f"\n  Trend {self.timeframe}: {trend_data['trend'].upper()} "
+                        f"(Fast={trend_data['fast']:.4f}, Slow={trend_data['slow']:.4f})")
+        if self.htf_trend_enabled and htf_data:
+            trend_tag += (f"\n  Trend {self.htf_timeframe}: {htf_data['trend'].upper()} "
+                         f"(Fast={htf_data['fast']:.4f}, Slow={htf_data['slow']:.4f})")
+        
+        print(f"[FVG] ⚡ INSTANT SIGNAL: {fvg.symbol} {label}\n"
+              f"  FVG: ${fvg.low:.4f} - ${fvg.high:.4f} ({fvg.size_pct}%)\n"
+              f"  Entry: ${entry_price:.4f}, SL: ${sl_price:.4f}, TP: ${tp_price:.4f}\n"
+              f"  Risk: {risk_pct:.2f}%, R:R: {self.rr_ratio}{trend_tag}")
+        
+        self._stats['fvg_instant'] += 1
+        
+        if self.on_signal:
+            self.on_signal({
+                'symbol': fvg.symbol,
+                'type': signal_type,
+                'price': entry_price,
+                'sl_price': sl_price,
+                'tp_price': tp_price,
+                'reason': f'FVG Instant ({fvg.direction})',
+                'fvg_id': fvg.id,
+                'fvg_high': fvg.high,
+                'fvg_low': fvg.low,
+                'fvg_size_pct': fvg.size_pct,
+                'rr_ratio': self.rr_ratio,
+                'is_fvg': True,
+            })
+    
     def _monitor_all(self):
         """Check all active FVGs against current prices."""
         if not self._price_getter:
@@ -983,8 +1058,10 @@ class FVGDetector:
                         last_block = self._trend_block_dedup.get(fvg.id, 0)
                         if time.time() - last_block < 60:
                             pass  # Silently skip — trend hasn't changed yet
-                        else:
+                        elif self.retest_enabled:
                             self._on_retest(fvg, current_price)
+                        else:
+                            fvg.status = 'traded'  # Mark done if retest disabled
                     elif new_status == 'invalidated':
                         fvg.status = 'invalidated'
                         self._stats['fvg_invalidated'] += 1
@@ -1150,6 +1227,8 @@ class FVGDetector:
             'htf_fast_ema': self.htf_fast_ema,
             'htf_slow_ema': self.htf_slow_ema,
             'trends_htf': dict(self._symbol_trends_htf),
+            'retest_enabled': self.retest_enabled,
+            'instant_enabled': self.instant_enabled,
         }
     
     def clear_zones(self) -> int:

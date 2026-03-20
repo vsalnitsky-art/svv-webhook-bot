@@ -1234,6 +1234,8 @@ def register_api_routes(app):
             'ctr_fvg_htf_timeframe': db.get_setting('ctr_fvg_htf_timeframe', '1h'),
             'ctr_fvg_htf_fast_ema': db.get_setting('ctr_fvg_htf_fast_ema', '8'),
             'ctr_fvg_htf_slow_ema': db.get_setting('ctr_fvg_htf_slow_ema', '21'),
+            'ctr_fvg_retest_enabled': db.get_setting('ctr_fvg_retest_enabled', '1') in ('1', 'true', 'True', 'yes'),
+            'ctr_fvg_instant_enabled': db.get_setting('ctr_fvg_instant_enabled', '0') in ('1', 'true', 'True', 'yes'),
             # CTR Fast Scanner toggle + EMA Trend Filter
             'ctr_scanner_enabled': db.get_setting('ctr_scanner_enabled', '1') in ('1', 'true', 'True', 'yes'),
             'ctr_ema_trend_enabled': db.get_setting('ctr_ema_trend_enabled', '0') in ('1', 'true', 'True', 'yes'),
@@ -1385,6 +1387,7 @@ def register_api_routes(app):
             'ctr_fvg_trend_fast_ema', 'ctr_fvg_trend_slow_ema',
             'ctr_fvg_htf_trend', 'ctr_fvg_htf_timeframe',
             'ctr_fvg_htf_fast_ema', 'ctr_fvg_htf_slow_ema',
+            'ctr_fvg_retest_enabled', 'ctr_fvg_instant_enabled',
             # CTR Fast Scanner toggle + EMA Trend Filter
             'ctr_scanner_enabled', 'ctr_ema_trend_enabled',
             'ctr_ema_trend_fast', 'ctr_ema_trend_slow',

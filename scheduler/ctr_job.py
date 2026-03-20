@@ -161,6 +161,8 @@ class CTRFastJob:
         self.fvg_htf_timeframe = self.db.get_setting('ctr_fvg_htf_timeframe', '1h')
         self.fvg_htf_fast_ema = int(self.db.get_setting('ctr_fvg_htf_fast_ema', '8'))
         self.fvg_htf_slow_ema = int(self.db.get_setting('ctr_fvg_htf_slow_ema', '21'))
+        self.fvg_retest_enabled = _b('ctr_fvg_retest_enabled', '1')  # ON by default (current behavior)
+        self.fvg_instant_enabled = _b('ctr_fvg_instant_enabled', '0')  # OFF by default (new)
         
         # CTR Fast Scanner — enable/disable + EMA Trend Filter
         self.ctr_scanner_enabled = _b('ctr_scanner_enabled', '1')  # ON by default
@@ -970,6 +972,8 @@ class CTRFastJob:
                 htf_timeframe=self.fvg_htf_timeframe,
                 htf_fast_ema=self.fvg_htf_fast_ema,
                 htf_slow_ema=self.fvg_htf_slow_ema,
+                retest_enabled=self.fvg_retest_enabled,
+                instant_enabled=self.fvg_instant_enabled,
                 on_signal=self._on_signal,
             )
             

@@ -741,6 +741,21 @@
                     </label>
                     <small style="color: #ccc; margin-left: 8px;">Enable FVG Detection</small>
                     
+                    <!-- Strategy Selection -->
+                    <div style="display: flex; gap: 16px; margin: 10px 0; padding: 8px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="checkbox" id="fvg-retest-enabled" {{ 'checked' if settings.ctr_fvg_retest_enabled else '' }}
+                                   style="accent-color: #2196f3;">
+                            <span style="color: #2196f3; font-size: 12px; font-weight: 600;">🔄 Retest</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="checkbox" id="fvg-instant-enabled" {{ 'checked' if settings.ctr_fvg_instant_enabled else '' }}
+                                   style="accent-color: #ff9800;">
+                            <span style="color: #ff9800; font-size: 12px; font-weight: 600;">⚡ Instant</span>
+                        </label>
+                        <small style="color: #666; font-size: 11px; align-self: center;">можна обидві</small>
+                    </div>
+                    
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px;">
                         <div>
                             <small style="color:#aaa;">Timeframe</small>
@@ -1881,6 +1896,8 @@ async function saveFVGSettings() {
         ctr_fvg_htf_timeframe: document.getElementById('fvg-htf-timeframe').value,
         ctr_fvg_htf_fast_ema: document.getElementById('fvg-htf-fast-ema').value,
         ctr_fvg_htf_slow_ema: document.getElementById('fvg-htf-slow-ema').value,
+        ctr_fvg_retest_enabled: document.getElementById('fvg-retest-enabled').checked ? '1' : '0',
+        ctr_fvg_instant_enabled: document.getElementById('fvg-instant-enabled').checked ? '1' : '0',
         // FVG TP Manager
         fvg_tp_manager_enabled: document.getElementById('fvg-tp-enabled').checked ? '1' : '0',
         fvg_tp_trigger_pct: document.getElementById('fvg-tp-trigger-detail')?.value || document.getElementById('fvg-tp-trigger').value,
