@@ -153,6 +153,13 @@ class FVGDetector:
         self._symbol_trends_htf: Dict[str, Dict] = {}
         self._symbol_closes_htf: Dict[str, List[float]] = {}
         
+        # Dedup: trend block per FVG (fvg_id -> last_block_time) — suppress repeated log spam
+        self._trend_block_dedup: Dict[str, float] = {}
+        # Dedup: last kline timestamp checked per symbol — avoid re-checking same candle
+        self._last_kline_ts: Dict[str, int] = {}
+        # HTF scan counter — fetch HTF klines only every N scans (not every 60s)
+        self._htf_scan_counter: int = 0
+        
         # Threads
         self._monitor_thread = None
         self._scanner_thread = None
@@ -620,8 +627,9 @@ class FVGDetector:
             # Update trend data from klines
             self._update_trend(symbol, klines)
             
-            # Fetch HTF klines for higher timeframe trend (separate REST call)
-            if self.htf_trend_enabled:
+            # Fetch HTF klines only every 5th scan (~5 min for 1h candles)
+            if self.htf_trend_enabled and self._htf_scan_counter % 5 == 0:
+                time.sleep(0.2)  # Extra delay before HTF REST call
                 self._update_trend_htf_from_rest(symbol)
             
             # === KLINE-BASED RETEST CHECK ===
@@ -716,6 +724,11 @@ class FVGDetector:
                 except:
                     pass
                 
+                # Skip candles already checked in previous scans
+                last_ts = self._last_kline_ts.get(f"{symbol}:{fvg.id}", 0)
+                if candle['timestamp'] <= last_ts:
+                    continue
+                
                 c_low = candle['low']
                 c_high = candle['high']
                 c_close = candle['close']
@@ -730,9 +743,15 @@ class FVGDetector:
                     if c_close < fvg.low:
                         fvg.status = 'invalidated'
                         self._stats['fvg_invalidated'] += 1
+                        self._last_kline_ts[f"{symbol}:{fvg.id}"] = candle['timestamp']
                         break
                     
                     if wick_touched and close_above:
+                        self._last_kline_ts[f"{symbol}:{fvg.id}"] = candle['timestamp']
+                        # Skip if recently trend-blocked (avoid log spam)
+                        last_block = self._trend_block_dedup.get(fvg.id, 0)
+                        if time.time() - last_block < 60:
+                            break  # Silently skip
                         print(f"[FVG] 📊 Kline retest detected: {symbol} BULLISH "
                               f"(candle low=${c_low:.4f} into zone ${fvg.low:.4f}-${fvg.high:.4f}, "
                               f"close=${c_close:.4f})")
@@ -750,9 +769,15 @@ class FVGDetector:
                     if c_close > fvg.high:
                         fvg.status = 'invalidated'
                         self._stats['fvg_invalidated'] += 1
+                        self._last_kline_ts[f"{symbol}:{fvg.id}"] = candle['timestamp']
                         break
                     
                     if wick_touched and close_below:
+                        self._last_kline_ts[f"{symbol}:{fvg.id}"] = candle['timestamp']
+                        # Skip if recently trend-blocked (avoid log spam)
+                        last_block = self._trend_block_dedup.get(fvg.id, 0)
+                        if time.time() - last_block < 60:
+                            break  # Silently skip
                         print(f"[FVG] 📊 Kline retest detected: {symbol} BEARISH "
                               f"(candle high=${c_high:.4f} into zone ${fvg.low:.4f}-${fvg.high:.4f}, "
                               f"close=${c_close:.4f})")
@@ -762,10 +787,11 @@ class FVGDetector:
     
     def _scan_all_symbols(self):
         """Scan all watchlist symbols."""
+        self._htf_scan_counter += 1
         total_new = 0
         for symbol in self._watchlist:
             total_new += self._scan_symbol(symbol)
-            time.sleep(0.3)  # Rate limit protection (Bybit REST)
+            time.sleep(0.5)  # Rate limit protection (Bybit REST)
         
         self._stats['scans'] += 1
         self._stats['last_scan_time'] = datetime.now(timezone.utc).strftime('%H:%M:%S')
@@ -855,16 +881,21 @@ class FVGDetector:
         # === TREND FILTER (LTF + HTF) ===
         allowed, block_src = self._check_trend_filter(fvg.symbol, fvg.direction)
         if not allowed:
-            label = 'LONG' if fvg.direction == 'bullish' else 'SHORT'
-            ltf = self._symbol_trends.get(fvg.symbol, {})
-            htf = self._symbol_trends_htf.get(fvg.symbol, {})
-            tf_label = self.timeframe if block_src == 'ltf' else self.htf_timeframe
-            src_data = ltf if block_src == 'ltf' else htf
-            print(f"[FVG] 🚫 TREND BLOCKED [{tf_label}]: {fvg.symbol} {label} "
-                  f"(FVG={fvg.direction}, {tf_label}={src_data.get('trend', '?')}, "
-                  f"Fast={src_data.get('fast', 0):.4f}, Slow={src_data.get('slow', 0):.4f})")
-            # Keep FVG in 'waiting' so it can be re-entered later if trend changes
-            fvg.status = 'waiting'
+            # Dedup: only log once per 5 minutes per FVG
+            now = time.time()
+            last_block = self._trend_block_dedup.get(fvg.id, 0)
+            if now - last_block > 300:  # 5 min cooldown on log
+                label = 'LONG' if fvg.direction == 'bullish' else 'SHORT'
+                ltf = self._symbol_trends.get(fvg.symbol, {})
+                htf = self._symbol_trends_htf.get(fvg.symbol, {})
+                tf_label = self.timeframe if block_src == 'ltf' else self.htf_timeframe
+                src_data = ltf if block_src == 'ltf' else htf
+                print(f"[FVG] 🚫 TREND BLOCKED [{tf_label}]: {fvg.symbol} {label} "
+                      f"(FVG={fvg.direction}, {tf_label}={src_data.get('trend', '?')}, "
+                      f"Fast={src_data.get('fast', 0):.4f}, Slow={src_data.get('slow', 0):.4f})")
+                self._trend_block_dedup[fvg.id] = now
+            # Keep status as-is (entered stays entered) — don't reset to waiting
+            # This prevents the entered→blocked→waiting→entered spam cycle
             self._stats['fvg_filtered_trend'] += 1
             return
         
@@ -948,16 +979,27 @@ class FVGDetector:
                 
                 if new_status:
                     if new_status == 'retested':
-                        self._on_retest(fvg, current_price)
+                        # Skip if this FVG was trend-blocked recently (< 60s ago)
+                        last_block = self._trend_block_dedup.get(fvg.id, 0)
+                        if time.time() - last_block < 60:
+                            pass  # Silently skip — trend hasn't changed yet
+                        else:
+                            self._on_retest(fvg, current_price)
                     elif new_status == 'invalidated':
                         fvg.status = 'invalidated'
                         self._stats['fvg_invalidated'] += 1
+                        self._trend_block_dedup.pop(fvg.id, None)
                     elif new_status == 'entered':
-                        fvg.status = 'entered'
-                        label = '🟢' if fvg.direction == 'bullish' else '🔴'
-                        print(f"[FVG] 🎯 Entered: {fvg.symbol} {label} "
-                              f"${fvg.low:.4f}-${fvg.high:.4f} "
-                              f"(price=${current_price:.4f})")
+                        # Only log first entry (not re-entries after trend block)
+                        last_block = self._trend_block_dedup.get(fvg.id, 0)
+                        if time.time() - last_block > 300:  # Don't spam if recently blocked
+                            fvg.status = 'entered'
+                            label = '🟢' if fvg.direction == 'bullish' else '🔴'
+                            print(f"[FVG] 🎯 Entered: {fvg.symbol} {label} "
+                                  f"${fvg.low:.4f}-${fvg.high:.4f} "
+                                  f"(price=${current_price:.4f})")
+                        else:
+                            fvg.status = 'entered'  # Still update status, just don't log
                     
             except Exception as e:
                 print(f"[FVG] Monitor error {fvg.symbol}: {e}")
