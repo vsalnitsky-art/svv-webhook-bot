@@ -163,6 +163,8 @@ class FVGDetector:
         self._last_kline_ts: Dict[str, int] = {}
         # HTF scan counter — fetch HTF klines only every N scans (not every 60s)
         self._htf_scan_counter: int = 0
+        # Track which symbols had initial full scan (all 1000 bars)
+        self._symbols_full_scanned: set = set()
         
         # Threads
         self._monitor_thread = None
@@ -296,11 +298,17 @@ class FVGDetector:
         # Pine: ta.percentile_nearest_rank(diff, 1000, 100) = MAX of last 1000 values
         p100 = max(all_diffs) if all_diffs else 0
         
-        # ---- Pass 2: Detect FVGs (only in recent candles to avoid re-detection) ----
-        # Scan last N candles: scan_interval / TF_minutes + buffer
+        # ---- Pass 2: Detect FVGs ----
+        # First scan per symbol: check ALL klines to find existing FVGs on chart
+        # Subsequent scans: only check recent candles for new FVGs
         minutes = self.TF_MINUTES.get(self.timeframe, 15)
-        recent_candles = max(5, self.scan_interval // (minutes * 60) + 3)
-        start_idx = max(2, len(klines) - recent_candles)
+        if symbol not in self._symbols_full_scanned:
+            start_idx = 2  # Scan ALL available klines
+            self._symbols_full_scanned.add(symbol)
+            print(f"[FVG] 🔍 {symbol}: initial full scan ({len(klines)} klines)")
+        else:
+            recent_candles = max(5, self.scan_interval // (minutes * 60) + 3)
+            start_idx = max(2, len(klines) - recent_candles)
         
         for i in range(start_idx, len(klines)):
             c_prev2 = klines[i - 2]  # Pine: [2] bars ago
@@ -674,6 +682,9 @@ class FVGDetector:
             # Check last few CLOSED candles against active FVGs
             self._check_kline_retests(symbol, klines)
             
+            # Track if this is the first full scan (to suppress instant signals for historical FVGs)
+            is_initial_scan = symbol not in self._symbols_full_scanned
+            
             new_fvgs = self._detect_fvg_from_klines(symbol, klines)
             
             if new_fvgs:
@@ -726,11 +737,12 @@ class FVGDetector:
                         self._stats['fvg_detected'] += 1
                     
                     if added:
+                        tag = " (initial scan)" if is_initial_scan else ""
                         print(f"[FVG] 📐 {symbol}: +{added} new FVGs "
-                              f"(total active: {active_count + added})")
+                              f"(total active: {active_count + added}){tag}")
                 
-                # Instant signals — fire outside the lock
-                if self.instant_enabled and added_fvgs:
+                # Instant signals — only for genuinely NEW FVGs, not historical ones
+                if self.instant_enabled and added_fvgs and not is_initial_scan:
                     last_close = klines[-1]['close'] if klines else 0
                     for fvg in added_fvgs:
                         self._on_instant_signal(fvg, last_close)
@@ -1280,8 +1292,9 @@ class FVGDetector:
         with self._lock:
             count = len(self._fvg_zones)
             self._fvg_zones.clear()
+        self._symbols_full_scanned.clear()  # Force full rescan on next cycle
         self._save_to_db()
-        print(f"[FVG] 🗑️ Cleared {count} FVG zones")
+        print(f"[FVG] 🗑️ Cleared {count} FVG zones (will rescan all klines)")
         return count
     
     def scan_now(self):
