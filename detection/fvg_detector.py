@@ -251,19 +251,26 @@ class FVGDetector:
     
     def _detect_fvg_from_klines(self, symbol: str, klines: List[Dict]) -> List[FVGZone]:
         """
-        Pine Script exact FVG detection.
+        Pine Script exact FVG detection (100% match with "Объёмные FVG" by vsalnitsky).
         
         Bullish FVG (4 conditions):
           1. high[2] < low       — gap between candle i-2 and candle i
           2. high[2] < high[1]   — middle candle's high is above prev candle's high  
           3. low[2] < low        — confirms upward movement
-          4. filterFVG           — adaptive size filter
+          4. filterFVG           — adaptive size filter (>10% of max diff in 1000 bars)
           
         Bearish FVG (4 conditions):
           1. low[2] > high       — gap between candle i-2 and candle i
           2. low[2] > low[1]     — middle candle's low is below prev candle's low
           3. high[2] > high      — confirms downward movement
           4. filterFVG           — adaptive size filter
+          
+        Adaptive filter (Pine Script exact):
+          diff = close[1]>open[1] ? (low-high[2])/low*100 : (low[2]-high)/high*100
+          sizeFVG = diff / ta.percentile_nearest_rank(diff, 1000, 100) * 100
+          filterFVG = sizeFVG > 10
+          
+        percentile_nearest_rank(diff, 1000, 100) = MAX of diff over last 1000 bars.
         """
         if len(klines) < 3:
             return []
@@ -271,42 +278,38 @@ class FVGDetector:
         new_fvgs = []
         existing_ids = set(self._fvg_zones.keys())
         
-        # Limit scan to MAX_AGE worth of candles
-        minutes = self.TF_MINUTES.get(self.timeframe, 15)
-        max_candles = min(len(klines) - 1, int(self.MAX_AGE / 60 / minutes) + 3)
-        start_idx = max(2, len(klines) - max_candles)
-        
-        # ---- Pass 1: Collect ALL FVG diff sizes for adaptive filter ----
+        # ---- Pass 1: Compute diff for ALL bars (Pine does this on every bar) ----
+        # This is critical: percentile uses ALL diffs, not just FVG diffs
         all_diffs = []
-        for i in range(start_idx, len(klines) - 1):
-            h2 = klines[i - 2]['high']
-            l2 = klines[i - 2]['low']
-            lo = klines[i]['low']
-            hi = klines[i]['high']
-            c1 = klines[i - 1]['close']
-            o1 = klines[i - 1]['open']
+        for i in range(2, len(klines)):
+            c_mid = klines[i - 1]
+            c_prev2 = klines[i - 2]
+            c_curr = klines[i]
             
-            # Pine Script diff formula
-            if c1 > o1:  # middle candle is bullish
-                diff = (lo - h2) / lo * 100 if lo > 0 else 0
+            if c_mid['close'] > c_mid['open']:  # middle candle bullish
+                diff = (c_curr['low'] - c_prev2['high']) / c_curr['low'] * 100 if c_curr['low'] > 0 else 0
             else:
-                diff = (l2 - hi) / hi * 100 if hi > 0 else 0
+                diff = (c_prev2['low'] - c_curr['high']) / c_curr['high'] * 100 if c_curr['high'] > 0 else 0
             
-            if abs(diff) > 0.001:
-                all_diffs.append(abs(diff))
+            all_diffs.append(diff)
         
-        # Percentile 100 (max) for adaptive filter
+        # Pine: ta.percentile_nearest_rank(diff, 1000, 100) = MAX of last 1000 values
         p100 = max(all_diffs) if all_diffs else 0
         
-        # ---- Pass 2: Detect FVGs with full conditions ----
-        for i in range(start_idx, len(klines) - 1):
+        # ---- Pass 2: Detect FVGs (only in recent candles to avoid re-detection) ----
+        # Scan last N candles: scan_interval / TF_minutes + buffer
+        minutes = self.TF_MINUTES.get(self.timeframe, 15)
+        recent_candles = max(5, self.scan_interval // (minutes * 60) + 3)
+        start_idx = max(2, len(klines) - recent_candles)
+        
+        for i in range(start_idx, len(klines)):
             c_prev2 = klines[i - 2]  # Pine: [2] bars ago
             c_mid = klines[i - 1]    # Pine: [1] bar ago (middle candle)
             c_curr = klines[i]       # Pine: current bar
             
             ts = str(c_mid['timestamp'])
             
-            # Pine Script diff for filter
+            # Pine Script diff for this bar's filter
             if c_mid['close'] > c_mid['open']:
                 diff = (c_curr['low'] - c_prev2['high']) / c_curr['low'] * 100 if c_curr['low'] > 0 else 0
             else:
@@ -314,7 +317,7 @@ class FVGDetector:
             
             # Adaptive filter: sizeFVG = diff / p100 * 100 > 10
             if p100 > 0:
-                size_fvg = abs(diff) / p100 * 100
+                size_fvg = abs(diff) / abs(p100) * 100
                 filter_fvg = size_fvg > 10
             else:
                 filter_fvg = abs(diff) >= self.min_fvg_pct
@@ -336,7 +339,6 @@ class FVGDetector:
                     pct = (fvg_top - fvg_bot) / mid * 100 if mid > 0 else 0
                     
                     # Already mitigated by subsequent CLOSED candles?
-                    # Exclude last candle (forming/unclosed) — len(klines)-1
                     already_mitigated = False
                     for j in range(i + 1, len(klines) - 1):
                         val = klines[j]['close'] if self.mitigation_src == 'close' else klines[j]['low']
@@ -396,32 +398,59 @@ class FVGDetector:
                     else:
                         self._stats['fvg_filtered_size'] += 1
         
-        # === Overlap removal (Pine Script logic) ===
-        new_fvgs = self._remove_overlapping(new_fvgs)
+        # === Overlap removal: check new FVGs vs each other AND existing active FVGs ===
+        # Pine Script: if any FVG_j.top is between FVG_i.top and FVG_i.bottom → delete FVG_i
+        new_fvgs = self._remove_overlapping_full(symbol, new_fvgs)
         
         return new_fvgs
     
-    def _remove_overlapping(self, fvgs: List[FVGZone]) -> List[FVGZone]:
+    def _remove_overlapping_full(self, symbol: str, new_fvgs: List[FVGZone]) -> List[FVGZone]:
         """
-        Pine Script overlap removal:
-        If FVG_j.top is between FVG_i.bottom and FVG_i.top → remove FVG_i
+        Pine Script overlap removal (exact):
+        For each FVG_i, check ALL other FVGs (new + existing active).
+        If any FVG_j.high is between FVG_i.low and FVG_i.high → remove FVG_i.
+        Also invalidate existing active FVGs that overlap with new ones.
         """
-        if len(fvgs) <= 1:
-            return fvgs
+        if not new_fvgs:
+            return new_fvgs
         
-        to_remove = set()
-        for i in range(len(fvgs)):
-            if i in to_remove:
+        # Combine new + existing active FVGs for this symbol
+        with self._lock:
+            existing_active = [
+                f for f in self._fvg_zones.values()
+                if f.symbol == symbol and f.status in ('waiting', 'entered')
+            ]
+        
+        all_fvgs = existing_active + new_fvgs
+        
+        if len(all_fvgs) <= 1:
+            return new_fvgs
+        
+        to_remove_ids = set()
+        for i in range(len(all_fvgs)):
+            fi = all_fvgs[i]
+            if fi.id in to_remove_ids:
                 continue
-            for j in range(len(fvgs)):
-                if i == j or j in to_remove:
+            for j in range(len(all_fvgs)):
+                if i == j:
                     continue
-                if fvgs[j].high < fvgs[i].high and fvgs[j].high > fvgs[i].low:
-                    to_remove.add(i)
+                fj = all_fvgs[j]
+                if fj.id in to_remove_ids:
+                    continue
+                # Pine: if fvg_j.top is inside fvg_i body → remove fvg_i
+                if fj.high < fi.high and fj.high > fi.low:
+                    to_remove_ids.add(fi.id)
                     self._stats['fvg_filtered_overlap'] += 1
                     break
         
-        return [f for idx, f in enumerate(fvgs) if idx not in to_remove]
+        # Invalidate existing FVGs that got overlapped
+        with self._lock:
+            for fvg in existing_active:
+                if fvg.id in to_remove_ids:
+                    fvg.status = 'invalidated'
+        
+        # Filter new FVGs
+        return [f for f in new_fvgs if f.id not in to_remove_ids]
     
     # ========================================
     # TREND FILTER (EMA-based)
@@ -617,7 +646,9 @@ class FVGDetector:
         try:
             interval = self.INTERVAL_MAP.get(self.timeframe, '15')
             minutes = self.TF_MINUTES.get(self.timeframe, 15)
-            needed = min(1000, int(self.MAX_AGE / 60 / minutes) + 10)
+            
+            # Pine Script uses 1000-bar window for percentile — always load max
+            needed = 1000
             
             # Ensure enough klines for EMA computation
             if self.trend_filter_enabled:
