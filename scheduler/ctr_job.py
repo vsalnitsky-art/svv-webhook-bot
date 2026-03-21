@@ -374,6 +374,9 @@ class CTRFastJob:
             reason_tag = f" [{reason}]" if reason else ""
             print(f"[CTR Job] 📨 Signal sent: {symbol} {signal_type}{smc_tag}{reason_tag}")
             
+            # FVG label for Telegram: "FVG Retest" or "FVG Instant" (from reason)
+            fvg_label = "⚡ FVG Instant" if "Instant" in (reason or "") else "📐 FVG Retest"
+            
             # === FVG DUPLICATE CHECK ===
             if is_fvg and self.fvg_tp_enabled and self._trade_executor and symbol in self._fvg_managed:
                 existing = self._fvg_managed[symbol]
@@ -384,7 +387,7 @@ class CTRFastJob:
                     if send_telegram and notifier:
                         direction = '🟢 LONG' if signal_type == 'BUY' else '🔴 SHORT'
                         fvg_msg = (
-                            f"📐 FVG Retest | {symbol} (duplicate, skip)\n"
+                            f"{fvg_label} | {symbol} (duplicate, skip)\n"
                             f"{direction} @ ${signal.get('price', 0):.4f}\n"
                             f"FVG: ${signal.get('fvg_low', 0):.4f} – ${signal.get('fvg_high', 0):.4f}\n"
                             f"SL: ${signal.get('sl_price', 0):.4f} | "
@@ -505,7 +508,7 @@ class CTRFastJob:
                 direction = '🟢 LONG' if signal_type == 'BUY' else '🔴 SHORT'
                 trade_tag = " ✅" if fvg_trade_ok else ""
                 fvg_msg = (
-                    f"📐 FVG Retest | {symbol}{trade_tag}\n"
+                    f"{fvg_label} | {symbol}{trade_tag}\n"
                     f"{direction} @ ${fvg_actual_price:.4f}\n"
                     f"FVG: ${signal.get('fvg_low', 0):.4f} – ${signal.get('fvg_high', 0):.4f}\n"
                     f"SL: ${signal.get('sl_price', 0):.4f} | "
