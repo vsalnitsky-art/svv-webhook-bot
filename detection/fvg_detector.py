@@ -104,7 +104,7 @@ class FVGDetector:
         bybit_connector,
         timeframe: str = '15m',
         min_fvg_pct: float = 0.1,
-        max_fvg_per_symbol: int = 5,
+        max_fvg_per_symbol: int = 2,
         rr_ratio: float = 1.5,
         sl_buffer_pct: float = 0.2,
         check_interval: int = 3,
@@ -662,7 +662,6 @@ class FVGDetector:
                             break
                         
                         # Skip if overlapping zone already exists (any status)
-                        # This prevents re-detection of same gap with different timestamp
                         zone_exists = False
                         for existing in existing_for_symbol:
                             if (existing.direction == fvg.direction and
@@ -673,6 +672,21 @@ class FVGDetector:
                         
                         if zone_exists:
                             continue
+                        
+                        # Invalidate older FVGs in same direction (keep only newest)
+                        for existing in existing_for_symbol:
+                            if (existing.direction == fvg.direction and
+                                existing.status in ('waiting', 'entered')):
+                                existing.status = 'invalidated'
+                                self._stats['fvg_invalidated'] += 1
+                                self._trend_block_dedup.pop(existing.id, None)
+                                active_count -= 1
+                        
+                        # Remove invalidated from tracking list
+                        existing_for_symbol = [
+                            f for f in existing_for_symbol
+                            if f.status in ('waiting', 'entered')
+                        ]
                         
                         self._fvg_zones[fvg.id] = fvg
                         existing_for_symbol.append(fvg)

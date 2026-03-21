@@ -149,7 +149,7 @@ class CTRFastJob:
         self.fvg_enabled = _b('ctr_fvg_enabled', '0')
         self.fvg_timeframe = self.db.get_setting('ctr_fvg_timeframe', '15m')
         self.fvg_min_pct = float(self.db.get_setting('ctr_fvg_min_pct', '0.1'))
-        self.fvg_max_per_symbol = int(self.db.get_setting('ctr_fvg_max_per_symbol', '5'))
+        self.fvg_max_per_symbol = int(self.db.get_setting('ctr_fvg_max_per_symbol', '2'))
         self.fvg_rr_ratio = float(self.db.get_setting('ctr_fvg_rr_ratio', '1.5'))
         self.fvg_sl_buffer_pct = float(self.db.get_setting('ctr_fvg_sl_buffer_pct', '0.2'))
         self.fvg_scan_interval = int(self.db.get_setting('ctr_fvg_scan_interval', '60'))
