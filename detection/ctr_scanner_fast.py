@@ -78,6 +78,34 @@ class Kline:
         )
     
     @classmethod
+    def from_bybit(cls, data: list) -> 'Kline':
+        """Parse Bybit REST kline: [timestamp, open, high, low, close, volume, turnover]"""
+        return cls(
+            open_time=int(data[0]),
+            open=float(data[1]),
+            high=float(data[2]),
+            low=float(data[3]),
+            close=float(data[4]),
+            volume=float(data[5]),
+            close_time=int(data[0]),
+            is_closed=True
+        )
+    
+    @classmethod
+    def from_bybit_ws(cls, data: dict) -> 'Kline':
+        """Parse Bybit WS kline message data item"""
+        return cls(
+            open_time=int(data['start']),
+            open=float(data['open']),
+            high=float(data['high']),
+            low=float(data['low']),
+            close=float(data['close']),
+            volume=float(data['volume']),
+            close_time=int(data['end']),
+            is_closed=data.get('confirm', False)
+        )
+    
+    @classmethod
     def from_websocket(cls, data: dict) -> 'Kline':
         k = data['k']
         return cls(
@@ -422,7 +450,7 @@ class SMCTrendFilter:
     NEUTRAL тренд на будь-якому TF = пропускає сигнал (не блокує).
     """
     
-    REST_BASE_URL = "https://api.binance.com/api/v3"
+    REST_BASE_URL = "https://api.bybit.com/v5/market"
     CANDLES_4H = 500   # 500 × 4h ≈ 83 дні — достатньо для swing_length=50
     CANDLES_1H = 500   # 500 × 1h ≈ 21 день
     CANDLES_15M = 300  # 300 × 15m ≈ 3 дні — достатньо для swing_length=20
@@ -480,25 +508,43 @@ class SMCTrendFilter:
                   f"4h_swing={swing_length_4h}, 1h_swing={swing_length_1h}, "
                   f"refresh={refresh_interval}s{bn}{ew}")
     
+    # Bybit interval mapping for SMC Trend
+    _INTERVAL_MAP = {
+        '4h': '240', '1h': '60', '15m': '15', '30m': '30',
+        '5m': '5', '1m': '1', '1d': 'D',
+    }
+    
     # ---- DATA LOADING ----
     
     def _fetch_klines(self, symbol: str, interval: str, limit: int) -> Optional[tuple]:
         """
-        Завантажити свічки з Binance REST API.
+        Завантажити свічки з Bybit REST API.
         Returns: (highs, lows, closes) numpy arrays або None при помилці.
         """
         import requests as req
         try:
-            url = f"{self.REST_BASE_URL}/klines"
-            params = {'symbol': symbol, 'interval': interval, 'limit': limit}
+            bybit_interval = self._INTERVAL_MAP.get(interval, interval)
+            url = f"{self.REST_BASE_URL}/kline"
+            params = {
+                'category': 'linear',
+                'symbol': symbol,
+                'interval': bybit_interval,
+                'limit': limit
+            }
             resp = req.get(url, params=params, timeout=15)
             if resp.status_code != 200:
                 print(f"[SMC Trend] ❌ {symbol} {interval}: HTTP {resp.status_code}")
                 return None
-            data = resp.json()
+            result = resp.json()
+            if result.get('retCode', -1) != 0:
+                print(f"[SMC Trend] ❌ {symbol} {interval}: {result.get('retMsg', '?')}")
+                return None
+            data = result.get('result', {}).get('list', [])
             if not data or len(data) < 100:
                 print(f"[SMC Trend] ❌ {symbol} {interval}: only {len(data)} candles")
                 return None
+            # Bybit returns newest first — reverse
+            data = list(reversed(data))
             highs = np.array([float(k[2]) for k in data])
             lows = np.array([float(k[3]) for k in data])
             closes = np.array([float(k[4]) for k in data])
@@ -913,12 +959,12 @@ class SMCTrendFilter:
 class CTRFastScanner:
     """Швидкий CTR Scanner v2.6 — Incremental STC"""
     
-    WS_BASE_URL = "wss://stream.binance.com:9443/ws"
-    REST_BASE_URL = "https://api.binance.com/api/v3"
+    WS_BASE_URL = "wss://stream.bybit.com/v5/public/linear"
+    REST_BASE_URL = "https://api.bybit.com/v5/market"
     TIMEFRAME_MAP = {
-        '1m': '1m', '3m': '3m', '5m': '5m', '15m': '15m',
-        '30m': '30m', '1h': '1h', '2h': '2h', '4h': '4h',
-        '6h': '6h', '8h': '8h', '12h': '12h', '1d': '1d'
+        '1m': '1', '3m': '3', '5m': '5', '15m': '15',
+        '30m': '30', '1h': '60', '2h': '120', '4h': '240',
+        '6h': '360', '8h': '480', '12h': '720', '1d': 'D'
     }
     
     def __init__(
@@ -1048,10 +1094,11 @@ class CTRFastScanner:
         import requests
         
         try:
-            url = f"{self.REST_BASE_URL}/klines"
+            url = f"{self.REST_BASE_URL}/kline"
             params = {
+                'category': 'linear',
                 'symbol': symbol,
-                'interval': self.TIMEFRAME_MAP.get(self.timeframe, '15m'),
+                'interval': self.TIMEFRAME_MAP.get(self.timeframe, '15'),
                 'limit': 1000
             }
             
@@ -1061,13 +1108,20 @@ class CTRFastScanner:
                 print(f"[CTR Fast] ❌ Failed to load {symbol}: {response.status_code}")
                 return False
             
-            data = response.json()
+            result = response.json()
+            
+            if result.get('retCode', -1) != 0:
+                print(f"[CTR Fast] ❌ Bybit error {symbol}: {result.get('retMsg', '?')}")
+                return False
+            
+            data = result.get('result', {}).get('list', [])
             
             if not data:
                 print(f"[CTR Fast] ❌ No data for {symbol}")
                 return False
             
-            klines = [Kline.from_binance(k) for k in data]
+            # Bybit returns newest first — reverse to chronological order
+            klines = [Kline.from_bybit(k) for k in reversed(data)]
             smc_filter = self._create_smc_filter()
             
             # v2.6: Full STC calculate at startup → save state
@@ -1145,16 +1199,26 @@ class CTRFastScanner:
         return f"{self.WS_BASE_URL}/{'/'.join(streams)}"
     
     def _on_ws_message(self, ws, message):
-        """v2.6: Incremental STC on WS message"""
+        """v2.6: Incremental STC on WS message (Bybit format)"""
         try:
             data = json.loads(message)
-            stream_data = data['data'] if 'stream' in data else data
             
-            if stream_data.get('e') != 'kline':
+            # Bybit kline topic: "kline.15.ETHUSDT"
+            topic = data.get('topic', '')
+            if not topic.startswith('kline.'):
                 return
             
-            symbol = stream_data['s']
-            kline = Kline.from_websocket(stream_data)
+            kline_data = data.get('data', [])
+            if not kline_data:
+                return
+            
+            # Parse symbol from topic: "kline.15.ETHUSDT" → "ETHUSDT"
+            parts = topic.split('.')
+            if len(parts) < 3:
+                return
+            symbol = parts[2]
+            
+            kline = Kline.from_bybit_ws(kline_data[0])
             
             with self._lock:
                 if symbol not in self._cache:
@@ -1213,25 +1277,21 @@ class CTRFastScanner:
     
     def _on_ws_open(self, ws):
         self._ws_connected = True
-        print(f"[CTR Fast] ✅ WebSocket connected")
+        print(f"[CTR Fast] ✅ WebSocket connected (Bybit)")
         
-        if len(self._watchlist) > 1:
-            subscribe_msg = {
-                "method": "SUBSCRIBE",
-                "params": [f"{s.lower()}@kline_{self.timeframe}" for s in self._watchlist],
-                "id": 1
-            }
-            ws.send(json.dumps(subscribe_msg))
+        # Bybit subscribe: kline.{interval}.{SYMBOL}
+        interval = self.TIMEFRAME_MAP.get(self.timeframe, '15')
+        subscribe_msg = {
+            "op": "subscribe",
+            "args": [f"kline.{interval}.{s}" for s in self._watchlist]
+        }
+        ws.send(json.dumps(subscribe_msg))
     
     def _start_websocket(self):
         if not self._watchlist:
             return
         
-        if len(self._watchlist) > 1:
-            streams = "/".join([f"{s.lower()}@kline_{self.timeframe}" for s in self._watchlist])
-            ws_url = f"wss://stream.binance.com:9443/stream?streams={streams}"
-        else:
-            ws_url = f"{self.WS_BASE_URL}/{self._watchlist[0].lower()}@kline_{self.timeframe}"
+        ws_url = self.WS_BASE_URL
         
         self._ws = websocket.WebSocketApp(
             ws_url,
