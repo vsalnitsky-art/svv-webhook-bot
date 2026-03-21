@@ -94,7 +94,7 @@ def create_app():
             import threading
             def _auto_start_ctr():
                 import time
-                time.sleep(3)  # Wait for app to fully initialize
+                time.sleep(10)  # Wait for app to fully initialize + avoid WAF
                 try:
                     from scheduler.ctr_job import start_ctr_job
                     job = start_ctr_job(get_db())

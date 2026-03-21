@@ -558,12 +558,41 @@ class CTRFastJob:
     # ========================================
     
     def _get_current_price(self, symbol: str) -> float:
-        """Get current price from scanner's WebSocket cache"""
+        """Get current price from scanner's WebSocket cache, with Bybit REST fallback"""
+        # Primary: WebSocket cache (fastest, <1ms)
         if self._scanner and hasattr(self._scanner, '_cache'):
             cache = self._scanner._cache.get(symbol)
             if cache and cache.klines:
                 return float(cache.klines[-1].close)
-        return 0.0
+        
+        # Fallback: batch ticker cache (1 REST call for ALL symbols, refreshed every 30s)
+        return self._get_fallback_price(symbol)
+    
+    def _get_fallback_price(self, symbol: str) -> float:
+        """Batch ticker fallback — single REST call cached for 30s"""
+        now = time.time()
+        
+        # Refresh cache if stale (>30s) or empty
+        if not hasattr(self, '_ticker_cache') or not self._ticker_cache:
+            self._ticker_cache = {}
+            self._ticker_cache_time = 0
+        
+        if now - self._ticker_cache_time > 30:
+            try:
+                tickers = self.bybit.get_tickers() if self.bybit else []
+                if tickers:
+                    self._ticker_cache = {
+                        t['symbol']: float(t.get('lastPrice', 0))
+                        for t in tickers if t.get('lastPrice')
+                    }
+                    self._ticker_cache_time = now
+                    if not hasattr(self, '_ticker_fallback_logged'):
+                        print(f"[CTR Job] 📡 Price fallback: Bybit tickers ({len(self._ticker_cache)} symbols)")
+                        self._ticker_fallback_logged = True
+            except Exception as e:
+                pass
+        
+        return self._ticker_cache.get(symbol, 0.0)
     
     def _start_sl_monitor(self):
         """Start SL monitoring thread"""

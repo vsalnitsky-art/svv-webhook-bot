@@ -1167,11 +1167,11 @@ class CTRFastScanner:
                 loaded += 1
             else:
                 failed.append(symbol)
-            time.sleep(0.2)
+            time.sleep(0.5)  # 0.5s between symbols to avoid Bybit WAF
         
         if failed:
-            print(f"[CTR Fast] Retrying failed symbols in 2 seconds: {failed}")
-            time.sleep(2)
+            print(f"[CTR Fast] Retrying failed symbols in 5 seconds: {failed}")
+            time.sleep(5)
             
             retry_failed = []
             for symbol in failed:
