@@ -483,10 +483,12 @@
                 <div class="settings-grid">
                     <div class="setting-item">
                         <label>Timeframe</label>
-                        <select id="ctr_timeframe">
+                        <select id="ctr_timeframe" onchange="applyCTRPresets()">
                             <option value="1m" {{ 'selected' if settings.ctr_timeframe == '1m' else '' }}>1m</option>
+                            <option value="3m" {{ 'selected' if settings.ctr_timeframe == '3m' else '' }}>3m</option>
                             <option value="5m" {{ 'selected' if settings.ctr_timeframe == '5m' else '' }}>5m</option>
                             <option value="15m" {{ 'selected' if settings.ctr_timeframe == '15m' or not settings.ctr_timeframe else '' }}>15m</option>
+                            <option value="30m" {{ 'selected' if settings.ctr_timeframe == '30m' else '' }}>30m</option>
                             <option value="1h" {{ 'selected' if settings.ctr_timeframe == '1h' else '' }}>1h</option>
                             <option value="4h" {{ 'selected' if settings.ctr_timeframe == '4h' else '' }}>4h</option>
                         </select>
@@ -494,17 +496,17 @@
                     
                     <div class="setting-item">
                         <label>Fast EMA</label>
-                        <input type="number" id="ctr_fast_length" value="{{ settings.ctr_fast_length or 21 }}" min="5" max="50">
+                        <input type="number" id="ctr_fast_length" value="{{ settings.ctr_fast_length or 21 }}" min="3" max="200">
                     </div>
                     
                     <div class="setting-item">
                         <label>Slow EMA</label>
-                        <input type="number" id="ctr_slow_length" value="{{ settings.ctr_slow_length or 50 }}" min="20" max="100">
+                        <input type="number" id="ctr_slow_length" value="{{ settings.ctr_slow_length or 50 }}" min="5" max="500">
                     </div>
                     
                     <div class="setting-item">
                         <label>Cycle Length</label>
-                        <input type="number" id="ctr_cycle_length" value="{{ settings.ctr_cycle_length or 10 }}" min="5" max="30">
+                        <input type="number" id="ctr_cycle_length" value="{{ settings.ctr_cycle_length or 10 }}" min="3" max="50">
                     </div>
                     
                     <div class="setting-item">
@@ -578,13 +580,13 @@
                     <div class="setting-item">
                         <label>Fast EMA</label>
                         <input type="number" id="ctr_ema_trend_fast" 
-                               value="{{ settings.ctr_ema_trend_fast or 5 }}" min="2" max="50" step="1">
+                               value="{{ settings.ctr_ema_trend_fast or 5 }}" min="2" max="100" step="1">
                     </div>
                     
                     <div class="setting-item">
                         <label>Slow EMA</label>
                         <input type="number" id="ctr_ema_trend_slow" 
-                               value="{{ settings.ctr_ema_trend_slow or 13 }}" min="5" max="200" step="1">
+                               value="{{ settings.ctr_ema_trend_slow or 13 }}" min="3" max="200" step="1">
                     </div>
                 </div>
                 
@@ -1429,6 +1431,46 @@ async function removeSymbol(symbol) {
     } catch (e) {
         alert('Error: ' + e.message);
     }
+}
+
+// === CTR Auto-Preset: optimal STC + EMA params per timeframe ===
+function applyCTRPresets() {
+    const tf = document.getElementById('ctr_timeframe').value;
+    
+    // STC params: normalized to similar real-time lookback across TFs
+    // Goal: Fast ~5-8h, Slow ~12-24h, Cycle ~2-3h equivalent
+    const stcPresets = {
+        '1m':  { fast: 90, slow: 200, cycle: 40 },
+        '3m':  { fast: 60, slow: 150, cycle: 30 },
+        '5m':  { fast: 50, slow: 120, cycle: 25 },
+        '15m': { fast: 21, slow: 50,  cycle: 10 },
+        '30m': { fast: 14, slow: 34,  cycle: 8  },
+        '1h':  { fast: 10, slow: 24,  cycle: 6  },
+        '4h':  { fast: 8,  slow: 18,  cycle: 5  },
+    };
+    
+    // EMA Trend Filter: normalized to ~1-3h fast, ~3-8h slow
+    const emaPresets = {
+        '1m':  { fast: 34, slow: 89  },
+        '3m':  { fast: 21, slow: 55  },
+        '5m':  { fast: 13, slow: 34  },
+        '15m': { fast: 5,  slow: 13  },
+        '30m': { fast: 4,  slow: 10  },
+        '1h':  { fast: 3,  slow: 8   },
+        '4h':  { fast: 3,  slow: 5   },
+    };
+    
+    const stc = stcPresets[tf] || stcPresets['15m'];
+    const ema = emaPresets[tf] || emaPresets['15m'];
+    
+    document.getElementById('ctr_fast_length').value = stc.fast;
+    document.getElementById('ctr_slow_length').value = stc.slow;
+    document.getElementById('ctr_cycle_length').value = stc.cycle;
+    document.getElementById('ctr_ema_trend_fast').value = ema.fast;
+    document.getElementById('ctr_ema_trend_slow').value = ema.slow;
+    
+    // Visual feedback
+    showToast(`⚡ Auto-preset applied for ${tf}: STC(${stc.fast}/${stc.slow}/${stc.cycle}), EMA(${ema.fast}/${ema.slow})`);
 }
 
 async function saveSettings() {
