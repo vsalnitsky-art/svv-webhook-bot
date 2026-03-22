@@ -119,6 +119,12 @@ class FVGDetector:
         htf_slow_ema: int = 21,
         retest_enabled: bool = True,
         instant_enabled: bool = False,
+        zl_trend_enabled: bool = False,
+        zl_15m_enabled: bool = True,
+        zl_1h_enabled: bool = True,
+        zl_4h_enabled: bool = True,
+        zl_length: int = 70,
+        zl_mult: float = 1.2,
         on_signal: Optional[Callable] = None,
     ):
         self.db = db
@@ -140,6 +146,12 @@ class FVGDetector:
         self.htf_slow_ema = htf_slow_ema
         self.retest_enabled = retest_enabled
         self.instant_enabled = instant_enabled
+        self.zl_trend_enabled = zl_trend_enabled
+        self.zl_15m_enabled = zl_15m_enabled
+        self.zl_1h_enabled = zl_1h_enabled
+        self.zl_4h_enabled = zl_4h_enabled
+        self.zl_length = zl_length
+        self.zl_mult = zl_mult
         self.on_signal = on_signal
         
         # State
@@ -165,6 +177,9 @@ class FVGDetector:
         self._htf_scan_counter: int = 0
         # Track which symbols had initial full scan (all 1000 bars)
         self._symbols_full_scanned: set = set()
+        # Zero Lag Trend data: {symbol: {'15': {...}, '60': {...}, '240': {...}}}
+        self._zl_trends: Dict[str, Dict] = {}
+        self._zl_scan_counter: int = 0
         
         # Threads
         self._monitor_thread = None
@@ -235,7 +250,9 @@ class FVGDetector:
                      'max_fvg_per_symbol', 'mitigation_src',
                      'trend_filter_enabled', 'trend_fast_ema', 'trend_slow_ema',
                      'htf_trend_enabled', 'htf_timeframe', 'htf_fast_ema', 'htf_slow_ema',
-                     'retest_enabled', 'instant_enabled'):
+                     'retest_enabled', 'instant_enabled',
+                     'zl_trend_enabled', 'zl_15m_enabled', 'zl_1h_enabled', 'zl_4h_enabled',
+                     'zl_length', 'zl_mult'):
             if key in settings:
                 current = getattr(self, key)
                 if isinstance(current, bool):
@@ -621,27 +638,183 @@ class FVGDetector:
         }
     
     # ========================================
+    # ZERO LAG TREND (Pine Script exact)
+    # ========================================
+    
+    ZL_TF_MAP = {'15': 15, '60': 60, '240': 240}
+    ZL_INTERVAL_MAP = {'15': '15', '60': '60', '240': '240'}
+    
+    def _compute_zl_trend(self, klines: List[Dict], length: int = 70, mult: float = 1.2) -> Optional[Dict]:
+        """
+        Compute Zero Lag Trend (100% Pine Script match).
+        
+        Pine Script:
+          lag = floor((length - 1) / 2)
+          zlema = ema(src + (src - src[lag]), length)
+          volatility = highest(atr(length), length*3) * mult
+          trend = 1 if crossover(close, zlema+volatility)
+          trend = -1 if crossunder(close, zlema-volatility)
+        """
+        n = len(klines)
+        min_needed = length * 3 + length + 10
+        if n < min_needed:
+            return None
+        
+        closes = [k['close'] for k in klines]
+        highs = [k['high'] for k in klines]
+        lows = [k['low'] for k in klines]
+        
+        lag = (length - 1) // 2
+        
+        # Step 1: ZLEMA source = close + (close - close[lag])
+        zl_src = [0.0] * n
+        for i in range(n):
+            zl_src[i] = closes[i] + (closes[i] - closes[max(0, i - lag)]) if i >= lag else closes[i]
+        
+        # Step 2: EMA of zl_src (standard EMA)
+        alpha_ema = 2.0 / (length + 1)
+        zlema = [0.0] * n
+        zlema[length - 1] = sum(zl_src[:length]) / length  # SMA seed
+        for i in range(length, n):
+            zlema[i] = alpha_ema * zl_src[i] + (1 - alpha_ema) * zlema[i - 1]
+        
+        # Step 3: True Range → ATR (Pine ta.atr = RMA = Wilder's smoothing)
+        tr = [0.0] * n
+        tr[0] = highs[0] - lows[0]
+        for i in range(1, n):
+            tr[i] = max(highs[i] - lows[i],
+                        abs(highs[i] - closes[i - 1]),
+                        abs(lows[i] - closes[i - 1]))
+        
+        alpha_rma = 1.0 / length  # Wilder's = 1/length
+        atr = [0.0] * n
+        atr[length - 1] = sum(tr[:length]) / length
+        for i in range(length, n):
+            atr[i] = alpha_rma * tr[i] + (1 - alpha_rma) * atr[i - 1]
+        
+        # Step 4: volatility = highest(ATR, length*3) * mult
+        window = length * 3
+        vol = [0.0] * n
+        for i in range(window - 1, n):
+            vol[i] = max(atr[max(0, i - window + 1):i + 1]) * mult
+        
+        # Step 5: Trend state machine (bar-by-bar, Pine exact)
+        trend = 0
+        start = max(window, length + lag)
+        for i in range(start, n):
+            upper = zlema[i] + vol[i]
+            lower = zlema[i] - vol[i]
+            if i > start:
+                prev_upper = zlema[i - 1] + vol[i - 1]
+                prev_lower = zlema[i - 1] - vol[i - 1]
+                # crossover(close, zlema+volatility)
+                if closes[i - 1] <= prev_upper and closes[i] > upper:
+                    trend = 1
+                # crossunder(close, zlema-volatility)
+                if closes[i - 1] >= prev_lower and closes[i] < lower:
+                    trend = -1
+        
+        trend_name = 'bullish' if trend == 1 else ('bearish' if trend == -1 else 'neutral')
+        return {
+            'trend': trend_name,
+            'trend_raw': trend,
+            'zlema': round(zlema[-1], 6),
+            'volatility': round(vol[-1], 6),
+            'upper': round(zlema[-1] + vol[-1], 6),
+            'lower': round(zlema[-1] - vol[-1], 6),
+            'price': closes[-1],
+        }
+    
+    def _update_zl_trends(self, symbol: str, klines_15m: Optional[List[Dict]] = None):
+        """Update Zero Lag Trend for all enabled TFs."""
+        if not self.zl_trend_enabled:
+            return
+        
+        sym_data = self._zl_trends.get(symbol, {})
+        
+        # 15m — use provided klines (same as FVG scan TF)
+        if self.zl_15m_enabled and klines_15m and self.timeframe == '15m':
+            result = self._compute_zl_trend(klines_15m, self.zl_length, self.zl_mult)
+            if result:
+                sym_data['15'] = result
+        
+        # 1h — REST fetch (every 5th scan)
+        if self.zl_1h_enabled and self._zl_scan_counter % 5 == 0:
+            try:
+                klines = self.bybit.get_klines(symbol=symbol, interval='60', limit=1000)
+                if klines and len(klines) > 250:
+                    result = self._compute_zl_trend(klines, self.zl_length, self.zl_mult)
+                    if result:
+                        sym_data['60'] = result
+                    time.sleep(0.2)
+            except Exception as e:
+                pass
+        
+        # 4h — REST fetch (every 15th scan)
+        if self.zl_4h_enabled and self._zl_scan_counter % 15 == 0:
+            try:
+                klines = self.bybit.get_klines(symbol=symbol, interval='240', limit=1000)
+                if klines and len(klines) > 250:
+                    result = self._compute_zl_trend(klines, self.zl_length, self.zl_mult)
+                    if result:
+                        sym_data['240'] = result
+                    time.sleep(0.2)
+            except Exception as e:
+                pass
+        
+        self._zl_trends[symbol] = sym_data
+    
+    def _check_zl_trend(self, symbol: str, direction: str) -> tuple:
+        """Check Zero Lag Trend filter. Returns (allowed, block_tf)."""
+        if not self.zl_trend_enabled:
+            return True, ''
+        
+        sym_data = self._zl_trends.get(symbol, {})
+        
+        checks = [
+            (self.zl_15m_enabled, '15', '15m'),
+            (self.zl_1h_enabled, '60', '1h'),
+            (self.zl_4h_enabled, '240', '4h'),
+        ]
+        
+        for enabled, key, label in checks:
+            if not enabled:
+                continue
+            tf_data = sym_data.get(key)
+            if not tf_data or tf_data['trend'] == 'neutral':
+                continue  # No data or undetermined → don't block
+            if tf_data['trend'] != direction:
+                return False, f'zl_{label}'
+        
+        return True, ''
+    
+    # ========================================
     # COMBINED TREND CHECK
     # ========================================
     
     def _check_trend_filter(self, symbol: str, direction: str) -> tuple:
         """
-        Check if FVG direction aligns with trend on all enabled timeframes.
+        Check if FVG direction aligns with trend on all enabled filters.
         Returns (allowed: bool, block_reason: str).
         
-        Both LTF and HTF must agree with FVG direction when enabled.
+        Checks: EMA LTF → EMA HTF → Zero Lag Trend (all enabled TFs).
         """
-        # LTF check
+        # EMA LTF check
         if self.trend_filter_enabled:
             ltf = self._symbol_trends.get(symbol)
             if ltf and ltf['trend'] != direction:
                 return False, 'ltf'
         
-        # HTF check
+        # EMA HTF check
         if self.htf_trend_enabled:
             htf = self._symbol_trends_htf.get(symbol)
             if htf and htf['trend'] != direction:
                 return False, 'htf'
+        
+        # Zero Lag Trend check
+        zl_ok, zl_block = self._check_zl_trend(symbol, direction)
+        if not zl_ok:
+            return False, zl_block
         
         return True, ''
     
@@ -676,6 +849,10 @@ class FVGDetector:
             if self.htf_trend_enabled and self._htf_scan_counter % 5 == 0:
                 time.sleep(0.2)  # Extra delay before HTF REST call
                 self._update_trend_htf_from_rest(symbol)
+            
+            # Zero Lag Trend update (15m from current klines, 1h/4h from REST)
+            if self.zl_trend_enabled:
+                self._update_zl_trends(symbol, klines_15m=klines)
             
             # === KLINE-BASED RETEST CHECK ===
             # This catches retests that tick-polling (5s) may miss
@@ -861,6 +1038,7 @@ class FVGDetector:
     def _scan_all_symbols(self):
         """Scan all watchlist symbols."""
         self._htf_scan_counter += 1
+        self._zl_scan_counter += 1
         total_new = 0
         for symbol in self._watchlist:
             total_new += self._scan_symbol(symbol)
@@ -1286,6 +1464,13 @@ class FVGDetector:
             'trends_htf': dict(self._symbol_trends_htf),
             'retest_enabled': self.retest_enabled,
             'instant_enabled': self.instant_enabled,
+            'zl_trend_enabled': self.zl_trend_enabled,
+            'zl_15m_enabled': self.zl_15m_enabled,
+            'zl_1h_enabled': self.zl_1h_enabled,
+            'zl_4h_enabled': self.zl_4h_enabled,
+            'zl_length': self.zl_length,
+            'zl_mult': self.zl_mult,
+            'zl_trends': dict(self._zl_trends),
         }
     
     def clear_zones(self) -> int:

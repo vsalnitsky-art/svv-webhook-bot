@@ -163,6 +163,12 @@ class CTRFastJob:
         self.fvg_htf_slow_ema = int(self.db.get_setting('ctr_fvg_htf_slow_ema', '21'))
         self.fvg_retest_enabled = _b('ctr_fvg_retest_enabled', '1')  # ON by default (current behavior)
         self.fvg_instant_enabled = _b('ctr_fvg_instant_enabled', '0')  # OFF by default (new)
+        self.fvg_zl_trend_enabled = _b('ctr_fvg_zl_trend', '0')
+        self.fvg_zl_15m_enabled = _b('ctr_fvg_zl_15m', '1')
+        self.fvg_zl_1h_enabled = _b('ctr_fvg_zl_1h', '1')
+        self.fvg_zl_4h_enabled = _b('ctr_fvg_zl_4h', '1')
+        self.fvg_zl_length = int(self.db.get_setting('ctr_fvg_zl_length', '70'))
+        self.fvg_zl_mult = float(self.db.get_setting('ctr_fvg_zl_mult', '1.2'))
         
         # CTR Fast Scanner — enable/disable + EMA Trend Filter
         self.ctr_scanner_enabled = _b('ctr_scanner_enabled', '1')  # ON by default
@@ -1006,6 +1012,12 @@ class CTRFastJob:
                 htf_slow_ema=self.fvg_htf_slow_ema,
                 retest_enabled=self.fvg_retest_enabled,
                 instant_enabled=self.fvg_instant_enabled,
+                zl_trend_enabled=self.fvg_zl_trend_enabled,
+                zl_15m_enabled=self.fvg_zl_15m_enabled,
+                zl_1h_enabled=self.fvg_zl_1h_enabled,
+                zl_4h_enabled=self.fvg_zl_4h_enabled,
+                zl_length=self.fvg_zl_length,
+                zl_mult=self.fvg_zl_mult,
                 on_signal=self._on_signal,
             )
             

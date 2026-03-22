@@ -868,6 +868,48 @@
                         </small>
                     </div>
                     
+                    <!-- Zero Lag Trend Filter -->
+                    <div style="margin-top: 8px; padding: 8px; background: rgba(0,255,187,0.06); border-radius: 8px; border: 1px solid rgba(0,255,187,0.2);">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <label class="switch" style="margin: 0;">
+                                <input type="checkbox" id="fvg-zl-trend" {% if settings.ctr_fvg_zl_trend %}checked{% endif %}>
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: #00ffbb; font-weight: 600; font-size: 13px;">🎯 Zero Lag Trend</span>
+                        </div>
+                        <div style="display: flex; gap: 12px; margin-bottom: 8px;">
+                            <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                <input type="checkbox" id="fvg-zl-15m" {% if settings.ctr_fvg_zl_15m %}checked{% endif %} style="accent-color: #00ffbb;">
+                                <span style="color: #ccc; font-size: 12px;">15m</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                <input type="checkbox" id="fvg-zl-1h" {% if settings.ctr_fvg_zl_1h %}checked{% endif %} style="accent-color: #00ffbb;">
+                                <span style="color: #ccc; font-size: 12px;">1h</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                <input type="checkbox" id="fvg-zl-4h" {% if settings.ctr_fvg_zl_4h %}checked{% endif %} style="accent-color: #00ffbb;">
+                                <span style="color: #ccc; font-size: 12px;">4h</span>
+                            </label>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div>
+                                <small style="color:#aaa;">Length</small>
+                                <input type="number" id="fvg-zl-length" value="{{ settings.ctr_fvg_zl_length }}"
+                                       step="1" min="10" max="200"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                            <div>
+                                <small style="color:#aaa;">Band Mult</small>
+                                <input type="number" id="fvg-zl-mult" value="{{ settings.ctr_fvg_zl_mult }}"
+                                       step="0.1" min="0.1" max="5"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            ZLEMA + ATR volatility bands. Увімкнені TF мають збігатись.
+                        </small>
+                    </div>
+                    
                     <!-- FVG TP Manager Settings -->
                     <div style="margin-top: 12px; padding: 10px; background: rgba(33,150,243,0.05); border: 1px solid rgba(33,150,243,0.15); border-radius: 8px;">
                         <span style="color: #2196f3; font-weight: 600; font-size: 13px;">🎯 TP Manager (partial close + trailing)</span>
@@ -1885,6 +1927,12 @@ async function saveFVGSettings() {
         ctr_fvg_htf_slow_ema: document.getElementById('fvg-htf-slow-ema').value,
         ctr_fvg_retest_enabled: document.getElementById('fvg-retest-enabled').checked ? '1' : '0',
         ctr_fvg_instant_enabled: document.getElementById('fvg-instant-enabled').checked ? '1' : '0',
+        ctr_fvg_zl_trend: document.getElementById('fvg-zl-trend').checked ? '1' : '0',
+        ctr_fvg_zl_15m: document.getElementById('fvg-zl-15m').checked ? '1' : '0',
+        ctr_fvg_zl_1h: document.getElementById('fvg-zl-1h').checked ? '1' : '0',
+        ctr_fvg_zl_4h: document.getElementById('fvg-zl-4h').checked ? '1' : '0',
+        ctr_fvg_zl_length: document.getElementById('fvg-zl-length').value,
+        ctr_fvg_zl_mult: document.getElementById('fvg-zl-mult').value,
         // FVG TP Manager
         fvg_tp_manager_enabled: document.getElementById('fvg-tp-enabled').checked ? '1' : '0',
         fvg_tp_trigger_pct: document.getElementById('fvg-tp-trigger-detail')?.value || document.getElementById('fvg-tp-trigger').value,
@@ -1938,14 +1986,16 @@ async function loadFVGZones() {
         const trendGrid = document.getElementById('fvg-trend-grid');
         const hasLTF = stats.trend_filter_enabled && stats.trends;
         const hasHTF = stats.htf_trend_enabled && stats.trends_htf;
+        const hasZLT = stats.zl_trend_enabled && stats.zl_trends;
         
-        if (trendBar && (hasLTF || hasHTF)) {
+        if (trendBar && (hasLTF || hasHTF || hasZLT)) {
             trendBar.style.display = '';
             
-            // Collect all symbols (union of LTF + HTF)
+            // Collect all symbols (union of all filters)
             const allSyms = new Set();
             if (hasLTF) Object.keys(stats.trends).forEach(s => allSyms.add(s));
             if (hasHTF) Object.keys(stats.trends_htf).forEach(s => allSyms.add(s));
+            if (hasZLT) Object.keys(stats.zl_trends).forEach(s => allSyms.add(s));
             const symbols = [...allSyms].sort();
             
             const ltfLabel = `${stats.timeframe || '15m'} EMA(${stats.trend_fast_ema || 8}/${stats.trend_slow_ema || 21})`;
@@ -1954,11 +2004,27 @@ async function loadFVGZones() {
             function cell(t, sym, tf) {
                 if (!t) return `<div style="width:56px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:rgba(255,255,255,0.03);color:#555;font-size:10px;">—</div>`;
                 const bull = t.trend === 'bullish';
+                const neutral = t.trend === 'neutral';
+                if (neutral) return `<div style="width:56px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:rgba(255,255,255,0.05);color:#888;font-size:10px;font-weight:600;">●</div>`;
                 const arrow = bull ? '▲' : '▼';
                 const clr = bull ? '#4caf50' : '#ff5252';
                 const bg = bull ? 'rgba(76,175,80,0.15)' : 'rgba(255,82,82,0.15)';
                 const sp = t.spread_pct !== undefined ? `${t.spread_pct > 0 ? '+' : ''}${t.spread_pct}%` : '';
                 return `<div title="${sym} ${tf}: F=${t.fast} S=${t.slow} ${sp}" style="width:56px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:${bg};color:${clr};font-size:12px;font-weight:700;cursor:default;">${arrow}</div>`;
+            }
+            
+            function zlCell(sym, key, tfLabel) {
+                const data = hasZLT ? (stats.zl_trends[sym] || {}) : {};
+                const t = data[key];
+                if (!t) return `<div style="width:56px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:rgba(255,255,255,0.03);color:#555;font-size:10px;">—</div>`;
+                const bull = t.trend === 'bullish';
+                const neutral = t.trend === 'neutral';
+                if (neutral) return `<div title="${sym} ZL ${tfLabel}: neutral" style="width:56px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:rgba(255,255,255,0.05);color:#888;font-size:10px;font-weight:600;">●</div>`;
+                const arrow = bull ? '▲' : '▼';
+                const clr = bull ? '#00ffbb' : '#ff1100';
+                const bg = bull ? 'rgba(0,255,187,0.12)' : 'rgba(255,17,0,0.12)';
+                const tip = `ZLEMA=${t.zlema} Upper=${t.upper} Lower=${t.lower}`;
+                return `<div title="${sym} ZL ${tfLabel}: ${t.trend}\n${tip}" style="width:56px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;background:${bg};color:${clr};font-size:12px;font-weight:700;cursor:default;">${arrow}</div>`;
             }
             
             function matchCell(ltfT, htfT) {
@@ -1984,7 +2050,7 @@ async function loadFVGZones() {
                 symbols.forEach(sym => { html += cell(stats.trends[sym], sym, stats.timeframe); });
             }
             
-            // Match row (only if both enabled)
+            // Match row (only if both EMA enabled)
             if (hasLTF && hasHTF) {
                 html += `<div style="font-size:9px;color:#666;text-align:right;padding-right:4px;"></div>`;
                 symbols.forEach(sym => { html += matchCell(stats.trends[sym], stats.trends_htf[sym]); });
@@ -1994,6 +2060,22 @@ async function loadFVGZones() {
             if (hasHTF) {
                 html += `<div style="font-size:10px;color:#ba68c8;text-align:right;padding-right:4px;font-weight:600;">📊 ${htfLabel}</div>`;
                 symbols.forEach(sym => { html += cell(stats.trends_htf[sym], sym, stats.htf_timeframe); });
+            }
+            
+            // Zero Lag Trend rows
+            if (hasZLT) {
+                const zlLen = stats.zl_length || 70;
+                const zlMult = stats.zl_mult || 1.2;
+                const zlTFs = [
+                    [stats.zl_15m_enabled, '15', '15m'],
+                    [stats.zl_1h_enabled, '60', '1h'],
+                    [stats.zl_4h_enabled, '240', '4h'],
+                ];
+                for (const [enabled, key, label] of zlTFs) {
+                    if (!enabled) continue;
+                    html += `<div style="font-size:10px;color:#00ffbb;text-align:right;padding-right:4px;font-weight:600;">🎯 ZL ${label}</div>`;
+                    symbols.forEach(sym => { html += zlCell(sym, key, label); });
+                }
             }
             
             html += '</div>';
