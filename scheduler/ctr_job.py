@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from detection.ctr_scanner_fast import CTRFastScanner
+from detection.zl_trend import ZeroLagTrendService
 from alerts.telegram_notifier import get_notifier
 from storage.db_operations import DBOperations
 
@@ -54,6 +55,7 @@ class CTRFastJob:
     def __init__(self, db: DBOperations):
         self.db = db
         self._scanner: Optional[CTRFastScanner] = None
+        self._zl_service: Optional[ZeroLagTrendService] = None
         self._running = False
         self._lock = threading.Lock()
         
@@ -324,6 +326,14 @@ class CTRFastJob:
                 # EMA Trend Filter for CTR signals
                 if not self._check_ctr_ema_trend(symbol, signal_type):
                     return  # blocked by trend
+                
+                # Zero Lag Trend Filter for CTR signals (shared service)
+                if self._zl_service and self._zl_service.enabled:
+                    direction = 'bullish' if signal_type == 'BUY' else 'bearish'
+                    zl_ok, zl_block = self._zl_service.check_trend(symbol, direction)
+                    if not zl_ok:
+                        print(f"[CTR Job] 🚫 ZLT BLOCKED [{zl_block}]: {symbol} {signal_type}")
+                        return
             
             # v2.4: Trend Guard signals are priority — they bypass dedup
             # SL signals and FVG signals are also priority
@@ -975,6 +985,27 @@ class CTRFastJob:
     # FVG DETECTOR
     # ========================================
     
+    def _start_zl_service(self, bybit):
+        """Initialize Zero Lag Trend service (shared by FVG + CTR)."""
+        try:
+            if self._zl_service:
+                self._zl_service.stop()
+            
+            self._zl_service = ZeroLagTrendService(
+                bybit_connector=bybit,
+                enabled=self.fvg_zl_trend_enabled,
+                tf_15m_enabled=self.fvg_zl_15m_enabled,
+                tf_1h_enabled=self.fvg_zl_1h_enabled,
+                tf_4h_enabled=self.fvg_zl_4h_enabled,
+                length=self.fvg_zl_length,
+                mult=self.fvg_zl_mult,
+            )
+            
+            if self.fvg_zl_trend_enabled:
+                self._zl_service.start(self.watchlist, update_interval=60)
+        except Exception as e:
+            print(f"[CTR Job] ⚠️ ZLT service error: {e}")
+    
     def _start_fvg_detector(self):
         """Initialize and start FVG detector using Bybit connector"""
         try:
@@ -992,6 +1023,10 @@ class CTRFastJob:
                 except:
                     print("[CTR Job] ⚠️ FVG: Cannot get Bybit connector")
                     return
+            
+            # Start ZLT service if not already running (may have been started in start())
+            if not self._zl_service and self.fvg_zl_trend_enabled:
+                self._start_zl_service(bybit)
             
             self._fvg_detector = FVGDetector(
                 db=self.db,
@@ -1012,12 +1047,7 @@ class CTRFastJob:
                 htf_slow_ema=self.fvg_htf_slow_ema,
                 retest_enabled=self.fvg_retest_enabled,
                 instant_enabled=self.fvg_instant_enabled,
-                zl_trend_enabled=self.fvg_zl_trend_enabled,
-                zl_15m_enabled=self.fvg_zl_15m_enabled,
-                zl_1h_enabled=self.fvg_zl_1h_enabled,
-                zl_4h_enabled=self.fvg_zl_4h_enabled,
-                zl_length=self.fvg_zl_length,
-                zl_mult=self.fvg_zl_mult,
+                zl_service=self._zl_service,
                 on_signal=self._on_signal,
             )
             
@@ -1035,10 +1065,24 @@ class CTRFastJob:
         return []
     
     def get_fvg_stats(self) -> Dict:
-        """Get FVG statistics"""
+        """Get FVG statistics (includes ZLT data from shared service)"""
         if self._fvg_detector:
             return self._fvg_detector.get_stats()
-        return {'running': False, 'active_fvg': 0, 'total_fvg': 0}
+        
+        # FVG off — still return ZLT data for CTR UI
+        stats = {'running': False, 'active_fvg': 0, 'total_fvg': 0}
+        if self._zl_service:
+            zl = self._zl_service
+            stats.update({
+                'zl_trend_enabled': zl.enabled,
+                'zl_15m_enabled': zl.tf_15m_enabled,
+                'zl_1h_enabled': zl.tf_1h_enabled,
+                'zl_4h_enabled': zl.tf_4h_enabled,
+                'zl_length': zl.length,
+                'zl_mult': zl.mult,
+                'zl_trends': zl._trends.copy(),
+            })
+        return stats
     
     def clear_fvg_zones(self) -> int:
         """Clear all FVG zones"""
@@ -1182,6 +1226,20 @@ class CTRFastJob:
             if need_monitor:
                 self._start_sl_monitor()
             
+            # Start Zero Lag Trend service (shared by FVG + CTR)
+            if self.fvg_zl_trend_enabled:
+                bybit = None
+                if self._trade_executor and hasattr(self._trade_executor, 'bybit'):
+                    bybit = self._trade_executor.bybit
+                else:
+                    try:
+                        from core.bybit_connector import get_connector
+                        bybit = get_connector()
+                    except:
+                        pass
+                if bybit:
+                    self._start_zl_service(bybit)
+            
             # Start FVG Detector if enabled
             if self.fvg_enabled and FVG_AVAILABLE:
                 self._start_fvg_detector()
@@ -1205,6 +1263,10 @@ class CTRFastJob:
             if self._fvg_detector:
                 self._fvg_detector.stop()
                 self._fvg_detector = None
+            
+            if self._zl_service:
+                self._zl_service.stop()
+                self._zl_service = None
             
             self._running = False
             print("[CTR Job] ❌ Stopped")
