@@ -1173,6 +1173,18 @@ def register_api_routes(app):
             ctr_status = ctr_job.get_status()
             ws_connected = ctr_status.get('ws_connected', False)
             stats = ctr_status.get('stats', {})
+            
+            # Enrich scan_results with ZLT trend data (for Jinja template)
+            if hasattr(ctr_job, '_zl_service') and ctr_job._zl_service and ctr_job._zl_service.enabled:
+                for r in scan_results:
+                    sym = r.get('symbol', '')
+                    zl_data = ctr_job._zl_service._trends.get(sym, {})
+                    zl_summary = {}
+                    for key, label in [('15', '15m'), ('60', '1h'), ('240', '4h')]:
+                        td = zl_data.get(key)
+                        if td:
+                            zl_summary[label] = td['trend'].upper()
+                    r['zl_trend'] = zl_summary if zl_summary else None
         except:
             ctr_running = False
             ws_connected = False

@@ -245,16 +245,17 @@ class ZeroLagTrendService:
             self._trends[symbol] = sym_data
     
     def update_all(self, klines_map_15m: Optional[Dict[str, List[Dict]]] = None):
-        """Update all watchlist symbols. Increments scan counter."""
+        """Update all watchlist symbols. Increments scan counter AFTER completion."""
         if not self.enabled or not self._watchlist:
             return
-        
-        self._scan_counter += 1
         
         for symbol in self._watchlist:
             kl_15m = (klines_map_15m or {}).get(symbol)
             self.update_symbol(symbol, klines_15m=kl_15m)
             time.sleep(0.3)  # Rate limit between symbols
+        
+        # Increment AFTER all symbols processed — so wait loops detect completion
+        self._scan_counter += 1
     
     # ========================================
     # TREND CHECK (used by any module)

@@ -2212,12 +2212,10 @@ async function clearFVGZones() {
     }
 }
 
-// Load FVG zones
-{% if settings.ctr_fvg_enabled %}
+// Load FVG zones + Trend Grid (trend grid works independently of FVG)
 loadFVGZones();
 {% if ctr_running %}
 setInterval(loadFVGZones, 15000);
-{% endif %}
 {% endif %}
 </script>
 {% endblock %}

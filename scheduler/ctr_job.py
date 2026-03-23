@@ -1230,11 +1230,12 @@ class CTRFastJob:
                     self._start_zl_service(bybit)
                     # Wait for initial ZLT calculation before starting scanner
                     print("[CTR Job] ⏳ Waiting for ZLT initial calculation...")
-                    for _ in range(30):  # max 30s wait
+                    for _ in range(60):  # max 60s wait (10 symbols × ~3s each + REST)
                         if self._zl_service and self._zl_service._scan_counter > 0:
                             break
                         time.sleep(1)
-                    print("[CTR Job] ✅ ZLT ready")
+                    trend_count = len(self._zl_service._trends) if self._zl_service else 0
+                    print(f"[CTR Job] ✅ ZLT ready ({trend_count} symbols computed)")
             
             # Start scanner (SMC Trend Filter is created internally by scanner)
             self._scanner.start(self.watchlist)
