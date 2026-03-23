@@ -182,22 +182,24 @@ class ZeroLagTrendService:
     
     def _fetch_klines(self, symbol: str, interval: str) -> Optional[List[Dict]]:
         """Fetch klines via provider (if registered) or Bybit REST."""
+        min_bars = self.length * 3 + self.length + 10  # Same as compute() min_needed
+        
         # Try provider first (avoids duplicate REST call)
         provider = self._klines_providers.get(interval)
         if provider:
             try:
                 klines = provider(symbol)
-                if klines and len(klines) > 250:
+                if klines and len(klines) >= min_bars:
                     return klines
             except Exception:
                 pass
         
-        # Fallback: direct REST
+        # Fallback: direct REST — always load max 1000
         if not self.bybit:
             return None
         try:
             klines = self.bybit.get_klines(symbol=symbol, interval=interval, limit=1000)
-            if klines and len(klines) > 250:
+            if klines and len(klines) >= min_bars:
                 return klines
         except Exception:
             pass
@@ -208,13 +210,14 @@ class ZeroLagTrendService:
         if not self.enabled:
             return
         
+        min_bars = self.length * 3 + self.length + 10
         sym_data = self._trends.get(symbol, {})
         
         # 15m — use provided klines or fetch
         if self.tf_15m_enabled:
             if self._scan_counter % self.TF_UPDATE_FREQ['15'] == 0:
                 kl = klines_15m
-                if not kl or len(kl) < 250:
+                if not kl or len(kl) < min_bars:
                     kl = self._fetch_klines(symbol, '15')
                 if kl:
                     result = self.compute(kl, self.length, self.mult)

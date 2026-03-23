@@ -493,7 +493,7 @@ class FVGDetector:
         closes = [k['close'] for k in klines]
         
         # Cache closes for live EMA updates (keep last N needed for slow EMA + buffer)
-        cache_size = max(self.trend_fast_ema, self.trend_slow_ema) + 50
+        cache_size = max(self.trend_fast_ema, self.trend_slow_ema) * 3 + 50
         self._symbol_closes[symbol] = closes[-cache_size:]
         
         fast_ema = self._compute_ema(closes, self.trend_fast_ema)
@@ -558,7 +558,10 @@ class FVGDetector:
         
         try:
             htf_interval = self.INTERVAL_MAP.get(self.htf_timeframe, '60')
-            needed = max(self.htf_fast_ema, self.htf_slow_ema) + 20
+            # Load enough for proper EMA warmup: 500 bars minimum
+            # EMA needs ~3x period for convergence to < 1% error
+            needed = max(self.htf_fast_ema, self.htf_slow_ema) * 3 + 50
+            needed = max(needed, 500)  # At least 500 for professional accuracy
             
             klines = self.bybit.get_klines(
                 symbol=symbol, interval=htf_interval, limit=needed
@@ -570,7 +573,7 @@ class FVGDetector:
             closes = [k['close'] for k in klines]
             
             # Cache for live updates
-            cache_size = max(self.htf_fast_ema, self.htf_slow_ema) + 50
+            cache_size = max(self.htf_fast_ema, self.htf_slow_ema) * 3 + 50
             self._symbol_closes_htf[symbol] = closes[-cache_size:]
             
             fast_ema = self._compute_ema(closes, self.htf_fast_ema)

@@ -451,9 +451,9 @@ class SMCTrendFilter:
     """
     
     REST_BASE_URL = "https://api.bybit.com/v5/market"
-    CANDLES_4H = 500   # 500 × 4h ≈ 83 дні — достатньо для swing_length=50
-    CANDLES_1H = 500   # 500 × 1h ≈ 21 день
-    CANDLES_15M = 300  # 300 × 15m ≈ 3 дні — достатньо для swing_length=20
+    CANDLES_4H = 1000   # 1000 × 4h ≈ 166 дні — maximum for Bybit
+    CANDLES_1H = 1000   # 1000 × 1h ≈ 41 день
+    CANDLES_15M = 1000  # 1000 × 15m ≈ 10 днів
     
     def __init__(
         self,

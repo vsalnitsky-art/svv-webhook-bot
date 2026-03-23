@@ -87,7 +87,7 @@ class BybitConnector:
             return self._safe_float(ticker.get('lastPrice'))
         return 0.0
     
-    def get_klines(self, symbol: str, interval: str = "60", limit: int = 200) -> List[Dict]:
+    def get_klines(self, symbol: str, interval: str = "60", limit: int = 1000) -> List[Dict]:
         """
         Отримати свічки (klines)
         interval: 1, 3, 5, 15, 30, 60, 120, 240, 360, 720, D, W, M
