@@ -1214,19 +1214,8 @@ class CTRFastJob:
                 smc_trend_swing_15m=self.smc_trend_swing_15m,
             )
             
-            # Start scanner (SMC Trend Filter is created internally by scanner)
-            self._scanner.start(self.watchlist)
-            self._running = True
-            
-            # Start results saver thread
-            self._start_results_saver()
-            
-            # Start monitoring thread if SL Monitor or FVG TP Manager is enabled
-            need_monitor = (self.sl_monitor_enabled and self.sl_monitor_pct > 0) or self.fvg_tp_enabled
-            if need_monitor:
-                self._start_sl_monitor()
-            
-            # Start Zero Lag Trend service (shared by FVG + CTR)
+            # Start Zero Lag Trend service FIRST (shared by FVG + CTR)
+            # Must compute trends before scanner starts generating signals
             if self.fvg_zl_trend_enabled:
                 bybit = None
                 if self._trade_executor and hasattr(self._trade_executor, 'bybit'):
@@ -1239,6 +1228,25 @@ class CTRFastJob:
                         pass
                 if bybit:
                     self._start_zl_service(bybit)
+                    # Wait for initial ZLT calculation before starting scanner
+                    print("[CTR Job] ⏳ Waiting for ZLT initial calculation...")
+                    for _ in range(30):  # max 30s wait
+                        if self._zl_service and self._zl_service._scan_counter > 0:
+                            break
+                        time.sleep(1)
+                    print("[CTR Job] ✅ ZLT ready")
+            
+            # Start scanner (SMC Trend Filter is created internally by scanner)
+            self._scanner.start(self.watchlist)
+            self._running = True
+            
+            # Start results saver thread
+            self._start_results_saver()
+            
+            # Start monitoring thread if SL Monitor or FVG TP Manager is enabled
+            need_monitor = (self.sl_monitor_enabled and self.sl_monitor_pct > 0) or self.fvg_tp_enabled
+            if need_monitor:
+                self._start_sl_monitor()
             
             # Start FVG Detector if enabled
             if self.fvg_enabled and FVG_AVAILABLE:
@@ -1296,7 +1304,19 @@ class CTRFastJob:
     
     def get_results(self) -> List[Dict]:
         if self._scanner:
-            return self._scanner.get_results()
+            results = self._scanner.get_results()
+            # Enrich with ZLT trend data
+            if self._zl_service and self._zl_service.enabled:
+                for r in results:
+                    sym = r.get('symbol', '')
+                    zl_data = self._zl_service._trends.get(sym, {})
+                    zl_summary = {}
+                    for key, label in [('15', '15m'), ('60', '1h'), ('240', '4h')]:
+                        td = zl_data.get(key)
+                        if td:
+                            zl_summary[label] = td['trend'].upper()
+                    r['zl_trend'] = zl_summary if zl_summary else None
+            return results
         return []
     
     def add_symbol(self, symbol: str) -> bool:
