@@ -881,6 +881,10 @@
                         </div>
                         <div style="display: flex; gap: 12px; margin-bottom: 8px;">
                             <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                <input type="checkbox" id="fvg-zl-5m" {% if settings.ctr_fvg_zl_5m %}checked{% endif %} style="accent-color: #00ffbb;">
+                                <span style="color: #ccc; font-size: 12px;">5m</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
                                 <input type="checkbox" id="fvg-zl-15m" {% if settings.ctr_fvg_zl_15m %}checked{% endif %} style="accent-color: #00ffbb;">
                                 <span style="color: #ccc; font-size: 12px;">15m</span>
                             </label>
@@ -910,6 +914,29 @@
                         <small style="color: #888; margin-top: 4px; display: block;">
                             ZLEMA + ATR volatility bands. Увімкнені TF мають збігатись.
                         </small>
+                    </div>
+                    
+                    <!-- ZLT Bot Strategy -->
+                    <div style="margin-top: 8px; padding: 8px; background: rgba(255,165,0,0.06); border-radius: 8px; border: 1px solid rgba(255,165,0,0.2);">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                            <label class="switch" style="margin: 0;">
+                                <input type="checkbox" id="zl-bot-enabled" {% if settings.ctr_zl_bot_enabled %}checked{% endif %}>
+                                <span class="slider round"></span>
+                            </label>
+                            <span style="color: #ffa500; font-weight: 600; font-size: 13px;">🤖 ZLT Bot (Pullback Entry)</span>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 1fr; gap: 8px;">
+                            <div>
+                                <small style="color:#aaa;">Partial Close %</small>
+                                <input type="number" id="zl-bot-partial-pct" value="{{ settings.ctr_zl_bot_partial_pct }}"
+                                       step="5" min="10" max="90"
+                                       class="form-control" style="background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 5px; border-radius: 6px; width: 100%;">
+                            </div>
+                        </div>
+                        <small style="color: #888; margin-top: 4px; display: block;">
+                            H4+H1 macro → чекає M15+M5 pullback → M5 entry. Auto-enables all ZLT TFs.
+                        </small>
+                        <div id="zl-bot-states" style="margin-top: 6px;"></div>
                     </div>
                     
                     <!-- FVG TP Manager Settings -->
@@ -1985,8 +2012,11 @@ async function saveFVGSettings() {
         ctr_fvg_zl_15m: document.getElementById('fvg-zl-15m').checked ? '1' : '0',
         ctr_fvg_zl_1h: document.getElementById('fvg-zl-1h').checked ? '1' : '0',
         ctr_fvg_zl_4h: document.getElementById('fvg-zl-4h').checked ? '1' : '0',
+        ctr_fvg_zl_5m: document.getElementById('fvg-zl-5m').checked ? '1' : '0',
         ctr_fvg_zl_length: document.getElementById('fvg-zl-length').value,
         ctr_fvg_zl_mult: document.getElementById('fvg-zl-mult').value,
+        ctr_zl_bot_enabled: document.getElementById('zl-bot-enabled').checked ? '1' : '0',
+        ctr_zl_bot_partial_pct: document.getElementById('zl-bot-partial-pct').value,
         // FVG TP Manager
         fvg_tp_manager_enabled: document.getElementById('fvg-tp-enabled').checked ? '1' : '0',
         fvg_tp_trigger_pct: document.getElementById('fvg-tp-trigger-detail')?.value || document.getElementById('fvg-tp-trigger').value,
@@ -2092,6 +2122,7 @@ function updateTrendGrid(stats) {
         }
         if (hasZLT) {
             const zlTFs = [
+                [stats.zl_5m_enabled, '5', '5m'],
                 [stats.zl_15m_enabled, '15', '15m'],
                 [stats.zl_1h_enabled, '60', '1h'],
                 [stats.zl_4h_enabled, '240', '4h'],
@@ -2216,6 +2247,46 @@ async function clearFVGZones() {
 loadFVGZones();
 {% if ctr_running %}
 setInterval(loadFVGZones, 15000);
+{% endif %}
+
+// ZLT Bot states loader
+async function loadZLTBotStates() {
+    try {
+        const res = await fetch('/api/ctr/zl-bot/states');
+        const data = await res.json();
+        const el = document.getElementById('zl-bot-states');
+        if (!el || !data.enabled) { if (el) el.innerHTML = ''; return; }
+        
+        const states = data.states || {};
+        const entries = Object.entries(states).sort((a,b) => a[0].localeCompare(b[0]));
+        if (entries.length === 0) { el.innerHTML = '<small style="color:#666;">No symbols</small>'; return; }
+        
+        const stateColors = {
+            'idle': '#555', 'macro_ok': '#2196f3', 'waiting_pullback': '#ff9800',
+            'pullback_active': '#e91e63', 'in_trade': '#4caf50', 'in_trade_partial': '#8bc34a'
+        };
+        const stateIcons = {
+            'idle': '⚪', 'macro_ok': '🔵', 'waiting_pullback': '🟡',
+            'pullback_active': '🟠', 'in_trade': '🟢', 'in_trade_partial': '🟡'
+        };
+        
+        let html = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">';
+        for (const [sym, s] of entries) {
+            const clr = stateColors[s.state] || '#555';
+            const icon = stateIcons[s.state] || '⚪';
+            const dir = s.direction ? (s.direction === 'LONG' ? '▲' : '▼') : '';
+            const short = sym.replace('USDT','');
+            const tip = `${sym}: ${s.state}${s.direction ? ' ' + s.direction : ''}${s.entry_price ? ' @ $' + s.entry_price.toFixed(4) : ''}`;
+            html += `<span title="${tip}" style="display:inline-flex;align-items:center;gap:2px;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;background:rgba(255,255,255,0.04);border:1px solid ${clr}40;color:${clr};cursor:default;">${icon} ${short} ${dir}</span>`;
+        }
+        html += '</div>';
+        html += `<small style="color:#666;font-size:10px;">Entries: ${data.entries||0} | Partials: ${data.partial_exits||0} | Reloads: ${data.reloads||0} | Exits: ${data.full_exits||0}</small>`;
+        el.innerHTML = html;
+    } catch(e) {}
+}
+loadZLTBotStates();
+{% if ctr_running %}
+setInterval(loadZLTBotStates, 10000);
 {% endif %}
 </script>
 {% endblock %}

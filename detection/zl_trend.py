@@ -33,41 +33,60 @@ class ZeroLagTrendService:
     """
     
     # Bybit interval codes
-    TF_MAP = {'15m': '15', '1h': '60', '4h': '240'}
+    TF_MAP = {'5m': '5', '15m': '15', '1h': '60', '4h': '240'}
     
     # Update frequency per TF (in scan cycles, ~60s each)
-    TF_UPDATE_FREQ = {'15': 1, '60': 5, '240': 15}
+    TF_UPDATE_FREQ = {'5': 1, '15': 1, '60': 5, '240': 15}
+    
+    # Default per-TF parameters (optimized from Pine Script)
+    DEFAULT_TF_PARAMS = {
+        '5':   {'length': 55, 'mult': 1.3},  # 5m — wider bands (noisy)
+        '15':  {'length': 34, 'mult': 1.2},  # 15m — balanced
+        '60':  {'length': 34, 'mult': 1.0},  # 1h — narrower bands
+        '240': {'length': 21, 'mult': 0.8},  # 4h — fast, clear trend
+    }
     
     def __init__(
         self,
         bybit_connector,
         enabled: bool = False,
+        tf_5m_enabled: bool = False,
         tf_15m_enabled: bool = True,
         tf_1h_enabled: bool = True,
         tf_4h_enabled: bool = True,
         length: int = 70,
         mult: float = 1.2,
+        tf_params: Optional[Dict] = None,  # per-TF override: {'5': {'length': 55, 'mult': 1.3}, ...}
     ):
         self.bybit = bybit_connector
         self.enabled = enabled
+        self.tf_5m_enabled = tf_5m_enabled
         self.tf_15m_enabled = tf_15m_enabled
         self.tf_1h_enabled = tf_1h_enabled
         self.tf_4h_enabled = tf_4h_enabled
-        self.length = length
-        self.mult = mult
+        self.length = length  # global fallback
+        self.mult = mult      # global fallback
         
-        # State: {symbol: {'15': {trend, zlema, ...}, '60': {...}, '240': {...}}}
+        # Per-TF params: use provided or defaults
+        self.tf_params = tf_params or dict(self.DEFAULT_TF_PARAMS)
+        
+        # State: {symbol: {'5': {trend, zlema, ...}, '15': {...}, '60': {...}, '240': {...}}}
         self._trends: Dict[str, Dict[str, Dict]] = {}
+        # Previous trends for transition detection: {symbol: {'5': 'bullish', ...}}
+        self._prev_trends: Dict[str, Dict[str, str]] = {}
         self._lock = threading.RLock()
+        
+        # Transition callbacks: called when trend changes on any TF
+        self._on_transition: Optional[Callable] = None
         
         # Update tracking
         self._scan_counter: int = 0
         self._watchlist: List[str] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._update_interval: int = 60  # seconds between scans
+        self._update_interval: int = 30  # 30s for 5m responsiveness
         
-        # Klines provider callback (optional: for 15m reuse from FVG/CTR)
+        # Klines provider callback (optional)
         self._klines_providers: Dict[str, Callable] = {}
     
     # ========================================
@@ -76,10 +95,16 @@ class ZeroLagTrendService:
     
     def update_settings(self, **kwargs):
         """Update settings dynamically."""
-        for key in ('enabled', 'tf_15m_enabled', 'tf_1h_enabled', 'tf_4h_enabled',
+        for key in ('enabled', 'tf_5m_enabled', 'tf_15m_enabled', 'tf_1h_enabled', 'tf_4h_enabled',
                      'length', 'mult'):
             if key in kwargs:
                 setattr(self, key, kwargs[key])
+        if 'tf_params' in kwargs:
+            self.tf_params = kwargs['tf_params']
+    
+    def set_on_transition(self, callback: Callable):
+        """Register callback for trend transitions: callback(symbol, tf_key, old_trend, new_trend)"""
+        self._on_transition = callback
     
     def register_klines_provider(self, tf_key: str, provider: Callable):
         """
@@ -180,9 +205,19 @@ class ZeroLagTrendService:
     # UPDATE LOGIC
     # ========================================
     
+    def _get_tf_params(self, tf_key: str) -> tuple:
+        """Get length/mult for a specific TF. Per-TF override → global fallback."""
+        p = self.tf_params.get(tf_key, {})
+        return p.get('length', self.length), p.get('mult', self.mult)
+    
+    def _min_bars_for_tf(self, tf_key: str) -> int:
+        """Minimum bars needed for compute() on this TF."""
+        length, _ = self._get_tf_params(tf_key)
+        return length * 3 + length + 10
+    
     def _fetch_klines(self, symbol: str, interval: str) -> Optional[List[Dict]]:
         """Fetch klines via provider (if registered) or Bybit REST."""
-        min_bars = self.length * 3 + self.length + 10  # Same as compute() min_needed
+        min_bars = self._min_bars_for_tf(interval)
         
         # Try provider first (avoids duplicate REST call)
         provider = self._klines_providers.get(interval)
@@ -205,47 +240,70 @@ class ZeroLagTrendService:
             pass
         return None
     
-    def update_symbol(self, symbol: str, klines_15m: Optional[List[Dict]] = None):
+    def _update_tf(self, symbol: str, tf_key: str, klines: Optional[List[Dict]] = None) -> Optional[str]:
+        """Update one TF for one symbol. Returns new trend or None if unchanged."""
+        length, mult = self._get_tf_params(tf_key)
+        min_bars = length * 3 + length + 10
+        
+        kl = klines
+        if not kl or len(kl) < min_bars:
+            kl = self._fetch_klines(symbol, tf_key)
+        if not kl:
+            return None
+        
+        result = self.compute(kl, length, mult)
+        if not result:
+            return None
+        
+        # Track previous trend for transition detection
+        old_trend = None
+        with self._lock:
+            sym_data = self._trends.get(symbol, {})
+            old_data = sym_data.get(tf_key)
+            if old_data:
+                old_trend = old_data['trend']
+            sym_data[tf_key] = result
+            self._trends[symbol] = sym_data
+        
+        new_trend = result['trend']
+        
+        # Detect transition
+        if old_trend and old_trend != new_trend and new_trend != 'neutral':
+            # Store prev trends
+            if symbol not in self._prev_trends:
+                self._prev_trends[symbol] = {}
+            self._prev_trends[symbol][tf_key] = old_trend
+            
+            # Fire callback
+            if self._on_transition:
+                try:
+                    self._on_transition(symbol, tf_key, old_trend, new_trend)
+                except Exception as e:
+                    print(f"[ZLT] Transition callback error: {e}")
+        
+        return new_trend
+    
+    def update_symbol(self, symbol: str, klines_15m: Optional[List[Dict]] = None,
+                      klines_5m: Optional[List[Dict]] = None):
         """Update ZLT for one symbol across all enabled TFs."""
         if not self.enabled:
             return
         
-        min_bars = self.length * 3 + self.length + 10
-        sym_data = self._trends.get(symbol, {})
+        tf_configs = [
+            (self.tf_5m_enabled,  '5',   klines_5m,  self.TF_UPDATE_FREQ['5']),
+            (self.tf_15m_enabled, '15',  klines_15m, self.TF_UPDATE_FREQ['15']),
+            (self.tf_1h_enabled,  '60',  None,       self.TF_UPDATE_FREQ['60']),
+            (self.tf_4h_enabled,  '240', None,       self.TF_UPDATE_FREQ['240']),
+        ]
         
-        # 15m — use provided klines or fetch
-        if self.tf_15m_enabled:
-            if self._scan_counter % self.TF_UPDATE_FREQ['15'] == 0:
-                kl = klines_15m
-                if not kl or len(kl) < min_bars:
-                    kl = self._fetch_klines(symbol, '15')
-                if kl:
-                    result = self.compute(kl, self.length, self.mult)
-                    if result:
-                        sym_data['15'] = result
-        
-        # 1h
-        if self.tf_1h_enabled:
-            if self._scan_counter % self.TF_UPDATE_FREQ['60'] == 0:
-                kl = self._fetch_klines(symbol, '60')
-                if kl:
-                    result = self.compute(kl, self.length, self.mult)
-                    if result:
-                        sym_data['60'] = result
-                    time.sleep(0.2)
-        
-        # 4h
-        if self.tf_4h_enabled:
-            if self._scan_counter % self.TF_UPDATE_FREQ['240'] == 0:
-                kl = self._fetch_klines(symbol, '240')
-                if kl:
-                    result = self.compute(kl, self.length, self.mult)
-                    if result:
-                        sym_data['240'] = result
-                    time.sleep(0.2)
-        
-        with self._lock:
-            self._trends[symbol] = sym_data
+        for enabled, tf_key, provided_klines, freq in tf_configs:
+            if not enabled:
+                continue
+            if self._scan_counter % freq != 0:
+                continue
+            self._update_tf(symbol, tf_key, provided_klines)
+            if tf_key in ('60', '240'):
+                time.sleep(0.2)  # Rate limit for REST-fetched TFs
     
     def update_all(self, klines_map_15m: Optional[Dict[str, List[Dict]]] = None):
         """Update all watchlist symbols. Increments scan counter AFTER completion."""
@@ -257,7 +315,7 @@ class ZeroLagTrendService:
             self.update_symbol(symbol, klines_15m=kl_15m)
             time.sleep(0.3)  # Rate limit between symbols
         
-        # Increment AFTER all symbols processed — so wait loops detect completion
+        # Increment AFTER all symbols processed
         self._scan_counter += 1
     
     # ========================================
@@ -267,11 +325,7 @@ class ZeroLagTrendService:
     def check_trend(self, symbol: str, direction: str) -> tuple:
         """
         Check if direction aligns with ZLT on all enabled TFs.
-        
         Returns: (allowed: bool, block_reason: str)
-        - allowed=True: all enabled TFs agree (or no data/neutral)
-        - allowed=False: at least one TF disagrees
-        - block_reason: 'zl_15m', 'zl_1h', or 'zl_4h'
         """
         if not self.enabled:
             return True, ''
@@ -280,6 +334,7 @@ class ZeroLagTrendService:
             sym_data = self._trends.get(symbol, {})
         
         checks = [
+            (self.tf_5m_enabled, '5', '5m'),
             (self.tf_15m_enabled, '15', '15m'),
             (self.tf_1h_enabled, '60', '1h'),
             (self.tf_4h_enabled, '240', '4h'),
@@ -290,16 +345,28 @@ class ZeroLagTrendService:
                 continue
             tf_data = sym_data.get(key)
             if not tf_data or tf_data['trend'] == 'neutral':
-                continue  # No data or undetermined → don't block
+                continue
             if tf_data['trend'] != direction:
                 return False, f'zl_{label}'
         
         return True, ''
     
     def get_trend(self, symbol: str, tf_key: str) -> Optional[Dict]:
-        """Get trend data for specific symbol and TF key ('15', '60', '240')."""
+        """Get trend data for specific symbol and TF key ('5', '15', '60', '240')."""
         with self._lock:
             return self._trends.get(symbol, {}).get(tf_key)
+    
+    def get_all_trends(self, symbol: str) -> Dict[str, str]:
+        """Get trend direction for all TFs: {'5': 'bullish', '15': 'bearish', ...}"""
+        with self._lock:
+            sym_data = self._trends.get(symbol, {})
+        return {
+            tf_key: td['trend'] for tf_key, td in sym_data.items() if td
+        }
+    
+    def get_prev_trend(self, symbol: str, tf_key: str) -> Optional[str]:
+        """Get previous trend for transition detection."""
+        return self._prev_trends.get(symbol, {}).get(tf_key)
     
     # ========================================
     # STANDALONE UPDATE THREAD
@@ -320,13 +387,21 @@ class ZeroLagTrendService:
         self._thread.start()
         
         enabled_tfs = []
+        if self.tf_5m_enabled: enabled_tfs.append('5m')
         if self.tf_15m_enabled: enabled_tfs.append('15m')
         if self.tf_1h_enabled: enabled_tfs.append('1h')
         if self.tf_4h_enabled: enabled_tfs.append('4h')
         
+        # Log per-TF params
+        params_str = ", ".join(
+            f"{tf}:L={self.tf_params.get(k, {}).get('length', self.length)}/M={self.tf_params.get(k, {}).get('mult', self.mult)}"
+            for tf, k in [('5m','5'), ('15m','15'), ('1h','60'), ('4h','240')]
+            if k in [self.TF_MAP.get(tf, tf) for tf in enabled_tfs]
+        )
+        
         print(f"[ZLT] ✅ Started: {len(watchlist)} symbols, "
-              f"TFs={','.join(enabled_tfs)}, "
-              f"L={self.length}, M={self.mult}")
+              f"TFs=[{','.join(enabled_tfs)}], "
+              f"Params: {params_str}")
     
     def stop(self):
         """Stop update thread."""
@@ -359,11 +434,13 @@ class ZeroLagTrendService:
         with self._lock:
             return {
                 'enabled': self.enabled,
+                'tf_5m_enabled': self.tf_5m_enabled,
                 'tf_15m_enabled': self.tf_15m_enabled,
                 'tf_1h_enabled': self.tf_1h_enabled,
                 'tf_4h_enabled': self.tf_4h_enabled,
                 'length': self.length,
                 'mult': self.mult,
+                'tf_params': dict(self.tf_params),
                 'trends': dict(self._trends),
                 'scan_counter': self._scan_counter,
                 'running': self._running,

@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 
 from detection.ctr_scanner_fast import CTRFastScanner
 from detection.zl_trend import ZeroLagTrendService
+from strategy.zl_bot import ZLTBot
 from alerts.telegram_notifier import get_notifier
 from storage.db_operations import DBOperations
 
@@ -56,6 +57,7 @@ class CTRFastJob:
         self.db = db
         self._scanner: Optional[CTRFastScanner] = None
         self._zl_service: Optional[ZeroLagTrendService] = None
+        self._zl_bot: Optional[ZLTBot] = None
         self._running = False
         self._lock = threading.Lock()
         
@@ -171,6 +173,10 @@ class CTRFastJob:
         self.fvg_zl_4h_enabled = _b('ctr_fvg_zl_4h', '1')
         self.fvg_zl_length = int(self.db.get_setting('ctr_fvg_zl_length', '70'))
         self.fvg_zl_mult = float(self.db.get_setting('ctr_fvg_zl_mult', '1.2'))
+        self.fvg_zl_5m_enabled = _b('ctr_fvg_zl_5m', '0')
+        # ZLT Bot Strategy
+        self.zl_bot_enabled = _b('ctr_zl_bot_enabled', '0')
+        self.zl_bot_partial_pct = float(self.db.get_setting('ctr_zl_bot_partial_pct', '50'))
         
         # CTR Fast Scanner — enable/disable + EMA Trend Filter
         self.ctr_scanner_enabled = _b('ctr_scanner_enabled', '1')  # ON by default
@@ -637,6 +643,10 @@ class CTRFastJob:
                 if self.fvg_tp_enabled and self._fvg_managed:
                     self._check_fvg_tp_all()
                 
+                # ZLT Bot periodic safety check (every 6th cycle ~30s)
+                if self._zl_bot and self._zl_bot.enabled and check_count % 6 == 0:
+                    self._zl_bot.check_all()
+                
                 check_count += 1
                 # Log every 60 checks (~5 min at 5s interval)
                 if check_count % 60 == 1:
@@ -986,25 +996,135 @@ class CTRFastJob:
     # ========================================
     
     def _start_zl_service(self, bybit):
-        """Initialize Zero Lag Trend service (shared by FVG + CTR)."""
+        """Initialize Zero Lag Trend service + ZLT Bot."""
         try:
             if self._zl_service:
                 self._zl_service.stop()
             
+            # When ZLT Bot is enabled, force-enable all 4 TFs (bot needs them)
+            zl_5m = self.fvg_zl_5m_enabled or self.zl_bot_enabled
+            zl_15m = self.fvg_zl_15m_enabled or self.zl_bot_enabled
+            zl_1h = self.fvg_zl_1h_enabled or self.zl_bot_enabled
+            zl_4h = self.fvg_zl_4h_enabled or self.zl_bot_enabled
+            
             self._zl_service = ZeroLagTrendService(
                 bybit_connector=bybit,
-                enabled=self.fvg_zl_trend_enabled,
-                tf_15m_enabled=self.fvg_zl_15m_enabled,
-                tf_1h_enabled=self.fvg_zl_1h_enabled,
-                tf_4h_enabled=self.fvg_zl_4h_enabled,
+                enabled=self.fvg_zl_trend_enabled or self.zl_bot_enabled,
+                tf_5m_enabled=zl_5m,
+                tf_15m_enabled=zl_15m,
+                tf_1h_enabled=zl_1h,
+                tf_4h_enabled=zl_4h,
                 length=self.fvg_zl_length,
                 mult=self.fvg_zl_mult,
             )
             
-            if self.fvg_zl_trend_enabled:
-                self._zl_service.start(self.watchlist, update_interval=60)
+            if self._zl_service.enabled:
+                # 30s interval when bot is active (5m responsiveness), 60s otherwise
+                interval = 30 if self.zl_bot_enabled else 60
+                self._zl_service.start(self.watchlist, update_interval=interval)
+            
+            # Create ZLT Bot
+            if self.zl_bot_enabled and self._zl_service:
+                self._start_zl_bot()
+                
         except Exception as e:
             print(f"[CTR Job] ⚠️ ZLT service error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _start_zl_bot(self):
+        """Initialize ZLT Bot Strategy."""
+        if not self._zl_service:
+            return
+        
+        notifier = get_notifier()
+        
+        self._zl_bot = ZLTBot(
+            zl_service=self._zl_service,
+            enabled=True,
+            partial_close_pct=self.zl_bot_partial_pct,
+            on_trade=self._on_zl_bot_trade,
+            on_notify=notifier.send_message if notifier else None,
+        )
+        self._zl_bot.set_watchlist(self.watchlist)
+        
+        # Do initial check for all symbols
+        self._zl_bot.check_all()
+        
+        print(f"[ZLT Bot] ✅ Started: {len(self.watchlist)} symbols, "
+              f"partial={self.zl_bot_partial_pct}%")
+    
+    def _on_zl_bot_trade(self, symbol: str, action: str, details: Dict):
+        """Handle ZLT Bot trade actions — execute via trade executor."""
+        if not self._trade_executor:
+            print(f"[ZLT Bot] ⚠️ No trade executor for {symbol} {action}")
+            return
+        
+        try:
+            settings = self._trade_executor.get_settings()
+            if not settings.get('enabled'):
+                print(f"[ZLT Bot] ⚠️ Auto-Trade disabled — {symbol} {action} skipped")
+                return
+            if symbol not in settings.get('trade_symbols', []):
+                print(f"[ZLT Bot] ⚠️ {symbol} not in trade symbols — {action} skipped")
+                return
+            
+            if action == 'entry':
+                signal_type = details['signal_type']
+                result = self._trade_executor.execute_signal(
+                    symbol=symbol,
+                    signal_type=signal_type,
+                    price=0,  # market order
+                    reason=details.get('reason', 'ZLT Bot'),
+                )
+                if result['success']:
+                    # Get actual entry price
+                    time.sleep(0.3)
+                    pos = self._trade_executor.get_position_for_symbol(symbol)
+                    entry_price = pos.get('entry_price', 0) if pos else 0
+                    if self._zl_bot and symbol in self._zl_bot._states:
+                        self._zl_bot._states[symbol].entry_price = entry_price
+                    print(f"[ZLT Bot] 💰 Entry executed: {symbol} {signal_type} @ ${entry_price:.4f}")
+                else:
+                    print(f"[ZLT Bot] ⚠️ Entry failed: {symbol} — {result.get('details', '?')}")
+            
+            elif action == 'partial_exit':
+                pos = self._trade_executor.get_position_for_symbol(symbol)
+                if pos and pos.get('size', 0) > 0:
+                    close_qty = round(pos['size'] * (details['close_pct'] / 100), 6)
+                    if close_qty > 0:
+                        result = self._trade_executor.bybit.close_position(
+                            symbol, pos['side'], close_qty
+                        )
+                        if result:
+                            print(f"[ZLT Bot] 💰 Partial close: {symbol} qty={close_qty}")
+                        else:
+                            print(f"[ZLT Bot] ⚠️ Partial close failed: {symbol}")
+            
+            elif action == 'reload':
+                signal_type = details['signal_type']
+                result = self._trade_executor.execute_signal(
+                    symbol=symbol,
+                    signal_type=signal_type,
+                    price=0,
+                    reason=details.get('reason', 'ZLT Bot Reload'),
+                )
+                if result['success']:
+                    print(f"[ZLT Bot] 💰 Reload executed: {symbol} {signal_type}")
+            
+            elif action == 'full_exit':
+                pos = self._trade_executor.get_position_for_symbol(symbol)
+                if pos and pos.get('size', 0) > 0:
+                    result = self._trade_executor.bybit.close_position(
+                        symbol, pos['side'], pos['size']
+                    )
+                    if result:
+                        print(f"[ZLT Bot] 💰 Full exit: {symbol} size={pos['size']}")
+                    else:
+                        print(f"[ZLT Bot] ⚠️ Full exit failed: {symbol}")
+                        
+        except Exception as e:
+            print(f"[ZLT Bot] ❌ Trade error {symbol} {action}: {e}")
     
     def _start_fvg_detector(self):
         """Initialize and start FVG detector using Bybit connector"""
@@ -1075,6 +1195,7 @@ class CTRFastJob:
             zl = self._zl_service
             stats.update({
                 'zl_trend_enabled': zl.enabled,
+                'zl_5m_enabled': zl.tf_5m_enabled,
                 'zl_15m_enabled': zl.tf_15m_enabled,
                 'zl_1h_enabled': zl.tf_1h_enabled,
                 'zl_4h_enabled': zl.tf_4h_enabled,
@@ -1214,9 +1335,9 @@ class CTRFastJob:
                 smc_trend_swing_15m=self.smc_trend_swing_15m,
             )
             
-            # Start Zero Lag Trend service FIRST (shared by FVG + CTR)
+            # Start Zero Lag Trend service FIRST (shared by FVG + CTR + ZLT Bot)
             # Must compute trends before scanner starts generating signals
-            if self.fvg_zl_trend_enabled:
+            if self.fvg_zl_trend_enabled or self.zl_bot_enabled:
                 bybit = None
                 if self._trade_executor and hasattr(self._trade_executor, 'bybit'):
                     bybit = self._trade_executor.bybit
@@ -1244,8 +1365,9 @@ class CTRFastJob:
             # Start results saver thread
             self._start_results_saver()
             
-            # Start monitoring thread if SL Monitor or FVG TP Manager is enabled
-            need_monitor = (self.sl_monitor_enabled and self.sl_monitor_pct > 0) or self.fvg_tp_enabled
+            # Start monitoring thread if SL Monitor, FVG TP Manager, or ZLT Bot is enabled
+            need_monitor = ((self.sl_monitor_enabled and self.sl_monitor_pct > 0) 
+                           or self.fvg_tp_enabled or self.zl_bot_enabled)
             if need_monitor:
                 self._start_sl_monitor()
             
@@ -1276,6 +1398,10 @@ class CTRFastJob:
             if self._zl_service:
                 self._zl_service.stop()
                 self._zl_service = None
+            
+            if self._zl_bot:
+                print("[ZLT Bot] ❌ Stopped")
+                self._zl_bot = None
             
             self._running = False
             print("[CTR Job] ❌ Stopped")
@@ -1312,7 +1438,7 @@ class CTRFastJob:
                     sym = r.get('symbol', '')
                     zl_data = self._zl_service._trends.get(sym, {})
                     zl_summary = {}
-                    for key, label in [('15', '15m'), ('60', '1h'), ('240', '4h')]:
+                    for key, label in [('5', '5m'), ('15', '15m'), ('60', '1h'), ('240', '4h')]:
                         td = zl_data.get(key)
                         if td:
                             zl_summary[label] = td['trend'].upper()
@@ -1371,7 +1497,8 @@ class CTRFastJob:
             })
         
         # Start/restart monitoring thread if SL Monitor or FVG TP Manager needs it
-        need_monitor = (self.sl_monitor_enabled and self.sl_monitor_pct > 0) or self.fvg_tp_enabled
+        need_monitor = ((self.sl_monitor_enabled and self.sl_monitor_pct > 0) 
+                       or self.fvg_tp_enabled or self.zl_bot_enabled)
         if self._running and need_monitor:
             if not (self._sl_monitor_thread and self._sl_monitor_thread.is_alive()):
                 self._start_sl_monitor()

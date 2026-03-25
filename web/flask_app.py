@@ -1180,7 +1180,7 @@ def register_api_routes(app):
                     sym = r.get('symbol', '')
                     zl_data = ctr_job._zl_service._trends.get(sym, {})
                     zl_summary = {}
-                    for key, label in [('15', '15m'), ('60', '1h'), ('240', '4h')]:
+                    for key, label in [('5', '5m'), ('15', '15m'), ('60', '1h'), ('240', '4h')]:
                         td = zl_data.get(key)
                         if td:
                             zl_summary[label] = td['trend'].upper()
@@ -1254,6 +1254,9 @@ def register_api_routes(app):
             'ctr_fvg_zl_4h': db.get_setting('ctr_fvg_zl_4h', '1') in ('1', 'true', 'True', 'yes'),
             'ctr_fvg_zl_length': db.get_setting('ctr_fvg_zl_length', '70'),
             'ctr_fvg_zl_mult': db.get_setting('ctr_fvg_zl_mult', '1.2'),
+            'ctr_fvg_zl_5m': db.get_setting('ctr_fvg_zl_5m', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_zl_bot_enabled': db.get_setting('ctr_zl_bot_enabled', '0') in ('1', 'true', 'True', 'yes'),
+            'ctr_zl_bot_partial_pct': db.get_setting('ctr_zl_bot_partial_pct', '50'),
             # CTR Fast Scanner toggle + EMA Trend Filter
             'ctr_scanner_enabled': db.get_setting('ctr_scanner_enabled', '1') in ('1', 'true', 'True', 'yes'),
             'ctr_ema_trend_enabled': db.get_setting('ctr_ema_trend_enabled', '0') in ('1', 'true', 'True', 'yes'),
@@ -1406,8 +1409,9 @@ def register_api_routes(app):
             'ctr_fvg_htf_trend', 'ctr_fvg_htf_timeframe',
             'ctr_fvg_htf_fast_ema', 'ctr_fvg_htf_slow_ema',
             'ctr_fvg_retest_enabled', 'ctr_fvg_instant_enabled',
-            'ctr_fvg_zl_trend', 'ctr_fvg_zl_15m', 'ctr_fvg_zl_1h', 'ctr_fvg_zl_4h',
+            'ctr_fvg_zl_trend', 'ctr_fvg_zl_5m', 'ctr_fvg_zl_15m', 'ctr_fvg_zl_1h', 'ctr_fvg_zl_4h',
             'ctr_fvg_zl_length', 'ctr_fvg_zl_mult',
+            'ctr_zl_bot_enabled', 'ctr_zl_bot_partial_pct',
             # CTR Fast Scanner toggle + EMA Trend Filter
             'ctr_scanner_enabled', 'ctr_ema_trend_enabled',
             'ctr_ema_trend_fast', 'ctr_ema_trend_slow',
@@ -1684,6 +1688,26 @@ def register_api_routes(app):
         db = get_db()
         job = get_ctr_job(db)
         job.scan_fvg_now()
+        return jsonify({'success': True})
+    
+    @app.route('/api/ctr/zl-bot/states', methods=['GET'])
+    def api_ctr_zl_bot_states():
+        """Get ZLT Bot states for all symbols"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        if hasattr(job, '_zl_bot') and job._zl_bot:
+            return jsonify(job._zl_bot.get_stats())
+        return jsonify({'enabled': False, 'states': {}})
+    
+    @app.route('/api/ctr/zl-bot/reset', methods=['POST'])
+    def api_ctr_zl_bot_reset():
+        """Reset ZLT Bot states"""
+        from scheduler.ctr_job import get_ctr_job
+        db = get_db()
+        job = get_ctr_job(db)
+        if hasattr(job, '_zl_bot') and job._zl_bot:
+            job._zl_bot.reset_all()
         return jsonify({'success': True})
     
     # ========================================

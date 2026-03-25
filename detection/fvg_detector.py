@@ -1302,6 +1302,7 @@ class FVGDetector:
             'retest_enabled': self.retest_enabled,
             'instant_enabled': self.instant_enabled,
             'zl_trend_enabled': self._zl_service.enabled if self._zl_service else False,
+            'zl_5m_enabled': self._zl_service.tf_5m_enabled if self._zl_service else False,
             'zl_15m_enabled': self._zl_service.tf_15m_enabled if self._zl_service else False,
             'zl_1h_enabled': self._zl_service.tf_1h_enabled if self._zl_service else False,
             'zl_4h_enabled': self._zl_service.tf_4h_enabled if self._zl_service else False,
