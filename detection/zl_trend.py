@@ -231,11 +231,14 @@ class ZeroLagTrendService:
             except Exception:
                 pass
         
-        # Fallback: direct REST — always load max 1000
+        # Fallback: direct REST — load enough but not excessive
+        # 5m/15m: 500 bars sufficient (min_bars ~230 for L=55)
+        # 1h/4h: 500 bars sufficient (min_bars ~146 for L=34)
         if not self.bybit:
             return None
         try:
-            klines = self.bybit.get_klines(symbol=symbol, interval=interval, limit=1000)
+            fetch_limit = 500  # Reduced from 1000 — saves REST bandwidth
+            klines = self.bybit.get_klines(symbol=symbol, interval=interval, limit=fetch_limit)
             if klines and len(klines) >= min_bars:
                 return klines
         except Exception:

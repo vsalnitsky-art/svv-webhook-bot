@@ -42,17 +42,19 @@ class SymbolState:
     __slots__ = [
         'state', 'direction', 'macro_since', 'pullback_since',
         'entry_price', 'entry_time', 'partial_done', 'trade_count',
+        'last_exit_time',
     ]
     
     def __init__(self):
         self.state: BotState = BotState.IDLE
-        self.direction: str = ''  # 'LONG' or 'SHORT'
+        self.direction: str = ''
         self.macro_since: float = 0
         self.pullback_since: float = 0
         self.entry_price: float = 0
         self.entry_time: float = 0
         self.partial_done: bool = False
         self.trade_count: int = 0
+        self.last_exit_time: float = 0
     
     def reset(self):
         self.state = BotState.IDLE
@@ -62,6 +64,7 @@ class SymbolState:
         self.entry_price = 0
         self.entry_time = 0
         self.partial_done = False
+        # last_exit_time NOT reset — needed for cooldown
     
     def to_dict(self) -> Dict:
         return {
@@ -73,6 +76,7 @@ class SymbolState:
             'entry_time': self.entry_time,
             'partial_done': self.partial_done,
             'trade_count': self.trade_count,
+            'last_exit_time': self.last_exit_time,
         }
 
 
@@ -89,14 +93,18 @@ class ZLTBot:
         zl_service,
         enabled: bool = False,
         partial_close_pct: float = 50.0,
+        exit_cooldown_sec: int = 900,  # 15 min cooldown after full exit
         on_trade: Optional[Callable] = None,  # callback(symbol, action, details)
         on_notify: Optional[Callable] = None,  # callback(message)
+        get_price: Optional[Callable] = None,  # callback(symbol) -> float
     ):
         self.zl_service = zl_service
         self.enabled = enabled
         self.partial_close_pct = partial_close_pct
-        self.on_trade = on_trade  # Execute trade
-        self.on_notify = on_notify  # Send Telegram
+        self.exit_cooldown_sec = exit_cooldown_sec
+        self.on_trade = on_trade
+        self.on_notify = on_notify
+        self.get_price = get_price  # Get current market price
         
         # State per symbol
         self._states: Dict[str, SymbolState] = {}
@@ -186,6 +194,12 @@ class ZLTBot:
     
     def _handle_idle(self, symbol: str, s: SymbolState, h4: str, h1: str, m15: str, m5: str):
         """IDLE → check if macro forms."""
+        # Cooldown after exit — prevent rapid re-entry (ping-pong)
+        if s.last_exit_time > 0:
+            elapsed = time.time() - s.last_exit_time
+            if elapsed < self.exit_cooldown_sec:
+                return  # Still in cooldown, skip
+        
         # LONG macro
         if h4 == 'bullish' and h1 == 'bullish':
             s.direction = 'LONG'
@@ -283,95 +297,142 @@ class ZLTBot:
     def _do_entry(self, symbol: str, s: SymbolState):
         """Execute entry trade."""
         signal_type = 'BUY' if s.direction == 'LONG' else 'SELL'
+        price = self._get_price(symbol)
         
         s.state = BotState.IN_TRADE
+        s.entry_price = price
         s.entry_time = time.time()
         s.partial_done = False
         s.trade_count += 1
         self._stats['entries'] += 1
         
         label = '🟢 LONG' if s.direction == 'LONG' else '🔴 SHORT'
+        price_str = f"${price:,.4f}" if price else "market"
         msg = (f"⚡ ZLT Bot ENTRY | {symbol} {label}\n"
+               f"Price: {price_str}\n"
                f"Pullback complete — M5 reversed to trend\n"
                f"Trade #{s.trade_count}")
         
-        print(f"[ZLT Bot] ⚡ ENTRY: {symbol} {signal_type}")
+        print(f"[ZLT Bot] ⚡ ENTRY: {symbol} {signal_type} @ {price_str}")
         self._notify(msg)
         
         if self.on_trade:
             self.on_trade(symbol, 'entry', {
                 'signal_type': signal_type,
                 'direction': s.direction,
+                'price': price,
                 'reason': 'ZLT Bot Pullback Entry',
             })
     
     def _do_partial_exit(self, symbol: str, s: SymbolState):
         """Execute partial close."""
+        price = self._get_price(symbol)
+        
         s.state = BotState.IN_TRADE_PARTIAL
         s.partial_done = True
         self._stats['partial_exits'] += 1
         
-        exit_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
-        msg = (f"🔻 ZLT Bot PARTIAL | {symbol}\n"
-               f"M5 → {exit_dir} — closing {self.partial_close_pct}%\n"
-               f"Monitoring for reload or full exit...")
+        pnl_str = ""
+        if s.entry_price and price:
+            pnl_pct = ((price - s.entry_price) / s.entry_price * 100) if s.direction == 'LONG' else ((s.entry_price - price) / s.entry_price * 100)
+            pnl_str = f"\nP&L: {'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
         
-        print(f"[ZLT Bot] 🔻 PARTIAL: {symbol} (close {self.partial_close_pct}%)")
+        exit_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
+        price_str = f"${price:,.4f}" if price else "market"
+        msg = (f"🔻 ZLT Bot PARTIAL | {symbol}\n"
+               f"Price: {price_str} (entry: ${s.entry_price:,.4f}){pnl_str}\n"
+               f"M5 → {exit_dir} — closing {self.partial_close_pct}%")
+        
+        print(f"[ZLT Bot] 🔻 PARTIAL: {symbol} @ {price_str} (close {self.partial_close_pct}%)")
         self._notify(msg)
         
         if self.on_trade:
             self.on_trade(symbol, 'partial_exit', {
                 'close_pct': self.partial_close_pct,
                 'direction': s.direction,
+                'price': price,
+                'entry_price': s.entry_price,
                 'reason': 'ZLT Bot M5 Exit',
             })
     
     def _do_reload(self, symbol: str, s: SymbolState):
-        """Reload position back to 100% (M5 returned while M15 still intact)."""
+        """Reload position back to 100%."""
+        price = self._get_price(symbol)
+        
         s.state = BotState.IN_TRADE
         s.partial_done = False
         self._stats['reloads'] += 1
         
         entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
         signal_type = 'BUY' if s.direction == 'LONG' else 'SELL'
+        price_str = f"${price:,.4f}" if price else "market"
         msg = (f"🔄 ZLT Bot RELOAD | {symbol}\n"
+               f"Price: {price_str}\n"
                f"M5 → {entry_dir} + M15 intact — reloading to 100%")
         
-        print(f"[ZLT Bot] 🔄 RELOAD: {symbol} {signal_type}")
+        print(f"[ZLT Bot] 🔄 RELOAD: {symbol} {signal_type} @ {price_str}")
         self._notify(msg)
         
         if self.on_trade:
             self.on_trade(symbol, 'reload', {
                 'signal_type': signal_type,
                 'direction': s.direction,
+                'price': price,
                 'reason': 'ZLT Bot Reload',
             })
     
     def _do_full_exit(self, symbol: str, s: SymbolState, reason: str):
         """Full position close."""
+        price = self._get_price(symbol)
         was_partial = s.state == BotState.IN_TRADE_PARTIAL
         remaining = f"{100 - self.partial_close_pct}%" if was_partial else "100%"
         
+        pnl_str = ""
+        if s.entry_price and price:
+            pnl_pct = ((price - s.entry_price) / s.entry_price * 100) if s.direction == 'LONG' else ((s.entry_price - price) / s.entry_price * 100)
+            pnl_str = f"\nP&L: {'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
+        
         self._stats['full_exits'] += 1
         
+        price_str = f"${price:,.4f}" if price else "market"
+        entry_str = f"${s.entry_price:,.4f}" if s.entry_price else "?"
+        duration = ""
+        if s.entry_time:
+            dur_sec = time.time() - s.entry_time
+            dur_min = int(dur_sec / 60)
+            duration = f"\nDuration: {dur_min}m"
+        
         msg = (f"❌ ZLT Bot EXIT | {symbol}\n"
+               f"Price: {price_str} (entry: {entry_str}){pnl_str}{duration}\n"
                f"{reason} — closing {remaining}")
         
-        print(f"[ZLT Bot] ❌ EXIT: {symbol} ({reason}, {remaining})")
+        print(f"[ZLT Bot] ❌ EXIT: {symbol} @ {price_str} ({reason}, {remaining})")
         self._notify(msg)
         
         if self.on_trade:
             self.on_trade(symbol, 'full_exit', {
                 'direction': s.direction,
+                'price': price,
+                'entry_price': s.entry_price,
                 'reason': f'ZLT Bot Exit: {reason}',
                 'was_partial': was_partial,
             })
         
+        s.last_exit_time = time.time()
         s.reset()
     
     # ========================================
     # HELPERS
     # ========================================
+    
+    def _get_price(self, symbol: str) -> float:
+        """Get current market price from scanner cache."""
+        if self.get_price:
+            try:
+                return self.get_price(symbol)
+            except:
+                pass
+        return 0.0
     
     def _macro_broken(self, direction: str, h4: str, h1: str) -> bool:
         """Check if macro trend is broken."""

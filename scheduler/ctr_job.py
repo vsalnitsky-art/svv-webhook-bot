@@ -1059,12 +1059,22 @@ class CTRFastJob:
         
         notifier = get_notifier()
         
+        def _get_scanner_price(symbol: str) -> float:
+            """Get current price from scanner cache."""
+            if self._scanner and hasattr(self._scanner, '_symbol_caches'):
+                cache = self._scanner._symbol_caches.get(symbol)
+                if cache and cache.last_price:
+                    return cache.last_price
+            return 0.0
+        
         self._zl_bot = ZLTBot(
             zl_service=self._zl_service,
             enabled=True,
             partial_close_pct=self.zl_bot_partial_pct,
+            exit_cooldown_sec=900,  # 15 min cooldown after full exit
             on_trade=self._on_zl_bot_trade,
             on_notify=notifier.send_message if notifier else None,
+            get_price=_get_scanner_price,
         )
         self._zl_bot.set_watchlist(self.watchlist)
         
@@ -1072,19 +1082,13 @@ class CTRFastJob:
         self._zl_bot.check_all()
         
         print(f"[ZLT Bot] ✅ Started: {len(self.watchlist)} symbols, "
-              f"partial={self.zl_bot_partial_pct}%")
+              f"partial={self.zl_bot_partial_pct}%, cooldown=15min")
     
     def _on_zl_bot_trade(self, symbol: str, action: str, details: Dict):
         """Handle ZLT Bot trade actions — save signal + execute trade."""
-        # Get current price for signal record
-        current_price = 0
-        try:
-            if self._scanner and hasattr(self._scanner, '_symbol_caches'):
-                cache = self._scanner._symbol_caches.get(symbol)
-                if cache and cache.last_price:
-                    current_price = cache.last_price
-        except:
-            pass
+        # Price comes from ZLT Bot (via get_price callback)
+        current_price = details.get('price', 0)
+        entry_price = details.get('entry_price', 0)
         
         # Get bot state for extra info
         bot_state = None
@@ -1125,16 +1129,29 @@ class CTRFastJob:
             'zlt_action': action,
             'zlt_direction': details.get('direction', ''),
             'zlt_trends': trends_str,
+            'zlt_entry_price': entry_price,
             'timestamp': datetime.now(timezone.utc).isoformat(),
         }
         
         # Add action-specific info
-        if action == 'partial_exit':
-            sig['reason'] += f" ({details.get('close_pct', 50)}%)"
-        elif action == 'full_exit':
-            sig['reason'] += f" ({'partial→full' if details.get('was_partial') else 'full 100%'})"
-        elif action == 'entry' and bot_state:
+        if action == 'entry' and bot_state:
             sig['reason'] += f" (trade #{bot_state.trade_count})"
+        elif action == 'partial_exit':
+            pnl = ""
+            if entry_price and current_price:
+                d = details.get('direction', 'LONG')
+                pnl_pct = ((current_price - entry_price) / entry_price * 100) if d == 'LONG' else ((entry_price - current_price) / entry_price * 100)
+                pnl = f" P&L:{'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
+            sig['reason'] += f" ({details.get('close_pct', 50)}%){pnl}"
+        elif action == 'reload':
+            sig['reason'] += f" @ ${current_price:,.4f}" if current_price else ""
+        elif action == 'full_exit':
+            pnl = ""
+            if entry_price and current_price:
+                d = details.get('direction', 'LONG')
+                pnl_pct = ((current_price - entry_price) / entry_price * 100) if d == 'LONG' else ((entry_price - current_price) / entry_price * 100)
+                pnl = f" P&L:{'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
+            sig['reason'] += f" ({'partial→full' if details.get('was_partial') else 'full 100%'}){pnl}"
         
         self._save_signal(sig)
         

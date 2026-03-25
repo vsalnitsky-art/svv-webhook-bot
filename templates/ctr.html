@@ -1322,7 +1322,10 @@
                                 <br><small style="color:#666;">SL: ${{ '%.4f'|format(sig.sl_price|default(0)) }} | TP: ${{ '%.4f'|format(sig.tp_price|default(0)) }} | R:R {{ sig.rr_ratio|default(0) }}</small>
                                 {% endif %}
                                 {% if sig.is_zlt_bot is defined and sig.is_zlt_bot %}
-                                <br><small style="color:#666;">{{ sig.zlt_trends|default('') }}</small>
+                                <br><small style="color:#666;">
+                                    {% if sig.zlt_entry_price is defined and sig.zlt_entry_price %}Entry: ${{ "%.4f"|format(sig.zlt_entry_price) }} | {% endif %}
+                                    {{ sig.zlt_trends|default('') }}
+                                </small>
                                 {% endif %}
                             </td>
                             <td>
