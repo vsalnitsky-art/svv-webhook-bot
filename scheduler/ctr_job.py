@@ -1039,8 +1039,8 @@ class CTRFastJob:
             )
             
             if self._zl_service.enabled:
-                # 30s interval when bot is active (5m responsiveness), 60s otherwise
-                interval = 30 if self.zl_bot_enabled else 60
+                # 45s when bot active (5m responsiveness + rate limit safe), 60s otherwise
+                interval = 45 if self.zl_bot_enabled else 60
                 self._zl_service.start(self.watchlist, update_interval=interval)
             
             # Create ZLT Bot
@@ -1075,7 +1075,70 @@ class CTRFastJob:
               f"partial={self.zl_bot_partial_pct}%")
     
     def _on_zl_bot_trade(self, symbol: str, action: str, details: Dict):
-        """Handle ZLT Bot trade actions — execute via trade executor."""
+        """Handle ZLT Bot trade actions — save signal + execute trade."""
+        # Get current price for signal record
+        current_price = 0
+        try:
+            if self._scanner and hasattr(self._scanner, '_symbol_caches'):
+                cache = self._scanner._symbol_caches.get(symbol)
+                if cache and cache.last_price:
+                    current_price = cache.last_price
+        except:
+            pass
+        
+        # Get bot state for extra info
+        bot_state = None
+        if self._zl_bot and symbol in self._zl_bot._states:
+            bot_state = self._zl_bot._states[symbol]
+        
+        # Get ZLT trends for signal context
+        trends_str = ''
+        if self._zl_service:
+            trends = self._zl_service.get_all_trends(symbol)
+            parts = []
+            for tf_key, label in [('240', 'H4'), ('60', 'H1'), ('15', 'M15'), ('5', 'M5')]:
+                t = trends.get(tf_key, '?')
+                icon = '▲' if t == 'bullish' else '▼' if t == 'bearish' else '●'
+                parts.append(f"{label}:{icon}")
+            trends_str = ' '.join(parts)
+        
+        # === ALWAYS save to Executed Signals ===
+        action_labels = {
+            'entry': '⚡ ENTRY',
+            'partial_exit': '🔻 PARTIAL',
+            'reload': '🔄 RELOAD',
+            'full_exit': '❌ EXIT',
+        }
+        
+        signal_type = details.get('signal_type', 'BUY' if details.get('direction') == 'LONG' else 'SELL')
+        reason_detail = details.get('reason', f'ZLT Bot {action}')
+        
+        sig = {
+            'symbol': symbol,
+            'type': signal_type,
+            'price': current_price,
+            'stc': 0,
+            'timeframe': 'MTF',
+            'smc_filtered': False,
+            'reason': f"🤖 ZLT Bot {action_labels.get(action, action)} | {reason_detail}",
+            'is_zlt_bot': True,
+            'zlt_action': action,
+            'zlt_direction': details.get('direction', ''),
+            'zlt_trends': trends_str,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+        
+        # Add action-specific info
+        if action == 'partial_exit':
+            sig['reason'] += f" ({details.get('close_pct', 50)}%)"
+        elif action == 'full_exit':
+            sig['reason'] += f" ({'partial→full' if details.get('was_partial') else 'full 100%'})"
+        elif action == 'entry' and bot_state:
+            sig['reason'] += f" (trade #{bot_state.trade_count})"
+        
+        self._save_signal(sig)
+        
+        # === Execute trade (if Auto-Trade enabled) ===
         if not self._trade_executor:
             print(f"[ZLT Bot] ⚠️ No trade executor for {symbol} {action}")
             return
@@ -1090,20 +1153,18 @@ class CTRFastJob:
                 return
             
             if action == 'entry':
-                signal_type = details['signal_type']
                 result = self._trade_executor.execute_signal(
                     symbol=symbol,
                     signal_type=signal_type,
-                    price=0,  # market order
-                    reason=details.get('reason', 'ZLT Bot'),
+                    price=0,
+                    reason=reason_detail,
                 )
                 if result['success']:
-                    # Get actual entry price
                     time.sleep(0.3)
                     pos = self._trade_executor.get_position_for_symbol(symbol)
                     entry_price = pos.get('entry_price', 0) if pos else 0
-                    if self._zl_bot and symbol in self._zl_bot._states:
-                        self._zl_bot._states[symbol].entry_price = entry_price
+                    if bot_state:
+                        bot_state.entry_price = entry_price
                     print(f"[ZLT Bot] 💰 Entry executed: {symbol} {signal_type} @ ${entry_price:.4f}")
                 else:
                     print(f"[ZLT Bot] ⚠️ Entry failed: {symbol} — {result.get('details', '?')}")
@@ -1122,12 +1183,11 @@ class CTRFastJob:
                             print(f"[ZLT Bot] ⚠️ Partial close failed: {symbol}")
             
             elif action == 'reload':
-                signal_type = details['signal_type']
                 result = self._trade_executor.execute_signal(
                     symbol=symbol,
                     signal_type=signal_type,
                     price=0,
-                    reason=details.get('reason', 'ZLT Bot Reload'),
+                    reason=reason_detail,
                 )
                 if result['success']:
                     print(f"[ZLT Bot] 💰 Reload executed: {symbol} {signal_type}")

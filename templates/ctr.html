@@ -1310,12 +1310,19 @@
                             </td>
                             <td>${{ "%.8f"|format(sig.price) if sig.price < 1 else "%.4f"|format(sig.price) if sig.price < 100 else "%.2f"|format(sig.price) }}</td>
                             <td class="stc-value {{ 'stc-oversold' if sig.stc <= 25 else 'stc-overbought' if sig.stc >= 75 else 'stc-neutral' }}">
-                                {{ "%.2f"|format(sig.stc) }}
+                                {% if sig.is_zlt_bot is defined and sig.is_zlt_bot %}
+                                    <span style="color: #ffa500; font-size: 0.8em;">🤖</span>
+                                {% else %}
+                                    {{ "%.2f"|format(sig.stc) }}
+                                {% endif %}
                             </td>
-                            <td style="font-size: 0.8em; color: {{ '#2196f3' if 'FVG' in (sig.reason|default('')) else '#ff5252' if 'SL' in (sig.reason|default('')) else '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
+                            <td style="font-size: 0.8em; color: {{ '#ffa500' if 'ZLT Bot' in (sig.reason|default('')) else '#2196f3' if 'FVG' in (sig.reason|default('')) else '#ff5252' if 'SL' in (sig.reason|default('')) else '#ff9800' if 'Trend Guard' in (sig.reason|default('')) else '#4fc3f7' if 'Gap' in (sig.reason|default('')) else '#aaa' }};">
                                 {{ sig.reason|default('Crossover') }}
                                 {% if sig.is_fvg is defined and sig.is_fvg %}
                                 <br><small style="color:#666;">SL: ${{ '%.4f'|format(sig.sl_price|default(0)) }} | TP: ${{ '%.4f'|format(sig.tp_price|default(0)) }} | R:R {{ sig.rr_ratio|default(0) }}</small>
+                                {% endif %}
+                                {% if sig.is_zlt_bot is defined and sig.is_zlt_bot %}
+                                <br><small style="color:#666;">{{ sig.zlt_trends|default('') }}</small>
                                 {% endif %}
                             </td>
                             <td>
