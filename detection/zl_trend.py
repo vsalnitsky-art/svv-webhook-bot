@@ -35,10 +35,15 @@ class ZeroLagTrendService:
     # Bybit interval codes
     TF_MAP = {'5m': '5', '15m': '15', '1h': '60', '4h': '240'}
     
-    # Update frequency per TF (in scan cycles, ~45s each)
-    # Staggered: 5m/15m on even cycles, 1h on cycle%5, 4h on cycle%15
-    # This avoids all TFs hitting REST at once
-    TF_UPDATE_FREQ = {'5': 2, '15': 2, '60': 5, '240': 15}
+    # Update frequency per TF (in scan cycles)
+    # 5m/15m: EVERY cycle — critical for entry/exit detection
+    # 1h: every 3rd cycle — macro, changes ~once per hour
+    # 4h: every 10th cycle — macro, changes ~once per 4 hours
+    TF_UPDATE_FREQ = {'5': 1, '15': 1, '60': 3, '240': 10}
+    
+    # Stagger offsets: prevent all heavy TFs hitting same cycle
+    # Cycle 0: 5m+15m, Cycle 1: 5m+15m, Cycle 2: 5m+15m+1h, etc.
+    TF_STAGGER = {'5': 0, '15': 0, '60': 2, '240': 5}
     
     # Default per-TF parameters (optimized from Pine Script)
     DEFAULT_TF_PARAMS = {
@@ -86,7 +91,7 @@ class ZeroLagTrendService:
         self._watchlist: List[str] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._update_interval: int = 45  # 45s for balanced rate limit
+        self._update_interval: int = 30  # 30s — fast detection for 5m/15m
         
         # Klines provider callback (optional)
         self._klines_providers: Dict[str, Callable] = {}
@@ -295,20 +300,24 @@ class ZeroLagTrendService:
             return
         
         tf_configs = [
-            (self.tf_5m_enabled,  '5',   klines_5m,  self.TF_UPDATE_FREQ['5']),
-            (self.tf_15m_enabled, '15',  klines_15m, self.TF_UPDATE_FREQ['15']),
-            (self.tf_1h_enabled,  '60',  None,       self.TF_UPDATE_FREQ['60']),
-            (self.tf_4h_enabled,  '240', None,       self.TF_UPDATE_FREQ['240']),
+            (self.tf_5m_enabled,  '5',   klines_5m,  self.TF_UPDATE_FREQ['5'],  self.TF_STAGGER.get('5', 0)),
+            (self.tf_15m_enabled, '15',  klines_15m, self.TF_UPDATE_FREQ['15'], self.TF_STAGGER.get('15', 0)),
+            (self.tf_1h_enabled,  '60',  None,       self.TF_UPDATE_FREQ['60'], self.TF_STAGGER.get('60', 0)),
+            (self.tf_4h_enabled,  '240', None,       self.TF_UPDATE_FREQ['240'], self.TF_STAGGER.get('240', 0)),
         ]
         
-        for enabled, tf_key, provided_klines, freq in tf_configs:
+        rest_calls = 0
+        for enabled, tf_key, provided_klines, freq, stagger in tf_configs:
             if not enabled:
                 continue
-            if self._scan_counter % freq != 0:
+            # Staggered check: (counter + stagger) % freq == 0
+            if (self._scan_counter + stagger) % freq != 0:
                 continue
             self._update_tf(symbol, tf_key, provided_klines)
-            if tf_key in ('60', '240'):
-                time.sleep(0.5)  # Rate limit for REST-fetched TFs
+            if provided_klines is None:
+                rest_calls += 1
+                if rest_calls > 1:
+                    time.sleep(0.15)  # Brief pause between consecutive REST calls
     
     def update_all(self, klines_map_15m: Optional[Dict[str, List[Dict]]] = None):
         """Update all watchlist symbols. Increments scan counter AFTER completion."""
@@ -318,7 +327,7 @@ class ZeroLagTrendService:
         for symbol in self._watchlist:
             kl_15m = (klines_map_15m or {}).get(symbol)
             self.update_symbol(symbol, klines_15m=kl_15m)
-            time.sleep(1.0)  # Rate limit between symbols (10 sym × 4 TF = safe under Bybit 120/min)
+            time.sleep(0.3)  # 0.3s between symbols (10 sym = 3s total)
         
         # Increment AFTER all symbols processed
         self._scan_counter += 1

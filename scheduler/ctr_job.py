@@ -1039,8 +1039,8 @@ class CTRFastJob:
             )
             
             if self._zl_service.enabled:
-                # 45s when bot active (5m responsiveness + rate limit safe), 60s otherwise
-                interval = 45 if self.zl_bot_enabled else 60
+                # 30s when bot active (fastest 5m detection), 60s otherwise
+                interval = 30 if self.zl_bot_enabled else 60
                 self._zl_service.start(self.watchlist, update_interval=interval)
             
             # Create ZLT Bot
