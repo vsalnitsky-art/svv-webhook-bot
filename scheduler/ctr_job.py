@@ -1380,6 +1380,7 @@ class CTRFastJob:
             
             # Start scanner (SMC Trend Filter is created internally by scanner)
             self._scanner.start(self.watchlist)
+            self._scanner.signals_muted = not self.ctr_scanner_enabled
             self._running = True
             
             # Start results saver thread
@@ -1515,6 +1516,8 @@ class CTRFastJob:
                 'smc_trend_early_warning': self.smc_trend_early_warning,
                 'smc_trend_swing_15m': self.smc_trend_swing_15m,
             })
+            # Sync signal muting
+            self._scanner.signals_muted = not self.ctr_scanner_enabled
         
         # Start/restart monitoring thread if needed
         need_monitor = ((self.sl_monitor_enabled and self.sl_monitor_pct > 0) 

@@ -1546,6 +1546,10 @@ class CTRFastScanner:
     def _process_signal(self, symbol: str, signal_type: str, stc_value: float,
                         price: float, cache: SymbolCache = None, reason: str = ""):
         """Process and send signal notification. Cooldown is optional (v2.6)."""
+        # If muted, suppress all signals (STC still computed for UI display)
+        if getattr(self, 'signals_muted', False):
+            return
+        
         now = time.time()
         
         is_priority = "Trend Guard" in reason
