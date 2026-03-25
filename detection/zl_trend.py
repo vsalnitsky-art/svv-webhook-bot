@@ -35,8 +35,8 @@ class ZeroLagTrendService:
     # Bybit interval codes
     TF_MAP = {'5m': '5', '15m': '15', '1h': '60', '4h': '240'}
     
-    # Update frequency per TF (in scan cycles, ~60s each)
-    TF_UPDATE_FREQ = {'5': 1, '15': 1, '60': 5, '240': 15}
+    # Update frequency per TF (in scan cycles, ~30s each)
+    TF_UPDATE_FREQ = {'5': 2, '15': 2, '60': 5, '240': 15}
     
     # Default per-TF parameters (optimized from Pine Script)
     DEFAULT_TF_PARAMS = {
@@ -303,7 +303,7 @@ class ZeroLagTrendService:
                 continue
             self._update_tf(symbol, tf_key, provided_klines)
             if tf_key in ('60', '240'):
-                time.sleep(0.2)  # Rate limit for REST-fetched TFs
+                time.sleep(0.5)  # Rate limit for REST-fetched TFs
     
     def update_all(self, klines_map_15m: Optional[Dict[str, List[Dict]]] = None):
         """Update all watchlist symbols. Increments scan counter AFTER completion."""
@@ -313,7 +313,7 @@ class ZeroLagTrendService:
         for symbol in self._watchlist:
             kl_15m = (klines_map_15m or {}).get(symbol)
             self.update_symbol(symbol, klines_15m=kl_15m)
-            time.sleep(0.3)  # Rate limit between symbols
+            time.sleep(0.5)  # Rate limit between symbols
         
         # Increment AFTER all symbols processed
         self._scan_counter += 1

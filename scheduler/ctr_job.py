@@ -1379,8 +1379,8 @@ class CTRFastJob:
                     print(f"[CTR Job] ✅ ZLT ready ({trend_count} symbols computed)")
             
             # Start scanner (SMC Trend Filter is created internally by scanner)
-            self._scanner.start(self.watchlist)
             self._scanner.signals_muted = not self.ctr_scanner_enabled
+            self._scanner.start(self.watchlist)
             self._running = True
             
             # Start results saver thread

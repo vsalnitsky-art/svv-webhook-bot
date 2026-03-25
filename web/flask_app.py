@@ -87,27 +87,37 @@ def create_app():
         except Exception as e:
             print(f"[APP] Failed to start scheduler: {e}")
     
-    # Auto-start CTR Scanner if it was running before restart
-    try:
-        db = get_db()
-        if db.get_setting('ctr_auto_start', '0') == '1':
-            import threading
-            def _auto_start_ctr():
-                import time
-                time.sleep(10)  # Wait for app to fully initialize + avoid WAF
-                try:
-                    from scheduler.ctr_job import start_ctr_job
-                    job = start_ctr_job(get_db())
-                    if job.is_running():
-                        print("[CTR Job] ✅ Auto-started after server restart")
-                    else:
-                        print("[CTR Job] ⚠️ Auto-start failed — scanner not running")
-                except Exception as e:
-                    print(f"[CTR Job] ❌ Auto-start error: {e}")
-            threading.Thread(target=_auto_start_ctr, daemon=True).start()
-            print("[APP] CTR Scanner auto-start scheduled (3s delay)")
-    except Exception as e:
-        print(f"[APP] CTR auto-start check failed: {e}")
+    # Auto-start CTR Scanner — use before_request to survive Gunicorn fork
+    _ctr_auto_started = {'done': False}
+    
+    @app.before_request
+    def _maybe_auto_start_ctr():
+        if _ctr_auto_started['done']:
+            return
+        _ctr_auto_started['done'] = True
+        
+        try:
+            db = get_db()
+            if db.get_setting('ctr_auto_start', '0') == '1':
+                import threading
+                def _do_start():
+                    import time
+                    time.sleep(5)  # Short delay for app init
+                    try:
+                        from scheduler.ctr_job import start_ctr_job
+                        job = start_ctr_job(get_db())
+                        if job.is_running():
+                            print("[CTR Job] ✅ Auto-started after server restart")
+                        else:
+                            print("[CTR Job] ⚠️ Auto-start failed — scanner not running")
+                    except Exception as e:
+                        print(f"[CTR Job] ❌ Auto-start error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                threading.Thread(target=_do_start, daemon=True).start()
+                print("[APP] CTR Scanner auto-start scheduled (worker process)")
+        except Exception as e:
+            print(f"[APP] CTR auto-start check failed: {e}")
     
     return app
 
