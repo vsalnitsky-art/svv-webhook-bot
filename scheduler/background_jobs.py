@@ -112,7 +112,12 @@ class BackgroundJobs:
         if self.is_running:
             return
         
-        self._setup_jobs()
+        # Check CTR Only mode — skip all sleeper jobs
+        ctr_only = self.db.get_setting('ctr_only_mode', '0')
+        if isinstance(ctr_only, str):
+            ctr_only = ctr_only.lower() in ('1', 'true', 'yes')
+        
+        self._setup_jobs(ctr_only=ctr_only)
         self.scheduler.start()
         self.is_running = True
         print("[SCHEDULER] Started background jobs")
@@ -121,26 +126,30 @@ class BackgroundJobs:
         modules = ['sleepers', 'orderblocks', 'signals', 'positions', 'intensive']
         enabled = [m for m in modules if self._is_module_enabled(m)]
         disabled = [m for m in modules if not self._is_module_enabled(m)]
-        print(f"[SCHEDULER] Enabled modules: {', '.join(enabled) if enabled else 'none'}")
-        if disabled:
+        if ctr_only:
+            print("[SCHEDULER] CTR Only mode — all sleeper jobs SKIPPED")
+        else:
+            print(f"[SCHEDULER] Enabled modules: {', '.join(enabled) if enabled else 'none'}")
+        if disabled and not ctr_only:
             print(f"[SCHEDULER] Disabled modules: {', '.join(disabled)}")
         
         self.db.log_event(
-            message=f"Background scheduler started. Enabled: {', '.join(enabled)}", 
+            message=f"Background scheduler started. {'CTR Only' if ctr_only else 'Enabled: ' + ', '.join(enabled)}", 
             level="INFO", 
             category="SYSTEM"
         )
         
-        # Run initial scan after 30 seconds to give time for app to fully start
-        print("[SCHEDULER] Initial Sleeper scan scheduled in 30 seconds...")
-        self.scheduler.add_job(
-            self._job_sleeper_scan,
-            'date',
-            run_date=datetime.now() + timedelta(seconds=30),
-            id='initial_sleeper_scan',
-            name='Initial Sleeper Scan',
-            replace_existing=True
-        )
+        # Run initial scan — only if NOT CTR Only mode
+        if not ctr_only:
+            print("[SCHEDULER] Initial Sleeper scan scheduled in 30 seconds...")
+            self.scheduler.add_job(
+                self._job_sleeper_scan,
+                'date',
+                run_date=datetime.now() + timedelta(seconds=30),
+                id='initial_sleeper_scan',
+                name='Initial Sleeper Scan',
+                replace_existing=True
+            )
     
     def stop(self):
         """Зупинити scheduler"""
@@ -152,54 +161,79 @@ class BackgroundJobs:
         print("[SCHEDULER] Stopped background jobs")
         self.db.log_event(message="Background scheduler stopped", level="INFO", category="SYSTEM")
     
-    def _setup_jobs(self):
+    def _setup_jobs(self, ctr_only: bool = False):
         """
-        Налаштувати всі фонові задачі
-        
-        v3.3: Optimized intervals to prevent Binance IP ban
-        - Sleeper scan: 30 min (was 15)
-        - OB scan: 10 min (was 5)
-        - Signal check: 2 min (was 1)
-        - Position monitor: 60 sec (was 30)
+        Налаштувати фонові задачі.
+        When ctr_only=True, only cleanup + daily summary are scheduled.
         """
         
-        # 1. Sleeper Scan - кожні 30 хвилин (збільшено для захисту від бану)
-        self.scheduler.add_job(
-            self._job_sleeper_scan,
-            IntervalTrigger(minutes=15),  # v8.2.4: Зменшено з 30 хв для швидшої детекції
-            id='sleeper_scan',
-            name='Sleeper Scanner',
-            replace_existing=True
-        )
+        if not ctr_only:
+            # 1. Sleeper Scan
+            self.scheduler.add_job(
+                self._job_sleeper_scan,
+                IntervalTrigger(minutes=15),
+                id='sleeper_scan',
+                name='Sleeper Scanner',
+                replace_existing=True
+            )
+            
+            # 2. Order Block Scan
+            self.scheduler.add_job(
+                self._job_ob_scan,
+                IntervalTrigger(minutes=10),
+                id='ob_scan',
+                name='Order Block Scanner',
+                replace_existing=True
+            )
+            
+            # 3. Signal Check
+            self.scheduler.add_job(
+                self._job_signal_check,
+                IntervalTrigger(minutes=2),
+                id='signal_check',
+                name='Signal Checker',
+                replace_existing=True
+            )
+            
+            # 4. Position Monitor
+            self.scheduler.add_job(
+                self._job_position_monitor,
+                IntervalTrigger(seconds=60),
+                id='position_monitor',
+                name='Position Monitor',
+                replace_existing=True
+            )
+            
+            # 7. HP Update
+            self.scheduler.add_job(
+                self._job_hp_update,
+                IntervalTrigger(hours=4),
+                id='hp_update',
+                name='HP Update',
+                replace_existing=True
+            )
+            
+            # 8. Intensive READY Monitor
+            self.scheduler.add_job(
+                self._job_intensive_ready_monitor,
+                IntervalTrigger(minutes=5),
+                id='intensive_ready_monitor',
+                name='Intensive READY Monitor',
+                replace_existing=True
+            )
+            
+            # 9. SMC Entry Checker
+            self.scheduler.add_job(
+                self._job_smc_entry_check,
+                IntervalTrigger(minutes=5),
+                id='smc_entry_check',
+                name='SMC Entry Checker',
+                replace_existing=True
+            )
         
-        # 2. Order Block Scan для ready sleepers - кожні 10 хвилин
-        self.scheduler.add_job(
-            self._job_ob_scan,
-            IntervalTrigger(minutes=10),
-            id='ob_scan',
-            name='Order Block Scanner',
-            replace_existing=True
-        )
+        # === Always-running jobs (lightweight, safe in CTR Only) ===
         
-        # 3. Signal Check - кожні 2 хвилини
-        self.scheduler.add_job(
-            self._job_signal_check,
-            IntervalTrigger(minutes=2),
-            id='signal_check',
-            name='Signal Checker',
-            replace_existing=True
-        )
-        
-        # 4. Position Monitor - кожну хвилину
-        self.scheduler.add_job(
-            self._job_position_monitor,
-            IntervalTrigger(seconds=60),
-            id='position_monitor',
-            name='Position Monitor',
-            replace_existing=True
-        )
-        
-        # 5. Cleanup - кожну годину
+        # 5. Cleanup — remove dead sleepers, expired OBs (1h)
         self.scheduler.add_job(
             self._job_cleanup,
             IntervalTrigger(hours=1),
@@ -208,40 +242,12 @@ class BackgroundJobs:
             replace_existing=True
         )
         
-        # 6. Daily Summary - о 00:00
+        # 6. Daily Summary — stats at midnight
         self.scheduler.add_job(
             self._job_daily_summary,
             CronTrigger(hour=0, minute=0),
             id='daily_summary',
             name='Daily Summary',
-            replace_existing=True
-        )
-        
-        # 7. HP Update для sleepers - кожні 4 години
-        self.scheduler.add_job(
-            self._job_hp_update,
-            IntervalTrigger(hours=4),
-            id='hp_update',
-            name='HP Update',
-            replace_existing=True
-        )
-        
-        # 8. Intensive READY Monitor - кожні 5 хвилин (v4.2)
-        self.scheduler.add_job(
-            self._job_intensive_ready_monitor,
-            IntervalTrigger(minutes=5),
-            id='intensive_ready_monitor',
-            name='Intensive READY Monitor',
-            replace_existing=True
-        )
-        
-        # 9. SMC Entry Checker - кожні 5 хвилин (v8.1)
-        # Перевіряє STALKING монети та шукає ENTRY_FOUND
-        self.scheduler.add_job(
-            self._job_smc_entry_check,
-            IntervalTrigger(minutes=5),
-            id='smc_entry_check',
-            name='SMC Entry Checker',
             replace_existing=True
         )
     
