@@ -340,6 +340,17 @@ class CTRFastJob:
                     if not zl_ok:
                         print(f"[CTR Job] 🚫 ZLT BLOCKED [{zl_block}]: {symbol} {signal_type}")
                         return
+                
+                # ZLT Bot conflict guard — don't trade against active bot position
+                if self._zl_bot and self._zl_bot.enabled:
+                    bot_state = self._zl_bot._states.get(symbol)
+                    if bot_state and bot_state.state.value in ('in_trade', 'in_trade_partial'):
+                        bot_dir = bot_state.direction  # 'LONG' or 'SHORT'
+                        ctr_dir = signal_type  # 'BUY' or 'SELL'
+                        # Block if CTR wants opposite of bot direction
+                        if (bot_dir == 'LONG' and ctr_dir == 'SELL') or (bot_dir == 'SHORT' and ctr_dir == 'BUY'):
+                            print(f"[CTR Job] 🚫 ZLT Bot CONFLICT: {symbol} CTR={ctr_dir} vs Bot={bot_dir} — skipped")
+                            return
             
             # v2.4: Trend Guard signals are priority — they bypass dedup
             # SL signals and FVG signals are also priority
@@ -620,7 +631,7 @@ class CTRFastJob:
         return self._ticker_cache.get(symbol, 0.0)
     
     def _start_sl_monitor(self):
-        """Start SL monitoring thread"""
+        """Start monitoring thread (SL Monitor + FVG TP + ZLT Bot)"""
         if self._sl_monitor_thread and self._sl_monitor_thread.is_alive():
             return
         
@@ -628,7 +639,16 @@ class CTRFastJob:
             target=self._sl_monitor_loop, daemon=True, name="SL-Monitor"
         )
         self._sl_monitor_thread.start()
-        print(f"[CTR Job] 🛑 SL Monitor started: {self.sl_monitor_pct}%, interval={self.sl_check_interval}s")
+        
+        parts = []
+        if self.sl_monitor_enabled and self.sl_monitor_pct > 0:
+            parts.append(f"SL={self.sl_monitor_pct}%")
+        if self.fvg_tp_enabled:
+            parts.append("FVG TP")
+        if self.zl_bot_enabled:
+            parts.append("ZLT Bot")
+        label = ', '.join(parts) if parts else 'idle'
+        print(f"[CTR Job] 🔄 Monitor started: [{label}], interval={self.sl_check_interval}s")
     
     def _sl_monitor_loop(self):
         """Main monitoring loop — SL Monitor + FVG TP Manager"""
@@ -1496,18 +1516,48 @@ class CTRFastJob:
                 'smc_trend_swing_15m': self.smc_trend_swing_15m,
             })
         
-        # Start/restart monitoring thread if SL Monitor or FVG TP Manager needs it
+        # Start/restart monitoring thread if needed
         need_monitor = ((self.sl_monitor_enabled and self.sl_monitor_pct > 0) 
                        or self.fvg_tp_enabled or self.zl_bot_enabled)
         if self._running and need_monitor:
             if not (self._sl_monitor_thread and self._sl_monitor_thread.is_alive()):
                 self._start_sl_monitor()
-            parts = []
-            if self.sl_monitor_enabled and self.sl_monitor_pct > 0:
-                parts.append(f"SL={self.sl_monitor_pct}%")
-            if self.fvg_tp_enabled:
-                parts.append(f"FVG TP: trigger={self.fvg_tp_trigger_pct}%, close={self.fvg_tp_close_pct}%, trail={self.fvg_tp_trail_pct}%@{self.fvg_tp_trail_start_pct}%")
-            print(f"[CTR Job] 🛑 Monitor: {', '.join(parts)}, interval={self.sl_check_interval}s")
+        
+        # ZLT Service + Bot dynamic start/stop
+        if self._running:
+            zlt_needed = self.fvg_zl_trend_enabled or self.zl_bot_enabled
+            if zlt_needed and not self._zl_service:
+                # Start ZLT service
+                bybit = None
+                if self._trade_executor and hasattr(self._trade_executor, 'bybit'):
+                    bybit = self._trade_executor.bybit
+                if bybit:
+                    self._start_zl_service(bybit)
+                    print("[CTR Job] 🔄 ZLT Service started (settings reload)")
+            elif zlt_needed and self._zl_service:
+                # Update existing service settings
+                self._zl_service.update_settings(
+                    enabled=True,
+                    tf_5m_enabled=self.fvg_zl_5m_enabled or self.zl_bot_enabled,
+                    tf_15m_enabled=self.fvg_zl_15m_enabled or self.zl_bot_enabled,
+                    tf_1h_enabled=self.fvg_zl_1h_enabled or self.zl_bot_enabled,
+                    tf_4h_enabled=self.fvg_zl_4h_enabled or self.zl_bot_enabled,
+                )
+            elif not zlt_needed and self._zl_service:
+                self._zl_service.stop()
+                self._zl_service = None
+                print("[CTR Job] 🔄 ZLT Service stopped (settings reload)")
+            
+            # ZLT Bot
+            if self.zl_bot_enabled and not self._zl_bot and self._zl_service:
+                self._start_zl_bot()
+                print("[CTR Job] 🔄 ZLT Bot started (settings reload)")
+            elif self.zl_bot_enabled and self._zl_bot:
+                self._zl_bot.enabled = True
+                self._zl_bot.partial_close_pct = self.zl_bot_partial_pct
+            elif not self.zl_bot_enabled and self._zl_bot:
+                self._zl_bot.enabled = False
+                print("[CTR Job] 🔄 ZLT Bot disabled (settings reload)")
         
         # FVG Detector reload
         if self._running and FVG_AVAILABLE:
