@@ -242,7 +242,7 @@ class ZeroLagTrendService:
         if not self.bybit:
             return None
         try:
-            fetch_limit = 500  # Reduced from 1000 — saves REST bandwidth
+            fetch_limit = 300  # 300 bars sufficient (max min_bars=230 for L=55)
             klines = self.bybit.get_klines(symbol=symbol, interval=interval, limit=fetch_limit)
             if klines and len(klines) >= min_bars:
                 return klines
@@ -317,7 +317,7 @@ class ZeroLagTrendService:
             if provided_klines is None:
                 rest_calls += 1
                 if rest_calls > 1:
-                    time.sleep(0.15)  # Brief pause between consecutive REST calls
+                    time.sleep(0.3)  # Pause between consecutive REST calls for same symbol
     
     def update_all(self, klines_map_15m: Optional[Dict[str, List[Dict]]] = None):
         """Update all watchlist symbols. Increments scan counter AFTER completion."""
@@ -327,7 +327,7 @@ class ZeroLagTrendService:
         for symbol in self._watchlist:
             kl_15m = (klines_map_15m or {}).get(symbol)
             self.update_symbol(symbol, klines_15m=kl_15m)
-            time.sleep(0.3)  # 0.3s between symbols (10 sym = 3s total)
+            time.sleep(0.5)  # 0.5s between symbols (11 sym = 5.5s total)
         
         # Increment AFTER all symbols processed
         self._scan_counter += 1

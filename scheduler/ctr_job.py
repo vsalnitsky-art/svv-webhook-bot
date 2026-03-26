@@ -579,6 +579,14 @@ class CTRFastJob:
                 sig_data['fvg_low'] = signal.get('fvg_low', 0)
                 sig_data['rr_ratio'] = signal.get('rr_ratio', 0)
             
+            # ZLT Bot fields
+            if signal.get('is_zlt_bot'):
+                sig_data['is_zlt_bot'] = True
+                sig_data['zlt_action'] = signal.get('zlt_action', '')
+                sig_data['zlt_direction'] = signal.get('zlt_direction', '')
+                sig_data['zlt_trends'] = signal.get('zlt_trends', '')
+                sig_data['zlt_entry_price'] = signal.get('zlt_entry_price', 0)
+            
             signals.append(sig_data)
             
             # Зберігаємо останні 500 сигналів
@@ -1061,10 +1069,10 @@ class CTRFastJob:
         
         def _get_scanner_price(symbol: str) -> float:
             """Get current price from scanner cache."""
-            if self._scanner and hasattr(self._scanner, '_symbol_caches'):
-                cache = self._scanner._symbol_caches.get(symbol)
-                if cache and cache.last_price:
-                    return cache.last_price
+            if self._scanner and hasattr(self._scanner, '_cache'):
+                cache = self._scanner._cache.get(symbol)
+                if cache and cache.klines:
+                    return cache.klines[-1].close
             return 0.0
         
         self._zl_bot = ZLTBot(
