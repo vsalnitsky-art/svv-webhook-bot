@@ -1718,7 +1718,9 @@ def register_api_routes(app):
         job = get_ctr_job(db)
         if hasattr(job, '_zl_bot') and job._zl_bot:
             job._zl_bot.reset_all()
-        return jsonify({'success': True})
+        # Also clear persisted state
+        db.set_setting('zl_bot_states', {})
+        return jsonify({'status': 'ok'})
     
     # ========================================
     # QM Zone Hunter Routes
