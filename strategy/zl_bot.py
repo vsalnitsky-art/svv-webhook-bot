@@ -85,7 +85,26 @@ class SymbolState:
             'last_exit_time': self.last_exit_time,
             'entry_m15': self.entry_m15,
             'm15_aligned': self.m15_aligned,
+            'last_partial_time': self.last_partial_time,
         }
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'SymbolState':
+        """Restore state from saved dict."""
+        s = cls()
+        s.state = BotState(data.get('state', 'idle'))
+        s.direction = data.get('direction', '')
+        s.macro_since = data.get('macro_since', 0)
+        s.pullback_since = data.get('pullback_since', 0)
+        s.entry_price = data.get('entry_price', 0)
+        s.entry_time = data.get('entry_time', 0)
+        s.partial_done = data.get('partial_done', False)
+        s.trade_count = data.get('trade_count', 0)
+        s.last_exit_time = data.get('last_exit_time', 0)
+        s.entry_m15 = data.get('entry_m15', '')
+        s.m15_aligned = data.get('m15_aligned', False)
+        s.last_partial_time = data.get('last_partial_time', 0)
+        return s
 
 
 class ZLTBot:
@@ -101,12 +120,13 @@ class ZLTBot:
         zl_service,
         enabled: bool = False,
         partial_close_pct: float = 50.0,
-        exit_cooldown_sec: int = 900,  # 15 min cooldown after full exit
-        min_trade_sec: int = 300,      # 5 min minimum trade duration before any exit
-        partial_cooldown_sec: int = 300,  # 5 min cooldown between partial/reload
+        exit_cooldown_sec: int = 900,
+        min_trade_sec: int = 300,
+        partial_cooldown_sec: int = 300,
         on_trade: Optional[Callable] = None,
         on_notify: Optional[Callable] = None,
         get_price: Optional[Callable] = None,
+        on_save: Optional[Callable] = None,  # callback(states_dict) → save to DB
     ):
         self.zl_service = zl_service
         self.enabled = enabled
@@ -117,6 +137,7 @@ class ZLTBot:
         self.on_trade = on_trade
         self.on_notify = on_notify
         self.get_price = get_price
+        self.on_save = on_save  # Persist state to DB
         
         # State per symbol
         self._states: Dict[str, SymbolState] = {}
@@ -372,6 +393,7 @@ class ZLTBot:
                 'price': price,
                 'reason': 'ZLT Bot Pullback Entry',
             })
+        self._save_state()
     
     def _do_partial_exit(self, symbol: str, s: SymbolState):
         """Execute partial close."""
@@ -404,6 +426,7 @@ class ZLTBot:
                 'entry_price': s.entry_price,
                 'reason': 'ZLT Bot M5 Exit',
             })
+        self._save_state()
     
     def _do_reload(self, symbol: str, s: SymbolState):
         """Reload position back to 100%."""
@@ -430,6 +453,7 @@ class ZLTBot:
                 'price': price,
                 'reason': 'ZLT Bot Reload',
             })
+        self._save_state()
     
     def _do_full_exit(self, symbol: str, s: SymbolState, reason: str):
         """Full position close."""
@@ -470,6 +494,7 @@ class ZLTBot:
         
         s.last_exit_time = time.time()
         s.reset()
+        self._save_state()
     
     # ========================================
     # HELPERS
@@ -497,6 +522,7 @@ class ZLTBot:
         old = s.state.value
         s.state = new_state
         print(f"[ZLT Bot] {symbol}: {old} → {new_state.value} ({reason})")
+        self._save_state()
     
     def _notify(self, msg: str):
         """Send notification."""
@@ -595,9 +621,56 @@ class ZLTBot:
         with self._lock:
             if symbol in self._states:
                 self._states[symbol].reset()
+                self._save_state()
     
     def reset_all(self):
         """Reset all states."""
         with self._lock:
             for s in self._states.values():
                 s.reset()
+            self._save_state()
+    
+    # ========================================
+    # STATE PERSISTENCE
+    # ========================================
+    
+    def _save_state(self):
+        """Save all states to DB via callback."""
+        if not self.on_save:
+            return
+        try:
+            states_data = {}
+            for sym, s in self._states.items():
+                d = s.to_dict()
+                # Only save non-idle states to reduce DB size
+                if d['state'] != 'idle' or d.get('last_exit_time', 0) > 0:
+                    states_data[sym] = d
+            self.on_save(states_data)
+        except Exception as e:
+            print(f"[ZLT Bot] ⚠️ State save error: {e}")
+    
+    def restore_states(self, saved_data: Dict):
+        """Restore states from DB after restart."""
+        if not saved_data:
+            return 0
+        
+        restored = 0
+        with self._lock:
+            for sym, data in saved_data.items():
+                if sym not in self._states:
+                    self._states[sym] = SymbolState()
+                try:
+                    self._states[sym] = SymbolState.from_dict(data)
+                    restored += 1
+                except Exception as e:
+                    print(f"[ZLT Bot] ⚠️ Restore error for {sym}: {e}")
+        
+        # Log restored states
+        in_trade = sum(1 for s in self._states.values() 
+                       if s.state in (BotState.IN_TRADE, BotState.IN_TRADE_PARTIAL))
+        active = sum(1 for s in self._states.values() if s.state != BotState.IDLE)
+        if restored > 0:
+            print(f"[ZLT Bot] 🔄 Restored {restored} states from DB "
+                  f"({in_trade} in trade, {active} active)")
+        
+        return restored

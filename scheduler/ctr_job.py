@@ -1075,21 +1075,34 @@ class CTRFastJob:
                     return cache.klines[-1].close
             return 0.0
         
+        def _save_zl_bot_state(states_data: Dict):
+            """Save ZLT Bot states to DB."""
+            try:
+                self.db.set_setting('zl_bot_states', states_data)
+            except Exception as e:
+                print(f"[ZLT Bot] ⚠️ DB save error: {e}")
+        
         self._zl_bot = ZLTBot(
             zl_service=self._zl_service,
             enabled=True,
             partial_close_pct=self.zl_bot_partial_pct,
-            exit_cooldown_sec=900,     # 15 min cooldown after full exit
-            min_trade_sec=300,         # 5 min min trade duration before exit
-            partial_cooldown_sec=300,  # 5 min cooldown between partial/reload
+            exit_cooldown_sec=900,
+            min_trade_sec=300,
+            partial_cooldown_sec=300,
             on_trade=self._on_zl_bot_trade,
             on_notify=notifier.send_message if notifier else None,
             get_price=_get_scanner_price,
+            on_save=_save_zl_bot_state,
         )
         self._zl_bot.set_watchlist(self.watchlist)
         
-        # Do initial check for all symbols
-        self._zl_bot.check_all()
+        # Restore state from DB (survives restart)
+        saved = self.db.get_setting('zl_bot_states', {})
+        if saved and isinstance(saved, dict):
+            restored = self._zl_bot.restore_states(saved)
+        else:
+            # Fresh start — do initial check
+            self._zl_bot.check_all()
         
         print(f"[ZLT Bot] ✅ Started: {len(self.watchlist)} symbols, "
               f"partial={self.zl_bot_partial_pct}%, cooldown=15min, "
