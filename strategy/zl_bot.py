@@ -42,7 +42,7 @@ class SymbolState:
     __slots__ = [
         'state', 'direction', 'macro_since', 'pullback_since',
         'entry_price', 'entry_time', 'partial_done', 'trade_count',
-        'last_exit_time',
+        'last_exit_time', 'entry_m15', 'm15_aligned', 'last_partial_time',
     ]
     
     def __init__(self):
@@ -55,6 +55,9 @@ class SymbolState:
         self.partial_done: bool = False
         self.trade_count: int = 0
         self.last_exit_time: float = 0
+        self.entry_m15: str = ''       # M15 trend at entry time
+        self.m15_aligned: bool = False  # True once M15 aligned with trade after entry
+        self.last_partial_time: float = 0  # For partial/reload cooldown
     
     def reset(self):
         self.state = BotState.IDLE
@@ -64,6 +67,9 @@ class SymbolState:
         self.entry_price = 0
         self.entry_time = 0
         self.partial_done = False
+        self.entry_m15 = ''
+        self.m15_aligned = False
+        self.last_partial_time = 0
         # last_exit_time NOT reset — needed for cooldown
     
     def to_dict(self) -> Dict:
@@ -77,6 +83,8 @@ class SymbolState:
             'partial_done': self.partial_done,
             'trade_count': self.trade_count,
             'last_exit_time': self.last_exit_time,
+            'entry_m15': self.entry_m15,
+            'm15_aligned': self.m15_aligned,
         }
 
 
@@ -94,17 +102,21 @@ class ZLTBot:
         enabled: bool = False,
         partial_close_pct: float = 50.0,
         exit_cooldown_sec: int = 900,  # 15 min cooldown after full exit
-        on_trade: Optional[Callable] = None,  # callback(symbol, action, details)
-        on_notify: Optional[Callable] = None,  # callback(message)
-        get_price: Optional[Callable] = None,  # callback(symbol) -> float
+        min_trade_sec: int = 300,      # 5 min minimum trade duration before any exit
+        partial_cooldown_sec: int = 300,  # 5 min cooldown between partial/reload
+        on_trade: Optional[Callable] = None,
+        on_notify: Optional[Callable] = None,
+        get_price: Optional[Callable] = None,
     ):
         self.zl_service = zl_service
         self.enabled = enabled
         self.partial_close_pct = partial_close_pct
         self.exit_cooldown_sec = exit_cooldown_sec
+        self.min_trade_sec = min_trade_sec
+        self.partial_cooldown_sec = partial_cooldown_sec
         self.on_trade = on_trade
         self.on_notify = on_notify
-        self.get_price = get_price  # Get current market price
+        self.get_price = get_price
         
         # State per symbol
         self._states: Dict[str, SymbolState] = {}
@@ -265,29 +277,57 @@ class ZLTBot:
     
     def _handle_in_trade(self, symbol: str, s: SymbolState, tf_key: str, m15: str, m5: str):
         """IN_TRADE → monitor for partial/full exit."""
+        entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
         exit_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
+        trade_age = time.time() - s.entry_time if s.entry_time else 0
         
-        # M15 → exit direction = FULL EXIT
+        # Track M15 alignment: once M15 aligns with trade, set flag
+        if m15 == entry_dir and not s.m15_aligned:
+            s.m15_aligned = True
+        
+        # M15 exit logic — with grace period for pullback entries
         if m15 == exit_dir:
-            self._do_full_exit(symbol, s, f"M15 → {exit_dir}")
-            return
+            if s.m15_aligned:
+                # M15 was aligned → now reversed = real exit signal
+                self._do_full_exit(symbol, s, f"M15 → {exit_dir}")
+                return
+            elif trade_age > self.min_trade_sec:
+                # Grace period expired — M15 never aligned, exit anyway
+                self._do_full_exit(symbol, s, f"M15 → {exit_dir} (grace expired)")
+                return
+            # else: still in grace period, M15 hasn't aligned yet — hold
         
-        # M5 → exit direction = PARTIAL EXIT
+        # M5 partial exit — only after min trade duration
         if m5 == exit_dir and tf_key == '5':
-            self._do_partial_exit(symbol, s)
+            if trade_age >= self.min_trade_sec:
+                self._do_partial_exit(symbol, s)
+            # else: too early, skip partial
     
     def _handle_in_trade_partial(self, symbol: str, s: SymbolState, tf_key: str, m15: str, m5: str):
         """IN_TRADE_PARTIAL → monitor for reload or full exit."""
-        exit_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
         entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
+        exit_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
+        
+        # Track M15 alignment
+        if m15 == entry_dir and not s.m15_aligned:
+            s.m15_aligned = True
         
         # M15 → exit direction = FULL EXIT remaining
         if m15 == exit_dir:
-            self._do_full_exit(symbol, s, f"M15 → {exit_dir}")
-            return
+            if s.m15_aligned:
+                self._do_full_exit(symbol, s, f"M15 → {exit_dir}")
+                return
+            elif (time.time() - s.entry_time) > self.min_trade_sec:
+                self._do_full_exit(symbol, s, f"M15 → {exit_dir} (grace expired)")
+                return
         
-        # M5 → entry direction + M15 still entry direction = RELOAD
+        # M5 → entry direction = RELOAD (with cooldown)
         if m5 == entry_dir and m15 == entry_dir and tf_key == '5':
+            # Check cooldown since last partial
+            if s.last_partial_time > 0:
+                elapsed = time.time() - s.last_partial_time
+                if elapsed < self.partial_cooldown_sec:
+                    return  # Too soon after partial, wait
             self._do_reload(symbol, s)
     
     # ========================================
@@ -299,17 +339,26 @@ class ZLTBot:
         signal_type = 'BUY' if s.direction == 'LONG' else 'SELL'
         price = self._get_price(symbol)
         
+        # Get M15 trend at entry for grace period logic
+        trends = self.zl_service.get_all_trends(symbol) if self.zl_service else {}
+        m15_at_entry = trends.get('15', 'neutral')
+        entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
+        
         s.state = BotState.IN_TRADE
         s.entry_price = price
         s.entry_time = time.time()
         s.partial_done = False
+        s.entry_m15 = m15_at_entry
+        s.m15_aligned = (m15_at_entry == entry_dir)  # Already aligned if M15 matches
+        s.last_partial_time = 0
         s.trade_count += 1
         self._stats['entries'] += 1
         
+        grace = "" if s.m15_aligned else " (M15 grace active)"
         label = '🟢 LONG' if s.direction == 'LONG' else '🔴 SHORT'
         price_str = f"${price:,.4f}" if price else "market"
         msg = (f"⚡ ZLT Bot ENTRY | {symbol} {label}\n"
-               f"Price: {price_str}\n"
+               f"Price: {price_str}{grace}\n"
                f"Pullback complete — M5 reversed to trend\n"
                f"Trade #{s.trade_count}")
         
@@ -330,6 +379,7 @@ class ZLTBot:
         
         s.state = BotState.IN_TRADE_PARTIAL
         s.partial_done = True
+        s.last_partial_time = time.time()
         self._stats['partial_exits'] += 1
         
         pnl_str = ""
