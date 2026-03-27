@@ -297,32 +297,35 @@ class ZLTBot:
             self._do_entry(symbol, s)
     
     def _handle_in_trade(self, symbol: str, s: SymbolState, tf_key: str, m15: str, m5: str):
-        """IN_TRADE → monitor for partial/full exit."""
+        """IN_TRADE → monitor for partial/full exit.
+        
+        Strategy: Entry is M5 precision, but TARGET is H1/H4 movement (2-8 hours).
+        M15 is the exit TF — stable enough to hold a daily impulse.
+        
+        EXIT RULES:
+        1. M15 aligned then reversed → FULL EXIT (structure break)
+        2. M15 never aligned → HOLD (only macro break H4/H1 exits)
+        3. M5 partial → only after trade matures (30min+)
+        """
         entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
         exit_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
         trade_age = time.time() - s.entry_time if s.entry_time else 0
         
-        # Track M15 alignment: once M15 aligns with trade, set flag
+        # Track M15 alignment: once M15 aligns with trade direction, lock it
         if m15 == entry_dir and not s.m15_aligned:
             s.m15_aligned = True
+            self._save_state()
         
-        # M15 exit logic — with grace period for pullback entries
-        if m15 == exit_dir:
-            if s.m15_aligned:
-                # M15 was aligned → now reversed = real exit signal
-                self._do_full_exit(symbol, s, f"M15 → {exit_dir}")
-                return
-            elif trade_age > self.min_trade_sec:
-                # Grace period expired — M15 never aligned, exit anyway
-                self._do_full_exit(symbol, s, f"M15 → {exit_dir} (grace expired)")
-                return
-            # else: still in grace period, M15 hasn't aligned yet — hold
+        # === M15 EXIT: only if M15 WAS aligned and THEN broke ===
+        # If M15 never aligned (pullback entry) → HOLD, macro break is the safety
+        if m15 == exit_dir and s.m15_aligned:
+            self._do_full_exit(symbol, s, f"M15 → {exit_dir}")
+            return
         
-        # M5 partial exit — only after min trade duration
+        # === M5 PARTIAL: only after trade matures ===
         if m5 == exit_dir and tf_key == '5':
             if trade_age >= self.min_trade_sec:
                 self._do_partial_exit(symbol, s)
-            # else: too early, skip partial
     
     def _handle_in_trade_partial(self, symbol: str, s: SymbolState, tf_key: str, m15: str, m5: str):
         """IN_TRADE_PARTIAL → monitor for reload or full exit."""
@@ -332,23 +335,19 @@ class ZLTBot:
         # Track M15 alignment
         if m15 == entry_dir and not s.m15_aligned:
             s.m15_aligned = True
+            self._save_state()
         
-        # M15 → exit direction = FULL EXIT remaining
-        if m15 == exit_dir:
-            if s.m15_aligned:
-                self._do_full_exit(symbol, s, f"M15 → {exit_dir}")
-                return
-            elif (time.time() - s.entry_time) > self.min_trade_sec:
-                self._do_full_exit(symbol, s, f"M15 → {exit_dir} (grace expired)")
-                return
+        # M15 exit — only after alignment was confirmed
+        if m15 == exit_dir and s.m15_aligned:
+            self._do_full_exit(symbol, s, f"M15 → {exit_dir}")
+            return
         
-        # M5 → entry direction = RELOAD (with cooldown)
+        # M5 RELOAD (with cooldown to prevent ping-pong)
         if m5 == entry_dir and m15 == entry_dir and tf_key == '5':
-            # Check cooldown since last partial
             if s.last_partial_time > 0:
                 elapsed = time.time() - s.last_partial_time
                 if elapsed < self.partial_cooldown_sec:
-                    return  # Too soon after partial, wait
+                    return
             self._do_reload(symbol, s)
     
     # ========================================

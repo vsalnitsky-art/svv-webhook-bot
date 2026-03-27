@@ -1086,9 +1086,9 @@ class CTRFastJob:
             zl_service=self._zl_service,
             enabled=True,
             partial_close_pct=self.zl_bot_partial_pct,
-            exit_cooldown_sec=900,
-            min_trade_sec=300,
-            partial_cooldown_sec=300,
+            exit_cooldown_sec=900,      # 15 min cooldown after full exit
+            min_trade_sec=1800,         # 30 min before M5 partial allowed
+            partial_cooldown_sec=300,   # 5 min cooldown between partial/reload
             on_trade=self._on_zl_bot_trade,
             on_notify=notifier.send_message if notifier else None,
             get_price=_get_scanner_price,
@@ -1106,7 +1106,7 @@ class CTRFastJob:
         
         print(f"[ZLT Bot] ✅ Started: {len(self.watchlist)} symbols, "
               f"partial={self.zl_bot_partial_pct}%, cooldown=15min, "
-              f"min_trade=5min, partial_cd=5min")
+              f"min_partial=30min, partial_cd=5min")
     
     def _on_zl_bot_trade(self, symbol: str, action: str, details: Dict):
         """Handle ZLT Bot trade actions — save signal + execute trade."""
