@@ -1085,10 +1085,7 @@ class CTRFastJob:
         self._zl_bot = ZLTBot(
             zl_service=self._zl_service,
             enabled=True,
-            partial_close_pct=self.zl_bot_partial_pct,
-            exit_cooldown_sec=900,      # 15 min cooldown after full exit
-            min_trade_sec=1800,         # 30 min before M5 partial allowed
-            partial_cooldown_sec=300,   # 5 min cooldown between partial/reload
+            exit_cooldown_sec=1800,  # 30 min between exit and re-entry
             on_trade=self._on_zl_bot_trade,
             on_notify=notifier.send_message if notifier else None,
             get_price=_get_scanner_price,
@@ -1101,12 +1098,10 @@ class CTRFastJob:
         if saved and isinstance(saved, dict):
             restored = self._zl_bot.restore_states(saved)
         else:
-            # Fresh start — do initial check
             self._zl_bot.check_all()
         
-        print(f"[ZLT Bot] ✅ Started: {len(self.watchlist)} symbols, "
-              f"partial={self.zl_bot_partial_pct}%, cooldown=15min, "
-              f"min_partial=30min, partial_cd=5min")
+        print(f"[ZLT Bot] ✅ v2.0 Started: {len(self.watchlist)} symbols, "
+              f"cooldown=30min, M5=entry only, M15=exit only")
     
     def _on_zl_bot_trade(self, symbol: str, action: str, details: Dict):
         """Handle ZLT Bot trade actions — save signal + execute trade."""
@@ -1658,7 +1653,6 @@ class CTRFastJob:
                 print("[CTR Job] 🔄 ZLT Bot started (settings reload)")
             elif self.zl_bot_enabled and self._zl_bot:
                 self._zl_bot.enabled = True
-                self._zl_bot.partial_close_pct = self.zl_bot_partial_pct
             elif not self.zl_bot_enabled and self._zl_bot:
                 self._zl_bot.enabled = False
                 print("[CTR Job] 🔄 ZLT Bot disabled (settings reload)")

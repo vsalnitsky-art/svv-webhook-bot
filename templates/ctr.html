@@ -2291,12 +2291,12 @@ async function loadZLTBotStates() {
         if (entries.length === 0) { el.innerHTML = '<small style="color:#666;">No symbols</small>'; return; }
         
         const stateColors = {
-            'idle': '#555', 'macro_ok': '#2196f3', 'waiting_pullback': '#ff9800',
-            'pullback_active': '#e91e63', 'in_trade': '#4caf50', 'in_trade_partial': '#8bc34a'
+            'idle': '#555', 'setup': '#2196f3', 'pullback': '#ff9800',
+            'entry_ready': '#e91e63', 'in_trade': '#4caf50'
         };
         const stateIcons = {
-            'idle': '⚪', 'macro_ok': '🔵', 'waiting_pullback': '🟡',
-            'pullback_active': '🟠', 'in_trade': '🟢', 'in_trade_partial': '🟡'
+            'idle': '⚪', 'setup': '🔵', 'pullback': '🟡',
+            'entry_ready': '🟠', 'in_trade': '🟢'
         };
         
         let html = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">';
