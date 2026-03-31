@@ -1,51 +1,56 @@
 """
-ZLT Bot Strategy v2.0 — Zero Lag Trend Pullback Entry (Professional)
+ZLT Bot Strategy v3.0 — Professional Multi-Timeframe Pullback Entry
 
 PHILOSOPHY:
-  Entry: M5 micro-precision (jeweler's entry on pullback)
-  Target: H1/H4 macro movement (ride the impulse 2-8 hours)
-  Exit: M15 structure break ONLY (stable intraday TF)
+  "Enter when lower TFs have CAUGHT UP to higher TFs"
+  At entry moment: H4, H1, M15, M5 — ALL aligned in same direction.
   
-  M5 is a MICROSCOPE for entry — NEVER used for exit management.
-  After entry, ONLY M15 controls the position.
+  M5 is the microscope for precision entry.
+  M15 must FIRST pull back, THEN recover — confirming the impulse.
+  Only AFTER M15 recovery, M5 gives the final trigger.
 
 STATE MACHINE:
-  IDLE → SETUP → PULLBACK → ENTRY_READY → IN_TRADE → IDLE
+  IDLE → SETUP → PULLBACK → RECOVERED → DIP → IN_TRADE → IDLE
 
-  IDLE:         No macro alignment
-  SETUP:        H4+H1 aligned, waiting for M15 pullback
-  PULLBACK:     M15 pulled back, waiting for M5 confirmation  
-  ENTRY_READY:  M5 confirmed pullback (M15+M5 against trend),
-                waiting for M5 to reverse back = ENTRY
-  IN_TRADE:     Position open, only M15 or macro break exits
+  IDLE:       No macro alignment (H4+H1 disagree)
+  SETUP:      H4+H1 aligned. Waiting for M15 to pull back.
+  PULLBACK:   M15 reversed against trend = pullback in progress.
+  RECOVERED:  M15 returned to trend direction = pullback over!
+              Now waiting for M5 micro-dip for precision entry.
+  DIP:        M5 pulled back (micro-dip within M15 impulse).
+              Waiting for M5 to return = ENTRY trigger.
+  IN_TRADE:   All TFs aligned at entry. Hold for H1 impulse (2-8h).
+              Exit ONLY on M15 structure break or macro break.
 
-EXIT RULES (in priority order):
-  1. MACRO BREAK: H4 or H1 reverses → immediate EXIT (safety)
-  2. M15 STRUCTURE BREAK: M15 aligned with trade → then reversed → EXIT
-  3. Nothing else exits. M5 noise is ignored after entry.
+AT ENTRY MOMENT (LONG example):
+  H4: ▲  H1: ▲  M15: ▲  M5: ▲  — ALL ALIGNED
+
+EXIT RULES:
+  1. M15 → bearish (structure break) = EXIT
+  2. H4 or H1 reverses (macro break) = EXIT (safety)
+  3. Nothing else. No M5 exit. No partial. No grace period.
 """
 
 import time
 import threading
-from datetime import datetime, timezone
 from typing import Dict, List, Optional, Callable
 from enum import Enum
 
 
 class BotState(Enum):
     IDLE = 'idle'
-    SETUP = 'setup'
-    PULLBACK = 'pullback'
-    ENTRY_READY = 'entry_ready'
-    IN_TRADE = 'in_trade'
+    SETUP = 'setup'          # Macro OK, waiting M15 pullback
+    PULLBACK = 'pullback'    # M15 pulled back against trend
+    RECOVERED = 'recovered'  # M15 returned to trend, waiting M5 dip
+    DIP = 'dip'              # M5 dipped, waiting M5 return = ENTRY
+    IN_TRADE = 'in_trade'    # Position open, all TFs were aligned
 
 
 class SymbolState:
-    """Track state machine for one symbol."""
     __slots__ = [
         'state', 'direction', 'macro_since', 'pullback_since',
-        'entry_price', 'entry_time', 'trade_count',
-        'last_exit_time', 'm15_aligned',
+        'recovered_since', 'entry_price', 'entry_time', 'trade_count',
+        'last_exit_time',
     ]
     
     def __init__(self):
@@ -53,20 +58,21 @@ class SymbolState:
         self.direction: str = ''
         self.macro_since: float = 0
         self.pullback_since: float = 0
+        self.recovered_since: float = 0
         self.entry_price: float = 0
         self.entry_time: float = 0
         self.trade_count: int = 0
         self.last_exit_time: float = 0
-        self.m15_aligned: bool = False
     
     def reset(self):
         self.state = BotState.IDLE
         self.direction = ''
         self.macro_since = 0
         self.pullback_since = 0
+        self.recovered_since = 0
         self.entry_price = 0
         self.entry_time = 0
-        self.m15_aligned = False
+        # last_exit_time NOT reset
     
     def to_dict(self) -> Dict:
         return {
@@ -74,11 +80,11 @@ class SymbolState:
             'direction': self.direction,
             'macro_since': self.macro_since,
             'pullback_since': self.pullback_since,
+            'recovered_since': self.recovered_since,
             'entry_price': self.entry_price,
             'entry_time': self.entry_time,
             'trade_count': self.trade_count,
             'last_exit_time': self.last_exit_time,
-            'm15_aligned': self.m15_aligned,
         }
     
     @classmethod
@@ -91,20 +97,20 @@ class SymbolState:
         s.direction = data.get('direction', '')
         s.macro_since = data.get('macro_since', 0)
         s.pullback_since = data.get('pullback_since', 0)
+        s.recovered_since = data.get('recovered_since', 0)
         s.entry_price = data.get('entry_price', 0)
         s.entry_time = data.get('entry_time', 0)
         s.trade_count = data.get('trade_count', 0)
         s.last_exit_time = data.get('last_exit_time', 0)
-        s.m15_aligned = data.get('m15_aligned', False)
         return s
 
 
 class ZLTBot:
     """
-    Zero Lag Trend Bot v2.0 — Professional Pullback Strategy.
+    ZLT Bot v3.0 — Professional Pullback Strategy.
     
-    M5 = entry only. M15 = exit only. H4+H1 = direction + safety.
-    No partial/reload. Trades last 2-8 hours.
+    Key difference from v2: entry ONLY when ALL TFs aligned.
+    M15 must pull back AND recover BEFORE M5 entry trigger.
     """
     
     def __init__(
@@ -116,7 +122,7 @@ class ZLTBot:
         on_notify: Optional[Callable] = None,
         get_price: Optional[Callable] = None,
         on_save: Optional[Callable] = None,
-        # Legacy params (accepted but ignored for backward compat)
+        # Legacy params (ignored)
         partial_close_pct: float = 50.0,
         min_trade_sec: int = 1800,
         partial_cooldown_sec: int = 300,
@@ -137,7 +143,7 @@ class ZLTBot:
             self.zl_service.set_on_transition(self._on_trend_change)
     
     # ========================================
-    # CORE: TREND TRANSITION HANDLER
+    # CORE
     # ========================================
     
     def _on_trend_change(self, symbol: str, tf_key: str, old_trend: str, new_trend: str):
@@ -163,7 +169,7 @@ class ZLTBot:
                     self._do_exit(symbol, s, f"Macro broken (H4={h4}, H1={h1})")
                     return
             
-            if s.state in (BotState.SETUP, BotState.PULLBACK, BotState.ENTRY_READY):
+            if s.state in (BotState.SETUP, BotState.PULLBACK, BotState.RECOVERED, BotState.DIP):
                 if self._macro_broken(s.direction, h4, h1):
                     self._transition(symbol, s, BotState.IDLE, "Macro broken")
                     s.reset()
@@ -171,13 +177,15 @@ class ZLTBot:
             
             # === STATE MACHINE ===
             if s.state == BotState.IDLE:
-                self._handle_idle(symbol, s, h4, h1, m15, m5)
+                self._handle_idle(symbol, s, h4, h1, m15)
             elif s.state == BotState.SETUP:
-                self._handle_setup(symbol, s, m15, m5)
+                self._handle_setup(symbol, s, m15)
             elif s.state == BotState.PULLBACK:
-                self._handle_pullback(symbol, s, m15, m5)
-            elif s.state == BotState.ENTRY_READY:
-                self._handle_entry_ready(symbol, s, m15, m5)
+                self._handle_pullback(symbol, s, m15)
+            elif s.state == BotState.RECOVERED:
+                self._handle_recovered(symbol, s, m15, m5)
+            elif s.state == BotState.DIP:
+                self._handle_dip(symbol, s, m15, m5)
             elif s.state == BotState.IN_TRADE:
                 self._handle_in_trade(symbol, s, m15)
     
@@ -185,7 +193,7 @@ class ZLTBot:
     # STATE HANDLERS
     # ========================================
     
-    def _handle_idle(self, symbol: str, s: SymbolState, h4: str, h1: str, m15: str, m5: str):
+    def _handle_idle(self, symbol: str, s: SymbolState, h4: str, h1: str, m15: str):
         """IDLE → detect macro alignment."""
         if s.last_exit_time > 0:
             if time.time() - s.last_exit_time < self.exit_cooldown_sec:
@@ -207,70 +215,91 @@ class ZLTBot:
         pullback_dir = 'bearish' if direction == 'LONG' else 'bullish'
         
         if m15 == pullback_dir:
+            # M15 already in pullback
             s.pullback_since = time.time()
-            if m5 == pullback_dir:
-                self._transition(symbol, s, BotState.ENTRY_READY,
-                                 f"Macro {direction} + pullback ready")
-            else:
-                self._transition(symbol, s, BotState.PULLBACK,
-                                 f"Macro {direction} + M15 pullback started")
+            self._transition(symbol, s, BotState.PULLBACK,
+                             f"Macro {direction} + M15 already pulling back")
         else:
             self._transition(symbol, s, BotState.SETUP,
-                             f"Macro {direction} — waiting for pullback")
+                             f"Macro {direction} — waiting for M15 pullback")
     
-    def _handle_setup(self, symbol: str, s: SymbolState, m15: str, m5: str):
-        """SETUP → wait for M15 pullback to start."""
+    def _handle_setup(self, symbol: str, s: SymbolState, m15: str):
+        """SETUP → wait for M15 to pull back."""
         pullback_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
         
         if m15 == pullback_dir:
             s.pullback_since = time.time()
-            if m5 == pullback_dir:
-                self._transition(symbol, s, BotState.ENTRY_READY,
-                                 f"Pullback deep (M15+M5 {pullback_dir})")
-            else:
-                self._transition(symbol, s, BotState.PULLBACK,
-                                 f"M15 pullback started ({pullback_dir})")
+            self._transition(symbol, s, BotState.PULLBACK,
+                             f"M15 pullback started ({pullback_dir})")
     
-    def _handle_pullback(self, symbol: str, s: SymbolState, m15: str, m5: str):
-        """PULLBACK → wait for M5 to also pull back."""
-        pullback_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
-        entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
+    def _handle_pullback(self, symbol: str, s: SymbolState, m15: str):
+        """PULLBACK → wait for M15 to RECOVER (return to trend direction).
         
-        if m5 == pullback_dir:
-            self._transition(symbol, s, BotState.ENTRY_READY,
-                             f"M5 pullback confirmed")
-        elif m15 == entry_dir:
-            self._transition(symbol, s, BotState.SETUP,
-                             "M15 returned — false pullback")
-    
-    def _handle_entry_ready(self, symbol: str, s: SymbolState, m15: str, m5: str):
-        """ENTRY_READY → M5 flips back to trend direction = ENTRY."""
-        entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
-        
-        if m5 == entry_dir:
-            self._do_entry(symbol, s)
-        elif m15 == entry_dir:
-            self._transition(symbol, s, BotState.SETUP,
-                             "M15 returned — pullback ended without M5 entry")
-    
-    def _handle_in_trade(self, symbol: str, s: SymbolState, m15: str):
-        """IN_TRADE → ONLY M15 manages exit. M5 completely ignored.
-        
-        Ride the H1/H4 impulse for 2-8 hours.
-        Exit ONLY when M15 first aligned, then broke structure.
-        If M15 never aligned → hold until macro breaks.
+        This is the KEY step that was missing in v1/v2.
+        M15 must complete its pullback and return BEFORE we look at M5.
         """
         entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
+        
+        if m15 == entry_dir:
+            # M15 recovered! Pullback is OVER.
+            s.recovered_since = time.time()
+            self._transition(symbol, s, BotState.RECOVERED,
+                             f"M15 recovered to {entry_dir} — waiting M5 dip")
+    
+    def _handle_recovered(self, symbol: str, s: SymbolState, m15: str, m5: str):
+        """RECOVERED → M15 is with trend. Wait for M5 micro-dip.
+        
+        Now M15 is aligned. We want M5 to dip briefly (micro-pullback)
+        so we enter at a better price within the M15 impulse.
+        
+        If M15 breaks again before M5 dips → back to PULLBACK.
+        """
+        pullback_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
+        
+        # M15 broke again → new pullback cycle
+        if m15 == pullback_dir:
+            s.pullback_since = time.time()
+            self._transition(symbol, s, BotState.PULLBACK,
+                             "M15 broke again — new pullback")
+            return
+        
+        # M5 dipped against trend = micro-pullback for precision entry
+        if m5 == pullback_dir:
+            self._transition(symbol, s, BotState.DIP,
+                             f"M5 dip ({pullback_dir}) — waiting for entry trigger")
+    
+    def _handle_dip(self, symbol: str, s: SymbolState, m15: str, m5: str):
+        """DIP → M5 returns to trend direction = ENTRY!
+        
+        At this moment: H4 ✅ H1 ✅ M15 ✅ M5 ✅ — ALL ALIGNED.
+        This is the precision entry point.
+        
+        If M15 breaks during dip → back to PULLBACK.
+        """
+        entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
+        pullback_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
+        
+        # M15 broke during M5 dip → back to pullback
+        if m15 == pullback_dir:
+            s.pullback_since = time.time()
+            self._transition(symbol, s, BotState.PULLBACK,
+                             "M15 broke during M5 dip — back to pullback")
+            return
+        
+        # M5 returned to trend = ALL TFs ALIGNED = ENTRY!
+        if m5 == entry_dir:
+            self._do_entry(symbol, s)
+    
+    def _handle_in_trade(self, symbol: str, s: SymbolState, m15: str):
+        """IN_TRADE → ONLY M15 manages exit.
+        
+        At entry, all TFs were aligned. Now ride the H1 impulse.
+        M15 is stable enough for intraday. M5 noise is ignored.
+        Exit when M15 structure breaks.
+        """
         exit_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
         
-        # Track M15 alignment (locked once set)
-        if m15 == entry_dir and not s.m15_aligned:
-            s.m15_aligned = True
-            self._save_state()
-            print(f"[ZLT Bot] ✅ {symbol}: M15 aligned — exit armed")
-        
-        # EXIT: M15 aligned → then reversed
-        if m15 == exit_dir and s.m15_aligned:
+        if m15 == exit_dir:
             dur = time.time() - s.entry_time if s.entry_time else 0
             self._do_exit(symbol, s,
                           f"M15 structure break ({int(dur/3600)}h{int((dur%3600)/60)}m)")
@@ -283,27 +312,21 @@ class ZLTBot:
         signal_type = 'BUY' if s.direction == 'LONG' else 'SELL'
         price = self._get_price(symbol)
         
-        trends = self.zl_service.get_all_trends(symbol) if self.zl_service else {}
-        m15_now = trends.get('15', 'neutral')
-        entry_dir = 'bullish' if s.direction == 'LONG' else 'bearish'
-        
         s.state = BotState.IN_TRADE
         s.entry_price = price
         s.entry_time = time.time()
-        s.m15_aligned = (m15_now == entry_dir)
         s.trade_count += 1
         self._stats['entries'] += 1
         
         label = '🟢 LONG' if s.direction == 'LONG' else '🔴 SHORT'
         price_str = f"${price:,.4f}" if price else "market"
-        aligned = "M15 aligned ✅" if s.m15_aligned else "M15 pending ⏳"
         
         msg = (f"⚡ ZLT Bot ENTRY | {symbol} {label}\n"
                f"Price: {price_str}\n"
-               f"{aligned} | Trade #{s.trade_count}\n"
+               f"All TFs aligned ✅ | Trade #{s.trade_count}\n"
                f"Target: H1 impulse (2-8h hold)")
         
-        print(f"[ZLT Bot] ⚡ ENTRY: {symbol} {signal_type} @ {price_str} ({aligned})")
+        print(f"[ZLT Bot] ⚡ ENTRY: {symbol} {signal_type} @ {price_str} (ALL TFs aligned)")
         self._notify(msg)
         
         if self.on_trade:
@@ -409,17 +432,19 @@ class ZLTBot:
                         self._do_exit(symbol, s, "Macro broken (periodic)")
                         continue
                     self._handle_in_trade(symbol, s, m15)
-                elif s.state in (BotState.SETUP, BotState.PULLBACK, BotState.ENTRY_READY):
+                elif s.state in (BotState.SETUP, BotState.PULLBACK, BotState.RECOVERED, BotState.DIP):
                     if self._macro_broken(s.direction, h4, h1):
                         self._transition(symbol, s, BotState.IDLE, "Macro broken (periodic)")
                         s.reset()
                         continue
                     if s.state == BotState.SETUP:
-                        self._handle_setup(symbol, s, m15, m5)
+                        self._handle_setup(symbol, s, m15)
                     elif s.state == BotState.PULLBACK:
-                        self._handle_pullback(symbol, s, m15, m5)
-                    elif s.state == BotState.ENTRY_READY:
-                        self._handle_entry_ready(symbol, s, m15, m5)
+                        self._handle_pullback(symbol, s, m15)
+                    elif s.state == BotState.RECOVERED:
+                        self._handle_recovered(symbol, s, m15, m5)
+                    elif s.state == BotState.DIP:
+                        self._handle_dip(symbol, s, m15, m5)
     
     # ========================================
     # PUBLIC API

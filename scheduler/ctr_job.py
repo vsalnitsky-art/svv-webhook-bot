@@ -1100,8 +1100,8 @@ class CTRFastJob:
         else:
             self._zl_bot.check_all()
         
-        print(f"[ZLT Bot] ✅ v2.0 Started: {len(self.watchlist)} symbols, "
-              f"cooldown=30min, M5=entry only, M15=exit only")
+        print(f"[ZLT Bot] ✅ v3.0 Started: {len(self.watchlist)} symbols, "
+              f"cooldown=30min, entry=ALL TFs aligned, exit=M15 break")
     
     def _on_zl_bot_trade(self, symbol: str, action: str, details: Dict):
         """Handle ZLT Bot trade actions — save signal + execute trade."""
