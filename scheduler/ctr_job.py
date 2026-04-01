@@ -1166,11 +1166,17 @@ class CTRFastJob:
             sig['reason'] += f" @ ${current_price:,.4f}" if current_price else ""
         elif action == 'full_exit':
             pnl = ""
+            peak = ""
             if entry_price and current_price:
                 d = details.get('direction', 'LONG')
                 pnl_pct = ((current_price - entry_price) / entry_price * 100) if d == 'LONG' else ((entry_price - current_price) / entry_price * 100)
                 pnl = f" P&L:{'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
-            sig['reason'] += f" ({'partial→full' if details.get('was_partial') else 'full 100%'}){pnl}"
+                
+                peak_price = details.get('peak_price', 0)
+                if peak_price and peak_price != entry_price:
+                    peak_pct = ((peak_price - entry_price) / entry_price * 100) if d == 'LONG' else ((entry_price - peak_price) / entry_price * 100)
+                    peak = f" Peak:+{peak_pct:.2f}%"
+            sig['reason'] += f" (full 100%){pnl}{peak}"
         
         self._save_signal(sig)
         

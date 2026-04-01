@@ -50,7 +50,7 @@ class SymbolState:
     __slots__ = [
         'state', 'direction', 'macro_since', 'pullback_since',
         'recovered_since', 'entry_price', 'entry_time', 'trade_count',
-        'last_exit_time',
+        'last_exit_time', 'peak_price',
     ]
     
     def __init__(self):
@@ -63,6 +63,7 @@ class SymbolState:
         self.entry_time: float = 0
         self.trade_count: int = 0
         self.last_exit_time: float = 0
+        self.peak_price: float = 0
     
     def reset(self):
         self.state = BotState.IDLE
@@ -72,6 +73,7 @@ class SymbolState:
         self.recovered_since = 0
         self.entry_price = 0
         self.entry_time = 0
+        self.peak_price = 0
         # last_exit_time NOT reset
     
     def to_dict(self) -> Dict:
@@ -85,6 +87,7 @@ class SymbolState:
             'entry_time': self.entry_time,
             'trade_count': self.trade_count,
             'last_exit_time': self.last_exit_time,
+            'peak_price': self.peak_price,
         }
     
     @classmethod
@@ -102,6 +105,7 @@ class SymbolState:
         s.entry_time = data.get('entry_time', 0)
         s.trade_count = data.get('trade_count', 0)
         s.last_exit_time = data.get('last_exit_time', 0)
+        s.peak_price = data.get('peak_price', 0)
         return s
 
 
@@ -297,6 +301,16 @@ class ZLTBot:
         M15 is stable enough for intraday. M5 noise is ignored.
         Exit when M15 structure breaks.
         """
+        # Track peak price (from scanner cache, zero REST cost)
+        current = self._get_price(symbol)
+        if current and s.entry_price:
+            if s.direction == 'LONG':
+                if current > s.peak_price:
+                    s.peak_price = current
+            else:
+                if s.peak_price == 0 or current < s.peak_price:
+                    s.peak_price = current
+        
         exit_dir = 'bearish' if s.direction == 'LONG' else 'bullish'
         
         if m15 == exit_dir:
@@ -314,6 +328,7 @@ class ZLTBot:
         
         s.state = BotState.IN_TRADE
         s.entry_price = price
+        s.peak_price = price  # Initialize peak at entry price
         s.entry_time = time.time()
         s.trade_count += 1
         self._stats['entries'] += 1
@@ -342,13 +357,30 @@ class ZLTBot:
         price = self._get_price(symbol)
         self._stats['exits'] += 1
         
+        # Final peak update
+        if price and s.entry_price:
+            if s.direction == 'LONG' and price > s.peak_price:
+                s.peak_price = price
+            elif s.direction == 'SHORT' and (s.peak_price == 0 or price < s.peak_price):
+                s.peak_price = price
+        
         pnl_str = ""
+        peak_str = ""
         if s.entry_price and price:
             if s.direction == 'LONG':
                 pnl_pct = (price - s.entry_price) / s.entry_price * 100
             else:
                 pnl_pct = (s.entry_price - price) / s.entry_price * 100
             pnl_str = f"\nP&L: {'+' if pnl_pct >= 0 else ''}{pnl_pct:.2f}%"
+            
+            # Peak calculation
+            if s.peak_price and s.peak_price != s.entry_price:
+                if s.direction == 'LONG':
+                    peak_pct = (s.peak_price - s.entry_price) / s.entry_price * 100
+                else:
+                    peak_pct = (s.entry_price - s.peak_price) / s.entry_price * 100
+                peak_price_str = f"${s.peak_price:,.4f}" if s.peak_price < 100 else f"${s.peak_price:,.2f}"
+                peak_str = f"\nPeak: +{peak_pct:.2f}% ({peak_price_str})"
         
         duration = ""
         if s.entry_time:
@@ -359,7 +391,7 @@ class ZLTBot:
         entry_str = f"${s.entry_price:,.4f}" if s.entry_price else "?"
         
         msg = (f"❌ ZLT Bot EXIT | {symbol}\n"
-               f"Price: {price_str} (entry: {entry_str}){pnl_str}{duration}\n"
+               f"Price: {price_str} (entry: {entry_str}){pnl_str}{peak_str}{duration}\n"
                f"{reason}")
         
         print(f"[ZLT Bot] ❌ EXIT: {symbol} @ {price_str} ({reason})")
@@ -370,6 +402,7 @@ class ZLTBot:
                 'direction': s.direction,
                 'price': price,
                 'entry_price': s.entry_price,
+                'peak_price': s.peak_price,
                 'reason': f'ZLT Bot Exit: {reason}',
                 'was_partial': False,
             })
