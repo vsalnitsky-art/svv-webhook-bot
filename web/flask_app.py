@@ -87,6 +87,14 @@ def create_app():
         except Exception as e:
             print(f"[APP] Failed to start scheduler: {e}")
     
+    # Start BTC Liquidity Map (always, independent of CTR/Sleepers)
+    try:
+        from detection.liquidity_map import init_liquidity_map
+        liq_map = init_liquidity_map(db=get_db())
+        liq_map.start()
+    except Exception as e:
+        print(f"[APP] Failed to start Liquidity Map: {e}")
+    
     # Auto-start CTR Scanner — use before_request to survive Gunicorn fork
     _ctr_auto_started = {'done': False}
     
@@ -1721,6 +1729,37 @@ def register_api_routes(app):
         # Also clear persisted state
         db.set_setting('zl_bot_states', {})
         return jsonify({'status': 'ok'})
+    
+    # ========================================
+    # BTC Liquidity Map Routes
+    # ========================================
+    
+    @app.route('/api/liquidity/current')
+    def api_liquidity_current():
+        """Current liquidity walls."""
+        from detection.liquidity_map import get_liquidity_map
+        lm = get_liquidity_map()
+        if not lm:
+            return jsonify({'error': 'Liquidity Map not running'}), 503
+        return jsonify(lm.get_current())
+    
+    @app.route('/api/liquidity/persistent')
+    def api_liquidity_persistent():
+        """Persistent walls (institutional levels)."""
+        from detection.liquidity_map import get_liquidity_map
+        lm = get_liquidity_map()
+        if not lm:
+            return jsonify({'error': 'Liquidity Map not running'}), 503
+        return jsonify(lm.get_persistent_walls())
+    
+    @app.route('/api/liquidity/summary')
+    def api_liquidity_summary():
+        """Compact summary for dashboard."""
+        from detection.liquidity_map import get_liquidity_map
+        lm = get_liquidity_map()
+        if not lm:
+            return jsonify({'running': False})
+        return jsonify(lm.get_summary())
     
     # ========================================
     # QM Zone Hunter Routes

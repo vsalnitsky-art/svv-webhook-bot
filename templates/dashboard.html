@@ -56,16 +56,32 @@
         </div>
     </div>
 
-    <!-- Live Activity Feed -->
-    <div class="section activity-section">
+    <!-- BTC Liquidity Map -->
+    <div class="section liq-section">
         <div class="section-header">
-            <h2>📡 Live Activity</h2>
-            <span class="live-indicator" id="live-status">🔴 Offline</span>
+            <h2>🧱 BTC Liquidity Map</h2>
+            <span class="liq-status" id="liq-status">⏳</span>
         </div>
         
-        <div class="activity-feed" id="activity-feed">
-            <div class="activity-loading">Connecting...</div>
+        <div class="liq-price" id="liq-price">---</div>
+        
+        <div class="liq-grid">
+            <!-- Ask walls (resistance) -->
+            <div class="liq-side ask-side">
+                <div class="liq-side-label">🔴 ASK WALLS (resistance)</div>
+                <div id="liq-ask-walls" class="liq-walls">Loading...</div>
+            </div>
+            <!-- Bid walls (support) -->
+            <div class="liq-side bid-side">
+                <div class="liq-side-label">🟢 BID WALLS (support)</div>
+                <div id="liq-bid-walls" class="liq-walls">Loading...</div>
+            </div>
         </div>
+        
+        <!-- Persistent walls -->
+        <div class="liq-persistent" id="liq-persistent"></div>
+        
+        <div class="liq-meta" id="liq-meta"></div>
     </div>
 
     <!-- Scheduler Status -->
@@ -216,75 +232,121 @@
 </div>
 
 <style>
-/* Live Activity Styles */
-.activity-section {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    border: 1px solid #0f3460;
+/* BTC Liquidity Map Styles */
+.liq-section {
+    background: linear-gradient(135deg, #1a1a2e 0%, #0d1b2a 100%);
+    border: 1px solid #1b3a5c;
 }
 
-.live-indicator {
-    font-size: 0.9rem;
-    padding: 4px 12px;
-    border-radius: 12px;
-    background: rgba(255,255,255,0.1);
-}
-
-.live-indicator.online {
-    color: #00ff88;
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-.activity-feed {
-    max-height: 200px;
-    overflow-y: auto;
-    font-family: 'Consolas', 'Monaco', monospace;
+.liq-status {
     font-size: 0.85rem;
-    background: #0a0a15;
-    border-radius: 8px;
-    padding: 12px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.08);
+    color: #888;
 }
 
-.activity-item {
-    padding: 4px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    display: flex;
-    gap: 10px;
-}
-
-.activity-item:last-child {
-    border-bottom: none;
-}
-
-.activity-time {
-    color: #666;
-    min-width: 70px;
-}
-
-.activity-type {
-    font-weight: bold;
-    min-width: 80px;
-}
-
-.activity-type.sleeper { color: #ffa500; }
-.activity-type.ob { color: #00bcd4; }
-.activity-type.signal { color: #ff4081; }
-.activity-type.trade { color: #4caf50; }
-.activity-type.scheduler { color: #9c27b0; }
-
-.activity-msg {
-    color: #ccc;
-    flex: 1;
-}
-
-.activity-loading {
-    color: #666;
+.liq-price {
     text-align: center;
-    padding: 20px;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #ffa500;
+    padding: 6px 0;
+    font-family: 'Consolas', monospace;
+}
+
+.liq-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+.liq-side {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 10px;
+}
+
+.liq-side-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #aaa;
+}
+
+.ask-side { border: 1px solid rgba(255,82,82,0.2); }
+.bid-side { border: 1px solid rgba(76,175,80,0.2); }
+
+.liq-walls {
+    font-family: 'Consolas', monospace;
+    font-size: 0.8rem;
+    color: #888;
+}
+
+.liq-wall {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.liq-wall:last-child { border-bottom: none; }
+
+.liq-wall-price {
+    font-weight: 600;
+    min-width: 75px;
+}
+
+.ask-side .liq-wall-price { color: #ff5252; }
+.bid-side .liq-wall-price { color: #4caf50; }
+
+.liq-wall-bar {
+    height: 6px;
+    border-radius: 3px;
+    flex: 1;
+    max-width: 100px;
+}
+
+.ask-side .liq-wall-bar { background: rgba(255,82,82,0.5); }
+.bid-side .liq-wall-bar { background: rgba(76,175,80,0.5); }
+
+.liq-wall-vol {
+    color: #aaa;
+    font-size: 0.75rem;
+    min-width: 55px;
+    text-align: right;
+}
+
+.liq-persistent {
+    margin-top: 8px;
+    padding: 8px;
+    background: rgba(255,165,0,0.05);
+    border: 1px solid rgba(255,165,0,0.15);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    color: #999;
+}
+
+.liq-persistent-title {
+    color: #ffa500;
+    font-weight: 600;
+    font-size: 0.8rem;
+    margin-bottom: 4px;
+}
+
+.liq-persistent-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+}
+
+.liq-meta {
+    text-align: center;
+    font-size: 0.7rem;
+    color: #555;
+    margin-top: 6px;
 }
 
 /* Job cards improvements */
@@ -317,54 +379,83 @@
 </style>
 
 <script>
-// === Live Activity Feed ===
-let activityItems = [];
-let lastEventId = 0;
-
-async function loadActivity() {
+// === BTC Liquidity Map ===
+async function loadLiquidity() {
     try {
-        const res = await fetch('/api/events?limit=20');
-        const data = await res.json();
+        const res = await fetch('/api/liquidity/summary');
+        const d = await res.json();
         
-        if (data.success && data.data.length > 0) {
-            document.getElementById('live-status').textContent = '🟢 Online';
-            document.getElementById('live-status').classList.add('online');
-            
-            renderActivity(data.data);
+        const statusEl = document.getElementById('liq-status');
+        const priceEl = document.getElementById('liq-price');
+        const bidEl = document.getElementById('liq-bid-walls');
+        const askEl = document.getElementById('liq-ask-walls');
+        const persistEl = document.getElementById('liq-persistent');
+        const metaEl = document.getElementById('liq-meta');
+        
+        if (!d.running) {
+            statusEl.textContent = '🔴 Off';
+            priceEl.textContent = 'Module not running';
+            return;
         }
-    } catch (err) {
-        document.getElementById('live-status').textContent = '🔴 Offline';
-        document.getElementById('live-status').classList.remove('online');
-    }
-}
-
-function renderActivity(events) {
-    const feed = document.getElementById('activity-feed');
-    
-    let html = '';
-    for (const e of events.slice(0, 15)) {
-        const time = e.timestamp ? e.timestamp.substring(11, 19) : '--:--:--';
-        const category = (e.category || 'SYSTEM').toLowerCase();
-        const symbol = e.symbol ? ` [${e.symbol}]` : '';
         
-        html += `
-            <div class="activity-item">
-                <span class="activity-time">${time}</span>
-                <span class="activity-type ${category}">${e.category || 'SYSTEM'}</span>
-                <span class="activity-msg">${e.message}${symbol}</span>
-            </div>
-        `;
+        statusEl.textContent = '🟢 Live';
+        statusEl.style.color = '#00ff88';
+        priceEl.textContent = d.price ? `BTC $${Number(d.price).toLocaleString()}` : '---';
+        
+        // Render current walls
+        askEl.innerHTML = renderWalls(d.current_ask || [], 'ask');
+        bidEl.innerHTML = renderWalls(d.current_bid || [], 'bid');
+        
+        // Render persistent walls
+        const pb = d.persistent_bid || [];
+        const pa = d.persistent_ask || [];
+        if (pb.length || pa.length) {
+            let html = '<div class="liq-persistent-title">🏛️ Institutional Levels (persistent)</div>';
+            for (const w of pa.slice(0, 3)) {
+                html += `<div class="liq-persistent-item"><span style="color:#ff5252">ASK $${Number(w.price).toLocaleString()}</span><span>${w.hours_alive}h | $${w.avg_volume_k}K avg | ${w.persistence_pct}%</span></div>`;
+            }
+            for (const w of pb.slice(0, 3)) {
+                html += `<div class="liq-persistent-item"><span style="color:#4caf50">BID $${Number(w.price).toLocaleString()}</span><span>${w.hours_alive}h | $${w.avg_volume_k}K avg | ${w.persistence_pct}%</span></div>`;
+            }
+            persistEl.innerHTML = html;
+            persistEl.style.display = 'block';
+        } else {
+            persistEl.style.display = 'none';
+        }
+        
+        metaEl.textContent = `Scan #${d.scan_count || 0} | ${d.history_hours || 0}h history | ${d.total_snapshots || 0} snapshots`;
+        
+    } catch (err) {
+        document.getElementById('liq-status').textContent = '⚠️';
     }
-    
-    feed.innerHTML = html || '<div class="activity-loading">No recent activity</div>';
 }
 
-// Load activity every 5 seconds
-document.addEventListener('DOMContentLoaded', loadActivity);
-setInterval(loadActivity, 5000);
+function renderWalls(walls, side) {
+    if (!walls || !walls.length) return '<div style="color:#555;padding:8px;">No walls detected</div>';
+    
+    const maxVol = Math.max(...walls.map(w => w.volume_usd));
+    let html = '';
+    for (const w of walls.slice(0, 5)) {
+        const pct = maxVol > 0 ? (w.volume_usd / maxVol * 100) : 0;
+        const vol = w.volume_usd >= 1000000 
+            ? `$${(w.volume_usd / 1e6).toFixed(1)}M`
+            : `$${(w.volume_usd / 1e3).toFixed(0)}K`;
+        html += `
+            <div class="liq-wall">
+                <span class="liq-wall-price">$${Number(w.price).toLocaleString()}</span>
+                <div class="liq-wall-bar" style="width:${pct}%"></div>
+                <span class="liq-wall-vol">${vol} (${w.strength}×)</span>
+            </div>`;
+    }
+    return html;
+}
+
+// Load every 30 seconds (synced with scan interval)
+document.addEventListener('DOMContentLoaded', loadLiquidity);
+setInterval(loadLiquidity, 30000);
 
 async function refreshEvents() {
-    await loadActivity();
+    location.reload();
 }
 
 // === Scheduler functions ===
@@ -449,13 +540,14 @@ async function triggerJob(jobId) {
         
         if (data.success) {
             // Show running indicator
-            document.getElementById('live-status').textContent = '⚡ Running...';
+            const s = document.getElementById('liq-status');
+            if (s) s.textContent = '⚡ Running...';
         }
         
         // Refresh after a moment
         setTimeout(() => {
             loadSchedulerStatus();
-            loadActivity();
+            loadLiquidity();
         }, 2000);
     } catch (err) {
         alert('Error: ' + err.message);
@@ -470,7 +562,7 @@ async function runFullScan() {
     const btn = event.target;
     btn.disabled = true;
     btn.textContent = '⏳ Scanning...';
-    document.getElementById('live-status').textContent = '⚡ Scanning...';
+    document.getElementById('liq-status').textContent = '⚡ Scanning...';
     
     try {
         const res = await fetch('/api/scan/full', { method: 'POST' });
