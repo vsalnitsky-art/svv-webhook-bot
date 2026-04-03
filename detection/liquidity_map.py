@@ -20,12 +20,12 @@ from typing import Dict, List, Optional
 # CONFIG
 # ========================================
 
-BINANCE_DEPTH_URL = 'https://fapi.binance.com/fapi/v1/depth'  # Futures, not spot
+BINANCE_DEPTH_URL = 'https://fapi.binance.com/fapi/v1/depth'  # Futures
 SYMBOL = 'BTCUSDT'
 DEPTH_LIMIT = 1000              # Max depth levels per side
-CLUSTER_SIZE = 50               # Group by $50 price buckets (tighter)
-WALL_THRESHOLD = 3.0            # Wall = volume > 3× average cluster
-MIN_WALL_USD = 100_000          # Minimum $100K to be a wall
+CLUSTER_SIZE = 10               # Group by $10 buckets (1000 lvls / $0.1 tick ≈ $100 range → ~10 clusters)
+WALL_THRESHOLD = 2.0            # Wall = volume > 2× average (real data shows max ~2.3×)
+MIN_WALL_USD = 500_000          # $500K min (clusters are multi-million on BTC futures)
 MAX_DISTANCE_PCT = 3.0          # Only walls within 3% of price
 MAX_WALLS_PER_SIDE = 10         # Max walls to store per snapshot
 SCAN_INTERVAL = 60              # Seconds between scans
