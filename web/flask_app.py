@@ -87,45 +87,46 @@ def create_app():
         except Exception as e:
             print(f"[APP] Failed to start scheduler: {e}")
     
-    # Start BTC Liquidity Map (always, independent of CTR/Sleepers)
-    try:
-        from detection.liquidity_map import init_liquidity_map
-        liq_map = init_liquidity_map(db=get_db())
-        liq_map.start()
-    except Exception as e:
-        print(f"[APP] Failed to start Liquidity Map: {e}")
-    
-    # Auto-start CTR Scanner — use before_request to survive Gunicorn fork
-    _ctr_auto_started = {'done': False}
+    # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
+    _auto_started = {'ctr': False, 'liq': False}
     
     @app.before_request
-    def _maybe_auto_start_ctr():
-        if _ctr_auto_started['done']:
-            return
-        _ctr_auto_started['done'] = True
+    def _maybe_auto_start():
+        # Liquidity Map — always start on first request
+        if not _auto_started['liq']:
+            _auto_started['liq'] = True
+            try:
+                from detection.liquidity_map import init_liquidity_map
+                liq = init_liquidity_map(db=get_db())
+                liq.start()
+            except Exception as e:
+                print(f"[APP] Failed to start Liquidity Map: {e}")
         
-        try:
-            db = get_db()
-            if db.get_setting('ctr_auto_start', '0') == '1':
-                import threading
-                def _do_start():
-                    import time
-                    time.sleep(5)  # Short delay for app init
-                    try:
-                        from scheduler.ctr_job import start_ctr_job
-                        job = start_ctr_job(get_db())
-                        if job.is_running():
-                            print("[CTR Job] ✅ Auto-started after server restart")
-                        else:
-                            print("[CTR Job] ⚠️ Auto-start failed — scanner not running")
-                    except Exception as e:
-                        print(f"[CTR Job] ❌ Auto-start error: {e}")
-                        import traceback
-                        traceback.print_exc()
-                threading.Thread(target=_do_start, daemon=True).start()
-                print("[APP] CTR Scanner auto-start scheduled (worker process)")
-        except Exception as e:
-            print(f"[APP] CTR auto-start check failed: {e}")
+        # CTR Scanner — only if auto-start enabled
+        if not _auto_started['ctr']:
+            _auto_started['ctr'] = True
+            try:
+                db = get_db()
+                if db.get_setting('ctr_auto_start', '0') == '1':
+                    import threading
+                    def _do_start():
+                        import time
+                        time.sleep(5)
+                        try:
+                            from scheduler.ctr_job import start_ctr_job
+                            job = start_ctr_job(get_db())
+                            if job.is_running():
+                                print("[CTR Job] ✅ Auto-started after server restart")
+                            else:
+                                print("[CTR Job] ⚠️ Auto-start failed — scanner not running")
+                        except Exception as e:
+                            print(f"[CTR Job] ❌ Auto-start error: {e}")
+                            import traceback
+                            traceback.print_exc()
+                    threading.Thread(target=_do_start, daemon=True).start()
+                    print("[APP] CTR Scanner auto-start scheduled (worker process)")
+            except Exception as e:
+                print(f"[APP] CTR auto-start check failed: {e}")
     
     return app
 

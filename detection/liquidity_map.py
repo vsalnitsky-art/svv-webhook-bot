@@ -74,11 +74,20 @@ class LiquidityMap:
         print("[LIQ MAP] Stopped")
     
     def _loop(self):
-        self._scan()  # Immediate first scan
-        while self._running:
-            time.sleep(self.scan_interval)
-            if self._running:
-                self._scan()
+        """Background scan loop with crash protection."""
+        print(f"[LIQ MAP] 🧵 Scan thread started (tid={threading.current_thread().ident})")
+        try:
+            self._scan()  # Immediate first scan
+            while self._running:
+                time.sleep(self.scan_interval)
+                if self._running:
+                    self._scan()
+        except Exception as e:
+            print(f"[LIQ MAP] 💀 Scan thread crashed: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("[LIQ MAP] 🧵 Scan thread exited")
     
     # ========================================
     # CORE SCAN
@@ -90,7 +99,7 @@ class LiquidityMap:
             resp = self._session.get(
                 BINANCE_DEPTH_URL,
                 params={'symbol': SYMBOL, 'limit': DEPTH_LIMIT},
-                timeout=10,
+                timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -98,6 +107,7 @@ class LiquidityMap:
             bids = data.get('bids', [])
             asks = data.get('asks', [])
             if not bids or not asks:
+                print(f"[LIQ MAP] ⚠️ Empty orderbook: bids={len(bids)}, asks={len(asks)}")
                 return
             
             mid_price = (float(bids[0][0]) + float(asks[0][0])) / 2
@@ -122,8 +132,8 @@ class LiquidityMap:
             if sc % 60 == 0:
                 self._cleanup()
             
-            # Log every 10th scan
-            if sc % 10 == 1:
+            # Log first scan and every 10th
+            if sc <= 2 or sc % 10 == 0:
                 tb = sum(w[1] for w in bid_walls) / 1e6
                 ta = sum(w[1] for w in ask_walls) / 1e6
                 print(f"[LIQ MAP] #{sc}: ${mid_price:,.0f} | "
@@ -134,12 +144,12 @@ class LiquidityMap:
             with self._lock:
                 self._current['errors'] += 1
             ec = self._current['errors']
-            if ec <= 3 or ec % 30 == 0:
-                print(f"[LIQ MAP] ⚠️ HTTP error ({ec}): {e}")
+            if ec <= 5 or ec % 10 == 0:
+                print(f"[LIQ MAP] ⚠️ HTTP error #{ec}: {type(e).__name__}: {e}")
         except Exception as e:
             with self._lock:
                 self._current['errors'] += 1
-            print(f"[LIQ MAP] ❌ Error: {e}")
+            print(f"[LIQ MAP] ❌ Scan error: {type(e).__name__}: {e}")
     
     # ========================================
     # WALL DETECTION
@@ -234,7 +244,9 @@ class LiquidityMap:
     def get_current(self) -> Dict:
         """Current walls + metadata."""
         with self._lock:
-            return dict(self._current)
+            result = dict(self._current)
+            result['thread_alive'] = self._thread.is_alive() if self._thread else False
+            return result
     
     def get_persistent_walls(self) -> Dict:
         """Walls that persisted over time (institutional levels)."""
@@ -329,6 +341,8 @@ def get_liquidity_map() -> Optional[LiquidityMap]:
 
 def init_liquidity_map(db=None) -> LiquidityMap:
     global _instance
-    if _instance is None:
-        _instance = LiquidityMap(db=db)
+    # Always create fresh instance (handles Gunicorn worker restarts)
+    if _instance is not None:
+        _instance.stop()
+    _instance = LiquidityMap(db=db)
     return _instance
