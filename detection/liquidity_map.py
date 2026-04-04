@@ -128,6 +128,9 @@ class LiquidityMap:
             # Store to DB
             self._store(bid_walls, ask_walls, mid_price, now_str)
             
+            # Store bias snapshot for history chart
+            self._store_bias(bid_walls, ask_walls, mid_price, now_str)
+            
             # Cleanup hourly
             if sc % 60 == 0:
                 self._cleanup()
@@ -234,8 +237,57 @@ class LiquidityMap:
             if before != len(history):
                 self.db.set_setting('liq_map_history', history)
                 print(f"[LIQ MAP] 🧹 Cleaned {before - len(history)} old snapshots")
+            
+            # Clean old bias days
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=HISTORY_DAYS)).strftime('%Y-%m-%d')
+            for i in range(HISTORY_DAYS + 2, HISTORY_DAYS + 5):
+                old_date = (datetime.now(timezone.utc) - timedelta(days=i)).strftime('%Y-%m-%d')
+                old_key = f'liq_bias_{old_date}'
+                try:
+                    if self.db.get_setting(old_key):
+                        self.db.set_setting(old_key, None)
+                except:
+                    pass
         except Exception as e:
             print(f"[LIQ MAP] ⚠️ Cleanup error: {e}")
+    
+    def _store_bias(self, bid_walls: List[tuple], ask_walls: List[tuple],
+                    price: float, ts: str):
+        """Store bias snapshot for daily chart. One DB key per day."""
+        if not self.db:
+            return
+        try:
+            # Calculate bias
+            bid_vol = sum(w[1] for w in bid_walls)
+            ask_vol = sum(w[1] for w in ask_walls)
+            total = bid_vol + ask_vol
+            long_pct = round(bid_vol / total * 100) if total > 0 else 50
+            
+            # Today's key
+            day = ts[:10]  # "2026-04-04"
+            db_key = f'liq_bias_{day}'
+            
+            history = self.db.get_setting(db_key, [])
+            if not isinstance(history, list):
+                history = []
+            
+            # Compact: time(HH:MM), longPct, price, bidVol($K), askVol($K)
+            history.append({
+                't': ts[11:16],  # "HH:MM"
+                'l': long_pct,
+                'p': round(price, 0),
+                'b': round(bid_vol / 1000, 0),
+                'a': round(ask_vol / 1000, 0),
+            })
+            
+            # Max 1440 per day (1 per minute)
+            if len(history) > 1440:
+                history = history[-1440:]
+            
+            self.db.set_setting(db_key, history)
+        except Exception as e:
+            if self._current.get('scan_count', 0) <= 3:
+                print(f"[LIQ MAP] ⚠️ Bias store error: {e}")
     
     # ========================================
     # PUBLIC API

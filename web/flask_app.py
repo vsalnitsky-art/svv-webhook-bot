@@ -1762,6 +1762,38 @@ def register_api_routes(app):
             return jsonify({'running': False})
         return jsonify(lm.get_summary())
     
+    @app.route('/api/liquidity/bias-history')
+    def api_liquidity_bias_history():
+        """Bias history for chart. ?date=2026-04-04 or defaults to today."""
+        from detection.liquidity_map import HISTORY_DAYS
+        db = get_db()
+        
+        req_date = request.args.get('date', '')
+        today = datetime.utcnow().strftime('%Y-%m-%d')
+        
+        if not req_date:
+            req_date = today
+        
+        # Available days (today + past HISTORY_DAYS)
+        available = []
+        for i in range(HISTORY_DAYS + 1):
+            d = (datetime.utcnow() - timedelta(days=i)).strftime('%Y-%m-%d')
+            key = f'liq_bias_{d}'
+            data = db.get_setting(key, [])
+            if isinstance(data, list) and len(data) > 0:
+                available.append({'date': d, 'points': len(data)})
+        
+        # Get requested day
+        data = db.get_setting(f'liq_bias_{req_date}', [])
+        if not isinstance(data, list):
+            data = []
+        
+        return jsonify({
+            'date': req_date,
+            'data': data,
+            'available_days': available,
+        })
+    
     # ========================================
     # QM Zone Hunter Routes
     # ========================================

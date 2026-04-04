@@ -72,6 +72,15 @@
         <div class="heatmap" id="liq-heatmap">Loading...</div>
         
         <div class="liq-meta" id="liq-meta"></div>
+        
+        <!-- Bias History Chart -->
+        <div class="bias-chart-section">
+            <div class="bias-chart-header">
+                <span class="bias-chart-title">📊 LONG/SHORT Bias History</span>
+                <div class="bias-day-selector" id="bias-day-btns"></div>
+            </div>
+            <canvas id="bias-chart" height="160"></canvas>
+        </div>
     </div>
 
     <!-- Scheduler Status -->
@@ -413,6 +422,51 @@
     margin-top: 6px;
 }
 
+/* Bias History Chart */
+.bias-chart-section {
+    margin-top: 10px;
+    padding: 8px;
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.06);
+}
+
+.bias-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.bias-chart-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #aaa;
+}
+
+.bias-day-selector {
+    display: flex;
+    gap: 4px;
+}
+
+.bias-day-btn {
+    padding: 2px 8px;
+    font-size: 0.7rem;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.05);
+    color: #888;
+    cursor: pointer;
+    font-family: 'Consolas', monospace;
+}
+
+.bias-day-btn:hover { background: rgba(255,255,255,0.1); }
+.bias-day-btn.active {
+    background: rgba(255,165,0,0.2);
+    border-color: #ffa500;
+    color: #ffa500;
+}
+
 /* Job cards improvements */
 .job-card {
     background: rgba(255,255,255,0.05);
@@ -441,6 +495,8 @@
     gap: 4px;
 }
 </style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
 <script>
 // === BTC Liquidity Heatmap + Bias ===
@@ -612,6 +668,154 @@ function renderHeatmap(levels, currentPrice) {
 
 document.addEventListener('DOMContentLoaded', loadLiquidity);
 setInterval(loadLiquidity, 30000);
+
+// === Bias History Chart ===
+let biasChart = null;
+let biasCurrentDay = '';
+
+async function loadBiasChart(date) {
+    try {
+        const url = date ? `/api/liquidity/bias-history?date=${date}` : '/api/liquidity/bias-history';
+        const res = await fetch(url);
+        const d = await res.json();
+        
+        biasCurrentDay = d.date || '';
+        
+        // Render day selector
+        const btnsEl = document.getElementById('bias-day-btns');
+        if (btnsEl && d.available_days) {
+            let html = '';
+            for (const day of d.available_days) {
+                const label = day.date.slice(5);  // "04-04"
+                const active = day.date === d.date ? 'active' : '';
+                html += `<button class="bias-day-btn ${active}" onclick="loadBiasChart('${day.date}')">${label} (${day.points})</button>`;
+            }
+            btnsEl.innerHTML = html;
+        }
+        
+        // Render chart
+        const data = d.data || [];
+        if (data.length < 2) return;
+        
+        // Sample every 5 points for performance (max ~288 points displayed)
+        const step = Math.max(1, Math.floor(data.length / 288));
+        const sampled = data.filter((_, i) => i % step === 0 || i === data.length - 1);
+        
+        const labels = sampled.map(p => p.t);
+        const longData = sampled.map(p => p.l);
+        const shortData = sampled.map(p => 100 - p.l);
+        const priceData = sampled.map(p => p.p);
+        
+        const ctx = document.getElementById('bias-chart');
+        if (!ctx) return;
+        
+        if (biasChart) biasChart.destroy();
+        
+        biasChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'LONG %',
+                        data: longData,
+                        borderColor: '#4caf50',
+                        backgroundColor: 'rgba(76,175,80,0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                        borderWidth: 1.5,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'SHORT %',
+                        data: shortData,
+                        borderColor: '#ff5252',
+                        backgroundColor: 'rgba(255,82,82,0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 0,
+                        borderWidth: 1.5,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'BTC Price',
+                        data: priceData,
+                        borderColor: 'rgba(255,165,0,0.5)',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        tension: 0.3,
+                        borderDash: [3, 3],
+                        yAxisID: 'y1',
+                        fill: false,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#888', font: { size: 10 }, boxWidth: 12, padding: 8 },
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0,0,0,0.85)',
+                        titleColor: '#ffa500',
+                        bodyColor: '#ccc',
+                        padding: 8,
+                        callbacks: {
+                            label: function(ctx) {
+                                if (ctx.dataset.yAxisID === 'y1') return `BTC $${Number(ctx.raw).toLocaleString()}`;
+                                return `${ctx.dataset.label}: ${ctx.raw}%`;
+                            }
+                        }
+                    },
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color: '#555',
+                            font: { size: 9 },
+                            maxTicksLimit: 12,
+                            maxRotation: 0,
+                        },
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                    },
+                    y: {
+                        position: 'left',
+                        min: 0,
+                        max: 100,
+                        ticks: {
+                            color: '#555',
+                            font: { size: 9 },
+                            callback: v => v + '%',
+                            stepSize: 25,
+                        },
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                    },
+                    y1: {
+                        position: 'right',
+                        ticks: {
+                            color: 'rgba(255,165,0,0.5)',
+                            font: { size: 9 },
+                            callback: v => '$' + (v/1000).toFixed(1) + 'K',
+                        },
+                        grid: { display: false },
+                    },
+                },
+            },
+        });
+    } catch (err) {
+        console.error('Bias chart error:', err);
+    }
+}
+
+// Load chart on page load and refresh every 2 min
+document.addEventListener('DOMContentLoaded', () => loadBiasChart(''));
+setInterval(() => loadBiasChart(biasCurrentDay), 120000);
 
 async function refreshEvents() {
     location.reload();
