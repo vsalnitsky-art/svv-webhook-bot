@@ -79,7 +79,7 @@
                 <span class="bias-chart-title">📊 LONG/SHORT Bias History</span>
                 <div class="bias-day-selector" id="bias-day-btns"></div>
             </div>
-            <canvas id="bias-chart" height="160"></canvas>
+            <div class="bias-chart-wrap"><canvas id="bias-chart"></canvas></div>
         </div>
     </div>
 
@@ -429,6 +429,12 @@
     background: rgba(0,0,0,0.25);
     border-radius: 8px;
     border: 1px solid rgba(255,255,255,0.06);
+}
+
+.bias-chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 180px;
 }
 
 .bias-chart-header {
