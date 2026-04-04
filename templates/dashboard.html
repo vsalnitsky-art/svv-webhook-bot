@@ -706,26 +706,29 @@ async function loadBiasChart(date) {
             return dt.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
         }
         
-        // Rolling 60-min bias from cumulative bid/ask volumes
-        // This matches what the bias bar shows — aggregate sentiment, not per-scan noise
-        const ROLLING = 60;  // 60-minute window
-        const rollingBias = [];
-        const priceArr = [];
-        const timeLabels = [];
+        // Two rolling windows: fast (30min) for scan, slow (3h) for weighted
+        const FAST = 30;   // Scan Bias: reacts quickly
+        const SLOW = 180;  // Weighted Bias: persistent trend (matches bias bar)
         
-        for (let i = 0; i < data.length; i++) {
-            const start = Math.max(0, i - ROLLING + 1);
-            let sumBid = 0, sumAsk = 0;
-            for (let j = start; j <= i; j++) {
-                sumBid += (data[j].b || 0);
-                sumAsk += (data[j].a || 0);
+        function rollingCalc(data, window) {
+            const out = [];
+            for (let i = 0; i < data.length; i++) {
+                const start = Math.max(0, i - window + 1);
+                let sumBid = 0, sumAsk = 0;
+                for (let j = start; j <= i; j++) {
+                    sumBid += (data[j].b || 0);
+                    sumAsk += (data[j].a || 0);
+                }
+                const total = sumBid + sumAsk;
+                out.push(total > 0 ? Math.round(sumBid / total * 100) : 50);
             }
-            const total = sumBid + sumAsk;
-            const bias = total > 0 ? Math.round(sumBid / total * 100) : 50;
-            rollingBias.push(bias);
-            priceArr.push(data[i].p);
-            timeLabels.push(utcToLocal(d.date, data[i].t));
+            return out;
         }
+        
+        const scanBias = rollingCalc(data, FAST);
+        const weightedBias = rollingCalc(data, SLOW);
+        const priceArr = data.map(p => p.p);
+        const timeLabels = data.map(p => utcToLocal(d.date, p.t));
         
         // Sample for performance (max ~300 points)
         const step = Math.max(1, Math.floor(data.length / 300));
@@ -735,8 +738,9 @@ async function loadBiasChart(date) {
         }
         
         const labels = idx.map(i => timeLabels[i]);
-        const biasData = idx.map(i => rollingBias[i]);
-        const weightedData = idx.map(i => data[i].w != null ? data[i].w : rollingBias[i]);
+        const biasData = idx.map(i => scanBias[i]);
+        // Use backend 'w' field if available, else JS 3h rolling fallback
+        const weightedData = idx.map(i => data[i].w != null ? data[i].w : weightedBias[i]);
         const priceData = idx.map(i => priceArr[i]);
         
         const ctx = document.getElementById('bias-chart');

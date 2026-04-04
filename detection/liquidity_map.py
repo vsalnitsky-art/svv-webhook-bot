@@ -52,9 +52,9 @@ class LiquidityMap:
         self._session = requests.Session()
         self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
         
-        # Rolling volume buffer for weighted bias (60 minutes of bid/ask volumes)
+        # Rolling volume buffer for weighted bias (3 hours = persistent sentiment)
         self._vol_buffer: List[tuple] = []  # [(bid_vol, ask_vol), ...]
-        self._vol_buffer_max: int = 60      # 60 scans = 60 minutes
+        self._vol_buffer_max: int = 180     # 180 scans = 3 hours
     
     # ========================================
     # LIFECYCLE
