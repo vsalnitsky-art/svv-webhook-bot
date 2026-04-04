@@ -700,8 +700,8 @@ async function loadBiasChart(date) {
         const data = d.data || [];
         if (data.length < 3) return;
         
-        // 15-min moving average for smooth display
-        const window = 15;
+        // 30-min moving average for scan bias (background context)
+        const window = 30;
         function sma(arr, w) {
             const out = [];
             for (let i = 0; i < arr.length; i++) {
@@ -750,22 +750,28 @@ async function loadBiasChart(date) {
                     {
                         label: 'Scan Bias',
                         data: longSmooth,
-                        segment: { borderColor: segmentColor, backgroundColor: segmentBg },
-                        fill: true,
+                        segment: { borderColor: segmentColor },
+                        fill: false,
                         tension: 0.4,
                         pointRadius: 0,
-                        borderWidth: 1.5,
+                        borderWidth: 1,
+                        borderDash: [2, 2],
                         yAxisID: 'y',
+                        order: 2,
                     },
                     {
                         label: 'Weighted Bias',
                         data: weightedLong,
-                        borderColor: '#fff',
-                        borderWidth: 2.5,
+                        segment: {
+                            borderColor: ctx => ctx.p0.parsed.y >= 50 ? '#4caf50' : '#ff5252',
+                            backgroundColor: ctx => ctx.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.2)' : 'rgba(255,82,82,0.2)',
+                        },
+                        fill: true,
+                        borderWidth: 3,
                         pointRadius: 0,
                         tension: 0.4,
-                        fill: false,
                         yAxisID: 'y',
+                        order: 1,
                     },
                     {
                         label: 'BTC Price',
@@ -777,6 +783,7 @@ async function loadBiasChart(date) {
                         borderDash: [4, 2],
                         yAxisID: 'y1',
                         fill: false,
+                        order: 3,
                     },
                 ],
             },

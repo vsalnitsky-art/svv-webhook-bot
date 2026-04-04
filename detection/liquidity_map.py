@@ -52,9 +52,9 @@ class LiquidityMap:
         self._session = requests.Session()
         self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
         
-        # EMA bias tracker (slow-moving weighted bias, matches the bias bar)
-        self._ema_long: float = 50.0  # Start neutral
-        self._ema_alpha: float = 0.05  # Slow: ~20 scans to converge
+        # EMA bias (very slow — captures persistent sentiment, not noise)
+        self._ema_long: float = 50.0
+        self._ema_alpha: float = 0.01  # ~100 scans (~1.5h) to fully converge
     
     # ========================================
     # LIFECYCLE
