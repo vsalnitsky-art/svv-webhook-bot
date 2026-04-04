@@ -52,9 +52,9 @@ class LiquidityMap:
         self._session = requests.Session()
         self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
         
-        # EMA bias (very slow — captures persistent sentiment, not noise)
-        self._ema_long: float = 50.0
-        self._ema_alpha: float = 0.01  # ~100 scans (~1.5h) to fully converge
+        # Rolling volume buffer for weighted bias (60 minutes of bid/ask volumes)
+        self._vol_buffer: List[tuple] = []  # [(bid_vol, ask_vol), ...]
+        self._vol_buffer_max: int = 60      # 60 scans = 60 minutes
     
     # ========================================
     # LIFECYCLE
@@ -267,9 +267,15 @@ class LiquidityMap:
             total = bid_vol + ask_vol
             long_pct = round(bid_vol / total * 100) if total > 0 else 50
             
-            # Update EMA (slow-moving weighted bias)
-            self._ema_long = self._ema_alpha * long_pct + (1 - self._ema_alpha) * self._ema_long
-            weighted_long = round(self._ema_long)
+            # Rolling 60-min weighted bias (sum of volumes over buffer)
+            self._vol_buffer.append((bid_vol, ask_vol))
+            if len(self._vol_buffer) > self._vol_buffer_max:
+                self._vol_buffer = self._vol_buffer[-self._vol_buffer_max:]
+            
+            sum_bid = sum(v[0] for v in self._vol_buffer)
+            sum_ask = sum(v[1] for v in self._vol_buffer)
+            sum_total = sum_bid + sum_ask
+            weighted_long = round(sum_bid / sum_total * 100) if sum_total > 0 else 50
             
             # Today's key
             day = ts[:10]

@@ -736,6 +736,7 @@ async function loadBiasChart(date) {
         
         const labels = idx.map(i => timeLabels[i]);
         const biasData = idx.map(i => rollingBias[i]);
+        const weightedData = idx.map(i => data[i].w != null ? data[i].w : rollingBias[i]);
         const priceData = idx.map(i => priceArr[i]);
         
         const ctx = document.getElementById('bias-chart');
@@ -748,17 +749,31 @@ async function loadBiasChart(date) {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Market Bias (60min)',
+                        label: 'Scan Bias (60min)',
                         data: biasData,
                         segment: {
-                            borderColor: c => c.p0.parsed.y >= 50 ? '#4caf50' : '#ff5252',
-                            backgroundColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.2)' : 'rgba(255,82,82,0.2)',
+                            borderColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.4)' : 'rgba(255,82,82,0.4)',
+                            backgroundColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.08)' : 'rgba(255,82,82,0.08)',
                         },
                         fill: true,
-                        borderWidth: 2.5,
+                        borderWidth: 1,
                         pointRadius: 0,
                         tension: 0.4,
                         yAxisID: 'y',
+                        order: 2,
+                    },
+                    {
+                        label: 'Weighted Bias',
+                        data: weightedData,
+                        segment: {
+                            borderColor: c => c.p0.parsed.y >= 50 ? '#4caf50' : '#ff5252',
+                        },
+                        fill: false,
+                        borderWidth: 3,
+                        pointRadius: 0,
+                        tension: 0.4,
+                        yAxisID: 'y',
+                        order: 1,
                     },
                     {
                         label: 'BTC Price',
@@ -770,6 +785,7 @@ async function loadBiasChart(date) {
                         borderDash: [4, 2],
                         yAxisID: 'y1',
                         fill: false,
+                        order: 3,
                     },
                 ],
             },
@@ -794,8 +810,10 @@ async function loadBiasChart(date) {
                             label: function(c) {
                                 if (c.dataset.yAxisID === 'y1') return `BTC $${Number(c.raw).toLocaleString()}`;
                                 const v = c.raw;
-                                if (v >= 50) return `🟢 LONG ${v}%`;
-                                return `🔴 SHORT ${100 - v}%`;
+                                const icon = v >= 50 ? '🟢' : '🔴';
+                                const dir = v >= 50 ? 'LONG' : 'SHORT';
+                                const pct = v >= 50 ? v : (100 - v);
+                                return `${icon} ${c.dataset.label}: ${dir} ${pct}%`;
                             }
                         }
                     },
