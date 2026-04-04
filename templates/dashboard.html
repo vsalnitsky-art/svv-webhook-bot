@@ -11,51 +11,6 @@
         </div>
     </div>
 
-    <!-- Stats Cards -->
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-icon">💰</div>
-            <div class="stat-content">
-                <div class="stat-value" id="balance">
-                    {% if paper_trading %}
-                        ${{ "%.2f"|format(paper_balance) }}
-                    {% else %}
-                        ---
-                    {% endif %}
-                </div>
-                <div class="stat-label">{{ 'Paper Balance' if paper_trading else 'Live Balance' }}</div>
-            </div>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-icon">📊</div>
-            <div class="stat-content">
-                <div class="stat-value">{{ trade_stats.total_trades }}</div>
-                <div class="stat-label">Total Trades (30d)</div>
-            </div>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-icon">🎯</div>
-            <div class="stat-content">
-                <div class="stat-value {% if trade_stats.win_rate >= 50 %}positive{% else %}negative{% endif %}">
-                    {{ "%.1f"|format(trade_stats.win_rate) }}%
-                </div>
-                <div class="stat-label">Win Rate</div>
-            </div>
-        </div>
-
-        <div class="stat-card">
-            <div class="stat-icon">💵</div>
-            <div class="stat-content">
-                <div class="stat-value {% if trade_stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
-                    ${{ "%.2f"|format(trade_stats.total_pnl) }}
-                </div>
-                <div class="stat-label">Total P&L</div>
-            </div>
-        </div>
-    </div>
-
     <!-- BTC Liquidity Map — Heatmap -->
     <div class="section liq-section">
         <div class="section-header">
@@ -80,6 +35,48 @@
                 <div class="bias-day-selector" id="bias-day-btns"></div>
             </div>
             <div class="bias-chart-wrap"><canvas id="bias-chart"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon">💰</div>
+            <div class="stat-content">
+                <div class="stat-value" id="balance">
+                    {% if paper_trading %}
+                        ${{ "%.2f"|format(paper_balance) }}
+                    {% else %}
+                        ---
+                    {% endif %}
+                </div>
+                <div class="stat-label">{{ 'Paper Balance' if paper_trading else 'Live Balance' }}</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+                <div class="stat-value">{{ trade_stats.total_trades }}</div>
+                <div class="stat-label">Total Trades (30d)</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🎯</div>
+            <div class="stat-content">
+                <div class="stat-value {% if trade_stats.win_rate >= 50 %}positive{% else %}negative{% endif %}">
+                    {{ "%.1f"|format(trade_stats.win_rate) }}%
+                </div>
+                <div class="stat-label">Win Rate</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">💵</div>
+            <div class="stat-content">
+                <div class="stat-value {% if trade_stats.total_pnl >= 0 %}positive{% else %}negative{% endif %}">
+                    ${{ "%.2f"|format(trade_stats.total_pnl) }}
+                </div>
+                <div class="stat-label">Total P&L</div>
+            </div>
         </div>
     </div>
 
@@ -701,21 +698,42 @@ async function loadBiasChart(date) {
         
         // Render chart
         const data = d.data || [];
-        if (data.length < 2) return;
+        if (data.length < 3) return;
         
-        // Sample every 5 points for performance (max ~288 points displayed)
-        const step = Math.max(1, Math.floor(data.length / 288));
+        // 15-min moving average for smooth display
+        const window = 15;
+        function sma(arr, w) {
+            const out = [];
+            for (let i = 0; i < arr.length; i++) {
+                const start = Math.max(0, i - w + 1);
+                const slice = arr.slice(start, i + 1);
+                out.push(Math.round(slice.reduce((a, b) => a + b, 0) / slice.length));
+            }
+            return out;
+        }
+        
+        // Sample for performance
+        const step = Math.max(1, Math.floor(data.length / 300));
         const sampled = data.filter((_, i) => i % step === 0 || i === data.length - 1);
         
         const labels = sampled.map(p => p.t);
-        const longData = sampled.map(p => p.l);
-        const shortData = sampled.map(p => 100 - p.l);
+        const rawLong = sampled.map(p => p.l);
+        const longSmooth = sma(rawLong, Math.ceil(window / step));
         const priceData = sampled.map(p => p.p);
         
         const ctx = document.getElementById('bias-chart');
         if (!ctx) return;
-        
         if (biasChart) biasChart.destroy();
+        
+        // Dynamic color: green above 50, red below
+        const segmentColor = (ctx) => {
+            const v = ctx.p0.parsed.y;
+            return v >= 50 ? '#4caf50' : '#ff5252';
+        };
+        const segmentBg = (ctx) => {
+            const v = ctx.p0.parsed.y;
+            return v >= 50 ? 'rgba(76,175,80,0.15)' : 'rgba(255,82,82,0.15)';
+        };
         
         biasChart = new Chart(ctx, {
             type: 'line',
@@ -723,35 +741,23 @@ async function loadBiasChart(date) {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'LONG %',
-                        data: longData,
-                        borderColor: '#4caf50',
-                        backgroundColor: 'rgba(76,175,80,0.1)',
+                        label: 'LONG Bias',
+                        data: longSmooth,
+                        segment: { borderColor: segmentColor, backgroundColor: segmentBg },
                         fill: true,
-                        tension: 0.3,
+                        tension: 0.4,
                         pointRadius: 0,
-                        borderWidth: 1.5,
-                        yAxisID: 'y',
-                    },
-                    {
-                        label: 'SHORT %',
-                        data: shortData,
-                        borderColor: '#ff5252',
-                        backgroundColor: 'rgba(255,82,82,0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 0,
-                        borderWidth: 1.5,
+                        borderWidth: 2,
                         yAxisID: 'y',
                     },
                     {
                         label: 'BTC Price',
                         data: priceData,
-                        borderColor: 'rgba(255,165,0,0.5)',
-                        borderWidth: 1,
+                        borderColor: 'rgba(255,165,0,0.6)',
+                        borderWidth: 1.5,
                         pointRadius: 0,
                         tension: 0.3,
-                        borderDash: [3, 3],
+                        borderDash: [4, 2],
                         yAxisID: 'y1',
                         fill: false,
                     },
@@ -768,39 +774,42 @@ async function loadBiasChart(date) {
                         labels: { color: '#888', font: { size: 10 }, boxWidth: 12, padding: 8 },
                     },
                     tooltip: {
-                        backgroundColor: 'rgba(0,0,0,0.85)',
+                        backgroundColor: 'rgba(0,0,0,0.9)',
                         titleColor: '#ffa500',
                         bodyColor: '#ccc',
                         padding: 8,
                         callbacks: {
-                            label: function(ctx) {
-                                if (ctx.dataset.yAxisID === 'y1') return `BTC $${Number(ctx.raw).toLocaleString()}`;
-                                return `${ctx.dataset.label}: ${ctx.raw}%`;
+                            label: function(c) {
+                                if (c.dataset.yAxisID === 'y1') return `BTC $${Number(c.raw).toLocaleString()}`;
+                                const bias = c.raw;
+                                const dir = bias >= 50 ? 'LONG' : 'SHORT';
+                                const str = bias >= 50 ? bias : (100 - bias);
+                                return `${dir} ${str}% bias`;
                             }
                         }
                     },
+                    annotation: undefined,
                 },
                 scales: {
                     x: {
-                        ticks: {
-                            color: '#555',
-                            font: { size: 9 },
-                            maxTicksLimit: 12,
-                            maxRotation: 0,
-                        },
+                        ticks: { color: '#555', font: { size: 9 }, maxTicksLimit: 10, maxRotation: 0 },
                         grid: { color: 'rgba(255,255,255,0.03)' },
                     },
                     y: {
                         position: 'left',
-                        min: 0,
-                        max: 100,
+                        min: 0, max: 100,
                         ticks: {
-                            color: '#555',
-                            font: { size: 9 },
-                            callback: v => v + '%',
-                            stepSize: 25,
+                            color: '#555', font: { size: 9 }, stepSize: 25,
+                            callback: v => {
+                                if (v === 50) return '— 50% —';
+                                if (v > 50) return `L${v}%`;
+                                return `S${100-v}%`;
+                            },
                         },
-                        grid: { color: 'rgba(255,255,255,0.04)' },
+                        grid: {
+                            color: (ctx) => ctx.tick.value === 50 ? 'rgba(255,165,0,0.3)' : 'rgba(255,255,255,0.04)',
+                            lineWidth: (ctx) => ctx.tick.value === 50 ? 2 : 1,
+                        },
                     },
                     y1: {
                         position: 'right',
