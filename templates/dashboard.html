@@ -65,6 +65,9 @@
         
         <div class="liq-price" id="liq-price">---</div>
         
+        <!-- Bias indicator -->
+        <div class="liq-bias" id="liq-bias"></div>
+        
         <!-- Heatmap: vertical price ladder -->
         <div class="heatmap" id="liq-heatmap">Loading...</div>
         
@@ -219,7 +222,7 @@
 </div>
 
 <style>
-/* BTC Liquidity Map Styles */
+/* BTC Liquidity Map */
 .liq-section {
     background: linear-gradient(135deg, #1a1a2e 0%, #0d1b2a 100%);
     border: 1px solid #1b3a5c;
@@ -235,45 +238,108 @@
 
 .liq-price {
     text-align: center;
-    font-size: 1.4rem;
+    font-size: 1.3rem;
     font-weight: 700;
     color: #ffa500;
-    padding: 4px 0;
+    padding: 2px 0;
     font-family: 'Consolas', monospace;
 }
 
-/* Heatmap price ladder */
+/* Bias indicator */
+.liq-bias {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+    padding: 6px 10px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+}
+
+.bias-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #aaa;
+    min-width: 55px;
+}
+
+.bias-bar-wrap {
+    flex: 1;
+    height: 20px;
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    background: #111;
+}
+
+.bias-bar-long {
+    height: 100%;
+    background: linear-gradient(90deg, #1b5e20, #4caf50);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #fff;
+    transition: width 0.5s ease;
+}
+
+.bias-bar-short {
+    height: 100%;
+    background: linear-gradient(90deg, #f44336, #b71c1c);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #fff;
+    transition: width 0.5s ease;
+}
+
+.bias-signal {
+    min-width: 60px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+
+.bias-signal.long { color: #4caf50; background: rgba(76,175,80,0.15); }
+.bias-signal.short { color: #ff5252; background: rgba(255,82,82,0.15); }
+.bias-signal.neutral { color: #888; background: rgba(255,255,255,0.05); }
+
+/* Heatmap */
 .heatmap {
     background: #0a0a15;
     border-radius: 8px;
-    padding: 8px 12px;
+    padding: 6px 0;
     margin-top: 6px;
     font-family: 'Consolas', monospace;
     font-size: 0.8rem;
 }
 
 .hm-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 72px 1fr 95px;
     align-items: center;
-    padding: 3px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.03);
-    position: relative;
+    padding: 2px 10px;
+    gap: 8px;
 }
 
-.hm-row:last-child { border-bottom: none; }
+.hm-row:hover { background: rgba(255,255,255,0.03); }
 
 .hm-price {
-    min-width: 80px;
     font-weight: 600;
     font-size: 0.78rem;
+    text-align: right;
 }
 
 .hm-price.ask { color: #ff5252; }
 .hm-price.bid { color: #4caf50; }
 
 .hm-bar-wrap {
-    flex: 1;
-    height: 18px;
+    height: 16px;
     position: relative;
     border-radius: 3px;
     overflow: hidden;
@@ -287,34 +353,33 @@
     display: flex;
     align-items: center;
     padding-left: 6px;
-    font-size: 0.7rem;
-    color: rgba(255,255,255,0.8);
+    font-size: 0.65rem;
+    color: rgba(255,255,255,0.7);
     white-space: nowrap;
 }
 
-.hm-bar.ask { background: linear-gradient(90deg, rgba(255,82,82,0.15), rgba(255,82,82,0.6)); }
-.hm-bar.bid { background: linear-gradient(90deg, rgba(76,175,80,0.15), rgba(76,175,80,0.6)); }
-
-/* Persistent walls glow brighter */
-.hm-bar.persistent { box-shadow: inset 0 0 8px rgba(255,255,255,0.1); }
+.hm-bar.ask { background: linear-gradient(90deg, rgba(255,82,82,0.2), rgba(255,82,82,0.55)); }
+.hm-bar.bid { background: linear-gradient(90deg, rgba(76,175,80,0.2), rgba(76,175,80,0.55)); }
+.hm-bar.persistent { box-shadow: inset 0 0 10px rgba(255,255,255,0.1); }
 
 .hm-info {
-    min-width: 100px;
     text-align: right;
     font-size: 0.7rem;
     color: #777;
-    padding-left: 6px;
+    white-space: nowrap;
+    overflow: hidden;
 }
 
-.hm-info .vol { color: #aaa; font-weight: 600; }
-.hm-info .time { color: #ffa500; font-size: 0.65rem; }
+.hm-info .vol { color: #bbb; }
+.hm-info .time { color: #ffa500; margin-left: 3px; }
+.hm-info .hist { color: #555; font-size: 0.6rem; margin-left: 2px; }
 
-/* Current price divider */
+/* Price divider */
 .hm-current {
     display: flex;
     align-items: center;
-    padding: 5px 0;
-    margin: 2px 0;
+    padding: 4px 10px;
+    margin: 1px 0;
 }
 
 .hm-current-line {
@@ -324,10 +389,11 @@
 }
 
 .hm-current-price {
-    padding: 2px 12px;
+    padding: 1px 10px;
     color: #ffa500;
     font-weight: 700;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+    font-family: 'Consolas', monospace;
     background: rgba(255,165,0,0.1);
     border-radius: 4px;
     border: 1px solid rgba(255,165,0,0.3);
@@ -336,7 +402,7 @@
 .hm-empty {
     text-align: center;
     color: #555;
-    padding: 6px;
+    padding: 12px;
     font-size: 0.75rem;
 }
 
@@ -377,7 +443,7 @@
 </style>
 
 <script>
-// === BTC Liquidity Heatmap ===
+// === BTC Liquidity Heatmap + Bias ===
 async function loadLiquidity() {
     try {
         const res = await fetch('/api/liquidity/summary');
@@ -385,12 +451,13 @@ async function loadLiquidity() {
         
         const statusEl = document.getElementById('liq-status');
         const priceEl = document.getElementById('liq-price');
+        const biasEl = document.getElementById('liq-bias');
         const heatmapEl = document.getElementById('liq-heatmap');
         const metaEl = document.getElementById('liq-meta');
         
         if (!d.running) {
             statusEl.textContent = '🔴 Off';
-            priceEl.textContent = 'Module not running';
+            priceEl.textContent = 'Not running';
             return;
         }
         
@@ -398,62 +465,108 @@ async function loadLiquidity() {
         statusEl.style.color = '#00ff88';
         priceEl.textContent = d.price ? `BTC $${Number(d.price).toLocaleString()}` : '---';
         
-        // Merge current + persistent into unified levels
         const levels = buildLevels(d);
         
+        // Render bias
+        biasEl.innerHTML = renderBias(d);
+        
+        // Render heatmap
         if (!levels.length) {
             heatmapEl.innerHTML = '<div class="hm-empty">Accumulating data...</div>';
         } else {
             heatmapEl.innerHTML = renderHeatmap(levels, d.price);
         }
         
-        metaEl.textContent = `Scan #${d.scan_count || 0} | ${d.history_hours || 0}h history | ${d.total_snapshots || 0} snapshots`;
+        metaEl.textContent = `Scan #${d.scan_count||0} | ${d.history_hours||0}h history | ${d.total_snapshots||0} snapshots`;
         
     } catch (err) {
         document.getElementById('liq-status').textContent = '⚠️';
     }
 }
 
-function buildLevels(d) {
-    const map = {};  // price → {side, vol, strength, hours, persistence, source}
-    const price = d.price || 0;
+function renderBias(d) {
+    // Calculate bias from current + persistent walls
+    let bidVol = 0, askVol = 0;
+    let bidWeight = 0, askWeight = 0;
     
-    // Current walls (live, high priority)
+    // Current walls (weight × 2 — real-time data is more valuable)
+    for (const w of (d.current_bid || [])) {
+        bidVol += w.volume_usd;
+        bidWeight += w.volume_usd * 2;
+    }
     for (const w of (d.current_ask || [])) {
-        const k = w.price;
-        map[k] = { price: k, side: 'ask', vol: w.volume_usd, strength: w.strength, hours: 0, persistence: 0, source: 'live' };
+        askVol += w.volume_usd;
+        askWeight += w.volume_usd * 2;
+    }
+    
+    // Persistent walls (weight × persistence hours — longer standing = stronger signal)
+    for (const w of (d.persistent_bid || [])) {
+        const hrs = Math.max(w.hours_alive || 0.5, 0.5);
+        bidWeight += (w.avg_volume_k || 0) * 1000 * Math.sqrt(hrs);
+    }
+    for (const w of (d.persistent_ask || [])) {
+        const hrs = Math.max(w.hours_alive || 0.5, 0.5);
+        askWeight += (w.avg_volume_k || 0) * 1000 * Math.sqrt(hrs);
+    }
+    
+    const total = bidWeight + askWeight;
+    if (total === 0) return '';
+    
+    // Bid walls = support = bullish pressure → LONG
+    // Ask walls = resistance = bearish pressure → SHORT
+    // But: strong bid support means buyers defend = LONG
+    //      strong ask resistance means sellers block = SHORT risk
+    const longPct = Math.round(bidWeight / total * 100);
+    const shortPct = 100 - longPct;
+    
+    let signal, sigClass;
+    if (longPct >= 65) { signal = 'LONG'; sigClass = 'long'; }
+    else if (shortPct >= 65) { signal = 'SHORT'; sigClass = 'short'; }
+    else { signal = 'NEUTRAL'; sigClass = 'neutral'; }
+    
+    const bidStr = bidVol >= 1e6 ? `$${(bidVol/1e6).toFixed(0)}M` : `$${(bidVol/1e3).toFixed(0)}K`;
+    const askStr = askVol >= 1e6 ? `$${(askVol/1e6).toFixed(0)}M` : `$${(askVol/1e3).toFixed(0)}K`;
+    
+    return `
+        <span class="bias-label">Support ${bidStr}</span>
+        <div class="bias-bar-wrap">
+            <div class="bias-bar-long" style="width:${longPct}%">${longPct}%</div>
+            <div class="bias-bar-short" style="width:${shortPct}%">${shortPct}%</div>
+        </div>
+        <span class="bias-label" style="text-align:right">Resist ${askStr}</span>
+        <span class="bias-signal ${sigClass}">${signal}</span>
+    `;
+}
+
+function buildLevels(d) {
+    const map = {};
+    
+    for (const w of (d.current_ask || [])) {
+        map[w.price] = { price: w.price, side: 'ask', vol: w.volume_usd, strength: w.strength, hours: 0, src: 'live' };
     }
     for (const w of (d.current_bid || [])) {
-        const k = w.price;
-        map[k] = { price: k, side: 'bid', vol: w.volume_usd, strength: w.strength, hours: 0, persistence: 0, source: 'live' };
+        map[w.price] = { price: w.price, side: 'bid', vol: w.volume_usd, strength: w.strength, hours: 0, src: 'live' };
     }
-    
-    // Persistent walls (merge or add)
     for (const w of (d.persistent_ask || [])) {
-        const k = w.price;
-        if (map[k]) {
-            map[k].hours = w.hours_alive;
-            map[k].persistence = w.persistence_pct;
-            map[k].source = 'both';
+        if (map[w.price]) {
+            map[w.price].hours = w.hours_alive;
+            map[w.price].src = 'both';
         } else {
-            map[k] = { price: k, side: 'ask', vol: (w.avg_volume_k || 0) * 1000, strength: 0, hours: w.hours_alive, persistence: w.persistence_pct, source: 'history' };
+            map[w.price] = { price: w.price, side: 'ask', vol: (w.avg_volume_k||0)*1000, strength: 0, hours: w.hours_alive, src: 'hist' };
         }
     }
     for (const w of (d.persistent_bid || [])) {
-        const k = w.price;
-        if (map[k]) {
-            map[k].hours = w.hours_alive;
-            map[k].persistence = w.persistence_pct;
-            map[k].source = 'both';
+        if (map[w.price]) {
+            map[w.price].hours = w.hours_alive;
+            map[w.price].src = 'both';
         } else {
-            map[k] = { price: k, side: 'bid', vol: (w.avg_volume_k || 0) * 1000, strength: 0, hours: w.hours_alive, persistence: w.persistence_pct, source: 'history' };
+            map[w.price] = { price: w.price, side: 'bid', vol: (w.avg_volume_k||0)*1000, strength: 0, hours: w.hours_alive, src: 'hist' };
         }
     }
     
-    // Sort: asks descending (highest first), bids descending (highest first)
     const levels = Object.values(map);
     levels.sort((a, b) => b.price - a.price);
-    return levels.slice(0, 15);  // Max 15 rows
+    return levels.slice(0, 14);
 }
 
 function renderHeatmap(levels, currentPrice) {
@@ -461,10 +574,7 @@ function renderHeatmap(levels, currentPrice) {
     let html = '';
     let priceInserted = false;
     
-    for (let i = 0; i < levels.length; i++) {
-        const l = levels[i];
-        
-        // Insert current price line between ask and bid levels
+    for (const l of levels) {
         if (!priceInserted && l.price < currentPrice) {
             html += `<div class="hm-current">
                 <div class="hm-current-line"></div>
@@ -474,34 +584,22 @@ function renderHeatmap(levels, currentPrice) {
             priceInserted = true;
         }
         
-        const pct = maxVol > 0 ? Math.max(8, l.vol / maxVol * 100) : 8;
+        const pct = maxVol > 0 ? Math.max(5, l.vol / maxVol * 100) : 5;
         const volStr = l.vol >= 1e6 ? `$${(l.vol/1e6).toFixed(1)}M` : `$${(l.vol/1e3).toFixed(0)}K`;
-        const isPersistent = l.hours > 0;
-        const barClass = `hm-bar ${l.side}${isPersistent ? ' persistent' : ''}`;
+        const barCls = `hm-bar ${l.side}${l.hours > 0 ? ' persistent' : ''}`;
+        const barLabel = l.strength > 0 ? `${l.strength.toFixed(1)}×` : '';
         
-        // Bar label
-        let barLabel = '';
-        if (l.strength > 0) barLabel += `${l.strength.toFixed(1)}×`;
-        
-        // Info: volume + persistence
-        let infoHtml = `<span class="vol">${volStr}</span>`;
-        if (isPersistent) {
-            infoHtml += ` <span class="time">⏱${l.hours.toFixed(1)}h</span>`;
-        }
-        if (l.source === 'history') {
-            infoHtml += ' <span style="color:#666;font-size:0.6rem">hist</span>';
-        }
+        let info = `<span class="vol">${volStr}</span>`;
+        if (l.hours > 0) info += `<span class="time">⏱${l.hours.toFixed(1)}h</span>`;
+        if (l.src === 'hist') info += `<span class="hist">hist</span>`;
         
         html += `<div class="hm-row">
             <span class="hm-price ${l.side}">$${Number(l.price).toLocaleString()}</span>
-            <div class="hm-bar-wrap">
-                <div class="${barClass}" style="width:${pct}%">${barLabel}</div>
-            </div>
-            <div class="hm-info">${infoHtml}</div>
+            <div class="hm-bar-wrap"><div class="${barCls}" style="width:${pct}%">${barLabel}</div></div>
+            <div class="hm-info">${info}</div>
         </div>`;
     }
     
-    // If price wasn't inserted (all levels above or below), add at end
     if (!priceInserted) {
         html += `<div class="hm-current">
             <div class="hm-current-line"></div>
