@@ -700,47 +700,47 @@ async function loadBiasChart(date) {
         const data = d.data || [];
         if (data.length < 3) return;
         
-        // 30-min moving average for scan bias (background context)
-        const window = 30;
-        function sma(arr, w) {
-            const out = [];
-            for (let i = 0; i < arr.length; i++) {
-                const start = Math.max(0, i - w + 1);
-                const slice = arr.slice(start, i + 1);
-                out.push(Math.round(slice.reduce((a, b) => a + b, 0) / slice.length));
-            }
-            return out;
-        }
-        
-        // Sample for performance
-        const step = Math.max(1, Math.floor(data.length / 300));
-        const sampled = data.filter((_, i) => i % step === 0 || i === data.length - 1);
-        
         // Convert UTC time to local
         function utcToLocal(dateStr, timeStr) {
-            const d = new Date(dateStr + 'T' + timeStr + ':00Z');
-            return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+            const dt = new Date(dateStr + 'T' + timeStr + ':00Z');
+            return dt.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
         }
         
-        const labels = sampled.map(p => utcToLocal(d.date, p.t));
-        const rawLong = sampled.map(p => p.l);
-        const longSmooth = sma(rawLong, Math.ceil(window / step));
-        const weightedLong = sampled.map(p => p.w != null ? p.w : p.l);
-        const priceData = sampled.map(p => p.p);
+        // Rolling 60-min bias from cumulative bid/ask volumes
+        // This matches what the bias bar shows — aggregate sentiment, not per-scan noise
+        const ROLLING = 60;  // 60-minute window
+        const rollingBias = [];
+        const priceArr = [];
+        const timeLabels = [];
+        
+        for (let i = 0; i < data.length; i++) {
+            const start = Math.max(0, i - ROLLING + 1);
+            let sumBid = 0, sumAsk = 0;
+            for (let j = start; j <= i; j++) {
+                sumBid += (data[j].b || 0);
+                sumAsk += (data[j].a || 0);
+            }
+            const total = sumBid + sumAsk;
+            const bias = total > 0 ? Math.round(sumBid / total * 100) : 50;
+            rollingBias.push(bias);
+            priceArr.push(data[i].p);
+            timeLabels.push(utcToLocal(d.date, data[i].t));
+        }
+        
+        // Sample for performance (max ~300 points)
+        const step = Math.max(1, Math.floor(data.length / 300));
+        const idx = [];
+        for (let i = 0; i < data.length; i++) {
+            if (i % step === 0 || i === data.length - 1) idx.push(i);
+        }
+        
+        const labels = idx.map(i => timeLabels[i]);
+        const biasData = idx.map(i => rollingBias[i]);
+        const priceData = idx.map(i => priceArr[i]);
         
         const ctx = document.getElementById('bias-chart');
         if (!ctx) return;
         if (biasChart) biasChart.destroy();
-        
-        // Dynamic color: green above 50, red below
-        const segmentColor = (ctx) => {
-            const v = ctx.p0.parsed.y;
-            return v >= 50 ? '#4caf50' : '#ff5252';
-        };
-        const segmentBg = (ctx) => {
-            const v = ctx.p0.parsed.y;
-            return v >= 50 ? 'rgba(76,175,80,0.15)' : 'rgba(255,82,82,0.15)';
-        };
         
         biasChart = new Chart(ctx, {
             type: 'line',
@@ -748,30 +748,17 @@ async function loadBiasChart(date) {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Scan Bias',
-                        data: longSmooth,
-                        segment: { borderColor: segmentColor },
-                        fill: false,
-                        tension: 0.4,
-                        pointRadius: 0,
-                        borderWidth: 1,
-                        borderDash: [2, 2],
-                        yAxisID: 'y',
-                        order: 2,
-                    },
-                    {
-                        label: 'Weighted Bias',
-                        data: weightedLong,
+                        label: 'Market Bias (60min)',
+                        data: biasData,
                         segment: {
-                            borderColor: ctx => ctx.p0.parsed.y >= 50 ? '#4caf50' : '#ff5252',
-                            backgroundColor: ctx => ctx.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.2)' : 'rgba(255,82,82,0.2)',
+                            borderColor: c => c.p0.parsed.y >= 50 ? '#4caf50' : '#ff5252',
+                            backgroundColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.2)' : 'rgba(255,82,82,0.2)',
                         },
                         fill: true,
-                        borderWidth: 3,
+                        borderWidth: 2.5,
                         pointRadius: 0,
                         tension: 0.4,
                         yAxisID: 'y',
-                        order: 1,
                     },
                     {
                         label: 'BTC Price',
@@ -783,7 +770,6 @@ async function loadBiasChart(date) {
                         borderDash: [4, 2],
                         yAxisID: 'y1',
                         fill: false,
-                        order: 3,
                     },
                 ],
             },
@@ -807,10 +793,9 @@ async function loadBiasChart(date) {
                         callbacks: {
                             label: function(c) {
                                 if (c.dataset.yAxisID === 'y1') return `BTC $${Number(c.raw).toLocaleString()}`;
-                                const bias = c.raw;
-                                const dir = bias >= 50 ? 'LONG' : 'SHORT';
-                                const str = bias >= 50 ? bias : (100 - bias);
-                                return `${c.dataset.label}: ${dir} ${str}%`;
+                                const v = c.raw;
+                                if (v >= 50) return `🟢 LONG ${v}%`;
+                                return `🔴 SHORT ${100 - v}%`;
                             }
                         }
                     },
