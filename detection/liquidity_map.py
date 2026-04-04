@@ -10,6 +10,7 @@ Zero impact on Bybit (separate API, separate rate limits).
 
 import time
 import json
+import math
 import threading
 import requests
 from datetime import datetime, timezone, timedelta
@@ -53,8 +54,12 @@ class LiquidityMap:
         self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
         
         # Rolling volume buffer for weighted bias (3 hours = persistent sentiment)
-        self._vol_buffer: List[tuple] = []  # [(bid_vol, ask_vol), ...]
-        self._vol_buffer_max: int = 180     # 180 scans = 3 hours
+        self._vol_buffer: List[tuple] = []
+        self._vol_buffer_max: int = 180
+        
+        # Cached persistent walls (recomputed every 10 scans)
+        self._cached_persistent: Dict = {'bid': [], 'ask': []}
+        self._persistent_refresh: int = 0
     
     # ========================================
     # LIFECYCLE
@@ -257,25 +262,44 @@ class LiquidityMap:
     
     def _store_bias(self, bid_walls: List[tuple], ask_walls: List[tuple],
                     price: float, ts: str):
-        """Store bias snapshot for daily chart. One DB key per day."""
+        """Store bias bar percentage every scan. Same formula as dashboard bias bar."""
         if not self.db:
             return
         try:
-            # Calculate raw bias from current scan
+            # Current scan volumes
             bid_vol = sum(w[1] for w in bid_walls)
             ask_vol = sum(w[1] for w in ask_walls)
-            total = bid_vol + ask_vol
-            long_pct = round(bid_vol / total * 100) if total > 0 else 50
             
-            # Rolling 60-min weighted bias (sum of volumes over buffer)
-            self._vol_buffer.append((bid_vol, ask_vol))
-            if len(self._vol_buffer) > self._vol_buffer_max:
-                self._vol_buffer = self._vol_buffer[-self._vol_buffer_max:]
+            # === Compute EXACT bias bar percentage ===
+            # Same formula as renderBias() in JavaScript
+            bid_weight = bid_vol * 2  # Current walls × 2
+            ask_weight = ask_vol * 2
             
-            sum_bid = sum(v[0] for v in self._vol_buffer)
-            sum_ask = sum(v[1] for v in self._vol_buffer)
-            sum_total = sum_bid + sum_ask
-            weighted_long = round(sum_bid / sum_total * 100) if sum_total > 0 else 50
+            # Refresh persistent walls cache every 10 scans (~10 min)
+            sc = self._current.get('scan_count', 0)
+            if sc - self._persistent_refresh >= 10 or self._persistent_refresh == 0:
+                self._persistent_refresh = sc
+                try:
+                    p = self.get_persistent_walls()
+                    self._cached_persistent = p
+                except:
+                    pass
+            
+            # Add persistent walls contribution (same as JS: vol × sqrt(hours))
+            for w in self._cached_persistent.get('bid', []):
+                vol = (w.get('avg_volume_k', 0)) * 1000
+                hrs = max(w.get('hours_alive', 0.5), 0.5)
+                bid_weight += vol * math.sqrt(hrs)
+                bid_vol += vol
+            
+            for w in self._cached_persistent.get('ask', []):
+                vol = (w.get('avg_volume_k', 0)) * 1000
+                hrs = max(w.get('hours_alive', 0.5), 0.5)
+                ask_weight += vol * math.sqrt(hrs)
+                ask_vol += vol
+            
+            total_weight = bid_weight + ask_weight
+            bias_pct = round(bid_weight / total_weight * 100) if total_weight > 0 else 50
             
             # Today's key
             day = ts[:10]
@@ -285,11 +309,10 @@ class LiquidityMap:
             if not isinstance(history, list):
                 history = []
             
-            # Compact: t=time, l=rawLong%, w=weightedLong%, p=price, b=bidVol$K, a=askVol$K
+            # t=time, w=biasBar%, p=price, b=bidTotal$K, a=askTotal$K
             history.append({
                 't': ts[11:16],
-                'l': long_pct,
-                'w': weighted_long,
+                'w': bias_pct,
                 'p': round(price, 0),
                 'b': round(bid_vol / 1000, 0),
                 'a': round(ask_vol / 1000, 0),

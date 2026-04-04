@@ -706,29 +706,24 @@ async function loadBiasChart(date) {
             return dt.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
         }
         
-        // Two rolling windows: fast (30min) for scan, slow (3h) for weighted
-        const FAST = 30;   // Scan Bias: reacts quickly
-        const SLOW = 180;  // Weighted Bias: persistent trend (matches bias bar)
-        
-        function rollingCalc(data, window) {
-            const out = [];
-            for (let i = 0; i < data.length; i++) {
-                const start = Math.max(0, i - window + 1);
-                let sumBid = 0, sumAsk = 0;
-                for (let j = start; j <= i; j++) {
-                    sumBid += (data[j].b || 0);
-                    sumAsk += (data[j].a || 0);
-                }
-                const total = sumBid + sumAsk;
-                out.push(total > 0 ? Math.round(sumBid / total * 100) : 50);
-            }
-            return out;
-        }
-        
-        const scanBias = rollingCalc(data, FAST);
-        const weightedBias = rollingCalc(data, SLOW);
+        // Bias bar percentage stored in 'w' field every minute
+        // For old data without 'w': fallback to rolling 60min from b/a volumes
         const priceArr = data.map(p => p.p);
         const timeLabels = data.map(p => utcToLocal(d.date, p.t));
+        const biasArr = [];
+        
+        for (let i = 0; i < data.length; i++) {
+            if (data[i].w != null) {
+                biasArr.push(data[i].w);
+            } else {
+                // Fallback: rolling 60min from bid/ask volumes
+                const start = Math.max(0, i - 59);
+                let sb = 0, sa = 0;
+                for (let j = start; j <= i; j++) { sb += (data[j].b||0); sa += (data[j].a||0); }
+                const t = sb + sa;
+                biasArr.push(t > 0 ? Math.round(sb / t * 100) : 50);
+            }
+        }
         
         // Sample for performance (max ~300 points)
         const step = Math.max(1, Math.floor(data.length / 300));
@@ -738,9 +733,7 @@ async function loadBiasChart(date) {
         }
         
         const labels = idx.map(i => timeLabels[i]);
-        const biasData = idx.map(i => scanBias[i]);
-        // Use backend 'w' field if available, else JS 3h rolling fallback
-        const weightedData = idx.map(i => data[i].w != null ? data[i].w : weightedBias[i]);
+        const biasData = idx.map(i => biasArr[i]);
         const priceData = idx.map(i => priceArr[i]);
         
         const ctx = document.getElementById('bias-chart');
@@ -753,31 +746,17 @@ async function loadBiasChart(date) {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Scan Bias (60min)',
+                        label: 'LONG/SHORT Bias',
                         data: biasData,
                         segment: {
-                            borderColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.4)' : 'rgba(255,82,82,0.4)',
-                            backgroundColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.08)' : 'rgba(255,82,82,0.08)',
+                            borderColor: c => c.p0.parsed.y >= 50 ? '#4caf50' : '#ff5252',
+                            backgroundColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.15)' : 'rgba(255,82,82,0.15)',
                         },
                         fill: true,
-                        borderWidth: 1,
+                        borderWidth: 2.5,
                         pointRadius: 0,
-                        tension: 0.4,
+                        tension: 0.3,
                         yAxisID: 'y',
-                        order: 2,
-                    },
-                    {
-                        label: 'Weighted Bias',
-                        data: weightedData,
-                        segment: {
-                            borderColor: c => c.p0.parsed.y >= 50 ? '#4caf50' : '#ff5252',
-                        },
-                        fill: false,
-                        borderWidth: 3,
-                        pointRadius: 0,
-                        tension: 0.4,
-                        yAxisID: 'y',
-                        order: 1,
                     },
                     {
                         label: 'BTC Price',
@@ -789,7 +768,6 @@ async function loadBiasChart(date) {
                         borderDash: [4, 2],
                         yAxisID: 'y1',
                         fill: false,
-                        order: 3,
                     },
                 ],
             },
@@ -814,10 +792,8 @@ async function loadBiasChart(date) {
                             label: function(c) {
                                 if (c.dataset.yAxisID === 'y1') return `BTC $${Number(c.raw).toLocaleString()}`;
                                 const v = c.raw;
-                                const icon = v >= 50 ? '🟢' : '🔴';
-                                const dir = v >= 50 ? 'LONG' : 'SHORT';
-                                const pct = v >= 50 ? v : (100 - v);
-                                return `${icon} ${c.dataset.label}: ${dir} ${pct}%`;
+                                if (v >= 50) return `🟢 LONG ${v}%`;
+                                return `🔴 SHORT ${100 - v}%`;
                             }
                         }
                     },
@@ -861,9 +837,13 @@ async function loadBiasChart(date) {
     }
 }
 
-// Load chart on page load and refresh every 2 min
-document.addEventListener('DOMContentLoaded', () => loadBiasChart(''));
-setInterval(() => loadBiasChart(biasCurrentDay), 120000);
+// Load chart on page load with LOCAL date and refresh every 2 min
+function getLocalDate() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+document.addEventListener('DOMContentLoaded', () => loadBiasChart(getLocalDate()));
+setInterval(() => loadBiasChart(biasCurrentDay || getLocalDate()), 120000);
 
 async function refreshEvents() {
     location.reload();

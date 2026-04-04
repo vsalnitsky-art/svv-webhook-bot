@@ -1764,29 +1764,31 @@ def register_api_routes(app):
     
     @app.route('/api/liquidity/bias-history')
     def api_liquidity_bias_history():
-        """Bias history for chart. ?date=2026-04-04 or defaults to today."""
+        """Bias history for chart. ?date=2026-04-05 (local date from browser)."""
         from detection.liquidity_map import HISTORY_DAYS
         db = get_db()
         
         req_date = request.args.get('date', '')
-        today = datetime.utcnow().strftime('%Y-%m-%d')
         
-        if not req_date:
-            req_date = today
-        
-        # Available days (today + past HISTORY_DAYS)
+        # Scan today + past days + tomorrow (covers timezone differences)
         available = []
-        for i in range(HISTORY_DAYS + 1):
+        for i in range(-1, HISTORY_DAYS + 1):
             d = (datetime.utcnow() - timedelta(days=i)).strftime('%Y-%m-%d')
             key = f'liq_bias_{d}'
             data = db.get_setting(key, [])
             if isinstance(data, list) and len(data) > 0:
                 available.append({'date': d, 'points': len(data)})
         
-        # Get requested day
+        # Sort by date descending (newest first)
+        available.sort(key=lambda x: x['date'], reverse=True)
+        
+        # If no data for requested date, use latest available
         data = db.get_setting(f'liq_bias_{req_date}', [])
-        if not isinstance(data, list):
-            data = []
+        if (not isinstance(data, list) or len(data) == 0) and available:
+            req_date = available[0]['date']
+            data = db.get_setting(f'liq_bias_{req_date}', [])
+            if not isinstance(data, list):
+                data = []
         
         return jsonify({
             'date': req_date,
