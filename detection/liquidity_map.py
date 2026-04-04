@@ -125,26 +125,6 @@ class LiquidityMap:
                 self._current['scan_count'] += 1
                 sc = self._current['scan_count']
             
-            # Debug: first 3 scans — show raw cluster stats
-            if sc <= 3:
-                bid_clusters = self._get_cluster_stats(bids, mid_price)
-                ask_clusters = self._get_cluster_stats(asks, mid_price)
-                print(f"[LIQ MAP] 🔍 DEBUG #{sc}: price=${mid_price:,.0f}, "
-                      f"bids={len(bids)} levels, asks={len(asks)} levels")
-                print(f"[LIQ MAP] 🔍 Bid clusters: {len(bid_clusters)}, "
-                      f"max=${bid_clusters[0][1]/1e3:.0f}K @ ${bid_clusters[0][0]:,.0f}, "
-                      f"avg=${sum(c[1] for c in bid_clusters)/len(bid_clusters)/1e3:.0f}K" if bid_clusters else "none")
-                print(f"[LIQ MAP] 🔍 Ask clusters: {len(ask_clusters)}, "
-                      f"max=${ask_clusters[0][1]/1e3:.0f}K @ ${ask_clusters[0][0]:,.0f}, "
-                      f"avg=${sum(c[1] for c in ask_clusters)/len(ask_clusters)/1e3:.0f}K" if ask_clusters else "none")
-                # Show top 5 bid clusters
-                for i, (cp, vol) in enumerate(bid_clusters[:5]):
-                    avg = sum(c[1] for c in bid_clusters) / len(bid_clusters) if bid_clusters else 1
-                    print(f"[LIQ MAP] 🔍   BID #{i+1}: ${cp:,.0f} = ${vol/1e3:.0f}K ({vol/avg:.1f}× avg)")
-                for i, (cp, vol) in enumerate(ask_clusters[:5]):
-                    avg = sum(c[1] for c in ask_clusters) / len(ask_clusters) if ask_clusters else 1
-                    print(f"[LIQ MAP] 🔍   ASK #{i+1}: ${cp:,.0f} = ${vol/1e3:.0f}K ({vol/avg:.1f}× avg)")
-            
             # Store to DB
             self._store(bid_walls, ask_walls, mid_price, now_str)
             
@@ -211,20 +191,6 @@ class LiquidityMap:
             'volume_usd': round(wall[1], 0),
             'strength': round(wall[2], 1),
         }
-    
-    def _get_cluster_stats(self, orders: List, price: float) -> List[tuple]:
-        """Get sorted clusters for debug logging."""
-        clusters: Dict[float, float] = {}
-        for p_str, q_str in orders:
-            p = float(p_str)
-            q = float(q_str)
-            vol = p * q
-            bucket = round(p / CLUSTER_SIZE) * CLUSTER_SIZE
-            clusters[bucket] = clusters.get(bucket, 0) + vol
-        
-        # Sort by volume descending
-        sorted_c = sorted(clusters.items(), key=lambda x: x[1], reverse=True)
-        return sorted_c
     
     # ========================================
     # DB STORAGE

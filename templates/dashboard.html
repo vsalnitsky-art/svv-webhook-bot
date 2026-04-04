@@ -56,7 +56,7 @@
         </div>
     </div>
 
-    <!-- BTC Liquidity Map -->
+    <!-- BTC Liquidity Map — Heatmap -->
     <div class="section liq-section">
         <div class="section-header">
             <h2>🧱 BTC Liquidity Map</h2>
@@ -65,21 +65,8 @@
         
         <div class="liq-price" id="liq-price">---</div>
         
-        <div class="liq-grid">
-            <!-- Ask walls (resistance) -->
-            <div class="liq-side ask-side">
-                <div class="liq-side-label">🔴 ASK WALLS (resistance)</div>
-                <div id="liq-ask-walls" class="liq-walls">Loading...</div>
-            </div>
-            <!-- Bid walls (support) -->
-            <div class="liq-side bid-side">
-                <div class="liq-side-label">🟢 BID WALLS (support)</div>
-                <div id="liq-bid-walls" class="liq-walls">Loading...</div>
-            </div>
-        </div>
-        
-        <!-- Persistent walls -->
-        <div class="liq-persistent" id="liq-persistent"></div>
+        <!-- Heatmap: vertical price ladder -->
+        <div class="heatmap" id="liq-heatmap">Loading...</div>
         
         <div class="liq-meta" id="liq-meta"></div>
     </div>
@@ -248,98 +235,109 @@
 
 .liq-price {
     text-align: center;
-    font-size: 1.5rem;
+    font-size: 1.4rem;
     font-weight: 700;
     color: #ffa500;
-    padding: 6px 0;
+    padding: 4px 0;
     font-family: 'Consolas', monospace;
 }
 
-.liq-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-top: 6px;
-}
-
-.liq-side {
-    background: rgba(0,0,0,0.3);
+/* Heatmap price ladder */
+.heatmap {
+    background: #0a0a15;
     border-radius: 8px;
-    padding: 10px;
-}
-
-.liq-side-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    margin-bottom: 8px;
-    color: #aaa;
-}
-
-.ask-side { border: 1px solid rgba(255,82,82,0.2); }
-.bid-side { border: 1px solid rgba(76,175,80,0.2); }
-
-.liq-walls {
+    padding: 8px 12px;
+    margin-top: 6px;
     font-family: 'Consolas', monospace;
     font-size: 0.8rem;
-    color: #888;
 }
 
-.liq-wall {
+.hm-row {
     display: flex;
     align-items: center;
-    gap: 6px;
     padding: 3px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    position: relative;
 }
 
-.liq-wall:last-child { border-bottom: none; }
+.hm-row:last-child { border-bottom: none; }
 
-.liq-wall-price {
+.hm-price {
+    min-width: 80px;
     font-weight: 600;
-    min-width: 75px;
+    font-size: 0.78rem;
 }
 
-.ask-side .liq-wall-price { color: #ff5252; }
-.bid-side .liq-wall-price { color: #4caf50; }
+.hm-price.ask { color: #ff5252; }
+.hm-price.bid { color: #4caf50; }
 
-.liq-wall-bar {
-    height: 6px;
-    border-radius: 3px;
+.hm-bar-wrap {
     flex: 1;
-    max-width: 100px;
+    height: 18px;
+    position: relative;
+    border-radius: 3px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.02);
 }
 
-.ask-side .liq-wall-bar { background: rgba(255,82,82,0.5); }
-.bid-side .liq-wall-bar { background: rgba(76,175,80,0.5); }
-
-.liq-wall-vol {
-    color: #aaa;
-    font-size: 0.75rem;
-    min-width: 55px;
-    text-align: right;
-}
-
-.liq-persistent {
-    margin-top: 8px;
-    padding: 8px;
-    background: rgba(255,165,0,0.05);
-    border: 1px solid rgba(255,165,0,0.15);
-    border-radius: 6px;
-    font-size: 0.75rem;
-    color: #999;
-}
-
-.liq-persistent-title {
-    color: #ffa500;
-    font-weight: 600;
-    font-size: 0.8rem;
-    margin-bottom: 4px;
-}
-
-.liq-persistent-item {
+.hm-bar {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease;
     display: flex;
-    justify-content: space-between;
-    padding: 2px 0;
+    align-items: center;
+    padding-left: 6px;
+    font-size: 0.7rem;
+    color: rgba(255,255,255,0.8);
+    white-space: nowrap;
+}
+
+.hm-bar.ask { background: linear-gradient(90deg, rgba(255,82,82,0.15), rgba(255,82,82,0.6)); }
+.hm-bar.bid { background: linear-gradient(90deg, rgba(76,175,80,0.15), rgba(76,175,80,0.6)); }
+
+/* Persistent walls glow brighter */
+.hm-bar.persistent { box-shadow: inset 0 0 8px rgba(255,255,255,0.1); }
+
+.hm-info {
+    min-width: 100px;
+    text-align: right;
+    font-size: 0.7rem;
+    color: #777;
+    padding-left: 6px;
+}
+
+.hm-info .vol { color: #aaa; font-weight: 600; }
+.hm-info .time { color: #ffa500; font-size: 0.65rem; }
+
+/* Current price divider */
+.hm-current {
+    display: flex;
+    align-items: center;
+    padding: 5px 0;
+    margin: 2px 0;
+}
+
+.hm-current-line {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #ffa500, transparent);
+}
+
+.hm-current-price {
+    padding: 2px 12px;
+    color: #ffa500;
+    font-weight: 700;
+    font-size: 0.85rem;
+    background: rgba(255,165,0,0.1);
+    border-radius: 4px;
+    border: 1px solid rgba(255,165,0,0.3);
+}
+
+.hm-empty {
+    text-align: center;
+    color: #555;
+    padding: 6px;
+    font-size: 0.75rem;
 }
 
 .liq-meta {
@@ -379,7 +377,7 @@
 </style>
 
 <script>
-// === BTC Liquidity Map ===
+// === BTC Liquidity Heatmap ===
 async function loadLiquidity() {
     try {
         const res = await fetch('/api/liquidity/summary');
@@ -387,9 +385,7 @@ async function loadLiquidity() {
         
         const statusEl = document.getElementById('liq-status');
         const priceEl = document.getElementById('liq-price');
-        const bidEl = document.getElementById('liq-bid-walls');
-        const askEl = document.getElementById('liq-ask-walls');
-        const persistEl = document.getElementById('liq-persistent');
+        const heatmapEl = document.getElementById('liq-heatmap');
         const metaEl = document.getElementById('liq-meta');
         
         if (!d.running) {
@@ -402,25 +398,13 @@ async function loadLiquidity() {
         statusEl.style.color = '#00ff88';
         priceEl.textContent = d.price ? `BTC $${Number(d.price).toLocaleString()}` : '---';
         
-        // Render current walls
-        askEl.innerHTML = renderWalls(d.current_ask || [], 'ask');
-        bidEl.innerHTML = renderWalls(d.current_bid || [], 'bid');
+        // Merge current + persistent into unified levels
+        const levels = buildLevels(d);
         
-        // Render persistent walls
-        const pb = d.persistent_bid || [];
-        const pa = d.persistent_ask || [];
-        if (pb.length || pa.length) {
-            let html = '<div class="liq-persistent-title">🏛️ Institutional Levels (persistent)</div>';
-            for (const w of pa.slice(0, 3)) {
-                html += `<div class="liq-persistent-item"><span style="color:#ff5252">ASK $${Number(w.price).toLocaleString()}</span><span>${w.hours_alive}h | $${w.avg_volume_k}K avg | ${w.persistence_pct}%</span></div>`;
-            }
-            for (const w of pb.slice(0, 3)) {
-                html += `<div class="liq-persistent-item"><span style="color:#4caf50">BID $${Number(w.price).toLocaleString()}</span><span>${w.hours_alive}h | $${w.avg_volume_k}K avg | ${w.persistence_pct}%</span></div>`;
-            }
-            persistEl.innerHTML = html;
-            persistEl.style.display = 'block';
+        if (!levels.length) {
+            heatmapEl.innerHTML = '<div class="hm-empty">Accumulating data...</div>';
         } else {
-            persistEl.style.display = 'none';
+            heatmapEl.innerHTML = renderHeatmap(levels, d.price);
         }
         
         metaEl.textContent = `Scan #${d.scan_count || 0} | ${d.history_hours || 0}h history | ${d.total_snapshots || 0} snapshots`;
@@ -430,27 +414,105 @@ async function loadLiquidity() {
     }
 }
 
-function renderWalls(walls, side) {
-    if (!walls || !walls.length) return '<div style="color:#555;padding:8px;">No walls detected</div>';
+function buildLevels(d) {
+    const map = {};  // price → {side, vol, strength, hours, persistence, source}
+    const price = d.price || 0;
     
-    const maxVol = Math.max(...walls.map(w => w.volume_usd));
-    let html = '';
-    for (const w of walls.slice(0, 5)) {
-        const pct = maxVol > 0 ? (w.volume_usd / maxVol * 100) : 0;
-        const vol = w.volume_usd >= 1000000 
-            ? `$${(w.volume_usd / 1e6).toFixed(1)}M`
-            : `$${(w.volume_usd / 1e3).toFixed(0)}K`;
-        html += `
-            <div class="liq-wall">
-                <span class="liq-wall-price">$${Number(w.price).toLocaleString()}</span>
-                <div class="liq-wall-bar" style="width:${pct}%"></div>
-                <span class="liq-wall-vol">${vol} (${w.strength}×)</span>
-            </div>`;
+    // Current walls (live, high priority)
+    for (const w of (d.current_ask || [])) {
+        const k = w.price;
+        map[k] = { price: k, side: 'ask', vol: w.volume_usd, strength: w.strength, hours: 0, persistence: 0, source: 'live' };
     }
+    for (const w of (d.current_bid || [])) {
+        const k = w.price;
+        map[k] = { price: k, side: 'bid', vol: w.volume_usd, strength: w.strength, hours: 0, persistence: 0, source: 'live' };
+    }
+    
+    // Persistent walls (merge or add)
+    for (const w of (d.persistent_ask || [])) {
+        const k = w.price;
+        if (map[k]) {
+            map[k].hours = w.hours_alive;
+            map[k].persistence = w.persistence_pct;
+            map[k].source = 'both';
+        } else {
+            map[k] = { price: k, side: 'ask', vol: (w.avg_volume_k || 0) * 1000, strength: 0, hours: w.hours_alive, persistence: w.persistence_pct, source: 'history' };
+        }
+    }
+    for (const w of (d.persistent_bid || [])) {
+        const k = w.price;
+        if (map[k]) {
+            map[k].hours = w.hours_alive;
+            map[k].persistence = w.persistence_pct;
+            map[k].source = 'both';
+        } else {
+            map[k] = { price: k, side: 'bid', vol: (w.avg_volume_k || 0) * 1000, strength: 0, hours: w.hours_alive, persistence: w.persistence_pct, source: 'history' };
+        }
+    }
+    
+    // Sort: asks descending (highest first), bids descending (highest first)
+    const levels = Object.values(map);
+    levels.sort((a, b) => b.price - a.price);
+    return levels.slice(0, 15);  // Max 15 rows
+}
+
+function renderHeatmap(levels, currentPrice) {
+    const maxVol = Math.max(...levels.map(l => l.vol));
+    let html = '';
+    let priceInserted = false;
+    
+    for (let i = 0; i < levels.length; i++) {
+        const l = levels[i];
+        
+        // Insert current price line between ask and bid levels
+        if (!priceInserted && l.price < currentPrice) {
+            html += `<div class="hm-current">
+                <div class="hm-current-line"></div>
+                <span class="hm-current-price">► $${Number(currentPrice).toLocaleString()}</span>
+                <div class="hm-current-line"></div>
+            </div>`;
+            priceInserted = true;
+        }
+        
+        const pct = maxVol > 0 ? Math.max(8, l.vol / maxVol * 100) : 8;
+        const volStr = l.vol >= 1e6 ? `$${(l.vol/1e6).toFixed(1)}M` : `$${(l.vol/1e3).toFixed(0)}K`;
+        const isPersistent = l.hours > 0;
+        const barClass = `hm-bar ${l.side}${isPersistent ? ' persistent' : ''}`;
+        
+        // Bar label
+        let barLabel = '';
+        if (l.strength > 0) barLabel += `${l.strength.toFixed(1)}×`;
+        
+        // Info: volume + persistence
+        let infoHtml = `<span class="vol">${volStr}</span>`;
+        if (isPersistent) {
+            infoHtml += ` <span class="time">⏱${l.hours.toFixed(1)}h</span>`;
+        }
+        if (l.source === 'history') {
+            infoHtml += ' <span style="color:#666;font-size:0.6rem">hist</span>';
+        }
+        
+        html += `<div class="hm-row">
+            <span class="hm-price ${l.side}">$${Number(l.price).toLocaleString()}</span>
+            <div class="hm-bar-wrap">
+                <div class="${barClass}" style="width:${pct}%">${barLabel}</div>
+            </div>
+            <div class="hm-info">${infoHtml}</div>
+        </div>`;
+    }
+    
+    // If price wasn't inserted (all levels above or below), add at end
+    if (!priceInserted) {
+        html += `<div class="hm-current">
+            <div class="hm-current-line"></div>
+            <span class="hm-current-price">► $${Number(currentPrice).toLocaleString()}</span>
+            <div class="hm-current-line"></div>
+        </div>`;
+    }
+    
     return html;
 }
 
-// Load every 30 seconds (synced with scan interval)
 document.addEventListener('DOMContentLoaded', loadLiquidity);
 setInterval(loadLiquidity, 30000);
 
