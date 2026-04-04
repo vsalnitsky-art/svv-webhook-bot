@@ -725,6 +725,7 @@ async function loadBiasChart(date) {
         const labels = sampled.map(p => utcToLocal(d.date, p.t));
         const rawLong = sampled.map(p => p.l);
         const longSmooth = sma(rawLong, Math.ceil(window / step));
+        const weightedLong = sampled.map(p => p.w != null ? p.w : p.l);
         const priceData = sampled.map(p => p.p);
         
         const ctx = document.getElementById('bias-chart');
@@ -747,13 +748,23 @@ async function loadBiasChart(date) {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'LONG Bias',
+                        label: 'Scan Bias',
                         data: longSmooth,
                         segment: { borderColor: segmentColor, backgroundColor: segmentBg },
                         fill: true,
                         tension: 0.4,
                         pointRadius: 0,
-                        borderWidth: 2,
+                        borderWidth: 1.5,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'Weighted Bias',
+                        data: weightedLong,
+                        borderColor: '#fff',
+                        borderWidth: 2.5,
+                        pointRadius: 0,
+                        tension: 0.4,
+                        fill: false,
                         yAxisID: 'y',
                     },
                     {
@@ -792,7 +803,7 @@ async function loadBiasChart(date) {
                                 const bias = c.raw;
                                 const dir = bias >= 50 ? 'LONG' : 'SHORT';
                                 const str = bias >= 50 ? bias : (100 - bias);
-                                return `${dir} ${str}% bias`;
+                                return `${c.dataset.label}: ${dir} ${str}%`;
                             }
                         }
                     },

@@ -51,6 +51,10 @@ class LiquidityMap:
         }
         self._session = requests.Session()
         self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
+        
+        # EMA bias tracker (slow-moving weighted bias, matches the bias bar)
+        self._ema_long: float = 50.0  # Start neutral
+        self._ema_alpha: float = 0.05  # Slow: ~20 scans to converge
     
     # ========================================
     # LIFECYCLE
@@ -257,30 +261,34 @@ class LiquidityMap:
         if not self.db:
             return
         try:
-            # Calculate bias
+            # Calculate raw bias from current scan
             bid_vol = sum(w[1] for w in bid_walls)
             ask_vol = sum(w[1] for w in ask_walls)
             total = bid_vol + ask_vol
             long_pct = round(bid_vol / total * 100) if total > 0 else 50
             
+            # Update EMA (slow-moving weighted bias)
+            self._ema_long = self._ema_alpha * long_pct + (1 - self._ema_alpha) * self._ema_long
+            weighted_long = round(self._ema_long)
+            
             # Today's key
-            day = ts[:10]  # "2026-04-04"
+            day = ts[:10]
             db_key = f'liq_bias_{day}'
             
             history = self.db.get_setting(db_key, [])
             if not isinstance(history, list):
                 history = []
             
-            # Compact: time(HH:MM), longPct, price, bidVol($K), askVol($K)
+            # Compact: t=time, l=rawLong%, w=weightedLong%, p=price, b=bidVol$K, a=askVol$K
             history.append({
-                't': ts[11:16],  # "HH:MM"
+                't': ts[11:16],
                 'l': long_pct,
+                'w': weighted_long,
                 'p': round(price, 0),
                 'b': round(bid_vol / 1000, 0),
                 'a': round(ask_vol / 1000, 0),
             })
             
-            # Max 1440 per day (1 per minute)
             if len(history) > 1440:
                 history = history[-1440:]
             
