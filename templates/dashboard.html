@@ -499,23 +499,23 @@ function renderBias(d) {
         askWeight += w.volume_usd * 2;
     }
     
-    // Persistent walls (weight × persistence hours — longer standing = stronger signal)
+    // Persistent walls (weight × sqrt(hours) — longer standing = stronger signal)
     for (const w of (d.persistent_bid || [])) {
+        const vol = (w.avg_volume_k || 0) * 1000;
         const hrs = Math.max(w.hours_alive || 0.5, 0.5);
-        bidWeight += (w.avg_volume_k || 0) * 1000 * Math.sqrt(hrs);
+        bidVol += vol;
+        bidWeight += vol * Math.sqrt(hrs);
     }
     for (const w of (d.persistent_ask || [])) {
+        const vol = (w.avg_volume_k || 0) * 1000;
         const hrs = Math.max(w.hours_alive || 0.5, 0.5);
-        askWeight += (w.avg_volume_k || 0) * 1000 * Math.sqrt(hrs);
+        askVol += vol;
+        askWeight += vol * Math.sqrt(hrs);
     }
     
     const total = bidWeight + askWeight;
     if (total === 0) return '';
     
-    // Bid walls = support = bullish pressure → LONG
-    // Ask walls = resistance = bearish pressure → SHORT
-    // But: strong bid support means buyers defend = LONG
-    //      strong ask resistance means sellers block = SHORT risk
     const longPct = Math.round(bidWeight / total * 100);
     const shortPct = 100 - longPct;
     
@@ -524,16 +524,15 @@ function renderBias(d) {
     else if (shortPct >= 65) { signal = 'SHORT'; sigClass = 'short'; }
     else { signal = 'NEUTRAL'; sigClass = 'neutral'; }
     
-    const bidStr = bidVol >= 1e6 ? `$${(bidVol/1e6).toFixed(0)}M` : `$${(bidVol/1e3).toFixed(0)}K`;
-    const askStr = askVol >= 1e6 ? `$${(askVol/1e6).toFixed(0)}M` : `$${(askVol/1e3).toFixed(0)}K`;
+    const fmtVol = v => v >= 1e6 ? `$${(v/1e6).toFixed(0)}M` : `$${(v/1e3).toFixed(0)}K`;
     
     return `
-        <span class="bias-label">Support ${bidStr}</span>
+        <span class="bias-label">Support ${fmtVol(bidVol)}</span>
         <div class="bias-bar-wrap">
             <div class="bias-bar-long" style="width:${longPct}%">${longPct}%</div>
             <div class="bias-bar-short" style="width:${shortPct}%">${shortPct}%</div>
         </div>
-        <span class="bias-label" style="text-align:right">Resist ${askStr}</span>
+        <span class="bias-label" style="text-align:right">Resist ${fmtVol(askVol)}</span>
         <span class="bias-signal ${sigClass}">${signal}</span>
     `;
 }
