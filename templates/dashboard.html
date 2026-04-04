@@ -431,7 +431,7 @@
 .bias-chart-wrap {
     position: relative;
     width: 100%;
-    height: 180px;
+    height: 220px;
 }
 
 .bias-chart-header {
@@ -442,9 +442,9 @@
 }
 
 .bias-chart-title {
-    font-size: 0.8rem;
+    font-size: 0.9rem;
     font-weight: 600;
-    color: #aaa;
+    color: #ccc;
 }
 
 .bias-day-selector {
@@ -453,8 +453,8 @@
 }
 
 .bias-day-btn {
-    padding: 2px 8px;
-    font-size: 0.7rem;
+    padding: 3px 10px;
+    font-size: 0.8rem;
     border-radius: 4px;
     border: 1px solid rgba(255,255,255,0.15);
     background: rgba(255,255,255,0.05);
@@ -716,7 +716,13 @@ async function loadBiasChart(date) {
         const step = Math.max(1, Math.floor(data.length / 300));
         const sampled = data.filter((_, i) => i % step === 0 || i === data.length - 1);
         
-        const labels = sampled.map(p => p.t);
+        // Convert UTC time to local
+        function utcToLocal(dateStr, timeStr) {
+            const d = new Date(dateStr + 'T' + timeStr + ':00Z');
+            return d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+        }
+        
+        const labels = sampled.map(p => utcToLocal(d.date, p.t));
         const rawLong = sampled.map(p => p.l);
         const longSmooth = sma(rawLong, Math.ceil(window / step));
         const priceData = sampled.map(p => p.p);
@@ -771,13 +777,15 @@ async function loadBiasChart(date) {
                     legend: {
                         display: true,
                         position: 'top',
-                        labels: { color: '#888', font: { size: 10 }, boxWidth: 12, padding: 8 },
+                        labels: { color: '#bbb', font: { size: 12 }, boxWidth: 14, padding: 10 },
                     },
                     tooltip: {
                         backgroundColor: 'rgba(0,0,0,0.9)',
                         titleColor: '#ffa500',
-                        bodyColor: '#ccc',
-                        padding: 8,
+                        titleFont: { size: 12 },
+                        bodyColor: '#ddd',
+                        bodyFont: { size: 12 },
+                        padding: 10,
                         callbacks: {
                             label: function(c) {
                                 if (c.dataset.yAxisID === 'y1') return `BTC $${Number(c.raw).toLocaleString()}`;
@@ -792,14 +800,14 @@ async function loadBiasChart(date) {
                 },
                 scales: {
                     x: {
-                        ticks: { color: '#555', font: { size: 9 }, maxTicksLimit: 10, maxRotation: 0 },
+                        ticks: { color: '#aaa', font: { size: 11 }, maxTicksLimit: 10, maxRotation: 0 },
                         grid: { color: 'rgba(255,255,255,0.03)' },
                     },
                     y: {
                         position: 'left',
                         min: 0, max: 100,
                         ticks: {
-                            color: '#555', font: { size: 9 }, stepSize: 25,
+                            color: '#aaa', font: { size: 11 }, stepSize: 25,
                             callback: v => {
                                 if (v === 50) return '— 50% —';
                                 if (v > 50) return `L${v}%`;
@@ -814,8 +822,8 @@ async function loadBiasChart(date) {
                     y1: {
                         position: 'right',
                         ticks: {
-                            color: 'rgba(255,165,0,0.5)',
-                            font: { size: 9 },
+                            color: 'rgba(255,165,0,0.7)',
+                            font: { size: 11 },
                             callback: v => '$' + (v/1000).toFixed(1) + 'K',
                         },
                         grid: { display: false },
