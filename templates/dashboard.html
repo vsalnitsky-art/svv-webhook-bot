@@ -725,7 +725,16 @@ async function loadBiasChart(date) {
             }
             
             // Scan Bias (current scan only, NO persistent)
-            scanRaw.push(data[i].s != null ? data[i].s : (data[i].l != null ? data[i].l : biasArr[i]));
+            // Scan Bias: uses 's' field if available, else per-point b/(b+a)
+            if (data[i].s != null) {
+                scanRaw.push(data[i].s);
+            } else {
+                // Fallback for old data: per-point bid/ask ratio (different from weighted 'w')
+                const b = data[i].b || 0;
+                const a = data[i].a || 0;
+                const tot = b + a;
+                scanRaw.push(tot > 0 ? Math.round(b / tot * 100) : 50);
+            }
         }
         
         // SMA 10-min smoothing for scan bias (removes per-minute noise, keeps reactivity)
@@ -759,14 +768,13 @@ async function loadBiasChart(date) {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Scan Bias (30min)',
+                        label: 'Scan Bias',
                         data: scanData,
-                        segment: {
-                            borderColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.35)' : 'rgba(255,82,82,0.35)',
-                            backgroundColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.06)' : 'rgba(255,82,82,0.06)',
-                        },
+                        borderColor: 'rgba(255,255,255,0.5)',
+                        backgroundColor: 'rgba(255,255,255,0.05)',
                         fill: true,
-                        borderWidth: 1,
+                        borderWidth: 1.5,
+                        borderDash: [4, 2],
                         pointRadius: 0,
                         tension: 0.3,
                         yAxisID: 'y',
