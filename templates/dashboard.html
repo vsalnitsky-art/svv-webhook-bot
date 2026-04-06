@@ -707,22 +707,29 @@ async function loadBiasChart(date) {
         }
         
         // Bias bar percentage stored in 'w' field every minute
-        // For old data without 'w': fallback to rolling 60min from b/a volumes
         const priceArr = data.map(p => p.p);
         const timeLabels = data.map(p => utcToLocal(d.date, p.t));
         const biasArr = [];
+        const scanArr = [];
         
         for (let i = 0; i < data.length; i++) {
+            // Main bias (= bias bar value)
             if (data[i].w != null) {
                 biasArr.push(data[i].w);
             } else {
-                // Fallback: rolling 60min from bid/ask volumes
                 const start = Math.max(0, i - 59);
                 let sb = 0, sa = 0;
                 for (let j = start; j <= i; j++) { sb += (data[j].b||0); sa += (data[j].a||0); }
                 const t = sb + sa;
                 biasArr.push(t > 0 ? Math.round(sb / t * 100) : 50);
             }
+            
+            // Scan bias (30min rolling from raw bid/ask volumes)
+            const s30 = Math.max(0, i - 29);
+            let sb30 = 0, sa30 = 0;
+            for (let j = s30; j <= i; j++) { sb30 += (data[j].b||0); sa30 += (data[j].a||0); }
+            const t30 = sb30 + sa30;
+            scanArr.push(t30 > 0 ? Math.round(sb30 / t30 * 100) : 50);
         }
         
         // Sample for performance (max ~300 points)
@@ -734,6 +741,7 @@ async function loadBiasChart(date) {
         
         const labels = idx.map(i => timeLabels[i]);
         const biasData = idx.map(i => biasArr[i]);
+        const scanData = idx.map(i => scanArr[i]);
         const priceData = idx.map(i => priceArr[i]);
         
         const ctx = document.getElementById('bias-chart');
@@ -746,7 +754,21 @@ async function loadBiasChart(date) {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'LONG/SHORT Bias',
+                        label: 'Scan Bias (30min)',
+                        data: scanData,
+                        segment: {
+                            borderColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.35)' : 'rgba(255,82,82,0.35)',
+                            backgroundColor: c => c.p0.parsed.y >= 50 ? 'rgba(76,175,80,0.06)' : 'rgba(255,82,82,0.06)',
+                        },
+                        fill: true,
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        tension: 0.3,
+                        yAxisID: 'y',
+                        order: 2,
+                    },
+                    {
+                        label: 'Weighted Bias',
                         data: biasData,
                         segment: {
                             borderColor: c => c.p0.parsed.y >= 50 ? '#4caf50' : '#ff5252',
@@ -757,6 +779,7 @@ async function loadBiasChart(date) {
                         pointRadius: 0,
                         tension: 0.3,
                         yAxisID: 'y',
+                        order: 1,
                     },
                     {
                         label: 'BTC Price',
@@ -768,6 +791,7 @@ async function loadBiasChart(date) {
                         borderDash: [4, 2],
                         yAxisID: 'y1',
                         fill: false,
+                        order: 3,
                     },
                 ],
             },
@@ -792,8 +816,9 @@ async function loadBiasChart(date) {
                             label: function(c) {
                                 if (c.dataset.yAxisID === 'y1') return `BTC $${Number(c.raw).toLocaleString()}`;
                                 const v = c.raw;
-                                if (v >= 50) return `🟢 LONG ${v}%`;
-                                return `🔴 SHORT ${100 - v}%`;
+                                const icon = v >= 50 ? '🟢' : '🔴';
+                                const dir = v >= 50 ? `LONG ${v}%` : `SHORT ${100-v}%`;
+                                return `${icon} ${c.dataset.label}: ${dir}`;
                             }
                         }
                     },
