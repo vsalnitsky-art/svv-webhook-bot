@@ -266,14 +266,17 @@ class LiquidityMap:
         if not self.db:
             return
         try:
-            # Current scan volumes
-            bid_vol = sum(w[1] for w in bid_walls)
-            ask_vol = sum(w[1] for w in ask_walls)
+            # Current scan volumes (WITHOUT persistent)
+            bid_vol_raw = sum(w[1] for w in bid_walls)
+            ask_vol_raw = sum(w[1] for w in ask_walls)
+            raw_total = bid_vol_raw + ask_vol_raw
+            scan_pct = round(bid_vol_raw / raw_total * 100) if raw_total > 0 else 50
             
-            # === Compute EXACT bias bar percentage ===
-            # Same formula as renderBias() in JavaScript
-            bid_weight = bid_vol * 2  # Current walls × 2
-            ask_weight = ask_vol * 2
+            # === Compute EXACT bias bar percentage (WITH persistent) ===
+            bid_weight = bid_vol_raw * 2
+            ask_weight = ask_vol_raw * 2
+            bid_vol = bid_vol_raw
+            ask_vol = ask_vol_raw
             
             # Refresh persistent walls cache every 10 scans (~10 min)
             sc = self._current.get('scan_count', 0)
@@ -309,10 +312,11 @@ class LiquidityMap:
             if not isinstance(history, list):
                 history = []
             
-            # t=time, w=biasBar%, p=price, b=bidTotal$K, a=askTotal$K
+            # t=time, w=weightedBias%, s=scanBias%, p=price, b=bidK, a=askK
             history.append({
                 't': ts[11:16],
                 'w': bias_pct,
+                's': scan_pct,
                 'p': round(price, 0),
                 'b': round(bid_vol / 1000, 0),
                 'a': round(ask_vol / 1000, 0),

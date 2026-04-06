@@ -710,10 +710,10 @@ async function loadBiasChart(date) {
         const priceArr = data.map(p => p.p);
         const timeLabels = data.map(p => utcToLocal(d.date, p.t));
         const biasArr = [];
-        const scanArr = [];
+        const scanRaw = [];
         
         for (let i = 0; i < data.length; i++) {
-            // Main bias (= bias bar value)
+            // Weighted Bias (= bias bar value, includes persistent)
             if (data[i].w != null) {
                 biasArr.push(data[i].w);
             } else {
@@ -724,12 +724,17 @@ async function loadBiasChart(date) {
                 biasArr.push(t > 0 ? Math.round(sb / t * 100) : 50);
             }
             
-            // Scan bias (30min rolling from raw bid/ask volumes)
-            const s30 = Math.max(0, i - 29);
-            let sb30 = 0, sa30 = 0;
-            for (let j = s30; j <= i; j++) { sb30 += (data[j].b||0); sa30 += (data[j].a||0); }
-            const t30 = sb30 + sa30;
-            scanArr.push(t30 > 0 ? Math.round(sb30 / t30 * 100) : 50);
+            // Scan Bias (current scan only, NO persistent)
+            scanRaw.push(data[i].s != null ? data[i].s : (data[i].l != null ? data[i].l : biasArr[i]));
+        }
+        
+        // SMA 10-min smoothing for scan bias (removes per-minute noise, keeps reactivity)
+        const scanSmooth = [];
+        for (let i = 0; i < scanRaw.length; i++) {
+            const start = Math.max(0, i - 9);
+            let sum = 0;
+            for (let j = start; j <= i; j++) sum += scanRaw[j];
+            scanSmooth.push(Math.round(sum / (i - start + 1)));
         }
         
         // Sample for performance (max ~300 points)
@@ -741,7 +746,7 @@ async function loadBiasChart(date) {
         
         const labels = idx.map(i => timeLabels[i]);
         const biasData = idx.map(i => biasArr[i]);
-        const scanData = idx.map(i => scanArr[i]);
+        const scanData = idx.map(i => scanSmooth[i]);
         const priceData = idx.map(i => priceArr[i]);
         
         const ctx = document.getElementById('bias-chart');
