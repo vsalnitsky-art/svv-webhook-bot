@@ -107,8 +107,8 @@ def create_app():
             _auto_started['funding'] = True
             try:
                 from detection.funding_monitor import init_funding_monitor
-                from core.bybit_connector import get_bybit_connector
-                bybit = get_bybit_connector()
+                from core.bybit_connector import get_connector
+                bybit = get_connector()
                 fm = init_funding_monitor(bybit_connector=bybit, db=get_db())
                 fm.start()
             except Exception as e:
