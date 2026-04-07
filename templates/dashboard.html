@@ -80,6 +80,16 @@
         </div>
     </div>
 
+    <!-- Funding Rate Monitor -->
+    <div class="section funding-section">
+        <div class="section-header">
+            <h2>💰 Funding Rate Scanner</h2>
+            <span class="funding-status" id="funding-status">⏳</span>
+        </div>
+        <div id="funding-content">Loading...</div>
+        <div class="funding-meta" id="funding-meta"></div>
+    </div>
+
     <!-- Scheduler Status -->
     <div class="section scheduler-section">
         <div class="section-header">
@@ -468,6 +478,67 @@
     background: rgba(255,165,0,0.2);
     border-color: #ffa500;
     color: #ffa500;
+}
+
+/* Funding Rate Monitor */
+.funding-section {
+    background: linear-gradient(135deg, #1a1a2e 0%, #1a0d2e 100%);
+    border: 1px solid #2d1b5c;
+}
+
+.funding-status {
+    font-size: 0.85rem;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.08);
+    color: #888;
+}
+
+.funding-table {
+    width: 100%;
+    font-family: 'Consolas', monospace;
+    font-size: 0.8rem;
+    border-collapse: collapse;
+}
+
+.funding-table th {
+    text-align: left;
+    color: #888;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    text-transform: uppercase;
+}
+
+.funding-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.funding-table tr:hover { background: rgba(255,255,255,0.03); }
+
+.fr-symbol { color: #ddd; font-weight: 600; }
+.fr-rate { font-weight: 700; font-size: 0.85rem; }
+.fr-rate.negative { color: #ff5252; }
+.fr-rate.positive { color: #4caf50; }
+.fr-dir { font-weight: 600; font-size: 0.75rem; padding: 1px 6px; border-radius: 3px; }
+.fr-dir.long { color: #4caf50; background: rgba(76,175,80,0.15); }
+.fr-dir.short { color: #ff5252; background: rgba(255,82,82,0.15); }
+.fr-vol { color: #888; font-size: 0.75rem; }
+
+.funding-empty {
+    text-align: center;
+    padding: 16px;
+    color: #555;
+    font-size: 0.8rem;
+}
+
+.funding-meta {
+    text-align: center;
+    font-size: 0.7rem;
+    color: #555;
+    margin-top: 6px;
 }
 
 /* Job cards improvements */
@@ -882,6 +953,62 @@ function getLocalDate() {
 }
 document.addEventListener('DOMContentLoaded', () => loadBiasChart(getLocalDate()));
 setInterval(() => loadBiasChart(biasCurrentDay || getLocalDate()), 120000);
+
+// === Funding Rate Monitor ===
+async function loadFunding() {
+    try {
+        const res = await fetch('/api/funding/extreme');
+        const d = await res.json();
+        
+        const statusEl = document.getElementById('funding-status');
+        const contentEl = document.getElementById('funding-content');
+        const metaEl = document.getElementById('funding-meta');
+        
+        if (!d.running) {
+            statusEl.textContent = '🔴 Off';
+            contentEl.innerHTML = '<div class="funding-empty">Not running</div>';
+            return;
+        }
+        
+        statusEl.textContent = '🟢 Live';
+        statusEl.style.color = '#00ff88';
+        
+        const coins = d.coins || [];
+        
+        if (coins.length === 0) {
+            contentEl.innerHTML = `<div class="funding-empty">No coins with funding ≤${d.threshold?.negative}% or ≥+${d.threshold?.positive}% (${d.total_coins} scanned)</div>`;
+        } else {
+            let html = `<table class="funding-table">
+                <tr><th>Coin</th><th>Funding Rate</th><th>Signal</th><th>Price</th><th>Vol 24h</th></tr>`;
+            
+            for (const c of coins) {
+                const rateClass = c.rate < 0 ? 'negative' : 'positive';
+                const dirClass = c.direction === 'LONG' ? 'long' : 'short';
+                const vol = c.volume_24h >= 1e6 
+                    ? `$${(c.volume_24h * c.price / 1e6).toFixed(0)}M` 
+                    : `$${(c.volume_24h * c.price / 1e3).toFixed(0)}K`;
+                
+                html += `<tr>
+                    <td class="fr-symbol">${c.symbol.replace('USDT','')}</td>
+                    <td class="fr-rate ${rateClass}">${c.rate > 0 ? '+' : ''}${c.rate.toFixed(3)}%</td>
+                    <td><span class="fr-dir ${dirClass}">${c.direction}</span></td>
+                    <td style="color:#aaa">$${Number(c.price).toLocaleString()}</td>
+                    <td class="fr-vol">${vol}</td>
+                </tr>`;
+            }
+            html += '</table>';
+            contentEl.innerHTML = html;
+        }
+        
+        metaEl.textContent = `Scan #${d.scan_count} | ${d.total_coins} coins | Threshold: ≤${d.threshold?.negative}% / ≥+${d.threshold?.positive}%`;
+        
+    } catch (err) {
+        document.getElementById('funding-status').textContent = '⚠️';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadFunding);
+setInterval(loadFunding, 60000);  // Refresh every minute
 
 async function refreshEvents() {
     location.reload();

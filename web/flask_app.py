@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -101,6 +101,18 @@ def create_app():
                 liq.start()
             except Exception as e:
                 print(f"[APP] Failed to start Liquidity Map: {e}")
+        
+        # Funding Rate Monitor — always start
+        if not _auto_started['funding']:
+            _auto_started['funding'] = True
+            try:
+                from detection.funding_monitor import init_funding_monitor
+                from core.bybit_connector import get_bybit_connector
+                bybit = get_bybit_connector()
+                fm = init_funding_monitor(bybit_connector=bybit, db=get_db())
+                fm.start()
+            except Exception as e:
+                print(f"[APP] Failed to start Funding Monitor: {e}")
         
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
@@ -1795,6 +1807,39 @@ def register_api_routes(app):
             'data': data,
             'available_days': available,
         })
+    
+    # ========================================
+    # Funding Rate Monitor Routes
+    # ========================================
+    
+    @app.route('/api/funding/extreme')
+    def api_funding_extreme():
+        """Coins with extreme funding rates."""
+        from detection.funding_monitor import get_funding_monitor
+        fm = get_funding_monitor()
+        if not fm:
+            return jsonify({'running': False, 'coins': []})
+        return jsonify(fm.get_extreme())
+    
+    @app.route('/api/funding/top')
+    def api_funding_top():
+        """Top most extreme rates both directions."""
+        from detection.funding_monitor import get_funding_monitor
+        fm = get_funding_monitor()
+        if not fm:
+            return jsonify({'most_negative': [], 'most_positive': []})
+        limit = request.args.get('limit', 15, type=int)
+        return jsonify(fm.get_top_rates(limit=limit))
+    
+    @app.route('/api/funding/history')
+    def api_funding_history():
+        """History of extreme coins."""
+        from detection.funding_monitor import get_funding_monitor
+        fm = get_funding_monitor()
+        if not fm:
+            return jsonify({'data': [], 'available_days': []})
+        date = request.args.get('date', '')
+        return jsonify(fm.get_history(date=date))
     
     # ========================================
     # QM Zone Hunter Routes
