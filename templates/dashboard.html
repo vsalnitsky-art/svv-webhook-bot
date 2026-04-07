@@ -954,10 +954,10 @@ function getLocalDate() {
 document.addEventListener('DOMContentLoaded', () => loadBiasChart(getLocalDate()));
 setInterval(() => loadBiasChart(biasCurrentDay || getLocalDate()), 120000);
 
-// === Funding Rate Monitor ===
+// === Funding Rate Monitor (Watchlist) ===
 async function loadFunding() {
     try {
-        const res = await fetch('/api/funding/extreme');
+        const res = await fetch('/api/funding/watchlist');
         const d = await res.json();
         
         const statusEl = document.getElementById('funding-status');
@@ -976,31 +976,41 @@ async function loadFunding() {
         const coins = d.coins || [];
         
         if (coins.length === 0) {
-            contentEl.innerHTML = `<div class="funding-empty">No coins with funding ≤${d.threshold?.negative}% or ≥+${d.threshold?.positive}% (${d.total_coins} scanned)</div>`;
+            contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Threshold: ±${d.threshold}%<br>No extreme funding detected yet.</div>`;
         } else {
             let html = `<table class="funding-table">
-                <tr><th>Coin</th><th>Funding Rate</th><th>Signal</th><th>Price</th><th>Vol 24h</th></tr>`;
+                <tr><th>Coin</th><th>Signal</th><th>Trigger</th><th>Current</th><th>Range</th><th>Price Δ</th><th>Tracked</th><th>Expires</th></tr>`;
             
             for (const c of coins) {
-                const rateClass = c.rate < 0 ? 'negative' : 'positive';
                 const dirClass = c.direction === 'LONG' ? 'long' : 'short';
-                const vol = c.volume_24h >= 1e6 
-                    ? `$${(c.volume_24h * c.price / 1e6).toFixed(0)}M` 
-                    : `$${(c.volume_24h * c.price / 1e3).toFixed(0)}K`;
+                const curClass = c.current_rate < 0 ? 'negative' : 'positive';
+                const priceClass = c.price_change >= 0 ? 'positive' : 'negative';
+                const priceSign = c.price_change >= 0 ? '+' : '';
+                
+                // Time formatted
+                const tracked = c.hours_tracked >= 24 
+                    ? `${(c.hours_tracked/24).toFixed(1)}d` 
+                    : `${c.hours_tracked.toFixed(0)}h`;
+                const left = c.hours_left >= 24 
+                    ? `${(c.hours_left/24).toFixed(1)}d` 
+                    : `${c.hours_left.toFixed(0)}h`;
                 
                 html += `<tr>
                     <td class="fr-symbol">${c.symbol.replace('USDT','')}</td>
-                    <td class="fr-rate ${rateClass}">${c.rate > 0 ? '+' : ''}${c.rate.toFixed(3)}%</td>
                     <td><span class="fr-dir ${dirClass}">${c.direction}</span></td>
-                    <td style="color:#aaa">$${Number(c.price).toLocaleString()}</td>
-                    <td class="fr-vol">${vol}</td>
+                    <td class="fr-rate ${c.trigger_rate < 0 ? 'negative' : 'positive'}">${c.trigger_rate > 0 ? '+' : ''}${c.trigger_rate.toFixed(3)}%</td>
+                    <td class="fr-rate ${curClass}">${c.current_rate > 0 ? '+' : ''}${c.current_rate.toFixed(3)}%</td>
+                    <td style="color:#aaa;font-size:0.7rem">${c.min_rate.toFixed(2)}% → ${c.max_rate.toFixed(2)}%</td>
+                    <td class="fr-rate ${priceClass}">${priceSign}${c.price_change.toFixed(2)}%</td>
+                    <td style="color:#888">${tracked}</td>
+                    <td style="color:#666">${left}</td>
                 </tr>`;
             }
             html += '</table>';
             contentEl.innerHTML = html;
         }
         
-        metaEl.textContent = `Scan #${d.scan_count} | ${d.total_coins} coins | Threshold: ≤${d.threshold?.negative}% / ≥+${d.threshold?.positive}%`;
+        metaEl.textContent = `Scan #${d.scan_count} | ${d.total_coins} coins | ${d.total_tracked} tracked | Threshold: ±${d.threshold}% | Watch: ${d.watch_days}d`;
         
     } catch (err) {
         document.getElementById('funding-status').textContent = '⚠️';
@@ -1008,7 +1018,7 @@ async function loadFunding() {
 }
 
 document.addEventListener('DOMContentLoaded', loadFunding);
-setInterval(loadFunding, 60000);  // Refresh every minute
+setInterval(loadFunding, 60000);
 
 async function refreshEvents() {
     location.reload();
