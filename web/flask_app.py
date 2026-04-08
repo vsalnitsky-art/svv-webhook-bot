@@ -109,7 +109,14 @@ def create_app():
                 from detection.funding_monitor import init_funding_monitor
                 from core.bybit_connector import get_connector
                 bybit = get_connector()
-                fm = init_funding_monitor(bybit_connector=bybit, db=get_db())
+                # Get Telegram notifier if available
+                tg = None
+                try:
+                    from alerts.telegram_notifier import get_notifier
+                    tg = get_notifier()
+                except:
+                    pass
+                fm = init_funding_monitor(bybit_connector=bybit, db=get_db(), notifier=tg)
                 fm.start()
             except Exception as e:
                 print(f"[APP] Failed to start Funding Monitor: {e}")
@@ -1820,6 +1827,21 @@ def register_api_routes(app):
         if not fm:
             return jsonify({'running': False, 'coins': [], 'total_tracked': 0})
         return jsonify(fm.get_watchlist())
+    
+    @app.route('/api/funding/remove/<symbol>', methods=['POST', 'DELETE'])
+    def api_funding_remove(symbol):
+        """Manually remove coin from watchlist."""
+        from detection.funding_monitor import get_funding_monitor
+        fm = get_funding_monitor()
+        if not fm:
+            return jsonify({'ok': False, 'error': 'Not running'})
+        # Normalize symbol
+        if not symbol.endswith('USDT'):
+            symbol = symbol.upper() + 'USDT'
+        else:
+            symbol = symbol.upper()
+        ok = fm.remove_coin(symbol)
+        return jsonify({'ok': ok, 'symbol': symbol})
     
     # ========================================
     # QM Zone Hunter Routes

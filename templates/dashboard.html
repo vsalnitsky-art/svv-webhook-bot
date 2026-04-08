@@ -38,6 +38,16 @@
         </div>
     </div>
 
+    <!-- Funding Rate Monitor -->
+    <div class="section funding-section">
+        <div class="section-header">
+            <h2>💰 Funding Rate Scanner</h2>
+            <span class="funding-status" id="funding-status">⏳</span>
+        </div>
+        <div id="funding-content">Loading...</div>
+        <div class="funding-meta" id="funding-meta"></div>
+    </div>
+
     <!-- Stats Cards -->
     <div class="stats-grid">
         <div class="stat-card">
@@ -78,16 +88,6 @@
                 <div class="stat-label">Total P&L</div>
             </div>
         </div>
-    </div>
-
-    <!-- Funding Rate Monitor -->
-    <div class="section funding-section">
-        <div class="section-header">
-            <h2>💰 Funding Rate Scanner</h2>
-            <span class="funding-status" id="funding-status">⏳</span>
-        </div>
-        <div id="funding-content">Loading...</div>
-        <div class="funding-meta" id="funding-meta"></div>
     </div>
 
     <!-- Scheduler Status -->
@@ -526,6 +526,35 @@
 .fr-dir.long { color: #4caf50; background: rgba(76,175,80,0.15); }
 .fr-dir.short { color: #ff5252; background: rgba(255,82,82,0.15); }
 .fr-vol { color: #888; font-size: 0.75rem; }
+
+.funding-table tr.priority {
+    background: rgba(255,215,0,0.08) !important;
+    border-left: 3px solid #ffa500;
+}
+
+.fr-priority-badge {
+    font-size: 0.65rem;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(255,165,0,0.2);
+    color: #ffa500;
+    font-weight: 700;
+    margin-left: 4px;
+}
+
+.fr-trend { font-size: 0.8rem; }
+
+.fr-delete {
+    background: none;
+    border: 1px solid rgba(255,82,82,0.3);
+    color: #ff5252;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    opacity: 0.5;
+}
+.fr-delete:hover { opacity: 1; background: rgba(255,82,82,0.15); }
 
 .funding-empty {
     text-align: center;
@@ -976,18 +1005,23 @@ async function loadFunding() {
         const coins = d.coins || [];
         
         if (coins.length === 0) {
-            contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Threshold: ±${d.threshold}%<br>No extreme funding detected yet.</div>`;
+            contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Entry: ≤ -${d.threshold}%<br>No extreme funding detected yet.</div>`;
         } else {
             let html = `<table class="funding-table">
-                <tr><th>Coin</th><th>Signal</th><th>Trigger</th><th>Current</th><th>Range</th><th>Price Δ</th><th>Tracked</th><th>Expires</th></tr>`;
+                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Range</th><th>Price Δ</th><th>F-Trend</th><th>Tracked</th><th>Expires</th><th></th></tr>`;
             
             for (const c of coins) {
-                const dirClass = c.direction === 'LONG' ? 'long' : 'short';
                 const curClass = c.current_rate < 0 ? 'negative' : 'positive';
                 const priceClass = c.price_change >= 0 ? 'positive' : 'negative';
                 const priceSign = c.price_change >= 0 ? '+' : '';
+                const rowClass = c.is_priority ? ' class="priority"' : '';
+                const badge = c.is_priority ? '<span class="fr-priority-badge">⚡ SQUEEZE</span>' : '';
+                const alertIcon = c.alerted ? ' 📨' : '';
                 
-                // Time formatted
+                // Trend arrows
+                const fTrend = c.funding_trend < 0 ? '🔻' : c.funding_trend > 0 ? '🔺' : '➖';
+                const pTrend = c.price_trend > 0 ? '📈' : c.price_trend < 0 ? '📉' : '➖';
+                
                 const tracked = c.hours_tracked >= 24 
                     ? `${(c.hours_tracked/24).toFixed(1)}d` 
                     : `${c.hours_tracked.toFixed(0)}h`;
@@ -995,25 +1029,36 @@ async function loadFunding() {
                     ? `${(c.hours_left/24).toFixed(1)}d` 
                     : `${c.hours_left.toFixed(0)}h`;
                 
-                html += `<tr>
-                    <td class="fr-symbol">${c.symbol.replace('USDT','')}</td>
-                    <td><span class="fr-dir ${dirClass}">${c.direction}</span></td>
-                    <td class="fr-rate ${c.trigger_rate < 0 ? 'negative' : 'positive'}">${c.trigger_rate > 0 ? '+' : ''}${c.trigger_rate.toFixed(3)}%</td>
+                html += `<tr${rowClass}>
+                    <td class="fr-symbol">${c.symbol.replace('USDT','')}${badge}${alertIcon}</td>
+                    <td class="fr-rate negative">${c.trigger_rate.toFixed(3)}%</td>
                     <td class="fr-rate ${curClass}">${c.current_rate > 0 ? '+' : ''}${c.current_rate.toFixed(3)}%</td>
                     <td style="color:#aaa;font-size:0.7rem">${c.min_rate.toFixed(2)}% → ${c.max_rate.toFixed(2)}%</td>
-                    <td class="fr-rate ${priceClass}">${priceSign}${c.price_change.toFixed(2)}%</td>
+                    <td class="fr-rate ${priceClass}">${priceSign}${c.price_change.toFixed(2)}% ${pTrend}</td>
+                    <td class="fr-trend">${fTrend}</td>
                     <td style="color:#888">${tracked}</td>
                     <td style="color:#666">${left}</td>
+                    <td><button class="fr-delete" onclick="removeFundingCoin('${c.symbol}')">✕</button></td>
                 </tr>`;
             }
             html += '</table>';
             contentEl.innerHTML = html;
         }
         
-        metaEl.textContent = `Scan #${d.scan_count} | ${d.total_coins} coins | ${d.total_tracked} tracked | Threshold: ±${d.threshold}% | Watch: ${d.watch_days}d`;
+        metaEl.textContent = `Scan #${d.scan_count} | ${d.total_coins} coins scanned | ${d.total_tracked} tracked | Entry: ≤ -${d.threshold}% | Watch: ${d.watch_days}d`;
         
     } catch (err) {
         document.getElementById('funding-status').textContent = '⚠️';
+    }
+}
+
+async function removeFundingCoin(symbol) {
+    if (!confirm(`Remove ${symbol} from watchlist?`)) return;
+    try {
+        await fetch(`/api/funding/remove/${symbol}`, {method: 'POST'});
+        loadFunding();
+    } catch (err) {
+        alert('Error removing coin');
     }
 }
 
