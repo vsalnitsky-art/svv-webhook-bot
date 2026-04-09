@@ -11,6 +11,18 @@
         </div>
     </div>
 
+    <!-- BTC Volume Flow -->
+    <div class="section vf-section">
+        <div class="section-header">
+            <h2>📊 BTC Volume Flow</h2>
+            <span class="vf-status" id="vf-status">⏳</span>
+        </div>
+        <div class="vf-price" id="vf-price">---</div>
+        <div class="vf-windows" id="vf-windows">Loading...</div>
+        <div class="vf-signal" id="vf-signal"></div>
+        <div class="vf-meta" id="vf-meta"></div>
+    </div>
+
     <!-- BTC Liquidity Map — Heatmap -->
     <div class="section liq-section">
         <div class="section-header">
@@ -238,6 +250,130 @@
 </div>
 
 <style>
+/* BTC Volume Flow */
+.vf-section {
+    background: linear-gradient(135deg, #0d1b2e 0%, #1a2e1a 100%);
+    border: 1px solid #1b5c3a;
+}
+
+.vf-status {
+    font-size: 0.85rem;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.08);
+    color: #888;
+}
+
+.vf-price {
+    text-align: center;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #ffa500;
+    padding: 2px 0;
+    font-family: 'Consolas', monospace;
+}
+
+.vf-windows {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.vf-win {
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    padding: 8px;
+    text-align: center;
+}
+
+.vf-win-label {
+    font-size: 0.7rem;
+    color: #888;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.vf-bar-wrap {
+    height: 14px;
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+    background: #111;
+    margin: 4px 0;
+}
+
+.vf-bar-buy {
+    height: 100%;
+    background: linear-gradient(90deg, #1b5e20, #4caf50);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #fff;
+    transition: width 0.5s ease;
+}
+
+.vf-bar-sell {
+    height: 100%;
+    background: linear-gradient(90deg, #f44336, #b71c1c);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #fff;
+    transition: width 0.5s ease;
+}
+
+.vf-vol {
+    font-family: 'Consolas', monospace;
+    font-size: 0.7rem;
+    color: #aaa;
+    margin-top: 2px;
+}
+
+.vf-vol .buy { color: #4caf50; }
+.vf-vol .sell { color: #ff5252; }
+
+.vf-win-signal {
+    font-size: 0.7rem;
+    font-weight: 700;
+    margin-top: 2px;
+}
+
+.vf-signal {
+    margin-top: 8px;
+    padding: 6px 12px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: 'Consolas', monospace;
+    font-size: 0.8rem;
+}
+
+.vf-overall {
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.vf-overall.buyers { color: #4caf50; }
+.vf-overall.sellers { color: #ff5252; }
+.vf-overall.mixed { color: #888; }
+
+.vf-cvd { color: #aaa; }
+.vf-spike { color: #ffa500; font-weight: 700; }
+
+.vf-meta {
+    text-align: center;
+    font-size: 0.7rem;
+    color: #555;
+    margin-top: 6px;
+}
+
 /* BTC Liquidity Map */
 .liq-section {
     background: linear-gradient(135deg, #1a1a2e 0%, #0d1b2a 100%);
@@ -602,6 +738,87 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
 <script>
+// === BTC Volume Flow ===
+async function loadVolumeFlow() {
+    try {
+        const res = await fetch('/api/volume-flow/summary');
+        const d = await res.json();
+        
+        const statusEl = document.getElementById('vf-status');
+        const priceEl = document.getElementById('vf-price');
+        const winsEl = document.getElementById('vf-windows');
+        const sigEl = document.getElementById('vf-signal');
+        const metaEl = document.getElementById('vf-meta');
+        
+        if (!d.running || !d.has_data) {
+            statusEl.textContent = d.running ? '⏳ Loading...' : '🔴 Off';
+            return;
+        }
+        
+        statusEl.textContent = '🟢 Live';
+        statusEl.style.color = '#00ff88';
+        priceEl.textContent = `BTC $${Number(d.price).toLocaleString()}`;
+        
+        // Render 4 windows
+        const windows = d.windows || {};
+        const order = ['5m', '15m', '1h', '4h'];
+        let html = '';
+        
+        for (const key of order) {
+            const w = windows[key];
+            if (!w) continue;
+            
+            const buyVol = w.buy >= 1e9 ? `$${(w.buy/1e9).toFixed(1)}B` : `$${(w.buy/1e6).toFixed(0)}M`;
+            const sellVol = w.sell >= 1e9 ? `$${(w.sell/1e9).toFixed(1)}B` : `$${(w.sell/1e6).toFixed(0)}M`;
+            
+            let sigColor = '#888';
+            let sigText = w.signal;
+            if (w.signal === 'BUYERS') { sigColor = '#4caf50'; sigText = '🟢 BUYERS'; }
+            if (w.signal === 'SELLERS') { sigColor = '#ff5252'; sigText = '🔴 SELLERS'; }
+            
+            html += `<div class="vf-win">
+                <div class="vf-win-label">${key.toUpperCase()}</div>
+                <div class="vf-bar-wrap">
+                    <div class="vf-bar-buy" style="width:${w.buy_pct}%">${w.buy_pct}%</div>
+                    <div class="vf-bar-sell" style="width:${w.sell_pct}%">${w.sell_pct}%</div>
+                </div>
+                <div class="vf-vol"><span class="buy">${buyVol}</span> / <span class="sell">${sellVol}</span></div>
+                <div class="vf-win-signal" style="color:${sigColor}">${sigText}</div>
+            </div>`;
+        }
+        winsEl.innerHTML = html;
+        
+        // Overall signal + CVD + spike
+        const sigClass = d.overall_signal.includes('BUYERS') ? 'buyers' 
+                       : d.overall_signal.includes('SELLERS') ? 'sellers' : 'mixed';
+        
+        const cvd = d.cvd_1h || 0;
+        const cvdStr = cvd >= 0 
+            ? `+$${(cvd/1e6).toFixed(1)}M` 
+            : `-$${(Math.abs(cvd)/1e6).toFixed(1)}M`;
+        const cvdColor = cvd >= 0 ? '#4caf50' : '#ff5252';
+        const cvdIcon = cvd >= 0 ? '📈' : '📉';
+        
+        let sigHtml = `<span class="vf-overall ${sigClass}">${d.overall_signal}</span>`;
+        sigHtml += `<span class="vf-cvd">CVD 1h: <span style="color:${cvdColor}">${cvdStr} ${cvdIcon}</span></span>`;
+        
+        if (d.spike_alert) {
+            sigHtml += `<span class="vf-spike">⚡ SPIKE ${d.spike}×</span>`;
+        } else if (d.spike >= 2.0) {
+            sigHtml += `<span style="color:#ffa500">Spike ${d.spike}×</span>`;
+        }
+        
+        sigEl.innerHTML = sigHtml;
+        metaEl.textContent = `Scan #${d.scan_count} | Binance Futures BTCUSDT | 1-min klines`;
+        
+    } catch (err) {
+        document.getElementById('vf-status').textContent = '⚠️';
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadVolumeFlow);
+setInterval(loadVolumeFlow, 30000);
+
 // === BTC Liquidity Heatmap + Bias ===
 async function loadLiquidity() {
     try {

@@ -88,10 +88,20 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False}
     
     @app.before_request
     def _maybe_auto_start():
+        # Volume Flow — always start
+        if not _auto_started['volflow']:
+            _auto_started['volflow'] = True
+            try:
+                from detection.volume_flow import init_volume_flow
+                vf = init_volume_flow(db=get_db())
+                vf.start()
+            except Exception as e:
+                print(f"[APP] Failed to start Volume Flow: {e}")
+        
         # Liquidity Map — always start on first request
         if not _auto_started['liq']:
             _auto_started['liq'] = True
@@ -1814,6 +1824,27 @@ def register_api_routes(app):
             'data': data,
             'available_days': available,
         })
+    
+    # ========================================
+    # Volume Flow Routes
+    # ========================================
+    
+    @app.route('/api/volume-flow/summary')
+    def api_volume_flow_summary():
+        from detection.volume_flow import get_volume_flow
+        vf = get_volume_flow()
+        if not vf:
+            return jsonify({'running': False, 'has_data': False})
+        return jsonify(vf.get_summary())
+    
+    @app.route('/api/volume-flow/history')
+    def api_volume_flow_history():
+        from detection.volume_flow import get_volume_flow
+        vf = get_volume_flow()
+        if not vf:
+            return jsonify({'data': [], 'available_days': []})
+        date = request.args.get('date', '')
+        return jsonify(vf.get_history(date=date))
     
     # ========================================
     # Funding Rate Monitor Routes
