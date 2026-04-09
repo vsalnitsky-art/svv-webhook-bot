@@ -1,16 +1,14 @@
 """
-BTC Volume Flow Monitor v1.0
+BTC Volume Flow Monitor v2.0 — Trade Signal Generator
 
-Fetches Binance Futures 1-min klines every 60s.
-Binance klines include taker_buy_volume → we get buy vs sell split.
+Fetches Binance Futures 1-min klines every 60s (taker buy/sell volumes).
+Generates LONG/SHORT signals with confidence % based on:
+  - Multi-TF buy/sell dominance (5m, 15m, 1h, 4h)
+  - CVD (Cumulative Volume Delta) trend
+  - Price vs CVD divergence (accumulation/distribution)
+  - Volume spikes
 
-Calculates:
-  - Buy/Sell volume for 5min, 15min, 1h, 4h windows
-  - CVD (Cumulative Volume Delta) = cumulative(buy - sell)
-  - Volume spikes (current vs average)
-  - Buy/Sell ratio trend
-
-One request per scan: GET /fapi/v1/klines?symbol=BTCUSDT&interval=1m&limit=240
+Telegram alert on signal change (LONG→SHORT or vice versa).
 """
 
 import time
@@ -21,16 +19,17 @@ from typing import Dict, List, Optional
 
 BINANCE_KLINE_URL = 'https://fapi.binance.com/fapi/v1/klines'
 SYMBOL = 'BTCUSDT'
-SCAN_INTERVAL = 60          # Every minute
-KLINE_LIMIT = 240           # 4 hours of 1-min candles
+SCAN_INTERVAL = 60
+KLINE_LIMIT = 240
 DB_KEY_PREFIX = 'vol_flow_'
 HISTORY_DAYS = 3
 
 
 class VolumeFlow:
     
-    def __init__(self, db=None, scan_interval: int = SCAN_INTERVAL):
+    def __init__(self, db=None, notifier=None, scan_interval: int = SCAN_INTERVAL):
         self.db = db
+        self.notifier = notifier
         self.scan_interval = scan_interval
         
         self._running = False
@@ -39,11 +38,15 @@ class VolumeFlow:
         self._session = requests.Session()
         self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
         
-        # Current state
-        self._candles: List[Dict] = []  # Last 240 1-min candles
+        self._candles: List[Dict] = []
         self._price: float = 0
         self._scan_count: int = 0
         self._errors: int = 0
+        
+        # Signal state (avoid spam: alert once per direction change)
+        self._last_signal_dir: str = ''  # 'LONG' or 'SHORT' or ''
+        self._last_signal_time: str = ''
+        self._signal: Dict = {}
     
     def start(self):
         if self._running:
@@ -84,22 +87,18 @@ class VolumeFlow:
             if not raw or not isinstance(raw, list):
                 return
             
-            # Parse klines: [open_time, O, H, L, C, vol, close_time, quote_vol, trades, taker_buy_vol, taker_buy_quote_vol, ...]
             candles = []
             for k in raw:
                 try:
-                    total_vol = float(k[7])       # quote asset volume (USD)
-                    taker_buy = float(k[10])      # taker buy quote volume (USD)
+                    total_vol = float(k[7])
+                    taker_buy = float(k[10])
                     taker_sell = total_vol - taker_buy
                     close_price = float(k[4])
-                    ts = int(k[0]) // 1000        # Unix seconds
-                    
+                    ts = int(k[0]) // 1000
                     candles.append({
-                        'ts': ts,
-                        'p': close_price,
+                        'ts': ts, 'p': close_price,
                         'v': round(total_vol),
-                        'b': round(taker_buy),
-                        's': round(taker_sell),
+                        'b': round(taker_buy), 's': round(taker_sell),
                     })
                 except (ValueError, IndexError):
                     continue
@@ -111,23 +110,201 @@ class VolumeFlow:
                 self._candles = candles
                 self._price = candles[-1]['p']
                 self._scan_count += 1
+                self._signal = self._calc_signal(candles)
             
-            # Store bias history for chart
+            # Check for Telegram alert
+            self._check_alert()
+            
+            # Store history
             self._store_snapshot(candles)
             
             if self._scan_count <= 1 or self._scan_count % 30 == 0:
                 s = self._calc_window(candles, 60)
-                print(f"[VOL FLOW] #{self._scan_count}: {len(candles)} candles, "
-                      f"1h Buy ${s['buy']/1e6:.0f}M / Sell ${s['sell']/1e6:.0f}M "
-                      f"({s['buy_pct']:.0f}%/{s['sell_pct']:.0f}%)")
+                sig = self._signal
+                print(f"[VOL FLOW] #{self._scan_count}: "
+                      f"1h Buy {s['buy_pct']:.0f}%/Sell {s['sell_pct']:.0f}% | "
+                      f"Signal: {sig.get('direction','-')} {sig.get('confidence',0)}%")
         
         except Exception as e:
             self._errors += 1
             if self._errors <= 5 or self._errors % 10 == 0:
                 print(f"[VOL FLOW] ⚠️ Error #{self._errors}: {e}")
     
+    # ========================================
+    # SIGNAL CALCULATION
+    # ========================================
+    
+    def _calc_signal(self, candles: List[Dict]) -> Dict:
+        """
+        Calculate trade signal with confidence %.
+        
+        Scoring (max 100):
+          +25: 5m buy/sell dominant (≥60%)
+          +25: 15m buy/sell dominant (≥60%)
+          +25: 1h buy/sell dominant (≥55%)
+          +15: 4h confirms direction (≥55%)
+          +10: Volume spike ≥2× with directional bias
+          +15: CVD trend confirms (rising for LONG, falling for SHORT)
+          +20: Price/CVD divergence (accumulation/distribution)
+          
+        Direction determined by majority of scoring components.
+        """
+        w5 = self._calc_window(candles, 5)
+        w15 = self._calc_window(candles, 15)
+        w60 = self._calc_window(candles, 60)
+        w240 = self._calc_window(candles, 240)
+        
+        long_score = 0
+        short_score = 0
+        reasons = []
+        
+        # 1. Multi-TF buy/sell dominance
+        if w5['buy_pct'] >= 60:
+            long_score += 25
+            reasons.append(f"5m Buyers {w5['buy_pct']:.0f}%")
+        elif w5['sell_pct'] >= 60:
+            short_score += 25
+            reasons.append(f"5m Sellers {w5['sell_pct']:.0f}%")
+        
+        if w15['buy_pct'] >= 60:
+            long_score += 25
+            reasons.append(f"15m Buyers {w15['buy_pct']:.0f}%")
+        elif w15['sell_pct'] >= 60:
+            short_score += 25
+            reasons.append(f"15m Sellers {w15['sell_pct']:.0f}%")
+        
+        if w60['buy_pct'] >= 55:
+            long_score += 25
+            reasons.append(f"1h Buyers {w60['buy_pct']:.0f}%")
+        elif w60['sell_pct'] >= 55:
+            short_score += 25
+            reasons.append(f"1h Sellers {w60['sell_pct']:.0f}%")
+        
+        # 2. 4h confirmation
+        if w240['buy_pct'] >= 55:
+            long_score += 15
+            reasons.append(f"4h Buyers {w240['buy_pct']:.0f}%")
+        elif w240['sell_pct'] >= 55:
+            short_score += 15
+            reasons.append(f"4h Sellers {w240['sell_pct']:.0f}%")
+        
+        # 3. Volume spike with direction
+        spike = w60['spike']
+        if spike >= 2.0:
+            last5 = candles[-5:]
+            spike_buy = sum(c['b'] for c in last5)
+            spike_sell = sum(c['s'] for c in last5)
+            if spike_buy > spike_sell * 1.3:
+                long_score += 10
+                reasons.append(f"Spike {spike:.1f}× Buy")
+            elif spike_sell > spike_buy * 1.3:
+                short_score += 10
+                reasons.append(f"Spike {spike:.1f}× Sell")
+        
+        # 4. CVD trend (last 15 min)
+        if len(candles) >= 15:
+            cvd_values = []
+            running = 0
+            for c in candles[-15:]:
+                running += (c['b'] - c['s'])
+                cvd_values.append(running)
+            
+            cvd_start = cvd_values[0]
+            cvd_end = cvd_values[-1]
+            if cvd_end > cvd_start + abs(cvd_start) * 0.1:
+                long_score += 15
+                reasons.append("CVD rising")
+            elif cvd_end < cvd_start - abs(cvd_start) * 0.1:
+                short_score += 15
+                reasons.append("CVD falling")
+        
+        # 5. DIVERGENCE — most powerful signal
+        if len(candles) >= 15:
+            price_start = candles[-15]['p']
+            price_end = candles[-1]['p']
+            price_change = (price_end - price_start) / price_start * 100
+            
+            cvd_15m = sum(c['b'] - c['s'] for c in candles[-15:])
+            
+            # Price falling + CVD rising = accumulation → LONG
+            if price_change < -0.1 and cvd_15m > 0:
+                long_score += 20
+                reasons.append(f"⚡ Accumulation (P {price_change:+.2f}%, CVD +)")
+            # Price rising + CVD falling = distribution → SHORT
+            elif price_change > 0.1 and cvd_15m < 0:
+                short_score += 20
+                reasons.append(f"⚡ Distribution (P {price_change:+.2f}%, CVD -)")
+        
+        # Determine direction and confidence
+        total = long_score + short_score
+        if total == 0:
+            return {'direction': 'NEUTRAL', 'confidence': 0, 'reasons': []}
+        
+        if long_score > short_score:
+            confidence = min(95, round(long_score / 1.15))
+            direction = 'LONG'
+        elif short_score > long_score:
+            confidence = min(95, round(short_score / 1.15))
+            direction = 'SHORT'
+        else:
+            return {'direction': 'NEUTRAL', 'confidence': 0, 'reasons': reasons}
+        
+        return {
+            'direction': direction,
+            'confidence': confidence,
+            'long_score': long_score,
+            'short_score': short_score,
+            'reasons': reasons,
+            'price': self._price,
+        }
+    
+    def _check_alert(self):
+        """Send Telegram on direction change with confidence ≥65%."""
+        sig = self._signal
+        if not sig or sig.get('confidence', 0) < 65:
+            return
+        
+        direction = sig.get('direction', '')
+        if not direction or direction == 'NEUTRAL':
+            return
+        
+        if direction == self._last_signal_dir:
+            return
+        
+        self._last_signal_dir = direction
+        self._last_signal_time = datetime.now(timezone.utc).strftime('%H:%M')
+        
+        if not self.notifier:
+            print(f"[VOL FLOW] 🔔 Signal: {direction} {sig['confidence']}% (no TG)")
+            return
+        
+        try:
+            icon = '🟢' if direction == 'LONG' else '🔴'
+            reasons_str = '\n'.join(f"  • {r}" for r in sig.get('reasons', []))
+            
+            msg = (
+                f"{icon} <b>BTC VOLUME SIGNAL: {direction} {sig['confidence']}%</b>\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"💰 BTC ${self._price:,.2f}\n"
+                f"\n"
+                f"📊 <b>Reasons:</b>\n"
+                f"{reasons_str}\n"
+                f"\n"
+                f"Long score: {sig.get('long_score', 0)} | "
+                f"Short score: {sig.get('short_score', 0)}\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"⏱ {self._last_signal_time} UTC"
+            )
+            self.notifier.send_message(msg)
+            print(f"[VOL FLOW] 📨 TG: {direction} {sig['confidence']}%")
+        except Exception as e:
+            print(f"[VOL FLOW] ⚠️ Alert error: {e}")
+    
+    # ========================================
+    # WINDOW CALCULATION
+    # ========================================
+    
     def _calc_window(self, candles: List[Dict], minutes: int) -> Dict:
-        """Calculate buy/sell stats for last N minutes."""
         recent = candles[-minutes:] if len(candles) >= minutes else candles
         
         total_buy = sum(c['b'] for c in recent)
@@ -136,18 +313,11 @@ class VolumeFlow:
         
         buy_pct = (total_buy / total * 100) if total > 0 else 50
         sell_pct = 100 - buy_pct
-        
-        # CVD for this window
         cvd = total_buy - total_sell
-        
-        # Volume per minute average
         avg_vol = total / len(recent) if recent else 0
-        
-        # Current 1-min volume vs average (spike detection)
         last_vol = recent[-1]['v'] if recent else 0
         spike = (last_vol / avg_vol) if avg_vol > 0 else 1
         
-        # Determine signal
         if buy_pct >= 60:
             signal = 'BUYERS'
         elif sell_pct >= 60:
@@ -156,26 +326,22 @@ class VolumeFlow:
             signal = 'NEUTRAL'
         
         return {
-            'buy': round(total_buy),
-            'sell': round(total_sell),
+            'buy': round(total_buy), 'sell': round(total_sell),
             'total': round(total),
-            'buy_pct': round(buy_pct, 1),
-            'sell_pct': round(sell_pct, 1),
-            'cvd': round(cvd),
-            'signal': signal,
-            'spike': round(spike, 1),
-            'avg_vol_min': round(avg_vol),
+            'buy_pct': round(buy_pct, 1), 'sell_pct': round(sell_pct, 1),
+            'cvd': round(cvd), 'signal': signal,
+            'spike': round(spike, 1), 'avg_vol_min': round(avg_vol),
         }
     
+    # ========================================
+    # STORAGE
+    # ========================================
+    
     def _store_snapshot(self, candles: List[Dict]):
-        """Store 1-min snapshot for daily chart."""
         if not self.db or not candles:
             return
         try:
-            last = candles[-1]
-            # Calculate 5-min buy%
             w5 = self._calc_window(candles, 5)
-            
             now = datetime.now(timezone.utc)
             day = now.strftime('%Y-%m-%d')
             db_key = f'{DB_KEY_PREFIX}{day}'
@@ -186,17 +352,15 @@ class VolumeFlow:
             
             history.append({
                 't': now.strftime('%H:%M'),
-                'bp': round(w5['buy_pct']),  # 5-min buy %
-                'p': last['p'],
+                'bp': round(w5['buy_pct']),
+                'p': candles[-1]['p'],
                 'cvd': w5['cvd'],
             })
             
             if len(history) > 1440:
                 history = history[-1440:]
-            
             self.db.set_setting(db_key, history)
             
-            # Cleanup old days
             if self._scan_count % 60 == 0:
                 for i in range(HISTORY_DAYS + 2, HISTORY_DAYS + 5):
                     old = (now - timedelta(days=i)).strftime('%Y-%m-%d')
@@ -214,34 +378,18 @@ class VolumeFlow:
     # ========================================
     
     def get_summary(self) -> Dict:
-        """Full summary for dashboard."""
         with self._lock:
             if not self._candles:
                 return {'running': self._running, 'has_data': False,
                         'scan_count': self._scan_count}
             
             candles = self._candles
-            
             w5 = self._calc_window(candles, 5)
             w15 = self._calc_window(candles, 15)
             w60 = self._calc_window(candles, 60)
             w240 = self._calc_window(candles, 240)
             
-            # Overall signal from multiple timeframes
-            signals = [w5['signal'], w15['signal'], w60['signal']]
-            buyers = signals.count('BUYERS')
-            sellers = signals.count('SELLERS')
-            
-            if buyers >= 2:
-                overall = 'BUYERS DOMINANT'
-            elif sellers >= 2:
-                overall = 'SELLERS DOMINANT'
-            else:
-                overall = 'MIXED'
-            
-            # Volume spike (last 1-min vs 1h average)
-            spike = w60['spike']
-            spike_alert = spike >= 3.0
+            sig = self._signal or {}
             
             return {
                 'running': self._running,
@@ -249,23 +397,16 @@ class VolumeFlow:
                 'price': self._price,
                 'scan_count': self._scan_count,
                 'errors': self._errors,
-                'windows': {
-                    '5m': w5,
-                    '15m': w15,
-                    '1h': w60,
-                    '4h': w240,
-                },
-                'overall_signal': overall,
-                'spike': spike,
-                'spike_alert': spike_alert,
+                'windows': {'5m': w5, '15m': w15, '1h': w60, '4h': w240},
+                'signal': sig,
                 'cvd_1h': w60['cvd'],
+                'spike': w60['spike'],
+                'spike_alert': w60['spike'] >= 3.0,
             }
     
     def get_history(self, date: str = '') -> Dict:
-        """Buy% history for chart."""
         if not self.db:
             return {'data': [], 'available_days': []}
-        
         available = []
         for i in range(-1, HISTORY_DAYS + 1):
             d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime('%Y-%m-%d')
@@ -273,30 +414,22 @@ class VolumeFlow:
             if isinstance(data, list) and len(data) > 0:
                 available.append({'date': d, 'points': len(data)})
         available.sort(key=lambda x: x['date'], reverse=True)
-        
         if not date and available:
             date = available[0]['date']
-        
         data = self.db.get_setting(f'{DB_KEY_PREFIX}{date}', [])
         if not isinstance(data, list):
             data = []
-        
-        return {
-            'date': date,
-            'data': data,
-            'available_days': available,
-        }
+        return {'date': date, 'data': data, 'available_days': available}
 
 
-# Singleton
 _instance: Optional[VolumeFlow] = None
 
 def get_volume_flow() -> Optional[VolumeFlow]:
     return _instance
 
-def init_volume_flow(db=None) -> VolumeFlow:
+def init_volume_flow(db=None, notifier=None) -> VolumeFlow:
     global _instance
     if _instance is not None:
         _instance.stop()
-    _instance = VolumeFlow(db=db)
+    _instance = VolumeFlow(db=db, notifier=notifier)
     return _instance

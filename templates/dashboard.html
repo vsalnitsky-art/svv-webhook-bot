@@ -20,6 +20,7 @@
         <div class="vf-price" id="vf-price">---</div>
         <div class="vf-windows" id="vf-windows">Loading...</div>
         <div class="vf-signal" id="vf-signal"></div>
+        <div class="vf-trade" id="vf-trade"></div>
         <div class="vf-meta" id="vf-meta"></div>
     </div>
 
@@ -373,6 +374,62 @@
     color: #555;
     margin-top: 6px;
 }
+
+/* Trade Signal Box */
+.vf-trade {
+    margin-top: 8px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-family: 'Consolas', monospace;
+}
+
+.vf-trade.long-sig {
+    background: rgba(76,175,80,0.1);
+    border: 1px solid rgba(76,175,80,0.4);
+}
+
+.vf-trade.short-sig {
+    background: rgba(255,82,82,0.1);
+    border: 1px solid rgba(255,82,82,0.4);
+}
+
+.vf-trade.neutral-sig {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.vf-trade-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.vf-trade-dir {
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.vf-trade-dir.long { color: #4caf50; }
+.vf-trade-dir.short { color: #ff5252; }
+.vf-trade-dir.neutral { color: #666; }
+
+.vf-confidence {
+    font-size: 1.3rem;
+    font-weight: 700;
+}
+
+.vf-confidence.high { color: #4caf50; }
+.vf-confidence.medium { color: #ffa500; }
+.vf-confidence.low { color: #666; }
+
+.vf-reasons {
+    font-size: 0.75rem;
+    color: #aaa;
+    line-height: 1.5;
+}
+
+.vf-reasons .highlight { color: #ffa500; font-weight: 600; }
 
 /* BTC Liquidity Map */
 .liq-section {
@@ -788,27 +845,45 @@ async function loadVolumeFlow() {
         }
         winsEl.innerHTML = html;
         
-        // Overall signal + CVD + spike
-        const sigClass = d.overall_signal.includes('BUYERS') ? 'buyers' 
-                       : d.overall_signal.includes('SELLERS') ? 'sellers' : 'mixed';
-        
+        // CVD + spike row
         const cvd = d.cvd_1h || 0;
-        const cvdStr = cvd >= 0 
-            ? `+$${(cvd/1e6).toFixed(1)}M` 
-            : `-$${(Math.abs(cvd)/1e6).toFixed(1)}M`;
+        const cvdStr = cvd >= 0 ? `+$${(cvd/1e6).toFixed(1)}M` : `-$${(Math.abs(cvd)/1e6).toFixed(1)}M`;
         const cvdColor = cvd >= 0 ? '#4caf50' : '#ff5252';
         const cvdIcon = cvd >= 0 ? '📈' : '📉';
         
-        let sigHtml = `<span class="vf-overall ${sigClass}">${d.overall_signal}</span>`;
-        sigHtml += `<span class="vf-cvd">CVD 1h: <span style="color:${cvdColor}">${cvdStr} ${cvdIcon}</span></span>`;
-        
+        let sigHtml = `<span class="vf-cvd">CVD 1h: <span style="color:${cvdColor}">${cvdStr} ${cvdIcon}</span></span>`;
         if (d.spike_alert) {
             sigHtml += `<span class="vf-spike">⚡ SPIKE ${d.spike}×</span>`;
         } else if (d.spike >= 2.0) {
             sigHtml += `<span style="color:#ffa500">Spike ${d.spike}×</span>`;
         }
-        
         sigEl.innerHTML = sigHtml;
+        
+        // Trade Signal Box
+        const tradeEl = document.getElementById('vf-trade');
+        const sig = d.signal || {};
+        const dir = sig.direction || 'NEUTRAL';
+        const conf = sig.confidence || 0;
+        
+        const dirIcon = dir === 'LONG' ? '🟢' : dir === 'SHORT' ? '🔴' : '⚪';
+        const dirClass = dir.toLowerCase();
+        const boxClass = dir === 'LONG' ? 'long-sig' : dir === 'SHORT' ? 'short-sig' : 'neutral-sig';
+        const confClass = conf >= 75 ? 'high' : conf >= 50 ? 'medium' : 'low';
+        
+        const reasons = (sig.reasons || []).map(r => {
+            if (r.includes('⚡')) return `<span class="highlight">${r}</span>`;
+            return r;
+        }).join(' · ');
+        
+        tradeEl.className = `vf-trade ${boxClass}`;
+        tradeEl.innerHTML = `
+            <div class="vf-trade-header">
+                <span class="vf-trade-dir ${dirClass}">${dirIcon} ${dir}</span>
+                <span class="vf-confidence ${confClass}">${conf}%</span>
+            </div>
+            ${reasons ? `<div class="vf-reasons">${reasons}</div>` : ''}
+        `;
+        
         metaEl.textContent = `Scan #${d.scan_count} | Binance Futures BTCUSDT | 1-min klines`;
         
     } catch (err) {

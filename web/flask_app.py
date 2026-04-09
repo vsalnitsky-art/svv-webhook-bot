@@ -97,7 +97,14 @@ def create_app():
             _auto_started['volflow'] = True
             try:
                 from detection.volume_flow import init_volume_flow
-                vf = init_volume_flow(db=get_db())
+                # Get Telegram notifier
+                vf_tg = None
+                try:
+                    from alerts.telegram_notifier import get_notifier
+                    vf_tg = get_notifier()
+                except:
+                    pass
+                vf = init_volume_flow(db=get_db(), notifier=vf_tg)
                 vf.start()
             except Exception as e:
                 print(f"[APP] Failed to start Volume Flow: {e}")
