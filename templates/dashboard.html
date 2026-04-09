@@ -845,18 +845,18 @@ async function loadVolumeFlow() {
         }
         winsEl.innerHTML = html;
         
-        // CVD + spike row
+        // CVD + sentiment + spike row
         const cvd = d.cvd_1h || 0;
         const cvdStr = cvd >= 0 ? `+$${(cvd/1e6).toFixed(1)}M` : `-$${(Math.abs(cvd)/1e6).toFixed(1)}M`;
         const cvdColor = cvd >= 0 ? '#4caf50' : '#ff5252';
-        const cvdIcon = cvd >= 0 ? '📈' : '📉';
         
-        let sigHtml = `<span class="vf-cvd">CVD 1h: <span style="color:${cvdColor}">${cvdStr} ${cvdIcon}</span></span>`;
-        if (d.spike_alert) {
-            sigHtml += `<span class="vf-spike">⚡ SPIKE ${d.spike}×</span>`;
-        } else if (d.spike >= 2.0) {
-            sigHtml += `<span style="color:#ffa500">Spike ${d.spike}×</span>`;
-        }
+        const s = d.sentiment || {};
+        let sigHtml = `<span class="vf-cvd">CVD: <span style="color:${cvdColor}">${cvdStr}</span></span>`;
+        if (s.oi) sigHtml += `<span style="color:#aaa">OI $${(s.oi/1e9).toFixed(1)}B</span>`;
+        if (s.ls_ratio) sigHtml += `<span style="color:#aaa">L/S ${s.ls_ratio.toFixed(2)}</span>`;
+        if (s.top_ls_ratio) sigHtml += `<span style="color:${s.top_long >= 55 ? '#4caf50' : s.top_long <= 45 ? '#ff5252' : '#aaa'}">Top ${s.top_long.toFixed(0)}%L</span>`;
+        if (d.spike_alert) sigHtml += `<span class="vf-spike">⚡${d.spike}×</span>`;
+        else if (d.spike >= 2.0) sigHtml += `<span style="color:#ffa500">${d.spike}×</span>`;
         sigEl.innerHTML = sigHtml;
         
         // Trade Signal Box
@@ -864,17 +864,15 @@ async function loadVolumeFlow() {
         const sig = d.signal || {};
         const dir = sig.direction || 'NEUTRAL';
         const conf = sig.confidence || 0;
-        
         const dirIcon = dir === 'LONG' ? '🟢' : dir === 'SHORT' ? '🔴' : '⚪';
         const dirClass = dir.toLowerCase();
         const boxClass = dir === 'LONG' ? 'long-sig' : dir === 'SHORT' ? 'short-sig' : 'neutral-sig';
         const confClass = conf >= 75 ? 'high' : conf >= 50 ? 'medium' : 'low';
-        
         const reasons = (sig.reasons || []).map(r => {
-            if (r.includes('⚡')) return `<span class="highlight">${r}</span>`;
+            if (r.includes('⚡') || r.includes('squeeze') || r.includes('Liquidation'))
+                return `<span class="highlight">${r}</span>`;
             return r;
         }).join(' · ');
-        
         tradeEl.className = `vf-trade ${boxClass}`;
         tradeEl.innerHTML = `
             <div class="vf-trade-header">
@@ -884,7 +882,7 @@ async function loadVolumeFlow() {
             ${reasons ? `<div class="vf-reasons">${reasons}</div>` : ''}
         `;
         
-        metaEl.textContent = `Scan #${d.scan_count} | Binance Futures BTCUSDT | 1-min klines`;
+        metaEl.textContent = `Scan #${d.scan_count} | Binance Futures | Klines + OI + L/S + TopTrader + Taker`;
         
     } catch (err) {
         document.getElementById('vf-status').textContent = '⚠️';
