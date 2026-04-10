@@ -24,6 +24,16 @@
         <div class="vf-meta" id="vf-meta"></div>
     </div>
 
+    <!-- Funding Rate Monitor -->
+    <div class="section funding-section">
+        <div class="section-header">
+            <h2>💰 Funding Rate Scanner</h2>
+            <span class="funding-status" id="funding-status">⏳</span>
+        </div>
+        <div id="funding-content">Loading...</div>
+        <div class="funding-meta" id="funding-meta"></div>
+    </div>
+
     <!-- BTC Liquidity Map — Heatmap -->
     <div class="section liq-section">
         <div class="section-header">
@@ -49,16 +59,6 @@
             </div>
             <div class="bias-chart-wrap"><canvas id="bias-chart"></canvas></div>
         </div>
-    </div>
-
-    <!-- Funding Rate Monitor -->
-    <div class="section funding-section">
-        <div class="section-header">
-            <h2>💰 Funding Rate Scanner</h2>
-            <span class="funding-status" id="funding-status">⏳</span>
-        </div>
-        <div id="funding-content">Loading...</div>
-        <div class="funding-meta" id="funding-meta"></div>
     </div>
 
     <!-- Stats Cards -->
@@ -1298,19 +1298,33 @@ async function loadFunding() {
             contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Entry: ≤ -${d.threshold}%<br>No extreme funding detected yet.</div>`;
         } else {
             let html = `<table class="funding-table">
-                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Range</th><th>Price Δ</th><th>F-Trend</th><th>Tracked</th><th>Expires</th><th></th></tr>`;
+                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>F-Trend</th><th>Tracked</th><th>Expires</th><th></th></tr>`;
             
             for (const c of coins) {
                 const curClass = c.current_rate < 0 ? 'negative' : 'positive';
-                const priceClass = c.price_change >= 0 ? 'positive' : 'negative';
-                const priceSign = c.price_change >= 0 ? '+' : '';
                 const rowClass = c.is_priority ? ' class="priority"' : '';
                 const badge = c.is_priority ? '<span class="fr-priority-badge">⚡ SQUEEZE</span>' : '';
                 const alertIcon = c.alerted ? ' 📨' : '';
                 
-                // Trend arrows
-                const fTrend = c.funding_trend < 0 ? '🔻' : c.funding_trend > 0 ? '🔺' : '➖';
-                const pTrend = c.price_trend > 0 ? '📈' : c.price_trend < 0 ? '📉' : '➖';
+                // Funding trend: deeper = more negative = what we want
+                const fTrend = c.funding_trend < 0 ? '🔻 deeper' : c.funding_trend > 0 ? '🔺 easing' : '➖';
+                const fTrendColor = c.funding_trend < 0 ? '#ff5252' : c.funding_trend > 0 ? '#4caf50' : '#888';
+                
+                // Range: show depth from trigger to deepest (min_rate)
+                // More negative = more accumulated = good for squeeze
+                const depth = Math.abs(c.min_rate - c.trigger_rate);
+                const depthStr = depth > 0.01 ? `${depth.toFixed(2)}%↓` : 'flat';
+                const depthColor = depth >= 1.0 ? '#ff5252' : depth >= 0.5 ? '#ffa500' : '#888';
+                
+                // Price change from trigger + trend
+                const pSign = c.price_change >= 0 ? '+' : '';
+                const pClass = c.price_change >= 0 ? 'positive' : 'negative';
+                const pTrend = c.price_trend > 0 ? ' 📈' : c.price_trend < 0 ? ' 📉' : '';
+                
+                // Price: show current + change
+                const priceStr = c.current_price >= 1 
+                    ? `$${Number(c.current_price).toLocaleString(undefined, {maximumFractionDigits: 2})}` 
+                    : `$${c.current_price.toPrecision(4)}`;
                 
                 const tracked = c.hours_tracked >= 24 
                     ? `${(c.hours_tracked/24).toFixed(1)}d` 
@@ -1323,9 +1337,10 @@ async function loadFunding() {
                     <td class="fr-symbol">${c.symbol.replace('USDT','')}${badge}${alertIcon}</td>
                     <td class="fr-rate negative">${c.trigger_rate.toFixed(3)}%</td>
                     <td class="fr-rate ${curClass}">${c.current_rate > 0 ? '+' : ''}${c.current_rate.toFixed(3)}%</td>
-                    <td style="color:#aaa;font-size:0.7rem">${c.min_rate.toFixed(2)}% → ${c.max_rate.toFixed(2)}%</td>
-                    <td class="fr-rate ${priceClass}">${priceSign}${c.price_change.toFixed(2)}% ${pTrend}</td>
-                    <td class="fr-trend">${fTrend}</td>
+                    <td class="fr-rate negative" style="font-weight:700">${c.min_rate.toFixed(3)}%</td>
+                    <td style="color:${depthColor};font-size:0.75rem;font-weight:600">${depthStr}</td>
+                    <td><span style="color:#aaa;font-size:0.75rem">${priceStr}</span> <span class="fr-rate ${pClass}" style="font-size:0.75rem">${pSign}${c.price_change.toFixed(2)}%${pTrend}</span></td>
+                    <td style="color:${fTrendColor};font-size:0.75rem">${fTrend}</td>
                     <td style="color:#888">${tracked}</td>
                     <td style="color:#666">${left}</td>
                     <td><button class="fr-delete" onclick="removeFundingCoin('${c.symbol}')">✕</button></td>

@@ -12,11 +12,11 @@ import threading
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
-SCAN_INTERVAL = 300
+SCAN_INTERVAL = 60          # 1 minute
 ENTRY_THRESHOLD = -1.0
 WATCH_DAYS = 5
 DB_KEY = 'funding_watchlist'
-TREND_WINDOW = 6
+TREND_WINDOW = 30           # 30 scans × 1min = 30 min trend
 
 
 class FundingMonitor:
@@ -136,8 +136,8 @@ class FundingMonitor:
                             'r': round(r['rate'] * 100, 4),
                             'p': r['price'],
                         })
-                        if len(coin['rates']) > 1440:
-                            coin['rates'] = coin['rates'][-1440:]
+                        if len(coin['rates']) > 7200:
+                            coin['rates'] = coin['rates'][-7200:]
 
                 for symbol, coin in self._watchlist.items():
                     if coin.get('alerted'):
