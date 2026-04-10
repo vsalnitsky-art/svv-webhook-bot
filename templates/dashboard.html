@@ -1313,10 +1313,17 @@ document.addEventListener('DOMContentLoaded', () => loadBiasChart(getLocalDate()
 setInterval(() => loadBiasChart(biasCurrentDay || getLocalDate()), 120000);
 
 // === Funding Rate Monitor (Watchlist) ===
+let fundingSignals = {};
+
 async function loadFunding() {
     try {
-        const res = await fetch('/api/funding/watchlist');
-        const d = await res.json();
+        const [wlRes, sigRes] = await Promise.all([
+            fetch('/api/funding/watchlist'),
+            fetch('/api/funding/signals').catch(() => ({json: () => ({signals: {}})})),
+        ]);
+        const d = await wlRes.json();
+        const sigData = await sigRes.json();
+        fundingSignals = sigData.signals || {};
         
         const statusEl = document.getElementById('funding-status');
         const contentEl = document.getElementById('funding-content');
@@ -1337,7 +1344,7 @@ async function loadFunding() {
             contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Entry: ≤ -${d.threshold}%<br>No extreme funding detected yet.</div>`;
         } else {
             let html = `<table class="funding-table">
-                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>F-Trend</th><th>Tracked</th><th>Expires</th><th></th></tr>`;
+                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol Signal</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
             
             for (const c of coins) {
                 const curClass = c.current_rate < 0 ? 'negative' : 'positive';
@@ -1372,6 +1379,19 @@ async function loadFunding() {
                     ? `${(c.hours_left/24).toFixed(1)}d` 
                     : `${c.hours_left.toFixed(0)}h`;
                 
+                // Volume Flow signal for this coin
+                const cSig = fundingSignals[c.symbol] || {};
+                const sigDir = cSig.direction || '';
+                const sigConf = cSig.confidence || 0;
+                let sigHtml = '<span style="color:#555">—</span>';
+                if (sigDir === 'LONG' && sigConf >= 50) {
+                    sigHtml = `<span style="color:#4caf50;font-weight:700">🟢 ${sigConf}%</span>`;
+                } else if (sigDir === 'SHORT' && sigConf >= 50) {
+                    sigHtml = `<span style="color:#ff5252;font-weight:700">🔴 ${sigConf}%</span>`;
+                } else if (sigDir && sigConf > 0) {
+                    sigHtml = `<span style="color:#888">${sigDir === 'LONG' ? '🟢' : '🔴'} ${sigConf}%</span>`;
+                }
+                
                 html += `<tr${rowClass} onclick="showFundingChart('${c.symbol}')">
                     <td class="fr-symbol">${c.symbol.replace('USDT','')}${badge}${alertIcon}</td>
                     <td class="fr-rate negative">${c.trigger_rate.toFixed(3)}%</td>
@@ -1379,9 +1399,9 @@ async function loadFunding() {
                     <td class="fr-rate negative" style="font-weight:700">${c.min_rate.toFixed(3)}%</td>
                     <td style="color:${depthColor};font-size:0.75rem;font-weight:600">${depthStr}</td>
                     <td><span style="color:#aaa;font-size:0.75rem">${priceStr}</span> <span class="fr-rate ${pClass}" style="font-size:0.75rem">${pSign}${c.price_change.toFixed(2)}%${pTrend}</span></td>
+                    <td>${sigHtml}</td>
                     <td style="color:${fTrendColor};font-size:0.75rem">${fTrend}</td>
                     <td style="color:#888">${tracked}</td>
-                    <td style="color:#666">${left}</td>
                     <td><button class="fr-delete" onclick="event.stopPropagation();removeFundingCoin('${c.symbol}')">✕</button></td>
                 </tr>`;
             }
@@ -1415,25 +1435,65 @@ let fundingChartSymbol = '';
 
 async function showFundingChart(symbol) {
     try {
-        // Highlight selected row
         document.querySelectorAll('.funding-table tr').forEach(r => r.classList.remove('selected'));
         document.querySelectorAll('.funding-table tr').forEach(r => {
             if (r.onclick && r.onclick.toString().includes(symbol)) r.classList.add('selected');
         });
         
-        const res = await fetch(`/api/funding/coin/${symbol}`);
-        const d = await res.json();
+        const [rateRes, flowRes] = await Promise.all([
+            fetch(`/api/funding/coin/${symbol}`),
+            fetch(`/api/funding/flow/${symbol}`).catch(() => ({json: () => ({found: false})})),
+        ]);
+        const d = await rateRes.json();
+        const flow = await flowRes.json();
         
-        if (!d.found || !d.rates || d.rates.length < 2) {
-            return;
-        }
+        if (!d.found || !d.rates || d.rates.length < 2) return;
         
         fundingChartSymbol = symbol;
         const section = document.getElementById('funding-chart-section');
         section.style.display = 'block';
         
         const titleEl = document.getElementById('funding-chart-title');
-        titleEl.textContent = `📊 ${symbol.replace('USDT','')} — Funding Rate & Price`;
+        
+        // Build title with Volume Flow signal
+        let titleHtml = `📊 ${symbol.replace('USDT','')}`;
+        if (flow.found && flow.signal && flow.signal.direction !== 'NEUTRAL') {
+            const sig = flow.signal;
+            const icon = sig.direction === 'LONG' ? '🟢' : '🔴';
+            titleHtml += ` — ${icon} ${sig.direction} ${sig.confidence}%`;
+        }
+        titleEl.textContent = titleHtml;
+        
+        // Show Volume Flow details if available
+        let flowHtml = '';
+        if (flow.found && flow.windows) {
+            const wins = flow.windows;
+            flowHtml = '<div style="display:flex;gap:12px;margin-bottom:6px;font-size:0.75rem;font-family:Consolas,monospace">';
+            for (const [k, w] of Object.entries(wins)) {
+                const col = w.buy_pct >= 60 ? '#4caf50' : w.sell_pct >= 60 ? '#ff5252' : '#888';
+                flowHtml += `<span style="color:${col}">${k.toUpperCase()}: Buy ${w.buy_pct}%</span>`;
+            }
+            if (flow.sentiment) {
+                const s = flow.sentiment;
+                if (s.ls_ratio) flowHtml += `<span style="color:#aaa">L/S ${s.ls_ratio.toFixed(2)}</span>`;
+                if (s.top_long) flowHtml += `<span style="color:#aaa">Top ${s.top_long.toFixed(0)}%L</span>`;
+            }
+            if (flow.signal && flow.signal.reasons) {
+                const rs = flow.signal.reasons.slice(0, 3).join(' · ');
+                flowHtml += `</div><div style="font-size:0.7rem;color:#aaa;margin-bottom:4px">${rs}`;
+            }
+            flowHtml += '</div>';
+        }
+        
+        // Insert flow info before chart
+        let flowEl = document.getElementById('funding-flow-info');
+        if (!flowEl) {
+            flowEl = document.createElement('div');
+            flowEl.id = 'funding-flow-info';
+            const chartWrap = document.querySelector('.funding-chart-wrap');
+            chartWrap.parentNode.insertBefore(flowEl, chartWrap);
+        }
+        flowEl.innerHTML = flowHtml;
         
         // Sample for performance
         const data = d.rates;

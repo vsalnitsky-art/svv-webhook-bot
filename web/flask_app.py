@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -97,7 +97,6 @@ def create_app():
             _auto_started['volflow'] = True
             try:
                 from detection.volume_flow import init_volume_flow
-                # Get Telegram notifier
                 vf_tg = None
                 try:
                     from alerts.telegram_notifier import get_notifier
@@ -109,7 +108,7 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Volume Flow: {e}")
         
-        # Liquidity Map — always start on first request
+        # Liquidity Map
         if not _auto_started['liq']:
             _auto_started['liq'] = True
             try:
@@ -119,14 +118,13 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Liquidity Map: {e}")
         
-        # Funding Rate Monitor — always start
+        # Funding Rate Monitor
         if not _auto_started['funding']:
             _auto_started['funding'] = True
             try:
                 from detection.funding_monitor import init_funding_monitor
                 from core.bybit_connector import get_connector
                 bybit = get_connector()
-                # Get Telegram notifier if available
                 tg = None
                 try:
                     from alerts.telegram_notifier import get_notifier
@@ -137,6 +135,24 @@ def create_app():
                 fm.start()
             except Exception as e:
                 print(f"[APP] Failed to start Funding Monitor: {e}")
+        
+        # Coin Flow Scanner (depends on Funding Monitor)
+        if not _auto_started['coinflow']:
+            _auto_started['coinflow'] = True
+            try:
+                from detection.funding_monitor import get_funding_monitor
+                from detection.coin_flow import init_coin_flow
+                fm = get_funding_monitor()
+                cf_tg = None
+                try:
+                    from alerts.telegram_notifier import get_notifier
+                    cf_tg = get_notifier()
+                except:
+                    pass
+                cf = init_coin_flow(funding_monitor=fm, notifier=cf_tg)
+                cf.start()
+            except Exception as e:
+                print(f"[APP] Failed to start Coin Flow: {e}")
         
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
@@ -1892,6 +1908,28 @@ def register_api_routes(app):
         else:
             symbol = symbol.upper()
         return jsonify(fm.get_coin_rates(symbol))
+    
+    @app.route('/api/funding/flow/<symbol>')
+    def api_funding_flow(symbol):
+        """Volume flow analysis for a watchlist coin."""
+        from detection.coin_flow import get_coin_flow
+        cf = get_coin_flow()
+        if not cf:
+            return jsonify({'found': False})
+        if not symbol.endswith('USDT'):
+            symbol = symbol.upper() + 'USDT'
+        else:
+            symbol = symbol.upper()
+        return jsonify(cf.get_coin_summary(symbol))
+    
+    @app.route('/api/funding/signals')
+    def api_funding_signals():
+        """All coin flow signals summary."""
+        from detection.coin_flow import get_coin_flow
+        cf = get_coin_flow()
+        if not cf:
+            return jsonify({'signals': {}, 'running': False})
+        return jsonify(cf.get_all_signals())
     
     # ========================================
     # QM Zone Hunter Routes
