@@ -32,6 +32,14 @@
         </div>
         <div id="funding-content">Loading...</div>
         <div class="funding-meta" id="funding-meta"></div>
+        <!-- Coin detail chart -->
+        <div class="funding-chart-section" id="funding-chart-section" style="display:none">
+            <div class="funding-chart-header">
+                <span class="funding-chart-title" id="funding-chart-title">---</span>
+                <button class="fr-delete" onclick="closeFundingChart()" style="opacity:0.7">✕ Close</button>
+            </div>
+            <div class="funding-chart-wrap"><canvas id="funding-chart"></canvas></div>
+        </div>
     </div>
 
     <!-- BTC Liquidity Map — Heatmap -->
@@ -763,6 +771,37 @@
     margin-top: 6px;
 }
 
+/* Funding Coin Chart */
+.funding-chart-section {
+    margin-top: 10px;
+    padding: 8px;
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    border: 1px solid rgba(255,165,0,0.15);
+}
+
+.funding-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.funding-chart-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #ffa500;
+}
+
+.funding-chart-wrap {
+    position: relative;
+    width: 100%;
+    height: 220px;
+}
+
+.funding-table tr { cursor: pointer; }
+.funding-table tr.selected { background: rgba(255,165,0,0.1) !important; }
+
 /* Job cards improvements */
 .job-card {
     background: rgba(255,255,255,0.05);
@@ -1333,7 +1372,7 @@ async function loadFunding() {
                     ? `${(c.hours_left/24).toFixed(1)}d` 
                     : `${c.hours_left.toFixed(0)}h`;
                 
-                html += `<tr${rowClass}>
+                html += `<tr${rowClass} onclick="showFundingChart('${c.symbol}')">
                     <td class="fr-symbol">${c.symbol.replace('USDT','')}${badge}${alertIcon}</td>
                     <td class="fr-rate negative">${c.trigger_rate.toFixed(3)}%</td>
                     <td class="fr-rate ${curClass}">${c.current_rate > 0 ? '+' : ''}${c.current_rate.toFixed(3)}%</td>
@@ -1343,7 +1382,7 @@ async function loadFunding() {
                     <td style="color:${fTrendColor};font-size:0.75rem">${fTrend}</td>
                     <td style="color:#888">${tracked}</td>
                     <td style="color:#666">${left}</td>
-                    <td><button class="fr-delete" onclick="removeFundingCoin('${c.symbol}')">✕</button></td>
+                    <td><button class="fr-delete" onclick="event.stopPropagation();removeFundingCoin('${c.symbol}')">✕</button></td>
                 </tr>`;
             }
             html += '</table>';
@@ -1369,6 +1408,157 @@ async function removeFundingCoin(symbol) {
 
 document.addEventListener('DOMContentLoaded', loadFunding);
 setInterval(loadFunding, 60000);
+
+// === Funding Coin Chart ===
+let fundingChart = null;
+let fundingChartSymbol = '';
+
+async function showFundingChart(symbol) {
+    try {
+        // Highlight selected row
+        document.querySelectorAll('.funding-table tr').forEach(r => r.classList.remove('selected'));
+        document.querySelectorAll('.funding-table tr').forEach(r => {
+            if (r.onclick && r.onclick.toString().includes(symbol)) r.classList.add('selected');
+        });
+        
+        const res = await fetch(`/api/funding/coin/${symbol}`);
+        const d = await res.json();
+        
+        if (!d.found || !d.rates || d.rates.length < 2) {
+            return;
+        }
+        
+        fundingChartSymbol = symbol;
+        const section = document.getElementById('funding-chart-section');
+        section.style.display = 'block';
+        
+        const titleEl = document.getElementById('funding-chart-title');
+        titleEl.textContent = `📊 ${symbol.replace('USDT','')} — Funding Rate & Price`;
+        
+        // Sample for performance
+        const data = d.rates;
+        const step = Math.max(1, Math.floor(data.length / 300));
+        const sampled = data.filter((_, i) => i % step === 0 || i === data.length - 1);
+        
+        // Convert time to local
+        const labels = sampled.map(p => {
+            const dt = new Date(p.t.replace(' ', 'T') + ':00Z');
+            return dt.toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false});
+        });
+        const rateData = sampled.map(p => p.r);
+        const priceData = sampled.map(p => p.p);
+        
+        const ctx = document.getElementById('funding-chart');
+        if (!ctx) return;
+        if (fundingChart) fundingChart.destroy();
+        
+        fundingChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Funding Rate %',
+                        data: rateData,
+                        borderColor: '#ff5252',
+                        backgroundColor: 'rgba(255,82,82,0.1)',
+                        fill: true,
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.3,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'Price',
+                        data: priceData,
+                        borderColor: '#4caf50',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.3,
+                        fill: false,
+                        yAxisID: 'y1',
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#bbb', font: { size: 11 }, boxWidth: 14, padding: 10 },
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0,0,0,0.9)',
+                        titleColor: '#ffa500',
+                        titleFont: { size: 11 },
+                        bodyColor: '#ddd',
+                        bodyFont: { size: 11 },
+                        padding: 10,
+                        callbacks: {
+                            label: function(c) {
+                                if (c.dataset.yAxisID === 'y1') {
+                                    const p = c.raw;
+                                    return `Price: $${p >= 1 ? Number(p).toLocaleString(undefined,{maximumFractionDigits:2}) : p.toPrecision(4)}`;
+                                }
+                                return `Funding: ${c.raw.toFixed(3)}%`;
+                            }
+                        }
+                    },
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#aaa', font: { size: 10 }, maxTicksLimit: 10, maxRotation: 0 },
+                        grid: { color: 'rgba(255,255,255,0.03)' },
+                    },
+                    y: {
+                        position: 'left',
+                        title: { display: true, text: 'Funding %', color: '#ff5252', font: { size: 11 } },
+                        ticks: {
+                            color: '#ff5252',
+                            font: { size: 10 },
+                            callback: v => v.toFixed(2) + '%',
+                        },
+                        grid: { color: 'rgba(255,255,255,0.04)' },
+                    },
+                    y1: {
+                        position: 'right',
+                        title: { display: true, text: 'Price', color: '#4caf50', font: { size: 11 } },
+                        ticks: {
+                            color: '#4caf50',
+                            font: { size: 10 },
+                            callback: v => {
+                                if (v >= 1) return '$' + Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
+                                return '$' + v.toPrecision(4);
+                            },
+                        },
+                        grid: { display: false },
+                    },
+                },
+            },
+        });
+        
+        // Scroll to chart
+        section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        
+    } catch (err) {
+        console.error('Funding chart error:', err);
+    }
+}
+
+function closeFundingChart() {
+    document.getElementById('funding-chart-section').style.display = 'none';
+    fundingChartSymbol = '';
+    if (fundingChart) { fundingChart.destroy(); fundingChart = null; }
+    document.querySelectorAll('.funding-table tr').forEach(r => r.classList.remove('selected'));
+}
+
+// Auto-refresh chart if open
+setInterval(() => {
+    if (fundingChartSymbol) showFundingChart(fundingChartSymbol);
+}, 120000);
 
 async function refreshEvents() {
     location.reload();

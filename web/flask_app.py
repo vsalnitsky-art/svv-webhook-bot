@@ -1873,13 +1873,25 @@ def register_api_routes(app):
         fm = get_funding_monitor()
         if not fm:
             return jsonify({'ok': False, 'error': 'Not running'})
-        # Normalize symbol
         if not symbol.endswith('USDT'):
             symbol = symbol.upper() + 'USDT'
         else:
             symbol = symbol.upper()
         ok = fm.remove_coin(symbol)
         return jsonify({'ok': ok, 'symbol': symbol})
+    
+    @app.route('/api/funding/coin/<symbol>')
+    def api_funding_coin(symbol):
+        """Full rate history for a single coin (for chart)."""
+        from detection.funding_monitor import get_funding_monitor
+        fm = get_funding_monitor()
+        if not fm:
+            return jsonify({'found': False})
+        if not symbol.endswith('USDT'):
+            symbol = symbol.upper() + 'USDT'
+        else:
+            symbol = symbol.upper()
+        return jsonify(fm.get_coin_rates(symbol))
     
     # ========================================
     # QM Zone Hunter Routes

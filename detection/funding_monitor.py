@@ -276,6 +276,21 @@ class FundingMonitor:
             return -1
         return 0
 
+    def get_coin_rates(self, symbol: str) -> Dict:
+        """Full rate history for a single coin (for chart)."""
+        with self._lock:
+            if symbol not in self._watchlist:
+                return {'symbol': symbol, 'found': False, 'rates': []}
+            coin = self._watchlist[symbol]
+            return {
+                'symbol': symbol,
+                'found': True,
+                'trigger_rate': coin.get('trigger_rate', 0),
+                'price_at_trigger': coin.get('price_at_trigger', 0),
+                'first_seen': coin.get('first_seen', ''),
+                'rates': coin.get('rates', []),
+            }
+    
     def remove_coin(self, symbol: str) -> bool:
         with self._lock:
             if symbol in self._watchlist:
