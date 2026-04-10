@@ -367,9 +367,17 @@ class CoinFlowScanner:
         try:
             icon = '🟢' if direction == 'LONG' else '🔴'
             reasons_str = '\n'.join(f"  • {r}" for r in signal.get('reasons', []))
+            
+            # Get current price
+            coin = self._data.get(symbol, {})
+            klines = coin.get('klines', [])
+            price = klines[-1]['p'] if klines else 0
+            price_str = f"${price:,.6g}" if price else "N/A"
+            
             msg = (
                 f"{icon} <b>{symbol} SIGNAL: {direction} {signal['confidence']}%</b>\n"
                 f"━━━━━━━━━━━━━━━━\n"
+                f"💰 Price: <b>{price_str}</b>\n\n"
                 f"📊 <b>Factors:</b>\n{reasons_str}\n\n"
                 f"L: {signal.get('long_score',0)} | S: {signal.get('short_score',0)}\n"
                 f"━━━━━━━━━━━━━━━━\n"
