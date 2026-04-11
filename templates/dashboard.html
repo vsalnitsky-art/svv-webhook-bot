@@ -1406,57 +1406,66 @@ async function loadValidatorLog() {
         statusEl.textContent = `${log.length} signals`;
         
         let html = `<table class="sv-table">
-            <tr><th>Time</th><th>Coin</th><th>TV Signal</th><th>Vol Flow</th><th>BTC</th><th>Status</th><th>Reasons</th><th></th></tr>`;
+            <tr><th>Time</th><th>Coin</th><th>Strategy</th><th>TV</th><th>SL/TP</th><th>Vol Flow</th><th>BTC</th><th>Status</th><th></th></tr>`;
         
         for (const r of log.slice(0, 50)) {
             const sig = r.signal || {};
             const btc = r.btc_signal || {};
+            const pine = r.pine || {};
             const rowClass = r.approved ? 'sv-approved' : (r.action === 'Close' ? '' : 'sv-rejected');
             
-            // Time (local)
             const dt = new Date(r.timestamp.replace(' ', 'T') + 'Z');
             const timeStr = dt.toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false});
             
-            // TV direction
             const tvIcon = r.direction === 'LONG' ? '🟢' : r.direction === 'SHORT' ? '🔴' : '⚪';
-            const tvDir = r.action === 'Close' ? `Close ${r.direction||''}` : `${tvIcon} ${r.direction}`;
+            const tvDir = r.action === 'Close' ? `Close` : `${tvIcon} ${r.direction}`;
             
-            // Vol Flow
+            // Strategy
+            const strat = r.strategy || pine.strategy || 'MANUAL';
+            const stratShort = strat.replace('SMC_PRO_', '').replace('SMC_PRO', 'SMC');
+            const trigger = pine.trigger ? ` (${pine.trigger.replace('Internal_','')})` : '';
+            
+            // SL/TP
+            let sltp = '';
+            if (r.sl_price) {
+                const slStr = r.sl_price >= 1 ? r.sl_price.toFixed(2) : r.sl_price.toPrecision(4);
+                sltp += `SL:${slStr}`;
+            }
+            if (r.tp_price) {
+                const tpStr = r.tp_price >= 1 ? r.tp_price.toFixed(2) : r.tp_price.toPrecision(4);
+                sltp += ` TP:${tpStr}`;
+            }
+            if (r.rr_ratio) sltp += ` ${r.rr_ratio.toFixed(1)}R`;
+            
             let volStr = '—';
             if (sig.direction && sig.direction !== 'NEUTRAL') {
                 const vIcon = sig.direction === 'LONG' ? '🟢' : '🔴';
                 volStr = `${vIcon} ${sig.confidence}%`;
             }
             
-            // BTC
             let btcStr = '—';
             if (btc.direction && btc.direction !== 'NEUTRAL') {
                 const bIcon = btc.direction === 'LONG' ? '🟢' : '🔴';
                 btcStr = `${bIcon} ${btc.confidence}%`;
             }
             
-            // Status badge
             let badgeClass = 'sv-rejected-badge';
             if (r.approved) badgeClass = 'sv-approved-badge';
             else if (r.status && r.status.includes('WEAK')) badgeClass = 'sv-weak-badge';
             else if (r.action === 'Close') badgeClass = '';
             
             const statusText = r.action === 'Close' ? 'CLOSE' : (r.status || '—');
-            
-            // Reasons (compact)
-            const reasons = (sig.reasons || []).slice(0, 3).join(', ');
-            
-            // Price
             const priceStr = r.price ? `$${Number(r.price).toLocaleString(undefined, {maximumFractionDigits: 4})}` : '';
             
             html += `<tr class="${rowClass}">
                 <td style="color:#888">${timeStr}</td>
                 <td style="color:#ddd;font-weight:600">${r.symbol.replace('USDT','')} <span style="color:#666;font-size:0.65rem">${priceStr}</span></td>
+                <td style="color:#aaa;font-size:0.7rem">${stratShort}${trigger}</td>
                 <td>${tvDir}</td>
+                <td style="color:#888;font-size:0.68rem">${sltp || '—'}</td>
                 <td>${volStr}</td>
                 <td>${btcStr}</td>
                 <td><span class="sv-status-badge ${badgeClass}">${statusText}</span></td>
-                <td style="color:#777;font-size:0.68rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${reasons}</td>
                 <td><button class="fr-delete" onclick="deleteValidatorEntry('${r.id}')">✕</button></td>
             </tr>`;
         }

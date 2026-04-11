@@ -39,8 +39,9 @@ class SignalValidator:
     def validate(self, data: Dict) -> Dict:
         """
         Validate a TradingView signal.
-        data: {"action": "Buy/Sell", "symbol": "BTCUSDT", ...}
-        Returns: full analysis result stored in DB.
+        Supports both formats:
+          Pine Script: {"action":"buy","symbol":"BTCUSDT","entry":"67500","sl":"67200","tp":"68400","strategy":"SMC_PRO",...}
+          Manual:      {"action":"Buy","symbol":"BTCUSDT","leverage":10,"riskPercent":1,"stopLossPercent":2}
         """
         action = data.get('action', '').capitalize()
         symbol = data.get('symbol', '')
@@ -53,19 +54,55 @@ class SignalValidator:
         if not symbol.endswith('USDT'):
             symbol += 'USDT'
         
-        # Close signals — just log, no analysis needed
+        # Parse strategy type
+        strategy = data.get('strategy', 'MANUAL')
+        
+        # Parse entry/SL/TP (Pine sends absolute prices as strings)
+        entry_price = float(data.get('entry', 0) or 0)
+        sl_price = float(data.get('sl', 0) or 0)
+        tp_price = float(data.get('tp', 0) or 0)
+        tp1_price = float(data.get('tp1', 0) or 0)
+        rr_ratio = float(data.get('rr', 0) or 0)
+        
+        # Parse risk (Pine: "1%" string, Manual: riskPercent number)
+        risk_str = data.get('risk', '')
+        risk_pct = float(data.get('riskPercent', 0) or 0)
+        if not risk_pct and risk_str:
+            try:
+                risk_pct = float(risk_str.replace('%', ''))
+            except:
+                pass
+        
+        # Parse Pine-specific fields
+        pine_tf = data.get('tf', '')
+        pine_bias = data.get('bias', '')
+        pine_htf = data.get('htf_bias', '')
+        pine_htf2 = data.get('htf2_bias', '')
+        pine_trigger = data.get('trigger', '')
+        pine_zone = data.get('zone', '')
+        pine_sweep = data.get('sweep', '')
+        pine_fvg = data.get('fvg', '')
+        pine_ob = data.get('ob', '')
+        pine_mtf = data.get('mtf_strength', '')
+        pine_mtf_conf = data.get('mtf_confidence', '')
+        
+        leverage = int(data.get('leverage', 0) or 0)
+        sl_pct = float(data.get('stopLossPercent', 0) or 0)
+        
+        # Close signals — just log
         if action == 'Close':
             result = {
                 'id': self._gen_id(),
                 'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
                 'symbol': symbol,
                 'action': 'Close',
-                'direction': data.get('direction', 'N/A'),
+                'direction': data.get('direction', data.get('bias', 'N/A')),
                 'reason': data.get('reason', ''),
                 'status': 'CLOSE',
                 'approved': False,
                 'signal': {},
                 'btc_signal': {},
+                'pine': {'strategy': strategy, 'trigger': pine_trigger},
                 'raw_json': data,
             }
             self._store(result)
@@ -113,7 +150,7 @@ class SignalValidator:
         else:
             status = f'❌ BTC OPPOSING ({btc_dir} {btc_conf}%)'
         
-        price = klines[-1]['p'] if klines else 0
+        price = entry_price if entry_price else (klines[-1]['p'] if klines else 0)
         
         result = {
             'id': self._gen_id(),
@@ -122,10 +159,14 @@ class SignalValidator:
             'action': action,
             'direction': tv_direction,
             'price': price,
-            'risk_pct': data.get('riskPercent', 0),
-            'leverage': data.get('leverage', 0),
-            'sl_pct': data.get('stopLossPercent', 0),
-            'tp_pct': data.get('takeProfitPercent', 0),
+            'strategy': strategy,
+            'risk_pct': risk_pct,
+            'leverage': leverage,
+            'sl_price': sl_price,
+            'tp_price': tp_price,
+            'tp1_price': tp1_price,
+            'rr_ratio': rr_ratio,
+            'sl_pct': sl_pct,
             'status': status,
             'approved': approved,
             'signal': {
@@ -138,6 +179,20 @@ class SignalValidator:
             'btc_signal': {
                 'direction': btc_dir,
                 'confidence': btc_conf,
+            },
+            'pine': {
+                'strategy': strategy,
+                'trigger': pine_trigger,
+                'tf': pine_tf,
+                'bias': pine_bias,
+                'htf': pine_htf,
+                'htf2': pine_htf2,
+                'zone': pine_zone,
+                'sweep': pine_sweep,
+                'fvg': pine_fvg,
+                'ob': pine_ob,
+                'mtf': pine_mtf,
+                'mtf_conf': pine_mtf_conf,
             },
             'raw_json': data,
         }
@@ -328,23 +383,63 @@ class SignalValidator:
         try:
             s = result.get('signal', {})
             b = result.get('btc_signal', {})
+            p = result.get('pine', {})
             icon = '✅' if result['approved'] else '❌'
             dir_icon = '🟢' if result['direction'] == 'LONG' else '🔴'
             
-            reasons = '\n'.join(f"  • {r}" for r in s.get('reasons', [])[:5])
+            # Vol Flow direction
+            vol_icon = '🟢' if s.get('direction') == 'LONG' else '🔴' if s.get('direction') == 'SHORT' else '⚪'
+            btc_icon = '🟢' if b.get('direction') == 'LONG' else '🔴' if b.get('direction') == 'SHORT' else '⚪'
             
-            msg = (
-                f"{icon} <b>TV SIGNAL: {result['symbol']} {result['action']}</b>\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"💰 Price: <b>${result.get('price', 0):,.6g}</b>\n"
-                f"📡 TradingView: {dir_icon} {result['direction']}\n"
-                f"📊 Volume Flow: {s.get('direction','—')} {s.get('confidence',0)}%\n"
-                f"₿ BTC: {b.get('direction','—')} {b.get('confidence',0)}%\n\n"
-                f"📊 <b>Factors:</b>\n{reasons}\n\n"
-                f"<b>Status: {result['status']}</b>\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"⏱ {result['timestamp'][11:16]} UTC"
+            # === MAIN (always visible) ===
+            main = (
+                f"{icon} <b>TV: {result['symbol']} {result['action']}</b>  "
+                f"💰 <b>${result.get('price', 0):,.6g}</b>\n"
+                f"{dir_icon} TV:{result['direction']}  "
+                f"{vol_icon} Vol:{s.get('confidence',0)}%  "
+                f"{btc_icon} BTC:{b.get('confidence',0)}%\n"
+                f"<b>{result['status']}</b>"
             )
+            
+            # === DETAILS (in spoiler — tap to reveal) ===
+            details_parts = []
+            
+            # Strategy + trigger
+            strat = p.get('strategy', result.get('strategy', ''))
+            if strat and strat != 'MANUAL':
+                trig = f" ({p['trigger']})" if p.get('trigger') else ''
+                details_parts.append(f"🔧 {strat}{trig}")
+            
+            # SL/TP
+            sltp = []
+            if result.get('sl_price'):
+                sltp.append(f"SL:${result['sl_price']:,.6g}")
+            if result.get('tp_price'):
+                sltp.append(f"TP:${result['tp_price']:,.6g}")
+            if result.get('rr_ratio'):
+                sltp.append(f"RR:{result['rr_ratio']:.1f}")
+            if sltp:
+                details_parts.append('🛡 ' + '  '.join(sltp))
+            
+            # Pine filters
+            filters = []
+            if p.get('htf'): filters.append(f"HTF:{p['htf']}")
+            if p.get('htf2'): filters.append(f"HTF2:{p['htf2']}")
+            if p.get('zone'): filters.append(f"Zone:{p['zone']}")
+            if p.get('mtf'): filters.append(f"MTF:{p['mtf']}/7")
+            if filters:
+                details_parts.append('📋 ' + ' '.join(filters))
+            
+            # Vol Flow reasons
+            reasons = s.get('reasons', [])[:5]
+            if reasons:
+                details_parts.append('📊 ' + ' · '.join(reasons))
+            
+            details_text = '\n'.join(details_parts)
+            spoiler = f"\n<tg-spoiler>{details_text}</tg-spoiler>" if details_text else ''
+            
+            msg = f"{main}{spoiler}\n⏱ {result['timestamp'][11:16]} UTC"
+            
             self.notifier.send_message(msg)
         except Exception as e:
             print(f"[VALIDATOR] Notification error: {e}")
