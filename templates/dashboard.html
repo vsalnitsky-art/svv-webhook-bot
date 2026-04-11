@@ -24,6 +24,19 @@
         <div class="vf-meta" id="vf-meta"></div>
     </div>
 
+    <!-- Signal Validator -->
+    <div class="section sv-section">
+        <div class="section-header">
+            <h2>📡 TradingView Signals</h2>
+            <div>
+                <button class="fr-delete" onclick="clearValidatorLog()" style="opacity:0.7;margin-right:4px">🗑️ Clear All</button>
+                <span class="sv-status" id="sv-status">—</span>
+            </div>
+        </div>
+        <div id="sv-content"><div class="funding-empty">No signals received yet. Webhook: /webhook</div></div>
+        <div class="sv-meta" id="sv-meta"></div>
+    </div>
+
     <!-- Funding Rate Monitor -->
     <div class="section funding-section">
         <div class="section-header">
@@ -681,6 +694,65 @@
     color: #ffa500;
 }
 
+/* Signal Validator */
+.sv-section {
+    background: linear-gradient(135deg, #1a1a2e 0%, #2e1a1a 100%);
+    border: 1px solid #5c1b3a;
+}
+
+.sv-status {
+    font-size: 0.85rem;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.08);
+    color: #888;
+}
+
+.sv-table {
+    width: 100%;
+    font-family: 'Consolas', monospace;
+    font-size: 0.78rem;
+    border-collapse: collapse;
+}
+
+.sv-table th {
+    text-align: left;
+    color: #888;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 4px 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    text-transform: uppercase;
+}
+
+.sv-table td {
+    padding: 5px 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.sv-table tr:hover { background: rgba(255,255,255,0.03); }
+
+.sv-table tr.sv-approved { background: rgba(76,175,80,0.06); }
+.sv-table tr.sv-rejected { background: rgba(255,82,82,0.04); }
+
+.sv-status-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+.sv-approved-badge { background: rgba(76,175,80,0.2); color: #4caf50; }
+.sv-rejected-badge { background: rgba(255,82,82,0.15); color: #ff5252; }
+.sv-weak-badge { background: rgba(255,165,0,0.15); color: #ffa500; }
+
+.sv-meta {
+    text-align: center;
+    font-size: 0.7rem;
+    color: #555;
+    margin-top: 6px;
+}
+
 /* Funding Rate Monitor */
 .funding-section {
     background: linear-gradient(135deg, #1a1a2e 0%, #1a0d2e 100%);
@@ -1311,6 +1383,110 @@ function getLocalDate() {
 }
 document.addEventListener('DOMContentLoaded', () => loadBiasChart(getLocalDate()));
 setInterval(() => loadBiasChart(biasCurrentDay || getLocalDate()), 120000);
+
+// === Signal Validator ===
+async function loadValidatorLog() {
+    try {
+        const res = await fetch('/api/validator/log');
+        const d = await res.json();
+        
+        const contentEl = document.getElementById('sv-content');
+        const statusEl = document.getElementById('sv-status');
+        const metaEl = document.getElementById('sv-meta');
+        
+        const log = d.log || [];
+        
+        if (log.length === 0) {
+            contentEl.innerHTML = '<div class="funding-empty">No signals received yet. Webhook: <code>/webhook</code></div>';
+            statusEl.textContent = `${log.length} signals`;
+            metaEl.textContent = 'Auto-cleanup: 5 days';
+            return;
+        }
+        
+        statusEl.textContent = `${log.length} signals`;
+        
+        let html = `<table class="sv-table">
+            <tr><th>Time</th><th>Coin</th><th>TV Signal</th><th>Vol Flow</th><th>BTC</th><th>Status</th><th>Reasons</th><th></th></tr>`;
+        
+        for (const r of log.slice(0, 50)) {
+            const sig = r.signal || {};
+            const btc = r.btc_signal || {};
+            const rowClass = r.approved ? 'sv-approved' : (r.action === 'Close' ? '' : 'sv-rejected');
+            
+            // Time (local)
+            const dt = new Date(r.timestamp.replace(' ', 'T') + 'Z');
+            const timeStr = dt.toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false});
+            
+            // TV direction
+            const tvIcon = r.direction === 'LONG' ? '🟢' : r.direction === 'SHORT' ? '🔴' : '⚪';
+            const tvDir = r.action === 'Close' ? `Close ${r.direction||''}` : `${tvIcon} ${r.direction}`;
+            
+            // Vol Flow
+            let volStr = '—';
+            if (sig.direction && sig.direction !== 'NEUTRAL') {
+                const vIcon = sig.direction === 'LONG' ? '🟢' : '🔴';
+                volStr = `${vIcon} ${sig.confidence}%`;
+            }
+            
+            // BTC
+            let btcStr = '—';
+            if (btc.direction && btc.direction !== 'NEUTRAL') {
+                const bIcon = btc.direction === 'LONG' ? '🟢' : '🔴';
+                btcStr = `${bIcon} ${btc.confidence}%`;
+            }
+            
+            // Status badge
+            let badgeClass = 'sv-rejected-badge';
+            if (r.approved) badgeClass = 'sv-approved-badge';
+            else if (r.status && r.status.includes('WEAK')) badgeClass = 'sv-weak-badge';
+            else if (r.action === 'Close') badgeClass = '';
+            
+            const statusText = r.action === 'Close' ? 'CLOSE' : (r.status || '—');
+            
+            // Reasons (compact)
+            const reasons = (sig.reasons || []).slice(0, 3).join(', ');
+            
+            // Price
+            const priceStr = r.price ? `$${Number(r.price).toLocaleString(undefined, {maximumFractionDigits: 4})}` : '';
+            
+            html += `<tr class="${rowClass}">
+                <td style="color:#888">${timeStr}</td>
+                <td style="color:#ddd;font-weight:600">${r.symbol.replace('USDT','')} <span style="color:#666;font-size:0.65rem">${priceStr}</span></td>
+                <td>${tvDir}</td>
+                <td>${volStr}</td>
+                <td>${btcStr}</td>
+                <td><span class="sv-status-badge ${badgeClass}">${statusText}</span></td>
+                <td style="color:#777;font-size:0.68rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${reasons}</td>
+                <td><button class="fr-delete" onclick="deleteValidatorEntry('${r.id}')">✕</button></td>
+            </tr>`;
+        }
+        html += '</table>';
+        contentEl.innerHTML = html;
+        
+        metaEl.textContent = `${log.length} signals | Auto-cleanup: 5 days | Webhook: /webhook`;
+        
+    } catch (err) {
+        console.error('Validator log error:', err);
+    }
+}
+
+async function deleteValidatorEntry(id) {
+    try {
+        await fetch(`/api/validator/delete/${id}`, {method: 'POST'});
+        loadValidatorLog();
+    } catch (err) { alert('Error'); }
+}
+
+async function clearValidatorLog() {
+    if (!confirm('Clear ALL signal history?')) return;
+    try {
+        await fetch('/api/validator/clear', {method: 'POST'});
+        loadValidatorLog();
+    } catch (err) { alert('Error'); }
+}
+
+document.addEventListener('DOMContentLoaded', loadValidatorLog);
+setInterval(loadValidatorLog, 30000);
 
 // === Funding Rate Monitor (Watchlist) ===
 let fundingSignals = {};

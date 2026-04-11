@@ -142,6 +142,7 @@ def create_app():
             try:
                 from detection.funding_monitor import get_funding_monitor
                 from detection.coin_flow import init_coin_flow
+                from detection.signal_validator import init_validator
                 fm = get_funding_monitor()
                 cf_tg = None
                 try:
@@ -151,6 +152,8 @@ def create_app():
                     pass
                 cf = init_coin_flow(funding_monitor=fm, notifier=cf_tg)
                 cf.start()
+                # Signal Validator (no thread, on-demand)
+                init_validator(db=get_db(), notifier=cf_tg)
             except Exception as e:
                 print(f"[APP] Failed to start Coin Flow: {e}")
         
@@ -1847,6 +1850,58 @@ def register_api_routes(app):
             'data': data,
             'available_days': available,
         })
+    
+    # ========================================
+    # Webhook + Signal Validator Routes
+    # ========================================
+    
+    @app.route('/webhook', methods=['POST'])
+    def webhook():
+        """Receive TradingView JSON → validate → store result."""
+        try:
+            import json as _json
+            raw = request.get_data(as_text=True)
+            data = _json.loads(raw) if raw else {}
+            
+            print(f"[WEBHOOK] 📥 {data.get('symbol','')} {data.get('action','')}")
+            
+            from detection.signal_validator import get_validator
+            v = get_validator()
+            if not v:
+                return jsonify({'status': 'error', 'reason': 'Validator not initialized'}), 500
+            
+            result = v.validate(data)
+            return jsonify(result)
+        except Exception as e:
+            print(f"[WEBHOOK] ❌ Error: {e}")
+            return jsonify({'status': 'error', 'reason': str(e)}), 400
+    
+    @app.route('/api/validator/log')
+    def api_validator_log():
+        """Signal validation history."""
+        from detection.signal_validator import get_validator
+        v = get_validator()
+        if not v:
+            return jsonify({'log': []})
+        return jsonify({'log': v.get_log()})
+    
+    @app.route('/api/validator/delete/<entry_id>', methods=['POST', 'DELETE'])
+    def api_validator_delete(entry_id):
+        """Delete a single entry."""
+        from detection.signal_validator import get_validator
+        v = get_validator()
+        if not v:
+            return jsonify({'ok': False})
+        return jsonify({'ok': v.delete_entry(entry_id)})
+    
+    @app.route('/api/validator/clear', methods=['POST', 'DELETE'])
+    def api_validator_clear():
+        """Clear all entries."""
+        from detection.signal_validator import get_validator
+        v = get_validator()
+        if not v:
+            return jsonify({'ok': False})
+        return jsonify({'ok': v.clear_all()})
     
     # ========================================
     # Volume Flow Routes
