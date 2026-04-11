@@ -276,6 +276,55 @@ class FundingMonitor:
             return -1
         return 0
 
+    def add_coin(self, symbol: str) -> Dict:
+        """Manually add a coin to watchlist. Fetches current rate from Bybit."""
+        symbol = symbol.upper().replace('.P', '')
+        if not symbol.endswith('USDT'):
+            symbol += 'USDT'
+        
+        with self._lock:
+            if symbol in self._watchlist:
+                return {'ok': False, 'reason': f'{symbol} already tracked'}
+        
+        # Fetch current rate
+        if not self.bybit:
+            return {'ok': False, 'reason': 'Bybit not connected'}
+        
+        try:
+            tickers = self.bybit.get_tickers(category='linear')
+            found = None
+            for t in tickers:
+                if t.get('symbol') == symbol:
+                    found = t
+                    break
+            
+            if not found:
+                return {'ok': False, 'reason': f'{symbol} not found on Bybit'}
+            
+            rate = float(found.get('fundingRate', '0'))
+            price = float(found.get('lastPrice', '0'))
+            now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')
+            
+            with self._lock:
+                self._watchlist[symbol] = {
+                    'first_seen': now_str,
+                    'trigger_rate': round(rate * 100, 4),
+                    'price_at_trigger': price,
+                    'alerted': False,
+                    'rates': [{
+                        't': now_str,
+                        'r': round(rate * 100, 4),
+                        'p': price,
+                    }],
+                }
+            
+            self._save_watchlist()
+            print(f"[FUNDING] ➕ Manually added: {symbol} (rate {rate*100:.3f}%, price ${price:,.6g})")
+            return {'ok': True, 'symbol': symbol, 'rate': round(rate * 100, 4), 'price': price}
+        
+        except Exception as e:
+            return {'ok': False, 'reason': str(e)}
+    
     def get_coin_rates(self, symbol: str) -> Dict:
         """Full rate history for a single coin (for chart)."""
         with self._lock:

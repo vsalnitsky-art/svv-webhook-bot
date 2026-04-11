@@ -41,7 +41,11 @@
     <div class="section funding-section">
         <div class="section-header">
             <h2>💰 Funding Rate Scanner</h2>
-            <span class="funding-status" id="funding-status">⏳</span>
+            <div style="display:flex;align-items:center;gap:6px">
+                <input type="text" id="funding-add-input" placeholder="DOGE, SOL..." style="width:100px;padding:3px 8px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
+                <button class="btn btn-sm" onclick="addFundingCoin()" style="padding:3px 10px;font-size:0.75rem;background:rgba(76,175,80,0.2);border:1px solid rgba(76,175,80,0.4);color:#4caf50;border-radius:4px;cursor:pointer">+ Add</button>
+                <span class="funding-status" id="funding-status">⏳</span>
+            </div>
         </div>
         <div id="funding-content">Loading...</div>
         <div class="funding-meta" id="funding-meta"></div>
@@ -1610,6 +1614,35 @@ async function removeFundingCoin(symbol) {
         alert('Error removing coin');
     }
 }
+
+async function addFundingCoin() {
+    const input = document.getElementById('funding-add-input');
+    const raw = input.value.trim().toUpperCase();
+    if (!raw) return;
+    // Support comma-separated: "DOGE, SOL, PEPE"
+    const symbols = raw.split(/[,\s]+/).filter(s => s.length > 0);
+    input.disabled = true;
+    let added = 0;
+    for (const sym of symbols) {
+        try {
+            const res = await fetch(`/api/funding/add/${sym}`, {method: 'POST'});
+            const d = await res.json();
+            if (d.ok) added++;
+            else if (symbols.length === 1) alert(d.reason || 'Failed');
+        } catch (err) {}
+    }
+    if (added > 0) {
+        input.value = '';
+        loadFunding();
+    }
+    input.disabled = false;
+    input.focus();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const inp = document.getElementById('funding-add-input');
+    if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') addFundingCoin(); });
+});
 
 document.addEventListener('DOMContentLoaded', loadFunding);
 setInterval(loadFunding, 60000);

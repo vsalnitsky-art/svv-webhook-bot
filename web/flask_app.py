@@ -1951,6 +1951,15 @@ def register_api_routes(app):
         ok = fm.remove_coin(symbol)
         return jsonify({'ok': ok, 'symbol': symbol})
     
+    @app.route('/api/funding/add/<symbol>', methods=['POST'])
+    def api_funding_add(symbol):
+        """Manually add coin to watchlist."""
+        from detection.funding_monitor import get_funding_monitor
+        fm = get_funding_monitor()
+        if not fm:
+            return jsonify({'ok': False, 'reason': 'Not running'})
+        return jsonify(fm.add_coin(symbol))
+    
     @app.route('/api/funding/coin/<symbol>')
     def api_funding_coin(symbol):
         """Full rate history for a single coin (for chart)."""
