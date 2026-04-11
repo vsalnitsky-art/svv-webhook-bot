@@ -15,16 +15,10 @@ import requests
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-BINANCE_KLINE_URL = 'https://fapi.binance.com/fapi/v1/klines'
-BINANCE_OI_URL = 'https://fapi.binance.com/fapi/v1/openInterest'
-BINANCE_LS_URL = 'https://fapi.binance.com/futures/data/globalLongShortAccountRatio'
-BINANCE_TOP_LS_URL = 'https://fapi.binance.com/futures/data/topLongShortAccountRatio'
-BINANCE_TAKER_URL = 'https://fapi.binance.com/futures/data/takerlongshortRatio'
-
-SCAN_INTERVAL = 300       # Klines + OI every 5 min
-SENTIMENT_EVERY = 3       # Sentiment every 3rd scan = 15 min
-REQUEST_DELAY = 0.5       # 500ms between requests
-KLINE_LIMIT = 60          # 1 hour of 1-min candles per coin
+SCAN_INTERVAL = 300
+SENTIMENT_EVERY = 3
+REQUEST_DELAY = 0.5
+KLINE_LIMIT = 60
 
 
 class CoinFlowScanner:
@@ -149,80 +143,19 @@ class CoinFlowScanner:
     # ========================================
     
     def _fetch_klines(self, symbol: str) -> Optional[List[Dict]]:
-        try:
-            r = self._session.get(BINANCE_KLINE_URL,
-                params={'symbol': symbol, 'interval': '1m', 'limit': KLINE_LIMIT},
-                timeout=10)
-            if r.status_code != 200:
-                return None
-            raw = r.json()
-            candles = []
-            for k in raw:
-                try:
-                    tv = float(k[7])
-                    tb = float(k[10])
-                    candles.append({
-                        'p': float(k[4]), 'v': round(tv),
-                        'b': round(tb), 's': round(tv - tb),
-                    })
-                except:
-                    continue
-            return candles if candles else None
-        except:
-            return None
+        from detection.market_data import get_market_data
+        return get_market_data().fetch_klines(symbol, KLINE_LIMIT)
     
     def _fetch_oi(self, symbol: str) -> Optional[float]:
-        try:
-            r = self._session.get(BINANCE_OI_URL,
-                params={'symbol': symbol}, timeout=10)
-            if r.status_code == 200:
-                d = r.json()
-                oi_qty = float(d.get('openInterest', 0))
-                price = self._data.get(symbol, {}).get('klines', [{}])
-                last_p = price[-1]['p'] if price else 0
-                return oi_qty * last_p if last_p else oi_qty
-        except:
-            pass
-        return None
+        from detection.market_data import get_market_data
+        price = self._data.get(symbol, {}).get('klines', [{}])
+        last_p = price[-1]['p'] if price else 0
+        oi, _ = get_market_data().fetch_oi(symbol, last_p)
+        return oi
     
     def _fetch_sentiment(self, symbol: str) -> Optional[Dict]:
-        sent = {}
-        try:
-            r = self._session.get(BINANCE_LS_URL,
-                params={'symbol': symbol, 'period': '5m', 'limit': 6}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    latest = data[-1]
-                    sent['ls_ratio'] = float(latest.get('longShortRatio', 1))
-                    sent['ls_long'] = round(float(latest.get('longAccount', 0.5)) * 100, 1)
-        except:
-            pass
-        time.sleep(REQUEST_DELAY)
-        
-        try:
-            r = self._session.get(BINANCE_TOP_LS_URL,
-                params={'symbol': symbol, 'period': '5m', 'limit': 6}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    latest = data[-1]
-                    sent['top_ls'] = float(latest.get('longShortRatio', 1))
-                    sent['top_long'] = round(float(latest.get('longAccount', 0.5)) * 100, 1)
-        except:
-            pass
-        time.sleep(REQUEST_DELAY)
-        
-        try:
-            r = self._session.get(BINANCE_TAKER_URL,
-                params={'symbol': symbol, 'period': '5m', 'limit': 6}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    sent['taker'] = float(data[-1].get('buySellRatio', 1))
-        except:
-            pass
-        
+        from detection.market_data import get_market_data
+        sent = get_market_data().fetch_sentiment(symbol)
         return sent if sent else None
     
     # ========================================

@@ -20,19 +20,12 @@ Telegram alert on direction change with confidence ≥60%.
 
 import time
 import threading
-import requests
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
-BINANCE_KLINE_URL = 'https://fapi.binance.com/fapi/v1/klines'
-BINANCE_OI_URL = 'https://fapi.binance.com/fapi/v1/openInterest'
-BINANCE_LS_URL = 'https://fapi.binance.com/futures/data/globalLongShortAccountRatio'
-BINANCE_TOP_LS_URL = 'https://fapi.binance.com/futures/data/topLongShortAccountRatio'
-BINANCE_TAKER_URL = 'https://fapi.binance.com/futures/data/takerlongshortRatio'
-
 SYMBOL = 'BTCUSDT'
 SCAN_INTERVAL = 60
-SENTIMENT_INTERVAL = 300  # OI/LS/Taker every 5min
+SENTIMENT_INTERVAL = 300
 KLINE_LIMIT = 240
 DB_KEY_PREFIX = 'vol_flow_'
 HISTORY_DAYS = 3
@@ -48,8 +41,6 @@ class VolumeFlow:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.RLock()
-        self._session = requests.Session()
-        self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
         
         self._candles: List[Dict] = []
         self._price: float = 0
@@ -59,6 +50,7 @@ class VolumeFlow:
         # Sentiment data (updated every 5min)
         self._sentiment: Dict = {}
         self._sentiment_scan: int = 0
+        self._data_source: str = ''  # 'Binance', 'OKX', 'Binance+OKX'
         
         # Signal state
         self._last_signal_dir: str = ''
@@ -103,33 +95,10 @@ class VolumeFlow:
     def _scan(self):
         """Fetch 1-min klines with taker buy/sell volumes."""
         try:
-            resp = self._session.get(
-                BINANCE_KLINE_URL,
-                params={'symbol': SYMBOL, 'interval': '1m', 'limit': KLINE_LIMIT},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            raw = resp.json()
-            if not raw or not isinstance(raw, list):
-                return
+            from detection.market_data import get_market_data
+            md = get_market_data()
             
-            candles = []
-            for k in raw:
-                try:
-                    total_vol = float(k[7])       # quote volume USD
-                    taker_buy = float(k[10])      # taker buy quote USD
-                    candles.append({
-                        'ts': int(k[0]) // 1000,
-                        'p': float(k[4]),         # close
-                        'h': float(k[2]),         # high
-                        'l': float(k[3]),         # low
-                        'v': round(total_vol),
-                        'b': round(taker_buy),
-                        's': round(total_vol - taker_buy),
-                    })
-                except (ValueError, IndexError):
-                    continue
-            
+            candles = md.fetch_klines(SYMBOL, KLINE_LIMIT)
             if not candles:
                 return
             
@@ -138,6 +107,7 @@ class VolumeFlow:
                 self._price = candles[-1]['p']
                 self._scan_count += 1
                 self._signal = self._calc_signal(candles)
+                self._data_source = md.source_summary
             
             self._check_alert()
             self._store_snapshot(candles)
@@ -155,85 +125,41 @@ class VolumeFlow:
                 print(f"[VOL FLOW] ⚠️ Kline error #{self._errors}: {e}")
     
     def _fetch_sentiment(self):
-        """Fetch OI, L/S ratio, Top Trader L/S, Taker ratio."""
+        """Fetch OI, L/S ratio, Top Trader L/S, Taker ratio via MarketData (Binance→OKX)."""
+        from detection.market_data import get_market_data
+        md = get_market_data()
         sent = {}
         
-        # 1. Open Interest
-        try:
-            r = self._session.get(BINANCE_OI_URL,
-                params={'symbol': SYMBOL}, timeout=10)
-            if r.status_code == 200:
-                d = r.json()
-                oi = float(d.get('openInterest', 0))
-                # Convert to USD: OI is in BTC, multiply by price
-                sent['oi'] = round(oi * self._price) if self._price else 0
-                sent['oi_btc'] = round(oi, 2)
-        except Exception as e:
-            if self._sentiment_scan <= 2:
-                print(f"[VOL FLOW] OI fetch error: {e}")
+        # OI
+        oi_usd, oi_src = md.fetch_oi(SYMBOL, self._price)
+        if oi_usd is not None:
+            sent['oi'] = round(oi_usd)
+            sent['oi_btc'] = round(oi_usd / self._price, 2) if self._price else 0
         
-        # 2. Global Long/Short Account Ratio (5min periods)
-        try:
-            r = self._session.get(BINANCE_LS_URL,
-                params={'symbol': SYMBOL, 'period': '5m', 'limit': 12}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    latest = data[-1]
-                    sent['ls_ratio'] = float(latest.get('longShortRatio', 1))
-                    sent['ls_long'] = round(float(latest.get('longAccount', 0.5)) * 100, 1)
-                    sent['ls_short'] = round(float(latest.get('shortAccount', 0.5)) * 100, 1)
-                    # Trend: compare first vs last
-                    if len(data) >= 6:
-                        first = float(data[-6].get('longShortRatio', 1))
-                        last = float(data[-1].get('longShortRatio', 1))
-                        sent['ls_trend'] = 1 if last > first * 1.05 else (-1 if last < first * 0.95 else 0)
-        except Exception as e:
-            if self._sentiment_scan <= 2:
-                print(f"[VOL FLOW] L/S ratio error: {e}")
-        
-        # 3. Top Trader Long/Short Ratio
-        try:
-            r = self._session.get(BINANCE_TOP_LS_URL,
-                params={'symbol': SYMBOL, 'period': '5m', 'limit': 6}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    latest = data[-1]
-                    sent['top_ls_ratio'] = float(latest.get('longShortRatio', 1))
-                    sent['top_long'] = round(float(latest.get('longAccount', 0.5)) * 100, 1)
-                    sent['top_short'] = round(float(latest.get('shortAccount', 0.5)) * 100, 1)
-        except Exception as e:
-            if self._sentiment_scan <= 2:
-                print(f"[VOL FLOW] Top L/S error: {e}")
-        
-        # 4. Taker Buy/Sell Ratio
-        try:
-            r = self._session.get(BINANCE_TAKER_URL,
-                params={'symbol': SYMBOL, 'period': '5m', 'limit': 12}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    latest = data[-1]
-                    sent['taker_ratio'] = float(latest.get('buySellRatio', 1))
-                    # Trend
-                    if len(data) >= 6:
-                        first = float(data[-6].get('buySellRatio', 1))
-                        last = float(data[-1].get('buySellRatio', 1))
-                        sent['taker_trend'] = 1 if last > first * 1.05 else (-1 if last < first * 0.95 else 0)
-        except Exception as e:
-            if self._sentiment_scan <= 2:
-                print(f"[VOL FLOW] Taker ratio error: {e}")
+        # L/S + Top + Taker (with fallback)
+        sentiment = md.fetch_sentiment(SYMBOL)
+        if sentiment:
+            if 'ls_ratio' in sentiment:
+                sent['ls_ratio'] = sentiment['ls_ratio']
+                sent['ls_long'] = sentiment.get('ls_long', 50)
+                sent['ls_short'] = round(100 - sent['ls_long'], 1)
+            if 'top_ls' in sentiment:
+                sent['top_ls_ratio'] = sentiment['top_ls']
+                sent['top_long'] = sentiment.get('top_long', 50)
+                sent['top_short'] = round(100 - sent['top_long'], 1)
+            if 'taker' in sentiment:
+                sent['taker_ratio'] = sentiment['taker']
         
         self._sentiment_scan += 1
         with self._lock:
-            # Preserve previous OI for change calculation
             prev_oi = self._sentiment.get('oi', 0)
             sent['oi_prev'] = prev_oi
             self._sentiment = sent
+            self._data_source = md.source_summary
         
         if self._sentiment_scan <= 2 or self._sentiment_scan % 12 == 0:
-            print(f"[VOL FLOW] Sentiment #{self._sentiment_scan}: "
+            src = md.source_summary
+            print(f"[VOL FLOW] Sentiment #{self._sentiment_scan} [{src}]: "
                   f"OI ${sent.get('oi',0)/1e9:.1f}B, "
                   f"L/S {sent.get('ls_ratio',0):.2f} ({sent.get('ls_long',0):.0f}%L), "
                   f"Top {sent.get('top_ls_ratio',0):.2f} ({sent.get('top_long',0):.0f}%L), "
@@ -524,6 +450,7 @@ class VolumeFlow:
                 'cvd_1h': self._calc_window(c, 60)['cvd'],
                 'spike': self._calc_window(c, 60)['spike'],
                 'spike_alert': self._calc_window(c, 60)['spike'] >= 3.0,
+                'data_source': self._data_source or 'Binance',
             }
     
     def get_history(self, date=''):

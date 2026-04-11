@@ -809,6 +809,11 @@
     border-left: 3px solid #ffa500;
 }
 
+.funding-table tr.manual {
+    background: rgba(33,150,243,0.06) !important;
+    border-left: 3px solid rgba(33,150,243,0.4);
+}
+
 .fr-priority-badge {
     font-size: 0.65rem;
     padding: 1px 5px;
@@ -816,6 +821,15 @@
     background: rgba(255,165,0,0.2);
     color: #ffa500;
     font-weight: 700;
+    margin-left: 4px;
+}
+
+.fr-manual-badge {
+    font-size: 0.6rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(33,150,243,0.2);
+    color: #42a5f5;
     margin-left: 4px;
 }
 
@@ -997,7 +1011,8 @@ async function loadVolumeFlow() {
             ${reasons ? `<div class="vf-reasons">${reasons}</div>` : ''}
         `;
         
-        metaEl.textContent = `Scan #${d.scan_count} | Binance Futures | Klines + OI + L/S + TopTrader + Taker`;
+        const src = d.data_source || 'Binance';
+        metaEl.textContent = `Scan #${d.scan_count} | ${src} | Klines + OI + L/S + TopTrader + Taker`;
         
     } catch (err) {
         document.getElementById('vf-status').textContent = '⚠️';
@@ -1537,8 +1552,9 @@ async function loadFunding() {
             
             for (const c of coins) {
                 const curClass = c.current_rate < 0 ? 'negative' : 'positive';
-                const rowClass = c.is_priority ? ' class="priority"' : '';
+                const rowClass = c.is_priority ? ' class="priority"' : c.manual ? ' class="manual"' : '';
                 const badge = c.is_priority ? '<span class="fr-priority-badge">⚡ SQUEEZE</span>' : '';
+                const manualBadge = c.manual ? '<span class="fr-manual-badge">✋</span>' : '';
                 const alertIcon = c.alerted ? ' 📨' : '';
                 
                 // Funding trend: deeper = more negative = what we want
@@ -1582,7 +1598,7 @@ async function loadFunding() {
                 }
                 
                 html += `<tr${rowClass} onclick="showFundingChart('${c.symbol}')">
-                    <td class="fr-symbol">${c.symbol.replace('USDT','')}${badge}${alertIcon}</td>
+                    <td class="fr-symbol">${c.symbol.replace('USDT','')}${badge}${manualBadge}${alertIcon}</td>
                     <td class="fr-rate negative">${c.trigger_rate.toFixed(3)}%</td>
                     <td class="fr-rate ${curClass}">${c.current_rate > 0 ? '+' : ''}${c.current_rate.toFixed(3)}%</td>
                     <td class="fr-rate negative" style="font-weight:700">${c.min_rate.toFixed(3)}%</td>

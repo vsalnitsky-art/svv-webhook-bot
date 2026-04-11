@@ -13,19 +13,11 @@ Flow:
 """
 
 import time
-import requests
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
-BINANCE_KLINE_URL = 'https://fapi.binance.com/fapi/v1/klines'
-BINANCE_OI_URL = 'https://fapi.binance.com/fapi/v1/openInterest'
-BINANCE_LS_URL = 'https://fapi.binance.com/futures/data/globalLongShortAccountRatio'
-BINANCE_TOP_LS_URL = 'https://fapi.binance.com/futures/data/topLongShortAccountRatio'
-BINANCE_TAKER_URL = 'https://fapi.binance.com/futures/data/takerlongshortRatio'
-
 DB_KEY = 'signal_validator_log'
 KEEP_DAYS = 5
-REQUEST_DELAY = 0.3
 
 
 class SignalValidator:
@@ -33,8 +25,6 @@ class SignalValidator:
     def __init__(self, db=None, notifier=None):
         self.db = db
         self.notifier = notifier
-        self._session = requests.Session()
-        self._session.headers.update({'User-Agent': 'SVV-Bot/1.0'})
     
     def validate(self, data: Dict) -> Dict:
         """
@@ -210,63 +200,18 @@ class SignalValidator:
     # ========================================
     
     def _fetch_klines(self, symbol):
-        try:
-            r = self._session.get(BINANCE_KLINE_URL,
-                params={'symbol': symbol, 'interval': '1m', 'limit': 60}, timeout=10)
-            if r.status_code != 200:
-                return None
-            candles = []
-            for k in r.json():
-                try:
-                    tv = float(k[7]); tb = float(k[10])
-                    candles.append({'p': float(k[4]), 'v': round(tv), 'b': round(tb), 's': round(tv-tb)})
-                except: continue
-            return candles if candles else None
-        except: return None
+        from detection.market_data import get_market_data
+        return get_market_data().fetch_klines(symbol, 60)
     
     def _fetch_oi(self, symbol, klines):
-        try:
-            time.sleep(REQUEST_DELAY)
-            r = self._session.get(BINANCE_OI_URL, params={'symbol': symbol}, timeout=10)
-            if r.status_code == 200:
-                qty = float(r.json().get('openInterest', 0))
-                price = klines[-1]['p'] if klines else 0
-                return qty * price if price else qty
-        except: pass
-        return 0
+        from detection.market_data import get_market_data
+        price = klines[-1]['p'] if klines else 0
+        oi, _ = get_market_data().fetch_oi(symbol, price)
+        return oi or 0
     
     def _fetch_sentiment(self, symbol):
-        sent = {}
-        try:
-            time.sleep(REQUEST_DELAY)
-            r = self._session.get(BINANCE_LS_URL,
-                params={'symbol': symbol, 'period': '5m', 'limit': 6}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    sent['ls_ratio'] = float(data[-1].get('longShortRatio', 1))
-                    sent['ls_long'] = round(float(data[-1].get('longAccount', 0.5)) * 100, 1)
-        except: pass
-        try:
-            time.sleep(REQUEST_DELAY)
-            r = self._session.get(BINANCE_TOP_LS_URL,
-                params={'symbol': symbol, 'period': '5m', 'limit': 6}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    sent['top_ls'] = float(data[-1].get('longShortRatio', 1))
-                    sent['top_long'] = round(float(data[-1].get('longAccount', 0.5)) * 100, 1)
-        except: pass
-        try:
-            time.sleep(REQUEST_DELAY)
-            r = self._session.get(BINANCE_TAKER_URL,
-                params={'symbol': symbol, 'period': '5m', 'limit': 6}, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    sent['taker'] = float(data[-1].get('buySellRatio', 1))
-        except: pass
-        return sent
+        from detection.market_data import get_market_data
+        return get_market_data().fetch_sentiment(symbol)
     
     def _get_btc_signal(self):
         try:
@@ -391,7 +336,7 @@ class SignalValidator:
             vol_icon = '🟢' if s.get('direction') == 'LONG' else '🔴' if s.get('direction') == 'SHORT' else '⚪'
             btc_icon = '🟢' if b.get('direction') == 'LONG' else '🔴' if b.get('direction') == 'SHORT' else '⚪'
             
-            # === MAIN (always visible) ===
+            # === MAIN ===
             main = (
                 f"{icon} <b>TV: {result['symbol']} {result['action']}</b>  "
                 f"💰 <b>${result.get('price', 0):,.6g}</b>\n"
@@ -401,44 +346,7 @@ class SignalValidator:
                 f"<b>{result['status']}</b>"
             )
             
-            # === DETAILS (in spoiler — tap to reveal) ===
-            details_parts = []
-            
-            # Strategy + trigger
-            strat = p.get('strategy', result.get('strategy', ''))
-            if strat and strat != 'MANUAL':
-                trig = f" ({p['trigger']})" if p.get('trigger') else ''
-                details_parts.append(f"🔧 {strat}{trig}")
-            
-            # SL/TP
-            sltp = []
-            if result.get('sl_price'):
-                sltp.append(f"SL:${result['sl_price']:,.6g}")
-            if result.get('tp_price'):
-                sltp.append(f"TP:${result['tp_price']:,.6g}")
-            if result.get('rr_ratio'):
-                sltp.append(f"RR:{result['rr_ratio']:.1f}")
-            if sltp:
-                details_parts.append('🛡 ' + '  '.join(sltp))
-            
-            # Pine filters
-            filters = []
-            if p.get('htf'): filters.append(f"HTF:{p['htf']}")
-            if p.get('htf2'): filters.append(f"HTF2:{p['htf2']}")
-            if p.get('zone'): filters.append(f"Zone:{p['zone']}")
-            if p.get('mtf'): filters.append(f"MTF:{p['mtf']}/7")
-            if filters:
-                details_parts.append('📋 ' + ' '.join(filters))
-            
-            # Vol Flow reasons
-            reasons = s.get('reasons', [])[:5]
-            if reasons:
-                details_parts.append('📊 ' + ' · '.join(reasons))
-            
-            details_text = '\n'.join(details_parts)
-            spoiler = f"\n<tg-spoiler>{details_text}</tg-spoiler>" if details_text else ''
-            
-            msg = f"{main}{spoiler}\n⏱ {result['timestamp'][11:16]} UTC"
+            msg = f"{main}\n⏱ {result['timestamp'][11:16]} UTC"
             
             self.notifier.send_message(msg)
         except Exception as e:

@@ -123,6 +123,7 @@ class FundingMonitor:
                             'trigger_rate': round(data['rate'] * 100, 4),
                             'price_at_trigger': data['price'],
                             'alerted': False,
+                            'manual': False,
                             'rates': [],
                         }
                         new_added += 1
@@ -248,6 +249,7 @@ class FundingMonitor:
                     'first_seen': first_seen,
                     'is_priority': is_priority,
                     'alerted': data.get('alerted', False),
+                    'manual': data.get('manual', False),
                     'funding_trend': ft,
                     'price_trend': pt,
                 })
@@ -311,6 +313,7 @@ class FundingMonitor:
                     'trigger_rate': round(rate * 100, 4),
                     'price_at_trigger': price,
                     'alerted': False,
+                    'manual': True,
                     'rates': [{
                         't': now_str,
                         'r': round(rate * 100, 4),
