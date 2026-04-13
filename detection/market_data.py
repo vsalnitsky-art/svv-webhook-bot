@@ -1,8 +1,9 @@
 """
-Market Data Provider v1.0 — Multi-Exchange with Fallback
+Market Data Provider v1.1 — Multi-Exchange with Fallback
 
 Primary: Binance Futures (free, no key)
-Fallback: OKX (free, no key)
+Fallback 1: OKX (free, no key)
+Fallback 2: Bybit (free, no key) — for Bybit-exclusive coins
 
 Tracks which exchange provided data for UI display.
 """
@@ -22,12 +23,17 @@ BN_TOP_LS  = 'https://fapi.binance.com/futures/data/topLongShortAccountRatio'
 BN_TAKER   = 'https://fapi.binance.com/futures/data/takerlongshortRatio'
 BN_DEPTH   = 'https://fapi.binance.com/fapi/v1/depth'
 
-# OKX endpoints (no key required for public data)
+# OKX endpoints
 OKX_KLINE  = 'https://www.okx.com/api/v5/market/candles'
 OKX_OI     = 'https://www.okx.com/api/v5/rubik/stat/contracts-open-interest-history'
 OKX_LS     = 'https://www.okx.com/api/v5/rubik/stat/contracts-long-short-account-ratio-contract-top-trader'
 OKX_TAKER  = 'https://www.okx.com/api/v5/rubik/stat/taker-volume-contract'
 OKX_DEPTH  = 'https://www.okx.com/api/v5/market/books'
+
+# Bybit endpoints (public, no key)
+BB_KLINE   = 'https://api.bybit.com/v5/market/kline'
+BB_OI      = 'https://api.bybit.com/v5/market/open-interest'
+BB_TAKER   = 'https://api.bybit.com/v5/market/account-ratio'
 
 
 def _okx_symbol(symbol: str) -> str:
@@ -48,6 +54,7 @@ class MarketData:
         # Track errors for monitoring
         self._bn_errors: int = 0
         self._okx_errors: int = 0
+        self._bb_errors: int = 0
     
     @property
     def sources(self) -> Dict[str, str]:
@@ -120,6 +127,36 @@ class MarketData:
         except:
             self._okx_errors += 1
         
+        # Fallback 2: Bybit (for Bybit-exclusive coins like RAVE, SIREN, etc.)
+        try:
+            time.sleep(DELAY)
+            r = self._session.get(BB_KLINE,
+                params={'category': 'linear', 'symbol': symbol, 'interval': '1', 'limit': limit},
+                timeout=REQUEST_TIMEOUT)
+            if r.status_code == 200:
+                result = r.json().get('result', {})
+                data = result.get('list', [])
+                candles = []
+                for k in data:
+                    # Bybit: [startTime, open, high, low, close, volume, turnover]
+                    try:
+                        tv = float(k[6])  # turnover (USDT volume)
+                        o = float(k[1]); c = float(k[4])
+                        buy_ratio = 0.6 if c > o else 0.4 if c < o else 0.5
+                        tb = tv * buy_ratio
+                        candles.append({'p': c, 'v': round(tv),
+                                       'b': round(tb), 's': round(tv - tb),
+                                       'h': float(k[2]), 'l': float(k[3])})
+                    except:
+                        continue
+                # Bybit returns newest first
+                candles.reverse()
+                if candles:
+                    self._sources['klines'] = 'Bybit'
+                    return candles
+        except:
+            self._bb_errors += 1
+        
         return None
     
     # ========================================
@@ -157,6 +194,23 @@ class MarketData:
                     return oi_usd, 'OKX'
         except:
             self._okx_errors += 1
+        
+        # Bybit
+        try:
+            time.sleep(DELAY)
+            r = self._session.get(BB_OI,
+                params={'category': 'linear', 'symbol': symbol, 'intervalTime': '5min', 'limit': 1},
+                timeout=REQUEST_TIMEOUT)
+            if r.status_code == 200:
+                result = r.json().get('result', {})
+                rows = result.get('list', [])
+                if rows:
+                    oi_val = float(rows[0].get('openInterest', 0))
+                    oi_usd = oi_val * price if price else oi_val
+                    self._sources['oi'] = 'Bybit'
+                    return oi_usd, 'Bybit'
+        except:
+            self._bb_errors += 1
         
         return None, ''
     
@@ -202,6 +256,25 @@ class MarketData:
         except:
             self._okx_errors += 1
         
+        # Bybit (account ratio — closest to L/S)
+        try:
+            time.sleep(DELAY)
+            r = self._session.get(BB_TAKER,
+                params={'category': 'linear', 'symbol': symbol, 'period': '1d', 'limit': 1},
+                timeout=REQUEST_TIMEOUT)
+            if r.status_code == 200:
+                rows = r.json().get('result', {}).get('list', [])
+                if rows:
+                    buy_ratio = float(rows[0].get('buyRatio', 0.5))
+                    sell_ratio = float(rows[0].get('sellRatio', 0.5))
+                    ratio = buy_ratio / sell_ratio if sell_ratio > 0 else 1
+                    long_pct = round(buy_ratio * 100, 1)
+                    result = {'ls_ratio': round(ratio, 3), 'ls_long': long_pct}
+                    self._sources['ls'] = 'Bybit'
+                    return result, 'Bybit'
+        except:
+            self._bb_errors += 1
+        
         return None, ''
     
     # ========================================
@@ -245,6 +318,25 @@ class MarketData:
                     return result, 'OKX'
         except:
             self._okx_errors += 1
+        
+        # Bybit (uses same account-ratio as ls)
+        try:
+            time.sleep(DELAY)
+            r = self._session.get(BB_TAKER,
+                params={'category': 'linear', 'symbol': symbol, 'period': '1d', 'limit': 1},
+                timeout=REQUEST_TIMEOUT)
+            if r.status_code == 200:
+                rows = r.json().get('result', {}).get('list', [])
+                if rows:
+                    buy_ratio = float(rows[0].get('buyRatio', 0.5))
+                    sell_ratio = float(rows[0].get('sellRatio', 0.5))
+                    ratio = buy_ratio / sell_ratio if sell_ratio > 0 else 1
+                    long_pct = round(buy_ratio * 100, 1)
+                    result = {'top_ls': round(ratio, 3), 'top_long': long_pct}
+                    self._sources['top_ls'] = 'Bybit'
+                    return result, 'Bybit'
+        except:
+            self._bb_errors += 1
         
         return None, ''
     
@@ -326,6 +418,7 @@ class MarketData:
             'summary': self.source_summary,
             'bn_errors': self._bn_errors,
             'okx_errors': self._okx_errors,
+            'bb_errors': self._bb_errors,
         }
 
 
