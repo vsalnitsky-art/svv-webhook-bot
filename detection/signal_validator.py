@@ -29,10 +29,19 @@ class SignalValidator:
     def validate(self, data: Dict) -> Dict:
         """
         Validate a TradingView signal.
-        Supports both formats:
-          Pine Script: {"action":"buy","symbol":"BTCUSDT","entry":"67500","sl":"67200","tp":"68400","strategy":"SMC_PRO",...}
-          Manual:      {"action":"Buy","symbol":"BTCUSDT","leverage":10,"riskPercent":1,"stopLossPercent":2}
+        Supports formats:
+          v38 SMC_PRO:      {"strategy","action","symbol","entry","sl","tp"}
+          v38 CTR/MOM:      {"strategy","action","symbol","entry"}
+          v38 Close:        {"strategy","action":"Close","symbol","direction","reason","entry"}
+          v38 TREND_BREAK:  {"strategy","event":"TREND_BREAK",...}  ← IGNORED
+          Manual:           {"action":"Buy","symbol","leverage","riskPercent","stopLossPercent"}
         """
+        # Ignore TREND_BREAK events — informational, no action needed
+        event = data.get('event', '')
+        if event == 'TREND_BREAK':
+            print(f"[VALIDATOR] 🔸 TREND_BREAK ignored: {data.get('symbol','')} {data.get('direction','')}")
+            return {'status': 'ignored', 'reason': 'TREND_BREAK event'}
+        
         action = data.get('action', '').capitalize()
         symbol = data.get('symbol', '')
         
@@ -91,7 +100,7 @@ class SignalValidator:
                 'status': 'CLOSE',
                 'approved': False,
                 'signal': {},
-                'btc_signal': {},
+                'cvd': {'value': 0, 'direction': 'NEUTRAL'},
                 'pine': {'strategy': strategy, 'trigger': pine_trigger},
                 'raw_json': data,
             }
@@ -111,24 +120,23 @@ class SignalValidator:
         # Calculate signal (same engine as Volume Flow)
         signal = self._calc_signal(klines, oi, sentiment) if klines else {}
         
-        # Get current BTC signal for context
-        btc_signal = self._get_btc_signal()
+        # Calculate CVD for the coin (15-min cumulative volume delta)
+        coin_cvd = self._calc_cvd(klines, 15) if klines else 0
+        cvd_direction = 'LONG' if coin_cvd > 0 else 'SHORT' if coin_cvd < 0 else 'NEUTRAL'
         
         # Determine approval
         coin_dir = signal.get('direction', 'NEUTRAL')
         coin_conf = signal.get('confidence', 0)
-        btc_dir = btc_signal.get('direction', 'NEUTRAL')
-        btc_conf = btc_signal.get('confidence', 0)
         
         # Approval logic:
-        # 1. Coin signal must agree with TV direction
-        # 2. Coin confidence ≥ 50%
-        # 3. BTC not strongly opposing (if BTC SHORT 70%+ don't open LONG)
+        # 1. Vol Flow direction = TV direction
+        # 2. Confidence ≥ 50%
+        # 3. CVD of coin confirms TV direction (positive for LONG, negative for SHORT)
         direction_match = (coin_dir == tv_direction)
         conf_ok = (coin_conf >= 50)
-        btc_ok = not (btc_dir != tv_direction and btc_conf >= 70)
+        cvd_ok = (cvd_direction == tv_direction) or cvd_direction == 'NEUTRAL'
         
-        approved = direction_match and conf_ok and btc_ok
+        approved = direction_match and conf_ok and cvd_ok
         
         # Status text
         if approved:
@@ -138,7 +146,7 @@ class SignalValidator:
         elif not conf_ok:
             status = f'⚠️ WEAK ({coin_conf}%)'
         else:
-            status = f'❌ BTC OPPOSING ({btc_dir} {btc_conf}%)'
+            status = f'❌ CVD OPPOSING ({cvd_direction})'
         
         price = entry_price if entry_price else (klines[-1]['p'] if klines else 0)
         
@@ -166,9 +174,9 @@ class SignalValidator:
                 'long_score': signal.get('long_score', 0),
                 'short_score': signal.get('short_score', 0),
             },
-            'btc_signal': {
-                'direction': btc_dir,
-                'confidence': btc_conf,
+            'cvd': {
+                'value': coin_cvd,
+                'direction': cvd_direction,
             },
             'pine': {
                 'strategy': strategy,
@@ -191,7 +199,7 @@ class SignalValidator:
         self._send_notification(result)
         
         print(f"[VALIDATOR] {status} | {symbol} {tv_direction} | "
-              f"Vol: {coin_dir} {coin_conf}% | BTC: {btc_dir} {btc_conf}%")
+              f"Vol: {coin_dir} {coin_conf}% | CVD: {cvd_direction} ({coin_cvd:+,.0f})")
         
         return result
     
@@ -213,15 +221,12 @@ class SignalValidator:
         from detection.market_data import get_market_data
         return get_market_data().fetch_sentiment(symbol)
     
-    def _get_btc_signal(self):
-        try:
-            from detection.volume_flow import get_volume_flow
-            vf = get_volume_flow()
-            if vf:
-                s = vf.get_summary()
-                return s.get('signal', {})
-        except: pass
-        return {}
+    def _calc_cvd(self, klines, minutes=15):
+        """Cumulative Volume Delta over last N minutes (taker buy - taker sell)."""
+        if not klines:
+            return 0
+        recent = klines[-minutes:] if len(klines) >= minutes else klines
+        return round(sum(c.get('b', 0) - c.get('s', 0) for c in recent))
     
     # ========================================
     # SIGNAL ENGINE (same as volume_flow.py)
@@ -327,14 +332,18 @@ class SignalValidator:
         if not self.notifier: return
         try:
             s = result.get('signal', {})
-            b = result.get('btc_signal', {})
-            p = result.get('pine', {})
+            c = result.get('cvd', {})
             icon = '✅' if result['approved'] else '❌'
             dir_icon = '🟢' if result['direction'] == 'LONG' else '🔴'
             
-            # Vol Flow direction
+            # Vol Flow direction icon
             vol_icon = '🟢' if s.get('direction') == 'LONG' else '🔴' if s.get('direction') == 'SHORT' else '⚪'
-            btc_icon = '🟢' if b.get('direction') == 'LONG' else '🔴' if b.get('direction') == 'SHORT' else '⚪'
+            
+            # CVD direction icon + formatted value
+            cvd_val = c.get('value', 0)
+            cvd_dir = c.get('direction', 'NEUTRAL')
+            cvd_icon = '🟢' if cvd_dir == 'LONG' else '🔴' if cvd_dir == 'SHORT' else '⚪'
+            cvd_str = f"{cvd_val:+,.0f}" if cvd_val else '0'
             
             # === MAIN ===
             main = (
@@ -342,7 +351,7 @@ class SignalValidator:
                 f"💰 <b>${result.get('price', 0):,.6g}</b>\n"
                 f"{dir_icon} TV:{result['direction']}  "
                 f"{vol_icon} Vol:{s.get('confidence',0)}%  "
-                f"{btc_icon} BTC:{b.get('confidence',0)}%\n"
+                f"{cvd_icon} CVD:{cvd_str}\n"
                 f"<b>{result['status']}</b>"
             )
             

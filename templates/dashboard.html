@@ -1425,11 +1425,11 @@ async function loadValidatorLog() {
         statusEl.textContent = `${log.length} signals`;
         
         let html = `<table class="sv-table">
-            <tr><th>Time</th><th>Coin</th><th>Strategy</th><th>TV</th><th>SL/TP</th><th>Vol Flow</th><th>BTC</th><th>Status</th><th></th></tr>`;
+            <tr><th>Time</th><th>Coin</th><th>Strategy</th><th>TV</th><th>SL/TP</th><th>Vol Flow</th><th>CVD</th><th>Status</th><th></th></tr>`;
         
         for (const r of log.slice(0, 50)) {
             const sig = r.signal || {};
-            const btc = r.btc_signal || {};
+            const cvd = r.cvd || {};
             const pine = r.pine || {};
             const rowClass = r.approved ? 'sv-approved' : (r.action === 'Close' ? '' : 'sv-rejected');
             
@@ -1462,10 +1462,20 @@ async function loadValidatorLog() {
                 volStr = `${vIcon} ${sig.confidence}%`;
             }
             
-            let btcStr = '—';
-            if (btc.direction && btc.direction !== 'NEUTRAL') {
-                const bIcon = btc.direction === 'LONG' ? '🟢' : '🔴';
-                btcStr = `${bIcon} ${btc.confidence}%`;
+            // CVD column — 15-min cumulative delta for the coin
+            let cvdStr = '—';
+            const cvdVal = cvd.value || 0;
+            const cvdDir = cvd.direction || 'NEUTRAL';
+            if (cvdVal !== 0) {
+                const cIcon = cvdDir === 'LONG' ? '🟢' : cvdDir === 'SHORT' ? '🔴' : '⚪';
+                // Format: +1.2M, -450K, +12.5K
+                const abs = Math.abs(cvdVal);
+                let fmt;
+                if (abs >= 1e6) fmt = (cvdVal/1e6).toFixed(1) + 'M';
+                else if (abs >= 1e3) fmt = (cvdVal/1e3).toFixed(1) + 'K';
+                else fmt = String(Math.round(cvdVal));
+                const sign = cvdVal > 0 ? '+' : '';
+                cvdStr = `${cIcon} ${sign}${fmt}`;
             }
             
             let badgeClass = 'sv-rejected-badge';
@@ -1483,7 +1493,7 @@ async function loadValidatorLog() {
                 <td>${tvDir}</td>
                 <td style="color:#888;font-size:0.68rem">${sltp || '—'}</td>
                 <td>${volStr}</td>
-                <td>${btcStr}</td>
+                <td>${cvdStr}</td>
                 <td><span class="sv-status-badge ${badgeClass}">${statusText}</span></td>
                 <td><button class="fr-delete" onclick="deleteValidatorEntry('${r.id}')">✕</button></td>
             </tr>`;
