@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -156,6 +156,24 @@ def create_app():
                 init_validator(db=get_db(), notifier=cf_tg)
             except Exception as e:
                 print(f"[APP] Failed to start Coin Flow: {e}")
+        
+        # Position Exit Monitor
+        if not _auto_started['exitmon']:
+            _auto_started['exitmon'] = True
+            try:
+                from detection.exit_monitor import init_exit_monitor
+                from core.bybit_connector import get_connector
+                em_tg = None
+                try:
+                    from alerts.telegram_notifier import get_notifier
+                    em_tg = get_notifier()
+                except:
+                    pass
+                bybit = get_connector()
+                em = init_exit_monitor(db=get_db(), notifier=em_tg, bybit_connector=bybit)
+                em.start()
+            except Exception as e:
+                print(f"[APP] Failed to start Exit Monitor: {e}")
         
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
@@ -1850,6 +1868,42 @@ def register_api_routes(app):
             'data': data,
             'available_days': available,
         })
+    
+    # ========================================
+    # Position Exit Monitor Routes
+    # ========================================
+    
+    @app.route('/api/exitmon/state')
+    def api_exitmon_state():
+        """Current Exit Monitor state for all tracked positions."""
+        from detection.exit_monitor import get_exit_monitor
+        em = get_exit_monitor()
+        if not em:
+            return jsonify({'positions': [], 'running': False})
+        return jsonify(em.get_state())
+    
+    @app.route('/api/exitmon/settings', methods=['GET', 'POST'])
+    def api_exitmon_settings():
+        """Get or update Exit Monitor settings (weights, thresholds, etc)."""
+        from detection.exit_monitor import get_exit_monitor
+        em = get_exit_monitor()
+        if not em:
+            return jsonify({'ok': False, 'error': 'Not running'})
+        if request.method == 'GET':
+            return jsonify(em.get_settings())
+        data = request.get_json() or {}
+        ok = em.update_settings(data)
+        return jsonify({'ok': ok, 'settings': em.get_settings()})
+    
+    @app.route('/api/exitmon/history')
+    def api_exitmon_history():
+        """Historical Exit Scores for charts."""
+        from detection.exit_monitor import get_exit_monitor
+        em = get_exit_monitor()
+        if not em:
+            return jsonify({'history': []})
+        date = request.args.get('date', '')
+        return jsonify(em.get_history(date))
     
     # ========================================
     # Webhook + Signal Validator Routes

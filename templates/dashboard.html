@@ -24,6 +24,20 @@
         <div class="vf-meta" id="vf-meta"></div>
     </div>
 
+    <!-- Position Exit Monitor -->
+    <div class="section em-section">
+        <div class="section-header">
+            <h2>🎯 Position Exit Monitor</h2>
+            <div style="display:flex;align-items:center;gap:8px">
+                <button class="btn btn-sm" onclick="toggleEmSettings()" style="padding:3px 10px;font-size:0.75rem;background:rgba(100,100,100,0.2);border:1px solid rgba(255,255,255,0.15);color:#ddd;border-radius:4px;cursor:pointer">⚙️ Settings</button>
+                <span class="em-status" id="em-status">⏳</span>
+            </div>
+        </div>
+        <div id="em-content"><div class="funding-empty">No open positions</div></div>
+        <div id="em-settings-panel" style="display:none;margin-top:10px;padding:10px;background:rgba(0,0,0,0.3);border-radius:6px;border:1px solid rgba(255,255,255,0.05)"></div>
+        <div class="em-meta" id="em-meta"></div>
+    </div>
+
     <!-- Signal Validator -->
     <div class="section sv-section">
         <div class="section-header">
@@ -696,6 +710,110 @@
     background: rgba(255,165,0,0.2);
     border-color: #ffa500;
     color: #ffa500;
+}
+
+/* Position Exit Monitor */
+.em-section {
+    background: linear-gradient(135deg, #1a1a2e 0%, #2e2a1a 100%);
+    border: 1px solid #5c4a1b;
+}
+
+.em-status {
+    font-size: 0.85rem;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.08);
+    color: #888;
+}
+
+.em-table {
+    width: 100%;
+    font-family: 'Consolas', monospace;
+    font-size: 0.78rem;
+    border-collapse: collapse;
+}
+
+.em-table th {
+    text-align: left;
+    color: #888;
+    font-size: 0.68rem;
+    font-weight: 600;
+    padding: 4px 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    text-transform: uppercase;
+}
+
+.em-table td {
+    padding: 5px 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.em-score-bar {
+    display: inline-block;
+    height: 14px;
+    width: 60px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 7px;
+    overflow: hidden;
+    vertical-align: middle;
+    margin-right: 6px;
+}
+
+.em-score-fill {
+    height: 100%;
+    transition: width 0.3s;
+}
+
+.em-action-hold     { background: rgba(76,175,80,0.2); color: #4caf50; }
+.em-action-warning  { background: rgba(255,193,7,0.2); color: #ffc107; }
+.em-action-partial  { background: rgba(255,152,0,0.25); color: #ff9800; }
+.em-action-fullexit { background: rgba(255,82,82,0.3); color: #ff5252; animation: em-pulse 1s infinite; }
+
+@keyframes em-pulse {
+    50% { opacity: 0.6; }
+}
+
+.em-action-badge {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.em-factors {
+    font-size: 0.68rem;
+    color: #888;
+}
+
+.em-meta {
+    text-align: center;
+    font-size: 0.7rem;
+    color: #555;
+    margin-top: 6px;
+}
+
+.em-weight-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+    font-size: 0.75rem;
+}
+
+.em-weight-row label {
+    flex: 0 0 140px;
+    color: #bbb;
+}
+
+.em-weight-row input[type=range] {
+    flex: 1;
+}
+
+.em-weight-row .val {
+    flex: 0 0 35px;
+    text-align: right;
+    color: #fff;
+    font-family: Consolas, monospace;
 }
 
 /* Signal Validator */
@@ -1402,6 +1520,178 @@ function getLocalDate() {
 }
 document.addEventListener('DOMContentLoaded', () => loadBiasChart(getLocalDate()));
 setInterval(() => loadBiasChart(biasCurrentDay || getLocalDate()), 120000);
+
+// === Position Exit Monitor ===
+let emSettings = null;
+
+async function loadExitMonitor() {
+    try {
+        const res = await fetch('/api/exitmon/state');
+        const d = await res.json();
+        
+        const contentEl = document.getElementById('em-content');
+        const statusEl = document.getElementById('em-status');
+        const metaEl = document.getElementById('em-meta');
+        
+        const positions = d.positions || [];
+        statusEl.textContent = positions.length > 0 ? `${positions.length} positions` : 'No positions';
+        
+        if (positions.length === 0) {
+            contentEl.innerHTML = '<div class="funding-empty">No open positions to monitor</div>';
+            metaEl.textContent = `Source: ${d.source || '—'} | Scans: ${d.scan_count || 0}`;
+            return;
+        }
+        
+        let html = `<table class="em-table">
+            <tr><th>Coin</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Exit Score</th><th>Factors</th><th>Action</th></tr>`;
+        
+        for (const p of positions) {
+            const sideIcon = p.side === 'LONG' ? '🟢' : '🔴';
+            const pnlClass = p.pnl_pct > 0 ? 'positive' : 'negative';
+            const pnlSign = p.pnl_pct > 0 ? '+' : '';
+            
+            // Score bar color
+            let fillColor = '#4caf50';
+            if (p.score >= 70) fillColor = '#ff5252';
+            else if (p.score >= 50) fillColor = '#ff9800';
+            else if (p.score >= 30) fillColor = '#ffc107';
+            
+            // Action badge class
+            let actionClass = 'em-action-hold';
+            if (p.action === 'FULL_EXIT') actionClass = 'em-action-fullexit';
+            else if (p.action === 'PARTIAL_EXIT') actionClass = 'em-action-partial';
+            else if (p.action === 'WARNING') actionClass = 'em-action-warning';
+            
+            const reasons = (p.reasons || []).slice(0, 3).join(' · ');
+            
+            const entryStr = p.entry >= 1 ? Number(p.entry).toLocaleString(undefined, {maximumFractionDigits: 2}) : p.entry.toPrecision(4);
+            const curStr = p.current_price >= 1 ? Number(p.current_price).toLocaleString(undefined, {maximumFractionDigits: 2}) : (p.current_price || 0).toPrecision(4);
+            
+            html += `<tr>
+                <td style="color:#ddd;font-weight:600">${p.symbol.replace('USDT','')}</td>
+                <td>${sideIcon} ${p.side}</td>
+                <td style="color:#aaa">$${entryStr}</td>
+                <td style="color:#ddd">$${curStr}</td>
+                <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
+                <td>
+                    <span class="em-score-bar"><span class="em-score-fill" style="width:${p.score}%;background:${fillColor}"></span></span>
+                    <span style="color:${fillColor};font-weight:700">${p.score}</span>
+                </td>
+                <td class="em-factors">${reasons || '—'}</td>
+                <td><span class="em-action-badge ${actionClass}">${p.action_text || p.action}</span></td>
+            </tr>`;
+        }
+        html += '</table>';
+        contentEl.innerHTML = html;
+        
+        metaEl.textContent = `Source: ${d.source} | Scan #${d.scan_count} | Auto-close: ${d.auto_close ? 'ON' : 'OFF'}`;
+    } catch (err) {
+        console.error('Exit Monitor error:', err);
+    }
+}
+
+async function toggleEmSettings() {
+    const panel = document.getElementById('em-settings-panel');
+    if (panel.style.display === 'none') {
+        // Load settings
+        try {
+            const res = await fetch('/api/exitmon/settings');
+            emSettings = await res.json();
+            renderEmSettings();
+            panel.style.display = 'block';
+        } catch (err) { alert('Settings load error'); }
+    } else {
+        panel.style.display = 'none';
+    }
+}
+
+function renderEmSettings() {
+    if (!emSettings) return;
+    const panel = document.getElementById('em-settings-panel');
+    const w = emSettings.weights || {};
+    const t = emSettings.thresholds || {};
+    
+    const factorLabels = {
+        cvd_divergence: 'CVD Divergence',
+        volflow_flip: 'Volume Flow Flip',
+        oi_divergence: 'OI Divergence',
+        top_trader_flip: 'Top Trader Flip',
+        ls_extreme: 'L/S Extreme',
+        wall_approach: 'Wall Approach (BTC)',
+        rsi_divergence: 'RSI Divergence',
+        funding_extreme: 'Funding Extreme',
+    };
+    
+    let html = '<div style="color:#ffa500;font-weight:700;margin-bottom:8px;font-size:0.85rem">Factor Weights (sum = 100)</div>';
+    
+    for (const [key, label] of Object.entries(factorLabels)) {
+        const val = w[key] || 0;
+        html += `<div class="em-weight-row">
+            <label>${label}</label>
+            <input type="range" min="0" max="40" value="${val}" oninput="updateEmWeight('${key}', this.value)">
+            <span class="val" id="em-w-${key}">${val}</span>
+        </div>`;
+    }
+    
+    html += '<div style="color:#ffa500;font-weight:700;margin:12px 0 8px;font-size:0.85rem">Action Thresholds</div>';
+    
+    const thLabels = {warning: 'Warning', partial_exit: 'Partial Exit', full_exit: 'Full Exit'};
+    for (const [key, label] of Object.entries(thLabels)) {
+        const val = t[key] || 0;
+        html += `<div class="em-weight-row">
+            <label>${label}</label>
+            <input type="range" min="10" max="100" value="${val}" oninput="updateEmThreshold('${key}', this.value)">
+            <span class="val" id="em-t-${key}">${val}</span>
+        </div>`;
+    }
+    
+    html += `<div style="display:flex;gap:8px;margin-top:10px">
+        <label style="font-size:0.8rem;color:#ddd"><input type="checkbox" ${emSettings.telegram_alerts ? 'checked' : ''} onchange="updateEmBool('telegram_alerts', this.checked)"> Telegram Alerts</label>
+        <label style="font-size:0.8rem;color:#ddd"><input type="checkbox" ${emSettings.auto_close ? 'checked' : ''} onchange="updateEmBool('auto_close', this.checked)"> Auto-close at Full Exit</label>
+        <label style="font-size:0.8rem;color:#ddd">Source:
+            <select onchange="updateEmBool('data_source', this.value)">
+                <option value="internal" ${emSettings.data_source==='internal'?'selected':''}>Internal DB</option>
+                <option value="bybit" ${emSettings.data_source==='bybit'?'selected':''}>Bybit API</option>
+            </select>
+        </label>
+    </div>
+    <div style="margin-top:10px"><button onclick="saveEmSettings()" style="padding:5px 14px;background:rgba(76,175,80,0.3);border:1px solid rgba(76,175,80,0.5);color:#4caf50;border-radius:4px;cursor:pointer">💾 Save</button></div>`;
+    
+    panel.innerHTML = html;
+}
+
+function updateEmWeight(key, val) {
+    emSettings.weights[key] = parseInt(val);
+    document.getElementById(`em-w-${key}`).textContent = val;
+}
+
+function updateEmThreshold(key, val) {
+    emSettings.thresholds[key] = parseInt(val);
+    document.getElementById(`em-t-${key}`).textContent = val;
+}
+
+function updateEmBool(key, val) {
+    emSettings[key] = val;
+}
+
+async function saveEmSettings() {
+    try {
+        const res = await fetch('/api/exitmon/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(emSettings)
+        });
+        const d = await res.json();
+        if (d.ok) {
+            alert('Settings saved');
+        } else {
+            alert('Save failed');
+        }
+    } catch (err) { alert('Error: ' + err); }
+}
+
+document.addEventListener('DOMContentLoaded', loadExitMonitor);
+setInterval(loadExitMonitor, 10000);
 
 // === Signal Validator ===
 async function loadValidatorLog() {
