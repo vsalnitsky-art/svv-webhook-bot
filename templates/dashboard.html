@@ -56,6 +56,10 @@
         <div class="section-header">
             <h2>💰 Funding Rate Scanner</h2>
             <div style="display:flex;align-items:center;gap:6px">
+                <label class="fr-toggle" title="Enable/disable scanner">
+                    <input type="checkbox" id="funding-toggle" onchange="toggleFunding(this.checked)">
+                    <span class="fr-toggle-slider"></span>
+                </label>
                 <input type="text" id="funding-add-input" placeholder="DOGE, SOL..." style="width:100px;padding:3px 8px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
                 <button class="btn btn-sm" onclick="addFundingCoin()" style="padding:3px 10px;font-size:0.75rem;background:rgba(76,175,80,0.2);border:1px solid rgba(76,175,80,0.4);color:#4caf50;border-radius:4px;cursor:pointer">+ Add</button>
                 <span class="funding-status" id="funding-status">⏳</span>
@@ -949,6 +953,45 @@
     background: rgba(33,150,243,0.2);
     color: #42a5f5;
     margin-left: 4px;
+}
+
+/* Toggle switch */
+.fr-toggle {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 18px;
+    cursor: pointer;
+}
+.fr-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.fr-toggle-slider {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,82,82,0.3);
+    border-radius: 10px;
+    transition: 0.2s;
+}
+.fr-toggle-slider:before {
+    content: "";
+    position: absolute;
+    height: 14px;
+    width: 14px;
+    left: 2px;
+    top: 2px;
+    background: #ddd;
+    border-radius: 50%;
+    transition: 0.2s;
+}
+.fr-toggle input:checked + .fr-toggle-slider {
+    background: rgba(76,175,80,0.5);
+}
+.fr-toggle input:checked + .fr-toggle-slider:before {
+    transform: translateX(18px);
+    background: #4caf50;
 }
 
 .fr-trend { font-size: 0.8rem; }
@@ -1921,6 +1964,26 @@ async function loadFunding() {
     }
 }
 
+async function toggleFunding(enabled) {
+    try {
+        await fetch('/api/funding/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
+        });
+        loadFunding();
+    } catch (err) { alert('Toggle error'); }
+}
+
+async function loadFundingToggleState() {
+    try {
+        const res = await fetch('/api/funding/toggle');
+        const d = await res.json();
+        const toggle = document.getElementById('funding-toggle');
+        if (toggle) toggle.checked = !!d.enabled;
+    } catch (err) {}
+}
+
 async function removeFundingCoin(symbol) {
     if (!confirm(`Remove ${symbol} from watchlist?`)) return;
     try {
@@ -1960,7 +2023,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') addFundingCoin(); });
 });
 
-document.addEventListener('DOMContentLoaded', loadFunding);
+document.addEventListener('DOMContentLoaded', () => { loadFunding(); loadFundingToggleState(); });
 setInterval(loadFunding, 60000);
 
 // === Funding Coin Chart ===

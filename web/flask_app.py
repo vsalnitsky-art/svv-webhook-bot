@@ -2014,6 +2014,20 @@ def register_api_routes(app):
             return jsonify({'ok': False, 'reason': 'Not running'})
         return jsonify(fm.add_coin(symbol))
     
+    @app.route('/api/funding/toggle', methods=['GET', 'POST'])
+    def api_funding_toggle():
+        """Get or set Funding Scanner enabled state."""
+        from detection.funding_monitor import get_funding_monitor
+        fm = get_funding_monitor()
+        if not fm:
+            return jsonify({'ok': False, 'enabled': False, 'reason': 'Not initialized'})
+        if request.method == 'GET':
+            return jsonify({'ok': True, 'enabled': fm.is_enabled(), 'running': fm._running})
+        data = request.get_json() or {}
+        enabled = bool(data.get('enabled', True))
+        fm.set_enabled(enabled)
+        return jsonify({'ok': True, 'enabled': fm.is_enabled(), 'running': fm._running})
+    
     @app.route('/api/funding/coin/<symbol>')
     def api_funding_coin(symbol):
         """Full rate history for a single coin (for chart)."""
