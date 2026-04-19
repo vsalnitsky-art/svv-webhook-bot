@@ -1596,13 +1596,13 @@ async function loadExitMonitor() {
             msg += `Current source: <b style="color:#ffa500">${d.source}</b><br>`;
             msg += `Internal DB trades: <b style="color:${diag.internal_count > 0 ? '#4caf50' : '#888'}">${diag.internal_count}</b><br>`;
             msg += `Bybit API positions: <b style="color:${diag.bybit_count > 0 ? '#4caf50' : '#888'}">${diag.bybit_available ? diag.bybit_count : 'N/A (no connector)'}</b><br>`;
+            msg += `TV Signals (virtual): <b style="color:${diag.tv_count > 0 ? '#4caf50' : '#888'}">${diag.tv_count}</b><br>`;
             
-            if (d.source === 'internal' && diag.internal_count === 0 && diag.bybit_count > 0) {
-                msg += `<br><div style="color:#ffa500;margin-top:8px">💡 You have ${diag.bybit_count} position(s) on Bybit but source is set to Internal DB.<br>Click <b>⚙️ Settings</b> → change Source to <b>Bybit API</b> → Save</div>`;
-            } else if (d.source === 'bybit' && diag.bybit_count === 0) {
-                msg += `<br><div style="color:#888;margin-top:8px">No open positions on Bybit right now.</div>`;
-            } else if (d.source === 'internal' && diag.internal_count === 0) {
-                msg += `<br><div style="color:#888;margin-top:8px">Internal DB has no open trades. If you trade manually on Bybit, switch source to <b>Bybit API</b>.</div>`;
+            const totalAvailable = (diag.internal_count || 0) + (diag.bybit_count || 0) + (diag.tv_count || 0);
+            if (totalAvailable > 0 && d.source !== 'all_combined') {
+                msg += `<br><div style="color:#ffa500;margin-top:8px">💡 Positions exist in other sources. Switch to <b>All combined</b> in ⚙️ Settings to monitor them all.</div>`;
+            } else if (totalAvailable === 0) {
+                msg += `<br><div style="color:#888;margin-top:8px">No open positions anywhere right now.</div>`;
             }
             msg += `</div></div>`;
             contentEl.innerHTML = msg;
@@ -1635,8 +1635,14 @@ async function loadExitMonitor() {
             const entryStr = p.entry >= 1 ? Number(p.entry).toLocaleString(undefined, {maximumFractionDigits: 2}) : p.entry.toPrecision(4);
             const curStr = p.current_price >= 1 ? Number(p.current_price).toLocaleString(undefined, {maximumFractionDigits: 2}) : (p.current_price || 0).toPrecision(4);
             
+            // Source badge (B=Bybit, I=Internal, TV=TV Signal)
+            let srcBadge = '';
+            if (p.pos_source === 'bybit') srcBadge = '<span style="font-size:0.6rem;padding:1px 4px;background:rgba(255,165,0,0.25);color:#ffa500;border-radius:3px;margin-left:4px">B</span>';
+            else if (p.pos_source === 'tv_signal') srcBadge = '<span style="font-size:0.6rem;padding:1px 4px;background:rgba(33,150,243,0.25);color:#42a5f5;border-radius:3px;margin-left:4px">TV</span>';
+            else if (p.pos_source === 'internal') srcBadge = '<span style="font-size:0.6rem;padding:1px 4px;background:rgba(76,175,80,0.25);color:#4caf50;border-radius:3px;margin-left:4px">I</span>';
+            
             html += `<tr>
-                <td style="color:#ddd;font-weight:600">${p.symbol.replace('USDT','')}</td>
+                <td style="color:#ddd;font-weight:600">${p.symbol.replace('USDT','')}${srcBadge}</td>
                 <td>${sideIcon} ${p.side}</td>
                 <td style="color:#aaa">$${entryStr}</td>
                 <td style="color:#ddd">$${curStr}</td>
@@ -1720,6 +1726,8 @@ function renderEmSettings() {
             <select onchange="updateEmBool('data_source', this.value)">
                 <option value="internal" ${emSettings.data_source==='internal'?'selected':''}>Internal DB</option>
                 <option value="bybit" ${emSettings.data_source==='bybit'?'selected':''}>Bybit API</option>
+                <option value="tv_signals" ${emSettings.data_source==='tv_signals'?'selected':''}>TradingView Signals</option>
+                <option value="all_combined" ${emSettings.data_source==='all_combined'?'selected':''}>All combined</option>
             </select>
         </label>
     </div>

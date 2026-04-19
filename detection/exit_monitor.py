@@ -57,7 +57,7 @@ DEFAULT_THRESHOLDS = {
 # Default settings
 DEFAULT_SETTINGS = {
     'enabled': True,
-    'data_source': 'internal',   # 'internal' | 'bybit'
+    'data_source': 'all_combined',   # 'internal' | 'bybit' | 'tv_signals' | 'all_combined'
     'auto_close': False,         # future toggle
     'telegram_alerts': True,
     'scan_interval': SCAN_INTERVAL,
@@ -178,8 +178,103 @@ class PositionExitMonitor:
         
         if source == 'bybit':
             return self._get_bybit_positions()
+        elif source == 'tv_signals':
+            return self._get_tv_positions()
+        elif source == 'all_combined':
+            # Combine all three sources, dedupe by symbol+side
+            # Priority: Bybit > Internal > TV
+            internal = self._get_internal_trades()
+            bybit = self._get_bybit_positions()
+            tv = self._get_tv_positions()
+            
+            combined = {}
+            # Lowest priority first, higher overwrites
+            for p in tv:
+                key = f"{p['symbol']}_{p['side']}"
+                combined[key] = p
+            for p in internal:
+                key = f"{p['symbol']}_{p['side']}"
+                combined[key] = p
+            for p in bybit:
+                key = f"{p['symbol']}_{p['side']}"
+                combined[key] = p
+            
+            return list(combined.values())
         else:
             return self._get_internal_trades()
+    
+    def _get_tv_positions(self) -> List[Dict]:
+        """Build virtual positions from TradingView Signals log (validator_log).
+        
+        Logic:
+          - For each symbol, find latest Buy/Sell signal
+          - If latest is Close → no position
+          - If latest is Buy/Sell → virtual position open
+          - ALL Buy/Sell signals count (not only APPROVED) — per user requirement
+          - NO TTL — virtual position persists until Close comes (per user requirement)
+        """
+        try:
+            from detection.signal_validator import get_validator
+            v = get_validator()
+            if not v:
+                return []
+            log = v.get_log()  # newest first
+            if not log:
+                return []
+            
+            # For each symbol, find the most recent action (Buy/Sell/Close)
+            # Skip 'ignored' entries (TREND_BREAK) and error entries
+            seen_symbols = set()
+            positions = []
+            
+            for entry in log:  # already newest first
+                symbol = entry.get('symbol', '')
+                action = entry.get('action', '')
+                
+                if not symbol or symbol in seen_symbols:
+                    continue
+                
+                # Only consider Buy/Sell/Close actions
+                if action not in ('Buy', 'Sell', 'Close'):
+                    continue
+                
+                seen_symbols.add(symbol)
+                
+                # If latest action is Close → position is closed, skip
+                if action == 'Close':
+                    continue
+                
+                # Latest is Buy or Sell → virtual position open
+                side = 'LONG' if action == 'Buy' else 'SHORT'
+                
+                # Entry price: Pine entry if provided, else signal.price (per user decision #4)
+                raw_json = entry.get('raw_json', {}) or {}
+                pine_entry = 0
+                try:
+                    pine_entry = float(raw_json.get('entry', 0) or 0)
+                except:
+                    pine_entry = 0
+                entry_price = pine_entry if pine_entry > 0 else float(entry.get('price', 0) or 0)
+                
+                positions.append({
+                    'symbol': symbol,
+                    'side': side,
+                    'entry_price': entry_price,
+                    'qty': 0,  # unknown from TV signal
+                    'sl': float(entry.get('sl_price', 0) or 0),
+                    'tp': float(entry.get('tp_price', 0) or 0),
+                    'opened_at': entry.get('timestamp', ''),
+                    'id': entry.get('id', ''),
+                    'source': 'tv_signal',
+                    'approved': entry.get('approved', False),
+                    'strategy': entry.get('strategy', ''),
+                })
+            
+            return positions
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[EXIT] TV positions error: {e}")
+            return []
     
     def _get_internal_trades(self) -> List[Dict]:
         """Get open trades from internal DB."""
@@ -417,6 +512,7 @@ class PositionExitMonitor:
             'action_text': action_text,
             'factors': factors,
             'reasons': reasons,
+            'pos_source': pos.get('source', 'internal'),
             'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
         }
     
@@ -433,6 +529,7 @@ class PositionExitMonitor:
             'action_text': f'— ({reason})',
             'factors': {},
             'reasons': [],
+            'pos_source': pos.get('source', 'internal'),
             'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
         }
     
@@ -796,8 +893,8 @@ class PositionExitMonitor:
                 clean = {k: v for k, v in st.items() if not k.startswith('_')}
                 positions.append(clean)
             
-            # Diagnostic: count raw positions in both sources
-            diag = {'internal_count': 0, 'bybit_count': 0, 'bybit_available': False}
+            # Diagnostic: count raw positions in all sources
+            diag = {'internal_count': 0, 'bybit_count': 0, 'tv_count': 0, 'bybit_available': False}
             try:
                 internal = self._get_internal_trades()
                 diag['internal_count'] = len(internal)
@@ -808,6 +905,11 @@ class PositionExitMonitor:
                     diag['bybit_available'] = True
                     bybit_pos = self._get_bybit_positions()
                     diag['bybit_count'] = len(bybit_pos)
+            except:
+                pass
+            try:
+                tv = self._get_tv_positions()
+                diag['tv_count'] = len(tv)
             except:
                 pass
             
