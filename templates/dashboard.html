@@ -1577,11 +1577,36 @@ async function loadExitMonitor() {
         const metaEl = document.getElementById('em-meta');
         
         const positions = d.positions || [];
-        statusEl.textContent = positions.length > 0 ? `${positions.length} positions` : 'No positions';
+        const diag = d.diagnostic || {};
+        
+        // Status badge
+        if (!d.running) {
+            statusEl.textContent = '⏸️ Stopped';
+        } else if (positions.length > 0) {
+            statusEl.textContent = `${positions.length} positions`;
+        } else {
+            statusEl.textContent = '🟢 Running';
+        }
         
         if (positions.length === 0) {
-            contentEl.innerHTML = '<div class="funding-empty">No open positions to monitor</div>';
-            metaEl.textContent = `Source: ${d.source || '—'} | Scans: ${d.scan_count || 0}`;
+            // Detailed empty state with diagnostic
+            let msg = '<div class="funding-empty" style="padding:15px">';
+            msg += `<div style="color:#ddd;margin-bottom:10px">No positions to monitor</div>`;
+            msg += `<div style="font-size:0.75rem;color:#888;line-height:1.7">`;
+            msg += `Current source: <b style="color:#ffa500">${d.source}</b><br>`;
+            msg += `Internal DB trades: <b style="color:${diag.internal_count > 0 ? '#4caf50' : '#888'}">${diag.internal_count}</b><br>`;
+            msg += `Bybit API positions: <b style="color:${diag.bybit_count > 0 ? '#4caf50' : '#888'}">${diag.bybit_available ? diag.bybit_count : 'N/A (no connector)'}</b><br>`;
+            
+            if (d.source === 'internal' && diag.internal_count === 0 && diag.bybit_count > 0) {
+                msg += `<br><div style="color:#ffa500;margin-top:8px">💡 You have ${diag.bybit_count} position(s) on Bybit but source is set to Internal DB.<br>Click <b>⚙️ Settings</b> → change Source to <b>Bybit API</b> → Save</div>`;
+            } else if (d.source === 'bybit' && diag.bybit_count === 0) {
+                msg += `<br><div style="color:#888;margin-top:8px">No open positions on Bybit right now.</div>`;
+            } else if (d.source === 'internal' && diag.internal_count === 0) {
+                msg += `<br><div style="color:#888;margin-top:8px">Internal DB has no open trades. If you trade manually on Bybit, switch source to <b>Bybit API</b>.</div>`;
+            }
+            msg += `</div></div>`;
+            contentEl.innerHTML = msg;
+            metaEl.textContent = `Source: ${d.source} | Scans: ${d.scan_count || 0} | Errors: ${d.errors || 0}`;
             return;
         }
         

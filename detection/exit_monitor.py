@@ -796,12 +796,29 @@ class PositionExitMonitor:
                 clean = {k: v for k, v in st.items() if not k.startswith('_')}
                 positions.append(clean)
             
+            # Diagnostic: count raw positions in both sources
+            diag = {'internal_count': 0, 'bybit_count': 0, 'bybit_available': False}
+            try:
+                internal = self._get_internal_trades()
+                diag['internal_count'] = len(internal)
+            except:
+                pass
+            try:
+                if self.bybit:
+                    diag['bybit_available'] = True
+                    bybit_pos = self._get_bybit_positions()
+                    diag['bybit_count'] = len(bybit_pos)
+            except:
+                pass
+            
             return {
                 'positions': positions,
                 'scan_count': self._scan_count,
                 'source': self._settings.get('data_source', 'internal'),
                 'enabled': self._settings.get('enabled', True),
                 'running': self._running,
+                'errors': self._errors,
+                'diagnostic': diag,
             }
 
 
