@@ -1898,6 +1898,32 @@ def register_api_routes(app):
         
         return jsonify(lm.get_heatmap_data(hours=hours))
     
+    @app.route('/api/volume-profile')
+    def api_volume_profile():
+        """Volume Profile (POC / VAH / VAL) for a symbol.
+        
+        Query params:
+          symbol: default BTCUSDT
+          hours: 1-168 (default 24). Note: Binance 1m klines max ~25h per request.
+          buckets: 20-100 (default 50)
+        """
+        from detection.volume_profile import build_volume_profile
+        symbol = request.args.get('symbol', 'BTCUSDT').upper()
+        if not symbol.endswith('USDT'):
+            symbol += 'USDT'
+        try:
+            hours = int(request.args.get('hours', 24))
+            hours = max(1, min(hours, 168))
+        except:
+            hours = 24
+        try:
+            buckets = int(request.args.get('buckets', 50))
+            buckets = max(20, min(buckets, 100))
+        except:
+            buckets = 50
+        
+        return jsonify(build_volume_profile(symbol, hours=hours, buckets=buckets))
+    
     # ========================================
     # Position Exit Monitor Routes
     # ========================================

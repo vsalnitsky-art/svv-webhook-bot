@@ -138,6 +138,135 @@
     color: #666;
 }
 
+/* Volume Profile */
+.vp-meta {
+    display: flex;
+    justify-content: space-between;
+    color: #888;
+    font-size: 0.75rem;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.vp-legend {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 0.7rem;
+    color: #aaa;
+}
+
+.vp-legend-item { display: flex; align-items: center; gap: 4px; }
+
+.vp-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    display: inline-block;
+}
+
+.vp-stats {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 4px;
+    margin-bottom: 10px;
+    font-family: Consolas, monospace;
+    font-size: 0.8rem;
+}
+
+.vp-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.vp-stat-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    color: #888;
+    letter-spacing: 0.05em;
+}
+
+.vp-stat-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+#vp-wrapper {
+    background: #0a0e18;
+    border-radius: 4px;
+    padding: 10px;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.vp-row {
+    display: flex;
+    align-items: center;
+    font-family: Consolas, monospace;
+    font-size: 0.72rem;
+    height: 14px;
+    margin-bottom: 1px;
+    position: relative;
+}
+
+.vp-row.va { background: rgba(76,175,80,0.08); }
+.vp-row.poc { background: rgba(255,165,0,0.18); font-weight: 700; }
+.vp-row.hvn { background: rgba(239,68,68,0.10); }
+
+.vp-price-label {
+    width: 80px;
+    text-align: right;
+    padding-right: 8px;
+    color: #aaa;
+    flex-shrink: 0;
+}
+
+.vp-row.poc .vp-price-label { color: #ffa500; }
+
+.vp-bar-container {
+    flex: 1;
+    display: flex;
+    height: 100%;
+    align-items: center;
+    position: relative;
+}
+
+.vp-bar-buy {
+    height: 10px;
+    background: linear-gradient(to right, rgba(74,222,128,0.5), rgba(74,222,128,0.9));
+    border-radius: 2px 0 0 2px;
+}
+
+.vp-bar-sell {
+    height: 10px;
+    background: linear-gradient(to right, rgba(239,68,68,0.9), rgba(239,68,68,0.5));
+    border-radius: 0 2px 2px 0;
+}
+
+.vp-vol-label {
+    margin-left: 6px;
+    color: #888;
+    font-size: 0.68rem;
+    white-space: nowrap;
+}
+
+.vp-marker {
+    position: absolute;
+    right: 0;
+    color: #ffa500;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0 4px;
+}
+
+.vp-row.hvn .vp-marker { color: #ef4444; }
+.vp-row.lvn .vp-marker { color: #666; }
+
 .hm-price-axis {
     color: #888;
     font-family: Consolas, monospace;
@@ -193,7 +322,7 @@
     
     <div class="ma-tabs">
         <button class="ma-tab active" data-tab="heatmap" onclick="switchTab('heatmap')">🔥 Heatmap</button>
-        <button class="ma-tab disabled" data-tab="volprofile" onclick="switchTab('volprofile')">📊 Volume Profile</button>
+        <button class="ma-tab" data-tab="volprofile" onclick="switchTab('volprofile')">📊 Volume Profile</button>
         <button class="ma-tab disabled" data-tab="whales" onclick="switchTab('whales')">🐋 Whale Tape</button>
         <button class="ma-tab disabled" data-tab="liqheat" onclick="switchTab('liqheat')">💥 Liquidations</button>
         <button class="ma-tab disabled" data-tab="orderflow" onclick="switchTab('orderflow')">⚖️ Order Flow</button>
@@ -214,11 +343,22 @@
         </div>
     </div>
     
-    <!-- Placeholder panels for future stages -->
+    <!-- Volume Profile Panel -->
     <div id="tab-volprofile" class="ma-panel" style="display:none">
-        <div class="ma-panel-disabled">
-            📊 Volume Profile (POC / VAH / VAL)
-            <div class="stage">Coming in Stage 2</div>
+        <div class="vp-meta">
+            <div id="vp-info">Loading...</div>
+            <div class="vp-legend">
+                <span class="vp-legend-item"><span class="vp-dot" style="background:#ffa500"></span> POC</span>
+                <span class="vp-legend-item"><span class="vp-dot" style="background:rgba(76,175,80,0.3)"></span> Value Area (70%)</span>
+                <span class="vp-legend-item"><span class="vp-dot" style="background:rgba(239,68,68,0.7)"></span> HVN</span>
+                <span class="vp-legend-item"><span class="vp-dot" style="background:#888"></span> LVN</span>
+                <span class="vp-legend-item"><span class="vp-dot" style="background:#4ade80"></span> Buy</span>
+                <span class="vp-legend-item"><span class="vp-dot" style="background:#ef4444"></span> Sell</span>
+            </div>
+        </div>
+        <div id="vp-stats" class="vp-stats"></div>
+        <div id="vp-wrapper">
+            <div class="hm-loading">⏳ Loading volume profile...</div>
         </div>
     </div>
     <div id="tab-whales" class="ma-panel" style="display:none">
@@ -226,8 +366,7 @@
             🐋 Whale Tape — Large Trades Feed
             <div class="stage">Coming in Stage 3</div>
         </div>
-    </div>
-    <div id="tab-liqheat" class="ma-panel" style="display:none">
+    </div>    <div id="tab-liqheat" class="ma-panel" style="display:none">
         <div class="ma-panel-disabled">
             💥 Liquidation Heatmap
             <div class="stage">Coming in Stage 4</div>
@@ -254,10 +393,12 @@ function switchTab(name) {
         if (panel) panel.style.display = t === name ? 'block' : 'none';
     });
     if (name === 'heatmap') loadHeatmap();
+    else if (name === 'volprofile') loadVolumeProfile();
 }
 
 function refreshCurrentTab() {
     if (currentTab === 'heatmap') loadHeatmap();
+    else if (currentTab === 'volprofile') loadVolumeProfile();
 }
 
 async function loadHeatmap() {
@@ -436,6 +577,135 @@ function colorForIntensity(i) {
 
 document.addEventListener('DOMContentLoaded', loadHeatmap);
 // Auto-refresh every 60 seconds
-setInterval(() => { if (currentTab === 'heatmap') loadHeatmap(); }, 60000);
+setInterval(() => {
+    if (currentTab === 'heatmap') loadHeatmap();
+    else if (currentTab === 'volprofile') loadVolumeProfile();
+}, 60000);
+
+// ============================================
+// Volume Profile (Stage 2)
+// ============================================
+async function loadVolumeProfile() {
+    const wrap = document.getElementById('vp-wrapper');
+    const info = document.getElementById('vp-info');
+    const stats = document.getElementById('vp-stats');
+    const hours = document.getElementById('ma-period').value;
+    const symbol = document.getElementById('ma-symbol').value || 'BTCUSDT';
+    
+    wrap.innerHTML = '<div class="hm-loading">⏳ Loading volume profile...</div>';
+    info.textContent = 'Loading...';
+    stats.innerHTML = '';
+    
+    try {
+        // Binance 1m klines cap ~25h per request; warn for >24h
+        const reqHours = Math.min(parseInt(hours), 25);
+        const res = await fetch(`/api/volume-profile?symbol=${symbol}&hours=${reqHours}&buckets=60`);
+        const d = await res.json();
+        
+        if (!d.levels || d.levels.length === 0) {
+            wrap.innerHTML = `<div class="hm-empty">
+                <div style="font-size:1.2rem;margin-bottom:10px">📭 No profile data</div>
+                <div style="font-size:0.85rem">${d.error || 'Not enough klines to build profile'}</div>
+            </div>`;
+            info.textContent = 'No data';
+            return;
+        }
+        
+        renderVolumeProfile(d);
+        
+        info.innerHTML = `<b style="color:#ddd">${d.symbol}</b> · ${d.klines_count} klines (${reqHours}h) · bucket $${d.bucket_size} · source: <b>${d.source}</b> · current: <b style="color:#4caf50">$${Number(d.current_price).toLocaleString()}</b>`;
+        
+        if (parseInt(hours) > 25) {
+            info.innerHTML += ` <span style="color:#ffa500">⚠️ 1m klines limited to ~25h</span>`;
+        }
+    } catch (err) {
+        wrap.innerHTML = `<div class="hm-empty" style="color:#ff5252">❌ ${err.message}</div>`;
+        info.textContent = 'Error';
+    }
+}
+
+function renderVolumeProfile(d) {
+    const wrap = document.getElementById('vp-wrapper');
+    const stats = document.getElementById('vp-stats');
+    
+    // Stats bar
+    const totalVolM = (d.total_volume / 1e6).toFixed(1);
+    const pocVolM = (d.poc_volume / 1e6).toFixed(2);
+    stats.innerHTML = `
+        <div class="vp-stat">
+            <span class="vp-stat-label">POC</span>
+            <span class="vp-stat-value" style="color:#ffa500">$${Number(d.poc_price).toLocaleString()}</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">POC Volume</span>
+            <span class="vp-stat-value">$${pocVolM}M</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">VAH</span>
+            <span class="vp-stat-value" style="color:#4ade80">$${Number(d.vah).toLocaleString()}</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">VAL</span>
+            <span class="vp-stat-value" style="color:#4ade80">$${Number(d.val).toLocaleString()}</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">VA Coverage</span>
+            <span class="vp-stat-value">${d.va_volume_pct}%</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Total Volume</span>
+            <span class="vp-stat-value">$${totalVolM}M</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Range</span>
+            <span class="vp-stat-value">$${Number(d.price_min).toLocaleString()} — $${Number(d.price_max).toLocaleString()}</span>
+        </div>
+    `;
+    
+    // Calculate max volume for bar scaling
+    let maxVol = 0;
+    for (const lv of d.levels) {
+        if (lv.total > maxVol) maxVol = lv.total;
+    }
+    if (maxVol === 0) maxVol = 1;
+    
+    // Build bars — max bar width leaves room for label + marker
+    const MAX_BAR_WIDTH = 500;
+    
+    let html = '';
+    for (const lv of d.levels) {
+        let rowClass = 'vp-row';
+        if (lv.is_poc) rowClass += ' poc';
+        else if (lv.in_va) rowClass += ' va';
+        else if (lv.is_hvn) rowClass += ' hvn';
+        if (lv.is_lvn) rowClass += ' lvn';
+        
+        const totalW = (lv.total / maxVol) * MAX_BAR_WIDTH;
+        const buyW = lv.total > 0 ? totalW * (lv.buy / lv.total) : 0;
+        const sellW = lv.total > 0 ? totalW * (lv.sell / lv.total) : 0;
+        
+        const priceStr = Number(lv.price).toLocaleString();
+        const volStr = lv.total >= 1e9 ? `$${(lv.total/1e9).toFixed(2)}B`
+                     : lv.total >= 1e6 ? `$${(lv.total/1e6).toFixed(1)}M`
+                     : `$${(lv.total/1e3).toFixed(0)}K`;
+        
+        let marker = '';
+        if (lv.is_poc) marker = 'POC';
+        else if (lv.is_hvn) marker = 'HVN';
+        else if (lv.is_lvn) marker = 'LVN';
+        
+        html += `<div class="${rowClass}" title="$${priceStr}: buy $${(lv.buy/1e6).toFixed(2)}M / sell $${(lv.sell/1e6).toFixed(2)}M">
+            <div class="vp-price-label">$${priceStr}</div>
+            <div class="vp-bar-container">
+                <div class="vp-bar-buy" style="width:${buyW}px"></div>
+                <div class="vp-bar-sell" style="width:${sellW}px"></div>
+                <div class="vp-vol-label">${volStr}</div>
+                ${marker ? `<div class="vp-marker">${marker}</div>` : ''}
+            </div>
+        </div>`;
+    }
+    
+    wrap.innerHTML = html;
+}
 </script>
 {% endblock %}
