@@ -30,8 +30,14 @@ MIN_WALL_USD = 500_000          # $500K min (clusters are multi-million on BTC f
 MAX_DISTANCE_PCT = 3.0          # Only walls within 3% of price
 MAX_WALLS_PER_SIDE = 10         # Max walls to store per snapshot
 SCAN_INTERVAL = 60              # Seconds between scans
-HISTORY_DAYS = 3                # Rolling window
+HISTORY_DAYS = 3                # Rolling window (walls)
 MAX_SNAPSHOTS = 4320            # 3d × 24h × 60m
+
+# Heatmap-specific (Stage 1 of Market Analytics)
+HEATMAP_RETENTION_DAYS = 7      # Keep 7 days of full depth profiles
+HEATMAP_PRICE_LEVELS = 100      # ±100 buckets from mid-price (±$500 at $5 resolution)
+HEATMAP_CLUSTER_SIZE = 5        # $5 buckets — finer than wall detection ($10)
+HEATMAP_MAX_SNAPSHOTS = 7 * 24 * 60  # 7d × 1min = 10080
 
 
 class LiquidityMap:
@@ -139,6 +145,9 @@ class LiquidityMap:
             
             # Store bias snapshot for history chart
             self._store_bias(bid_walls, ask_walls, mid_price, now_str)
+            
+            # Store heatmap profile (full depth clusters, not just walls)
+            self._store_heatmap_profile(bids, asks, mid_price, now_str)
             
             # Cleanup hourly
             if sc % 60 == 0:
@@ -257,8 +266,215 @@ class LiquidityMap:
                         self.db.set_setting(old_key, None)
                 except:
                     pass
+            
+            # Clean heatmap profiles older than HEATMAP_RETENTION_DAYS
+            try:
+                hm_hist = self.db.get_setting('liq_heatmap_profiles', [])
+                if isinstance(hm_hist, list) and hm_hist:
+                    hm_cutoff = (datetime.now(timezone.utc) - timedelta(days=HEATMAP_RETENTION_DAYS)).strftime('%Y-%m-%d %H:%M')
+                    before_hm = len(hm_hist)
+                    hm_hist = [s for s in hm_hist if s.get('t', '') >= hm_cutoff]
+                    if before_hm != len(hm_hist):
+                        self.db.set_setting('liq_heatmap_profiles', hm_hist)
+                        print(f"[HEATMAP] 🧹 Cleaned {before_hm - len(hm_hist)} old profiles")
+            except Exception as e:
+                print(f"[HEATMAP] Cleanup error: {e}")
         except Exception as e:
             print(f"[LIQ MAP] ⚠️ Cleanup error: {e}")
+    
+    # ========================================
+    # HEATMAP PROFILE (Stage 1: 24h Liquidity Heatmap)
+    # ========================================
+    
+    def _store_heatmap_profile(self, bids: List, asks: List, mid_price: float, ts: str):
+        """Store complete depth profile (all clusters in range, not just walls).
+        
+        This is the raw data for the Heatmap view: time × price → liquidity.
+        Stored every scan (60s). Retention: 7 days.
+        Format is compact to keep storage reasonable (~150KB/day).
+        """
+        if not self.db:
+            return
+        try:
+            # Build clusters for both sides with $5 resolution
+            # Only store clusters within ±3% of mid_price to keep size manageable
+            max_dist = mid_price * 0.03
+            
+            bid_clusters: Dict[float, float] = {}
+            for p_str, q_str in bids:
+                p = float(p_str)
+                if mid_price - p > max_dist:
+                    continue
+                q = float(q_str)
+                vol = p * q
+                bucket = round(p / HEATMAP_CLUSTER_SIZE) * HEATMAP_CLUSTER_SIZE
+                bid_clusters[bucket] = bid_clusters.get(bucket, 0) + vol
+            
+            ask_clusters: Dict[float, float] = {}
+            for p_str, q_str in asks:
+                p = float(p_str)
+                if p - mid_price > max_dist:
+                    continue
+                q = float(q_str)
+                vol = p * q
+                bucket = round(p / HEATMAP_CLUSTER_SIZE) * HEATMAP_CLUSTER_SIZE
+                ask_clusters[bucket] = ask_clusters.get(bucket, 0) + vol
+            
+            # Convert to compact arrays: [[price, volume_in_thousands], ...]
+            # Filter out very thin clusters (<$50K) to reduce storage
+            bid_arr = sorted(
+                [[int(p), round(v / 1000)] for p, v in bid_clusters.items() if v >= 50_000],
+                key=lambda x: x[0]
+            )
+            ask_arr = sorted(
+                [[int(p), round(v / 1000)] for p, v in ask_clusters.items() if v >= 50_000],
+                key=lambda x: x[0]
+            )
+            
+            profile = {
+                't': ts,
+                'p': round(mid_price, 0),
+                'b': bid_arr,
+                'a': ask_arr,
+            }
+            
+            # Load history and append
+            history = self.db.get_setting('liq_heatmap_profiles', [])
+            if not isinstance(history, list):
+                history = []
+            history.append(profile)
+            
+            # Cap at max snapshots
+            if len(history) > HEATMAP_MAX_SNAPSHOTS:
+                history = history[-HEATMAP_MAX_SNAPSHOTS:]
+            
+            self.db.set_setting('liq_heatmap_profiles', history)
+        except Exception as e:
+            print(f"[HEATMAP] Store error: {e}")
+    
+    def get_heatmap_data(self, hours: int = 24) -> Dict:
+        """Return heatmap data for the last N hours.
+        
+        Returns:
+            {
+                'time_buckets': ['11:30', '11:35', ...],        # 5-min buckets
+                'price_min': 74000, 'price_max': 76000,
+                'rows': [                                       # one per price bucket ($5 step)
+                    {
+                        'price': 75000,
+                        'cells': [v1, v2, v3, ...]              # volume in $K per time bucket
+                    }
+                ],
+                'price_line': [price_t1, price_t2, ...],        # actual price per time bucket
+                'max_volume': 12345,                            # for color scaling
+                'snapshots': N,
+                'bid_side_prices': [75000, 74995, ...],         # prices that are bid side (below mid)
+                'ask_side_prices': [75005, 75010, ...],         # prices that are ask side (above mid)
+            }
+        """
+        if not self.db:
+            return self._empty_heatmap()
+        
+        try:
+            history = self.db.get_setting('liq_heatmap_profiles', [])
+            if not isinstance(history, list) or not history:
+                return self._empty_heatmap()
+            
+            # Filter by time window
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime('%Y-%m-%d %H:%M')
+            relevant = [s for s in history if s.get('t', '') >= cutoff]
+            
+            if not relevant:
+                return self._empty_heatmap()
+            
+            # Aggregate into 5-minute buckets
+            bucket_map: Dict[str, Dict] = {}  # time_bucket → {price: volume, price: volume, ...}
+            price_by_bucket: Dict[str, float] = {}  # time_bucket → mid_price (last)
+            
+            for snap in relevant:
+                ts = snap.get('t', '')
+                if len(ts) < 16:
+                    continue
+                # "2026-04-19 15:42" → "2026-04-19 15:40" (round down to 5min)
+                try:
+                    hh_mm = ts[11:16]
+                    hour = int(hh_mm[:2])
+                    minute = int(hh_mm[3:5])
+                    bucket_min = (minute // 5) * 5
+                    bucket_key = f"{ts[:10]} {hour:02d}:{bucket_min:02d}"
+                except:
+                    continue
+                
+                if bucket_key not in bucket_map:
+                    bucket_map[bucket_key] = {}
+                cell = bucket_map[bucket_key]
+                
+                # Merge bid and ask clusters for this snapshot
+                for p, v in snap.get('b', []):
+                    cell[p] = max(cell.get(p, 0), v)  # max (not sum) since multiple snaps in same bucket
+                for p, v in snap.get('a', []):
+                    cell[p] = max(cell.get(p, 0), v)
+                
+                price_by_bucket[bucket_key] = snap.get('p', 0)
+            
+            # Sort buckets chronologically
+            sorted_buckets = sorted(bucket_map.keys())
+            
+            # Collect all unique prices
+            all_prices = set()
+            for cell in bucket_map.values():
+                all_prices.update(cell.keys())
+            
+            if not all_prices:
+                return self._empty_heatmap()
+            
+            sorted_prices = sorted(all_prices)
+            price_min = sorted_prices[0]
+            price_max = sorted_prices[-1]
+            
+            # Build rows (one per price level, descending price = top of chart)
+            rows = []
+            max_vol = 0
+            current_price = price_by_bucket.get(sorted_buckets[-1], 0)
+            
+            for price in reversed(sorted_prices):  # high to low
+                cells = []
+                for bucket in sorted_buckets:
+                    v = bucket_map[bucket].get(price, 0)
+                    cells.append(v)
+                    if v > max_vol:
+                        max_vol = v
+                rows.append({
+                    'price': price,
+                    'cells': cells,
+                })
+            
+            # Time labels (HH:MM)
+            time_labels = [b[11:] for b in sorted_buckets]
+            price_line = [round(price_by_bucket.get(b, 0)) for b in sorted_buckets]
+            
+            return {
+                'time_buckets': time_labels,
+                'price_min': price_min,
+                'price_max': price_max,
+                'rows': rows,
+                'price_line': price_line,
+                'max_volume': max_vol,
+                'snapshots': len(relevant),
+                'current_price': current_price,
+                'hours': hours,
+                'symbol': SYMBOL,
+            }
+        except Exception as e:
+            print(f"[HEATMAP] get_heatmap_data error: {e}")
+            return self._empty_heatmap()
+    
+    def _empty_heatmap(self) -> Dict:
+        return {
+            'time_buckets': [], 'price_min': 0, 'price_max': 0,
+            'rows': [], 'price_line': [], 'max_volume': 0,
+            'snapshots': 0, 'current_price': 0, 'hours': 0, 'symbol': SYMBOL,
+        }
     
     def _store_bias(self, bid_walls: List[tuple], ask_walls: List[tuple],
                     price: float, ts: str):

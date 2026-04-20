@@ -1870,6 +1870,35 @@ def register_api_routes(app):
         })
     
     # ========================================
+    # Market Analytics Routes (Stage 1: Heatmap)
+    # ========================================
+    
+    @app.route('/market-analytics')
+    def market_analytics_page():
+        """Market Microstructure Analytics page with tabs."""
+        return render_template('market_analytics.html')
+    
+    @app.route('/api/heatmap/liquidity')
+    def api_heatmap_liquidity():
+        """24h Liquidity Heatmap data.
+        
+        Query params:
+          hours: int — time window (default 24, max 168 = 7d)
+        """
+        from detection.liquidity_map import get_liquidity_map
+        lm = get_liquidity_map()
+        if not lm:
+            return jsonify({'error': 'Liquidity Map not initialized', 'rows': []})
+        
+        try:
+            hours = int(request.args.get('hours', 24))
+            hours = max(1, min(hours, 168))
+        except:
+            hours = 24
+        
+        return jsonify(lm.get_heatmap_data(hours=hours))
+    
+    # ========================================
     # Position Exit Monitor Routes
     # ========================================
     
