@@ -267,6 +267,125 @@
 .vp-row.hvn .vp-marker { color: #ef4444; }
 .vp-row.lvn .vp-marker { color: #666; }
 
+/* Whale Tape */
+.wt-controls {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 10px;
+    padding: 10px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 4px;
+}
+
+.wt-control-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+}
+
+.wt-control-item label {
+    color: #aaa;
+}
+
+.wt-control-item select {
+    padding: 3px 8px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #ddd;
+    border-radius: 3px;
+    font-size: 0.78rem;
+    font-family: Consolas, monospace;
+}
+
+.wt-bias-bar {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.05);
+    margin-bottom: 10px;
+}
+
+.wt-bias-buy {
+    background: linear-gradient(to right, #22c55e, #4ade80);
+    transition: width 0.5s;
+}
+
+.wt-bias-sell {
+    background: linear-gradient(to right, #f87171, #ef4444);
+    transition: width 0.5s;
+}
+
+#wt-list {
+    background: #0a0e18;
+    border-radius: 4px;
+    padding: 6px;
+    max-height: 640px;
+    overflow-y: auto;
+    font-family: Consolas, monospace;
+    font-size: 0.78rem;
+}
+
+.wt-row {
+    display: grid;
+    grid-template-columns: 80px 60px 100px 100px 1fr 90px;
+    gap: 8px;
+    padding: 4px 8px;
+    align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    transition: background 0.15s;
+}
+
+.wt-row:hover {
+    background: rgba(255,255,255,0.04);
+}
+
+.wt-row.buy {
+    border-left: 3px solid #4ade80;
+}
+
+.wt-row.sell {
+    border-left: 3px solid #ef4444;
+}
+
+.wt-row.mega-buy {
+    background: rgba(74,222,128,0.08);
+    border-left-width: 4px;
+}
+
+.wt-row.mega-sell {
+    background: rgba(239,68,68,0.08);
+    border-left-width: 4px;
+}
+
+.wt-time { color: #888; font-size: 0.72rem; }
+.wt-side-buy { color: #4ade80; font-weight: 700; }
+.wt-side-sell { color: #ef4444; font-weight: 700; }
+.wt-price { color: #ddd; }
+.wt-qty { color: #aaa; }
+.wt-usd { color: #ddd; font-weight: 600; text-align: right; }
+.wt-usd.mega { color: #ffa500; text-shadow: 0 0 6px rgba(255,165,0,0.3); }
+.wt-bar-cell {
+    position: relative;
+    height: 14px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.wt-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+}
+.wt-bar-fill.buy {
+    background: linear-gradient(to right, rgba(74,222,128,0.5), rgba(74,222,128,0.9));
+}
+.wt-bar-fill.sell {
+    background: linear-gradient(to right, rgba(239,68,68,0.9), rgba(239,68,68,0.5));
+}
+
 .hm-price-axis {
     color: #888;
     font-family: Consolas, monospace;
@@ -323,7 +442,7 @@
     <div class="ma-tabs">
         <button class="ma-tab active" data-tab="heatmap" onclick="switchTab('heatmap')">🔥 Heatmap</button>
         <button class="ma-tab" data-tab="volprofile" onclick="switchTab('volprofile')">📊 Volume Profile</button>
-        <button class="ma-tab disabled" data-tab="whales" onclick="switchTab('whales')">🐋 Whale Tape</button>
+        <button class="ma-tab" data-tab="whales" onclick="switchTab('whales')">🐋 Whale Tape</button>
         <button class="ma-tab disabled" data-tab="liqheat" onclick="switchTab('liqheat')">💥 Liquidations</button>
         <button class="ma-tab disabled" data-tab="orderflow" onclick="switchTab('orderflow')">⚖️ Order Flow</button>
     </div>
@@ -361,10 +480,50 @@
             <div class="hm-loading">⏳ Loading volume profile...</div>
         </div>
     </div>
+    <!-- Whale Tape Panel -->
     <div id="tab-whales" class="ma-panel" style="display:none">
-        <div class="ma-panel-disabled">
-            🐋 Whale Tape — Large Trades Feed
-            <div class="stage">Coming in Stage 3</div>
+        <div class="wt-controls">
+            <div class="wt-control-item">
+                <label>Threshold:</label>
+                <select id="wt-threshold" onchange="setWhaleThreshold(this.value)">
+                    <option value="50000">≥ $50K</option>
+                    <option value="100000" selected>≥ $100K</option>
+                    <option value="250000">≥ $250K</option>
+                    <option value="500000">≥ $500K</option>
+                    <option value="1000000">≥ $1M</option>
+                    <option value="2500000">≥ $2.5M</option>
+                </select>
+            </div>
+            <div class="wt-control-item">
+                <label>Stats window:</label>
+                <select id="wt-window" onchange="loadWhales()">
+                    <option value="5">5 min</option>
+                    <option value="15">15 min</option>
+                    <option value="60" selected>60 min</option>
+                    <option value="240">4 hours</option>
+                </select>
+            </div>
+            <div class="wt-control-item">
+                <label>Show last:</label>
+                <select id="wt-limit" onchange="loadWhales()">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="250">250</option>
+                    <option value="500">500</option>
+                </select>
+            </div>
+            <div style="margin-left:auto;font-size:0.75rem;color:#888" id="wt-status">—</div>
+        </div>
+        
+        <div id="wt-stats" class="vp-stats"></div>
+        
+        <div class="wt-bias-bar" id="wt-bias-bar">
+            <div class="wt-bias-buy" id="wt-bias-buy"></div>
+            <div class="wt-bias-sell" id="wt-bias-sell"></div>
+        </div>
+        
+        <div id="wt-list">
+            <div class="hm-loading">⏳ Loading recent whale trades...</div>
         </div>
     </div>    <div id="tab-liqheat" class="ma-panel" style="display:none">
         <div class="ma-panel-disabled">
@@ -394,11 +553,13 @@ function switchTab(name) {
     });
     if (name === 'heatmap') loadHeatmap();
     else if (name === 'volprofile') loadVolumeProfile();
+    else if (name === 'whales') { loadThreshold(); loadWhales(); }
 }
 
 function refreshCurrentTab() {
     if (currentTab === 'heatmap') loadHeatmap();
     else if (currentTab === 'volprofile') loadVolumeProfile();
+    else if (currentTab === 'whales') loadWhales();
 }
 
 async function loadHeatmap() {
@@ -581,6 +742,184 @@ setInterval(() => {
     if (currentTab === 'heatmap') loadHeatmap();
     else if (currentTab === 'volprofile') loadVolumeProfile();
 }, 60000);
+
+// Whale Tape auto-refreshes faster (10s) since it's near-realtime
+setInterval(() => {
+    if (currentTab === 'whales') loadWhales();
+}, 10000);
+
+// ============================================
+// Whale Tape (Stage 3)
+// ============================================
+async function loadThreshold() {
+    try {
+        const res = await fetch('/api/whales/threshold');
+        const d = await res.json();
+        if (d.ok) {
+            const sel = document.getElementById('wt-threshold');
+            if (sel) {
+                // Find matching option or add custom
+                const vals = Array.from(sel.options).map(o => parseInt(o.value));
+                if (vals.includes(d.threshold)) {
+                    sel.value = String(d.threshold);
+                }
+            }
+        }
+    } catch (err) {}
+}
+
+async function setWhaleThreshold(usd) {
+    try {
+        await fetch('/api/whales/threshold', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({threshold: parseInt(usd)})
+        });
+        // Note: existing buffer has already-filtered trades, threshold applies to NEW polls
+        loadWhales();
+    } catch (err) { alert('Threshold update error: ' + err); }
+}
+
+async function loadWhales() {
+    const listEl = document.getElementById('wt-list');
+    const statsEl = document.getElementById('wt-stats');
+    const statusEl = document.getElementById('wt-status');
+    const window = document.getElementById('wt-window').value;
+    const limit = document.getElementById('wt-limit').value;
+    
+    try {
+        const res = await fetch(`/api/whales/state?limit=${limit}&window=${window}`);
+        const d = await res.json();
+        
+        if (!d.running) {
+            listEl.innerHTML = '<div class="hm-empty">⏸️ Whale Tape not running</div>';
+            statusEl.textContent = 'Stopped';
+            return;
+        }
+        
+        const trades = d.trades || [];
+        const stats = d.stats || {};
+        
+        statusEl.innerHTML = `Buffer: <b style="color:#ddd">${d.buffer_size}</b> · Scans: ${d.scan_count} · Errors: ${d.errors}`;
+        
+        // Render stats
+        renderWhaleStats(stats, d.threshold);
+        
+        // Render bias bar
+        const buyPct = stats.buy_pct || 50;
+        document.getElementById('wt-bias-buy').style.width = buyPct + '%';
+        document.getElementById('wt-bias-sell').style.width = (100 - buyPct) + '%';
+        
+        if (trades.length === 0) {
+            listEl.innerHTML = `<div class="hm-empty">
+                <div style="font-size:1rem;margin-bottom:6px">⏳ Waiting for whale trades...</div>
+                <div style="font-size:0.8rem;color:#666">Threshold: ≥ $${d.threshold.toLocaleString()}</div>
+                <div style="font-size:0.75rem;color:#555;margin-top:6px">Large trades appear here as they happen on Binance.</div>
+            </div>`;
+            return;
+        }
+        
+        // Find max USD for bar scaling
+        let maxUsd = 0;
+        for (const t of trades) if (t.usd > maxUsd) maxUsd = t.usd;
+        if (maxUsd === 0) maxUsd = 1;
+        
+        // Render rows
+        let html = '';
+        for (const t of trades) {
+            const usdM = t.usd >= 1e6 ? `$${(t.usd/1e6).toFixed(2)}M` : `$${(t.usd/1e3).toFixed(0)}K`;
+            const isMega = t.usd >= 1_000_000;
+            
+            let rowClass = 'wt-row ' + t.side.toLowerCase();
+            if (isMega) rowClass += ' mega-' + t.side.toLowerCase();
+            
+            const barWidth = (t.usd / maxUsd * 100).toFixed(1);
+            const barClass = t.side === 'BUY' ? 'buy' : 'sell';
+            
+            const sideArrow = t.side === 'BUY' ? '🟢' : '🔴';
+            const sideClass = t.side === 'BUY' ? 'wt-side-buy' : 'wt-side-sell';
+            
+            const priceStr = t.price >= 1000 ? Number(t.price).toLocaleString(undefined, {maximumFractionDigits: 2})
+                           : Number(t.price).toLocaleString(undefined, {maximumFractionDigits: 6});
+            const qtyStr = t.qty >= 1 ? t.qty.toFixed(3) : t.qty.toPrecision(3);
+            
+            html += `<div class="${rowClass}">
+                <div class="wt-time">${t.time_str}</div>
+                <div class="${sideClass}">${sideArrow} ${t.side}</div>
+                <div class="wt-price">$${priceStr}</div>
+                <div class="wt-qty">${qtyStr} BTC</div>
+                <div class="wt-bar-cell">
+                    <div class="wt-bar-fill ${barClass}" style="width:${barWidth}%"></div>
+                </div>
+                <div class="wt-usd ${isMega ? 'mega' : ''}">${usdM}</div>
+            </div>`;
+        }
+        
+        listEl.innerHTML = html;
+    } catch (err) {
+        listEl.innerHTML = `<div class="hm-empty" style="color:#ff5252">❌ ${err.message}</div>`;
+        statusEl.textContent = 'Error';
+    }
+}
+
+function renderWhaleStats(s, threshold) {
+    const statsEl = document.getElementById('wt-stats');
+    const netDelta = s.net_delta || 0;
+    const netClass = netDelta > 0 ? 'color:#4ade80' : netDelta < 0 ? 'color:#ef4444' : 'color:#aaa';
+    const netSign = netDelta > 0 ? '+' : '';
+    
+    const totalM = s.total_volume >= 1e6 ? `$${(s.total_volume/1e6).toFixed(2)}M` : `$${(s.total_volume/1e3).toFixed(0)}K`;
+    const buyM = s.buy_volume >= 1e6 ? `$${(s.buy_volume/1e6).toFixed(2)}M` : `$${(s.buy_volume/1e3).toFixed(0)}K`;
+    const sellM = s.sell_volume >= 1e6 ? `$${(s.sell_volume/1e6).toFixed(2)}M` : `$${(s.sell_volume/1e3).toFixed(0)}K`;
+    const netM = Math.abs(netDelta) >= 1e6 ? `${netSign}$${(netDelta/1e6).toFixed(2)}M` : `${netSign}$${(netDelta/1e3).toFixed(0)}K`;
+    const avgK = s.avg_usd >= 1e6 ? `$${(s.avg_usd/1e6).toFixed(2)}M` : `$${(s.avg_usd/1e3).toFixed(0)}K`;
+    
+    let largestStr = '—';
+    if (s.largest) {
+        const lM = s.largest.usd >= 1e6 ? `$${(s.largest.usd/1e6).toFixed(2)}M` : `$${(s.largest.usd/1e3).toFixed(0)}K`;
+        const color = s.largest.side === 'BUY' ? '#4ade80' : '#ef4444';
+        largestStr = `<span style="color:${color}">${lM} ${s.largest.side}</span>`;
+    }
+    
+    statsEl.innerHTML = `
+        <div class="vp-stat">
+            <span class="vp-stat-label">Threshold</span>
+            <span class="vp-stat-value">≥ $${(threshold/1000).toFixed(0)}K</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Window</span>
+            <span class="vp-stat-value">${s.window_minutes}m</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Count (B / S)</span>
+            <span class="vp-stat-value"><span style="color:#4ade80">${s.buy_count}</span> / <span style="color:#ef4444">${s.sell_count}</span></span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Buy Vol</span>
+            <span class="vp-stat-value" style="color:#4ade80">${buyM}</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Sell Vol</span>
+            <span class="vp-stat-value" style="color:#ef4444">${sellM}</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Net Delta</span>
+            <span class="vp-stat-value" style="${netClass}">${netM}</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Buy %</span>
+            <span class="vp-stat-value">${s.buy_pct}%</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Avg Size</span>
+            <span class="vp-stat-value">${avgK}</span>
+        </div>
+        <div class="vp-stat">
+            <span class="vp-stat-label">Largest</span>
+            <span class="vp-stat-value">${largestStr}</span>
+        </div>
+    `;
+}
 
 // ============================================
 // Volume Profile (Stage 2)

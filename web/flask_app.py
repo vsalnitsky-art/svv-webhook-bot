@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -174,6 +174,16 @@ def create_app():
                 em.start()
             except Exception as e:
                 print(f"[APP] Failed to start Exit Monitor: {e}")
+        
+        # Whale Tape
+        if not _auto_started['whales']:
+            _auto_started['whales'] = True
+            try:
+                from detection.whale_tape import init_whale_tape
+                wt = init_whale_tape(db=get_db())
+                wt.start()
+            except Exception as e:
+                print(f"[APP] Failed to start Whale Tape: {e}")
         
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
@@ -1923,6 +1933,52 @@ def register_api_routes(app):
             buckets = 50
         
         return jsonify(build_volume_profile(symbol, hours=hours, buckets=buckets))
+    
+    @app.route('/api/whales/state')
+    def api_whales_state():
+        """Whale Tape state: recent large trades + stats.
+        
+        Query params:
+          limit: max trades to return (default 100)
+          window: stats window in minutes (default 60)
+        """
+        from detection.whale_tape import get_whale_tape
+        wt = get_whale_tape()
+        if not wt:
+            return jsonify({'trades': [], 'stats': {}, 'running': False, 'error': 'Not initialized'})
+        
+        try:
+            limit = int(request.args.get('limit', 100))
+            limit = max(10, min(limit, 500))
+        except:
+            limit = 100
+        try:
+            window = int(request.args.get('window', 60))
+            window = max(1, min(window, 1440))
+        except:
+            window = 60
+        
+        return jsonify(wt.get_state(limit=limit, window_minutes=window))
+    
+    @app.route('/api/whales/threshold', methods=['GET', 'POST'])
+    def api_whales_threshold():
+        """Get or set minimum trade size threshold (USD)."""
+        from detection.whale_tape import get_whale_tape
+        wt = get_whale_tape()
+        if not wt:
+            return jsonify({'ok': False, 'error': 'Not initialized'})
+        
+        if request.method == 'GET':
+            return jsonify({'ok': True, 'threshold': wt.get_threshold()})
+        
+        data = request.get_json() or {}
+        try:
+            usd = int(data.get('threshold', 100000))
+        except:
+            return jsonify({'ok': False, 'error': 'Invalid threshold'})
+        
+        ok = wt.set_threshold(usd)
+        return jsonify({'ok': ok, 'threshold': wt.get_threshold()})
     
     # ========================================
     # Position Exit Monitor Routes
