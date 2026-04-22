@@ -15,7 +15,13 @@
     <div class="section vf-section">
         <div class="section-header">
             <h2>📊 BTC Volume Flow</h2>
-            <span class="vf-status" id="vf-status">⏳</span>
+            <div style="display:flex;align-items:center;gap:8px">
+                <label class="fr-toggle" title="Enable/disable module">
+                    <input type="checkbox" id="vf-toggle" onchange="toggleVolumeFlow(this.checked)">
+                    <span class="fr-toggle-slider"></span>
+                </label>
+                <span class="vf-status" id="vf-status">⏳</span>
+            </div>
         </div>
         <div class="vf-price" id="vf-price">---</div>
         <div class="vf-windows" id="vf-windows">Loading...</div>
@@ -42,7 +48,11 @@
     <div class="section sv-section">
         <div class="section-header">
             <h2>📡 TradingView Signals</h2>
-            <div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <label class="fr-toggle" title="Enable/disable webhook processing">
+                    <input type="checkbox" id="sv-toggle" onchange="toggleValidator(this.checked)">
+                    <span class="fr-toggle-slider"></span>
+                </label>
                 <button class="fr-delete" onclick="clearValidatorLog()" style="opacity:0.7;margin-right:4px">🗑️ Clear All</button>
                 <span class="sv-status" id="sv-status">—</span>
             </div>
@@ -82,7 +92,10 @@
         <div class="section-header">
             <h2>🧱 BTC Liquidity Map</h2>
             <div style="display:flex;align-items:center;gap:8px">
-                <a href="/market-analytics" style="padding:4px 10px;font-size:0.75rem;background:rgba(255,165,0,0.15);border:1px solid rgba(255,165,0,0.4);color:#ffa500;border-radius:4px;text-decoration:none">📊 Full Analytics</a>
+                <label class="fr-toggle" title="Enable/disable scanner">
+                    <input type="checkbox" id="liq-toggle" onchange="toggleLiqMap(this.checked)">
+                    <span class="fr-toggle-slider"></span>
+                </label>
                 <span class="liq-status" id="liq-status">⏳</span>
             </div>
         </div>
@@ -2020,6 +2033,63 @@ async function loadFundingToggleState() {
     } catch (err) {}
 }
 
+async function toggleLiqMap(enabled) {
+    try {
+        await fetch('/api/liquidity/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
+        });
+    } catch (err) { alert('Liquidity toggle error'); }
+}
+
+async function loadLiqMapToggleState() {
+    try {
+        const res = await fetch('/api/liquidity/toggle');
+        const d = await res.json();
+        const toggle = document.getElementById('liq-toggle');
+        if (toggle) toggle.checked = !!d.enabled;
+    } catch (err) {}
+}
+
+async function toggleVolumeFlow(enabled) {
+    try {
+        await fetch('/api/volume-flow/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
+        });
+    } catch (err) { alert('Volume Flow toggle error'); }
+}
+
+async function loadVolumeFlowToggleState() {
+    try {
+        const res = await fetch('/api/volume-flow/toggle');
+        const d = await res.json();
+        const toggle = document.getElementById('vf-toggle');
+        if (toggle) toggle.checked = !!d.enabled;
+    } catch (err) {}
+}
+
+async function toggleValidator(enabled) {
+    try {
+        await fetch('/api/validator/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
+        });
+    } catch (err) { alert('Validator toggle error'); }
+}
+
+async function loadValidatorToggleState() {
+    try {
+        const res = await fetch('/api/validator/toggle');
+        const d = await res.json();
+        const toggle = document.getElementById('sv-toggle');
+        if (toggle) toggle.checked = !!d.enabled;
+    } catch (err) {}
+}
+
 async function removeFundingCoin(symbol) {
     if (!confirm(`Remove ${symbol} from watchlist?`)) return;
     try {
@@ -2059,7 +2129,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') addFundingCoin(); });
 });
 
-document.addEventListener('DOMContentLoaded', () => { loadFunding(); loadFundingToggleState(); });
+document.addEventListener('DOMContentLoaded', () => {
+    loadFunding();
+    loadFundingToggleState();
+    loadLiqMapToggleState();
+    loadVolumeFlowToggleState();
+    loadValidatorToggleState();
+});
 setInterval(loadFunding, 60000);
 
 // === Funding Coin Chart ===

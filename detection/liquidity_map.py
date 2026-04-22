@@ -74,6 +74,10 @@ class LiquidityMap:
     def start(self):
         if self._running:
             return
+        # Check DB toggle
+        if self.db and self.db.get_setting('liq_map_enabled', '1') != '1':
+            print("[LIQ MAP] Disabled in DB, not starting")
+            return
         self._running = True
         self._thread = threading.Thread(
             target=self._loop, daemon=True, name="LiquidityMap"
@@ -84,6 +88,25 @@ class LiquidityMap:
     
     def stop(self):
         self._running = False
+    
+    def is_enabled(self) -> bool:
+        if not self.db:
+            return self._running
+        return self.db.get_setting('liq_map_enabled', '1') == '1'
+    
+    def set_enabled(self, enabled: bool) -> bool:
+        """Turn module on/off and persist state."""
+        if self.db:
+            self.db.set_setting('liq_map_enabled', '1' if enabled else '0')
+        if enabled and not self._running:
+            self._running = True
+            self._thread = threading.Thread(target=self._loop, daemon=True, name="LiquidityMap")
+            self._thread.start()
+            print("[LIQ MAP] ✅ Enabled and started")
+        elif not enabled and self._running:
+            self._running = False
+            print("[LIQ MAP] ⏸️ Disabled")
+        return True
         if self._thread:
             self._thread.join(timeout=5)
         print("[LIQ MAP] Stopped")
@@ -146,8 +169,9 @@ class LiquidityMap:
             # Store bias snapshot for history chart
             self._store_bias(bid_walls, ask_walls, mid_price, now_str)
             
-            # Store heatmap profile (full depth clusters, not just walls)
-            self._store_heatmap_profile(bids, asks, mid_price, now_str)
+            # Store heatmap profile — DISABLED (Full Analytics suspended).
+            # To re-enable, uncomment the line below.
+            # self._store_heatmap_profile(bids, asks, mid_price, now_str)
             
             # Cleanup hourly
             if sc % 60 == 0:

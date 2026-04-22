@@ -175,15 +175,18 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Exit Monitor: {e}")
         
-        # Whale Tape
-        if not _auto_started['whales']:
-            _auto_started['whales'] = True
-            try:
-                from detection.whale_tape import init_whale_tape
-                wt = init_whale_tape(db=get_db())
-                wt.start()
-            except Exception as e:
-                print(f"[APP] Failed to start Whale Tape: {e}")
+        # Whale Tape — DISABLED (Full Analytics suspended)
+        # Market Analytics (Heatmap + Volume Profile + Whale Tape) is stopped.
+        # To re-enable, uncomment the block below.
+        # if not _auto_started['whales']:
+        #     _auto_started['whales'] = True
+        #     try:
+        #         from detection.whale_tape import init_whale_tape
+        #         wt = init_whale_tape(db=get_db())
+        #         wt.start()
+        #     except Exception as e:
+        #         print(f"[APP] Failed to start Whale Tape: {e}")
+        _auto_started['whales'] = True  # mark as handled so block is skipped
         
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
@@ -2138,6 +2141,48 @@ def register_api_routes(app):
         enabled = bool(data.get('enabled', True))
         fm.set_enabled(enabled)
         return jsonify({'ok': True, 'enabled': fm.is_enabled(), 'running': fm._running})
+    
+    @app.route('/api/liquidity/toggle', methods=['GET', 'POST'])
+    def api_liquidity_toggle():
+        """Get or set Liquidity Map enabled state."""
+        from detection.liquidity_map import get_liquidity_map
+        lm = get_liquidity_map()
+        if not lm:
+            return jsonify({'ok': False, 'enabled': False, 'reason': 'Not initialized'})
+        if request.method == 'GET':
+            return jsonify({'ok': True, 'enabled': lm.is_enabled(), 'running': lm._running})
+        data = request.get_json() or {}
+        enabled = bool(data.get('enabled', True))
+        lm.set_enabled(enabled)
+        return jsonify({'ok': True, 'enabled': lm.is_enabled(), 'running': lm._running})
+    
+    @app.route('/api/volume-flow/toggle', methods=['GET', 'POST'])
+    def api_volume_flow_toggle():
+        """Get or set Volume Flow enabled state."""
+        from detection.volume_flow import get_volume_flow
+        vf = get_volume_flow()
+        if not vf:
+            return jsonify({'ok': False, 'enabled': False, 'reason': 'Not initialized'})
+        if request.method == 'GET':
+            return jsonify({'ok': True, 'enabled': vf.is_enabled(), 'running': vf._running})
+        data = request.get_json() or {}
+        enabled = bool(data.get('enabled', True))
+        vf.set_enabled(enabled)
+        return jsonify({'ok': True, 'enabled': vf.is_enabled(), 'running': vf._running})
+    
+    @app.route('/api/validator/toggle', methods=['GET', 'POST'])
+    def api_validator_toggle():
+        """Get or set Signal Validator (TradingView Signals) enabled state."""
+        from detection.signal_validator import get_validator
+        v = get_validator()
+        if not v:
+            return jsonify({'ok': False, 'enabled': False, 'reason': 'Not initialized'})
+        if request.method == 'GET':
+            return jsonify({'ok': True, 'enabled': v.is_enabled()})
+        data = request.get_json() or {}
+        enabled = bool(data.get('enabled', True))
+        v.set_enabled(enabled)
+        return jsonify({'ok': True, 'enabled': v.is_enabled()})
     
     @app.route('/api/funding/coin/<symbol>')
     def api_funding_coin(symbol):

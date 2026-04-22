@@ -59,6 +59,10 @@ class VolumeFlow:
     def start(self):
         if self._running:
             return
+        # Check DB toggle
+        if self.db and self.db.get_setting('volume_flow_enabled', '1') != '1':
+            print("[VOL FLOW] Disabled in DB, not starting")
+            return
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="VolumeFlow")
         self._thread.start()
@@ -69,6 +73,24 @@ class VolumeFlow:
         self._running = False
         if self._thread:
             self._thread.join(timeout=5)
+    
+    def is_enabled(self) -> bool:
+        if not self.db:
+            return self._running
+        return self.db.get_setting('volume_flow_enabled', '1') == '1'
+    
+    def set_enabled(self, enabled: bool) -> bool:
+        if self.db:
+            self.db.set_setting('volume_flow_enabled', '1' if enabled else '0')
+        if enabled and not self._running:
+            self._running = True
+            self._thread = threading.Thread(target=self._loop, daemon=True, name="VolumeFlow")
+            self._thread.start()
+            print("[VOL FLOW] ✅ Enabled and started")
+        elif not enabled and self._running:
+            self._running = False
+            print("[VOL FLOW] ⏸️ Disabled")
+        return True
     
     def _loop(self):
         print("[VOL FLOW] 🧵 Thread started")

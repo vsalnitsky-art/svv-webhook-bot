@@ -26,6 +26,17 @@ class SignalValidator:
         self.db = db
         self.notifier = notifier
     
+    def is_enabled(self) -> bool:
+        if not self.db:
+            return True
+        return self.db.get_setting('validator_enabled', '1') == '1'
+    
+    def set_enabled(self, enabled: bool) -> bool:
+        if self.db:
+            self.db.set_setting('validator_enabled', '1' if enabled else '0')
+        print(f"[VALIDATOR] {'✅ Enabled' if enabled else '⏸️ Disabled'}")
+        return True
+    
     def validate(self, data: Dict) -> Dict:
         """
         Validate a TradingView signal.
@@ -36,6 +47,11 @@ class SignalValidator:
           v38 TREND_BREAK:  {"strategy","event":"TREND_BREAK",...}  ← IGNORED
           Manual:           {"action":"Buy","symbol","leverage","riskPercent","stopLossPercent"}
         """
+        # Check if module is enabled
+        if not self.is_enabled():
+            print(f"[VALIDATOR] ⏸️ Disabled — webhook ignored: {data.get('symbol','')} {data.get('action','')}")
+            return {'status': 'disabled', 'reason': 'Validator disabled'}
+        
         # Ignore TREND_BREAK events — informational, no action needed
         event = data.get('event', '')
         if event == 'TREND_BREAK':
