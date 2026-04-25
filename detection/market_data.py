@@ -42,6 +42,22 @@ def _okx_symbol(symbol: str) -> str:
     return f'{base}-USDT-SWAP'
 
 
+def _to_okx_interval(binance_interval: str) -> str:
+    """Map Binance interval to OKX bar."""
+    return {
+        '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m',
+        '1h': '1H', '4h': '4H', '1d': '1D',
+    }.get(binance_interval, '1m')
+
+
+def _to_bybit_interval(binance_interval: str) -> str:
+    """Map Binance interval to Bybit numeric interval."""
+    return {
+        '1m': '1', '5m': '5', '15m': '15', '30m': '30',
+        '1h': '60', '4h': '240', '1d': 'D',
+    }.get(binance_interval, '1')
+
+
 class MarketData:
     """Fetches market data with Binance→OKX fallback."""
     
@@ -72,21 +88,28 @@ class MarketData:
     # KLINES (taker buy/sell volumes)
     # ========================================
     
-    def fetch_klines(self, symbol: str, limit: int = 60) -> Optional[List[Dict]]:
-        """Fetch 1-min klines with taker buy/sell. Returns [{p, v, b, s}, ...]"""
+    def fetch_klines(self, symbol: str, limit: int = 60, interval: str = '1m') -> Optional[List[Dict]]:
+        """Fetch klines with taker buy/sell. Returns [{p, v, b, s, h, l, o, t}, ...]
+        
+        interval: '1m', '5m', '15m', '30m', '1h', '4h', '1d'  (Binance format)
+        """
+        # Map for OKX/Bybit
+        okx_interval = _to_okx_interval(interval)
+        bb_interval = _to_bybit_interval(interval)
+        
         # Try Binance
         try:
             r = self._session.get(BN_KLINE,
-                params={'symbol': symbol, 'interval': '1m', 'limit': limit},
+                params={'symbol': symbol, 'interval': interval, 'limit': limit},
                 timeout=REQUEST_TIMEOUT)
             if r.status_code == 200:
                 candles = []
                 for k in r.json():
                     try:
                         tv = float(k[7]); tb = float(k[10])
-                        candles.append({'p': float(k[4]), 'v': round(tv),
+                        candles.append({'t': int(k[0]), 'p': float(k[4]), 'v': round(tv),
                                        'b': round(tb), 's': round(tv - tb),
-                                       'h': float(k[2]), 'l': float(k[3])})
+                                       'h': float(k[2]), 'l': float(k[3]), 'o': float(k[1])})
                     except:
                         continue
                 if candles:
@@ -100,26 +123,22 @@ class MarketData:
             time.sleep(DELAY)
             okx_sym = _okx_symbol(symbol)
             r = self._session.get(OKX_KLINE,
-                params={'instId': okx_sym, 'bar': '1m', 'limit': str(limit)},
+                params={'instId': okx_sym, 'bar': okx_interval, 'limit': str(limit)},
                 timeout=REQUEST_TIMEOUT)
             if r.status_code == 200:
                 data = r.json().get('data', [])
                 candles = []
                 for k in data:
-                    # OKX: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
                     try:
-                        tv = float(k[7])  # volCcyQuote (USDT volume)
-                        # OKX doesn't provide taker buy separately in klines
-                        # Estimate: if close > open → bullish candle → assume 60% buy
+                        tv = float(k[7])
                         o = float(k[1]); c = float(k[4])
                         buy_ratio = 0.6 if c > o else 0.4 if c < o else 0.5
                         tb = tv * buy_ratio
-                        candles.append({'p': c, 'v': round(tv),
+                        candles.append({'t': int(k[0]), 'p': c, 'v': round(tv),
                                        'b': round(tb), 's': round(tv - tb),
-                                       'h': float(k[2]), 'l': float(k[3])})
+                                       'h': float(k[2]), 'l': float(k[3]), 'o': o})
                     except:
                         continue
-                # OKX returns newest first, reverse
                 candles.reverse()
                 if candles:
                     self._sources['klines'] = 'OKX'
@@ -127,29 +146,27 @@ class MarketData:
         except:
             self._okx_errors += 1
         
-        # Fallback 2: Bybit (for Bybit-exclusive coins like RAVE, SIREN, etc.)
+        # Fallback 2: Bybit
         try:
             time.sleep(DELAY)
             r = self._session.get(BB_KLINE,
-                params={'category': 'linear', 'symbol': symbol, 'interval': '1', 'limit': limit},
+                params={'category': 'linear', 'symbol': symbol, 'interval': bb_interval, 'limit': limit},
                 timeout=REQUEST_TIMEOUT)
             if r.status_code == 200:
                 result = r.json().get('result', {})
                 data = result.get('list', [])
                 candles = []
                 for k in data:
-                    # Bybit: [startTime, open, high, low, close, volume, turnover]
                     try:
-                        tv = float(k[6])  # turnover (USDT volume)
+                        tv = float(k[6])
                         o = float(k[1]); c = float(k[4])
                         buy_ratio = 0.6 if c > o else 0.4 if c < o else 0.5
                         tb = tv * buy_ratio
-                        candles.append({'p': c, 'v': round(tv),
+                        candles.append({'t': int(k[0]), 'p': c, 'v': round(tv),
                                        'b': round(tb), 's': round(tv - tb),
-                                       'h': float(k[2]), 'l': float(k[3])})
+                                       'h': float(k[2]), 'l': float(k[3]), 'o': o})
                     except:
                         continue
-                # Bybit returns newest first
                 candles.reverse()
                 if candles:
                     self._sources['klines'] = 'Bybit'

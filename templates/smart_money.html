@@ -1,0 +1,640 @@
+{% extends "base.html" %}
+{% block title %}Smart Money — SVV Bot{% endblock %}
+
+{% block content %}
+<style>
+.sm-container { max-width: 1500px; margin: 0 auto; padding: 12px; }
+
+.sm-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.sm-header h1 {
+    color: #ddd;
+    font-size: 1.4rem;
+    margin: 0;
+    display: inline-block;
+    margin-left: 10px;
+}
+
+.back-link {
+    display: inline-block;
+    padding: 4px 10px;
+    color: #888;
+    text-decoration: none;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+.back-link:hover { color: #ddd; border-color: rgba(255,255,255,0.3); }
+
+.sm-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 12px;
+    height: calc(100vh - 130px);
+    min-height: 600px;
+}
+
+.sm-watchlist {
+    background: linear-gradient(135deg, #0f1420 0%, #1a1f2e 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sm-wl-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #aaa;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.sm-add-form {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.sm-add-form input {
+    flex: 1;
+    padding: 4px 8px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #ddd;
+    border-radius: 3px;
+    font-family: Consolas, monospace;
+    font-size: 0.78rem;
+}
+
+.sm-add-form button {
+    padding: 4px 10px;
+    background: rgba(76,175,80,0.2);
+    border: 1px solid rgba(76,175,80,0.4);
+    color: #4caf50;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.78rem;
+}
+
+.sm-wl-list {
+    flex: 1;
+    overflow-y: auto;
+    margin: 0 -4px;
+}
+
+.sm-wl-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 8px;
+    margin: 1px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: Consolas, monospace;
+    font-size: 0.8rem;
+    color: #ddd;
+    border-left: 3px solid transparent;
+    transition: background 0.15s;
+}
+
+.sm-wl-item:hover { background: rgba(255,255,255,0.05); }
+
+.sm-wl-item.active {
+    background: rgba(0,217,255,0.12);
+    border-left-color: #00d9ff;
+}
+
+.sm-wl-item .trend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #555;
+    display: inline-block;
+    margin-right: 6px;
+}
+
+.sm-wl-item .trend-dot.bull { background: #4ade80; }
+.sm-wl-item .trend-dot.bear { background: #ef4444; }
+
+.sm-wl-remove {
+    color: #555;
+    font-size: 0.85rem;
+    padding: 0 4px;
+    cursor: pointer;
+    line-height: 1;
+}
+.sm-wl-remove:hover { color: #ef4444; }
+
+.sm-chart-area {
+    background: linear-gradient(135deg, #0f1420 0%, #1a1f2e 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sm-chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 8px;
+}
+
+.sm-chart-title {
+    color: #ddd;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.sm-chart-meta {
+    color: #888;
+    font-size: 0.75rem;
+    font-family: Consolas, monospace;
+}
+
+.sm-controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.sm-control-item {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    font-size: 0.75rem;
+    color: #aaa;
+}
+
+.sm-control-item input, .sm-control-item select {
+    padding: 3px 6px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #ddd;
+    border-radius: 3px;
+    font-family: Consolas, monospace;
+    font-size: 0.75rem;
+}
+
+.sm-control-item input:disabled, .sm-control-item select:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.sm-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.sm-chart-wrap {
+    flex: 1;
+    position: relative;
+    background: #0a0e18;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+#sm-chart {
+    width: 100%;
+    height: 100%;
+}
+
+.sm-loading, .sm-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #666;
+    text-align: center;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.9rem;
+}
+
+.sm-status-badge {
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: rgba(255,255,255,0.06);
+    color: #aaa;
+}
+
+.sm-trend-bull { background: rgba(74,222,128,0.2); color: #4ade80; }
+.sm-trend-bear { background: rgba(239,68,68,0.2); color: #ef4444; }
+
+.sm-pulse {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4ade80;
+    margin-right: 5px;
+    animation: sm-pulse 2s infinite;
+}
+
+@keyframes sm-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+</style>
+
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+
+<div class="sm-container">
+    <div class="sm-header">
+        <div>
+            <a href="/" class="back-link">← Dashboard</a>
+            <h1>🎯 Smart Money Concepts</h1>
+        </div>
+        <div class="sm-controls">
+            <label class="sm-checkbox">
+                <input type="checkbox" id="sm-internal" checked disabled>
+                Show Internal Structure
+            </label>
+            <div class="sm-control-item">
+                <label>Swings Points:</label>
+                <input type="number" value="50" disabled style="width:50px">
+            </div>
+            <div class="sm-control-item">
+                <label>Alert mode:</label>
+                <select id="sm-alert-mode" onchange="updateAlertMode()">
+                    <option value="choch">CHoCH only</option>
+                    <option value="choch_bos">CHoCH + BOS</option>
+                </select>
+            </div>
+            <div class="sm-control-item" id="sm-status">
+                <span class="sm-pulse"></span>
+                <span>—</span>
+            </div>
+        </div>
+    </div>
+    
+    <div class="sm-layout">
+        <!-- Watchlist -->
+        <div class="sm-watchlist">
+            <div class="sm-wl-header">
+                <span>WATCHLIST</span>
+                <span id="sm-wl-count" style="color:#666;font-size:0.7rem;font-weight:normal">0 / 50</span>
+            </div>
+            <div class="sm-add-form">
+                <input type="text" id="sm-add-input" placeholder="BTC, ETH..." onkeypress="if(event.key==='Enter')addSymbol()">
+                <button onclick="addSymbol()">+ Add</button>
+            </div>
+            <div class="sm-wl-list" id="sm-wl-list">
+                <div style="text-align:center;color:#555;font-size:0.75rem;padding:20px">No symbols yet</div>
+            </div>
+        </div>
+        
+        <!-- Chart -->
+        <div class="sm-chart-area">
+            <div class="sm-chart-header">
+                <div>
+                    <span class="sm-chart-title" id="sm-chart-title">Select a symbol</span>
+                    <span class="sm-status-badge" id="sm-trend-badge" style="margin-left:10px;display:none"></span>
+                </div>
+                <div class="sm-chart-meta" id="sm-chart-meta"></div>
+            </div>
+            <div class="sm-chart-wrap" id="sm-chart-wrap">
+                <div class="sm-empty" id="sm-empty">
+                    <div style="font-size:2rem">🎯</div>
+                    <div>Select a symbol from the watchlist</div>
+                    <div style="font-size:0.75rem;color:#555">15-minute timeframe · Internal Structure (size 5)</div>
+                </div>
+                <div id="sm-chart"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let chart = null;
+let candleSeries = null;
+let currentSymbol = null;
+let activeLines = [];   // line series we draw for BOS/CHoCH
+let activeMarkers = []; // labels
+
+// === Watchlist ===
+async function loadWatchlist() {
+    try {
+        const res = await fetch('/api/smc/watchlist');
+        const d = await res.json();
+        renderWatchlist(d.watchlist || []);
+    } catch (err) {
+        console.error('watchlist load err:', err);
+    }
+}
+
+function renderWatchlist(list) {
+    const el = document.getElementById('sm-wl-list');
+    document.getElementById('sm-wl-count').textContent = `${list.length} / 50`;
+    
+    if (list.length === 0) {
+        el.innerHTML = '<div style="text-align:center;color:#555;font-size:0.75rem;padding:20px">No symbols yet</div>';
+        return;
+    }
+    
+    let html = '';
+    for (const sym of list) {
+        const short = sym.replace('USDT', '');
+        const isActive = (sym === currentSymbol) ? 'active' : '';
+        html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
+            <span><span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span class="sm-wl-remove" onclick="event.stopPropagation();removeSymbol('${sym}')">✕</span>
+        </div>`;
+    }
+    el.innerHTML = html;
+}
+
+async function addSymbol() {
+    const input = document.getElementById('sm-add-input');
+    const raw = input.value.trim().toUpperCase();
+    if (!raw) return;
+    
+    // Support comma-separated
+    const symbols = raw.split(/[,\s]+/).filter(s => s);
+    let added = 0, errors = [];
+    
+    for (const sym of symbols) {
+        try {
+            const res = await fetch('/api/smc/watchlist/add', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({symbol: sym}),
+            });
+            const d = await res.json();
+            if (d.ok) added++;
+            else errors.push(`${sym}: ${d.reason}`);
+        } catch (err) { errors.push(`${sym}: ${err.message}`); }
+    }
+    
+    input.value = '';
+    if (errors.length) alert(errors.join('\n'));
+    loadWatchlist();
+}
+
+async function removeSymbol(sym) {
+    if (!confirm(`Remove ${sym}?`)) return;
+    try {
+        await fetch('/api/smc/watchlist/remove', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: sym}),
+        });
+        if (currentSymbol === sym) {
+            currentSymbol = null;
+            clearChart();
+        }
+        loadWatchlist();
+    } catch (err) { alert('Remove error: ' + err); }
+}
+
+async function selectSymbol(sym) {
+    if (currentSymbol === sym) return;
+    currentSymbol = sym;
+    document.querySelectorAll('.sm-wl-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.symbol === sym);
+    });
+    await loadChart();
+}
+
+// === Settings ===
+async function loadSettings() {
+    try {
+        const res = await fetch('/api/smc/settings');
+        const d = await res.json();
+        if (d.settings) {
+            document.getElementById('sm-alert-mode').value = d.settings.alert_mode || 'choch';
+        }
+    } catch (err) {}
+}
+
+async function updateAlertMode() {
+    const mode = document.getElementById('sm-alert-mode').value;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({alert_mode: mode}),
+        });
+    } catch (err) { alert('Update error: ' + err); }
+}
+
+// === Chart ===
+function ensureChart() {
+    if (chart) return;
+    
+    const wrap = document.getElementById('sm-chart-wrap');
+    const chartEl = document.getElementById('sm-chart');
+    
+    chart = LightweightCharts.createChart(chartEl, {
+        layout: {
+            background: { type: 'solid', color: '#0a0e18' },
+            textColor: '#aaa',
+        },
+        grid: {
+            vertLines: { color: 'rgba(255,255,255,0.04)' },
+            horzLines: { color: 'rgba(255,255,255,0.04)' },
+        },
+        crosshair: { mode: 1 },
+        rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
+        timeScale: {
+            borderColor: 'rgba(255,255,255,0.08)',
+            timeVisible: true,
+            secondsVisible: false,
+        },
+    });
+    
+    candleSeries = chart.addCandlestickSeries({
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderUpColor: '#26a69a',
+        borderDownColor: '#ef5350',
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350',
+    });
+    
+    // Resize handler
+    new ResizeObserver(() => {
+        chart.applyOptions({
+            width: chartEl.clientWidth,
+            height: chartEl.clientHeight,
+        });
+    }).observe(chartEl);
+    
+    chart.applyOptions({
+        width: chartEl.clientWidth,
+        height: chartEl.clientHeight,
+    });
+}
+
+function clearChart() {
+    if (!chart) return;
+    activeLines.forEach(s => chart.removeSeries(s));
+    activeLines = [];
+    if (candleSeries) candleSeries.setData([]);
+    if (candleSeries) candleSeries.setMarkers([]);
+    document.getElementById('sm-empty').style.display = 'flex';
+    document.getElementById('sm-chart-title').textContent = 'Select a symbol';
+    document.getElementById('sm-trend-badge').style.display = 'none';
+    document.getElementById('sm-chart-meta').textContent = '';
+}
+
+async function loadChart() {
+    if (!currentSymbol) return;
+    
+    ensureChart();
+    document.getElementById('sm-empty').style.display = 'none';
+    document.getElementById('sm-chart-title').textContent = `${currentSymbol} · 15M`;
+    document.getElementById('sm-chart-meta').textContent = 'Loading...';
+    
+    try {
+        const res = await fetch(`/api/smc/chart?symbol=${currentSymbol}`);
+        const d = await res.json();
+        
+        if (d.error || !d.ohlc || d.ohlc.length === 0) {
+            document.getElementById('sm-chart-meta').textContent = `Error: ${d.error || 'No data'}`;
+            return;
+        }
+        
+        // Set candles
+        candleSeries.setData(d.ohlc);
+        
+        // Clear old structure lines
+        activeLines.forEach(s => chart.removeSeries(s));
+        activeLines = [];
+        
+        // Draw BOS/CHoCH events as horizontal lines from pivot to crossing bar
+        const events = d.events || [];
+        for (const ev of events) {
+            const color = ev.dir === 'bull' ? '#4ade80' : '#ef4444';
+            const isCHoCH = ev.tag === 'CHoCH';
+            // Use a separate line series for each event
+            const lineSeries = chart.addLineSeries({
+                color: color,
+                lineWidth: 1,
+                lineStyle: isCHoCH ? 2 : 0,  // dashed for CHoCH, solid for BOS
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+            });
+            lineSeries.setData([
+                { time: ev.from_time, value: ev.level },
+                { time: ev.to_time, value: ev.level },
+            ]);
+            activeLines.push(lineSeries);
+        }
+        
+        // Draw markers (BOS/CHoCH labels at the crossing bar)
+        const markers = [];
+        for (const ev of events) {
+            markers.push({
+                time: ev.to_time,
+                position: ev.dir === 'bull' ? 'belowBar' : 'aboveBar',
+                color: ev.dir === 'bull' ? '#4ade80' : '#ef4444',
+                shape: 'arrowUp',
+                text: ev.tag,
+            });
+        }
+        
+        // Add pivot HH/HL/LH/LL markers (smaller, dimmer)
+        const pivots = d.pivots || [];
+        for (const p of pivots) {
+            const isHigh = (p.type === 'HH' || p.type === 'LH');
+            markers.push({
+                time: p.time,
+                position: isHigh ? 'aboveBar' : 'belowBar',
+                color: 'rgba(255,255,255,0.4)',
+                shape: 'circle',
+                text: p.type,
+                size: 0,  // tiny
+            });
+        }
+        
+        // Lightweight Charts requires markers sorted by time
+        markers.sort((a, b) => a.time - b.time);
+        candleSeries.setMarkers(markers);
+        
+        // Trend badge
+        const trendBadge = document.getElementById('sm-trend-badge');
+        if (d.trend === 1) {
+            trendBadge.textContent = '🟢 BULLISH';
+            trendBadge.className = 'sm-status-badge sm-trend-bull';
+            trendBadge.style.display = 'inline-block';
+        } else if (d.trend === -1) {
+            trendBadge.textContent = '🔴 BEARISH';
+            trendBadge.className = 'sm-status-badge sm-trend-bear';
+            trendBadge.style.display = 'inline-block';
+        } else {
+            trendBadge.style.display = 'none';
+        }
+        
+        // Update watchlist trend dots
+        const dot = document.getElementById('dot-' + currentSymbol);
+        if (dot) {
+            dot.className = 'trend-dot ' + (d.trend === 1 ? 'bull' : d.trend === -1 ? 'bear' : '');
+        }
+        
+        // Meta
+        const lastUpdate = new Date((d.updated_at || 0) * 1000);
+        document.getElementById('sm-chart-meta').textContent =
+            `${d.klines_count} bars · ${events.length} events · ${pivots.length} pivots · ${lastUpdate.toLocaleTimeString()}`;
+        
+        // Auto-fit
+        chart.timeScale().fitContent();
+    } catch (err) {
+        document.getElementById('sm-chart-meta').textContent = 'Error: ' + err.message;
+        console.error('Chart load error:', err);
+    }
+}
+
+// === Status ===
+async function updateStatus() {
+    try {
+        const res = await fetch('/api/smc/state');
+        const d = await res.json();
+        const statusEl = document.getElementById('sm-status').querySelector('span:last-child');
+        if (d.running) {
+            statusEl.textContent = `Scanning ${d.watchlist.length} symbols (${d.scan_count} scans)`;
+        } else {
+            statusEl.textContent = 'Stopped';
+        }
+    } catch (err) {}
+}
+
+// === Init ===
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadSettings();
+    await loadWatchlist();
+    updateStatus();
+    setInterval(updateStatus, 15000);
+    setInterval(() => {
+        if (currentSymbol) loadChart();
+    }, 30000);
+});
+</script>
+{% endblock %}

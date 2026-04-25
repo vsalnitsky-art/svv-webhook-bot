@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -187,6 +187,22 @@ def create_app():
         #     except Exception as e:
         #         print(f"[APP] Failed to start Whale Tape: {e}")
         _auto_started['whales'] = True  # mark as handled so block is skipped
+        
+        # Smart Money Scanner
+        if not _auto_started['smc']:
+            _auto_started['smc'] = True
+            try:
+                from detection.smc_scanner import init_smc_scanner
+                smc_tg = None
+                try:
+                    from alerts.telegram_notifier import get_notifier
+                    smc_tg = get_notifier()
+                except:
+                    pass
+                smc = init_smc_scanner(db=get_db(), notifier=smc_tg)
+                smc.start()
+            except Exception as e:
+                print(f"[APP] Failed to start SMC Scanner: {e}")
         
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
@@ -2169,6 +2185,72 @@ def register_api_routes(app):
         enabled = bool(data.get('enabled', True))
         vf.set_enabled(enabled)
         return jsonify({'ok': True, 'enabled': vf.is_enabled(), 'running': vf._running})
+    
+    # ========================================
+    # Smart Money Routes
+    # ========================================
+    
+    @app.route('/smart-money')
+    def smart_money_page():
+        return render_template('smart_money.html')
+    
+    @app.route('/api/smc/state')
+    def api_smc_state():
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'running': False, 'error': 'Not initialized'})
+        return jsonify(s.get_state())
+    
+    @app.route('/api/smc/watchlist', methods=['GET'])
+    def api_smc_watchlist():
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'watchlist': []})
+        return jsonify({'watchlist': s.get_watchlist()})
+    
+    @app.route('/api/smc/watchlist/add', methods=['POST'])
+    def api_smc_watchlist_add():
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        sym = data.get('symbol', '')
+        return jsonify(s.add_symbol(sym))
+    
+    @app.route('/api/smc/watchlist/remove', methods=['POST'])
+    def api_smc_watchlist_remove():
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        sym = data.get('symbol', '')
+        return jsonify(s.remove_symbol(sym))
+    
+    @app.route('/api/smc/settings', methods=['GET', 'POST'])
+    def api_smc_settings():
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        if request.method == 'GET':
+            return jsonify({'ok': True, 'settings': s.get_settings()})
+        data = request.get_json() or {}
+        new_settings = s.update_settings(data)
+        return jsonify({'ok': True, 'settings': new_settings})
+    
+    @app.route('/api/smc/chart')
+    def api_smc_chart():
+        """Return klines + structure for a symbol. ?symbol=BTCUSDT"""
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'error': 'Not initialized', 'ohlc': []})
+        symbol = request.args.get('symbol', 'BTCUSDT')
+        return jsonify(s.get_chart_data(symbol))
     
     @app.route('/api/validator/toggle', methods=['GET', 'POST'])
     def api_validator_toggle():
