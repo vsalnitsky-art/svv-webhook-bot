@@ -35,7 +35,7 @@ from typing import Dict, List, Optional
 # Defaults
 DEFAULT_INTERVAL_SECS = 60
 DEFAULT_ALERT_MODE = 'choch'  # 'choch' or 'choch_bos'
-KLINES_LIMIT = 300            # bars to fetch per scan
+KLINES_LIMIT = 500            # bars to fetch per scan (~5 days of 15m data)
 TIMEFRAME = '15m'
 MAX_WATCHLIST = 50
 
