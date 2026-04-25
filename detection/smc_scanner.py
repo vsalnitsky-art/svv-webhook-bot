@@ -329,15 +329,21 @@ class SMCScanner:
             self._first_scan_done[symbol] = True
             return
         
-        # Build event IDs for ALL events
-        # Each event is uniquely identified by (from_t, level, tag, dir).
+        # === Stable event identifier ===
+        # IMPORTANT: We use ONLY (from_t, dir) — NOT tag.
+        # Reason: when the algorithm re-runs over a growing klines array,
+        # the SAME pivot point may be re-classified between CHoCH and BOS
+        # depending on what came before in the new window. If we included
+        # tag in the key, the same logical event would appear "new" again
+        # and trigger duplicate alerts (this caused the false NEOUSDT BOS
+        # confirmation that wasn't visible on chart).
         def ev_id(e):
-            return f"{e.get('from_t')}:{round(e.get('level', 0), 8)}:{e.get('tag')}:{e.get('dir')}"
+            return f"{e.get('from_t')}:{e.get('dir')}"
         
         seen = self._seen_events.setdefault(symbol, set())
         is_first_scan = not self._first_scan_done.get(symbol, False)
         
-        # Determine NEW events: those whose IDs aren't in `seen` yet
+        # Determine truly NEW events (their stable IDs aren't in `seen`)
         new_events = []
         for ev in events:
             eid = ev_id(ev)
@@ -345,42 +351,50 @@ class SMCScanner:
                 new_events.append((eid, ev))
                 seen.add(eid)
         
-        # Bound the seen set to avoid unbounded growth (keep last 200)
+        # Bound seen set to avoid unbounded growth
         if len(seen) > 200:
-            # Drop oldest by re-syncing to the latest 200 events on the chart
             recent_ids = {ev_id(e) for e in events[-200:]}
             self._seen_events[symbol] = recent_ids
         
         if is_first_scan:
-            # On first scan we only RECORD existing events; never alert.
-            # Mark scan as done and exit.
+            # First scan: just record existing events. NEVER seed pending_choch
+            # from history, because the BOS that "confirms" it would also be
+            # historical and is recorded as seen on this same scan.
             self._first_scan_done[symbol] = True
-            
-            # In choch_bos mode, also seed pending CHoCH if the latest event
-            # is a fresh-looking CHoCH (so a future BOS confirms it correctly).
-            mode = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
-            if mode == 'choch_bos' and events:
-                latest = events[-1]
-                if latest.get('tag') == 'CHoCH':
-                    self._pending_choch[symbol] = {
-                        'from_t': latest['from_t'],
-                        'level': latest['level'],
-                        'dir': latest['dir'],
-                        'choch_event': latest,
-                    }
-            
             print(f"[SMC] {symbol}: first scan recorded {len(events)} historical events "
-                  f"(no alerts sent)")
+                  f"(no alerts, no pending CHoCH from history)")
             return
         
         if not new_events:
             return  # nothing changed since last scan
         
+        # === Recency guard ===
+        # Only alert on events whose `to_t` (the bar where BOS/CHoCH was
+        # confirmed by close cross) is within the LAST FEW closed bars.
+        # This protects against alerts on events that "appeared" from history
+        # due to algorithm re-evaluation.
+        # 15m timeframe → allow events from last 3 closed bars (45 min).
+        recent_threshold_secs = 60 * 60  # 1 hour cushion
+        now_ms = int(time.time() * 1000)
+        
         mode = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
         
-        # Process new events in chronological order (oldest first)
         for _, ev in new_events:
             tag = ev.get('tag')
+            to_t = ev.get('to_t', 0) or 0
+            # to_t is in ms (kline open time)
+            to_age_secs = (now_ms - to_t) / 1000 if to_t > 1e10 else (now_ms / 1000 - to_t)
+            
+            is_recent = to_age_secs <= recent_threshold_secs
+            
+            if not is_recent:
+                # Event is old — silently record but don't alert
+                # (this was the bug: we used to alert on these)
+                if mode == 'choch_bos' and tag == 'CHoCH':
+                    # Don't even seed pending_choch from old CHoCH —
+                    # only fresh CHoCH should anchor a future BOS confirmation
+                    pass
+                continue
             
             if mode == 'choch':
                 if tag == 'CHoCH':
@@ -388,9 +402,10 @@ class SMCScanner:
             
             elif mode == 'choch_bos':
                 if tag == 'CHoCH':
-                    # Remember CHoCH but don't alert yet
+                    # Fresh CHoCH — anchor for future BOS confirmation
                     self._pending_choch[symbol] = {
                         'from_t': ev['from_t'],
+                        'to_t': ev['to_t'],
                         'level': ev['level'],
                         'dir': ev['dir'],
                         'choch_event': ev,
@@ -398,12 +413,13 @@ class SMCScanner:
                 elif tag == 'BOS':
                     pending = self._pending_choch.get(symbol)
                     if pending and pending['dir'] == ev['dir']:
-                        # BOS confirms CHoCH in same direction
-                        self._send_alert(symbol, ev, mode='choch_bos',
-                                          choch_event=pending['choch_event'])
-                        self._pending_choch.pop(symbol, None)
+                        # Additional safety: BOS must be AFTER the CHoCH chronologically
+                        if ev.get('to_t', 0) > pending.get('to_t', 0):
+                            self._send_alert(symbol, ev, mode='choch_bos',
+                                              choch_event=pending['choch_event'])
+                            self._pending_choch.pop(symbol, None)
                     elif pending and pending['dir'] != ev['dir']:
-                        # Opposite BOS invalidates pending CHoCH
+                        # Opposite-direction BOS invalidates pending CHoCH
                         self._pending_choch.pop(symbol, None)
     
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
