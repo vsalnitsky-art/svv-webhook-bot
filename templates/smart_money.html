@@ -471,6 +471,7 @@ function ensureChart() {
         layout: {
             background: { type: 'solid', color: '#0a0e18' },
             textColor: '#aaa',
+            fontSize: 10,
         },
         grid: {
             vertLines: { color: 'rgba(255,255,255,0.04)' },
@@ -483,6 +484,17 @@ function ensureChart() {
             timeVisible: true,
             secondsVisible: false,
         },
+        // Show times in user's local timezone (matches TradingView default)
+        localization: {
+            locale: navigator.language || 'en-US',
+            timeFormatter: (time) => {
+                const d = new Date(time * 1000);
+                return d.toLocaleString(navigator.language || 'en-US', {
+                    month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit',
+                });
+            },
+        },
     });
     
     candleSeries = chart.addCandlestickSeries({
@@ -492,14 +504,6 @@ function ensureChart() {
         borderDownColor: '#5a5a5a',
         wickUpColor: '#bbbbbb',
         wickDownColor: '#7a7a7a',
-    });
-    
-    chart.applyOptions({
-        layout: {
-            background: { type: 'solid', color: '#0a0e18' },
-            textColor: '#aaa',
-            fontSize: 10,
-        },
     });
     
     // Resize handler
