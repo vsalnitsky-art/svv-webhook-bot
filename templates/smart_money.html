@@ -273,8 +273,12 @@
         </div>
         <div class="sm-controls">
             <label class="sm-checkbox">
-                <input type="checkbox" id="sm-internal" checked disabled>
+                <input type="checkbox" id="sm-internal" checked onchange="onInternalToggle()">
                 Show Internal Structure
+            </label>
+            <label class="sm-checkbox">
+                <input type="checkbox" id="sm-swing" checked onchange="onSwingToggle()">
+                Show Swing Structure
             </label>
             <label class="sm-checkbox">
                 <input type="checkbox" id="sm-show-pivots" onchange="onShowPivotsChange()">
@@ -282,7 +286,8 @@
             </label>
             <div class="sm-control-item">
                 <label>Swings Points:</label>
-                <input type="number" value="50" disabled style="width:50px">
+                <input type="number" id="sm-swings-input" value="50" min="10" max="200" style="width:55px"
+                       onchange="onSwingsPointsChange()">
             </div>
             <div class="sm-control-item">
                 <label>Alert mode:</label>
@@ -342,12 +347,46 @@ let currentSymbol = null;
 let activeLines = [];   // line series we draw for BOS/CHoCH
 let activeMarkers = []; // labels
 let showPivots = false; // HH/HL/LH/LL toggle, default OFF
+let showInternal = true;  // Internal Structure (size=5), default ON
+let showSwing = true;     // Swing Structure (size=50), default ON
+let swingPoints = 50;     // currently selected swing size
 
 function onShowPivotsChange() {
     showPivots = document.getElementById('sm-show-pivots').checked;
-    // Force structure redraw on next loadChart by clearing the cached key
     lastEventsKey = '';
     if (currentSymbol) loadChart();
+}
+
+function onInternalToggle() {
+    showInternal = document.getElementById('sm-internal').checked;
+    lastEventsKey = '';
+    if (currentSymbol) loadChart();
+}
+
+function onSwingToggle() {
+    showSwing = document.getElementById('sm-swing').checked;
+    lastEventsKey = '';
+    if (currentSymbol) loadChart();
+}
+
+async function onSwingsPointsChange() {
+    const val = parseInt(document.getElementById('sm-swings-input').value);
+    if (isNaN(val) || val < 10 || val > 200) {
+        document.getElementById('sm-swings-input').value = swingPoints;
+        return;
+    }
+    swingPoints = val;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({swing_size: val}),
+        });
+        // Force chart reload to pick up new swing analysis
+        lastChartSymbol = null;
+        lastEventsKey = '';
+        if (currentSymbol) loadChart();
+    } catch (err) { alert('Settings update error: ' + err); }
 }
 
 // === Watchlist ===
@@ -445,6 +484,9 @@ async function loadSettings() {
         const d = await res.json();
         if (d.settings) {
             document.getElementById('sm-alert-mode').value = d.settings.alert_mode || 'choch';
+            const ss = d.settings.swing_size || 50;
+            swingPoints = ss;
+            document.getElementById('sm-swings-input').value = ss;
         }
     } catch (err) {}
 }
@@ -561,8 +603,12 @@ async function loadChart() {
         }
         
         const ohlc = d.ohlc;
-        const events = d.events || [];
-        const pivots = d.pivots || [];
+        const internalEvents = d.events || [];
+        const internalPivots = d.pivots || [];
+        const swingEvents = d.swing_events || [];
+        const swingPivotsArr = d.swing_pivots || [];
+        const strongHigh = d.strong_high;
+        const weakLow = d.weak_low;
         
         // === Candles ===
         if (isSymbolChange) {
@@ -586,7 +632,10 @@ async function loadChart() {
         lastOhlcLength = ohlc.length;
         
         // === Structure (only redraw if changed) ===
-        const eventsKey = (showPivots ? 'P' : 'N') + '|' + events.map(e => `${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|');
+        // Cache key includes which structures are visible + pivots toggle
+        const intKey = showInternal ? internalEvents.map(e => `i${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|') : '';
+        const swKey = showSwing ? swingEvents.map(e => `s${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|') : '';
+        const eventsKey = (showPivots ? 'P' : 'N') + '|' + intKey + '||' + swKey;
         const structureChanged = (eventsKey !== lastEventsKey) || isSymbolChange;
         
         if (structureChanged) {
@@ -594,49 +643,146 @@ async function loadChart() {
             activeLines.forEach(s => chart.removeSeries(s));
             activeLines = [];
             
-            // Draw BOS/CHoCH events
-            for (const ev of events) {
-                const color = ev.dir === 'bull' ? '#4ade80' : '#ef4444';
-                const isCHoCH = ev.tag === 'CHoCH';
-                const lineSeries = chart.addLineSeries({
-                    color: color,
-                    lineWidth: 1,
-                    lineStyle: isCHoCH ? 2 : 0,
-                    priceLineVisible: false,
-                    lastValueVisible: false,
-                    crosshairMarkerVisible: false,
-                });
-                lineSeries.setData([
-                    { time: ev.from_time, value: ev.level },
-                    { time: ev.to_time, value: ev.level },
-                ]);
-                activeLines.push(lineSeries);
+            const markers = [];
+            
+            // === INTERNAL STRUCTURE (size=5, thinner lines, smaller labels) ===
+            if (showInternal) {
+                for (const ev of internalEvents) {
+                    const color = ev.dir === 'bull' ? '#4ade80' : '#ef4444';
+                    const isCHoCH = ev.tag === 'CHoCH';
+                    const lineSeries = chart.addLineSeries({
+                        color: color,
+                        lineWidth: 1,
+                        lineStyle: isCHoCH ? 2 : 0,  // dashed for CHoCH, solid for BOS
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        crosshairMarkerVisible: false,
+                    });
+                    lineSeries.setData([
+                        { time: ev.from_time, value: ev.level },
+                        { time: ev.to_time, value: ev.level },
+                    ]);
+                    activeLines.push(lineSeries);
+                    
+                    markers.push({
+                        time: ev.to_time,
+                        position: ev.dir === 'bull' ? 'aboveBar' : 'belowBar',
+                        color: color,
+                        shape: ev.dir === 'bull' ? 'arrowDown' : 'arrowUp',
+                        text: ev.tag,
+                    });
+                }
+                
+                // Internal pivots (yellow) when toggle ON
+                if (showPivots) {
+                    for (const p of internalPivots) {
+                        const isHigh = (p.type === 'HH' || p.type === 'LH');
+                        markers.push({
+                            time: p.time,
+                            position: isHigh ? 'aboveBar' : 'belowBar',
+                            color: '#facc15',
+                            shape: 'circle',
+                            text: p.type,
+                            size: 0,
+                        });
+                    }
+                }
             }
             
-            // Markers
-            const markers = [];
-            for (const ev of events) {
-                // Bullish events break upward through pivot HIGH → label sits above bar, arrow pointing DOWN to the bar
-                // Bearish events break downward through pivot LOW → label sits below bar, arrow pointing UP to the bar
-                markers.push({
-                    time: ev.to_time,
-                    position: ev.dir === 'bull' ? 'aboveBar' : 'belowBar',
-                    color: ev.dir === 'bull' ? '#4ade80' : '#ef4444',
-                    shape: ev.dir === 'bull' ? 'arrowDown' : 'arrowUp',
-                    text: ev.tag,
-                });
-            }
-            for (const p of pivots) {
-                if (!showPivots) continue;
-                const isHigh = (p.type === 'HH' || p.type === 'LH');
-                markers.push({
-                    time: p.time,
-                    position: isHigh ? 'aboveBar' : 'belowBar',
-                    color: '#facc15',  // yellow
-                    shape: 'circle',
-                    text: p.type,
-                    size: 0,
-                });
+            // === SWING STRUCTURE (size=swingPoints, thicker lines, bigger labels) ===
+            if (showSwing) {
+                for (const ev of swingEvents) {
+                    const color = ev.dir === 'bull' ? '#22c55e' : '#dc2626';
+                    const isCHoCH = ev.tag === 'CHoCH';
+                    const lineSeries = chart.addLineSeries({
+                        color: color,
+                        lineWidth: 2,
+                        lineStyle: isCHoCH ? 2 : 0,
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        crosshairMarkerVisible: false,
+                    });
+                    lineSeries.setData([
+                        { time: ev.from_time, value: ev.level },
+                        { time: ev.to_time, value: ev.level },
+                    ]);
+                    activeLines.push(lineSeries);
+                    
+                    markers.push({
+                        time: ev.to_time,
+                        position: ev.dir === 'bull' ? 'aboveBar' : 'belowBar',
+                        color: color,
+                        shape: ev.dir === 'bull' ? 'arrowDown' : 'arrowUp',
+                        text: ev.tag.toUpperCase(),  // bigger via uppercase styling
+                    });
+                }
+                
+                // Strong High & Weak Low — like in TradingView
+                if (strongHigh) {
+                    // Horizontal line from pivot extending right
+                    const lineSeries = chart.addLineSeries({
+                        color: '#dc2626',
+                        lineWidth: 1,
+                        lineStyle: 0,
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        crosshairMarkerVisible: false,
+                    });
+                    const lastTime = ohlc.length > 0 ? ohlc[ohlc.length - 1].time : strongHigh.time;
+                    lineSeries.setData([
+                        { time: strongHigh.time, value: strongHigh.price },
+                        { time: lastTime, value: strongHigh.price },
+                    ]);
+                    activeLines.push(lineSeries);
+                    
+                    markers.push({
+                        time: strongHigh.time,
+                        position: 'aboveBar',
+                        color: '#dc2626',
+                        shape: 'arrowDown',
+                        text: 'Strong High',
+                    });
+                }
+                
+                if (weakLow) {
+                    const lineSeries = chart.addLineSeries({
+                        color: '#22c55e',
+                        lineWidth: 1,
+                        lineStyle: 0,
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        crosshairMarkerVisible: false,
+                    });
+                    const lastTime = ohlc.length > 0 ? ohlc[ohlc.length - 1].time : weakLow.time;
+                    lineSeries.setData([
+                        { time: weakLow.time, value: weakLow.price },
+                        { time: lastTime, value: weakLow.price },
+                    ]);
+                    activeLines.push(lineSeries);
+                    
+                    markers.push({
+                        time: weakLow.time,
+                        position: 'belowBar',
+                        color: '#22c55e',
+                        shape: 'arrowUp',
+                        text: 'Weak Low',
+                    });
+                }
+                
+                // Swing pivots (orange) when toggle ON
+                if (showPivots) {
+                    for (const p of swingPivotsArr) {
+                        const isHigh = (p.type === 'HH' || p.type === 'LH');
+                        markers.push({
+                            time: p.time,
+                            position: isHigh ? 'aboveBar' : 'belowBar',
+                            color: '#fb923c',  // orange — distinct from internal yellow
+                            shape: 'circle',
+                            text: p.type,
+                            size: 0,
+                        });
+                    }
+                }
             }
             markers.sort((a, b) => a.time - b.time);
             candleSeries.setMarkers(markers);
@@ -664,7 +810,7 @@ async function loadChart() {
         
         const lastUpdate = new Date((d.updated_at || 0) * 1000);
         document.getElementById('sm-chart-meta').textContent =
-            `${d.klines_count} bars · ${events.length} events · ${pivots.length} pivots · ${lastUpdate.toLocaleTimeString()}`;
+            `${d.klines_count} bars · INT: ${internalEvents.length}ev/${internalPivots.length}p · SW: ${swingEvents.length}ev/${swingPivotsArr.length}p · ${lastUpdate.toLocaleTimeString()}`;
         
         // === ONLY fit content on symbol change — preserve user zoom otherwise ===
         if (isSymbolChange) {

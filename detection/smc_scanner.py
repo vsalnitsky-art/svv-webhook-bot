@@ -48,6 +48,7 @@ DEFAULT_SETTINGS = {
     'alert_mode': DEFAULT_ALERT_MODE,
     'interval_secs': DEFAULT_INTERVAL_SECS,
     'telegram_alerts': True,
+    'swing_size': 50,  # Pine default for Swing Structure
 }
 
 
@@ -197,7 +198,7 @@ class SMCScanner:
     
     def update_settings(self, new: Dict) -> Dict:
         with self._lock:
-            allowed = ['enabled', 'alert_mode', 'interval_secs', 'telegram_alerts']
+            allowed = ['enabled', 'alert_mode', 'interval_secs', 'telegram_alerts', 'swing_size']
             for k in allowed:
                 if k in new:
                     self._settings[k] = new[k]
@@ -211,6 +212,12 @@ class SMCScanner:
                 self._settings['interval_secs'] = max(30, min(600, int(self._settings.get('interval_secs', 60))))
             except:
                 self._settings['interval_secs'] = DEFAULT_INTERVAL_SECS
+            
+            # Clamp swing_size — Pine minval is 10
+            try:
+                self._settings['swing_size'] = max(10, min(200, int(self._settings.get('swing_size', 50))))
+            except:
+                self._settings['swing_size'] = 50
             
             self._persist_settings()
             return dict(self._settings)
@@ -305,10 +312,12 @@ class SMCScanner:
                 # │ stability — no signal until the bar is actually closed. │
                 # │ This is exactly how TV indicators behave.               │
                 # └─────────────────────────────────────────────────────────┘
-                result_full = detect_smc_structure(klines, internal_size=5)
+                result_full = detect_smc_structure(klines, internal_size=5,
+                                                     swing_size=int(self._settings.get('swing_size', 50)))
                 
                 klines_closed = klines[:-1] if len(klines) > 1 else klines
-                result_closed = detect_smc_structure(klines_closed, internal_size=5)
+                result_closed = detect_smc_structure(klines_closed, internal_size=5,
+                                                       swing_size=int(self._settings.get('swing_size', 50)))
                 
                 # Cache full klines + full structure for chart display
                 with self._lock:
@@ -503,7 +512,8 @@ class SMCScanner:
             
             # On-demand chart fetch: use full klines (incl. live bar) so the
             # chart shows what TradingView would show in real time.
-            analysis = detect_smc_structure(klines, internal_size=5)
+            analysis = detect_smc_structure(klines, internal_size=5,
+                                              swing_size=int(self._settings.get('swing_size', 50)))
             
             with self._lock:
                 self._cache[symbol] = {
@@ -533,6 +543,7 @@ class SMCScanner:
             })
         
         internal = analysis.get('internal', {})
+        swing = analysis.get('swing', {})
         
         # Format pivots and events with timestamps in seconds
         def to_sec(t):
@@ -540,31 +551,59 @@ class SMCScanner:
                 return 0
             return int(t // 1000) if t > 1e12 else int(t)
         
-        pivots = []
-        for p in internal.get('pivots', []):
-            pivots.append({
+        def fmt_pivots(struct):
+            return [{
                 'time': to_sec(p.get('t')),
                 'price': p.get('price'),
                 'type': p.get('type'),
-            })
+            } for p in struct.get('pivots', [])]
         
-        events = []
-        for e in internal.get('events', []):
-            events.append({
+        def fmt_events(struct):
+            return [{
                 'from_time': to_sec(e.get('from_t')),
                 'to_time': to_sec(e.get('to_t')),
                 'level': e.get('level'),
                 'tag': e.get('tag'),
                 'dir': e.get('dir'),
-            })
+            } for e in struct.get('events', [])]
+        
+        # Strong High / Weak Low — the last swing pivot in the active trend dir,
+        # marked as "strong" if the trend is going through it without breaking
+        # opposite direction. For simplicity: just mark the most recent unbroken
+        # swing high and low.
+        strong_high = None  # last LH or HH that hasn't been crossed bullishly
+        weak_low = None
+        if swing.get('pivots'):
+            for p in reversed(swing['pivots']):
+                if p['type'] in ('HH', 'LH') and strong_high is None:
+                    strong_high = {
+                        'time': to_sec(p.get('t')),
+                        'price': p.get('price'),
+                        'type': p.get('type'),
+                    }
+                if p['type'] in ('HL', 'LL') and weak_low is None:
+                    weak_low = {
+                        'time': to_sec(p.get('t')),
+                        'price': p.get('price'),
+                        'type': p.get('type'),
+                    }
+                if strong_high and weak_low:
+                    break
         
         return {
             'symbol': symbol,
             'interval': TIMEFRAME,
             'ohlc': ohlc,
-            'pivots': pivots,
-            'events': events,
+            # Internal Structure (size=5)
+            'pivots': fmt_pivots(internal),
+            'events': fmt_events(internal),
             'trend': internal.get('trend', 0),
+            # Swing Structure (size=swing_size)
+            'swing_pivots': fmt_pivots(swing),
+            'swing_events': fmt_events(swing),
+            'swing_trend': swing.get('trend', 0),
+            'strong_high': strong_high,
+            'weak_low': weak_low,
             'klines_count': len(ohlc),
             'updated_at': int(time.time()),
         }
