@@ -65,6 +65,14 @@ class SMCScanner:
         # Identifier = (from_t, level, tag) tuple as string
         self._last_alerted: Dict[str, str] = {}
         
+        # Track which symbols have completed their first scan.
+        # On the first scan we only RECORD existing events as "already seen",
+        # but do NOT send alerts. This prevents spam at startup or when a
+        # symbol is added to the watchlist.
+        # {symbol: set_of_event_ids_seen_on_first_scan}
+        self._first_scan_done: Dict[str, bool] = {}
+        self._seen_events: Dict[str, set] = {}  # {symbol: {ev_id, ...}}
+        
         self._scan_count = 0
         self._errors = 0
         
@@ -154,6 +162,8 @@ class SMCScanner:
                 self._persist_watchlist()
                 # Clean up state
                 self._pending_choch.pop(symbol, None)
+                self._first_scan_done.pop(symbol, None)
+                self._seen_events.pop(symbol, None)
                 for k in list(self._last_alerted.keys()):
                     if k.startswith(f"{symbol}:"):
                         del self._last_alerted[k]
@@ -302,47 +312,85 @@ class SMCScanner:
         
         events = result.get('internal', {}).get('events', [])
         if not events:
+            self._first_scan_done[symbol] = True
             return
         
-        # Latest event
-        latest = events[-1]
-        ev_id = f"{symbol}:{latest['from_t']}:{latest['level']}:{latest['tag']}:{latest['dir']}"
+        # Build event IDs for ALL events
+        # Each event is uniquely identified by (from_t, level, tag, dir).
+        def ev_id(e):
+            return f"{e.get('from_t')}:{round(e.get('level', 0), 8)}:{e.get('tag')}:{e.get('dir')}"
+        
+        seen = self._seen_events.setdefault(symbol, set())
+        is_first_scan = not self._first_scan_done.get(symbol, False)
+        
+        # Determine NEW events: those whose IDs aren't in `seen` yet
+        new_events = []
+        for ev in events:
+            eid = ev_id(ev)
+            if eid not in seen:
+                new_events.append((eid, ev))
+                seen.add(eid)
+        
+        # Bound the seen set to avoid unbounded growth (keep last 200)
+        if len(seen) > 200:
+            # Drop oldest by re-syncing to the latest 200 events on the chart
+            recent_ids = {ev_id(e) for e in events[-200:]}
+            self._seen_events[symbol] = recent_ids
+        
+        if is_first_scan:
+            # On first scan we only RECORD existing events; never alert.
+            # Mark scan as done and exit.
+            self._first_scan_done[symbol] = True
+            
+            # In choch_bos mode, also seed pending CHoCH if the latest event
+            # is a fresh-looking CHoCH (so a future BOS confirms it correctly).
+            mode = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
+            if mode == 'choch_bos' and events:
+                latest = events[-1]
+                if latest.get('tag') == 'CHoCH':
+                    self._pending_choch[symbol] = {
+                        'from_t': latest['from_t'],
+                        'level': latest['level'],
+                        'dir': latest['dir'],
+                        'choch_event': latest,
+                    }
+            
+            print(f"[SMC] {symbol}: first scan recorded {len(events)} historical events "
+                  f"(no alerts sent)")
+            return
+        
+        if not new_events:
+            return  # nothing changed since last scan
         
         mode = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
         
-        if mode == 'choch':
-            # Alert on every new CHoCH
-            if latest['tag'] == 'CHoCH':
-                if self._last_alerted.get(symbol + ':last_choch') == ev_id:
-                    return  # already alerted
-                self._last_alerted[symbol + ':last_choch'] = ev_id
-                self._send_alert(symbol, latest, mode='choch')
-        
-        elif mode == 'choch_bos':
-            # Track CHoCH and wait for confirming BOS in same direction
-            if latest['tag'] == 'CHoCH':
-                # Remember this CHoCH; do NOT alert yet
-                self._pending_choch[symbol] = {
-                    'from_t': latest['from_t'],
-                    'level': latest['level'],
-                    'dir': latest['dir'],
-                    'choch_event': latest,
-                }
-            elif latest['tag'] == 'BOS':
-                pending = self._pending_choch.get(symbol)
-                if pending and pending['dir'] == latest['dir']:
-                    # CHoCH confirmed by BOS in same direction
-                    confirm_id = f"{symbol}:{pending['from_t']}:CHoCH+BOS"
-                    if self._last_alerted.get(symbol + ':last_confirmed') == confirm_id:
-                        return
-                    self._last_alerted[symbol + ':last_confirmed'] = confirm_id
-                    self._send_alert(symbol, latest, mode='choch_bos',
-                                     choch_event=pending['choch_event'])
-                    # Clear the pending CHoCH (one BOS confirms it once)
-                    self._pending_choch.pop(symbol, None)
-                elif pending and pending['dir'] != latest['dir']:
-                    # Opposite direction BOS — invalidates pending CHoCH
-                    self._pending_choch.pop(symbol, None)
+        # Process new events in chronological order (oldest first)
+        for _, ev in new_events:
+            tag = ev.get('tag')
+            
+            if mode == 'choch':
+                if tag == 'CHoCH':
+                    self._send_alert(symbol, ev, mode='choch')
+            
+            elif mode == 'choch_bos':
+                if tag == 'CHoCH':
+                    # Remember CHoCH but don't alert yet
+                    self._pending_choch[symbol] = {
+                        'from_t': ev['from_t'],
+                        'level': ev['level'],
+                        'dir': ev['dir'],
+                        'choch_event': ev,
+                    }
+                elif tag == 'BOS':
+                    pending = self._pending_choch.get(symbol)
+                    if pending and pending['dir'] == ev['dir']:
+                        # BOS confirms CHoCH in same direction
+                        self._send_alert(symbol, ev, mode='choch_bos',
+                                          choch_event=pending['choch_event'])
+                        self._pending_choch.pop(symbol, None)
+                    elif pending and pending['dir'] != ev['dir']:
+                        # Opposite BOS invalidates pending CHoCH
+                        self._pending_choch.pop(symbol, None)
     
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:

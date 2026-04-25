@@ -416,6 +416,10 @@ async function removeSymbol(sym) {
 async function selectSymbol(sym) {
     if (currentSymbol === sym) return;
     currentSymbol = sym;
+    // Reset incremental tracking so new symbol triggers full setData + fitContent
+    lastChartSymbol = null;
+    lastOhlcLength = 0;
+    lastEventsKey = '';
     document.querySelectorAll('.sm-wl-item').forEach(el => {
         el.classList.toggle('active', el.dataset.symbol === sym);
     });
@@ -504,13 +508,24 @@ function clearChart() {
     document.getElementById('sm-chart-meta').textContent = '';
 }
 
+// Track last loaded data to enable incremental updates
+let lastChartSymbol = null;
+let lastOhlcLength = 0;
+let lastEventsKey = '';
+let userInteractedWithChart = false;
+
 async function loadChart() {
     if (!currentSymbol) return;
     
     ensureChart();
     document.getElementById('sm-empty').style.display = 'none';
     document.getElementById('sm-chart-title').textContent = `${currentSymbol} · 15M`;
-    document.getElementById('sm-chart-meta').textContent = 'Loading...';
+    
+    const isSymbolChange = (lastChartSymbol !== currentSymbol);
+    if (isSymbolChange) {
+        document.getElementById('sm-chart-meta').textContent = 'Loading...';
+        userInteractedWithChart = false;
+    }
     
     try {
         const res = await fetch(`/api/smc/chart?symbol=${currentSymbol}`);
@@ -521,65 +536,87 @@ async function loadChart() {
             return;
         }
         
-        // Set candles
-        candleSeries.setData(d.ohlc);
-        
-        // Clear old structure lines
-        activeLines.forEach(s => chart.removeSeries(s));
-        activeLines = [];
-        
-        // Draw BOS/CHoCH events as horizontal lines from pivot to crossing bar
+        const ohlc = d.ohlc;
         const events = d.events || [];
-        for (const ev of events) {
-            const color = ev.dir === 'bull' ? '#4ade80' : '#ef4444';
-            const isCHoCH = ev.tag === 'CHoCH';
-            // Use a separate line series for each event
-            const lineSeries = chart.addLineSeries({
-                color: color,
-                lineWidth: 1,
-                lineStyle: isCHoCH ? 2 : 0,  // dashed for CHoCH, solid for BOS
-                priceLineVisible: false,
-                lastValueVisible: false,
-                crosshairMarkerVisible: false,
-            });
-            lineSeries.setData([
-                { time: ev.from_time, value: ev.level },
-                { time: ev.to_time, value: ev.level },
-            ]);
-            activeLines.push(lineSeries);
-        }
-        
-        // Draw markers (BOS/CHoCH labels at the crossing bar)
-        const markers = [];
-        for (const ev of events) {
-            markers.push({
-                time: ev.to_time,
-                position: ev.dir === 'bull' ? 'belowBar' : 'aboveBar',
-                color: ev.dir === 'bull' ? '#4ade80' : '#ef4444',
-                shape: 'arrowUp',
-                text: ev.tag,
-            });
-        }
-        
-        // Add pivot HH/HL/LH/LL markers (smaller, dimmer)
         const pivots = d.pivots || [];
-        for (const p of pivots) {
-            const isHigh = (p.type === 'HH' || p.type === 'LH');
-            markers.push({
-                time: p.time,
-                position: isHigh ? 'aboveBar' : 'belowBar',
-                color: 'rgba(255,255,255,0.4)',
-                shape: 'circle',
-                text: p.type,
-                size: 0,  // tiny
-            });
+        
+        // === Candles ===
+        if (isSymbolChange) {
+            // New symbol — full reset and fit
+            candleSeries.setData(ohlc);
+            // Save viewport state for restoration after structure redraw
+        } else {
+            // Same symbol — incremental update to preserve user's zoom/pan
+            // Find any new bars not in our previous load
+            if (ohlc.length > lastOhlcLength) {
+                // New bar(s) appeared — update only the tail
+                for (let i = lastOhlcLength; i < ohlc.length; i++) {
+                    candleSeries.update(ohlc[i]);
+                }
+            }
+            // Always update the last bar in case its OHLC values changed (live bar)
+            if (ohlc.length > 0) {
+                candleSeries.update(ohlc[ohlc.length - 1]);
+            }
         }
+        lastOhlcLength = ohlc.length;
         
-        // Lightweight Charts requires markers sorted by time
-        markers.sort((a, b) => a.time - b.time);
-        candleSeries.setMarkers(markers);
+        // === Structure (only redraw if changed) ===
+        const eventsKey = events.map(e => `${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|');
+        const structureChanged = (eventsKey !== lastEventsKey) || isSymbolChange;
         
-        // Trend badge
+        if (structureChanged) {
+            // Remove old lines
+            activeLines.forEach(s => chart.removeSeries(s));
+            activeLines = [];
+            
+            // Draw BOS/CHoCH events
+            for (const ev of events) {
+                const color = ev.dir === 'bull' ? '#4ade80' : '#ef4444';
+                const isCHoCH = ev.tag === 'CHoCH';
+                const lineSeries = chart.addLineSeries({
+                    color: color,
+                    lineWidth: 1,
+                    lineStyle: isCHoCH ? 2 : 0,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                });
+                lineSeries.setData([
+                    { time: ev.from_time, value: ev.level },
+                    { time: ev.to_time, value: ev.level },
+                ]);
+                activeLines.push(lineSeries);
+            }
+            
+            // Markers
+            const markers = [];
+            for (const ev of events) {
+                markers.push({
+                    time: ev.to_time,
+                    position: ev.dir === 'bull' ? 'belowBar' : 'aboveBar',
+                    color: ev.dir === 'bull' ? '#4ade80' : '#ef4444',
+                    shape: 'arrowUp',
+                    text: ev.tag,
+                });
+            }
+            for (const p of pivots) {
+                const isHigh = (p.type === 'HH' || p.type === 'LH');
+                markers.push({
+                    time: p.time,
+                    position: isHigh ? 'aboveBar' : 'belowBar',
+                    color: 'rgba(255,255,255,0.4)',
+                    shape: 'circle',
+                    text: p.type,
+                    size: 0,
+                });
+            }
+            markers.sort((a, b) => a.time - b.time);
+            candleSeries.setMarkers(markers);
+        }
+        lastEventsKey = eventsKey;
+        
+        // === Trend badge ===
         const trendBadge = document.getElementById('sm-trend-badge');
         if (d.trend === 1) {
             trendBadge.textContent = '🟢 BULLISH';
@@ -593,23 +630,33 @@ async function loadChart() {
             trendBadge.style.display = 'none';
         }
         
-        // Update watchlist trend dots
         const dot = document.getElementById('dot-' + currentSymbol);
         if (dot) {
             dot.className = 'trend-dot ' + (d.trend === 1 ? 'bull' : d.trend === -1 ? 'bear' : '');
         }
         
-        // Meta
         const lastUpdate = new Date((d.updated_at || 0) * 1000);
         document.getElementById('sm-chart-meta').textContent =
             `${d.klines_count} bars · ${events.length} events · ${pivots.length} pivots · ${lastUpdate.toLocaleTimeString()}`;
         
-        // Auto-fit
-        chart.timeScale().fitContent();
+        // === ONLY fit content on symbol change — preserve user zoom otherwise ===
+        if (isSymbolChange) {
+            chart.timeScale().fitContent();
+        }
+        
+        lastChartSymbol = currentSymbol;
     } catch (err) {
         document.getElementById('sm-chart-meta').textContent = 'Error: ' + err.message;
         console.error('Chart load error:', err);
     }
+}
+
+// Track user interactions to know they zoomed/panned
+function setupChartInteractionTracking() {
+    if (!chart) return;
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+        userInteractedWithChart = true;
+    });
 }
 
 // === Status ===
