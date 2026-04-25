@@ -263,8 +263,11 @@ def _check_crossover_events(klines, i, state, events_out,
     if hp['level'] is not None and not hp['crossed']:
         if close_now > hp['level'] and close_prev <= hp['level']:
             # Internal filter (Pine line 691):
-            # extraCondition = internalHigh.currentLevel != swingHigh.currentLevel
-            #                  AND bullishBar
+            #   extraCondition = internalHigh.currentLevel != swingHigh.currentLevel
+            #                    AND bullishBar
+            # If extraCondition is FALSE in Pine, the entire block is skipped:
+            #   pivot.crossed stays false, trend.bias unchanged, no event.
+            # Next bar gets another chance.
             ok = True
             if extra_filter and swing_state is not None:
                 sw_h = swing_state['high_pivot']['level']
@@ -283,11 +286,7 @@ def _check_crossover_events(klines, i, state, events_out,
                 events_out.append(ev)
                 hp['crossed'] = True
                 state['trend_bias'] = BULLISH
-            else:
-                # Mark crossed even when filtered, so we don't re-trigger
-                hp['crossed'] = True
-                # Trend bias still flips per Pine (line 705 unconditional)
-                state['trend_bias'] = BULLISH
+            # else: do nothing — pivot stays uncrossed, trend stays put
     
     # Bearish crossover
     if lp['level'] is not None and not lp['crossed']:
@@ -310,9 +309,7 @@ def _check_crossover_events(klines, i, state, events_out,
                 events_out.append(ev)
                 lp['crossed'] = True
                 state['trend_bias'] = BEARISH
-            else:
-                lp['crossed'] = True
-                state['trend_bias'] = BEARISH
+            # else: do nothing — pivot stays uncrossed, trend stays put
 
 
 def _last_with_tag(events, tag):
