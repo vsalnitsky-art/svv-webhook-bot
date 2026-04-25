@@ -35,8 +35,9 @@ from typing import Dict, List, Optional
 # Defaults
 DEFAULT_INTERVAL_SECS = 60
 DEFAULT_ALERT_MODE = 'choch'  # 'choch' or 'choch_bos'
-KLINES_LIMIT = 500            # bars to fetch per scan (~5 days of 15m data)
-TIMEFRAME = '15m'
+KLINES_LIMIT = 700            # bars to fetch per scan (~2.4 days of 5m data)
+TIMEFRAME = '5m'              # finer timeframe for more granular SMC structure
+DISPLAY_LABEL = '5M'          # what users see in UI / Telegram (uppercase)
 MAX_WATCHLIST = 50
 
 DB_KEY_WATCHLIST = 'smc_watchlist'
@@ -286,7 +287,8 @@ class SMCScanner:
                 return
             try:
                 # Fetch 15m klines
-                klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval='15m') \
+                # Fetch klines at configured timeframe
+                klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=TIMEFRAME) \
                     if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames \
                     else md.fetch_klines(symbol, limit=KLINES_LIMIT)
                 
@@ -394,12 +396,12 @@ class SMCScanner:
             return  # nothing changed since last scan
         
         # === Recency guard ===
-        # Only alert on events whose `to_t` (the bar where BOS/CHoCH was
-        # confirmed by close cross) is within the LAST FEW closed bars.
-        # This protects against alerts on events that "appeared" from history
-        # due to algorithm re-evaluation.
-        # 15m timeframe → allow events from last 3 closed bars (45 min).
-        recent_threshold_secs = 60 * 60  # 1 hour cushion
+        # Only alert on events whose `to_t` (bar where BOS/CHoCH was confirmed
+        # by close cross) is within the last few closed bars.
+        # 5m timeframe → 30 min window (6 closed bars) is plenty fresh,
+        # filters out events that "appeared" from history due to algorithm
+        # re-evaluation across scans.
+        recent_threshold_secs = 30 * 60  # 30 minutes
         now_ms = int(time.time() * 1000)
         
         mode = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
@@ -463,7 +465,7 @@ class SMCScanner:
                     f"━━━━━━━━━━━━━━━━\n"
                     f"{dir_icon} {dir_label} change of character\n"
                     f"📍 Level: {level_str}\n"
-                    f"⏱ {TIMEFRAME} · {now_str}"
+                    f"⏱ {DISPLAY_LABEL} · {now_str}"
                 )
             else:  # choch_bos
                 choch_level = choch_event.get('level', 0) if choch_event else 0
@@ -474,7 +476,7 @@ class SMCScanner:
                     f"{dir_icon} {dir_label} structure confirmed\n"
                     f"🔄 CHoCH: {choch_str}\n"
                     f"💥 BOS: {level_str}\n"
-                    f"⏱ {TIMEFRAME} · {now_str}"
+                    f"⏱ {DISPLAY_LABEL} · {now_str}"
                 )
             
             self.notifier.send_message(msg)
@@ -503,7 +505,7 @@ class SMCScanner:
             from detection.smc_structure import detect_smc_structure
             
             md = get_market_data()
-            klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval='15m') \
+            klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=TIMEFRAME) \
                 if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames \
                 else md.fetch_klines(symbol, limit=KLINES_LIMIT)
             
@@ -592,7 +594,7 @@ class SMCScanner:
         
         return {
             'symbol': symbol,
-            'interval': TIMEFRAME,
+            'interval': DISPLAY_LABEL,
             'ohlc': ohlc,
             # Internal Structure (size=5)
             'pivots': fmt_pivots(internal),

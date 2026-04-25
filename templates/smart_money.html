@@ -542,7 +542,7 @@ async function loadChart() {
     
     ensureChart();
     document.getElementById('sm-empty').style.display = 'none';
-    document.getElementById('sm-chart-title').textContent = `${currentSymbol} · 15M`;
+    document.getElementById('sm-chart-title').textContent = `${currentSymbol} · …`;
     
     const isSymbolChange = (lastChartSymbol !== currentSymbol);
     if (isSymbolChange) {
@@ -558,6 +558,9 @@ async function loadChart() {
             document.getElementById('sm-chart-meta').textContent = `Error: ${d.error || 'No data'}`;
             return;
         }
+        
+        // Update title with actual timeframe from server
+        document.getElementById('sm-chart-title').textContent = `${currentSymbol} · ${d.interval || '5M'}`;
         
         const ohlc = d.ohlc;
         const internalEvents = d.events || [];
