@@ -74,15 +74,19 @@ def detect_smc_structure(klines: List[Dict], internal_size: int = 5,
     if not klines or len(klines) < internal_size + 2:
         return _empty_result(klines)
     
-    internal = _process_structure(klines, internal_size, label='internal')
-    
-    # Swing computed but currently disabled in UI — keep logic ready
-    swing = _process_structure(klines, swing_size, label='swing') \
-        if len(klines) >= swing_size + 2 else _empty_struct()
+    # Pine processes Internal and Swing in parallel because Internal events
+    # are filtered against current Swing levels (line 691 of Pine):
+    #   extraCondition = internalHigh.currentLevel != swingHigh.currentLevel
+    #                    and bullishBar
+    # This is why we run them together rather than two independent passes.
+    has_swing = len(klines) >= swing_size + 2
+    internal, swing = _process_structures_parallel(
+        klines, internal_size, swing_size if has_swing else None
+    )
     
     return {
         'internal': internal,
-        'swing': swing,
+        'swing': swing if has_swing else _empty_struct(),
         'klines_count': len(klines),
     }
 
@@ -105,16 +109,235 @@ def _empty_struct():
     }
 
 
+def _process_structures_parallel(klines: List[Dict], internal_size: int,
+                                  swing_size):
+    """Run Internal and Swing structure detection bar-by-bar in lockstep.
+    
+    This is required to match Pine: Internal BOS/CHoCH events are filtered
+    against the CURRENT Swing pivot level (extraCondition in Pine line 691),
+    plus a bullishBar/bearishBar filter on the crossover bar.
+    
+    Without this filter, our algorithm produces extra Internal events at the
+    same price levels as Swing pivots (e.g. the spurious CHoCH bull + BOS bear
+    seen between the genuine TV events).
+    """
+    n = len(klines)
+    
+    # Per-structure state
+    state_int = _new_struct_state()
+    state_sw = _new_struct_state() if swing_size else None
+    
+    pivots_int = []
+    events_int = []
+    pivots_sw = []
+    events_sw = []
+    
+    for i in range(max(internal_size, swing_size or 0), n):
+        bar = klines[i]
+        
+        # === Update Swing state first (so Internal can reference current Swing levels) ===
+        if swing_size and i >= swing_size:
+            _update_leg_and_pivots(klines, i, swing_size, state_sw, pivots_sw)
+            _check_crossover_events(klines, i, state_sw, events_sw,
+                                     extra_filter=False, bar_char_filter=False,
+                                     swing_state=None)
+        
+        # === Then update Internal ===
+        if i >= internal_size:
+            _update_leg_and_pivots(klines, i, internal_size, state_int, pivots_int)
+            # Internal applies extra filters: dedup vs swing level + bar character
+            _check_crossover_events(klines, i, state_int, events_int,
+                                     extra_filter=True, bar_char_filter=True,
+                                     swing_state=state_sw)
+    
+    internal = {
+        'pivots': pivots_int,
+        'events': events_int,
+        'trend': state_int['trend_bias'],
+        'last_bos': _last_with_tag(events_int, 'BOS'),
+        'last_choch': _last_with_tag(events_int, 'CHoCH'),
+    }
+    
+    swing = None
+    if state_sw is not None:
+        swing = {
+            'pivots': pivots_sw,
+            'events': events_sw,
+            'trend': state_sw['trend_bias'],
+            'last_bos': _last_with_tag(events_sw, 'BOS'),
+            'last_choch': _last_with_tag(events_sw, 'CHoCH'),
+        }
+    
+    return internal, swing
+
+
+def _new_struct_state():
+    return {
+        'leg_state': None,
+        'high_pivot': {'level': None, 'last_level': None, 'crossed': False,
+                        't': None, 'idx': None},
+        'low_pivot': {'level': None, 'last_level': None, 'crossed': False,
+                       't': None, 'idx': None},
+        'trend_bias': 0,
+    }
+
+
+def _update_leg_and_pivots(klines, i, size, state, pivots_out):
+    """Detect new leg/pivot at bar i with given size."""
+    candidate = klines[i - size]
+    c_high = candidate.get('h', candidate['p'])
+    c_low = candidate.get('l', candidate['p'])
+    
+    # Pine: ta.highest(size) on bar i = max of high[i-size+1 .. i]
+    window_highs = [klines[j].get('h', klines[j]['p']) for j in range(i - size + 1, i + 1)]
+    window_lows = [klines[j].get('l', klines[j]['p']) for j in range(i - size + 1, i + 1)]
+    max_h = max(window_highs) if window_highs else c_high
+    min_l = min(window_lows) if window_lows else c_low
+    
+    new_leg_high = c_high > max_h
+    new_leg_low = c_low < min_l
+    
+    prev_leg = state['leg_state']
+    if new_leg_high:
+        state['leg_state'] = BEARISH_LEG
+    elif new_leg_low:
+        state['leg_state'] = BULLISH_LEG
+    
+    # Pivot forms on any leg state transition (including from None)
+    new_pivot = (prev_leg is not None and 
+                 state['leg_state'] is not None and 
+                 state['leg_state'] != prev_leg)
+    
+    if not new_pivot:
+        return
+    
+    if state['leg_state'] == BULLISH_LEG:
+        lp = state['low_pivot']
+        lp['last_level'] = lp['level']
+        lp['level'] = c_low
+        lp['crossed'] = False
+        lp['t'] = candidate.get('t')
+        lp['idx'] = i - size
+        pt = 'HL' if (lp['last_level'] is not None and c_low > lp['last_level']) else 'LL'
+        pivots_out.append({
+            't': lp['t'], 'idx': lp['idx'], 'price': c_low, 'type': pt,
+        })
+    elif state['leg_state'] == BEARISH_LEG:
+        hp = state['high_pivot']
+        hp['last_level'] = hp['level']
+        hp['level'] = c_high
+        hp['crossed'] = False
+        hp['t'] = candidate.get('t')
+        hp['idx'] = i - size
+        pt = 'HH' if (hp['last_level'] is not None and c_high > hp['last_level']) else 'LH'
+        pivots_out.append({
+            't': hp['t'], 'idx': hp['idx'], 'price': c_high, 'type': pt,
+        })
+
+
+def _check_crossover_events(klines, i, state, events_out,
+                              extra_filter=False, bar_char_filter=False,
+                              swing_state=None):
+    """Check for BOS/CHoCH crossovers at bar i."""
+    if i < 1:
+        return
+    bar = klines[i]
+    close_now = bar['p']
+    close_prev = klines[i - 1]['p']
+    
+    # Bar character (Pine: bullishBar/bearishBar with internalFilterConfluenceInput=true)
+    # bullishBar: top wick smaller than bottom wick → buyer-dominated
+    # bearishBar: top wick larger than bottom wick → seller-dominated
+    h = bar.get('h', close_now)
+    l = bar.get('l', close_now)
+    o = bar.get('o', close_now)
+    top_wick = h - max(close_now, o)
+    bottom_wick = min(close_now, o) - l
+    bullish_bar = top_wick < bottom_wick
+    bearish_bar = top_wick > bottom_wick
+    
+    hp = state['high_pivot']
+    lp = state['low_pivot']
+    
+    # Bullish crossover
+    if hp['level'] is not None and not hp['crossed']:
+        if close_now > hp['level'] and close_prev <= hp['level']:
+            # Internal filter (Pine line 691):
+            # extraCondition = internalHigh.currentLevel != swingHigh.currentLevel
+            #                  AND bullishBar
+            ok = True
+            if extra_filter and swing_state is not None:
+                sw_h = swing_state['high_pivot']['level']
+                if sw_h is not None and abs(hp['level'] - sw_h) < 1e-12:
+                    ok = False
+            if bar_char_filter and not bullish_bar:
+                ok = False
+            
+            if ok:
+                tag = CHOCH if state['trend_bias'] == BEARISH else BOS
+                ev = {
+                    'from_t': hp['t'], 'from_idx': hp['idx'],
+                    'to_t': bar.get('t'), 'to_idx': i,
+                    'level': hp['level'], 'tag': tag, 'dir': 'bull',
+                }
+                events_out.append(ev)
+                hp['crossed'] = True
+                state['trend_bias'] = BULLISH
+            else:
+                # Mark crossed even when filtered, so we don't re-trigger
+                hp['crossed'] = True
+                # Trend bias still flips per Pine (line 705 unconditional)
+                state['trend_bias'] = BULLISH
+    
+    # Bearish crossover
+    if lp['level'] is not None and not lp['crossed']:
+        if close_now < lp['level'] and close_prev >= lp['level']:
+            ok = True
+            if extra_filter and swing_state is not None:
+                sw_l = swing_state['low_pivot']['level']
+                if sw_l is not None and abs(lp['level'] - sw_l) < 1e-12:
+                    ok = False
+            if bar_char_filter and not bearish_bar:
+                ok = False
+            
+            if ok:
+                tag = CHOCH if state['trend_bias'] == BULLISH else BOS
+                ev = {
+                    'from_t': lp['t'], 'from_idx': lp['idx'],
+                    'to_t': bar.get('t'), 'to_idx': i,
+                    'level': lp['level'], 'tag': tag, 'dir': 'bear',
+                }
+                events_out.append(ev)
+                lp['crossed'] = True
+                state['trend_bias'] = BEARISH
+            else:
+                lp['crossed'] = True
+                state['trend_bias'] = BEARISH
+
+
+def _last_with_tag(events, tag):
+    for e in reversed(events):
+        if e.get('tag') == tag:
+            return e
+    return None
+
+
 def _process_structure(klines: List[Dict], size: int, label: str = '') -> Dict:
     """Walk klines and detect structure.
     
     Mirrors Pine getCurrentStructure() + displayStructure() called bar-by-bar.
+    
+    IMPORTANT: Pine uses BULLISH_LEG=1 and BEARISH_LEG=0 (where 0 is a VALID
+    state, not "uninitialized"). To match Pine semantics exactly, we use
+    `leg_state = None` to mean "uninitialized" so we don't accidentally treat
+    BEARISH_LEG transitions as "first time".
     """
     n = len(klines)
     
-    # leg state
-    leg_state = 0  # 0 = none yet (Pine: var leg = 0)
-    prev_leg_state = 0
+    # leg state — None means uninitialized (Pine uses var leg = 0 but that's
+    # also BEARISH_LEG; we keep them distinct here)
+    leg_state = None
+    prev_leg_state = None
     
     # pivot storage (current = most recent confirmed pivot)
     high_pivot = {'level': None, 'last_level': None, 'crossed': False,
@@ -136,11 +359,9 @@ def _process_structure(klines: List[Dict], size: int, label: str = '') -> Dict:
         c_high = candidate.get('h', candidate['p'])
         c_low = candidate.get('l', candidate['p'])
         
-        # ta.highest(size) at bar i ≈ max of high[i-size..i-1]
+        # Pine: ta.highest(size) on bar i = max of high[i-size+1 .. i]
+        # (size bars including current, excluding the candidate at i-size)
         # newLegHigh = high[size] > ta.highest(size)
-        # In Pine: high[size] is the bar `size` back; ta.highest(size) returns
-        # the highest of the previous `size` bars (offsets 0..size-1).
-        # So we compare candidate.high to max(high[i-size+1 .. i])
         window_highs = [klines[j].get('h', klines[j]['p']) for j in range(i - size + 1, i + 1)]
         window_lows = [klines[j].get('l', klines[j]['p']) for j in range(i - size + 1, i + 1)]
         
@@ -152,12 +373,18 @@ def _process_structure(klines: List[Dict], size: int, label: str = '') -> Dict:
         
         prev_leg_state = leg_state
         if new_leg_high:
-            leg_state = BEARISH_LEG  # Pine: bearish leg = a new high formed
+            leg_state = BEARISH_LEG  # Pine: bearish leg = a new high formed (=0)
         elif new_leg_low:
-            leg_state = BULLISH_LEG
+            leg_state = BULLISH_LEG  # =1
+        # else: leg_state unchanged (Pine: leg keeps prior value)
         
-        new_pivot = (leg_state != prev_leg_state) and prev_leg_state != 0 or \
-                    (prev_leg_state == 0 and leg_state != 0)
+        # Pine startOfNewLeg: ta.change(leg) != 0
+        # In our case: pivot is created on EVERY transition — including the
+        # very first transition from None (uninitialized) to a valid state,
+        # AND any transition between BEARISH_LEG (0) and BULLISH_LEG (1).
+        new_pivot = (prev_leg_state is not None and 
+                     leg_state is not None and 
+                     leg_state != prev_leg_state)
         
         if new_pivot:
             if leg_state == BULLISH_LEG:
