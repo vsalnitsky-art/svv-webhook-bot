@@ -1,16 +1,23 @@
 """
-Smart Money Scanner v1.0 — Background watchlist scanner with Telegram alerts.
+Smart Money Scanner v1.1 — Background watchlist scanner with Telegram alerts.
 
 For each symbol in the user's watchlist:
   1. Fetches 15m klines (300 bars) every 60 seconds
-  2. Runs SMC structure detection (Internal Structure, size=5)
+  2. Runs SMC structure detection TWICE:
+     - On all bars (including the live unclosed one) → cached for chart display
+     - On closed bars only (live bar dropped) → used for alert detection
   3. Compares against last detected event ID to find newly formed events
   4. Sends Telegram alert based on user's chosen alert mode
+
+Why two passes?
+  Pine `alertcondition()` defaults to fire once per bar close. A BOS/CHoCH that
+  forms intra-bar but later "un-forms" before close would otherwise produce
+  a false alert. Detecting on closed bars only prevents this. The chart still
+  shows live structure for visual feedback.
 
 Alert modes:
   'choch'       — Alert on every new CHoCH
   'choch_bos'   — Alert only when CHoCH is followed by a BOS in the same direction
-                  (the CHoCH "confirms" — common SMC trader rule)
 
 Settings persisted in DB:
   smc_watchlist:    list of symbols
@@ -279,18 +286,25 @@ class SMCScanner:
                 if not klines or len(klines) < 50:
                     continue
                 
-                result = detect_smc_structure(klines, internal_size=5)
+                # Full result (includes live unclosed bar) — used for chart display
+                result_full = detect_smc_structure(klines, internal_size=5)
                 
-                # Cache for instant chart access
+                # Closed-bars-only result (drop last bar which is still forming)
+                # — used for alert detection. This matches Pine's default
+                # alertcondition() behavior which fires once per bar close.
+                klines_closed = klines[:-1] if len(klines) > 1 else klines
+                result_closed = detect_smc_structure(klines_closed, internal_size=5)
+                
+                # Cache for instant chart access (full data so user sees live bar)
                 with self._lock:
                     self._cache[symbol] = {
                         'klines': klines,
-                        'analysis': result,
+                        'analysis': result_full,
                         'updated_at': time.time(),
                     }
                 
-                # Process events for alerts
-                self._process_alerts(symbol, result)
+                # Process events for alerts — use closed-bars-only result
+                self._process_alerts(symbol, result_closed)
                 
                 # 200ms between symbols to spread load
                 time.sleep(0.2)

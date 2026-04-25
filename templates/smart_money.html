@@ -276,6 +276,10 @@
                 <input type="checkbox" id="sm-internal" checked disabled>
                 Show Internal Structure
             </label>
+            <label class="sm-checkbox">
+                <input type="checkbox" id="sm-show-pivots" onchange="onShowPivotsChange()">
+                Show Pivots (HH/HL/LH/LL)
+            </label>
             <div class="sm-control-item">
                 <label>Swings Points:</label>
                 <input type="number" value="50" disabled style="width:50px">
@@ -337,6 +341,14 @@ let candleSeries = null;
 let currentSymbol = null;
 let activeLines = [];   // line series we draw for BOS/CHoCH
 let activeMarkers = []; // labels
+let showPivots = false; // HH/HL/LH/LL toggle, default OFF
+
+function onShowPivotsChange() {
+    showPivots = document.getElementById('sm-show-pivots').checked;
+    // Force structure redraw on next loadChart by clearing the cached key
+    lastEventsKey = '';
+    if (currentSymbol) loadChart();
+}
 
 // === Watchlist ===
 async function loadWatchlist() {
@@ -570,7 +582,7 @@ async function loadChart() {
         lastOhlcLength = ohlc.length;
         
         // === Structure (only redraw if changed) ===
-        const eventsKey = events.map(e => `${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|');
+        const eventsKey = (showPivots ? 'P' : 'N') + '|' + events.map(e => `${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|');
         const structureChanged = (eventsKey !== lastEventsKey) || isSymbolChange;
         
         if (structureChanged) {
@@ -611,6 +623,7 @@ async function loadChart() {
                 });
             }
             for (const p of pivots) {
+                if (!showPivots) continue;
                 const isHigh = (p.type === 'HH' || p.type === 'LH');
                 markers.push({
                     time: p.time,
