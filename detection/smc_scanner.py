@@ -523,6 +523,14 @@ class SMCScanner:
     
     def get_state(self) -> Dict:
         with self._lock:
+            # Build per-symbol trend map from cache
+            trends = {}
+            for sym, c in self._cache.items():
+                try:
+                    trends[sym] = c.get('analysis', {}).get('internal', {}).get('trend', 0)
+                except:
+                    trends[sym] = 0
+            
             return {
                 'running': self._running,
                 'enabled': self._settings.get('enabled', True),
@@ -531,6 +539,7 @@ class SMCScanner:
                 'scan_count': self._scan_count,
                 'errors': self._errors,
                 'cached_symbols': list(self._cache.keys()),
+                'trends': trends,
                 'pending_choch': {k: {'dir': v['dir'], 'level': v['level']}
                                    for k, v in self._pending_choch.items()},
             }

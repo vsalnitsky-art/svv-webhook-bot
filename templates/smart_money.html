@@ -474,12 +474,20 @@ function ensureChart() {
     });
     
     candleSeries = chart.addCandlestickSeries({
-        upColor: '#26a69a',
-        downColor: '#ef5350',
-        borderUpColor: '#26a69a',
-        borderDownColor: '#ef5350',
-        wickUpColor: '#26a69a',
-        wickDownColor: '#ef5350',
+        upColor: '#e0e0e0',
+        downColor: '#5a5a5a',
+        borderUpColor: '#e0e0e0',
+        borderDownColor: '#5a5a5a',
+        wickUpColor: '#bbbbbb',
+        wickDownColor: '#7a7a7a',
+    });
+    
+    chart.applyOptions({
+        layout: {
+            background: { type: 'solid', color: '#0a0e18' },
+            textColor: '#aaa',
+            fontSize: 10,
+        },
     });
     
     // Resize handler
@@ -592,11 +600,13 @@ async function loadChart() {
             // Markers
             const markers = [];
             for (const ev of events) {
+                // Bullish events break upward through pivot HIGH → label sits above bar, arrow pointing DOWN to the bar
+                // Bearish events break downward through pivot LOW → label sits below bar, arrow pointing UP to the bar
                 markers.push({
                     time: ev.to_time,
-                    position: ev.dir === 'bull' ? 'belowBar' : 'aboveBar',
+                    position: ev.dir === 'bull' ? 'aboveBar' : 'belowBar',
                     color: ev.dir === 'bull' ? '#4ade80' : '#ef4444',
-                    shape: 'arrowUp',
+                    shape: ev.dir === 'bull' ? 'arrowDown' : 'arrowUp',
                     text: ev.tag,
                 });
             }
@@ -605,7 +615,7 @@ async function loadChart() {
                 markers.push({
                     time: p.time,
                     position: isHigh ? 'aboveBar' : 'belowBar',
-                    color: 'rgba(255,255,255,0.4)',
+                    color: '#facc15',  // yellow
                     shape: 'circle',
                     text: p.type,
                     size: 0,
@@ -670,6 +680,16 @@ async function updateStatus() {
         } else {
             statusEl.textContent = 'Stopped';
         }
+        
+        // Update trend dots for all watchlist items
+        const trends = d.trends || {};
+        for (const sym of (d.watchlist || [])) {
+            const dot = document.getElementById('dot-' + sym);
+            if (dot) {
+                const t = trends[sym] || 0;
+                dot.className = 'trend-dot ' + (t === 1 ? 'bull' : t === -1 ? 'bear' : '');
+            }
+        }
     } catch (err) {}
 }
 
@@ -678,7 +698,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadSettings();
     await loadWatchlist();
     updateStatus();
-    setInterval(updateStatus, 15000);
+    setInterval(updateStatus, 10000);
     setInterval(() => {
         if (currentSymbol) loadChart();
     }, 30000);
