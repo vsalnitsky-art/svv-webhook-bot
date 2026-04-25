@@ -286,25 +286,32 @@ class SMCScanner:
                 if not klines or len(klines) < 50:
                     continue
                 
-                # Full result (includes live unclosed bar) — used for chart display
-                result_full = detect_smc_structure(klines, internal_size=5)
-                
-                # Closed-bars-only result (drop last bar which is still forming)
-                # — used for alert detection. This matches Pine's default
-                # alertcondition() behavior which fires once per bar close.
+                # Single source of truth: drop the live (unclosed) last bar
+                # for BOTH chart display and alert detection.
+                #
+                # Why? The SMC algorithm is sensitive to which bars are at the
+                # tail of the array. Running detect_smc_structure(klines) and
+                # detect_smc_structure(klines[:-1]) can produce DIFFERENT event
+                # sets — meaning the chart could show one structure while the
+                # alert engine "sees" another. That mismatch is exactly how
+                # alerts referenced BOS levels not visible on chart.
+                #
+                # By using klines[:-1] for both, the user always sees on the
+                # chart exactly what the alert engine evaluates against.
                 klines_closed = klines[:-1] if len(klines) > 1 else klines
-                result_closed = detect_smc_structure(klines_closed, internal_size=5)
+                result = detect_smc_structure(klines_closed, internal_size=5)
                 
-                # Cache for instant chart access (full data so user sees live bar)
+                # Cache for instant chart access (use the same closed-bar data
+                # so the chart matches what alerts are computed against)
                 with self._lock:
                     self._cache[symbol] = {
-                        'klines': klines,
-                        'analysis': result_full,
+                        'klines': klines_closed,
+                        'analysis': result,
                         'updated_at': time.time(),
                     }
                 
-                # Process events for alerts — use closed-bars-only result
-                self._process_alerts(symbol, result_closed)
+                # Process events for alerts — same result as displayed
+                self._process_alerts(symbol, result)
                 
                 # 200ms between symbols to spread load
                 time.sleep(0.2)
@@ -485,16 +492,19 @@ class SMCScanner:
             if not klines or len(klines) < 50:
                 return {'symbol': symbol, 'error': 'Not enough klines', 'klines': [], 'analysis': {}}
             
-            analysis = detect_smc_structure(klines, internal_size=5)
+            # Same logic as background scan: use closed bars only so the chart
+            # matches what alerts are computed against
+            klines_closed = klines[:-1] if len(klines) > 1 else klines
+            analysis = detect_smc_structure(klines_closed, internal_size=5)
             
             with self._lock:
                 self._cache[symbol] = {
-                    'klines': klines,
+                    'klines': klines_closed,
                     'analysis': analysis,
                     'updated_at': time.time(),
                 }
             
-            return self._format_chart(symbol, klines, analysis)
+            return self._format_chart(symbol, klines_closed, analysis)
         except Exception as e:
             return {'symbol': symbol, 'error': str(e), 'klines': [], 'analysis': {}}
     
