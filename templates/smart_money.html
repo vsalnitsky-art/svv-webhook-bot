@@ -465,7 +465,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-status-badge" id="sm-trend-badge" style="margin-left:10px;display:none"></span>
                     <span class="sm-status-badge" id="sm-htf-badge" style="margin-left:6px;display:none"></span>
                 </div>
-                <div class="sm-chart-meta" id="sm-chart-meta"></div>
+                <div style="display:flex;align-items:center;gap:10px">
+                    <button onclick="clearSignalsForCurrent()" id="sm-clear-signals-btn"
+                            style="padding:3px 8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#888;border-radius:3px;cursor:pointer;font-size:0.7rem;display:none"
+                            title="Remove all signal dots for this symbol">
+                        🗑 Clear Signals
+                    </button>
+                    <div class="sm-chart-meta" id="sm-chart-meta"></div>
+                </div>
             </div>
             <div class="sm-chart-wrap" id="sm-chart-wrap">
                 <div class="sm-empty" id="sm-empty">
@@ -498,6 +505,20 @@ function onShowStructureChange() {
     showStructure = document.getElementById('sm-show-structure').checked;
     lastEventsKey = '';
     if (currentSymbol) loadChart();
+}
+
+async function clearSignalsForCurrent() {
+    if (!currentSymbol) return;
+    if (!confirm(`Clear all signal dots for ${currentSymbol}?`)) return;
+    try {
+        await fetch('/api/smc/signals/clear', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: currentSymbol}),
+        });
+        lastEventsKey = '';
+        loadChart();
+    } catch (err) { alert('Clear error: ' + err); }
 }
 
 // === Watchlist ===
@@ -790,6 +811,8 @@ function clearChart() {
     document.getElementById('sm-chart-title').textContent = 'Select a symbol';
     document.getElementById('sm-trend-badge').style.display = 'none';
     document.getElementById('sm-htf-badge').style.display = 'none';
+    const clrBtn = document.getElementById('sm-clear-signals-btn');
+    if (clrBtn) clrBtn.style.display = 'none';
     document.getElementById('sm-chart-meta').textContent = '';
 }
 
@@ -968,8 +991,14 @@ async function loadChart() {
         }
         
         const lastUpdate = new Date((d.updated_at || 0) * 1000);
+        const sigCount = signalMarkers.length;
+        const sigStr = sigCount > 0 ? ` · ${sigCount} signals` : '';
         document.getElementById('sm-chart-meta').textContent =
-            `${d.klines_count} bars · ${internalEvents.length} events · ${internalPivots.length} pivots · ${lastUpdate.toLocaleTimeString()}`;
+            `${d.klines_count} bars · ${internalEvents.length} events · ${internalPivots.length} pivots${sigStr} · ${lastUpdate.toLocaleTimeString()}`;
+        
+        // Show Clear Signals button when symbol has signals
+        const clearBtn = document.getElementById('sm-clear-signals-btn');
+        clearBtn.style.display = sigCount > 0 ? 'inline-block' : 'none';
         
         // === ONLY fit content on symbol change — preserve user zoom otherwise ===
         if (isSymbolChange) {

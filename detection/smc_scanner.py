@@ -53,6 +53,8 @@ TIMEFRAME_LABELS = {
 DB_KEY_WATCHLIST = 'smc_watchlist'
 DB_KEY_SETTINGS = 'smc_settings'
 DB_KEY_STATE = 'smc_last_events'   # tracks last seen event per symbol
+DB_KEY_SIGNALS_PREFIX = 'smc_signals_'   # per-symbol: smc_signals_BTCUSDT, etc.
+SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
 DEFAULT_SETTINGS = {
     'enabled': True,
@@ -176,7 +178,7 @@ class SMCScanner:
         # Signal markers per symbol — points on the chart where Telegram alerts
         # actually fired. Used to display LONG/SHORT dots on the chart.
         # {symbol: [{'time': ts_sec, 'price': float, 'side': 'LONG'|'SHORT'}, ...]}
-        # Capped at 50 most recent per symbol.
+        # Persisted in DB per-symbol so they survive restarts.
         self._signal_markers: Dict[str, List[Dict]] = {}
         
         self._scan_count = 0
@@ -184,6 +186,8 @@ class SMCScanner:
         
         self._settings = self._load_settings()
         self._watchlist = self._load_watchlist()
+        # Load signals only for symbols currently in watchlist
+        self._load_all_signals()
     
     # ========================================
     # Persistence
@@ -226,6 +230,72 @@ class SMCScanner:
                 self.db.set_setting(DB_KEY_WATCHLIST, self._watchlist)
             except Exception as e:
                 print(f"[SMC] Watchlist persist error: {e}")
+    
+    def _load_all_signals(self):
+        """Load persisted signal markers for every watchlist symbol."""
+        if not self.db:
+            return
+        loaded = 0
+        for symbol in self._watchlist:
+            try:
+                key = DB_KEY_SIGNALS_PREFIX + symbol
+                stored = self.db.get_setting(key, [])
+                if isinstance(stored, list):
+                    # Validate items
+                    cleaned = []
+                    for item in stored:
+                        if isinstance(item, dict) and 'time' in item and 'side' in item:
+                            cleaned.append({
+                                'time': int(item['time']),
+                                'price': float(item.get('price', 0)),
+                                'side': str(item['side']),
+                            })
+                    if cleaned:
+                        self._signal_markers[symbol] = cleaned
+                        loaded += len(cleaned)
+            except Exception as e:
+                print(f"[SMC] Signal load error for {symbol}: {e}")
+        if loaded:
+            print(f"[SMC] Loaded {loaded} persisted signal markers across "
+                  f"{len(self._signal_markers)} symbols")
+    
+    def _persist_signals(self, symbol: str):
+        """Save signal markers for one symbol to DB."""
+        if not self.db:
+            return
+        try:
+            key = DB_KEY_SIGNALS_PREFIX + symbol
+            markers = self._signal_markers.get(symbol, [])
+            self.db.set_setting(key, markers)
+        except Exception as e:
+            print(f"[SMC] Signal persist error for {symbol}: {e}")
+    
+    def clear_signals(self, symbol: Optional[str] = None) -> Dict:
+        """Clear persisted signal markers. If symbol is None, clear ALL."""
+        with self._lock:
+            if symbol:
+                sym = self._normalize_symbol(symbol)
+                self._signal_markers.pop(sym, None)
+                self._delete_signals(sym)
+                return {'ok': True, 'cleared': sym}
+            else:
+                # Clear all
+                cleared = list(self._signal_markers.keys())
+                self._signal_markers.clear()
+                for s in cleared:
+                    self._delete_signals(s)
+                return {'ok': True, 'cleared': cleared, 'count': len(cleared)}
+    
+    def _delete_signals(self, symbol: str):
+        """Remove persisted signals for a symbol (e.g. on watchlist remove)."""
+        if not self.db:
+            return
+        try:
+            key = DB_KEY_SIGNALS_PREFIX + symbol
+            # Set to empty list — DB doesn't have a delete API in our codebase
+            self.db.set_setting(key, [])
+        except Exception as e:
+            print(f"[SMC] Signal delete error for {symbol}: {e}")
     
     # ========================================
     # Public API — Watchlist
@@ -276,6 +346,8 @@ class SMCScanner:
                 for k in list(self._last_alerted.keys()):
                     if k.startswith(f"{symbol}:"):
                         del self._last_alerted[k]
+                # Clear persisted signals from DB
+                self._delete_signals(symbol)
                 return {'ok': True, 'watchlist': list(self._watchlist)}
         return {'ok': False, 'reason': 'Not in watchlist'}
     
@@ -381,7 +453,11 @@ class SMCScanner:
                 self._first_scan_done.clear()
                 self._seen_events.clear()
                 self._pending_choch.clear()
+                # Don't drop signal_markers from DB — they represent historical
+                # facts (alerts that did fire). Just reload from DB to keep
+                # in-memory copy fresh.
                 self._signal_markers.clear()
+                self._load_all_signals()
                 print(f"[SMC] Settings changed: tf {old_tf}→{new_tf}, "
                       f"size {old_isize}→{new_isize}. Cache cleared.")
             if htf_changed or tf_changed:
@@ -738,6 +814,7 @@ class SMCScanner:
             # Use to_t (timestamp of bar where crossover happened) as the time
             to_t = event.get('to_t', 0)
             t_sec = int(to_t // 1000) if to_t > 1e12 else int(to_t)
+            persisted = False
             with self._lock:
                 markers = self._signal_markers.setdefault(symbol, [])
                 # Dedup — don't add the same time+side twice
@@ -747,9 +824,14 @@ class SMCScanner:
                         'price': float(entry_price),
                         'side': side_label,
                     })
-                    # Keep last 50
-                    if len(markers) > 50:
-                        self._signal_markers[symbol] = markers[-50:]
+                    # Keep last SIGNALS_PERSIST_LIMIT
+                    if len(markers) > SIGNALS_PERSIST_LIMIT:
+                        self._signal_markers[symbol] = markers[-SIGNALS_PERSIST_LIMIT:]
+                    persisted = True
+            
+            # Save to DB outside the lock to avoid holding it during I/O
+            if persisted:
+                self._persist_signals(symbol)
             
             print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
         except Exception as e:

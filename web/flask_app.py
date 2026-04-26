@@ -2252,6 +2252,17 @@ def register_api_routes(app):
         symbol = request.args.get('symbol', 'BTCUSDT')
         return jsonify(s.get_chart_data(symbol))
     
+    @app.route('/api/smc/signals/clear', methods=['POST'])
+    def api_smc_signals_clear():
+        """Clear persisted signal markers. POST {} for all, {'symbol': X} for one."""
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol')
+        return jsonify(s.clear_signals(symbol))
+    
     @app.route('/api/validator/toggle', methods=['GET', 'POST'])
     def api_validator_toggle():
         """Get or set Signal Validator (TradingView Signals) enabled state."""
