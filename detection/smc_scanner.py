@@ -173,6 +173,12 @@ class SMCScanner:
         # HTF Bias cache per symbol: {symbol: {'bias', 'method', ...}}
         self._htf_cache: Dict[str, Dict] = {}
         
+        # Signal markers per symbol — points on the chart where Telegram alerts
+        # actually fired. Used to display LONG/SHORT dots on the chart.
+        # {symbol: [{'time': ts_sec, 'price': float, 'side': 'LONG'|'SHORT'}, ...]}
+        # Capped at 50 most recent per symbol.
+        self._signal_markers: Dict[str, List[Dict]] = {}
+        
         self._scan_count = 0
         self._errors = 0
         
@@ -264,6 +270,9 @@ class SMCScanner:
                 self._pending_choch.pop(symbol, None)
                 self._first_scan_done.pop(symbol, None)
                 self._seen_events.pop(symbol, None)
+                self._htf_cache.pop(symbol, None)
+                self._signal_markers.pop(symbol, None)
+                self._cache.pop(symbol, None)
                 for k in list(self._last_alerted.keys()):
                     if k.startswith(f"{symbol}:"):
                         del self._last_alerted[k]
@@ -372,6 +381,7 @@ class SMCScanner:
                 self._first_scan_done.clear()
                 self._seen_events.clear()
                 self._pending_choch.clear()
+                self._signal_markers.clear()
                 print(f"[SMC] Settings changed: tf {old_tf}→{new_tf}, "
                       f"size {old_isize}→{new_isize}. Cache cleared.")
             if htf_changed or tf_changed:
@@ -709,18 +719,13 @@ class SMCScanner:
             dir_icon = '🟢' if is_bull else '🔴'
             side_label = 'LONG' if is_bull else 'SHORT'
             
-            # Live entry price — the close of the bar where the BOS/CHoCH
-            # crossover occurred. This is the price at the actual moment the
-            # signal fired (not the pivot level being broken).
+            # Live entry price — close of the bar where the BOS/CHoCH crossover
+            # occurred. This is the price at the actual moment the signal fired.
             entry_price = self._get_live_price(symbol)
             if entry_price is None:
-                # Fallback to event level if live price unavailable
                 entry_price = event.get('level', 0)
             
             entry_str = self._fmt_price(entry_price)
-            
-            # Symbol with hashtag for Telegram clickable
-            sym_clean = symbol.replace('USDT', '')
             
             msg = (
                 f"{dir_icon} <b>{side_label}</b>: #{symbol}\n"
@@ -728,6 +733,24 @@ class SMCScanner:
             )
             
             self.notifier.send_message(msg)
+            
+            # Record signal marker for chart display
+            # Use to_t (timestamp of bar where crossover happened) as the time
+            to_t = event.get('to_t', 0)
+            t_sec = int(to_t // 1000) if to_t > 1e12 else int(to_t)
+            with self._lock:
+                markers = self._signal_markers.setdefault(symbol, [])
+                # Dedup — don't add the same time+side twice
+                if not any(m['time'] == t_sec and m['side'] == side_label for m in markers):
+                    markers.append({
+                        'time': t_sec,
+                        'price': float(entry_price),
+                        'side': side_label,
+                    })
+                    # Keep last 50
+                    if len(markers) > 50:
+                        self._signal_markers[symbol] = markers[-50:]
+            
             print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
         except Exception as e:
             print(f"[SMC] Alert send error: {e}")
@@ -848,23 +871,22 @@ class SMCScanner:
                 'dir': e.get('dir'),
             } for e in struct.get('events', [])]
         
-        # === HTF Bias filter (Task 1+2) ===
-        # When HTF filter is enabled, hide events whose direction doesn't match
-        # the current HTF bias. This makes the chart show only signals that
-        # would actually trigger Telegram alerts.
+        # === HTF Bias info (Tasks 1+2) ===
+        # We always return ALL Internal events for the chart — user toggles
+        # display of structure independently in the UI. The HTF bias is shown
+        # in the trend badge and used as the watchlist dot color when the
+        # filter is active. Signal markers (where alerts fired) are also
+        # returned so the chart can plot LONG/SHORT dots at exact moments.
         htf_settings = self.get_htf_settings()
         with self._lock:
             htf_data = dict(self._htf_cache.get(symbol, {}))
+            signals = list(self._signal_markers.get(symbol, []))
         htf_filter_active = htf_settings.get('enabled', False)
         htf_bias = htf_data.get('bias', 'neutral')
         
         all_events = fmt_events(internal)
-        if htf_filter_active and htf_bias in ('bull', 'bear'):
-            filtered_events = [e for e in all_events if e.get('dir') == htf_bias]
-        else:
-            filtered_events = all_events
         
-        # Effective trend for badge:
+        # Effective trend for the badge:
         #   When HTF filter is active and HTF has a clear direction, use it.
         #   Otherwise use Internal Structure's own trend.
         if htf_filter_active and htf_bias in ('bull', 'bear'):
@@ -899,10 +921,12 @@ class SMCScanner:
             'symbol': symbol,
             'interval': self.get_display_label(),
             'ohlc': ohlc,
-            # Internal Structure (already filtered by HTF if active)
+            # Internal Structure — ALL events, frontend toggles display
             'pivots': fmt_pivots(internal),
-            'events': filtered_events,
+            'events': all_events,
             'trend': display_trend,
+            # Signal markers — points where Telegram alerts actually fired
+            'signals': signals,
             # HTF info for frontend display
             'htf_filter_active': htf_filter_active,
             'htf_bias': htf_bias,

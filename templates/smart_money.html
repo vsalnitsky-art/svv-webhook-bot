@@ -343,8 +343,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <h3>Display</h3>
                 <div class="sm-controls">
                     <label class="sm-checkbox">
-                        <input type="checkbox" id="sm-internal" checked disabled>
-                        Show Internal Structure
+                        <input type="checkbox" id="sm-show-structure" onchange="onShowStructureChange()">
+                        Show Structure (BOS / CHoCH)
                     </label>
                     <label class="sm-checkbox">
                         <input type="checkbox" id="sm-show-pivots" onchange="onShowPivotsChange()">
@@ -486,9 +486,16 @@ let currentSymbol = null;
 let activeLines = [];
 let activeMarkers = [];
 let showPivots = false; // HH/HL/LH/LL toggle, default OFF
+let showStructure = false; // BOS/CHoCH toggle, default OFF
 
 function onShowPivotsChange() {
     showPivots = document.getElementById('sm-show-pivots').checked;
+    lastEventsKey = '';
+    if (currentSymbol) loadChart();
+}
+
+function onShowStructureChange() {
+    showStructure = document.getElementById('sm-show-structure').checked;
     lastEventsKey = '';
     if (currentSymbol) loadChart();
 }
@@ -820,6 +827,7 @@ async function loadChart() {
         const ohlc = d.ohlc;
         const internalEvents = d.events || [];
         const internalPivots = d.pivots || [];
+        const signalMarkers = d.signals || [];
         
         // === Candles ===
         if (isSymbolChange) {
@@ -838,9 +846,17 @@ async function loadChart() {
         }
         lastOhlcLength = ohlc.length;
         
-        // === Structure (only redraw if changed) ===
-        const eventsKey = (showPivots ? 'P' : 'N') + '|' + 
-            internalEvents.map(e => `${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|');
+        // === Structure + signals (only redraw if changed) ===
+        // Cache key includes both toggles and signal count so re-renders happen
+        // when structure visibility toggles or new signals arrive.
+        const structureKey = showStructure
+            ? internalEvents.map(e => `${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|')
+            : '';
+        const pivotsKey = showPivots
+            ? internalPivots.map(p => `${p.time}:${p.type}:${p.price}`).join('|')
+            : '';
+        const signalsKey = signalMarkers.map(s => `${s.time}:${s.side}`).join('|');
+        const eventsKey = `S=${showStructure}|P=${showPivots}|${structureKey}||${pivotsKey}||${signalsKey}`;
         const structureChanged = (eventsKey !== lastEventsKey) || isSymbolChange;
         
         if (structureChanged) {
@@ -850,34 +866,36 @@ async function loadChart() {
             
             const markers = [];
             
-            // === INTERNAL STRUCTURE ONLY (size=5) — matches TradingView default ===
-            for (const ev of internalEvents) {
-                const color = ev.dir === 'bull' ? '#4ade80' : '#ef4444';
-                const isCHoCH = ev.tag === 'CHoCH';
-                const lineSeries = chart.addLineSeries({
-                    color: color,
-                    lineWidth: 1,
-                    lineStyle: isCHoCH ? 2 : 0,  // dashed for CHoCH, solid for BOS
-                    priceLineVisible: false,
-                    lastValueVisible: false,
-                    crosshairMarkerVisible: false,
-                });
-                lineSeries.setData([
-                    { time: ev.from_time, value: ev.level },
-                    { time: ev.to_time, value: ev.level },
-                ]);
-                activeLines.push(lineSeries);
-                
-                markers.push({
-                    time: ev.to_time,
-                    position: ev.dir === 'bull' ? 'aboveBar' : 'belowBar',
-                    color: color,
-                    shape: ev.dir === 'bull' ? 'arrowDown' : 'arrowUp',
-                    text: ev.tag,
-                });
+            // === STRUCTURE (BOS / CHoCH) — only when toggle is ON ===
+            if (showStructure) {
+                for (const ev of internalEvents) {
+                    const color = ev.dir === 'bull' ? '#4ade80' : '#ef4444';
+                    const isCHoCH = ev.tag === 'CHoCH';
+                    const lineSeries = chart.addLineSeries({
+                        color: color,
+                        lineWidth: 1,
+                        lineStyle: isCHoCH ? 2 : 0,  // dashed for CHoCH, solid for BOS
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                        crosshairMarkerVisible: false,
+                    });
+                    lineSeries.setData([
+                        { time: ev.from_time, value: ev.level },
+                        { time: ev.to_time, value: ev.level },
+                    ]);
+                    activeLines.push(lineSeries);
+                    
+                    markers.push({
+                        time: ev.to_time,
+                        position: ev.dir === 'bull' ? 'aboveBar' : 'belowBar',
+                        color: color,
+                        shape: ev.dir === 'bull' ? 'arrowDown' : 'arrowUp',
+                        text: ev.tag,
+                    });
+                }
             }
             
-            // Optional pivots (yellow, only if toggle ON)
+            // === PIVOTS (HH/HL/LH/LL) — only when toggle is ON ===
             if (showPivots) {
                 for (const p of internalPivots) {
                     const isHigh = (p.type === 'HH' || p.type === 'LH');
@@ -891,6 +909,22 @@ async function loadChart() {
                     });
                 }
             }
+            
+            // === SIGNAL DOTS — points where Telegram alerts actually fired ===
+            // Always shown. Bright green LONG below the bar, bright red SHORT
+            // above the bar, as small filled circles.
+            for (const sig of signalMarkers) {
+                const isLong = sig.side === 'LONG';
+                markers.push({
+                    time: sig.time,
+                    position: isLong ? 'belowBar' : 'aboveBar',
+                    color: isLong ? '#00ff00' : '#ff0000',  // bright pure colors
+                    shape: 'circle',
+                    text: sig.side,
+                    size: 2,
+                });
+            }
+            
             markers.sort((a, b) => a.time - b.time);
             candleSeries.setMarkers(markers);
         }
