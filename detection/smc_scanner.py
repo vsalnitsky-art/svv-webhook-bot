@@ -65,13 +65,19 @@ DEFAULT_SETTINGS = {
     'timeframe': DEFAULT_TIMEFRAME,
     'internal_size': DEFAULT_INTERNAL_SIZE,
     
+    # Signal deduplication (Pine "Deduplicate Signals (1 per trend)").
+    # When ON: only the FIRST signal in each direction is sent. Subsequent
+    # same-direction signals are suppressed until direction flips.
+    # User-requested default: True.
+    'deduplicate_signals': True,
+    
     # HTF Bias filter (Pine PRO HTF Bias group)
-    'htf_enabled': False,         # When ON: alerts only fire when matching HTF direction
-    'htf_timeframe': '15m',       # User-requested default
-    'htf_method': 'EMA Trend',    # 'EMA Cross' | 'EMA Trend' | 'Swing Structure'
-    'htf_ema_fast': 9,            # Pine default (EMA Cross method)
-    'htf_ema_slow': 21,           # Pine default (EMA Cross method)
-    'htf_ema_trend': 50,          # Pine default (EMA Trend method)
+    'htf_enabled': False,
+    'htf_timeframe': '15m',
+    'htf_method': 'EMA Trend',
+    'htf_ema_fast': 9,
+    'htf_ema_slow': 21,
+    'htf_ema_trend': 50,
 }
 
 
@@ -181,6 +187,12 @@ class SMCScanner:
         # Persisted in DB per-symbol so they survive restarts.
         self._signal_markers: Dict[str, List[Dict]] = {}
         
+        # Last sent signal direction per symbol — used by deduplicate logic.
+        # {symbol: 'LONG' | 'SHORT' | None}.
+        # Seeded from the most recent persisted signal marker at startup, so
+        # dedup state survives restarts.
+        self._last_signal_dir: Dict[str, str] = {}
+        
         self._scan_count = 0
         self._errors = 0
         
@@ -253,6 +265,13 @@ class SMCScanner:
                     if cleaned:
                         self._signal_markers[symbol] = cleaned
                         loaded += len(cleaned)
+                        # Seed last_signal_dir from the most recent marker
+                        # so dedup state survives restarts
+                        try:
+                            last = max(cleaned, key=lambda m: m['time'])
+                            self._last_signal_dir[symbol] = last['side']
+                        except:
+                            pass
             except Exception as e:
                 print(f"[SMC] Signal load error for {symbol}: {e}")
         if loaded:
@@ -271,17 +290,20 @@ class SMCScanner:
             print(f"[SMC] Signal persist error for {symbol}: {e}")
     
     def clear_signals(self, symbol: Optional[str] = None) -> Dict:
-        """Clear persisted signal markers. If symbol is None, clear ALL."""
+        """Clear persisted signal markers. If symbol is None, clear ALL.
+        Also resets dedup tracking so the next signal in any direction fires.
+        """
         with self._lock:
             if symbol:
                 sym = self._normalize_symbol(symbol)
                 self._signal_markers.pop(sym, None)
+                self._last_signal_dir.pop(sym, None)
                 self._delete_signals(sym)
                 return {'ok': True, 'cleared': sym}
             else:
-                # Clear all
                 cleared = list(self._signal_markers.keys())
                 self._signal_markers.clear()
+                self._last_signal_dir.clear()
                 for s in cleared:
                     self._delete_signals(s)
                 return {'ok': True, 'cleared': cleared, 'count': len(cleared)}
@@ -342,6 +364,7 @@ class SMCScanner:
                 self._seen_events.pop(symbol, None)
                 self._htf_cache.pop(symbol, None)
                 self._signal_markers.pop(symbol, None)
+                self._last_signal_dir.pop(symbol, None)
                 self._cache.pop(symbol, None)
                 for k in list(self._last_alerted.keys()):
                     if k.startswith(f"{symbol}:"):
@@ -373,6 +396,7 @@ class SMCScanner:
         with self._lock:
             allowed = ['enabled', 'alert_mode', 'interval_secs', 'telegram_alerts',
                        'swing_size', 'timeframe', 'internal_size',
+                       'deduplicate_signals',
                        'htf_enabled', 'htf_timeframe', 'htf_method',
                        'htf_ema_fast', 'htf_ema_slow', 'htf_ema_trend']
             
@@ -415,6 +439,9 @@ class SMCScanner:
             # === HTF settings validation ===
             # htf_enabled is bool — coerce
             self._settings['htf_enabled'] = bool(self._settings.get('htf_enabled', False))
+            
+            # deduplicate_signals — coerce to bool
+            self._settings['deduplicate_signals'] = bool(self._settings.get('deduplicate_signals', True))
             
             # htf_timeframe — same allowed set + 1d
             allowed_htf_tfs = ALLOWED_TIMEFRAMES + ['1d']
@@ -739,10 +766,12 @@ class SMCScanner:
             
             if mode == 'choch':
                 if tag == 'CHoCH':
-                    if self._htf_allows(symbol, ev['dir']):
-                        self._send_alert(symbol, ev, mode='choch')
-                    else:
+                    if not self._htf_allows(symbol, ev['dir']):
                         print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
+                    elif not self._dedup_allows(symbol, ev['dir']):
+                        print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by dedup (already fired this direction)")
+                    else:
+                        self._send_alert(symbol, ev, mode='choch')
             
             elif mode == 'choch_bos':
                 if tag == 'CHoCH':
@@ -759,16 +788,35 @@ class SMCScanner:
                     if pending and pending['dir'] == ev['dir']:
                         # Additional safety: BOS must be AFTER the CHoCH chronologically
                         if ev.get('to_t', 0) > pending.get('to_t', 0):
-                            if self._htf_allows(symbol, ev['dir']):
+                            if not self._htf_allows(symbol, ev['dir']):
+                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
+                                # Don't pop pending — let next BOS in same direction try again
+                            elif not self._dedup_allows(symbol, ev['dir']):
+                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by dedup")
+                                self._pending_choch.pop(symbol, None)
+                            else:
                                 self._send_alert(symbol, ev, mode='choch_bos',
                                                   choch_event=pending['choch_event'])
                                 self._pending_choch.pop(symbol, None)
-                            else:
-                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
-                                # Don't pop pending — let next BOS in same direction try again
                     elif pending and pending['dir'] != ev['dir']:
                         # Opposite-direction BOS invalidates pending CHoCH
                         self._pending_choch.pop(symbol, None)
+    
+    def _dedup_allows(self, symbol: str, event_dir: str) -> bool:
+        """Check if signal deduplication permits an alert in this direction.
+        
+        Returns True if dedup is OFF, or if direction differs from last signal.
+        Returns False only when dedup is ON AND the same direction was last
+        signaled (Pine 'Deduplicate Signals (1 per trend)' behavior).
+        """
+        if not self._settings.get('deduplicate_signals', True):
+            return True
+        last_side = self._last_signal_dir.get(symbol)
+        # event_dir is 'bull' / 'bear'; last_side is 'LONG' / 'SHORT'
+        side_label = 'LONG' if event_dir == 'bull' else 'SHORT'
+        if last_side is None:
+            return True  # first signal ever for this symbol
+        return last_side != side_label
     
     def _htf_allows(self, symbol: str, event_dir: str) -> bool:
         """Check if HTF bias permits an alert in the given direction.
@@ -832,6 +880,11 @@ class SMCScanner:
             # Save to DB outside the lock to avoid holding it during I/O
             if persisted:
                 self._persist_signals(symbol)
+            
+            # Update last-direction state (used by dedup gate). Pine updates
+            # this even when dedup is OFF, so toggling dedup ON later doesn't
+            # cause a sudden re-fire of the prior direction.
+            self._last_signal_dir[symbol] = side_label
             
             print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
         except Exception as e:

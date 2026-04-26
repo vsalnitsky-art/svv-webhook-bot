@@ -343,7 +343,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <h3>Display</h3>
                 <div class="sm-controls">
                     <label class="sm-checkbox">
-                        <input type="checkbox" id="sm-show-structure" onchange="onShowStructureChange()">
+                        <input type="checkbox" id="sm-show-structure" checked onchange="onShowStructureChange()">
                         Show Structure (BOS / CHoCH)
                     </label>
                     <label class="sm-checkbox">
@@ -435,6 +435,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="choch_bos">CHoCH + BOS</option>
                         </select>
                     </div>
+                    <label class="sm-checkbox" title="When ON: only the FIRST signal in each direction fires. Subsequent same-direction signals are suppressed until direction flips.">
+                        <input type="checkbox" id="sm-dedup" checked onchange="updateDedup()">
+                        Deduplicate Signals (1 per trend)
+                    </label>
                 </div>
             </div>
             
@@ -493,7 +497,7 @@ let currentSymbol = null;
 let activeLines = [];
 let activeMarkers = [];
 let showPivots = false; // HH/HL/LH/LL toggle, default OFF
-let showStructure = false; // BOS/CHoCH toggle, default OFF
+let showStructure = true;  // BOS/CHoCH toggle, default ON
 
 function onShowPivotsChange() {
     showPivots = document.getElementById('sm-show-pivots').checked;
@@ -619,6 +623,7 @@ async function loadSettings() {
             document.getElementById('sm-alert-mode').value = s.alert_mode || 'choch';
             document.getElementById('sm-timeframe').value = s.timeframe || '5m';
             document.getElementById('sm-internal-size').value = s.internal_size || 5;
+            document.getElementById('sm-dedup').checked = s.deduplicate_signals !== false;
             document.getElementById('sm-htf-enabled').checked = !!s.htf_enabled;
             document.getElementById('sm-htf-timeframe').value = s.htf_timeframe || '15m';
             document.getElementById('sm-htf-method').value = s.htf_method || 'EMA Trend';
@@ -657,15 +662,27 @@ function updateSettingsSummary() {
     const isize = document.getElementById('sm-internal-size').value;
     const mode = document.getElementById('sm-alert-mode').value;
     const modeLabel = mode === 'choch' ? 'CHoCH' : 'CHoCH+BOS';
+    const dedup = document.getElementById('sm-dedup').checked;
     const htfOn = document.getElementById('sm-htf-enabled').checked;
     const htfTf = document.getElementById('sm-htf-timeframe').value.toUpperCase();
     const htfMethod = document.getElementById('sm-htf-method').value;
     
     let summary = `${tf} · size ${isize} · ${modeLabel}`;
-    if (htfOn) {
-        summary += ` · HTF ${htfTf} (${htfMethod})`;
-    }
+    if (dedup) summary += ' · dedup';
+    if (htfOn) summary += ` · HTF ${htfTf} (${htfMethod})`;
     document.getElementById('sm-settings-summary-right').textContent = summary;
+}
+
+async function updateDedup() {
+    const enabled = document.getElementById('sm-dedup').checked;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({deduplicate_signals: enabled}),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('Dedup update error: ' + err); }
 }
 
 async function updateAlertMode() {
