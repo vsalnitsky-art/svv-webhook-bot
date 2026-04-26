@@ -463,6 +463,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div>
                     <span class="sm-chart-title" id="sm-chart-title">Select a symbol</span>
                     <span class="sm-status-badge" id="sm-trend-badge" style="margin-left:10px;display:none"></span>
+                    <span class="sm-status-badge" id="sm-htf-badge" style="margin-left:6px;display:none"></span>
                 </div>
                 <div class="sm-chart-meta" id="sm-chart-meta"></div>
             </div>
@@ -706,6 +707,9 @@ async function updateHTFSettings() {
             body: JSON.stringify(payload),
         });
         updateSettingsSummary();
+        // Force chart redraw to apply HTF filter to events
+        lastEventsKey = '';
+        if (currentSymbol) loadChart();
     } catch (err) { alert('HTF update error: ' + err); }
 }
 
@@ -778,6 +782,7 @@ function clearChart() {
     document.getElementById('sm-empty').style.display = 'flex';
     document.getElementById('sm-chart-title').textContent = 'Select a symbol';
     document.getElementById('sm-trend-badge').style.display = 'none';
+    document.getElementById('sm-htf-badge').style.display = 'none';
     document.getElementById('sm-chart-meta').textContent = '';
 }
 
@@ -892,17 +897,35 @@ async function loadChart() {
         lastEventsKey = eventsKey;
         
         // === Trend badge ===
+        // When HTF filter is active, the trend reflects HTF direction
+        // (this is what alerts use). Label changes accordingly.
         const trendBadge = document.getElementById('sm-trend-badge');
+        const htfFilterActive = !!d.htf_filter_active;
+        const trendPrefix = htfFilterActive ? 'HTF ' : '';
         if (d.trend === 1) {
-            trendBadge.textContent = '🟢 BULLISH';
+            trendBadge.textContent = `🟢 ${trendPrefix}BULLISH`;
             trendBadge.className = 'sm-status-badge sm-trend-bull';
             trendBadge.style.display = 'inline-block';
         } else if (d.trend === -1) {
-            trendBadge.textContent = '🔴 BEARISH';
+            trendBadge.textContent = `🔴 ${trendPrefix}BEARISH`;
             trendBadge.className = 'sm-status-badge sm-trend-bear';
             trendBadge.style.display = 'inline-block';
         } else {
             trendBadge.style.display = 'none';
+        }
+        
+        // === HTF info badge (shows method + timeframe) ===
+        const htfBadge = document.getElementById('sm-htf-badge');
+        if (htfFilterActive) {
+            const tfLabel = (d.htf_timeframe || '').toUpperCase();
+            const method = d.htf_method || '';
+            htfBadge.textContent = `🎯 ${tfLabel} ${method}`;
+            htfBadge.className = 'sm-status-badge';
+            htfBadge.style.background = 'rgba(168, 85, 247, 0.18)';
+            htfBadge.style.color = '#c084fc';
+            htfBadge.style.display = 'inline-block';
+        } else {
+            htfBadge.style.display = 'none';
         }
         
         const dot = document.getElementById('dot-' + currentSymbol);

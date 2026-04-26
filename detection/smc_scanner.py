@@ -705,39 +705,61 @@ class SMCScanner:
     
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:
-            dir_icon = '🟢' if event['dir'] == 'bull' else '🔴'
-            dir_label = 'BULLISH' if event['dir'] == 'bull' else 'BEARISH'
+            is_bull = event['dir'] == 'bull'
+            dir_icon = '🟢' if is_bull else '🔴'
+            side_label = 'LONG' if is_bull else 'SHORT'
             
-            level = event['level']
-            level_str = f"${level:,.6g}" if level < 1 else f"${level:,.2f}"
+            # Live entry price — the close of the bar where the BOS/CHoCH
+            # crossover occurred. This is the price at the actual moment the
+            # signal fired (not the pivot level being broken).
+            entry_price = self._get_live_price(symbol)
+            if entry_price is None:
+                # Fallback to event level if live price unavailable
+                entry_price = event.get('level', 0)
             
-            now_str = datetime.now(timezone.utc).strftime('%H:%M UTC')
-            tf_label = self.get_display_label()
+            entry_str = self._fmt_price(entry_price)
             
-            if mode == 'choch':
-                msg = (
-                    f"🔄 <b>CHoCH {dir_label}</b>: {symbol}\n"
-                    f"━━━━━━━━━━━━━━━━\n"
-                    f"{dir_icon} {dir_label} change of character\n"
-                    f"📍 Level: {level_str}\n"
-                    f"⏱ {tf_label} · {now_str}"
-                )
-            else:  # choch_bos
-                choch_level = choch_event.get('level', 0) if choch_event else 0
-                choch_str = f"${choch_level:,.6g}" if choch_level < 1 else f"${choch_level:,.2f}"
-                msg = (
-                    f"✅ <b>CHoCH+BOS confirmed</b>: {symbol}\n"
-                    f"━━━━━━━━━━━━━━━━\n"
-                    f"{dir_icon} {dir_label} structure confirmed\n"
-                    f"🔄 CHoCH: {choch_str}\n"
-                    f"💥 BOS: {level_str}\n"
-                    f"⏱ {tf_label} · {now_str}"
-                )
+            # Symbol with hashtag for Telegram clickable
+            sym_clean = symbol.replace('USDT', '')
+            
+            msg = (
+                f"{dir_icon} <b>{side_label}</b>: #{symbol}\n"
+                f"📍 Вхід: {entry_str}"
+            )
             
             self.notifier.send_message(msg)
-            print(f"[SMC] 📨 Alert sent: {symbol} {mode} {dir_label}")
+            print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
         except Exception as e:
             print(f"[SMC] Alert send error: {e}")
+    
+    def _get_live_price(self, symbol: str) -> Optional[float]:
+        """Return the most recent close price for the symbol.
+        
+        Uses the cached klines if available (last bar's close = newest price
+        at the time of the most recent scan). Returns None if no cache.
+        """
+        with self._lock:
+            cached = self._cache.get(symbol)
+        if not cached or not cached.get('klines'):
+            return None
+        try:
+            return float(cached['klines'][-1].get('p', 0))
+        except:
+            return None
+    
+    def _fmt_price(self, price: float) -> str:
+        """Format price with appropriate precision."""
+        if price <= 0:
+            return '$0'
+        if price < 0.0001:
+            return f"${price:.8f}"
+        if price < 0.01:
+            return f"${price:.6f}"
+        if price < 1:
+            return f"${price:.5f}"
+        if price < 100:
+            return f"${price:.4f}"
+        return f"${price:,.2f}"
     
     # ========================================
     # Public API — Chart data
@@ -826,11 +848,35 @@ class SMCScanner:
                 'dir': e.get('dir'),
             } for e in struct.get('events', [])]
         
+        # === HTF Bias filter (Task 1+2) ===
+        # When HTF filter is enabled, hide events whose direction doesn't match
+        # the current HTF bias. This makes the chart show only signals that
+        # would actually trigger Telegram alerts.
+        htf_settings = self.get_htf_settings()
+        with self._lock:
+            htf_data = dict(self._htf_cache.get(symbol, {}))
+        htf_filter_active = htf_settings.get('enabled', False)
+        htf_bias = htf_data.get('bias', 'neutral')
+        
+        all_events = fmt_events(internal)
+        if htf_filter_active and htf_bias in ('bull', 'bear'):
+            filtered_events = [e for e in all_events if e.get('dir') == htf_bias]
+        else:
+            filtered_events = all_events
+        
+        # Effective trend for badge:
+        #   When HTF filter is active and HTF has a clear direction, use it.
+        #   Otherwise use Internal Structure's own trend.
+        if htf_filter_active and htf_bias in ('bull', 'bear'):
+            display_trend = 1 if htf_bias == 'bull' else -1
+        else:
+            display_trend = internal.get('trend', 0)
+        
         # Strong High / Weak Low — the last swing pivot in the active trend dir,
         # marked as "strong" if the trend is going through it without breaking
         # opposite direction. For simplicity: just mark the most recent unbroken
         # swing high and low.
-        strong_high = None  # last LH or HH that hasn't been crossed bullishly
+        strong_high = None
         weak_low = None
         if swing.get('pivots'):
             for p in reversed(swing['pivots']):
@@ -853,10 +899,15 @@ class SMCScanner:
             'symbol': symbol,
             'interval': self.get_display_label(),
             'ohlc': ohlc,
-            # Internal Structure (size=5)
+            # Internal Structure (already filtered by HTF if active)
             'pivots': fmt_pivots(internal),
-            'events': fmt_events(internal),
-            'trend': internal.get('trend', 0),
+            'events': filtered_events,
+            'trend': display_trend,
+            # HTF info for frontend display
+            'htf_filter_active': htf_filter_active,
+            'htf_bias': htf_bias,
+            'htf_method': htf_data.get('method', ''),
+            'htf_timeframe': htf_settings.get('timeframe', ''),
             # Swing Structure (size=swing_size)
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),
@@ -869,13 +920,31 @@ class SMCScanner:
     
     def get_state(self) -> Dict:
         with self._lock:
-            # Build per-symbol trend map from cache
+            htf_settings = self.get_htf_settings()
+            htf_active = htf_settings.get('enabled', False)
+            
+            # Build per-symbol trend map
+            # When HTF filter is active and that symbol has a clear HTF bias,
+            # the watchlist dot reflects the HTF direction (matches what user
+            # sees on the chart and what alerts will fire on).
             trends = {}
-            for sym, c in self._cache.items():
-                try:
-                    trends[sym] = c.get('analysis', {}).get('internal', {}).get('trend', 0)
-                except:
-                    trends[sym] = 0
+            for sym in self._watchlist:
+                effective = 0
+                if htf_active:
+                    bias = self._htf_cache.get(sym, {}).get('bias', 'neutral')
+                    if bias == 'bull':
+                        effective = 1
+                    elif bias == 'bear':
+                        effective = -1
+                    # neutral → fall through to internal trend
+                if effective == 0:
+                    c = self._cache.get(sym)
+                    if c:
+                        try:
+                            effective = c.get('analysis', {}).get('internal', {}).get('trend', 0)
+                        except:
+                            effective = 0
+                trends[sym] = effective
             
             # Per-symbol HTF biases
             htf_biases = {sym: dict(b) for sym, b in self._htf_cache.items()}
@@ -889,6 +958,7 @@ class SMCScanner:
                 'errors': self._errors,
                 'cached_symbols': list(self._cache.keys()),
                 'trends': trends,
+                'htf_filter_active': htf_active,
                 'htf_biases': htf_biases,
                 'pending_choch': {k: {'dir': v['dir'], 'level': v['level']}
                                    for k, v in self._pending_choch.items()},
