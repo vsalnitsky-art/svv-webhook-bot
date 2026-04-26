@@ -261,6 +261,61 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
 }
+
+/* Accordion settings */
+.sm-settings-bar {
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, #0f1420 0%, #1a1f2e 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.sm-settings-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    color: #ddd;
+    font-weight: 600;
+    font-size: 0.85rem;
+    list-style: none;
+}
+.sm-settings-summary::-webkit-details-marker { display: none; }
+.sm-settings-summary:hover { background: rgba(255,255,255,0.03); }
+.sm-settings-summary::before {
+    content: '▶';
+    font-size: 0.7rem;
+    color: #888;
+    margin-right: 8px;
+    transition: transform 0.15s;
+}
+details[open] .sm-settings-summary::before { transform: rotate(90deg); }
+.sm-settings-summary-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.75rem;
+    font-weight: normal;
+    color: #999;
+}
+.sm-settings-body {
+    padding: 12px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+.sm-settings-section {
+    padding: 10px 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.05);
+}
+.sm-settings-section:last-child { border-bottom: none; }
+.sm-settings-section h3 {
+    font-size: 0.75rem;
+    color: #888;
+    margin: 0 0 8px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -271,49 +326,120 @@
             <a href="/" class="back-link">← Dashboard</a>
             <h1>🎯 Smart Money Concepts</h1>
         </div>
-        <div class="sm-controls">
-            <label class="sm-checkbox">
-                <input type="checkbox" id="sm-internal" checked disabled>
-                Show Internal Structure
-            </label>
-            <label class="sm-checkbox">
-                <input type="checkbox" id="sm-show-pivots" onchange="onShowPivotsChange()">
-                Show Pivots (HH/HL/LH/LL)
-            </label>
-            <div class="sm-control-item">
-                <label>Timeframe:</label>
-                <select id="sm-timeframe" onchange="updateTimeframe()">
-                    <option value="1m">1M</option>
-                    <option value="3m">3M</option>
-                    <option value="5m" selected>5M</option>
-                    <option value="15m">15M</option>
-                    <option value="30m">30M</option>
-                    <option value="1h">1H</option>
-                    <option value="4h">4H</option>
-                </select>
-            </div>
-            <div class="sm-control-item">
-                <label>Internal Size:</label>
-                <input type="number" id="sm-internal-size" value="5" min="2" max="20"
-                       style="width:55px" onchange="updateInternalSize()">
-            </div>
-            <div class="sm-control-item">
-                <label>Swings Points:</label>
-                <input type="number" id="sm-swings-input" value="50" disabled style="width:55px">
-            </div>
-            <div class="sm-control-item">
-                <label>Alert mode:</label>
-                <select id="sm-alert-mode" onchange="updateAlertMode()">
-                    <option value="choch">CHoCH only</option>
-                    <option value="choch_bos">CHoCH + BOS</option>
-                </select>
-            </div>
-            <div class="sm-control-item" id="sm-status">
-                <span class="sm-pulse"></span>
-                <span>—</span>
-            </div>
+        <div class="sm-control-item" id="sm-status">
+            <span class="sm-pulse"></span>
+            <span>—</span>
         </div>
     </div>
+    
+    <details class="sm-settings-bar" id="sm-settings-accordion">
+        <summary class="sm-settings-summary">
+            <span>⚙️ Settings</span>
+            <span class="sm-settings-summary-right" id="sm-settings-summary-right">—</span>
+        </summary>
+        <div class="sm-settings-body">
+            
+            <div class="sm-settings-section">
+                <h3>Display</h3>
+                <div class="sm-controls">
+                    <label class="sm-checkbox">
+                        <input type="checkbox" id="sm-internal" checked disabled>
+                        Show Internal Structure
+                    </label>
+                    <label class="sm-checkbox">
+                        <input type="checkbox" id="sm-show-pivots" onchange="onShowPivotsChange()">
+                        Show Pivots (HH/HL/LH/LL)
+                    </label>
+                </div>
+            </div>
+            
+            <div class="sm-settings-section">
+                <h3>Structure Detection</h3>
+                <div class="sm-controls">
+                    <div class="sm-control-item">
+                        <label>Timeframe:</label>
+                        <select id="sm-timeframe" onchange="updateTimeframe()">
+                            <option value="1m">1M</option>
+                            <option value="3m">3M</option>
+                            <option value="5m" selected>5M</option>
+                            <option value="15m">15M</option>
+                            <option value="30m">30M</option>
+                            <option value="1h">1H</option>
+                            <option value="4h">4H</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item">
+                        <label>Internal Size:</label>
+                        <input type="number" id="sm-internal-size" value="5" min="2" max="20"
+                               style="width:55px" onchange="updateInternalSize()">
+                    </div>
+                    <div class="sm-control-item">
+                        <label>Swings Points:</label>
+                        <input type="number" id="sm-swings-input" value="50" disabled style="width:55px">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sm-settings-section">
+                <h3>HTF Bias Filter</h3>
+                <div class="sm-controls">
+                    <label class="sm-checkbox">
+                        <input type="checkbox" id="sm-htf-enabled" onchange="updateHTFSettings()">
+                        Require HTF Bias
+                    </label>
+                    <div class="sm-control-item">
+                        <label>HTF Timeframe:</label>
+                        <select id="sm-htf-timeframe" onchange="updateHTFSettings()">
+                            <option value="1m">1M</option>
+                            <option value="5m">5M</option>
+                            <option value="15m" selected>15M</option>
+                            <option value="30m">30M</option>
+                            <option value="1h">1H</option>
+                            <option value="4h">4H</option>
+                            <option value="1d">1D</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item">
+                        <label>HTF Method:</label>
+                        <select id="sm-htf-method" onchange="updateHTFSettings()">
+                            <option value="EMA Trend" selected>EMA Trend</option>
+                            <option value="EMA Cross">EMA Cross</option>
+                            <option value="Swing Structure">Swing Structure</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item" id="sm-htf-fast-wrap" style="display:none">
+                        <label>Fast EMA:</label>
+                        <input type="number" id="sm-htf-fast" value="9" min="3" max="100"
+                               style="width:55px" onchange="updateHTFSettings()">
+                    </div>
+                    <div class="sm-control-item" id="sm-htf-slow-wrap" style="display:none">
+                        <label>Slow EMA:</label>
+                        <input type="number" id="sm-htf-slow" value="21" min="5" max="200"
+                               style="width:55px" onchange="updateHTFSettings()">
+                    </div>
+                    <div class="sm-control-item" id="sm-htf-trend-wrap">
+                        <label>Trend EMA:</label>
+                        <input type="number" id="sm-htf-trend" value="50" min="10" max="200"
+                               style="width:55px" onchange="updateHTFSettings()">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sm-settings-section">
+                <h3>Alerts</h3>
+                <div class="sm-controls">
+                    <div class="sm-control-item">
+                        <label>Alert mode:</label>
+                        <select id="sm-alert-mode" onchange="updateAlertMode()">
+                            <option value="choch">CHoCH only</option>
+                            <option value="choch_bos">CHoCH + BOS</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </details>
     
     <div class="sm-layout">
         <!-- Watchlist -->
@@ -460,11 +586,57 @@ async function loadSettings() {
         const res = await fetch('/api/smc/settings');
         const d = await res.json();
         if (d.settings) {
-            document.getElementById('sm-alert-mode').value = d.settings.alert_mode || 'choch';
-            document.getElementById('sm-timeframe').value = d.settings.timeframe || '5m';
-            document.getElementById('sm-internal-size').value = d.settings.internal_size || 5;
+            const s = d.settings;
+            document.getElementById('sm-alert-mode').value = s.alert_mode || 'choch';
+            document.getElementById('sm-timeframe').value = s.timeframe || '5m';
+            document.getElementById('sm-internal-size').value = s.internal_size || 5;
+            document.getElementById('sm-htf-enabled').checked = !!s.htf_enabled;
+            document.getElementById('sm-htf-timeframe').value = s.htf_timeframe || '15m';
+            document.getElementById('sm-htf-method').value = s.htf_method || 'EMA Trend';
+            document.getElementById('sm-htf-fast').value = s.htf_ema_fast || 9;
+            document.getElementById('sm-htf-slow').value = s.htf_ema_slow || 21;
+            document.getElementById('sm-htf-trend').value = s.htf_ema_trend || 50;
+            updateHTFFieldVisibility();
+            updateSettingsSummary();
         }
     } catch (err) {}
+}
+
+function updateHTFFieldVisibility() {
+    const method = document.getElementById('sm-htf-method').value;
+    const fastWrap = document.getElementById('sm-htf-fast-wrap');
+    const slowWrap = document.getElementById('sm-htf-slow-wrap');
+    const trendWrap = document.getElementById('sm-htf-trend-wrap');
+    if (method === 'EMA Cross') {
+        fastWrap.style.display = '';
+        slowWrap.style.display = '';
+        trendWrap.style.display = 'none';
+    } else if (method === 'EMA Trend') {
+        fastWrap.style.display = 'none';
+        slowWrap.style.display = 'none';
+        trendWrap.style.display = '';
+    } else {
+        // Swing Structure — no EMA inputs needed
+        fastWrap.style.display = 'none';
+        slowWrap.style.display = 'none';
+        trendWrap.style.display = 'none';
+    }
+}
+
+function updateSettingsSummary() {
+    const tf = document.getElementById('sm-timeframe').value.toUpperCase();
+    const isize = document.getElementById('sm-internal-size').value;
+    const mode = document.getElementById('sm-alert-mode').value;
+    const modeLabel = mode === 'choch' ? 'CHoCH' : 'CHoCH+BOS';
+    const htfOn = document.getElementById('sm-htf-enabled').checked;
+    const htfTf = document.getElementById('sm-htf-timeframe').value.toUpperCase();
+    const htfMethod = document.getElementById('sm-htf-method').value;
+    
+    let summary = `${tf} · size ${isize} · ${modeLabel}`;
+    if (htfOn) {
+        summary += ` · HTF ${htfTf} (${htfMethod})`;
+    }
+    document.getElementById('sm-settings-summary-right').textContent = summary;
 }
 
 async function updateAlertMode() {
@@ -475,6 +647,7 @@ async function updateAlertMode() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({alert_mode: mode}),
         });
+        updateSettingsSummary();
     } catch (err) { alert('Update error: ' + err); }
 }
 
@@ -486,10 +659,10 @@ async function updateTimeframe() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({timeframe: tf}),
         });
-        // Force chart reload — backend cleared cache on change
         lastChartSymbol = null;
         lastOhlcLength = 0;
         lastEventsKey = '';
+        updateSettingsSummary();
         if (currentSymbol) loadChart();
     } catch (err) { alert('Timeframe update error: ' + err); }
 }
@@ -497,7 +670,6 @@ async function updateTimeframe() {
 async function updateInternalSize() {
     const v = parseInt(document.getElementById('sm-internal-size').value);
     if (isNaN(v) || v < 2 || v > 20) {
-        // restore from server
         loadSettings();
         return;
     }
@@ -510,8 +682,31 @@ async function updateInternalSize() {
         lastChartSymbol = null;
         lastOhlcLength = 0;
         lastEventsKey = '';
+        updateSettingsSummary();
         if (currentSymbol) loadChart();
     } catch (err) { alert('Internal size update error: ' + err); }
+}
+
+async function updateHTFSettings() {
+    updateHTFFieldVisibility();
+    
+    const payload = {
+        htf_enabled: document.getElementById('sm-htf-enabled').checked,
+        htf_timeframe: document.getElementById('sm-htf-timeframe').value,
+        htf_method: document.getElementById('sm-htf-method').value,
+        htf_ema_fast: parseInt(document.getElementById('sm-htf-fast').value) || 9,
+        htf_ema_slow: parseInt(document.getElementById('sm-htf-slow').value) || 21,
+        htf_ema_trend: parseInt(document.getElementById('sm-htf-trend').value) || 50,
+    };
+    
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('HTF update error: ' + err); }
 }
 
 // === Chart ===

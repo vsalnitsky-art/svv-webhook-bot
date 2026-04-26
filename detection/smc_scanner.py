@@ -42,6 +42,7 @@ MAX_WATCHLIST = 50
 
 # Allowed timeframes (Binance format)
 ALLOWED_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h']
+ALLOWED_HTF_METHODS = ['EMA Cross', 'EMA Trend', 'Swing Structure']
 
 # Display labels (uppercase) for UI / Telegram
 TIMEFRAME_LABELS = {
@@ -61,7 +62,83 @@ DEFAULT_SETTINGS = {
     'swing_size': 50,
     'timeframe': DEFAULT_TIMEFRAME,
     'internal_size': DEFAULT_INTERNAL_SIZE,
+    
+    # HTF Bias filter (Pine PRO HTF Bias group)
+    'htf_enabled': False,         # When ON: alerts only fire when matching HTF direction
+    'htf_timeframe': '15m',       # User-requested default
+    'htf_method': 'EMA Trend',    # 'EMA Cross' | 'EMA Trend' | 'Swing Structure'
+    'htf_ema_fast': 9,            # Pine default (EMA Cross method)
+    'htf_ema_slow': 21,           # Pine default (EMA Cross method)
+    'htf_ema_trend': 50,          # Pine default (EMA Trend method)
 }
+
+
+def _ema(values, period):
+    """Pine ta.ema(): exponential moving average. Returns array of EMA values
+    aligned with input. Initial value is the first close."""
+    if not values or period < 1:
+        return []
+    alpha = 2.0 / (period + 1)
+    out = [values[0]]
+    for i in range(1, len(values)):
+        out.append(alpha * values[i] + (1 - alpha) * out[-1])
+    return out
+
+
+def calc_htf_bias(htf_klines, method, ema_fast=9, ema_slow=21, ema_trend=50,
+                   swing_trend=None):
+    """Compute HTF bias on the given HTF klines.
+    
+    Args:
+        htf_klines: list of {p (close), ...} dicts at the HTF timeframe.
+        method: 'EMA Cross' | 'EMA Trend' | 'Swing Structure'
+        swing_trend: int (1=BULL, -1=BEAR, 0=NEUTRAL) for Swing Structure method
+    
+    Returns:
+        dict with:
+            'bias': 'bull' | 'bear' | 'neutral'
+            'method': method used
+            'fast_value', 'slow_value', 'trend_value', 'close' (for debug)
+    """
+    if method == 'Swing Structure':
+        if swing_trend == 1:
+            return {'bias': 'bull', 'method': method}
+        elif swing_trend == -1:
+            return {'bias': 'bear', 'method': method}
+        else:
+            return {'bias': 'neutral', 'method': method}
+    
+    if not htf_klines or len(htf_klines) < 2:
+        return {'bias': 'neutral', 'method': method, 'reason': 'not enough klines'}
+    
+    closes = [k.get('p', 0) for k in htf_klines]
+    last_close = closes[-1]
+    
+    if method == 'EMA Cross':
+        if len(closes) < ema_slow:
+            return {'bias': 'neutral', 'method': method, 'reason': 'not enough bars for slow EMA'}
+        fast = _ema(closes, ema_fast)
+        slow = _ema(closes, ema_slow)
+        is_bull = fast[-1] > slow[-1]
+        return {
+            'bias': 'bull' if is_bull else 'bear',
+            'method': method,
+            'fast_value': round(fast[-1], 6),
+            'slow_value': round(slow[-1], 6),
+            'close': round(last_close, 6),
+        }
+    
+    # 'EMA Trend' (default)
+    if len(closes) < ema_trend:
+        return {'bias': 'neutral', 'method': method, 'reason': 'not enough bars for trend EMA'}
+    trend = _ema(closes, ema_trend)
+    is_bull = last_close > trend[-1]
+    return {
+        'bias': 'bull' if is_bull else 'bear',
+        'method': method,
+        'trend_value': round(trend[-1], 6),
+        'close': round(last_close, 6),
+    }
 
 
 class SMCScanner:
@@ -92,6 +169,9 @@ class SMCScanner:
         # {symbol: set_of_event_ids_seen_on_first_scan}
         self._first_scan_done: Dict[str, bool] = {}
         self._seen_events: Dict[str, set] = {}  # {symbol: {ev_id, ...}}
+        
+        # HTF Bias cache per symbol: {symbol: {'bias', 'method', ...}}
+        self._htf_cache: Dict[str, Dict] = {}
         
         self._scan_count = 0
         self._errors = 0
@@ -211,11 +291,15 @@ class SMCScanner:
     def update_settings(self, new: Dict) -> Dict:
         with self._lock:
             allowed = ['enabled', 'alert_mode', 'interval_secs', 'telegram_alerts',
-                       'swing_size', 'timeframe', 'internal_size']
+                       'swing_size', 'timeframe', 'internal_size',
+                       'htf_enabled', 'htf_timeframe', 'htf_method',
+                       'htf_ema_fast', 'htf_ema_slow', 'htf_ema_trend']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
             old_isize = self._settings.get('internal_size', DEFAULT_INTERNAL_SIZE)
+            old_htf_tf = self._settings.get('htf_timeframe', '15m')
+            old_htf_method = self._settings.get('htf_method', 'EMA Trend')
             
             for k in allowed:
                 if k in new:
@@ -231,7 +315,7 @@ class SMCScanner:
             except:
                 self._settings['interval_secs'] = DEFAULT_INTERVAL_SECS
             
-            # Clamp swing_size — Pine minval is 10
+            # Clamp swing_size
             try:
                 self._settings['swing_size'] = max(10, min(200, int(self._settings.get('swing_size', 50))))
             except:
@@ -241,23 +325,60 @@ class SMCScanner:
             if self._settings.get('timeframe') not in ALLOWED_TIMEFRAMES:
                 self._settings['timeframe'] = DEFAULT_TIMEFRAME
             
-            # Clamp internal_size — keep tight (2-20), Pine default 5
+            # Clamp internal_size
             try:
                 self._settings['internal_size'] = max(2, min(20, int(self._settings.get('internal_size', 5))))
             except:
                 self._settings['internal_size'] = DEFAULT_INTERNAL_SIZE
             
-            # If timeframe or internal_size changed, reset cache + alert dedup
-            # so subsequent scan reanalyzes everything fresh
+            # === HTF settings validation ===
+            # htf_enabled is bool — coerce
+            self._settings['htf_enabled'] = bool(self._settings.get('htf_enabled', False))
+            
+            # htf_timeframe — same allowed set + 1d
+            allowed_htf_tfs = ALLOWED_TIMEFRAMES + ['1d']
+            if self._settings.get('htf_timeframe') not in allowed_htf_tfs:
+                self._settings['htf_timeframe'] = '15m'
+            
+            # htf_method
+            if self._settings.get('htf_method') not in ALLOWED_HTF_METHODS:
+                self._settings['htf_method'] = 'EMA Trend'
+            
+            # EMA periods
+            try:
+                self._settings['htf_ema_fast'] = max(3, min(100, int(self._settings.get('htf_ema_fast', 9))))
+            except:
+                self._settings['htf_ema_fast'] = 9
+            try:
+                self._settings['htf_ema_slow'] = max(5, min(200, int(self._settings.get('htf_ema_slow', 21))))
+            except:
+                self._settings['htf_ema_slow'] = 21
+            try:
+                self._settings['htf_ema_trend'] = max(10, min(200, int(self._settings.get('htf_ema_trend', 50))))
+            except:
+                self._settings['htf_ema_trend'] = 50
+            
+            # Reset cache on relevant changes
             new_tf = self._settings['timeframe']
             new_isize = self._settings['internal_size']
-            if new_tf != old_tf or new_isize != old_isize:
+            new_htf_tf = self._settings['htf_timeframe']
+            new_htf_method = self._settings['htf_method']
+            
+            tf_changed = (new_tf != old_tf or new_isize != old_isize)
+            htf_changed = (new_htf_tf != old_htf_tf or new_htf_method != old_htf_method)
+            
+            if tf_changed:
                 self._cache.clear()
                 self._first_scan_done.clear()
                 self._seen_events.clear()
                 self._pending_choch.clear()
                 print(f"[SMC] Settings changed: tf {old_tf}→{new_tf}, "
                       f"size {old_isize}→{new_isize}. Cache cleared.")
+            if htf_changed or tf_changed:
+                self._htf_cache.clear()
+                if htf_changed:
+                    print(f"[SMC] HTF changed: {old_htf_tf}/{old_htf_method} → "
+                          f"{new_htf_tf}/{new_htf_method}. HTF cache cleared.")
             
             self._persist_settings()
             return dict(self._settings)
@@ -273,6 +394,16 @@ class SMCScanner:
             return int(self._settings.get('internal_size', DEFAULT_INTERNAL_SIZE))
         except:
             return DEFAULT_INTERNAL_SIZE
+    
+    def get_htf_settings(self) -> Dict:
+        return {
+            'enabled': bool(self._settings.get('htf_enabled', False)),
+            'timeframe': self._settings.get('htf_timeframe', '15m'),
+            'method': self._settings.get('htf_method', 'EMA Trend'),
+            'ema_fast': int(self._settings.get('htf_ema_fast', 9)),
+            'ema_slow': int(self._settings.get('htf_ema_slow', 21)),
+            'ema_trend': int(self._settings.get('htf_ema_trend', 50)),
+        }
     
     def is_enabled(self) -> bool:
         return self._settings.get('enabled', True)
@@ -383,6 +514,13 @@ class SMCScanner:
                         'updated_at': time.time(),
                     }
                 
+                # === Compute HTF Bias (used by alert filter) ===
+                htf_settings = self.get_htf_settings()
+                htf_bias = self._compute_htf_bias(symbol, md, htf_settings,
+                                                    swing_trend=result_closed.get('swing', {}).get('trend', 0))
+                with self._lock:
+                    self._htf_cache[symbol] = htf_bias
+                
                 # Alerts run on CLOSED bars only — won't fire from intra-bar
                 # wicks that retract before close
                 self._process_alerts(symbol, result_closed)
@@ -396,6 +534,42 @@ class SMCScanner:
         
         if self._scan_count <= 2 or self._scan_count % 30 == 0:
             print(f"[SMC] Scan #{self._scan_count}: {len(self._watchlist)} symbols, errors={self._errors}")
+    
+    def _compute_htf_bias(self, symbol: str, md, htf_settings: Dict,
+                            swing_trend: int = 0) -> Dict:
+        """Fetch HTF klines and compute bias. Returns the result dict.
+        
+        For 'Swing Structure' method: uses swing_trend from current chart's
+        SMC analysis — no extra API call needed.
+        """
+        method = htf_settings['method']
+        
+        # Swing Structure method doesn't need HTF data
+        if method == 'Swing Structure':
+            return calc_htf_bias(None, method, swing_trend=swing_trend)
+        
+        # EMA Cross / EMA Trend need HTF klines
+        try:
+            htf_tf = htf_settings['timeframe']
+            # Fetch enough bars for the longest EMA period needed
+            need_bars = max(htf_settings['ema_slow'], htf_settings['ema_trend']) + 50
+            need_bars = min(need_bars, 500)
+            
+            htf_klines = md.fetch_klines(symbol, limit=need_bars, interval=htf_tf) \
+                if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames \
+                else None
+            
+            if not htf_klines:
+                return {'bias': 'neutral', 'method': method, 'reason': 'fetch failed'}
+            
+            return calc_htf_bias(
+                htf_klines, method,
+                ema_fast=htf_settings['ema_fast'],
+                ema_slow=htf_settings['ema_slow'],
+                ema_trend=htf_settings['ema_trend'],
+            )
+        except Exception as e:
+            return {'bias': 'neutral', 'method': method, 'reason': f'error: {e}'}
     
     # ========================================
     # Alerts logic
@@ -479,7 +653,10 @@ class SMCScanner:
             
             if mode == 'choch':
                 if tag == 'CHoCH':
-                    self._send_alert(symbol, ev, mode='choch')
+                    if self._htf_allows(symbol, ev['dir']):
+                        self._send_alert(symbol, ev, mode='choch')
+                    else:
+                        print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
             
             elif mode == 'choch_bos':
                 if tag == 'CHoCH':
@@ -496,12 +673,35 @@ class SMCScanner:
                     if pending and pending['dir'] == ev['dir']:
                         # Additional safety: BOS must be AFTER the CHoCH chronologically
                         if ev.get('to_t', 0) > pending.get('to_t', 0):
-                            self._send_alert(symbol, ev, mode='choch_bos',
-                                              choch_event=pending['choch_event'])
-                            self._pending_choch.pop(symbol, None)
+                            if self._htf_allows(symbol, ev['dir']):
+                                self._send_alert(symbol, ev, mode='choch_bos',
+                                                  choch_event=pending['choch_event'])
+                                self._pending_choch.pop(symbol, None)
+                            else:
+                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
+                                # Don't pop pending — let next BOS in same direction try again
                     elif pending and pending['dir'] != ev['dir']:
                         # Opposite-direction BOS invalidates pending CHoCH
                         self._pending_choch.pop(symbol, None)
+    
+    def _htf_allows(self, symbol: str, event_dir: str) -> bool:
+        """Check if HTF bias permits an alert in the given direction.
+        
+        Returns True if filter is OFF, or if direction matches HTF bias.
+        Returns False only when filter is ON and direction is opposite.
+        Neutral HTF bias is treated as "allow" so symbols with insufficient
+        data don't get blocked permanently.
+        """
+        htf = self.get_htf_settings()
+        if not htf['enabled']:
+            return True
+        
+        bias = self._htf_cache.get(symbol, {}).get('bias', 'neutral')
+        if bias == 'neutral':
+            return True  # don't block when HTF data is unavailable
+        
+        # event_dir = 'bull' | 'bear'; bias = 'bull' | 'bear'
+        return bias == event_dir
     
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:
@@ -677,6 +877,9 @@ class SMCScanner:
                 except:
                     trends[sym] = 0
             
+            # Per-symbol HTF biases
+            htf_biases = {sym: dict(b) for sym, b in self._htf_cache.items()}
+            
             return {
                 'running': self._running,
                 'enabled': self._settings.get('enabled', True),
@@ -686,6 +889,7 @@ class SMCScanner:
                 'errors': self._errors,
                 'cached_symbols': list(self._cache.keys()),
                 'trends': trends,
+                'htf_biases': htf_biases,
                 'pending_choch': {k: {'dir': v['dir'], 'level': v['level']}
                                    for k, v in self._pending_choch.items()},
             }
