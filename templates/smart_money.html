@@ -281,6 +281,23 @@
                 Show Pivots (HH/HL/LH/LL)
             </label>
             <div class="sm-control-item">
+                <label>Timeframe:</label>
+                <select id="sm-timeframe" onchange="updateTimeframe()">
+                    <option value="1m">1M</option>
+                    <option value="3m">3M</option>
+                    <option value="5m" selected>5M</option>
+                    <option value="15m">15M</option>
+                    <option value="30m">30M</option>
+                    <option value="1h">1H</option>
+                    <option value="4h">4H</option>
+                </select>
+            </div>
+            <div class="sm-control-item">
+                <label>Internal Size:</label>
+                <input type="number" id="sm-internal-size" value="5" min="2" max="20"
+                       style="width:55px" onchange="updateInternalSize()">
+            </div>
+            <div class="sm-control-item">
                 <label>Swings Points:</label>
                 <input type="number" id="sm-swings-input" value="50" disabled style="width:55px">
             </div>
@@ -444,6 +461,8 @@ async function loadSettings() {
         const d = await res.json();
         if (d.settings) {
             document.getElementById('sm-alert-mode').value = d.settings.alert_mode || 'choch';
+            document.getElementById('sm-timeframe').value = d.settings.timeframe || '5m';
+            document.getElementById('sm-internal-size').value = d.settings.internal_size || 5;
         }
     } catch (err) {}
 }
@@ -457,6 +476,42 @@ async function updateAlertMode() {
             body: JSON.stringify({alert_mode: mode}),
         });
     } catch (err) { alert('Update error: ' + err); }
+}
+
+async function updateTimeframe() {
+    const tf = document.getElementById('sm-timeframe').value;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({timeframe: tf}),
+        });
+        // Force chart reload — backend cleared cache on change
+        lastChartSymbol = null;
+        lastOhlcLength = 0;
+        lastEventsKey = '';
+        if (currentSymbol) loadChart();
+    } catch (err) { alert('Timeframe update error: ' + err); }
+}
+
+async function updateInternalSize() {
+    const v = parseInt(document.getElementById('sm-internal-size').value);
+    if (isNaN(v) || v < 2 || v > 20) {
+        // restore from server
+        loadSettings();
+        return;
+    }
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({internal_size: v}),
+        });
+        lastChartSymbol = null;
+        lastOhlcLength = 0;
+        lastEventsKey = '';
+        if (currentSymbol) loadChart();
+    } catch (err) { alert('Internal size update error: ' + err); }
 }
 
 // === Chart ===

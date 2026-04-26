@@ -35,10 +35,19 @@ from typing import Dict, List, Optional
 # Defaults
 DEFAULT_INTERVAL_SECS = 60
 DEFAULT_ALERT_MODE = 'choch'  # 'choch' or 'choch_bos'
-KLINES_LIMIT = 700            # bars to fetch per scan (~2.4 days of 5m data)
-TIMEFRAME = '5m'              # finer timeframe for more granular SMC structure
-DISPLAY_LABEL = '5M'          # what users see in UI / Telegram (uppercase)
+KLINES_LIMIT = 700            # bars to fetch per scan
+DEFAULT_TIMEFRAME = '5m'      # default timeframe
+DEFAULT_INTERNAL_SIZE = 5     # default Pine Internal Structure size
 MAX_WATCHLIST = 50
+
+# Allowed timeframes (Binance format)
+ALLOWED_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h']
+
+# Display labels (uppercase) for UI / Telegram
+TIMEFRAME_LABELS = {
+    '1m': '1M', '3m': '3M', '5m': '5M', '15m': '15M',
+    '30m': '30M', '1h': '1H', '4h': '4H',
+}
 
 DB_KEY_WATCHLIST = 'smc_watchlist'
 DB_KEY_SETTINGS = 'smc_settings'
@@ -49,7 +58,9 @@ DEFAULT_SETTINGS = {
     'alert_mode': DEFAULT_ALERT_MODE,
     'interval_secs': DEFAULT_INTERVAL_SECS,
     'telegram_alerts': True,
-    'swing_size': 50,  # Pine default for Swing Structure
+    'swing_size': 50,
+    'timeframe': DEFAULT_TIMEFRAME,
+    'internal_size': DEFAULT_INTERNAL_SIZE,
 }
 
 
@@ -199,7 +210,13 @@ class SMCScanner:
     
     def update_settings(self, new: Dict) -> Dict:
         with self._lock:
-            allowed = ['enabled', 'alert_mode', 'interval_secs', 'telegram_alerts', 'swing_size']
+            allowed = ['enabled', 'alert_mode', 'interval_secs', 'telegram_alerts',
+                       'swing_size', 'timeframe', 'internal_size']
+            
+            # Detect changes that require cache reset
+            old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
+            old_isize = self._settings.get('internal_size', DEFAULT_INTERNAL_SIZE)
+            
             for k in allowed:
                 if k in new:
                     self._settings[k] = new[k]
@@ -220,8 +237,42 @@ class SMCScanner:
             except:
                 self._settings['swing_size'] = 50
             
+            # Validate timeframe
+            if self._settings.get('timeframe') not in ALLOWED_TIMEFRAMES:
+                self._settings['timeframe'] = DEFAULT_TIMEFRAME
+            
+            # Clamp internal_size — keep tight (2-20), Pine default 5
+            try:
+                self._settings['internal_size'] = max(2, min(20, int(self._settings.get('internal_size', 5))))
+            except:
+                self._settings['internal_size'] = DEFAULT_INTERNAL_SIZE
+            
+            # If timeframe or internal_size changed, reset cache + alert dedup
+            # so subsequent scan reanalyzes everything fresh
+            new_tf = self._settings['timeframe']
+            new_isize = self._settings['internal_size']
+            if new_tf != old_tf or new_isize != old_isize:
+                self._cache.clear()
+                self._first_scan_done.clear()
+                self._seen_events.clear()
+                self._pending_choch.clear()
+                print(f"[SMC] Settings changed: tf {old_tf}→{new_tf}, "
+                      f"size {old_isize}→{new_isize}. Cache cleared.")
+            
             self._persist_settings()
             return dict(self._settings)
+    
+    def get_timeframe(self) -> str:
+        return self._settings.get('timeframe', DEFAULT_TIMEFRAME)
+    
+    def get_display_label(self) -> str:
+        return TIMEFRAME_LABELS.get(self.get_timeframe(), self.get_timeframe().upper())
+    
+    def get_internal_size(self) -> int:
+        try:
+            return int(self._settings.get('internal_size', DEFAULT_INTERNAL_SIZE))
+        except:
+            return DEFAULT_INTERNAL_SIZE
     
     def is_enabled(self) -> bool:
         return self._settings.get('enabled', True)
@@ -247,7 +298,7 @@ class SMCScanner:
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="SMCScanner")
         self._thread.start()
-        print(f"[SMC] ✅ Started: timeframe={TIMEFRAME}, "
+        print(f"[SMC] ✅ Started: timeframe={self.get_timeframe()}, "
               f"interval={self._settings['interval_secs']}s, "
               f"watchlist={len(self._watchlist)}, "
               f"alert_mode={self._settings['alert_mode']}")
@@ -286,9 +337,9 @@ class SMCScanner:
             if not self._running:
                 return
             try:
-                # Fetch 15m klines
                 # Fetch klines at configured timeframe
-                klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=TIMEFRAME) \
+                tf = self.get_timeframe()
+                klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=tf) \
                     if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames \
                     else md.fetch_klines(symbol, limit=KLINES_LIMIT)
                 
@@ -314,12 +365,15 @@ class SMCScanner:
                 # │ stability — no signal until the bar is actually closed. │
                 # │ This is exactly how TV indicators behave.               │
                 # └─────────────────────────────────────────────────────────┘
-                result_full = detect_smc_structure(klines, internal_size=5,
-                                                     swing_size=int(self._settings.get('swing_size', 50)))
+                isize = self.get_internal_size()
+                ssize = int(self._settings.get('swing_size', 50))
+                
+                result_full = detect_smc_structure(klines, internal_size=isize,
+                                                     swing_size=ssize)
                 
                 klines_closed = klines[:-1] if len(klines) > 1 else klines
-                result_closed = detect_smc_structure(klines_closed, internal_size=5,
-                                                       swing_size=int(self._settings.get('swing_size', 50)))
+                result_closed = detect_smc_structure(klines_closed, internal_size=isize,
+                                                       swing_size=ssize)
                 
                 # Cache full klines + full structure for chart display
                 with self._lock:
@@ -458,6 +512,7 @@ class SMCScanner:
             level_str = f"${level:,.6g}" if level < 1 else f"${level:,.2f}"
             
             now_str = datetime.now(timezone.utc).strftime('%H:%M UTC')
+            tf_label = self.get_display_label()
             
             if mode == 'choch':
                 msg = (
@@ -465,7 +520,7 @@ class SMCScanner:
                     f"━━━━━━━━━━━━━━━━\n"
                     f"{dir_icon} {dir_label} change of character\n"
                     f"📍 Level: {level_str}\n"
-                    f"⏱ {DISPLAY_LABEL} · {now_str}"
+                    f"⏱ {tf_label} · {now_str}"
                 )
             else:  # choch_bos
                 choch_level = choch_event.get('level', 0) if choch_event else 0
@@ -476,7 +531,7 @@ class SMCScanner:
                     f"{dir_icon} {dir_label} structure confirmed\n"
                     f"🔄 CHoCH: {choch_str}\n"
                     f"💥 BOS: {level_str}\n"
-                    f"⏱ {DISPLAY_LABEL} · {now_str}"
+                    f"⏱ {tf_label} · {now_str}"
                 )
             
             self.notifier.send_message(msg)
@@ -505,7 +560,8 @@ class SMCScanner:
             from detection.smc_structure import detect_smc_structure
             
             md = get_market_data()
-            klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=TIMEFRAME) \
+            tf = self.get_timeframe()
+            klines = md.fetch_klines(symbol, limit=KLINES_LIMIT, interval=tf) \
                 if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames \
                 else md.fetch_klines(symbol, limit=KLINES_LIMIT)
             
@@ -514,7 +570,8 @@ class SMCScanner:
             
             # On-demand chart fetch: use full klines (incl. live bar) so the
             # chart shows what TradingView would show in real time.
-            analysis = detect_smc_structure(klines, internal_size=5,
+            analysis = detect_smc_structure(klines,
+                                              internal_size=self.get_internal_size(),
                                               swing_size=int(self._settings.get('swing_size', 50)))
             
             with self._lock:
@@ -594,7 +651,7 @@ class SMCScanner:
         
         return {
             'symbol': symbol,
-            'interval': DISPLAY_LABEL,
+            'interval': self.get_display_label(),
             'ohlc': ohlc,
             # Internal Structure (size=5)
             'pivots': fmt_pivots(internal),
