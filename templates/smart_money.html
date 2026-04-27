@@ -316,6 +316,178 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
+
+/* Trade Manager UI */
+.tm-section {
+    margin-top: 16px;
+    background: linear-gradient(135deg, #0f1420 0%, #1a1f2e 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.tm-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: rgba(34, 197, 94, 0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.tm-header h2 {
+    font-size: 0.95rem;
+    margin: 0;
+    color: #ddd;
+}
+.tm-header.disabled { background: rgba(100,100,100,0.04); }
+.tm-master-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.tm-toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 22px;
+}
+.tm-toggle-switch input { opacity: 0; width: 0; height: 0; }
+.tm-toggle-switch .slider {
+    position: absolute; cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #4a4a4a;
+    border-radius: 22px;
+    transition: 0.2s;
+}
+.tm-toggle-switch .slider:before {
+    position: absolute; content: "";
+    height: 16px; width: 16px;
+    left: 3px; bottom: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: 0.2s;
+}
+.tm-toggle-switch input:checked + .slider {
+    background-color: #22c55e;
+}
+.tm-toggle-switch input:checked + .slider:before {
+    transform: translateX(22px);
+}
+.tm-body { padding: 12px 14px; }
+.tm-warn {
+    background: rgba(234, 88, 12, 0.1);
+    border: 1px solid rgba(234, 88, 12, 0.3);
+    color: #fb923c;
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    margin-bottom: 12px;
+}
+.tm-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+}
+.tm-row label {
+    font-size: 0.8rem;
+    color: #ccc;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.tm-row input[type=number], .tm-row select {
+    background: #0a0e16;
+    color: #eee;
+    border: 1px solid #333;
+    padding: 3px 6px;
+    border-radius: 3px;
+    font-size: 0.8rem;
+}
+.tm-row input[type=number] { width: 70px; }
+.tm-help {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    color: #888;
+    font-size: 0.7rem;
+    text-align: center;
+    line-height: 16px;
+    cursor: help;
+    user-select: none;
+    margin-left: 2px;
+}
+.tm-help:hover { background: rgba(168, 85, 247, 0.2); color: #c084fc; }
+
+.tm-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    margin-top: 8px;
+}
+.tm-table th, .tm-table td {
+    padding: 5px 8px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.tm-table th {
+    color: #888;
+    font-weight: normal;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.tm-table tr:hover td { background: rgba(255,255,255,0.02); }
+.tm-pnl-pos { color: #4ade80; }
+.tm-pnl-neg { color: #ef4444; }
+.tm-side-long { color: #4ade80; font-weight: 600; }
+.tm-side-short { color: #ef4444; font-weight: 600; }
+.tm-close-btn {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.72rem;
+}
+.tm-close-btn:hover { background: rgba(239, 68, 68, 0.25); }
+
+.tm-stats {
+    display: flex;
+    gap: 16px;
+    padding: 8px 0;
+    font-size: 0.78rem;
+    color: #aaa;
+}
+.tm-stats b { color: #ddd; font-weight: 600; }
+
+.tm-empty-msg {
+    text-align: center;
+    padding: 16px;
+    color: #666;
+    font-size: 0.78rem;
+}
+
+/* Tradeable badge in watchlist */
+.wl-trade-flag {
+    display: inline-block;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-left: 4px;
+    user-select: none;
+}
+.wl-trade-flag.active {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+}
+.wl-trade-flag.inactive {
+    color: #555;
+}
+.wl-trade-flag:hover { background: rgba(34, 197, 94, 0.1); }
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -488,6 +660,223 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
         </div>
     </div>
+    
+    <!-- ====================== TRADE MANAGER ====================== -->
+    <div class="tm-section">
+        <div class="tm-header" id="tm-header">
+            <h2>💼 Trade Manager <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(real Bybit positions)</span></h2>
+            <div class="tm-master-toggle">
+                <span id="tm-status-label" style="font-size:0.8rem;color:#888">Disabled</span>
+                <label class="tm-toggle-switch">
+                    <input type="checkbox" id="tm-enabled" onchange="onTMToggle()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        <div class="tm-body" id="tm-body">
+            
+            <div class="tm-warn">
+                ⚠️ <b>Real money:</b> Коли увімкнено, бот автоматично відкриває та закриває реальні позиції на Bybit за сигналами SMC. Перевір налаштування перед увімкненням.
+            </div>
+            
+            <details>
+                <summary class="sm-settings-summary" style="padding:6px 0">
+                    <span>⚙️ Strategy Settings</span>
+                    <span class="sm-settings-summary-right" id="tm-summary">—</span>
+                </summary>
+                <div style="padding:10px 0">
+                    
+                    <!-- Position Sizing -->
+                    <div class="sm-settings-section">
+                        <h3>Position Sizing</h3>
+                        <div class="tm-row">
+                            <label>Mode:
+                                <span class="tm-help" title="Як розраховується розмір позиції:&#10;• Fixed USD — фіксована сума в доларах (за замовчуванням $100)&#10;• Fixed % balance — відсоток від балансу акаунту&#10;• Risk-based — розмір такий, щоб втрата при SL = X% балансу">?</span>
+                            </label>
+                            <select id="tm-sizing-mode" onchange="onTMSizingChange()">
+                                <option value="fixed_usd">Fixed USD</option>
+                                <option value="fixed_pct">Fixed % balance</option>
+                                <option value="risk_based">Risk-based (X% loss at SL)</option>
+                            </select>
+                        </div>
+                        <div class="tm-row" id="tm-sizing-fixed-usd">
+                            <label>Amount USD:
+                                <span class="tm-help" title="Скільки доларів використовувати на одну угоду. Це notional value (без leverage). Приклад: $100 на BTC при ціні $87,000 → 0.00115 BTC">?</span>
+                            </label>
+                            <input type="number" id="tm-fixed-usd" min="10" max="100000" step="10" onchange="saveTMSettings()">
+                        </div>
+                        <div class="tm-row" id="tm-sizing-fixed-pct" style="display:none">
+                            <label>% of balance:
+                                <span class="tm-help" title="Відсоток від загального балансу акаунту на одну угоду. Приклад: 2% від $1000 = $20 на угоду">?</span>
+                            </label>
+                            <input type="number" id="tm-fixed-pct" min="0.1" max="50" step="0.1" onchange="saveTMSettings()">
+                        </div>
+                        <div class="tm-row" id="tm-sizing-risk" style="display:none">
+                            <label>Max loss % at SL:
+                                <span class="tm-help" title="Максимально допустима втрата у відсотках від балансу при спрацюванні Stop Loss. Розмір позиції розраховується так, щоб втрата дорівнювала цьому %">?</span>
+                            </label>
+                            <input type="number" id="tm-risk-pct" min="0.1" max="10" step="0.1" onchange="saveTMSettings()">
+                        </div>
+                        <div class="tm-row">
+                            <label>Leverage:
+                                <span class="tm-help" title="Кредитне плече. Чим вище — тим більше позиція може бути відкрита, але і ризик ліквідації вищий. Bybit дозволяє 1-100x для USDT-perpetual">?</span>
+                            </label>
+                            <input type="number" id="tm-leverage" min="1" max="50" step="1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">x</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Exit Rules -->
+                    <div class="sm-settings-section">
+                        <h3>Exit Rules</h3>
+                        
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-sl" onchange="saveTMSettings()">
+                                Stop Loss
+                                <span class="tm-help" title="Жорсткий стоп-лосс у відсотках від ціни входу. Закриває позицію якщо ціна йде проти на більше ніж SL%. Захищає від великих втрат">?</span>
+                            </label>
+                            <input type="number" id="tm-sl-pct" min="0.1" max="20" step="0.1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">%</span>
+                        </div>
+                        
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-tp" onchange="saveTMSettings()">
+                                Take Profit
+                                <span class="tm-help" title="Take profit у відсотках. Автоматично закриває позицію коли ціна досягне цільового рівня">?</span>
+                            </label>
+                            <input type="number" id="tm-tp-pct" min="0.1" max="50" step="0.1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">%</span>
+                        </div>
+                        
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-reverse" onchange="saveTMSettings()">
+                                Reverse SMC (CHoCH only)
+                                <span class="tm-help" title="Закриває LONG позицію коли приходить CHoCH bear (зміна структури ринку проти позиції), і навпаки. Це ключовий SMC exit — вихід при зміні структури">?</span>
+                            </label>
+                        </div>
+                        
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-htf-flip" onchange="saveTMSettings()">
+                                HTF Trend Flip
+                                <span class="tm-help" title="Закриває позицію коли HTF (старший таймфрейм) тренд змінюється проти неї. Працює тільки якщо HTF Filter увімкнений у налаштуваннях SMC">?</span>
+                            </label>
+                        </div>
+                        
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-time-stop" onchange="saveTMSettings()">
+                                Time Stop
+                                <span class="tm-help" title="Закриває позицію якщо вона відкрита довше за вказаний час. Корисно для уникнення застрявання у боковику">?</span>
+                            </label>
+                            <input type="number" id="tm-time-stop-hours" min="0.5" max="48" step="0.5" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">годин</span>
+                        </div>
+                        
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-trailing" onchange="saveTMSettings()">
+                                Trailing Stop
+                                <span class="tm-help" title="Динамічний стоп що рухається за ціною. Активується після досягнення певного прибутку. Коли ціна відкочується від piku на trailing distance — закриваємось">?</span>
+                            </label>
+                            <span style="font-size:0.72rem;color:#888">activate at</span>
+                            <input type="number" id="tm-trail-activate" min="0.1" max="20" step="0.1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.72rem">% / trail by</span>
+                            <input type="number" id="tm-trail-distance" min="0.1" max="10" step="0.1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.72rem">%</span>
+                        </div>
+                        
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-be" onchange="saveTMSettings()">
+                                Break-Even Move
+                                <span class="tm-help" title="Переносить SL на ціну входу коли позиція в плюсі на X%. Після цього угода 'безпечна' — гірше нуля бути не може">?</span>
+                            </label>
+                            <span style="font-size:0.72rem;color:#888">trigger at</span>
+                            <input type="number" id="tm-be-trigger" min="0.1" max="10" step="0.1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.72rem">%</span>
+                        </div>
+                    </div>
+                    
+                    <!-- BOS-N partials -->
+                    <div class="sm-settings-section">
+                        <h3>BOS-N Partial Closes (after CHoCH+BOS opening)</h3>
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-bos-partials" onchange="saveTMSettings()">
+                                Enable BOS-N partial closes
+                                <span class="tm-help" title="Після відкриття угоди по сигналу CHoCH+BOS бот рахує наступні BOS у тому ж напрямку: BOS-2, BOS-3, BOS-4. На кожному можна закрити частину позиції. Решта після BOS-2 переходить на trailing stop (якщо увімкнено)">?</span>
+                            </label>
+                        </div>
+                        <div class="tm-row">
+                            <label>BOS-2 close
+                                <span class="tm-help" title="Який відсоток позиції закривати на 2-му BOS у напрямку угоди. Зазвичай 70% — фіксуємо більшу частину прибутку, залишаємо 30% для подальшого руху">?</span>
+                            </label>
+                            <input type="number" id="tm-bos2-pct" min="0" max="100" step="5" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.72rem">%</span>
+                        </div>
+                        <div class="tm-row">
+                            <label>BOS-3 close
+                                <span class="tm-help" title="Який відсоток від ЗАЛИШКУ закривати на 3-му BOS. Якщо 0 — пропускаємо BOS-3">?</span>
+                            </label>
+                            <input type="number" id="tm-bos3-pct" min="0" max="100" step="5" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.72rem">%</span>
+                        </div>
+                        <div class="tm-row">
+                            <label>BOS-4 close
+                                <span class="tm-help" title="Який відсоток від ЗАЛИШКУ закривати на 4-му BOS. Якщо 0 — пропускаємо BOS-4">?</span>
+                            </label>
+                            <input type="number" id="tm-bos4-pct" min="0" max="100" step="5" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.72rem">%</span>
+                        </div>
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-trailing-after-bos2" onchange="saveTMSettings()">
+                                Auto-activate Trailing after BOS-2
+                                <span class="tm-help" title="Після часткового закриття на BOS-2 автоматично запускає Trailing Stop на залишковій частині позиції. Це фіксує прибуток на основній частці і дозволяє решті 'кататись' далі">?</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                </div>
+            </details>
+            
+            <!-- Stats -->
+            <div class="tm-stats" id="tm-stats">
+                <span>📊 <b>0</b> closed</span>
+                <span>🟢 <b>0</b> wins</span>
+                <span>🔴 <b>0</b> losses</span>
+                <span>📈 win rate: <b>—</b></span>
+                <span>💰 PnL: <b>$0</b></span>
+            </div>
+            
+            <!-- Open Positions -->
+            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
+            <table class="tm-table" id="tm-open-table">
+                <thead>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Qty</th><th>Action</th></tr>
+                </thead>
+                <tbody id="tm-open-tbody">
+                    <tr><td colspan="7" class="tm-empty-msg">No open positions</td></tr>
+                </tbody>
+            </table>
+            
+            <!-- Recent Closed -->
+            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📜 Recent Closed Trades</h3>
+            <table class="tm-table" id="tm-closed-table">
+                <thead>
+                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th></tr>
+                </thead>
+                <tbody id="tm-closed-tbody">
+                    <tr><td colspan="7" class="tm-empty-msg">No closed trades yet</td></tr>
+                </tbody>
+            </table>
+            
+        </div>
+    </div>
 </div>
 
 <script>
@@ -528,9 +917,13 @@ async function clearSignalsForCurrent() {
 // === Watchlist ===
 async function loadWatchlist() {
     try {
-        const res = await fetch('/api/smc/watchlist');
+        // Get watchlist + tradeable list in single state call
+        const res = await fetch('/api/smc/state');
         const d = await res.json();
-        renderWatchlist(d.watchlist || []);
+        const list = d.watchlist || [];
+        const tradeable = d.tradeable || [];
+        tmTradeable = new Set(tradeable);
+        renderWatchlist(list);
     } catch (err) {
         console.error('watchlist load err:', err);
     }
@@ -549,9 +942,18 @@ function renderWatchlist(list) {
     for (const sym of list) {
         const short = sym.replace('USDT', '');
         const isActive = (sym === currentSymbol) ? 'active' : '';
+        const isTradeable = tmTradeable.has(sym);
+        const flagClass = isTradeable ? 'active' : 'inactive';
+        const flagTitle = isTradeable
+            ? 'Tradeable: позиції на цій монеті будуть відкриватися'
+            : 'Click щоб дозволити торгівлю на цій монеті';
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
             <span><span class="trend-dot" id="dot-${sym}"></span>${short}</span>
-            <span class="sm-wl-remove" onclick="event.stopPropagation();removeSymbol('${sym}')">✕</span>
+            <span style="display:flex;align-items:center;gap:4px">
+                <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
+                      onclick="event.stopPropagation();toggleTradeable('${sym}')">💼</span>
+                <span class="sm-wl-remove" onclick="event.stopPropagation();removeSymbol('${sym}')">✕</span>
+            </span>
         </div>`;
     }
     el.innerHTML = html;
@@ -1061,15 +1463,344 @@ async function updateStatus() {
     } catch (err) {}
 }
 
+// ====================================================================
+// =================== TRADE MANAGER UI LOGIC =========================
+// ====================================================================
+
+// Cached tradeable list (used by watchlist render)
+let tmTradeable = new Set();
+
+async function loadTMSettings() {
+    try {
+        const res = await fetch('/api/tm/settings');
+        const d = await res.json();
+        if (!d.ok || !d.settings) return;
+        const s = d.settings;
+        
+        // Master toggle
+        const masterToggle = document.getElementById('tm-enabled');
+        masterToggle.checked = !!s.enabled;
+        updateTMHeader(s.enabled);
+        
+        // Sizing
+        document.getElementById('tm-sizing-mode').value = s.sizing_mode || 'fixed_usd';
+        document.getElementById('tm-fixed-usd').value = s.fixed_usd_amount;
+        document.getElementById('tm-fixed-pct').value = s.fixed_pct_balance;
+        document.getElementById('tm-risk-pct').value = s.risk_pct_balance;
+        document.getElementById('tm-leverage').value = s.leverage;
+        onTMSizingChange();
+        
+        // Exit rules
+        document.getElementById('tm-use-sl').checked = !!s.use_sl;
+        document.getElementById('tm-sl-pct').value = s.sl_pct;
+        document.getElementById('tm-use-tp').checked = !!s.use_tp;
+        document.getElementById('tm-tp-pct').value = s.tp_pct;
+        document.getElementById('tm-use-reverse').checked = !!s.use_reverse_smc;
+        document.getElementById('tm-use-htf-flip').checked = !!s.use_htf_flip;
+        document.getElementById('tm-use-time-stop').checked = !!s.use_time_stop;
+        document.getElementById('tm-time-stop-hours').value = s.time_stop_hours;
+        document.getElementById('tm-use-trailing').checked = !!s.use_trailing;
+        document.getElementById('tm-trail-activate').value = s.trailing_activate_pct;
+        document.getElementById('tm-trail-distance').value = s.trailing_distance_pct;
+        document.getElementById('tm-use-be').checked = !!s.use_be;
+        document.getElementById('tm-be-trigger').value = s.be_trigger_pct;
+        
+        // BOS-N
+        document.getElementById('tm-use-bos-partials').checked = !!s.use_bos_partials;
+        document.getElementById('tm-bos2-pct').value = s.bos_2_close_pct;
+        document.getElementById('tm-bos3-pct').value = s.bos_3_close_pct;
+        document.getElementById('tm-bos4-pct').value = s.bos_4_close_pct;
+        document.getElementById('tm-trailing-after-bos2').checked = !!s.trailing_after_bos_2;
+        
+        updateTMSummary();
+    } catch (err) {
+        console.error('TM settings load error', err);
+    }
+}
+
+function updateTMHeader(enabled) {
+    const header = document.getElementById('tm-header');
+    const label = document.getElementById('tm-status-label');
+    if (enabled) {
+        header.classList.remove('disabled');
+        header.style.background = 'rgba(34, 197, 94, 0.08)';
+        label.textContent = 'Active 🟢';
+        label.style.color = '#4ade80';
+    } else {
+        header.classList.add('disabled');
+        header.style.background = 'rgba(100,100,100,0.04)';
+        label.textContent = 'Disabled';
+        label.style.color = '#888';
+    }
+}
+
+function updateTMSummary() {
+    const mode = document.getElementById('tm-sizing-mode').value;
+    let sizeStr;
+    if (mode === 'fixed_usd') {
+        sizeStr = `$${document.getElementById('tm-fixed-usd').value}`;
+    } else if (mode === 'fixed_pct') {
+        sizeStr = `${document.getElementById('tm-fixed-pct').value}% bal`;
+    } else {
+        sizeStr = `risk ${document.getElementById('tm-risk-pct').value}%`;
+    }
+    const lev = document.getElementById('tm-leverage').value + 'x';
+    const sl = document.getElementById('tm-use-sl').checked
+        ? 'SL ' + document.getElementById('tm-sl-pct').value + '%' : '';
+    const tp = document.getElementById('tm-use-tp').checked
+        ? 'TP ' + document.getElementById('tm-tp-pct').value + '%' : '';
+    
+    const parts = [sizeStr, lev];
+    if (sl) parts.push(sl);
+    if (tp) parts.push(tp);
+    
+    document.getElementById('tm-summary').textContent = parts.join(' · ');
+}
+
+function onTMSizingChange() {
+    const mode = document.getElementById('tm-sizing-mode').value;
+    document.getElementById('tm-sizing-fixed-usd').style.display =
+        (mode === 'fixed_usd') ? '' : 'none';
+    document.getElementById('tm-sizing-fixed-pct').style.display =
+        (mode === 'fixed_pct') ? '' : 'none';
+    document.getElementById('tm-sizing-risk').style.display =
+        (mode === 'risk_based') ? '' : 'none';
+    saveTMSettings();
+}
+
+async function onTMToggle() {
+    const enabled = document.getElementById('tm-enabled').checked;
+    
+    if (enabled) {
+        const ok = confirm(
+            "⚠️ УВАГА: Trade Manager відкриватиме РЕАЛЬНІ позиції на Bybit!\n\n" +
+            "Перед увімкненням переконайся:\n" +
+            "• Налаштування sizing коректні\n" +
+            "• На Bybit достатньо балансу\n" +
+            "• Tradeable монети у watchlist відмічені\n" +
+            "• API ключі мають дозвіл на торгівлю\n\n" +
+            "Увімкнути Trade Manager?"
+        );
+        if (!ok) {
+            document.getElementById('tm-enabled').checked = false;
+            return;
+        }
+    }
+    
+    updateTMHeader(enabled);
+    await saveTMSettings();
+    setTimeout(loadTMState, 500);
+}
+
+let _tmSaveTimer = null;
+async function saveTMSettings() {
+    // Debounce — multiple inputs changing in quick succession only post once
+    clearTimeout(_tmSaveTimer);
+    _tmSaveTimer = setTimeout(async () => {
+        const payload = {
+            enabled: document.getElementById('tm-enabled').checked,
+            sizing_mode: document.getElementById('tm-sizing-mode').value,
+            fixed_usd_amount: parseFloat(document.getElementById('tm-fixed-usd').value) || 100,
+            fixed_pct_balance: parseFloat(document.getElementById('tm-fixed-pct').value) || 2,
+            risk_pct_balance: parseFloat(document.getElementById('tm-risk-pct').value) || 1,
+            leverage: parseInt(document.getElementById('tm-leverage').value) || 10,
+            use_sl: document.getElementById('tm-use-sl').checked,
+            sl_pct: parseFloat(document.getElementById('tm-sl-pct').value) || 2,
+            use_tp: document.getElementById('tm-use-tp').checked,
+            tp_pct: parseFloat(document.getElementById('tm-tp-pct').value) || 5,
+            use_reverse_smc: document.getElementById('tm-use-reverse').checked,
+            use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
+            use_time_stop: document.getElementById('tm-use-time-stop').checked,
+            time_stop_hours: parseFloat(document.getElementById('tm-time-stop-hours').value) || 4,
+            use_trailing: document.getElementById('tm-use-trailing').checked,
+            trailing_activate_pct: parseFloat(document.getElementById('tm-trail-activate').value) || 1,
+            trailing_distance_pct: parseFloat(document.getElementById('tm-trail-distance').value) || 0.5,
+            use_be: document.getElementById('tm-use-be').checked,
+            be_trigger_pct: parseFloat(document.getElementById('tm-be-trigger').value) || 0.5,
+            use_bos_partials: document.getElementById('tm-use-bos-partials').checked,
+            bos_2_close_pct: parseFloat(document.getElementById('tm-bos2-pct').value) || 0,
+            bos_3_close_pct: parseFloat(document.getElementById('tm-bos3-pct').value) || 0,
+            bos_4_close_pct: parseFloat(document.getElementById('tm-bos4-pct').value) || 0,
+            trailing_after_bos_2: document.getElementById('tm-trailing-after-bos2').checked,
+        };
+        try {
+            await fetch('/api/tm/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            updateTMSummary();
+        } catch (err) {
+            console.error('TM save error', err);
+        }
+    }, 300);
+}
+
+function fmtPriceJS(p) {
+    if (p == null || p <= 0) return '—';
+    if (p < 0.0001) return '$' + p.toFixed(8);
+    if (p < 0.01) return '$' + p.toFixed(6);
+    if (p < 1) return '$' + p.toFixed(5);
+    if (p < 100) return '$' + p.toFixed(4);
+    return '$' + p.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function fmtTimeJS(unix) {
+    if (!unix) return '—';
+    const d = new Date(unix * 1000);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) {
+        return d.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
+    }
+    return d.toLocaleDateString('en-GB', {day: '2-digit', month: '2-digit'}) + ' ' +
+           d.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
+}
+
+function reasonLabel(r) {
+    return {
+        'stop_loss': '🛡 SL',
+        'take_profit': '🎯 TP',
+        'reverse_smc': '🔄 Reverse',
+        'htf_flip': '📡 HTF flip',
+        'time_stop': '⏱ Time',
+        'trailing_stop': '📈 Trailing',
+        'manual': '✋ Manual',
+        'bos_2_partial': '✂️ BOS-2',
+        'bos_3_partial': '✂️ BOS-3',
+        'bos_4_partial': '✂️ BOS-4',
+    }[r] || r;
+}
+
+async function loadTMState() {
+    try {
+        const res = await fetch('/api/tm/state');
+        const d = await res.json();
+        if (!d || d.ok === false) return;
+        
+        // Stats
+        const st = d.stats || {};
+        const pnlClass = (st.total_pnl_usd || 0) >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+        const pnlSign = (st.total_pnl_usd || 0) >= 0 ? '+' : '';
+        document.getElementById('tm-stats').innerHTML =
+            `<span>📊 <b>${st.total_closed || 0}</b> closed</span>` +
+            `<span>🟢 <b>${st.wins || 0}</b> wins</span>` +
+            `<span>🔴 <b>${st.losses || 0}</b> losses</span>` +
+            `<span>📈 win rate: <b>${st.win_rate || 0}%</b></span>` +
+            `<span>💰 PnL: <b class="${pnlClass}">${pnlSign}$${(st.total_pnl_usd || 0).toFixed(2)}</b></span>`;
+        
+        // Open positions
+        const positions = d.positions || [];
+        document.getElementById('tm-open-count').textContent = `(${positions.length})`;
+        const openTbody = document.getElementById('tm-open-tbody');
+        if (positions.length === 0) {
+            openTbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No open positions</td></tr>';
+        } else {
+            openTbody.innerHTML = positions.map(p => {
+                const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+                const pnlSign = p.pnl_pct >= 0 ? '+' : '';
+                const sideClass = p.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
+                return `<tr>
+                    <td><b>${p.symbol}</b></td>
+                    <td class="${sideClass}">${p.side}</td>
+                    <td>${fmtPriceJS(p.entry_price)}</td>
+                    <td>${fmtPriceJS(p.current_price)}</td>
+                    <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
+                    <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
+                    <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
+                </tr>`;
+            }).join('');
+        }
+        
+        // Closed trades (most recent first)
+        const closed = (d.closed_trades || []).slice().reverse();
+        const closedTbody = document.getElementById('tm-closed-tbody');
+        if (closed.length === 0) {
+            closedTbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No closed trades yet</td></tr>';
+        } else {
+            closedTbody.innerHTML = closed.slice(0, 50).map(c => {
+                const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+                const pnlSign = c.pnl_pct >= 0 ? '+' : '';
+                const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
+                return `<tr>
+                    <td>${fmtTimeJS(c.closed_at)}</td>
+                    <td><b>${c.symbol}</b></td>
+                    <td class="${sideClass}">${c.side}</td>
+                    <td>${fmtPriceJS(c.entry_price)}</td>
+                    <td>${fmtPriceJS(c.exit_price)}</td>
+                    <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}% (${pnlSign}$${c.pnl_usd.toFixed(2)})</td>
+                    <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}</td>
+                </tr>`;
+            }).join('');
+        }
+    } catch (err) {
+        console.error('TM state load error', err);
+    }
+}
+
+async function closeTMPosition(symbol) {
+    if (!confirm(`Закрити позицію по ${symbol} зараз?`)) return;
+    try {
+        const res = await fetch('/api/tm/positions/close', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol}),
+        });
+        const d = await res.json();
+        if (d.ok) {
+            setTimeout(loadTMState, 500);
+        } else {
+            alert('Close failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (err) {
+        alert('Close error: ' + err);
+    }
+}
+
+async function toggleTradeable(symbol) {
+    const isCurrentlyTradeable = tmTradeable.has(symbol);
+    try {
+        const res = await fetch('/api/smc/watchlist/tradeable', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol, tradeable: !isCurrentlyTradeable}),
+        });
+        const d = await res.json();
+        if (d.ok) {
+            if (d.tradeable) {
+                tmTradeable.add(symbol);
+            } else {
+                tmTradeable.delete(symbol);
+            }
+            // Update visual on watchlist row
+            const flag = document.querySelector(`.wl-trade-flag[data-sym="${symbol}"]`);
+            if (flag) {
+                flag.className = 'wl-trade-flag ' + (d.tradeable ? 'active' : 'inactive');
+                flag.title = d.tradeable
+                    ? 'Tradeable: позиції на цій монеті будуть відкриватися'
+                    : 'Click щоб дозволити торгівлю на цій монеті';
+            }
+        } else {
+            alert('Toggle failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (err) {
+        alert('Tradeable toggle error: ' + err);
+    }
+}
+
 // === Init ===
 document.addEventListener('DOMContentLoaded', async () => {
     await loadSettings();
+    await loadTMSettings();
     await loadWatchlist();
+    await loadTMState();
     updateStatus();
     setInterval(updateStatus, 10000);
     setInterval(() => {
         if (currentSymbol) loadChart();
     }, 30000);
+    // Refresh TM state every 5s when there are open positions, every 15s otherwise
+    setInterval(loadTMState, 5000);
 });
+
 </script>
 {% endblock %}

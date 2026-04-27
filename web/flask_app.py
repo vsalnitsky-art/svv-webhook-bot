@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -203,6 +203,31 @@ def create_app():
                 smc.start()
             except Exception as e:
                 print(f"[APP] Failed to start SMC Scanner: {e}")
+        
+        # Trade Manager (manages real Bybit positions from SMC signals)
+        # Always init so settings/state can be read; actual trading gated by
+        # the settings.enabled toggle (default OFF for safety).
+        if not _auto_started['tm']:
+            _auto_started['tm'] = True
+            try:
+                from detection.trade_manager import init_trade_manager
+                from detection.smc_scanner import get_smc_scanner
+                from core.bybit_connector import get_connector
+                tm_tg = None
+                try:
+                    from alerts.telegram_notifier import get_notifier
+                    tm_tg = get_notifier()
+                except:
+                    pass
+                tm = init_trade_manager(
+                    db=get_db(),
+                    notifier=tm_tg,
+                    bybit=get_connector(),
+                    scanner=get_smc_scanner(),
+                )
+                tm.start()
+            except Exception as e:
+                print(f"[APP] Failed to start Trade Manager: {e}")
         
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
@@ -2262,6 +2287,56 @@ def register_api_routes(app):
         data = request.get_json() or {}
         symbol = data.get('symbol')
         return jsonify(s.clear_signals(symbol))
+    
+    @app.route('/api/smc/watchlist/tradeable', methods=['POST'])
+    def api_smc_watchlist_tradeable():
+        """Toggle tradeable flag for a watchlist symbol.
+        Body: {symbol: 'BTCUSDT', tradeable: true|false}
+        """
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        tradeable = bool(data.get('tradeable', False))
+        return jsonify(s.set_tradeable(symbol, tradeable))
+    
+    # ===== Trade Manager =====
+    
+    @app.route('/api/tm/state')
+    def api_tm_state():
+        """Return Trade Manager state: positions, closed trades, stats."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        return jsonify(tm.get_state())
+    
+    @app.route('/api/tm/settings', methods=['GET', 'POST'])
+    def api_tm_settings():
+        """Get or update Trade Manager settings."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        if request.method == 'GET':
+            return jsonify({'ok': True, 'settings': tm.get_settings()})
+        new_settings = request.get_json() or {}
+        return jsonify({'ok': True, 'settings': tm.update_settings(new_settings)})
+    
+    @app.route('/api/tm/positions/close', methods=['POST'])
+    def api_tm_position_close():
+        """Manually close an open position. Body: {symbol: 'BTCUSDT'}"""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'symbol required'})
+        return jsonify(tm.manual_close(symbol))
     
     @app.route('/api/validator/toggle', methods=['GET', 'POST'])
     def api_validator_toggle():

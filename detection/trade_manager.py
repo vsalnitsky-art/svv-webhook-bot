@@ -1,0 +1,861 @@
+"""
+Trade Manager v1.0 — Real-money position management for SMC signals.
+
+Responsibilities:
+  - Listen for signals from SMC scanner (LONG/SHORT)
+  - Open positions on Bybit when conditions allow
+  - Monitor open positions every 10s
+  - Close/partial-close based on configurable exit rules
+  - Send Telegram notifications on every action
+  - Persist positions and recent trades in DB
+
+Position sizing (3 modes):
+  - 'fixed_usd'    : qty = $usd_amount / entry_price          (default $100)
+  - 'fixed_pct'    : qty = (balance * pct/100) / entry_price
+  - 'risk_based'   : qty such that loss at SL = balance * 1%
+
+Exit rules (all toggleable, evaluated per priority):
+  1. Stop Loss          (fixed % or absolute)
+  2. Take Profit        (fixed % or absolute)
+  3. Reverse SMC signal (CHoCH only, A1)
+  4. HTF trend flip     (when HTF filter active)
+  5. Time stop          (close if open longer than X hours)
+  6. Trailing Stop      (track high water, trail by Y%)
+  7. Break-Even Move    (move SL to entry after +X%)
+  8. BOS-N partial close (close X% at 2nd/3rd/4th BOS, then trailing)
+
+This module is STATEFUL and SAFETY-CRITICAL. Default toggle = OFF.
+"""
+
+import time
+import threading
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
+
+
+# ======== DB keys ========
+DB_KEY_TM_SETTINGS = 'tm_settings'
+DB_KEY_TM_POSITIONS = 'tm_positions'
+DB_KEY_TM_CLOSED = 'tm_closed_trades'
+
+MONITOR_INTERVAL_SECS = 10
+CLOSED_TRADES_LIMIT = 100   # keep this many recent closed trades
+INITIAL_DELAY_SECS = 20      # wait at startup before first tick
+
+DEFAULT_SETTINGS = {
+    # Master toggle — DEFAULT OFF for safety
+    'enabled': False,
+    
+    # === Position Sizing ===
+    'sizing_mode': 'fixed_usd',     # 'fixed_usd' | 'fixed_pct' | 'risk_based'
+    'fixed_usd_amount': 100.0,       # USD per trade (mode = fixed_usd)
+    'fixed_pct_balance': 2.0,        # % of balance (mode = fixed_pct)
+    'risk_pct_balance': 1.0,         # max loss as % of balance (mode = risk_based)
+    'leverage': 10,                  # 1-50 typically
+    
+    # === Exit Rules — each toggleable ===
+    'use_sl': True,                  # Stop Loss
+    'sl_pct': 2.0,                   # %
+    
+    'use_tp': True,                  # Take Profit
+    'tp_pct': 5.0,                   # %
+    
+    'use_reverse_smc': True,         # Close on opposite CHoCH
+    
+    'use_htf_flip': True,            # Close when HTF trend flips against us
+    
+    'use_time_stop': False,          # Close after N hours regardless
+    'time_stop_hours': 4,
+    
+    'use_trailing': True,            # Trailing stop
+    'trailing_activate_pct': 1.0,    # activate after +X% profit
+    'trailing_distance_pct': 0.5,    # trail by Y% from peak
+    
+    'use_be': True,                  # Break-Even Move
+    'be_trigger_pct': 0.5,           # move SL to entry after +X% profit
+    
+    # === BOS-N partial closes (after CHoCH+BOS opening) ===
+    # The opening trade counts the entry-BOS as #1.
+    # Subsequent same-direction BOS events are #2, #3, #4...
+    'use_bos_partials': True,
+    'bos_2_close_pct': 70,           # close 70% on BOS-2
+    'bos_3_close_pct': 0,            # close additional 0% on BOS-3 (off by default)
+    'bos_4_close_pct': 0,
+    'trailing_after_bos_2': True,    # auto-activate trailing after BOS-2 partial
+}
+
+
+# Per-position state (in memory + persisted as dict)
+def _new_position(symbol, side, entry_price, qty, sl_price, tp_price, order_id, opened_by):
+    return {
+        'symbol': symbol,
+        'side': side,                    # 'LONG' | 'SHORT'
+        'entry_price': float(entry_price),
+        'qty': float(qty),
+        'remaining_qty': float(qty),     # decreases on partial closes
+        'sl_price': float(sl_price) if sl_price else None,
+        'tp_price': float(tp_price) if tp_price else None,
+        'opened_at': time.time(),
+        'opened_by': opened_by,          # 'choch_bos' | 'choch'
+        'order_id': order_id,
+        # Tracking
+        'be_moved': False,
+        'trailing_active': False,
+        'trailing_peak': float(entry_price),  # high-water mark for LONG; low for SHORT
+        'partial_closes_done': [],       # ['bos_2', 'bos_3', ...]
+        'bos_count_since_entry': 1,      # the opening BOS itself counts as #1
+    }
+
+
+class TradeManager:
+    
+    def __init__(self, db=None, notifier=None, bybit=None, scanner=None):
+        self.db = db
+        self.notifier = notifier
+        self.bybit = bybit
+        self.scanner = scanner   # SMC scanner reference (for tradeable list, HTF state)
+        
+        self._lock = threading.RLock()
+        self._running = False
+        self._monitor_thread: Optional[threading.Thread] = None
+        
+        # In-memory state
+        self._settings = self._load_settings()
+        self._positions: Dict[str, Dict] = {}     # symbol → position dict
+        self._closed_trades: List[Dict] = []
+        
+        self._load_positions()
+        self._load_closed_trades()
+        
+        # Stats
+        self._tick_count = 0
+        self._errors = 0
+    
+    # ============================================================
+    # Persistence
+    # ============================================================
+    
+    def _load_settings(self) -> Dict:
+        if not self.db:
+            return DEFAULT_SETTINGS.copy()
+        try:
+            stored = self.db.get_setting(DB_KEY_TM_SETTINGS, None)
+            if isinstance(stored, dict):
+                merged = DEFAULT_SETTINGS.copy()
+                merged.update(stored)
+                return merged
+        except:
+            pass
+        return DEFAULT_SETTINGS.copy()
+    
+    def _persist_settings(self):
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_TM_SETTINGS, self._settings)
+            except Exception as e:
+                print(f"[TM] Settings persist error: {e}")
+    
+    def _load_positions(self):
+        if not self.db:
+            return
+        try:
+            stored = self.db.get_setting(DB_KEY_TM_POSITIONS, {})
+            if isinstance(stored, dict):
+                self._positions = stored
+                print(f"[TM] Loaded {len(self._positions)} open positions from DB")
+        except Exception as e:
+            print(f"[TM] Position load error: {e}")
+    
+    def _persist_positions(self):
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_TM_POSITIONS, self._positions)
+            except Exception as e:
+                print(f"[TM] Position persist error: {e}")
+    
+    def _load_closed_trades(self):
+        if not self.db:
+            return
+        try:
+            stored = self.db.get_setting(DB_KEY_TM_CLOSED, [])
+            if isinstance(stored, list):
+                self._closed_trades = stored[-CLOSED_TRADES_LIMIT:]
+        except:
+            pass
+    
+    def _persist_closed_trades(self):
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_TM_CLOSED,
+                                     self._closed_trades[-CLOSED_TRADES_LIMIT:])
+            except Exception as e:
+                print(f"[TM] Closed-trades persist error: {e}")
+    
+    # ============================================================
+    # Settings API
+    # ============================================================
+    
+    def get_settings(self) -> Dict:
+        with self._lock:
+            return dict(self._settings)
+    
+    def update_settings(self, new: Dict) -> Dict:
+        with self._lock:
+            allowed = list(DEFAULT_SETTINGS.keys())
+            for k in allowed:
+                if k in new:
+                    self._settings[k] = new[k]
+            
+            # Type coercion / clamping
+            self._settings['enabled'] = bool(self._settings.get('enabled', False))
+            
+            if self._settings.get('sizing_mode') not in ('fixed_usd', 'fixed_pct', 'risk_based'):
+                self._settings['sizing_mode'] = 'fixed_usd'
+            
+            try:
+                self._settings['leverage'] = max(1, min(50, int(self._settings.get('leverage', 10))))
+            except:
+                self._settings['leverage'] = 10
+            
+            for k in ['fixed_usd_amount', 'fixed_pct_balance', 'risk_pct_balance',
+                      'sl_pct', 'tp_pct', 'time_stop_hours',
+                      'trailing_activate_pct', 'trailing_distance_pct', 'be_trigger_pct',
+                      'bos_2_close_pct', 'bos_3_close_pct', 'bos_4_close_pct']:
+                try:
+                    self._settings[k] = float(self._settings.get(k, DEFAULT_SETTINGS.get(k, 0)))
+                except:
+                    self._settings[k] = float(DEFAULT_SETTINGS.get(k, 0))
+            
+            for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_htf_flip',
+                      'use_time_stop', 'use_trailing', 'use_be',
+                      'use_bos_partials', 'trailing_after_bos_2']:
+                self._settings[k] = bool(self._settings.get(k, False))
+            
+            self._persist_settings()
+            
+            # If toggle was just turned ON and not running — start
+            if self._settings['enabled'] and not self._running:
+                self.start()
+            elif not self._settings['enabled'] and self._running:
+                # Don't stop monitoring (positions still need management)
+                # but new signals will be ignored
+                pass
+            
+            return dict(self._settings)
+    
+    def is_enabled(self) -> bool:
+        return self._settings.get('enabled', False)
+    
+    # ============================================================
+    # Lifecycle
+    # ============================================================
+    
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._monitor_thread = threading.Thread(target=self._loop, daemon=True, name="TradeManager")
+        self._monitor_thread.start()
+        print(f"[TM] ✅ Started: enabled={self.is_enabled()}, "
+              f"open_positions={len(self._positions)}")
+    
+    def stop(self):
+        self._running = False
+    
+    def _loop(self):
+        print("[TM] 🧵 Monitor thread started")
+        time.sleep(INITIAL_DELAY_SECS)
+        while self._running:
+            try:
+                self._tick()
+            except Exception as e:
+                self._errors += 1
+                if self._errors <= 5:
+                    print(f"[TM] Tick error: {e}")
+            for _ in range(MONITOR_INTERVAL_SECS):
+                if not self._running:
+                    return
+                time.sleep(1)
+    
+    def _tick(self):
+        """Monitor each open position for exit conditions."""
+        self._tick_count += 1
+        with self._lock:
+            symbols = list(self._positions.keys())
+        
+        for sym in symbols:
+            try:
+                self._monitor_position(sym)
+            except Exception as e:
+                if self._errors <= 10:
+                    print(f"[TM] Monitor error {sym}: {e}")
+                self._errors += 1
+    
+    def _monitor_position(self, symbol: str):
+        with self._lock:
+            pos = self._positions.get(symbol)
+        if not pos:
+            return
+        
+        current_price = self._get_current_price(symbol)
+        if current_price is None:
+            return
+        
+        # 1) Hard exits — Stop Loss / Take Profit
+        s = self._settings
+        if s.get('use_sl') and pos.get('sl_price'):
+            if (pos['side'] == 'LONG' and current_price <= pos['sl_price']) or \
+               (pos['side'] == 'SHORT' and current_price >= pos['sl_price']):
+                self._close_position(symbol, current_price, reason='stop_loss')
+                return
+        
+        if s.get('use_tp') and pos.get('tp_price'):
+            if (pos['side'] == 'LONG' and current_price >= pos['tp_price']) or \
+               (pos['side'] == 'SHORT' and current_price <= pos['tp_price']):
+                self._close_position(symbol, current_price, reason='take_profit')
+                return
+        
+        # 2) Time stop
+        if s.get('use_time_stop'):
+            elapsed_h = (time.time() - pos['opened_at']) / 3600
+            if elapsed_h >= s.get('time_stop_hours', 4):
+                self._close_position(symbol, current_price, reason='time_stop')
+                return
+        
+        # 3) HTF flip
+        if s.get('use_htf_flip') and self.scanner:
+            try:
+                htf_settings = self.scanner.get_htf_settings()
+                if htf_settings.get('enabled'):
+                    htf_bias = self.scanner._htf_cache.get(symbol, {}).get('bias', 'neutral')
+                    pos_dir = 'bull' if pos['side'] == 'LONG' else 'bear'
+                    opposite = 'bear' if pos_dir == 'bull' else 'bull'
+                    if htf_bias == opposite:
+                        self._close_position(symbol, current_price, reason='htf_flip')
+                        return
+            except:
+                pass
+        
+        # === Position-management actions (no closes) ===
+        self._update_trailing(pos, current_price)
+        self._update_be(pos, current_price)
+    
+    def _update_trailing(self, pos, current_price):
+        s = self._settings
+        if not s.get('use_trailing'):
+            return
+        
+        entry = pos['entry_price']
+        side = pos['side']
+        
+        # Activation
+        if not pos.get('trailing_active'):
+            activate_pct = s.get('trailing_activate_pct', 1.0) / 100
+            if side == 'LONG' and current_price >= entry * (1 + activate_pct):
+                pos['trailing_active'] = True
+                pos['trailing_peak'] = current_price
+            elif side == 'SHORT' and current_price <= entry * (1 - activate_pct):
+                pos['trailing_active'] = True
+                pos['trailing_peak'] = current_price
+        
+        if not pos.get('trailing_active'):
+            return
+        
+        # Track peak
+        if side == 'LONG' and current_price > pos['trailing_peak']:
+            pos['trailing_peak'] = current_price
+        elif side == 'SHORT' and current_price < pos['trailing_peak']:
+            pos['trailing_peak'] = current_price
+        
+        # Check if price retraced past trailing distance
+        dist_pct = s.get('trailing_distance_pct', 0.5) / 100
+        if side == 'LONG':
+            trail_stop = pos['trailing_peak'] * (1 - dist_pct)
+            if current_price <= trail_stop:
+                self._close_position(pos['symbol'], current_price, reason='trailing_stop')
+        else:
+            trail_stop = pos['trailing_peak'] * (1 + dist_pct)
+            if current_price >= trail_stop:
+                self._close_position(pos['symbol'], current_price, reason='trailing_stop')
+    
+    def _update_be(self, pos, current_price):
+        s = self._settings
+        if not s.get('use_be') or pos.get('be_moved'):
+            return
+        
+        trigger = s.get('be_trigger_pct', 0.5) / 100
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG' and current_price >= entry * (1 + trigger):
+            pos['sl_price'] = entry
+            pos['be_moved'] = True
+            self._update_exchange_sl(pos['symbol'], entry)
+            self._notify(f"⚖️ BE: SL → entry for {pos['symbol']} @ {self._fmt_price(entry)}")
+            self._persist_positions()
+        elif pos['side'] == 'SHORT' and current_price <= entry * (1 - trigger):
+            pos['sl_price'] = entry
+            pos['be_moved'] = True
+            self._update_exchange_sl(pos['symbol'], entry)
+            self._notify(f"⚖️ BE: SL → entry for {pos['symbol']} @ {self._fmt_price(entry)}")
+            self._persist_positions()
+    
+    # ============================================================
+    # Signal hooks (called from SMC scanner)
+    # ============================================================
+    
+    def on_signal(self, symbol: str, side: str, entry_price: float, opened_by: str):
+        """Called when SMC scanner fires a signal.
+        side: 'LONG' or 'SHORT'
+        opened_by: 'choch' or 'choch_bos'
+        """
+        if not self.is_enabled():
+            return
+        
+        # Reverse SMC: if there's a position in opposite direction → close it
+        s = self._settings
+        with self._lock:
+            existing = self._positions.get(symbol)
+        
+        if existing:
+            if existing['side'] != side and s.get('use_reverse_smc'):
+                # Opposite signal → close existing
+                current_price = self._get_current_price(symbol) or entry_price
+                self._close_position(symbol, current_price, reason='reverse_smc')
+                # Don't open new on same signal — wait for next one (safer)
+            return  # already have a position on this symbol
+        
+        # Tradeable check
+        if not self._is_tradeable(symbol):
+            print(f"[TM] {symbol} not in tradeable list — signal ignored")
+            return
+        
+        # Open new position
+        self._open_position(symbol, side, entry_price, opened_by)
+    
+    def on_bos_event(self, symbol: str, direction: str, level: float, bar_t: int):
+        """Called by SMC scanner when a BOS event is detected (any).
+        Used for BOS-N partial closes.
+        """
+        if not self.is_enabled():
+            return
+        s = self._settings
+        if not s.get('use_bos_partials'):
+            return
+        
+        with self._lock:
+            pos = self._positions.get(symbol)
+        if not pos:
+            return
+        
+        # Only count BOS in same direction as our position
+        bos_side = 'LONG' if direction == 'bull' else 'SHORT'
+        if bos_side != pos['side']:
+            return
+        
+        # Increment count
+        pos['bos_count_since_entry'] = pos.get('bos_count_since_entry', 1) + 1
+        n = pos['bos_count_since_entry']
+        
+        # Determine if this BOS triggers a partial
+        partial_pct = s.get(f'bos_{n}_close_pct', 0)
+        marker_key = f'bos_{n}'
+        
+        if partial_pct > 0 and marker_key not in pos.get('partial_closes_done', []):
+            current_price = self._get_current_price(symbol) or level
+            self._partial_close(symbol, partial_pct, current_price,
+                                reason=f'bos_{n}_partial')
+            pos.setdefault('partial_closes_done', []).append(marker_key)
+            
+            # Auto-activate trailing after BOS-2
+            if n == 2 and s.get('trailing_after_bos_2'):
+                pos['trailing_active'] = True
+                pos['trailing_peak'] = current_price
+                self._notify(f"📈 Trailing активовано після BOS-2: {symbol}")
+            
+            self._persist_positions()
+    
+    # ============================================================
+    # Position open / close / partial
+    # ============================================================
+    
+    def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str):
+        s = self._settings
+        
+        # Calculate size
+        try:
+            qty = self._calculate_qty(symbol, entry_price)
+        except Exception as e:
+            self._notify(f"❌ Sizing error for {symbol}: {e}")
+            return
+        
+        if qty <= 0:
+            print(f"[TM] {symbol}: zero quantity calculated, skipping")
+            return
+        
+        # Calculate SL / TP prices
+        sl_price = self._calc_sl_price(side, entry_price) if s.get('use_sl') else None
+        tp_price = self._calc_tp_price(side, entry_price) if s.get('use_tp') else None
+        
+        # Set leverage on Bybit
+        leverage = s.get('leverage', 10)
+        try:
+            self.bybit.set_leverage(symbol, leverage)
+        except Exception as e:
+            print(f"[TM] Leverage set warn for {symbol}: {e}")
+        
+        # Place order
+        bybit_side = 'Buy' if side == 'LONG' else 'Sell'
+        try:
+            result = self.bybit.place_order(
+                symbol=symbol,
+                side=bybit_side,
+                qty=qty,
+                order_type='Market',
+                stop_loss=sl_price,
+                take_profit=tp_price,
+            )
+        except Exception as e:
+            self._notify(f"❌ Failed to open {side} {symbol}: {e}")
+            return
+        
+        if not result:
+            self._notify(f"❌ Order rejected for {symbol} {side}")
+            return
+        
+        order_id = result.get('order_id', '')
+        position = _new_position(symbol, side, entry_price, qty,
+                                   sl_price, tp_price, order_id, opened_by)
+        
+        with self._lock:
+            self._positions[symbol] = position
+        self._persist_positions()
+        
+        self._notify_open(position)
+    
+    def _close_position(self, symbol: str, exit_price: float, reason: str):
+        with self._lock:
+            pos = self._positions.get(symbol)
+        if not pos:
+            return
+        
+        bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
+        qty = pos.get('remaining_qty', pos['qty'])
+        
+        try:
+            self.bybit.close_position(symbol=symbol, side=bybit_side, qty=qty)
+        except Exception as e:
+            self._notify(f"⚠️ Close API error for {symbol}: {e}")
+        
+        # Calculate PnL
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG':
+            pnl_pct = (exit_price - entry) / entry * 100
+        else:
+            pnl_pct = (entry - exit_price) / entry * 100
+        # Approximate USD PnL (qty is in coin units)
+        pnl_usd = (exit_price - entry) * qty * (1 if pos['side'] == 'LONG' else -1)
+        
+        closed = {
+            'symbol': symbol,
+            'side': pos['side'],
+            'entry_price': entry,
+            'exit_price': exit_price,
+            'qty': pos['qty'],
+            'remaining_qty_at_close': qty,
+            'opened_at': pos['opened_at'],
+            'closed_at': time.time(),
+            'pnl_pct': round(pnl_pct, 4),
+            'pnl_usd': round(pnl_usd, 2),
+            'reason': reason,
+            'opened_by': pos.get('opened_by', ''),
+            'partial_closes_done': pos.get('partial_closes_done', []),
+        }
+        
+        with self._lock:
+            self._positions.pop(symbol, None)
+            self._closed_trades.append(closed)
+            if len(self._closed_trades) > CLOSED_TRADES_LIMIT:
+                self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
+        self._persist_positions()
+        self._persist_closed_trades()
+        
+        self._notify_close(closed)
+    
+    def _partial_close(self, symbol: str, pct: float, exit_price: float, reason: str):
+        """Close a percentage of remaining qty."""
+        with self._lock:
+            pos = self._positions.get(symbol)
+        if not pos:
+            return
+        
+        remaining = pos.get('remaining_qty', pos['qty'])
+        close_qty = remaining * (pct / 100)
+        if close_qty <= 0:
+            return
+        
+        bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
+        try:
+            self.bybit.close_position(symbol=symbol, side=bybit_side, qty=close_qty)
+        except Exception as e:
+            print(f"[TM] Partial close error for {symbol}: {e}")
+            return
+        
+        new_remaining = remaining - close_qty
+        pos['remaining_qty'] = new_remaining
+        self._persist_positions()
+        
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG':
+            pnl_pct = (exit_price - entry) / entry * 100
+        else:
+            pnl_pct = (entry - exit_price) / entry * 100
+        
+        side_icon = '🟢' if pos['side'] == 'LONG' else '🔴'
+        self._notify(
+            f"{side_icon} <b>Partial close</b>: #{symbol}\n"
+            f"📤 {pct:.0f}% of position closed\n"
+            f"📍 Exit: {self._fmt_price(exit_price)}\n"
+            f"📊 PnL: {pnl_pct:+.2f}%\n"
+            f"🔖 Reason: {self._reason_label(reason)}\n"
+            f"💼 Remaining: {new_remaining:.6g}"
+        )
+    
+    # ============================================================
+    # Position sizing
+    # ============================================================
+    
+    def _calculate_qty(self, symbol: str, entry_price: float) -> float:
+        s = self._settings
+        mode = s.get('sizing_mode', 'fixed_usd')
+        
+        if mode == 'fixed_usd':
+            usd = float(s.get('fixed_usd_amount', 100))
+            qty = usd / entry_price
+        elif mode == 'fixed_pct':
+            balance = self._get_balance()
+            pct = float(s.get('fixed_pct_balance', 2.0))
+            usd = balance * (pct / 100)
+            qty = usd / entry_price
+        elif mode == 'risk_based':
+            balance = self._get_balance()
+            risk_pct = float(s.get('risk_pct_balance', 1.0)) / 100
+            sl_pct = float(s.get('sl_pct', 2.0)) / 100
+            if sl_pct <= 0:
+                return 0
+            # Risk USD = balance * risk_pct
+            # Loss per coin at SL = entry * sl_pct
+            # qty = risk_usd / loss_per_coin
+            risk_usd = balance * risk_pct
+            qty = risk_usd / (entry_price * sl_pct)
+        else:
+            qty = 0
+        
+        # Round to reasonable precision (Bybit will reject too-fine qty;
+        # an instrument-info lookup could be added later)
+        if qty < 1:
+            qty = round(qty, 6)
+        else:
+            qty = round(qty, 3)
+        return max(0, qty)
+    
+    def _calc_sl_price(self, side: str, entry: float) -> float:
+        sl_pct = self._settings.get('sl_pct', 2.0) / 100
+        if side == 'LONG':
+            return entry * (1 - sl_pct)
+        return entry * (1 + sl_pct)
+    
+    def _calc_tp_price(self, side: str, entry: float) -> float:
+        tp_pct = self._settings.get('tp_pct', 5.0) / 100
+        if side == 'LONG':
+            return entry * (1 + tp_pct)
+        return entry * (1 - tp_pct)
+    
+    # ============================================================
+    # Bybit helpers
+    # ============================================================
+    
+    def _get_balance(self) -> float:
+        try:
+            return self.bybit.get_wallet_balance() or 0
+        except Exception as e:
+            print(f"[TM] balance fetch error: {e}")
+            return 0
+    
+    def _get_current_price(self, symbol: str) -> Optional[float]:
+        # Prefer scanner's cached klines (avoids Bybit API hit)
+        if self.scanner:
+            try:
+                p = self.scanner._get_live_price(symbol)
+                if p:
+                    return p
+            except:
+                pass
+        # Fallback to Bybit
+        try:
+            p = self.bybit.get_price(symbol)
+            if p > 0:
+                return p
+        except:
+            pass
+        return None
+    
+    def _update_exchange_sl(self, symbol: str, sl_price: float):
+        try:
+            self.bybit.set_trading_stop(symbol=symbol, stop_loss=sl_price)
+        except Exception as e:
+            print(f"[TM] update SL error for {symbol}: {e}")
+    
+    # ============================================================
+    # Tradeable list (mirrored from scanner watchlist)
+    # ============================================================
+    
+    def _is_tradeable(self, symbol: str) -> bool:
+        """Check if symbol is in scanner's tradeable list."""
+        if not self.scanner:
+            return False
+        try:
+            tradeable = self.scanner.get_tradeable_symbols()
+            return symbol in tradeable
+        except:
+            return False
+    
+    # ============================================================
+    # State / queries
+    # ============================================================
+    
+    def get_state(self) -> Dict:
+        with self._lock:
+            positions = []
+            for sym, pos in self._positions.items():
+                current = self._get_current_price(sym) or pos['entry_price']
+                entry = pos['entry_price']
+                if pos['side'] == 'LONG':
+                    pnl_pct = (current - entry) / entry * 100
+                else:
+                    pnl_pct = (entry - current) / entry * 100
+                positions.append({
+                    **pos,
+                    'current_price': current,
+                    'pnl_pct': round(pnl_pct, 3),
+                })
+            
+            closed = list(self._closed_trades[-50:])
+            
+            # Stats
+            total_closed = len(self._closed_trades)
+            wins = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) > 0)
+            losses = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) < 0)
+            total_pnl = sum(c.get('pnl_usd', 0) for c in self._closed_trades)
+            
+            return {
+                'enabled': self.is_enabled(),
+                'running': self._running,
+                'tick_count': self._tick_count,
+                'errors': self._errors,
+                'positions': positions,
+                'closed_trades': closed,
+                'stats': {
+                    'total_closed': total_closed,
+                    'wins': wins,
+                    'losses': losses,
+                    'win_rate': round(wins / total_closed * 100, 1) if total_closed else 0,
+                    'total_pnl_usd': round(total_pnl, 2),
+                },
+                'settings': dict(self._settings),
+            }
+    
+    def manual_close(self, symbol: str) -> Dict:
+        """Manually close a position via UI button."""
+        with self._lock:
+            pos = self._positions.get(symbol)
+        if not pos:
+            return {'ok': False, 'reason': 'No open position for symbol'}
+        current = self._get_current_price(symbol) or pos['entry_price']
+        self._close_position(symbol, current, reason='manual')
+        return {'ok': True}
+    
+    # ============================================================
+    # Notifications
+    # ============================================================
+    
+    def _notify(self, msg: str):
+        if not self.notifier:
+            return
+        try:
+            self.notifier.send_message(msg)
+        except Exception as e:
+            print(f"[TM] Notify error: {e}")
+    
+    def _notify_open(self, pos):
+        side = pos['side']
+        icon = '🟢' if side == 'LONG' else '🔴'
+        sl_str = self._fmt_price(pos['sl_price']) if pos.get('sl_price') else '—'
+        tp_str = self._fmt_price(pos['tp_price']) if pos.get('tp_price') else '—'
+        msg = (
+            f"{icon} <b>OPEN {side}</b>: #{pos['symbol']}\n"
+            f"📍 Entry: {self._fmt_price(pos['entry_price'])}\n"
+            f"💼 Qty: {pos['qty']:.6g}\n"
+            f"🛡 SL: {sl_str}\n"
+            f"🎯 TP: {tp_str}\n"
+            f"⚙️ Lev: {self._settings.get('leverage', 10)}x"
+        )
+        self._notify(msg)
+    
+    def _notify_close(self, closed):
+        side = closed['side']
+        pnl_pct = closed['pnl_pct']
+        pnl_usd = closed['pnl_usd']
+        is_win = pnl_pct > 0
+        icon = '✅' if is_win else '❌'
+        msg = (
+            f"{icon} <b>CLOSE {side}</b>: #{closed['symbol']}\n"
+            f"📍 Entry: {self._fmt_price(closed['entry_price'])}\n"
+            f"📤 Exit: {self._fmt_price(closed['exit_price'])}\n"
+            f"📊 PnL: {pnl_pct:+.2f}% ({pnl_usd:+.2f}$)\n"
+            f"🔖 Reason: {self._reason_label(closed['reason'])}"
+        )
+        self._notify(msg)
+    
+    @staticmethod
+    def _reason_label(reason: str) -> str:
+        return {
+            'stop_loss': '🛡 Stop Loss',
+            'take_profit': '🎯 Take Profit',
+            'reverse_smc': '🔄 Reverse SMC',
+            'htf_flip': '📡 HTF Trend Flip',
+            'time_stop': '⏱ Time Stop',
+            'trailing_stop': '📈 Trailing Stop',
+            'manual': '✋ Manual',
+            'bos_2_partial': '✂️ BOS-2 partial',
+            'bos_3_partial': '✂️ BOS-3 partial',
+            'bos_4_partial': '✂️ BOS-4 partial',
+        }.get(reason, reason)
+    
+    @staticmethod
+    def _fmt_price(price: float) -> str:
+        if price <= 0:
+            return '$0'
+        if price < 0.0001:
+            return f"${price:.8f}"
+        if price < 0.01:
+            return f"${price:.6f}"
+        if price < 1:
+            return f"${price:.5f}"
+        if price < 100:
+            return f"${price:.4f}"
+        return f"${price:,.2f}"
+
+
+# Singleton
+_instance: Optional[TradeManager] = None
+
+
+def get_trade_manager() -> Optional[TradeManager]:
+    return _instance
+
+
+def init_trade_manager(db=None, notifier=None, bybit=None, scanner=None) -> TradeManager:
+    global _instance
+    if _instance is not None:
+        _instance.stop()
+    _instance = TradeManager(db=db, notifier=notifier, bybit=bybit, scanner=scanner)
+    return _instance

@@ -51,6 +51,7 @@ TIMEFRAME_LABELS = {
 }
 
 DB_KEY_WATCHLIST = 'smc_watchlist'
+DB_KEY_TRADEABLE = 'smc_tradeable'   # subset of watchlist that's tradeable
 DB_KEY_SETTINGS = 'smc_settings'
 DB_KEY_STATE = 'smc_last_events'   # tracks last seen event per symbol
 DB_KEY_SIGNALS_PREFIX = 'smc_signals_'   # per-symbol: smc_signals_BTCUSDT, etc.
@@ -198,6 +199,7 @@ class SMCScanner:
         
         self._settings = self._load_settings()
         self._watchlist = self._load_watchlist()
+        self._tradeable = self._load_tradeable()
         # Load signals only for symbols currently in watchlist
         self._load_all_signals()
     
@@ -242,6 +244,25 @@ class SMCScanner:
                 self.db.set_setting(DB_KEY_WATCHLIST, self._watchlist)
             except Exception as e:
                 print(f"[SMC] Watchlist persist error: {e}")
+    
+    def _load_tradeable(self) -> List[str]:
+        """List of symbols flagged as tradeable for Trade Manager."""
+        if not self.db:
+            return []
+        try:
+            stored = self.db.get_setting(DB_KEY_TRADEABLE, [])
+            if isinstance(stored, list):
+                return [s for s in stored if isinstance(s, str)]
+        except:
+            pass
+        return []
+    
+    def _persist_tradeable(self):
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_TRADEABLE, self._tradeable)
+            except Exception as e:
+                print(f"[SMC] Tradeable persist error: {e}")
     
     def _load_all_signals(self):
         """Load persisted signal markers for every watchlist symbol."""
@@ -327,6 +348,28 @@ class SMCScanner:
         with self._lock:
             return list(self._watchlist)
     
+    def get_tradeable_symbols(self) -> List[str]:
+        with self._lock:
+            # Only return tradeable that are also in watchlist (avoid stale)
+            return [s for s in self._tradeable if s in self._watchlist]
+    
+    def set_tradeable(self, symbol: str, tradeable: bool) -> Dict:
+        symbol = self._normalize_symbol(symbol)
+        with self._lock:
+            if symbol not in self._watchlist:
+                return {'ok': False, 'reason': 'Symbol not in watchlist'}
+            
+            currently = symbol in self._tradeable
+            if tradeable and not currently:
+                self._tradeable.append(symbol)
+                self._persist_tradeable()
+            elif not tradeable and currently:
+                self._tradeable.remove(symbol)
+                self._persist_tradeable()
+            
+            return {'ok': True, 'symbol': symbol,
+                    'tradeable': symbol in self._tradeable}
+    
     def add_symbol(self, symbol: str) -> Dict:
         symbol = self._normalize_symbol(symbol)
         if not symbol:
@@ -366,6 +409,10 @@ class SMCScanner:
                 self._signal_markers.pop(symbol, None)
                 self._last_signal_dir.pop(symbol, None)
                 self._cache.pop(symbol, None)
+                # Tradeable cleanup
+                if symbol in self._tradeable:
+                    self._tradeable.remove(symbol)
+                    self._persist_tradeable()
                 for k in list(self._last_alerted.keys()):
                     if k.startswith(f"{symbol}:"):
                         del self._last_alerted[k]
@@ -764,6 +811,19 @@ class SMCScanner:
                     pass
                 continue
             
+            # === Forward BOS events to Trade Manager (always, before mode logic) ===
+            # TM uses these to count BOS-N for partial closes after position open.
+            # Independent of alert mode and dedup — TM has its own logic.
+            if tag == 'BOS':
+                try:
+                    from detection.trade_manager import get_trade_manager
+                    tm = get_trade_manager()
+                    if tm and tm.is_enabled():
+                        tm.on_bos_event(symbol=symbol, direction=ev['dir'],
+                                          level=ev['level'], bar_t=to_t)
+                except Exception as e:
+                    print(f"[SMC] TM BOS hook error: {e}")
+            
             if mode == 'choch':
                 if tag == 'CHoCH':
                     if not self._htf_allows(symbol, ev['dir']):
@@ -887,6 +947,16 @@ class SMCScanner:
             self._last_signal_dir[symbol] = side_label
             
             print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
+            
+            # === Forward signal to Trade Manager ===
+            try:
+                from detection.trade_manager import get_trade_manager
+                tm = get_trade_manager()
+                if tm and tm.is_enabled():
+                    tm.on_signal(symbol=symbol, side=side_label,
+                                 entry_price=entry_price, opened_by=mode)
+            except Exception as e:
+                print(f"[SMC] TM hook error: {e}")
         except Exception as e:
             print(f"[SMC] Alert send error: {e}")
     
@@ -1112,6 +1182,7 @@ class SMCScanner:
                 'running': self._running,
                 'enabled': self._settings.get('enabled', True),
                 'watchlist': list(self._watchlist),
+                'tradeable': list(self._tradeable),
                 'settings': dict(self._settings),
                 'scan_count': self._scan_count,
                 'errors': self._errors,
