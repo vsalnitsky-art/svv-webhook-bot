@@ -577,6 +577,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="EMA Trend" selected>EMA Trend</option>
                             <option value="EMA Cross">EMA Cross</option>
                             <option value="Swing Structure">Swing Structure</option>
+                            <option value="Internal Structure">Internal Structure</option>
                         </select>
                     </div>
                     <div class="sm-control-item" id="sm-htf-fast-wrap" style="display:none">
@@ -592,6 +593,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div class="sm-control-item" id="sm-htf-trend-wrap">
                         <label>Trend EMA:</label>
                         <input type="number" id="sm-htf-trend" value="50" min="10" max="200"
+                               style="width:55px" onchange="updateHTFSettings()">
+                    </div>
+                    <div class="sm-control-item" id="sm-htf-isize-wrap" style="display:none">
+                        <label>Internal Size:</label>
+                        <input type="number" id="sm-htf-isize" value="3" min="2" max="20"
                                style="width:55px" onchange="updateHTFSettings()">
                     </div>
                 </div>
@@ -1032,6 +1038,7 @@ async function loadSettings() {
             document.getElementById('sm-htf-fast').value = s.htf_ema_fast || 9;
             document.getElementById('sm-htf-slow').value = s.htf_ema_slow || 21;
             document.getElementById('sm-htf-trend').value = s.htf_ema_trend || 50;
+            document.getElementById('sm-htf-isize').value = s.htf_internal_size || 3;
             updateHTFFieldVisibility();
             updateSettingsSummary();
         }
@@ -1043,20 +1050,23 @@ function updateHTFFieldVisibility() {
     const fastWrap = document.getElementById('sm-htf-fast-wrap');
     const slowWrap = document.getElementById('sm-htf-slow-wrap');
     const trendWrap = document.getElementById('sm-htf-trend-wrap');
+    const isizeWrap = document.getElementById('sm-htf-isize-wrap');
+    
+    // Hide all by default, show what the method needs
+    fastWrap.style.display = 'none';
+    slowWrap.style.display = 'none';
+    trendWrap.style.display = 'none';
+    isizeWrap.style.display = 'none';
+    
     if (method === 'EMA Cross') {
         fastWrap.style.display = '';
         slowWrap.style.display = '';
-        trendWrap.style.display = 'none';
     } else if (method === 'EMA Trend') {
-        fastWrap.style.display = 'none';
-        slowWrap.style.display = 'none';
         trendWrap.style.display = '';
-    } else {
-        // Swing Structure — no EMA inputs needed
-        fastWrap.style.display = 'none';
-        slowWrap.style.display = 'none';
-        trendWrap.style.display = 'none';
+    } else if (method === 'Internal Structure') {
+        isizeWrap.style.display = '';
     }
+    // 'Swing Structure' — no extra inputs needed
 }
 
 function updateSettingsSummary() {
@@ -1145,6 +1155,7 @@ async function updateHTFSettings() {
         htf_ema_fast: parseInt(document.getElementById('sm-htf-fast').value) || 9,
         htf_ema_slow: parseInt(document.getElementById('sm-htf-slow').value) || 21,
         htf_ema_trend: parseInt(document.getElementById('sm-htf-trend').value) || 50,
+        htf_internal_size: parseInt(document.getElementById('sm-htf-isize').value) || 3,
     };
     
     try {

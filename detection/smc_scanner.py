@@ -42,7 +42,7 @@ MAX_WATCHLIST = 50
 
 # Allowed timeframes (Binance format)
 ALLOWED_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h']
-ALLOWED_HTF_METHODS = ['EMA Cross', 'EMA Trend', 'Swing Structure']
+ALLOWED_HTF_METHODS = ['EMA Cross', 'EMA Trend', 'Swing Structure', 'Internal Structure']
 
 # Display labels (uppercase) for UI / Telegram
 TIMEFRAME_LABELS = {
@@ -72,13 +72,17 @@ DEFAULT_SETTINGS = {
     # User-requested default: True.
     'deduplicate_signals': True,
     
-    # HTF Bias filter (Pine PRO HTF Bias group)
+    # HTF Bias filter (Pine PRO HTF Bias group + Internal Structure addition)
     'htf_enabled': False,
     'htf_timeframe': '15m',
     'htf_method': 'EMA Trend',
     'htf_ema_fast': 9,
     'htf_ema_slow': 21,
     'htf_ema_trend': 50,
+    # 'Internal Structure' method — runs SMC structure detection on HTF and
+    # uses the LAST CHoCH event's direction as the trend. Pine "Deduplicate
+    # 1 per trend, CHoCH only" semantics: BOS events don't change trend.
+    'htf_internal_size': 3,
 }
 
 
@@ -95,19 +99,21 @@ def _ema(values, period):
 
 
 def calc_htf_bias(htf_klines, method, ema_fast=9, ema_slow=21, ema_trend=50,
-                   swing_trend=None):
+                   swing_trend=None, internal_size=3):
     """Compute HTF bias on the given HTF klines.
     
     Args:
         htf_klines: list of {p (close), ...} dicts at the HTF timeframe.
-        method: 'EMA Cross' | 'EMA Trend' | 'Swing Structure'
+        method: 'EMA Cross' | 'EMA Trend' | 'Swing Structure' | 'Internal Structure'
         swing_trend: int (1=BULL, -1=BEAR, 0=NEUTRAL) for Swing Structure method
+        internal_size: pivot size for Internal Structure method
     
     Returns:
         dict with:
             'bias': 'bull' | 'bear' | 'neutral'
             'method': method used
             'fast_value', 'slow_value', 'trend_value', 'close' (for debug)
+            'last_choch_t' (for Internal Structure)
     """
     if method == 'Swing Structure':
         if swing_trend == 1:
@@ -119,6 +125,35 @@ def calc_htf_bias(htf_klines, method, ema_fast=9, ema_slow=21, ema_trend=50,
     
     if not htf_klines or len(htf_klines) < 2:
         return {'bias': 'neutral', 'method': method, 'reason': 'not enough klines'}
+    
+    # === Internal Structure method ===
+    # Run SMC structure detection on the HTF klines (incl. live bar — real-time)
+    # and look at the LAST CHoCH event. Its direction = HTF trend.
+    # BOS events don't change the trend (they continue it).
+    if method == 'Internal Structure':
+        if len(htf_klines) < internal_size + 5:
+            return {'bias': 'neutral', 'method': method, 'reason': 'not enough HTF bars'}
+        try:
+            from detection.smc_structure import detect_smc_structure
+            result = detect_smc_structure(htf_klines, internal_size=internal_size,
+                                            swing_size=50)
+            events = result.get('internal', {}).get('events', [])
+            # Find the most recent CHoCH (BOS ignored — only CHoCH changes trend)
+            last_choch = None
+            for e in reversed(events):
+                if e.get('tag') == 'CHoCH':
+                    last_choch = e
+                    break
+            if last_choch is None:
+                return {'bias': 'neutral', 'method': method, 'reason': 'no CHoCH yet on HTF'}
+            return {
+                'bias': last_choch['dir'],   # 'bull' or 'bear'
+                'method': method,
+                'last_choch_t': last_choch.get('to_t'),
+                'last_choch_level': last_choch.get('level'),
+            }
+        except Exception as e:
+            return {'bias': 'neutral', 'method': method, 'reason': f'error: {e}'}
     
     closes = [k.get('p', 0) for k in htf_klines]
     last_close = closes[-1]
@@ -445,13 +480,15 @@ class SMCScanner:
                        'swing_size', 'timeframe', 'internal_size',
                        'deduplicate_signals',
                        'htf_enabled', 'htf_timeframe', 'htf_method',
-                       'htf_ema_fast', 'htf_ema_slow', 'htf_ema_trend']
+                       'htf_ema_fast', 'htf_ema_slow', 'htf_ema_trend',
+                       'htf_internal_size']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
             old_isize = self._settings.get('internal_size', DEFAULT_INTERNAL_SIZE)
             old_htf_tf = self._settings.get('htf_timeframe', '15m')
             old_htf_method = self._settings.get('htf_method', 'EMA Trend')
+            old_htf_isize = self._settings.get('htf_internal_size', 3)
             
             for k in allowed:
                 if k in new:
@@ -513,14 +550,23 @@ class SMCScanner:
             except:
                 self._settings['htf_ema_trend'] = 50
             
+            # Internal Structure size (Pine SMC pivot size on HTF)
+            try:
+                self._settings['htf_internal_size'] = max(2, min(20, int(self._settings.get('htf_internal_size', 3))))
+            except:
+                self._settings['htf_internal_size'] = 3
+            
             # Reset cache on relevant changes
             new_tf = self._settings['timeframe']
             new_isize = self._settings['internal_size']
             new_htf_tf = self._settings['htf_timeframe']
             new_htf_method = self._settings['htf_method']
+            new_htf_isize = self._settings['htf_internal_size']
             
             tf_changed = (new_tf != old_tf or new_isize != old_isize)
-            htf_changed = (new_htf_tf != old_htf_tf or new_htf_method != old_htf_method)
+            htf_changed = (new_htf_tf != old_htf_tf or 
+                           new_htf_method != old_htf_method or
+                           new_htf_isize != old_htf_isize)
             
             if tf_changed:
                 self._cache.clear()
@@ -563,6 +609,7 @@ class SMCScanner:
             'ema_fast': int(self._settings.get('htf_ema_fast', 9)),
             'ema_slow': int(self._settings.get('htf_ema_slow', 21)),
             'ema_trend': int(self._settings.get('htf_ema_trend', 50)),
+            'internal_size': int(self._settings.get('htf_internal_size', 3)),
         }
     
     def is_enabled(self) -> bool:
@@ -701,6 +748,8 @@ class SMCScanner:
         
         For 'Swing Structure' method: uses swing_trend from current chart's
         SMC analysis — no extra API call needed.
+        For 'Internal Structure' method: fetches HTF klines (incl. live bar
+        for real-time response) and runs SMC detection.
         """
         method = htf_settings['method']
         
@@ -708,11 +757,17 @@ class SMCScanner:
         if method == 'Swing Structure':
             return calc_htf_bias(None, method, swing_trend=swing_trend)
         
-        # EMA Cross / EMA Trend need HTF klines
+        # EMA / Internal Structure all need HTF klines
         try:
             htf_tf = htf_settings['timeframe']
-            # Fetch enough bars for the longest EMA period needed
-            need_bars = max(htf_settings['ema_slow'], htf_settings['ema_trend']) + 50
+            
+            # Bar count budget per method
+            if method == 'Internal Structure':
+                # Need enough bars for stable structure: 200 is generous
+                need_bars = 200
+            else:
+                # EMA methods: longest period + buffer
+                need_bars = max(htf_settings['ema_slow'], htf_settings['ema_trend']) + 50
             need_bars = min(need_bars, 500)
             
             htf_klines = md.fetch_klines(symbol, limit=need_bars, interval=htf_tf) \
@@ -727,6 +782,7 @@ class SMCScanner:
                 ema_fast=htf_settings['ema_fast'],
                 ema_slow=htf_settings['ema_slow'],
                 ema_trend=htf_settings['ema_trend'],
+                internal_size=htf_settings.get('internal_size', 3),
             )
         except Exception as e:
             return {'bias': 'neutral', 'method': method, 'reason': f'error: {e}'}
