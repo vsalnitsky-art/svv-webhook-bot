@@ -1091,40 +1091,6 @@ class SMCScanner:
         
         all_events = fmt_events(internal)
         
-        # === HTF-aware event filtering and sequencing ===
-        # When HTF filter is active and bias is clear, we keep only events
-        # that match the HTF direction and label them in sequence.
-        #
-        # Within a chain (after a CHoCH):
-        #   - CHoCH         (start of trend confirmation)
-        #   - BOS-1         (first break in same direction — opens position in choch_bos mode)
-        #   - BOS-2, BOS-3, BOS-4 ... (subsequent breaks — used by TM for partial closes)
-        #
-        # Opposite-direction events are SKIPPED entirely (not just hidden).
-        # A new CHoCH (in same HTF dir) starts a fresh chain.
-        if htf_filter_active and htf_bias in ('bull', 'bear'):
-            kept_dir = htf_bias
-            chain_events = [e for e in all_events if e.get('dir') == kept_dir]
-            
-            bos_count = 0
-            for e in chain_events:
-                if e.get('tag') == 'CHoCH':
-                    bos_count = 0
-                    e['label'] = 'CHoCH'
-                    e['seq'] = 0
-                else:  # BOS
-                    bos_count += 1
-                    e['seq'] = bos_count
-                    e['label'] = f"BOS-{bos_count}"
-            
-            display_events = chain_events
-        else:
-            # No HTF filter: events stay raw, simple labels
-            for e in all_events:
-                e['label'] = e.get('tag', '')
-                e['seq'] = 0
-            display_events = all_events
-        
         # Effective trend for the badge:
         #   When HTF filter is active and HTF has a clear direction, use it.
         #   Otherwise use Internal Structure's own trend.
@@ -1160,9 +1126,9 @@ class SMCScanner:
             'symbol': symbol,
             'interval': self.get_display_label(),
             'ohlc': ohlc,
-            # Internal Structure — events filtered by HTF direction when filter active
+            # Internal Structure — ALL events, frontend toggles display
             'pivots': fmt_pivots(internal),
-            'events': display_events,
+            'events': all_events,
             'trend': display_trend,
             # Signal markers — points where Telegram alerts actually fired
             'signals': signals,

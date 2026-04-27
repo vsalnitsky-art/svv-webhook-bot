@@ -1292,7 +1292,7 @@ async function loadChart() {
         // Cache key includes both toggles and signal count so re-renders happen
         // when structure visibility toggles or new signals arrive.
         const structureKey = showStructure
-            ? internalEvents.map(e => `${e.from_time}:${e.label || e.tag}:${e.dir}:${e.level}`).join('|')
+            ? internalEvents.map(e => `${e.from_time}:${e.tag}:${e.dir}:${e.level}`).join('|')
             : '';
         const pivotsKey = showPivots
             ? internalPivots.map(p => `${p.time}:${p.type}:${p.price}`).join('|')
@@ -1327,14 +1327,12 @@ async function loadChart() {
                     ]);
                     activeLines.push(lineSeries);
                     
-                    // Label includes sequence (BOS-1, BOS-2, ...) when HTF filter active
-                    const labelText = ev.label || ev.tag;
                     markers.push({
                         time: ev.to_time,
                         position: ev.dir === 'bull' ? 'aboveBar' : 'belowBar',
                         color: color,
                         shape: ev.dir === 'bull' ? 'arrowDown' : 'arrowUp',
-                        text: labelText,
+                        text: ev.tag,
                     });
                 }
             }
