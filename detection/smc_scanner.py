@@ -1030,10 +1030,14 @@ class SMCScanner:
             print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
             
             # === Forward signal to Trade Manager ===
+            # Always call on_signal — TM itself decides:
+            #   - if enabled=True → opens real Bybit position
+            #   - if enabled=False but test_mode=True → opens shadow (paper) position
+            #   - if both off → does nothing
             try:
                 from detection.trade_manager import get_trade_manager
                 tm = get_trade_manager()
-                if tm and tm.is_enabled():
+                if tm:
                     tm.on_signal(symbol=symbol, side=side_label,
                                  entry_price=entry_price, opened_by=mode)
             except Exception as e:
