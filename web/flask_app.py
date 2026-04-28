@@ -192,6 +192,10 @@ def create_app():
         if not _auto_started['smc']:
             _auto_started['smc'] = True
             try:
+                # Initialize forecast engine first — SMC scanner uses it during scans
+                from detection.forecast_engine import init_forecast_engine
+                init_forecast_engine()
+                
                 from detection.smc_scanner import init_smc_scanner
                 smc_tg = None
                 try:

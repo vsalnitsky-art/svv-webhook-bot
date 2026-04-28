@@ -646,6 +646,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-chart-title" id="sm-chart-title">Select a symbol</span>
                     <span class="sm-status-badge" id="sm-trend-badge" style="margin-left:10px;display:none"></span>
                     <span class="sm-status-badge" id="sm-htf-badge" style="margin-left:6px;display:none"></span>
+                    <span class="sm-status-badge" id="sm-forecast-badge" style="margin-left:6px;display:none"></span>
+                    <span class="sm-status-badge" id="sm-ctr-badge" style="margin-left:6px;display:none"></span>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <button onclick="clearSignalsForCurrent()" id="sm-clear-signals-btn"
@@ -683,6 +685,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
             <div class="tm-warn">
                 ⚠️ <b>Real money:</b> Коли увімкнено, бот автоматично відкриває та закриває реальні позиції на Bybit за сигналами SMC. Перевір налаштування перед увімкненням.
+            </div>
+            
+            <div class="tm-row" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px">
+                <label>
+                    <input type="checkbox" id="tm-test-mode" onchange="saveTMSettings()">
+                    🧪 <b>Test Mode (Paper Trading)</b>
+                    <span class="tm-help" title="Коли увімкнено, бот створює віртуальні (shadow) позиції на основі SMC сигналів, без реальних угод на Bybit. Exit правила (Reverse SMC, Forecast 1H Confluence) теж працюють — і відправляють Telegram повідомлення з позначкою [TEST]. Це дозволяє протестувати стратегію закриття без реального ризику. Працює навіть коли головний тумблер Trade Manager вимкнений.">?</span>
+                </label>
+                <span style="color:#a5b4fc;font-size:0.72rem">Працює навіть коли Trade Manager вимкнений</span>
             </div>
             
             <details>
@@ -761,6 +772,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="checkbox" id="tm-use-reverse" onchange="saveTMSettings()">
                                 Reverse SMC (CHoCH only)
                                 <span class="tm-help" title="Закриває LONG позицію коли приходить CHoCH bear (зміна структури ринку проти позиції), і навпаки. Це ключовий SMC exit — вихід при зміні структури">?</span>
+                            </label>
+                        </div>
+                        
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-forecast-close" onchange="saveTMSettings()">
+                                Forecast 1H Confluence
+                                <span class="tm-help" title="Закриває позицію коли одночасно: (1) на LTF з'явився протилежний CHoCH, (2) Прогноз 1H теж показує протилежний напрямок. Якщо CHoCH був, але 1H прогноз ще на нашу сторону — тримаємо. Якщо лише прогноз перевернувся, але CHoCH ще не було — теж тримаємо. Закриваємо лише при confluence (узгодження) обох умов.">?</span>
                             </label>
                         </div>
                         
@@ -880,6 +899,34 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><td colspan="7" class="tm-empty-msg">No closed trades yet</td></tr>
                 </tbody>
             </table>
+            
+            <!-- Shadow (paper) positions -->
+            <div id="tm-shadow-section" style="margin-top:18px;padding-top:12px;border-top:1px dashed rgba(99,102,241,0.3)">
+                <h3 style="font-size:0.85rem;color:#a5b4fc;margin:0 0 4px 0">
+                    🧪 Test Mode — Paper Positions
+                    <span id="tm-shadow-stats-inline" style="color:#888;font-weight:normal;font-size:0.72rem;margin-left:8px"></span>
+                </h3>
+                
+                <h4 style="font-size:0.78rem;color:#888;margin:8px 0 4px 0">Open Paper Positions <span id="tm-shadow-open-count" style="color:#666">(0)</span></h4>
+                <table class="tm-table" id="tm-shadow-open-table">
+                    <thead>
+                        <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th></tr>
+                    </thead>
+                    <tbody id="tm-shadow-open-tbody">
+                        <tr><td colspan="6" class="tm-empty-msg">No paper positions</td></tr>
+                    </tbody>
+                </table>
+                
+                <h4 style="font-size:0.78rem;color:#888;margin:12px 0 4px 0">Recent Paper Closes</h4>
+                <table class="tm-table" id="tm-shadow-closed-table">
+                    <thead>
+                        <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th></tr>
+                    </thead>
+                    <tbody id="tm-shadow-closed-tbody">
+                        <tr><td colspan="7" class="tm-empty-msg">No paper closes yet</td></tr>
+                    </tbody>
+                </table>
+            </div>
             
         </div>
     </div>
@@ -1241,6 +1288,10 @@ function clearChart() {
     document.getElementById('sm-chart-title').textContent = 'Select a symbol';
     document.getElementById('sm-trend-badge').style.display = 'none';
     document.getElementById('sm-htf-badge').style.display = 'none';
+    const fcBadge = document.getElementById('sm-forecast-badge');
+    if (fcBadge) fcBadge.style.display = 'none';
+    const ctrBadge = document.getElementById('sm-ctr-badge');
+    if (ctrBadge) ctrBadge.style.display = 'none';
     const clrBtn = document.getElementById('sm-clear-signals-btn');
     if (clrBtn) clrBtn.style.display = 'none';
     document.getElementById('sm-chart-meta').textContent = '';
@@ -1415,6 +1466,46 @@ async function loadChart() {
             htfBadge.style.display = 'none';
         }
         
+        // === Forecast 1H badge ===
+        const forecastBadge = document.getElementById('sm-forecast-badge');
+        const fc = d.forecast_1h;
+        if (fc && fc.side !== undefined && fc.side !== 0) {
+            const arrow = fc.side === 1 ? '🟢' : '🔴';
+            const dir = fc.side === 1 ? 'LONG' : 'SHORT';
+            const sign = fc.pct > 0 ? '+' : '';
+            forecastBadge.textContent = `🔮 1H: ${arrow} ${dir} ${sign}${fc.pct}% · ${fc.confidence}%`;
+            forecastBadge.className = 'sm-status-badge';
+            forecastBadge.style.background = fc.side === 1 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+            forecastBadge.style.color = fc.side === 1 ? '#4ade80' : '#fca5a5';
+            forecastBadge.style.display = 'inline-block';
+            forecastBadge.title = `Прогноз 1H: 6 Fibonacci horizons (5,8,13,21,34,55)\nSum: ${fc.sum}/12, confidence ${fc.confidence}%`;
+        } else if (fc && fc.reason) {
+            forecastBadge.textContent = `🔮 1H: —`;
+            forecastBadge.className = 'sm-status-badge';
+            forecastBadge.style.background = 'rgba(100,100,100,0.15)';
+            forecastBadge.style.color = '#888';
+            forecastBadge.style.display = 'inline-block';
+            forecastBadge.title = `Прогноз 1H: ${fc.reason}`;
+        } else {
+            forecastBadge.style.display = 'none';
+        }
+        
+        // === CTR badge (informational) ===
+        const ctrBadge = document.getElementById('sm-ctr-badge');
+        const ctr = d.ctr;
+        if (ctr && ctr.last_dir) {
+            const ctrIcon = ctr.last_dir === 'LONG' ? '🟢' : '🔴';
+            const ageStr = ctr.last_signal_age_bars !== null ? ` (${ctr.last_signal_age_bars}b)` : '';
+            ctrBadge.textContent = `⚡ CTR: ${ctrIcon} ${ctr.last_dir}${ageStr}`;
+            ctrBadge.className = 'sm-status-badge';
+            ctrBadge.style.background = ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
+            ctrBadge.style.color = ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5';
+            ctrBadge.style.display = 'inline-block';
+            ctrBadge.title = `CTR (Cyclic Trend Reversal) — Schaff Trend Cycle\nLast signal: ${ctr.last_dir} ${ctr.last_signal_age_bars} bars ago\nSTC: ${ctr.stc}`;
+        } else {
+            ctrBadge.style.display = 'none';
+        }
+        
         const dot = document.getElementById('dot-' + currentSymbol);
         if (dot) {
             dot.className = 'trend-dot ' + (d.trend === 1 ? 'bull' : d.trend === -1 ? 'bear' : '');
@@ -1507,6 +1598,7 @@ async function loadTMSettings() {
         document.getElementById('tm-use-tp').checked = !!s.use_tp;
         document.getElementById('tm-tp-pct').value = s.tp_pct;
         document.getElementById('tm-use-reverse').checked = !!s.use_reverse_smc;
+        document.getElementById('tm-use-forecast-close').checked = !!s.use_forecast_1h_close;
         document.getElementById('tm-use-htf-flip').checked = !!s.use_htf_flip;
         document.getElementById('tm-use-time-stop').checked = !!s.use_time_stop;
         document.getElementById('tm-time-stop-hours').value = s.time_stop_hours;
@@ -1515,6 +1607,9 @@ async function loadTMSettings() {
         document.getElementById('tm-trail-distance').value = s.trailing_distance_pct;
         document.getElementById('tm-use-be').checked = !!s.use_be;
         document.getElementById('tm-be-trigger').value = s.be_trigger_pct;
+        
+        // Test mode (paper trading)
+        document.getElementById('tm-test-mode').checked = !!s.test_mode;
         
         // BOS-N
         document.getElementById('tm-use-bos-partials').checked = !!s.use_bos_partials;
@@ -1620,6 +1715,7 @@ async function saveTMSettings() {
             use_tp: document.getElementById('tm-use-tp').checked,
             tp_pct: parseFloat(document.getElementById('tm-tp-pct').value) || 5,
             use_reverse_smc: document.getElementById('tm-use-reverse').checked,
+            use_forecast_1h_close: document.getElementById('tm-use-forecast-close').checked,
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
             use_time_stop: document.getElementById('tm-use-time-stop').checked,
             time_stop_hours: parseFloat(document.getElementById('tm-time-stop-hours').value) || 4,
@@ -1628,6 +1724,7 @@ async function saveTMSettings() {
             trailing_distance_pct: parseFloat(document.getElementById('tm-trail-distance').value) || 0.5,
             use_be: document.getElementById('tm-use-be').checked,
             be_trigger_pct: parseFloat(document.getElementById('tm-be-trigger').value) || 0.5,
+            test_mode: document.getElementById('tm-test-mode').checked,
             use_bos_partials: document.getElementById('tm-use-bos-partials').checked,
             bos_2_close_pct: parseFloat(document.getElementById('tm-bos2-pct').value) || 0,
             bos_3_close_pct: parseFloat(document.getElementById('tm-bos3-pct').value) || 0,
@@ -1672,6 +1769,7 @@ function reasonLabel(r) {
         'stop_loss': '🛡 SL',
         'take_profit': '🎯 TP',
         'reverse_smc': '🔄 Reverse',
+        'forecast_1h_confluence': '🔮 1H Confluence',
         'htf_flip': '📡 HTF flip',
         'time_stop': '⏱ Time',
         'trailing_stop': '📈 Trailing',
@@ -1739,6 +1837,58 @@ async function loadTMState() {
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}% (${pnlSign}$${c.pnl_usd.toFixed(2)})</td>
+                    <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}</td>
+                </tr>`;
+            }).join('');
+        }
+        
+        // === Shadow (paper) positions and closes ===
+        const shadowPositions = d.shadow_positions || [];
+        const shadowClosed = (d.shadow_closed || []).slice().reverse();
+        const shadowStats = d.shadow_stats || {};
+        
+        document.getElementById('tm-shadow-open-count').textContent = `(${shadowPositions.length})`;
+        
+        // Inline stats
+        const sStats = `${shadowStats.total_closed || 0} closed · ${shadowStats.wins || 0}W / ${shadowStats.losses || 0}L · win rate ${shadowStats.win_rate || 0}% · avg ${(shadowStats.avg_pnl_pct >= 0 ? '+' : '') + (shadowStats.avg_pnl_pct || 0)}%`;
+        document.getElementById('tm-shadow-stats-inline').textContent = sStats;
+        
+        // Open shadow positions
+        const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
+        if (shadowPositions.length === 0) {
+            shadowOpenTbody.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">No paper positions</td></tr>';
+        } else {
+            shadowOpenTbody.innerHTML = shadowPositions.map(p => {
+                const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+                const pnlSign = p.pnl_pct >= 0 ? '+' : '';
+                const sideClass = p.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
+                return `<tr>
+                    <td><b>${p.symbol}</b></td>
+                    <td class="${sideClass}">${p.side}</td>
+                    <td>${fmtPriceJS(p.entry_price)}</td>
+                    <td>${fmtPriceJS(p.current_price)}</td>
+                    <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
+                    <td style="color:#888;font-size:0.72rem">${p.opened_by || '—'}</td>
+                </tr>`;
+            }).join('');
+        }
+        
+        // Shadow closes
+        const shadowClosedTbody = document.getElementById('tm-shadow-closed-tbody');
+        if (shadowClosed.length === 0) {
+            shadowClosedTbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No paper closes yet</td></tr>';
+        } else {
+            shadowClosedTbody.innerHTML = shadowClosed.slice(0, 50).map(c => {
+                const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
+                const pnlSign = c.pnl_pct >= 0 ? '+' : '';
+                const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
+                return `<tr>
+                    <td>${fmtTimeJS(c.closed_at)}</td>
+                    <td><b>${c.symbol}</b></td>
+                    <td class="${sideClass}">${c.side}</td>
+                    <td>${fmtPriceJS(c.entry_price)}</td>
+                    <td>${fmtPriceJS(c.exit_price)}</td>
+                    <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}%</td>
                     <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}</td>
                 </tr>`;
             }).join('');

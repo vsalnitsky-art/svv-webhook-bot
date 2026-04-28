@@ -728,6 +728,17 @@ class SMCScanner:
                 with self._lock:
                     self._htf_cache[symbol] = htf_bias
                 
+                # === Update Forecast 1H + CTR via forecast engine ===
+                # Best-effort, never blocks scan loop on error
+                try:
+                    from detection.forecast_engine import get_forecast_engine
+                    fe = get_forecast_engine()
+                    if fe:
+                        fe.update(symbol, ltf_klines=klines)
+                except Exception as fe_err:
+                    if self._errors <= 5:
+                        print(f"[SMC] Forecast update error for {symbol}: {fe_err}")
+                
                 # Alerts run on CLOSED bars only — won't fire from intra-bar
                 # wicks that retract before close
                 self._process_alerts(symbol, result_closed)
@@ -879,6 +890,20 @@ class SMCScanner:
                                           level=ev['level'], bar_t=to_t)
                 except Exception as e:
                     print(f"[SMC] TM BOS hook error: {e}")
+            
+            # === Forward ALL CHoCH events to TM (regardless of TM enabled) ===
+            # TM uses these for: Reverse SMC exit, Forecast 1H Confluence exit.
+            # Both rules can run in shadow mode (TM disabled but test_mode on)
+            # to send Telegram-only signals without opening real positions.
+            if tag == 'CHoCH':
+                try:
+                    from detection.trade_manager import get_trade_manager
+                    tm = get_trade_manager()
+                    if tm:
+                        tm.on_choch_event(symbol=symbol, direction=ev['dir'],
+                                           level=ev['level'], bar_t=to_t)
+                except Exception as e:
+                    print(f"[SMC] TM CHoCH hook error: {e}")
             
             if mode == 'choch':
                 if tag == 'CHoCH':
@@ -1178,6 +1203,20 @@ class SMCScanner:
                 if strong_high and weak_low:
                     break
         
+        # === Forecast 1H + CTR (from forecast_engine cache) ===
+        forecast_1h = None
+        ctr = None
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe:
+                cached_fc = fe.get(symbol)
+                if cached_fc:
+                    forecast_1h = cached_fc.get('forecast_1h')
+                    ctr = cached_fc.get('ctr')
+        except Exception:
+            pass
+        
         return {
             'symbol': symbol,
             'interval': self.get_display_label(),
@@ -1193,6 +1232,9 @@ class SMCScanner:
             'htf_bias': htf_bias,
             'htf_method': htf_data.get('method', ''),
             'htf_timeframe': htf_settings.get('timeframe', ''),
+            # Forecast 1H + CTR (Pine PRO indicators)
+            'forecast_1h': forecast_1h,
+            'ctr': ctr,
             # Swing Structure (size=swing_size)
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),

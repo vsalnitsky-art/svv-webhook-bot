@@ -37,6 +37,8 @@ from typing import Dict, List, Optional, Tuple
 DB_KEY_TM_SETTINGS = 'tm_settings'
 DB_KEY_TM_POSITIONS = 'tm_positions'
 DB_KEY_TM_CLOSED = 'tm_closed_trades'
+DB_KEY_TM_SHADOW = 'tm_shadow_positions'   # paper-trading positions
+DB_KEY_TM_SHADOW_CLOSED = 'tm_shadow_closed'
 
 MONITOR_INTERVAL_SECS = 10
 CLOSED_TRADES_LIMIT = 100   # keep this many recent closed trades
@@ -73,6 +75,20 @@ DEFAULT_SETTINGS = {
     
     'use_be': True,                  # Break-Even Move
     'be_trigger_pct': 0.5,           # move SL to entry after +X% profit
+    
+    # === Forecast 1H Confluence Close exit ===
+    # Closes position when both:
+    #   1. Opposite CHoCH appears on LTF (after position open)
+    #   2. Forecast 1H side is opposite to position
+    # Either condition alone won't close — needs both (confluence).
+    'use_forecast_1h_close': True,
+    
+    # === Test mode (paper trading for exit-rule validation) ===
+    # When ON: signals create "shadow" positions tracked in memory only.
+    # No Bybit orders. Exit rules still evaluate and send Telegram alerts
+    # so the user can validate strategy behavior without real risk.
+    # Real positions (when TM enabled=True) take precedence over shadow.
+    'test_mode': True,
     
     # === BOS-N partial closes (after CHoCH+BOS opening) ===
     # The opening trade counts the entry-BOS as #1.
@@ -124,8 +140,15 @@ class TradeManager:
         self._positions: Dict[str, Dict] = {}     # symbol → position dict
         self._closed_trades: List[Dict] = []
         
+        # Shadow (paper) positions — tracked when test_mode=True even if TM is
+        # disabled. Used to validate exit rules without real Bybit orders.
+        self._shadow_positions: Dict[str, Dict] = {}
+        self._shadow_closed: List[Dict] = []
+        
         self._load_positions()
         self._load_closed_trades()
+        self._load_shadow_positions()
+        self._load_shadow_closed()
         
         # Stats
         self._tick_count = 0
@@ -191,6 +214,43 @@ class TradeManager:
             except Exception as e:
                 print(f"[TM] Closed-trades persist error: {e}")
     
+    def _load_shadow_positions(self):
+        if not self.db:
+            return
+        try:
+            stored = self.db.get_setting(DB_KEY_TM_SHADOW, {})
+            if isinstance(stored, dict):
+                self._shadow_positions = stored
+                if stored:
+                    print(f"[TM] Loaded {len(stored)} shadow positions from DB")
+        except Exception as e:
+            print(f"[TM] Shadow positions load error: {e}")
+    
+    def _persist_shadow_positions(self):
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_TM_SHADOW, self._shadow_positions)
+            except Exception as e:
+                print(f"[TM] Shadow positions persist error: {e}")
+    
+    def _load_shadow_closed(self):
+        if not self.db:
+            return
+        try:
+            stored = self.db.get_setting(DB_KEY_TM_SHADOW_CLOSED, [])
+            if isinstance(stored, list):
+                self._shadow_closed = stored[-CLOSED_TRADES_LIMIT:]
+        except:
+            pass
+    
+    def _persist_shadow_closed(self):
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_TM_SHADOW_CLOSED,
+                                     self._shadow_closed[-CLOSED_TRADES_LIMIT:])
+            except Exception as e:
+                print(f"[TM] Shadow closed persist error: {e}")
+    
     # ============================================================
     # Settings API
     # ============================================================
@@ -228,6 +288,7 @@ class TradeManager:
             
             for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_htf_flip',
                       'use_time_stop', 'use_trailing', 'use_be',
+                      'use_forecast_1h_close', 'test_mode',
                       'use_bos_partials', 'trailing_after_bos_2']:
                 self._settings[k] = bool(self._settings.get(k, False))
             
@@ -406,30 +467,98 @@ class TradeManager:
         """Called when SMC scanner fires a signal.
         side: 'LONG' or 'SHORT'
         opened_by: 'choch' or 'choch_bos'
-        """
-        if not self.is_enabled():
-            return
         
-        # Reverse SMC: if there's a position in opposite direction → close it
+        Behavior:
+          - TM enabled + no existing real position → open real on Bybit
+          - TM disabled + test_mode + no shadow position → open shadow (paper)
+          - Reverse SMC handled in on_choch_event (event-level, not signal-level)
+        """
+        s = self._settings
+        enabled = self.is_enabled()
+        test_mode = s.get('test_mode', True)
+        
+        with self._lock:
+            existing_real = self._positions.get(symbol)
+            existing_shadow = self._shadow_positions.get(symbol)
+        
+        if enabled:
+            # Real-money mode
+            if existing_real:
+                # Already have a real position — Reverse handled by on_choch_event
+                return
+            if not self._is_tradeable(symbol):
+                print(f"[TM] {symbol} not in tradeable list — signal ignored")
+                return
+            self._open_position(symbol, side, entry_price, opened_by)
+        elif test_mode:
+            # Paper mode — track shadow position
+            if existing_shadow:
+                # Already shadowing this symbol
+                return
+            self._open_shadow(symbol, side, entry_price, opened_by)
+    
+    def on_choch_event(self, symbol: str, direction: str, level: float, bar_t):
+        """Called by SMC scanner for EVERY CHoCH detected (regardless of dedup/HTF).
+        
+        Used to evaluate exit rules:
+          - Reverse SMC (CHoCH only): close position when opposite CHoCH appears
+          - Forecast 1H Confluence: close when opposite CHoCH AND Forecast 1H also opposite
+        
+        Both rules work on real (when TM enabled) and shadow (when test_mode on)
+        positions. Telegram notifications are sent regardless.
+        """
         s = self._settings
         with self._lock:
-            existing = self._positions.get(symbol)
+            real = self._positions.get(symbol)
+            shadow = self._shadow_positions.get(symbol)
         
-        if existing:
-            if existing['side'] != side and s.get('use_reverse_smc'):
-                # Opposite signal → close existing
-                current_price = self._get_current_price(symbol) or entry_price
-                self._close_position(symbol, current_price, reason='reverse_smc')
-                # Don't open new on same signal — wait for next one (safer)
-            return  # already have a position on this symbol
-        
-        # Tradeable check
-        if not self._is_tradeable(symbol):
-            print(f"[TM] {symbol} not in tradeable list — signal ignored")
+        # Pick whichever position exists (real takes precedence)
+        pos = real or shadow
+        if not pos:
             return
         
-        # Open new position
-        self._open_position(symbol, side, entry_price, opened_by)
+        pos_dir = 'bull' if pos['side'] == 'LONG' else 'bear'
+        if direction == pos_dir:
+            return  # same-direction CHoCH — not a reversal
+        
+        # === Forecast 1H Confluence Close ===
+        # Highest priority: if both LTF reverse AND Forecast 1H opposite, close.
+        if s.get('use_forecast_1h_close'):
+            forecast = self._get_forecast_1h(symbol)
+            if forecast and forecast.get('side') in (1, -1):
+                forecast_dir = 'bull' if forecast['side'] == 1 else 'bear'
+                if forecast_dir == direction:
+                    # Confluence! Forecast and CHoCH both oppose position
+                    current_price = self._get_current_price(symbol) or pos['entry_price']
+                    if real:
+                        self._close_position(symbol, current_price,
+                                              reason='forecast_1h_confluence')
+                    elif shadow and s.get('test_mode'):
+                        self._close_shadow(symbol, current_price,
+                                            reason='forecast_1h_confluence')
+                    return  # closed; don't fall through to plain reverse
+        
+        # === Plain Reverse SMC (CHoCH only) ===
+        if s.get('use_reverse_smc'):
+            current_price = self._get_current_price(symbol) or pos['entry_price']
+            if real:
+                self._close_position(symbol, current_price, reason='reverse_smc')
+            elif shadow and s.get('test_mode'):
+                self._close_shadow(symbol, current_price, reason='reverse_smc')
+    
+    def _get_forecast_1h(self, symbol: str) -> Optional[Dict]:
+        """Read the latest Forecast 1H for the symbol from forecast_engine cache."""
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if not fe:
+                return None
+            cached = fe.get(symbol)
+            if not cached:
+                return None
+            return cached.get('forecast_1h')
+        except Exception:
+            return None
     
     def on_bos_event(self, symbol: str, direction: str, level: float, bar_t: int):
         """Called by SMC scanner when a BOS event is detected (any).
@@ -620,6 +749,81 @@ class TradeManager:
         )
     
     # ============================================================
+    # Shadow (paper) positions — for test_mode
+    # ============================================================
+    
+    def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str):
+        """Open a paper-trading position. No Bybit calls."""
+        pos = {
+            'symbol': symbol,
+            'side': side,
+            'entry_price': float(entry_price),
+            'opened_at': time.time(),
+            'opened_by': opened_by,
+            'shadow': True,
+        }
+        with self._lock:
+            self._shadow_positions[symbol] = pos
+        self._persist_shadow_positions()
+        
+        icon = '🟢' if side == 'LONG' else '🔴'
+        msg = (
+            f"📊 <b>[TEST] OPEN {side}</b>: #{symbol}\n"
+            f"📍 Entry: {self._fmt_price(entry_price)}\n"
+            f"🧪 Paper trading (no real order)"
+        )
+        self._notify(msg)
+        print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
+    
+    def _close_shadow(self, symbol: str, exit_price: float, reason: str):
+        """Close a paper position. No Bybit calls — Telegram only."""
+        with self._lock:
+            pos = self._shadow_positions.get(symbol)
+        if not pos:
+            return
+        
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG':
+            pnl_pct = (exit_price - entry) / entry * 100
+        else:
+            pnl_pct = (entry - exit_price) / entry * 100
+        
+        closed = {
+            'symbol': symbol,
+            'side': pos['side'],
+            'entry_price': entry,
+            'exit_price': float(exit_price),
+            'opened_at': pos['opened_at'],
+            'closed_at': time.time(),
+            'pnl_pct': round(pnl_pct, 4),
+            'reason': reason,
+            'opened_by': pos.get('opened_by', ''),
+            'shadow': True,
+        }
+        
+        with self._lock:
+            self._shadow_positions.pop(symbol, None)
+            self._shadow_closed.append(closed)
+            if len(self._shadow_closed) > CLOSED_TRADES_LIMIT:
+                self._shadow_closed = self._shadow_closed[-CLOSED_TRADES_LIMIT:]
+        self._persist_shadow_positions()
+        self._persist_shadow_closed()
+        
+        is_win = pnl_pct > 0
+        icon = '✅' if is_win else '❌'
+        msg = (
+            f"{icon} <b>[TEST] CLOSE {pos['side']}</b>: #{symbol}\n"
+            f"📍 Entry: {self._fmt_price(entry)}\n"
+            f"📤 Exit: {self._fmt_price(exit_price)}\n"
+            f"📊 PnL: {pnl_pct:+.2f}%\n"
+            f"🔖 Reason: {self._reason_label(reason)}\n"
+            f"🧪 Paper trade (no real close)"
+        )
+        self._notify(msg)
+        print(f"[TM] [TEST] Shadow close: {symbol} {pos['side']} @ {self._fmt_price(exit_price)} "
+              f"({pnl_pct:+.2f}% reason={reason})")
+    
+    # ============================================================
     # Position sizing
     # ============================================================
     
@@ -740,11 +944,33 @@ class TradeManager:
             
             closed = list(self._closed_trades[-50:])
             
-            # Stats
+            # Stats — real
             total_closed = len(self._closed_trades)
             wins = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) > 0)
             losses = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) < 0)
             total_pnl = sum(c.get('pnl_usd', 0) for c in self._closed_trades)
+            
+            # Shadow positions snapshot
+            shadow_positions = []
+            for sym, pos in self._shadow_positions.items():
+                current = self._get_current_price(sym) or pos['entry_price']
+                entry = pos['entry_price']
+                if pos['side'] == 'LONG':
+                    pnl_pct = (current - entry) / entry * 100
+                else:
+                    pnl_pct = (entry - current) / entry * 100
+                shadow_positions.append({
+                    **pos,
+                    'current_price': current,
+                    'pnl_pct': round(pnl_pct, 3),
+                })
+            shadow_closed = list(self._shadow_closed[-50:])
+            
+            # Stats — shadow
+            sh_total = len(self._shadow_closed)
+            sh_wins = sum(1 for c in self._shadow_closed if c.get('pnl_pct', 0) > 0)
+            sh_losses = sum(1 for c in self._shadow_closed if c.get('pnl_pct', 0) < 0)
+            sh_avg_pnl = (sum(c.get('pnl_pct', 0) for c in self._shadow_closed) / sh_total) if sh_total else 0
             
             return {
                 'enabled': self.is_enabled(),
@@ -759,6 +985,15 @@ class TradeManager:
                     'losses': losses,
                     'win_rate': round(wins / total_closed * 100, 1) if total_closed else 0,
                     'total_pnl_usd': round(total_pnl, 2),
+                },
+                'shadow_positions': shadow_positions,
+                'shadow_closed': shadow_closed,
+                'shadow_stats': {
+                    'total_closed': sh_total,
+                    'wins': sh_wins,
+                    'losses': sh_losses,
+                    'win_rate': round(sh_wins / sh_total * 100, 1) if sh_total else 0,
+                    'avg_pnl_pct': round(sh_avg_pnl, 2),
                 },
                 'settings': dict(self._settings),
             }
@@ -820,7 +1055,8 @@ class TradeManager:
         return {
             'stop_loss': '🛡 Stop Loss',
             'take_profit': '🎯 Take Profit',
-            'reverse_smc': '🔄 Reverse SMC',
+            'reverse_smc': '🔄 Reverse SMC (CHoCH)',
+            'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
             'htf_flip': '📡 HTF Trend Flip',
             'time_stop': '⏱ Time Stop',
             'trailing_stop': '📈 Trailing Stop',
