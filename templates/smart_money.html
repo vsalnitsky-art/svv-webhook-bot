@@ -474,20 +474,33 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .wl-trade-flag {
     display: inline-block;
     cursor: pointer;
-    font-size: 0.85rem;
-    padding: 1px 4px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 2px 5px;
     border-radius: 3px;
     margin-left: 4px;
     user-select: none;
+    border: 1px solid transparent;
+    transition: all 0.15s;
 }
 .wl-trade-flag.active {
-    background: rgba(34, 197, 94, 0.15);
+    background: rgba(34, 197, 94, 0.18);
     color: #4ade80;
+    border-color: rgba(34, 197, 94, 0.35);
 }
 .wl-trade-flag.inactive {
     color: #555;
+    border-color: rgba(100, 100, 100, 0.25);
 }
-.wl-trade-flag:hover { background: rgba(34, 197, 94, 0.1); }
+.wl-trade-flag.active:hover {
+    background: rgba(34, 197, 94, 0.28);
+    color: #86efac;
+}
+.wl-trade-flag.inactive:hover {
+    color: #aaa;
+    border-color: rgba(150, 150, 150, 0.4);
+}
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -998,13 +1011,13 @@ function renderWatchlist(list) {
         const isTradeable = tmTradeable.has(sym);
         const flagClass = isTradeable ? 'active' : 'inactive';
         const flagTitle = isTradeable
-            ? 'Tradeable: позиції на цій монеті будуть відкриватися'
-            : 'Click щоб дозволити торгівлю на цій монеті';
+            ? '✅ Tradeable: позиції на цій монеті будуть відкриватися. Click щоб вимкнути.'
+            : '❌ Not tradeable: сигнали ігноруються. Click щоб дозволити торгівлю.';
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
             <span><span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
-                      onclick="event.stopPropagation();toggleTradeable('${sym}')">💼</span>
+                      onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
                 <span class="sm-wl-remove" onclick="event.stopPropagation();removeSymbol('${sym}')">✕</span>
             </span>
         </div>`;
@@ -1491,17 +1504,62 @@ async function loadChart() {
         }
         
         // === CTR badge (informational) ===
+        // STC ranges 0-100. Zones: <25 = Oversold, >75 = Overbought, mid otherwise.
+        // Last signal direction comes from STC crossing back THROUGH these levels:
+        //   crossover(STC, 25) = LONG  (exiting oversold zone)
+        //   crossunder(STC, 75) = SHORT (exiting overbought zone)
         const ctrBadge = document.getElementById('sm-ctr-badge');
         const ctr = d.ctr;
-        if (ctr && ctr.last_dir) {
-            const ctrIcon = ctr.last_dir === 'LONG' ? '🟢' : '🔴';
-            const ageStr = ctr.last_signal_age_bars !== null ? ` (${ctr.last_signal_age_bars}b)` : '';
-            ctrBadge.textContent = `⚡ CTR: ${ctrIcon} ${ctr.last_dir}${ageStr}`;
+        if (ctr && ctr.stc !== null && ctr.stc !== undefined) {
+            // Determine zone label from current STC value
+            let zoneLabel, zoneColor;
+            if (ctr.stc >= 75) {
+                zoneLabel = 'Overbought';
+                zoneColor = '#fca5a5';
+            } else if (ctr.stc <= 25) {
+                zoneLabel = 'Oversold';
+                zoneColor = '#86efac';
+            } else {
+                zoneLabel = 'Mid';
+                zoneColor = '#aaa';
+            }
+            
+            // Build badge: zone status + last signal age
+            let badgeText = `⚡ CTR ${ctr.stc.toFixed(0)} · ${zoneLabel}`;
+            let bgColor = 'rgba(100,100,100,0.12)';
+            let txtColor = zoneColor;
+            
+            if (ctr.last_dir) {
+                const ctrIcon = ctr.last_dir === 'LONG' ? '🟢' : '🔴';
+                const age = ctr.last_signal_age_bars;
+                const ageStr = age === null || age === undefined ? '' :
+                    (age === 0 ? 'now' : age === 1 ? '1 bar ago' : `${age} bars ago`);
+                badgeText = `⚡ CTR: ${ctrIcon} ${ctr.last_dir} (${ageStr}) · ${zoneLabel} ${ctr.stc.toFixed(0)}`;
+                bgColor = ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
+                txtColor = ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5';
+            }
+            
+            ctrBadge.textContent = badgeText;
             ctrBadge.className = 'sm-status-badge';
-            ctrBadge.style.background = ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
-            ctrBadge.style.color = ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5';
+            ctrBadge.style.background = bgColor;
+            ctrBadge.style.color = txtColor;
             ctrBadge.style.display = 'inline-block';
-            ctrBadge.title = `CTR (Cyclic Trend Reversal) — Schaff Trend Cycle\nLast signal: ${ctr.last_dir} ${ctr.last_signal_age_bars} bars ago\nSTC: ${ctr.stc}`;
+            
+            // Detailed tooltip
+            const tooltipParts = [
+                'CTR (Cyclic Trend Reversal) — Pine STC indicator',
+                `STC value: ${ctr.stc.toFixed(2)} / 100`,
+                `Zone: ${zoneLabel}` + (ctr.stc >= 75 ? ' (>75)' : ctr.stc <= 25 ? ' (<25)' : ' (25-75)'),
+            ];
+            if (ctr.last_dir) {
+                tooltipParts.push(`Last signal: ${ctr.last_dir} (${ctr.last_signal_age_bars} bars ago)`);
+                tooltipParts.push(ctr.last_dir === 'LONG'
+                    ? 'LONG = STC crossed up over 25 (exit Oversold)'
+                    : 'SHORT = STC crossed down under 75 (exit Overbought)');
+            } else {
+                tooltipParts.push('No signal yet');
+            }
+            ctrBadge.title = tooltipParts.join('\n');
         } else {
             ctrBadge.style.display = 'none';
         }
