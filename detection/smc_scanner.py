@@ -803,9 +803,12 @@ class SMCScanner:
     # ========================================
     
     def _process_alerts(self, symbol: str, result: Dict):
-        if not self._settings.get('telegram_alerts', True) or not self.notifier:
-            return
-        
+        # Note: SMC scanner no longer sends Telegram messages directly.
+        # Telegram delivery is owned by Trade Manager (real or test mode),
+        # which has its own per-mode toggles. The pipeline below still runs
+        # regardless of any legacy 'telegram_alerts' setting in DB, because
+        # it does signal markers, dedup state, and TM hooks — all of which
+        # are independent of Telegram.
         events = result.get('internal', {}).get('events', [])
         if not events:
             self._first_scan_done[symbol] = True
@@ -989,7 +992,6 @@ class SMCScanner:
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:
             is_bull = event['dir'] == 'bull'
-            dir_icon = '🟢' if is_bull else '🔴'
             side_label = 'LONG' if is_bull else 'SHORT'
             
             # Live entry price — close of the bar where the BOS/CHoCH crossover
@@ -1000,12 +1002,13 @@ class SMCScanner:
             
             entry_str = self._fmt_price(entry_price)
             
-            msg = (
-                f"{dir_icon} <b>{side_label}</b>: #{symbol}\n"
-                f"📍 Вхід: {entry_str}"
-            )
-            
-            self.notifier.send_message(msg)
+            # Telegram notification is sent by Trade Manager — either via
+            # _notify_open() for real positions (gated by tm.telegram_alerts)
+            # or via _open_shadow() for test/paper mode (gated by
+            # tm.test_telegram_alerts). The scanner itself does NOT send to
+            # Telegram to avoid duplicate messages on a single signal.
+            # When TM (real) AND test_mode are both off, no Telegram is sent —
+            # this is the intended behavior (silent mode).
             
             # Record signal marker for chart display
             # Use to_t (timestamp of bar where crossover happened) as the time
