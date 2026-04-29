@@ -700,13 +700,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 ⚠️ <b>Real money:</b> Коли увімкнено, бот автоматично відкриває та закриває реальні позиції на Bybit за сигналами SMC. Перевір налаштування перед увімкненням.
             </div>
             
-            <div class="tm-row" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px">
+            <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:8px 10px;margin-bottom:10px">
                 <label>
-                    <input type="checkbox" id="tm-test-mode" onchange="saveTMSettings()">
-                    🧪 <b>Test Mode (Paper Trading)</b>
-                    <span class="tm-help" title="Коли увімкнено, бот створює віртуальні (shadow) позиції на основі SMC сигналів, без реальних угод на Bybit. Exit правила (Reverse SMC, Forecast 1H Confluence) теж працюють — і відправляють Telegram повідомлення з позначкою [TEST]. Це дозволяє протестувати стратегію закриття без реального ризику. Працює навіть коли головний тумблер Trade Manager вимкнений.">?</span>
+                    <input type="checkbox" id="tm-telegram-alerts" onchange="saveTMSettings()">
+                    📨 Send Telegram alerts (real positions)
+                    <span class="tm-help" title="Коли увімкнено, Trade Manager відправляє повідомлення в Telegram про відкриття/закриття реальних угод. Якщо вимкнено — угоди виконуються тихо (SMC scanner все одно надсилає свої власні сигнальні алерти).">?</span>
                 </label>
-                <span style="color:#a5b4fc;font-size:0.72rem">Працює навіть коли Trade Manager вимкнений</span>
             </div>
             
             <details>
@@ -913,33 +912,57 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </tbody>
             </table>
             
-            <!-- Shadow (paper) positions -->
-            <div id="tm-shadow-section" style="margin-top:18px;padding-top:12px;border-top:1px dashed rgba(99,102,241,0.3)">
-                <h3 style="font-size:0.85rem;color:#a5b4fc;margin:0 0 4px 0">
-                    🧪 Test Mode — Paper Positions
-                    <span id="tm-shadow-stats-inline" style="color:#888;font-weight:normal;font-size:0.72rem;margin-left:8px"></span>
-                </h3>
-                
-                <h4 style="font-size:0.78rem;color:#888;margin:8px 0 4px 0">Open Paper Positions <span id="tm-shadow-open-count" style="color:#666">(0)</span></h4>
-                <table class="tm-table" id="tm-shadow-open-table">
-                    <thead>
-                        <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th></tr>
-                    </thead>
-                    <tbody id="tm-shadow-open-tbody">
-                        <tr><td colspan="6" class="tm-empty-msg">No paper positions</td></tr>
-                    </tbody>
-                </table>
-                
-                <h4 style="font-size:0.78rem;color:#888;margin:12px 0 4px 0">Recent Paper Closes</h4>
-                <table class="tm-table" id="tm-shadow-closed-table">
-                    <thead>
-                        <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th></tr>
-                    </thead>
-                    <tbody id="tm-shadow-closed-tbody">
-                        <tr><td colspan="7" class="tm-empty-msg">No paper closes yet</td></tr>
-                    </tbody>
-                </table>
+        </div>
+    </div>
+    
+    <!-- ====== TEST MODE (Paper Trading) — separate panel ====== -->
+    <div class="tm-panel" id="testmode-panel" style="margin-top:14px">
+        <div class="tm-header" id="testmode-header">
+            <h2>🧪 Test Mode <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(paper trading — no real orders)</span></h2>
+            <div class="tm-master-toggle">
+                <span id="testmode-status-label" style="font-size:0.8rem;color:#888">Disabled</span>
+                <label class="tm-toggle-switch">
+                    <input type="checkbox" id="tm-test-mode" onchange="onTestModeToggle()">
+                    <span class="slider"></span>
+                </label>
             </div>
+        </div>
+        <div class="tm-body" id="testmode-body">
+            
+            <div class="tm-row" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#a5b4fc;font-size:0.78rem">
+                ℹ️ Створює віртуальні позиції на основі SMC сигналів і застосовує до них правила виходу (Reverse SMC, Forecast 1H Confluence). Реальні ордери на Bybit не виконуються. Працює незалежно від Trade Manager — можна тримати обидва увімкненими або тільки один.
+            </div>
+            
+            <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:8px 10px;margin-bottom:10px">
+                <label>
+                    <input type="checkbox" id="tm-test-telegram-alerts" onchange="saveTMSettings()">
+                    📨 Send Telegram alerts (paper trades)
+                    <span class="tm-help" title="Коли увімкнено, Test Mode відправляє повідомлення в Telegram з префіксом [TEST] про відкриття/закриття віртуальних позицій. Якщо вимкнено — paper trading працює тихо, результати видно тільки на цій сторінці.">?</span>
+                </label>
+            </div>
+            
+            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">
+                Open Paper Positions <span id="tm-shadow-open-count" style="color:#666;font-weight:normal">(0)</span>
+                <span id="tm-shadow-stats-inline" style="color:#888;font-weight:normal;font-size:0.72rem;margin-left:8px"></span>
+            </h3>
+            <table class="tm-table" id="tm-shadow-open-table">
+                <thead>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th></tr>
+                </thead>
+                <tbody id="tm-shadow-open-tbody">
+                    <tr><td colspan="6" class="tm-empty-msg">No paper positions</td></tr>
+                </tbody>
+            </table>
+            
+            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">Recent Paper Closes</h3>
+            <table class="tm-table" id="tm-shadow-closed-table">
+                <thead>
+                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th></tr>
+                </thead>
+                <tbody id="tm-shadow-closed-tbody">
+                    <tr><td colspan="7" class="tm-empty-msg">No paper closes yet</td></tr>
+                </tbody>
+            </table>
             
         </div>
     </div>
@@ -1666,8 +1689,14 @@ async function loadTMSettings() {
         document.getElementById('tm-use-be').checked = !!s.use_be;
         document.getElementById('tm-be-trigger').value = s.be_trigger_pct;
         
+        // Telegram alerts toggles
+        // Default both ON if not present in saved settings (first load)
+        document.getElementById('tm-telegram-alerts').checked = (s.telegram_alerts !== false);
+        document.getElementById('tm-test-telegram-alerts').checked = (s.test_telegram_alerts !== false);
+        
         // Test mode (paper trading)
         document.getElementById('tm-test-mode').checked = !!s.test_mode;
+        updateTestModeHeader(!!s.test_mode);
         
         // BOS-N
         document.getElementById('tm-use-bos-partials').checked = !!s.use_bos_partials;
@@ -1696,6 +1725,30 @@ function updateTMHeader(enabled) {
         label.textContent = 'Disabled';
         label.style.color = '#888';
     }
+}
+
+function updateTestModeHeader(enabled) {
+    const header = document.getElementById('testmode-header');
+    const label = document.getElementById('testmode-status-label');
+    if (!header || !label) return;
+    if (enabled) {
+        header.classList.remove('disabled');
+        header.style.background = 'rgba(99, 102, 241, 0.08)';
+        label.textContent = 'Active 🧪';
+        label.style.color = '#a5b4fc';
+    } else {
+        header.classList.add('disabled');
+        header.style.background = 'rgba(100,100,100,0.04)';
+        label.textContent = 'Disabled';
+        label.style.color = '#888';
+    }
+}
+
+async function onTestModeToggle() {
+    const enabled = document.getElementById('tm-test-mode').checked;
+    updateTestModeHeader(enabled);
+    await saveTMSettings();
+    setTimeout(loadTMState, 500);
 }
 
 function updateTMSummary() {
@@ -1783,6 +1836,8 @@ async function saveTMSettings() {
             use_be: document.getElementById('tm-use-be').checked,
             be_trigger_pct: parseFloat(document.getElementById('tm-be-trigger').value) || 0.5,
             test_mode: document.getElementById('tm-test-mode').checked,
+            telegram_alerts: document.getElementById('tm-telegram-alerts').checked,
+            test_telegram_alerts: document.getElementById('tm-test-telegram-alerts').checked,
             use_bos_partials: document.getElementById('tm-use-bos-partials').checked,
             bos_2_close_pct: parseFloat(document.getElementById('tm-bos2-pct').value) || 0,
             bos_3_close_pct: parseFloat(document.getElementById('tm-bos3-pct').value) || 0,

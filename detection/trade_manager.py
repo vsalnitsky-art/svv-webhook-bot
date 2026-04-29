@@ -90,6 +90,13 @@ DEFAULT_SETTINGS = {
     # Real positions (when TM enabled=True) take precedence over shadow.
     'test_mode': True,
     
+    # === Telegram notification toggles ===
+    # Independently control Telegram alerts for real positions vs paper trades.
+    # SMC scanner always sends its own signal alerts — these toggles control
+    # the EXTRA alerts from Trade Manager about position lifecycle.
+    'telegram_alerts': True,        # real position open/close/partial
+    'test_telegram_alerts': True,   # paper [TEST] open/close
+    
     # === BOS-N partial closes (after CHoCH+BOS opening) ===
     # The opening trade counts the entry-BOS as #1.
     # Subsequent same-direction BOS events are #2, #3, #4...
@@ -289,6 +296,7 @@ class TradeManager:
             for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_htf_flip',
                       'use_time_stop', 'use_trailing', 'use_be',
                       'use_forecast_1h_close', 'test_mode',
+                      'telegram_alerts', 'test_telegram_alerts',
                       'use_bos_partials', 'trailing_after_bos_2']:
                 self._settings[k] = bool(self._settings.get(k, False))
             
@@ -743,7 +751,7 @@ class TradeManager:
             f"{side_icon} <b>Partial close</b>: #{symbol}\n"
             f"📤 {pct:.0f}% of position closed\n"
             f"📍 Exit: {self._fmt_price(exit_price)}\n"
-            f"📊 PnL: {pnl_pct:+.2f}%\n"
+            f"💰 PnL: {pnl_pct:+.2f}%\n"
             f"🔖 Reason: {self._reason_label(reason)}\n"
             f"💼 Remaining: {new_remaining:.6g}"
         )
@@ -766,13 +774,14 @@ class TradeManager:
             self._shadow_positions[symbol] = pos
         self._persist_shadow_positions()
         
+        # Use colored circle for direction (instead of 📊)
         icon = '🟢' if side == 'LONG' else '🔴'
         msg = (
-            f"📊 <b>[TEST] OPEN {side}</b>: #{symbol}\n"
+            f"{icon} <b>[TEST] OPEN {side}</b>: #{symbol}\n"
             f"📍 Entry: {self._fmt_price(entry_price)}\n"
             f"🧪 Paper trading (no real order)"
         )
-        self._notify(msg)
+        self._notify(msg, is_test=True)
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
     
     def _close_shadow(self, symbol: str, exit_price: float, reason: str):
@@ -815,11 +824,11 @@ class TradeManager:
             f"{icon} <b>[TEST] CLOSE {pos['side']}</b>: #{symbol}\n"
             f"📍 Entry: {self._fmt_price(entry)}\n"
             f"📤 Exit: {self._fmt_price(exit_price)}\n"
-            f"📊 PnL: {pnl_pct:+.2f}%\n"
+            f"💰 PnL: {pnl_pct:+.2f}%\n"
             f"🔖 Reason: {self._reason_label(reason)}\n"
             f"🧪 Paper trade (no real close)"
         )
-        self._notify(msg)
+        self._notify(msg, is_test=True)
         print(f"[TM] [TEST] Shadow close: {symbol} {pos['side']} @ {self._fmt_price(exit_price)} "
               f"({pnl_pct:+.2f}% reason={reason})")
     
@@ -1012,9 +1021,24 @@ class TradeManager:
     # Notifications
     # ============================================================
     
-    def _notify(self, msg: str):
+    def _notify(self, msg: str, is_test: bool = False):
+        """Send Telegram notification, respecting the relevant toggle.
+        
+        Args:
+            msg: text to send
+            is_test: True if from shadow/paper trade — gated by test_telegram_alerts.
+                     False if from real position — gated by telegram_alerts.
+        """
         if not self.notifier:
             return
+        # Gate by toggle. Default both to True if missing (back-compat with
+        # earlier saved settings that don't have these keys).
+        if is_test:
+            if not self._settings.get('test_telegram_alerts', True):
+                return
+        else:
+            if not self._settings.get('telegram_alerts', True):
+                return
         try:
             self.notifier.send_message(msg)
         except Exception as e:
@@ -1045,7 +1069,7 @@ class TradeManager:
             f"{icon} <b>CLOSE {side}</b>: #{closed['symbol']}\n"
             f"📍 Entry: {self._fmt_price(closed['entry_price'])}\n"
             f"📤 Exit: {self._fmt_price(closed['exit_price'])}\n"
-            f"📊 PnL: {pnl_pct:+.2f}% ({pnl_usd:+.2f}$)\n"
+            f"💰 PnL: {pnl_pct:+.2f}% ({pnl_usd:+.2f}$)\n"
             f"🔖 Reason: {self._reason_label(closed['reason'])}"
         )
         self._notify(msg)
