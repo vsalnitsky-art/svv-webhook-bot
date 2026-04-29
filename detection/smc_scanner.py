@@ -851,11 +851,18 @@ class SMCScanner:
             return  # nothing changed since last scan
         
         # === Recency guard ===
-        # Only alert on events whose `to_t` (bar where BOS/CHoCH was confirmed
-        # by close cross) is within the last few closed bars.
-        # 5m timeframe → 30 min window (6 closed bars) is plenty fresh,
-        # filters out events that "appeared" from history due to algorithm
-        # re-evaluation across scans.
+        # We have two different needs:
+        #   - For DIRECT alerts (mode='choch' on CHoCH, or BOS confirming pending
+        #     CHoCH in mode='choch_bos'): the event must be FRESH so we don't
+        #     alert on something that happened hours ago.
+        #   - For SEEDING pending state in choch_bos mode: a CHoCH that creates
+        #     the "anchor" for a future BOS confirmation should NOT be filtered
+        #     by age — it's just preparation, no alert is sent. BOS may arrive
+        #     much later (sometimes hours), and as long as the BOS itself is
+        #     fresh when it confirms, that's a valid setup.
+        #
+        # So: always seed pending_choch for CHoCH events in choch_bos mode.
+        # Apply recency only when actually firing alerts.
         recent_threshold_secs = 30 * 60  # 30 minutes
         now_ms = int(time.time() * 1000)
         
@@ -869,19 +876,10 @@ class SMCScanner:
             
             is_recent = to_age_secs <= recent_threshold_secs
             
-            if not is_recent:
-                # Event is old — silently record but don't alert
-                # (this was the bug: we used to alert on these)
-                if mode == 'choch_bos' and tag == 'CHoCH':
-                    # Don't even seed pending_choch from old CHoCH —
-                    # only fresh CHoCH should anchor a future BOS confirmation
-                    pass
-                continue
-            
             # === Forward BOS events to Trade Manager (always, before mode logic) ===
             # TM uses these to count BOS-N for partial closes after position open.
             # Independent of alert mode and dedup — TM has its own logic.
-            if tag == 'BOS':
+            if tag == 'BOS' and is_recent:
                 try:
                     from detection.trade_manager import get_trade_manager
                     tm = get_trade_manager()
@@ -891,11 +889,11 @@ class SMCScanner:
                 except Exception as e:
                     print(f"[SMC] TM BOS hook error: {e}")
             
-            # === Forward ALL CHoCH events to TM (regardless of TM enabled) ===
+            # === Forward fresh CHoCH events to TM (regardless of TM enabled) ===
             # TM uses these for: Reverse SMC exit, Forecast 1H Confluence exit.
             # Both rules can run in shadow mode (TM disabled but test_mode on)
             # to send Telegram-only signals without opening real positions.
-            if tag == 'CHoCH':
+            if tag == 'CHoCH' and is_recent:
                 try:
                     from detection.trade_manager import get_trade_manager
                     tm = get_trade_manager()
@@ -906,7 +904,8 @@ class SMCScanner:
                     print(f"[SMC] TM CHoCH hook error: {e}")
             
             if mode == 'choch':
-                if tag == 'CHoCH':
+                # CHoCH-only mode — alerts must be on FRESH CHoCH
+                if tag == 'CHoCH' and is_recent:
                     if not self._htf_allows(symbol, ev['dir']):
                         print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
                     elif not self._dedup_allows(symbol, ev['dir']):
@@ -916,15 +915,24 @@ class SMCScanner:
             
             elif mode == 'choch_bos':
                 if tag == 'CHoCH':
-                    # Fresh CHoCH — anchor for future BOS confirmation
-                    self._pending_choch[symbol] = {
-                        'from_t': ev['from_t'],
-                        'to_t': ev['to_t'],
-                        'level': ev['level'],
-                        'dir': ev['dir'],
-                        'choch_event': ev,
-                    }
-                elif tag == 'BOS':
+                    # Always seed pending — even if old. The BOS confirmation
+                    # will check freshness on its own when it arrives.
+                    # An opposite-direction CHoCH naturally overwrites the
+                    # previous pending state (last-CHoCH wins).
+                    prev = self._pending_choch.get(symbol)
+                    if prev and prev.get('to_t', 0) > to_t:
+                        # An older event arriving out of order — keep newer pending
+                        pass
+                    else:
+                        self._pending_choch[symbol] = {
+                            'from_t': ev['from_t'],
+                            'to_t': ev['to_t'],
+                            'level': ev['level'],
+                            'dir': ev['dir'],
+                            'choch_event': ev,
+                        }
+                elif tag == 'BOS' and is_recent:
+                    # BOS must be fresh to fire alert (confirms recent breakout)
                     pending = self._pending_choch.get(symbol)
                     if pending and pending['dir'] == ev['dir']:
                         # Additional safety: BOS must be AFTER the CHoCH chronologically
