@@ -491,3 +491,346 @@ def evaluate_position(
         'components': components,
         'summary': summary,
     }
+
+
+# ============================================================
+# ENTRY-SIDE EVALUATION
+# ============================================================
+# This is the dual of evaluate_position(): instead of asking "should we
+# stay in this position?", it asks "should we open this position?"
+#
+# Key differences from exit-side scoring:
+#   - PnL momentum and time decay are gone (no position exists yet)
+#   - SMC structure quality is added: how fresh is the CHoCH, how close
+#     to a Strong Low / Weak High pivot, how strong is the BOS leg
+#   - Premium/Discount: opening a LONG in Premium (top 38.2%) is bad RR;
+#     opening in Discount is great. Mirror image for SHORT.
+#   - Volume confirmation: was there a volume spike on the signal bar?
+#   - ATR volatility: is current ATR healthy or anaemic / extreme?
+#
+# Like exit-side, this is ADVISORY in this iteration. It produces a score
+# in [-100, +100] which is logged, surfaced in Telegram OPEN messages, and
+# stored on the position so the UI can show the "score at entry" badge.
+# It does NOT block opens.
+# ============================================================
+
+
+@dataclass
+class EntryEvaluationConfig:
+    """Weights for the Entry Score components.
+    
+    Different from EvaluationConfig because the factor mix is different.
+    Each weight = max points the component can contribute. Final score
+    is clamped to [-100, +100].
+    
+    Defaults below are tuned for the "Balanced" preset, which requires a
+    moderate consensus of positives. Aggressive lowers the threshold
+    (more signals pass), Conservative raises it.
+    """
+    # Macro confluence
+    weight_htf_alignment: float = 25.0       # HTF Bias direction
+    weight_forecast_alignment: float = 25.0  # Forecast 1H side · confidence
+    weight_ctr_alignment: float = 15.0       # CTR signal direction
+    weight_ctr_zone: float = 10.0            # Overbought (LONG bad) etc.
+    
+    # SMC structure quality
+    weight_choch_freshness: float = 12.0     # how fresh is the CHoCH
+    weight_pivot_proximity: float = 12.0     # near Strong Low / Weak High?
+    weight_pd_zone: float = 15.0             # Premium/Discount/Equilibrium
+    
+    # Market state
+    weight_volume_confirmation: float = 8.0  # signal bar volume vs avg
+    weight_atr_health: float = 8.0           # ATR not too low / extreme
+    
+    # Threshold for advisory ENTRY recommendation
+    threshold: float = 30.0
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, d: Dict) -> 'EntryEvaluationConfig':
+        valid = {k: v for k, v in (d or {}).items()
+                 if k in cls.__dataclass_fields__}
+        return cls(**valid)
+
+
+# Three presets — same shape as exit, different magnitudes. Threshold is
+# POSITIVE for entry (we want a signal good enough to act on), unlike exit
+# where we want a NEGATIVE score that's bad enough to bail.
+ENTRY_PRESETS = {
+    'aggressive':   {'threshold': 10.0},   # take almost any signal
+    'balanced':     {'threshold': 30.0},   # require modest consensus
+    'conservative': {'threshold': 50.0},   # only A-grade setups
+}
+
+
+# ============================================================
+# Entry-side scorers
+# ============================================================
+
+def _score_choch_freshness(choch_age_bars: Optional[int],
+                           weight: float) -> Tuple[float, str]:
+    """A fresh CHoCH (just happened) is the strongest version of the signal.
+    Older CHoCH means structure has had time to evolve — weaker conviction.
+    
+    age 0-2:  full positive
+    age 3-5:  half
+    age 6-15: quarter
+    age 16+:  zero (signal got stale)
+    """
+    if choch_age_bars is None:
+        return 0.0, 'CHoCH age: unknown'
+    if choch_age_bars <= 2:
+        score, lvl = weight, 'fresh'
+    elif choch_age_bars <= 5:
+        score, lvl = weight * 0.5, 'recent'
+    elif choch_age_bars <= 15:
+        score, lvl = weight * 0.25, 'older'
+    else:
+        return 0.0, f'CHoCH stale ({choch_age_bars}b)'
+    return score, f'CHoCH {lvl} ({choch_age_bars}b): +{score:.0f}'
+
+
+def _score_pivot_proximity(side: str, entry_price: float,
+                           strong_low: Optional[float],
+                           weak_high: Optional[float],
+                           atr: Optional[float],
+                           weight: float) -> Tuple[float, str]:
+    """LONG entries are best when near a Strong Low (HL on bullish trend) —
+    structurally well-defended. SHORT entries are best near a Weak High.
+    
+    Distance is measured in ATRs to be price-scale invariant. Within 2 ATR
+    of the relevant pivot = full weight, 2-5 ATR = half, 5-10 ATR = quarter,
+    farther = zero. No relevant pivot = zero (no information either way,
+    we don't penalize).
+    """
+    if not atr or atr <= 0:
+        return 0.0, 'pivot: ATR unavailable'
+    
+    if side == 'LONG':
+        if strong_low is None:
+            return 0.0, 'pivot: no Strong Low'
+        dist_atr = abs(entry_price - strong_low) / atr
+        target = 'Strong Low'
+    else:  # SHORT
+        if weak_high is None:
+            return 0.0, 'pivot: no Weak High'
+        dist_atr = abs(weak_high - entry_price) / atr
+        target = 'Weak High'
+    
+    if dist_atr <= 2:
+        score, lvl = weight, 'near'
+    elif dist_atr <= 5:
+        score, lvl = weight * 0.5, 'medium'
+    elif dist_atr <= 10:
+        score, lvl = weight * 0.25, 'far'
+    else:
+        return 0.0, f'pivot: too far ({dist_atr:.1f} ATR)'
+    return score, f'{target} {lvl} ({dist_atr:.1f} ATR): +{score:.0f}'
+
+
+def _score_pd_zone(side: str, entry_price: float,
+                   range_high: Optional[float],
+                   range_low: Optional[float],
+                   weight: float) -> Tuple[float, str]:
+    """Premium/Discount classifies where price sits in the active range:
+        > 61.8%: Premium (top of range — bad LONG entry, good SHORT)
+        < 38.2%: Discount (bottom of range — good LONG, bad SHORT)
+        38.2-61.8%: Equilibrium (mild signal either way)
+    
+    The 38.2 / 61.8 levels mirror Pine's PD zone convention exactly (Fib).
+    
+    For LONG: Discount = +full, Equilibrium = +0.3·, Premium = -full
+    For SHORT: mirror.
+    """
+    if range_high is None or range_low is None or range_high <= range_low:
+        return 0.0, 'PD: range unavailable'
+    
+    rng = range_high - range_low
+    pos = (entry_price - range_low) / rng  # 0 = bottom, 1 = top
+    pos = max(0.0, min(1.0, pos))
+    
+    if pos < 0.382:
+        zone, intensity = 'Discount', (0.382 - pos) / 0.382
+        # LONG good, SHORT bad
+        sign = 1 if side == 'LONG' else -1
+    elif pos > 0.618:
+        zone, intensity = 'Premium', (pos - 0.618) / 0.382
+        # LONG bad, SHORT good
+        sign = -1 if side == 'LONG' else 1
+    else:
+        # Equilibrium — mild bonus toward "fair" entry, negligible
+        zone, intensity = 'Equilibrium', 0.0
+        sign = 0
+    
+    intensity = min(1.0, intensity)
+    score = weight * sign * intensity if intensity > 0 else weight * 0.1 * (1 if zone == 'Equilibrium' else 0)
+    pct = pos * 100
+    return score, f'PD {zone} ({pct:.0f}%): {"+" if score >= 0 else ""}{score:.0f}'
+
+
+def _score_volume_confirmation(signal_volume: Optional[float],
+                               avg_volume: Optional[float],
+                               weight: float) -> Tuple[float, str]:
+    """Did the signal bar have meaningful volume?
+        ≥2.0× avg: strong confirmation, +full
+        1.5-2.0×: moderate, +0.6
+        1.0-1.5×: average, +0.2
+        <1.0×: weak, mild negative (low conviction signal)
+    """
+    if not signal_volume or not avg_volume or avg_volume <= 0:
+        return 0.0, 'volume: unavailable'
+    
+    ratio = signal_volume / avg_volume
+    if ratio >= 2.0:
+        score = weight
+        lvl = f'{ratio:.1f}× strong'
+    elif ratio >= 1.5:
+        score = weight * 0.6
+        lvl = f'{ratio:.1f}× moderate'
+    elif ratio >= 1.0:
+        score = weight * 0.2
+        lvl = f'{ratio:.1f}× average'
+    else:
+        score = -weight * 0.5
+        lvl = f'{ratio:.1f}× weak'
+    return score, f'Vol {lvl}: {"+" if score >= 0 else ""}{score:.0f}'
+
+
+def _score_atr_health(atr: Optional[float], price: float,
+                      weight: float) -> Tuple[float, str]:
+    """Volatility sanity check. We measure ATR as % of price:
+        0.5% - 2.5%: healthy range, full positive
+        0.2% - 0.5%: low volatility, half (small moves, harder TP)
+        2.5% - 5.0%: elevated, half (whippy)
+        <0.2% or >5.0%: extreme, negative
+    """
+    if not atr or not price or price <= 0:
+        return 0.0, 'ATR: unavailable'
+    
+    atr_pct = (atr / price) * 100
+    if 0.5 <= atr_pct <= 2.5:
+        score = weight
+        lvl = 'healthy'
+    elif 0.2 <= atr_pct < 0.5:
+        score = weight * 0.5
+        lvl = 'low'
+    elif 2.5 < atr_pct <= 5.0:
+        score = weight * 0.5
+        lvl = 'elevated'
+    elif atr_pct > 5.0:
+        score = -weight * 0.5
+        lvl = 'extreme'
+    else:  # < 0.2%
+        score = -weight * 0.3
+        lvl = 'flat'
+    return score, f'ATR {atr_pct:.2f}% ({lvl}): {"+" if score >= 0 else ""}{score:.0f}'
+
+
+# ============================================================
+# Entry main entry point
+# ============================================================
+
+def evaluate_entry(
+    side: str,
+    entry_price: float,
+    htf_bias: str,
+    forecast: Optional[Dict],
+    ctr: Optional[Dict],
+    choch_age_bars: Optional[int] = None,
+    strong_low: Optional[float] = None,
+    weak_high: Optional[float] = None,
+    range_high: Optional[float] = None,
+    range_low: Optional[float] = None,
+    atr: Optional[float] = None,
+    signal_volume: Optional[float] = None,
+    avg_volume: Optional[float] = None,
+    config: Optional[EntryEvaluationConfig] = None,
+) -> Dict:
+    """Compute the Entry Score for a fresh SMC signal.
+    
+    Args:
+        side: 'LONG' or 'SHORT'
+        entry_price: planned entry price (typically the latest close)
+        htf_bias: 'bull' | 'bear' | 'neutral'
+        forecast: forecast_engine 1H result or None
+        ctr: CTR result dict or None
+        choch_age_bars: bars elapsed since the seeding CHoCH
+        strong_low: highest HL pivot in current bullish leg, or None
+        weak_high: highest LH pivot in current bearish leg, or None
+        range_high / range_low: bounds of the active swing range for PD calc
+        atr: most recent ATR value (period 14)
+        signal_volume: volume of the signal bar
+        avg_volume: average volume over recent N bars (e.g. last 20)
+        config: weight configuration; uses Balanced defaults if None
+    
+    Returns:
+        {
+            'score': float in [-100, 100],
+            'verdict': 'good' | 'marginal' | 'poor',
+            'threshold': float (config.threshold),
+            'components': [{'name', 'value', 'label'}, ...],
+            'summary': human-readable headline of best/worst factors
+        }
+    """
+    cfg = config or EntryEvaluationConfig()
+    components: List[Dict] = []
+    
+    def add(name: str, scorer_result: Tuple[float, str]):
+        v, lbl = scorer_result
+        components.append({
+            'name': name,
+            'value': round(v, 2),
+            'label': lbl,
+        })
+    
+    # Macro factors — reuse exit-side scorers (they're side-aware already)
+    add('htf', _score_htf_alignment(side, htf_bias, cfg.weight_htf_alignment))
+    add('forecast', _score_forecast_alignment(side, forecast,
+                                                cfg.weight_forecast_alignment))
+    add('ctr_align', _score_ctr_alignment(side, ctr, cfg.weight_ctr_alignment))
+    add('ctr_zone', _score_ctr_zone(side, ctr, cfg.weight_ctr_zone))
+    
+    # Entry-specific factors
+    add('choch_fresh', _score_choch_freshness(choch_age_bars,
+                                                cfg.weight_choch_freshness))
+    add('pivot_prox', _score_pivot_proximity(side, entry_price,
+                                              strong_low, weak_high, atr,
+                                              cfg.weight_pivot_proximity))
+    add('pd_zone', _score_pd_zone(side, entry_price,
+                                    range_high, range_low, cfg.weight_pd_zone))
+    add('volume', _score_volume_confirmation(signal_volume, avg_volume,
+                                              cfg.weight_volume_confirmation))
+    add('atr', _score_atr_health(atr, entry_price, cfg.weight_atr_health))
+    
+    raw_total = sum(c['value'] for c in components)
+    score = round(_clamp(raw_total, -100.0, 100.0), 1)
+    
+    # Verdict — entry threshold is positive (we want a signal worth taking)
+    if score >= cfg.threshold:
+        verdict = 'good'
+    elif score >= 0:
+        verdict = 'marginal'
+    else:
+        verdict = 'poor'
+    
+    # Summary
+    sorted_pos = sorted([c for c in components if c['value'] > 0],
+                        key=lambda c: c['value'], reverse=True)
+    sorted_neg = sorted([c for c in components if c['value'] < 0],
+                        key=lambda c: c['value'])
+    bullets = []
+    for c in sorted_pos[:2]:
+        bullets.append('▲ ' + c['label'])
+    for c in sorted_neg[:1]:
+        bullets.append('▼ ' + c['label'])
+    summary = ' · '.join(bullets) if bullets else 'No signals available'
+    
+    return {
+        'score': score,
+        'verdict': verdict,
+        'threshold': cfg.threshold,
+        'components': components,
+        'summary': summary,
+    }

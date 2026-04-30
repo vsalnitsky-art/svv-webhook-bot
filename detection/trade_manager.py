@@ -131,6 +131,28 @@ DEFAULT_SETTINGS = {
     # If non-null, overrides the threshold from the preset. Used when the
     # user fine-tunes from the UI without picking a different preset.
     'health_score_threshold_override': None,
+    
+    # === Entry Score (advisory rule-based AI for position OPENING) ===
+    # Mirror image of Health Score but for the "should we open this?"
+    # decision. Score is in [-100, +100] like exit, but threshold is
+    # POSITIVE (we want a signal good enough to act on, e.g. +30).
+    # Like exit, this is ADVISORY in this iteration: shown in Telegram
+    # OPEN messages and stored on the position so UI can show the snapshot.
+    # Does NOT block opens — user explicitly chose advisory mode.
+    'entry_score_enabled': True,
+    'entry_score_preset': 'balanced',
+    'entry_score_weights': {
+        'weight_htf_alignment': 25.0,
+        'weight_forecast_alignment': 25.0,
+        'weight_ctr_alignment': 15.0,
+        'weight_ctr_zone': 10.0,
+        'weight_choch_freshness': 12.0,
+        'weight_pivot_proximity': 12.0,
+        'weight_pd_zone': 15.0,
+        'weight_volume_confirmation': 8.0,
+        'weight_atr_health': 8.0,
+    },
+    'entry_score_threshold_override': None,
 }
 
 
@@ -343,7 +365,8 @@ class TradeManager:
                       'use_forecast_1h_close', 'test_mode',
                       'telegram_alerts', 'test_telegram_alerts',
                       'use_bos_partials', 'trailing_after_bos_2',
-                      'health_score_enabled']:
+                      'health_score_enabled',
+                      'entry_score_enabled']:
                 self._settings[k] = bool(self._settings.get(k, False))
             
             # === Health Score validation ===
@@ -377,6 +400,33 @@ class TradeManager:
                 except (TypeError, ValueError):
                     cleaned[wkey] = float(default_val)
             self._settings['health_score_weights'] = cleaned
+            
+            # === Entry Score validation (mirror of Health Score) ===
+            preset = self._settings.get('entry_score_preset', 'balanced')
+            if preset not in ('aggressive', 'balanced', 'conservative'):
+                self._settings['entry_score_preset'] = 'balanced'
+            
+            tov = self._settings.get('entry_score_threshold_override')
+            if tov is None or tov == '':
+                self._settings['entry_score_threshold_override'] = None
+            else:
+                try:
+                    self._settings['entry_score_threshold_override'] = float(tov)
+                except (TypeError, ValueError):
+                    self._settings['entry_score_threshold_override'] = None
+            
+            entry_weights = self._settings.get('entry_score_weights')
+            default_entry_weights = DEFAULT_SETTINGS['entry_score_weights']
+            if not isinstance(entry_weights, dict):
+                entry_weights = {}
+            cleaned_e = {}
+            for wkey, default_val in default_entry_weights.items():
+                try:
+                    val = float(entry_weights.get(wkey, default_val))
+                    cleaned_e[wkey] = max(0.0, min(100.0, val))
+                except (TypeError, ValueError):
+                    cleaned_e[wkey] = float(default_val)
+            self._settings['entry_score_weights'] = cleaned_e
             
             self._persist_settings()
             
@@ -686,18 +736,21 @@ class TradeManager:
         except Exception:
             return None
     
-    def _format_opened_by(self, opened_by: str, symbol: str) -> str:
+    def _format_opened_by(self, opened_by: str, symbol: str,
+                          entry_score: Optional[Dict] = None) -> str:
         """Build a context-rich opened_by label that captures the state of
         Forecast 1H and CTR at the moment a position was opened. The base
         opened_by tag (e.g. 'choch_bos', 'choch') is preserved as the prefix
         so existing logic that inspects it keeps working — see _close_position
         and the reasonLabel mapping on the frontend.
         
-        Format: '<base> · 🔮 <SIDE> +<pct>%·<conf>% · ⚡ <SIDE> <zone> <stc>'
+        If `entry_score` is supplied (an evaluator result dict), a fourth
+        slot is appended showing the score and verdict. This lets the
+        Telegram OPEN message and the UI 'opened_by' column carry the
+        full snapshot of why the bot chose to enter.
+        
+        Format: '<base> · 🔮 <SIDE> +<pct>%·<conf>% · ⚡ <SIDE> <zone> <stc> · 🎯 Entry +<score>'
         Missing data is rendered with em-dashes so the slot is always present.
-        Examples:
-            choch_bos · 🔮 LONG +25%·50% · ⚡ LONG Overbought 89
-            choch · F:— · CTR:—
         """
         # Forecast 1H part
         fc = self._get_forecast_1h(symbol)
@@ -733,7 +786,16 @@ class TradeManager:
         else:
             ctr_part = "CTR:—"
         
-        return f"{opened_by} · {fc_part} · {ctr_part}"
+        parts = [opened_by, fc_part, ctr_part]
+        
+        # Entry Score part — only append when provided (advisory snapshot)
+        if entry_score and entry_score.get('score') is not None:
+            score = entry_score['score']
+            verdict = entry_score.get('verdict', '?')
+            sign = '+' if score >= 0 else ''
+            parts.append(f"🎯 Entry {sign}{score:.0f} {verdict}")
+        
+        return ' · '.join(parts)
     
     def _base_opened_by(self, opened_by: str) -> str:
         """Strip the contextual suffix added by _format_opened_by.
@@ -784,6 +846,156 @@ class TradeManager:
         
         weights['threshold'] = float(threshold)
         return EvaluationConfig.from_dict(weights)
+    
+    def _build_entry_eval_config(self):
+        """Mirror of _build_eval_config for the Entry Score side."""
+        from detection.position_evaluator import EntryEvaluationConfig, ENTRY_PRESETS
+        s = self._settings
+        weights = dict(s.get('entry_score_weights') or {})
+        
+        override = s.get('entry_score_threshold_override')
+        if override is not None:
+            try:
+                threshold = float(override)
+            except Exception:
+                threshold = None
+        else:
+            threshold = None
+        if threshold is None:
+            preset = s.get('entry_score_preset', 'balanced')
+            preset_cfg = ENTRY_PRESETS.get(preset, ENTRY_PRESETS['balanced'])
+            threshold = preset_cfg.get('threshold', 30.0)
+        
+        weights['threshold'] = float(threshold)
+        return EntryEvaluationConfig.from_dict(weights)
+    
+    def _gather_entry_context(self, symbol: str, side: str,
+                               entry_price: float) -> Dict:
+        """Pull every datum the entry evaluator needs from scanner caches.
+        
+        This is intentionally best-effort — any field that fails to resolve
+        is left as None and the corresponding scorer returns 0. The evaluator
+        gracefully degrades; we don't want a missing ATR to crash the open.
+        
+        Returns a dict of kwargs ready to pass to evaluate_entry().
+        """
+        ctx = {
+            'side': side,
+            'entry_price': entry_price,
+            'htf_bias': 'neutral',
+            'forecast': None, 'ctr': None,
+            'choch_age_bars': None,
+            'strong_low': None, 'weak_high': None,
+            'range_high': None, 'range_low': None,
+            'atr': None,
+            'signal_volume': None, 'avg_volume': None,
+        }
+        
+        if not self.scanner:
+            return ctx
+        
+        # HTF bias
+        try:
+            ctx['htf_bias'] = self.scanner._htf_cache.get(symbol, {}).get('bias', 'neutral')
+        except Exception:
+            pass
+        
+        # Forecast 1H + CTR (already cached by forecast_engine)
+        ctx['forecast'] = self._get_forecast_1h(symbol)
+        ctx['ctr'] = self._get_ctr(symbol)
+        
+        # Klines cache for ATR / volume / pivot extraction
+        try:
+            with self.scanner._lock:
+                cached = dict(self.scanner._cache.get(symbol) or {})
+        except Exception:
+            cached = {}
+        
+        klines = cached.get('klines') or []
+        analysis = cached.get('analysis') or {}
+        
+        # ---- ATR (period 14, latest bar) ----
+        if klines and len(klines) >= 15:
+            try:
+                from detection.forecast_engine import _atr
+                atr_series = _atr(klines, 14)
+                if atr_series:
+                    ctx['atr'] = atr_series[-1]
+            except Exception:
+                pass
+        
+        # ---- Volume confirmation ----
+        if klines and len(klines) >= 21:
+            try:
+                # Signal bar: the most recent CLOSED bar (klines[-2] is safer
+                # than klines[-1] which may still be in-progress, but we want
+                # the bar that triggered the signal — typically the last
+                # closed bar i.e. klines[-2]).
+                signal_bar = klines[-2] if len(klines) >= 2 else klines[-1]
+                ctx['signal_volume'] = float(signal_bar.get('v', 0) or 0)
+                # Average volume — prior 20 closed bars, excluding the signal bar
+                avg_window = klines[-22:-2] if len(klines) >= 22 else klines[:-2]
+                vols = [float(k.get('v', 0) or 0) for k in avg_window]
+                vols = [v for v in vols if v > 0]
+                if vols:
+                    ctx['avg_volume'] = sum(vols) / len(vols)
+            except Exception:
+                pass
+        
+        # ---- CHoCH age + Strong Low / Weak High + range bounds ----
+        # The analysis dict comes from detect_smc_structure which exposes
+        # 'pivots' (list with idx, price, type ∈ HH/HL/LH/LL),
+        # 'last_choch' (most recent CHoCH event with idx).
+        try:
+            pivots = analysis.get('pivots') or []
+            last_choch = analysis.get('last_choch')
+            
+            # CHoCH age in bars (klines length minus event index)
+            if last_choch and 'idx' in last_choch and klines:
+                ctx['choch_age_bars'] = max(0, len(klines) - 1 - int(last_choch['idx']))
+            
+            # Strong Low = most recent HL (in bullish context)
+            # Weak High = most recent LH (in bearish context)
+            # We walk pivots backward to find each
+            for p in reversed(pivots):
+                if ctx['strong_low'] is None and p.get('type') == 'HL':
+                    ctx['strong_low'] = float(p.get('price', 0))
+                if ctx['weak_high'] is None and p.get('type') == 'LH':
+                    ctx['weak_high'] = float(p.get('price', 0))
+                if ctx['strong_low'] is not None and ctx['weak_high'] is not None:
+                    break
+            
+            # Range — high/low of last 20 bars as a robust proxy.
+            # (Pine PD zone uses swing high/low; for our advisory score this
+            # short-window range is good enough and always available.)
+            if klines and len(klines) >= 20:
+                window = klines[-20:]
+                ctx['range_high'] = max(float(k.get('h', k.get('p', 0))) for k in window)
+                ctx['range_low'] = min(float(k.get('l', k.get('p', 0))) for k in window)
+        except Exception:
+            pass
+        
+        return ctx
+    
+    def _compute_entry_score(self, symbol: str, side: str,
+                              entry_price: float) -> Optional[Dict]:
+        """Compute the Entry Score for a fresh signal. Best-effort, never
+        raises. Returns None when the feature is disabled or evaluation fails.
+        """
+        if not self._settings.get('entry_score_enabled', True):
+            return None
+        try:
+            from detection.position_evaluator import evaluate_entry
+        except Exception:
+            return None
+        
+        try:
+            ctx = self._gather_entry_context(symbol, side, entry_price)
+            cfg = self._build_entry_eval_config()
+            return evaluate_entry(config=cfg, **ctx)
+        except Exception as e:
+            print(f"[TM] Entry score error for {symbol}: {e}")
+            return None
     
     def _compute_health(self, pos: Dict, is_shadow: bool) -> Optional[Dict]:
         """Run the position evaluator for a single open position. Pulls
@@ -964,10 +1176,17 @@ class TradeManager:
             return
         
         order_id = result.get('order_id', '')
-        # Enrich opened_by with a snapshot of Forecast 1H + CTR state at open
-        opened_by_full = self._format_opened_by(opened_by, symbol)
+        # Compute Entry Score snapshot — advisory, captures full context at
+        # the moment we entered. Stored on the position so the UI can show
+        # both the entry-side score (frozen) and the live exit health.
+        entry_score = self._compute_entry_score(symbol, side, entry_price)
+        opened_by_full = self._format_opened_by(opened_by, symbol,
+                                                 entry_score=entry_score)
         position = _new_position(symbol, side, entry_price, qty,
                                    sl_price, tp_price, order_id, opened_by_full)
+        # Attach the full evaluator result for UI tooltip / history
+        if entry_score is not None:
+            position['entry_score'] = entry_score
         
         with self._lock:
             self._positions[symbol] = position
@@ -1014,6 +1233,11 @@ class TradeManager:
             'reason': reason,
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
+            # Carry the entry-side advisory snapshot into the closed record
+            # so we can correlate "what the bot thought at open" with
+            # "how the trade actually went". Critical for tuning weights
+            # and validating whether Entry Score has predictive value.
+            'entry_score': pos.get('entry_score'),
         }
         
         with self._lock:
@@ -1072,7 +1296,13 @@ class TradeManager:
     
     def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str):
         """Open a paper-trading position. No Bybit calls."""
-        opened_by_full = self._format_opened_by(opened_by, symbol)
+        # Compute Entry Score snapshot. Advisory only — does not affect
+        # whether we open. We compute identically to real positions so
+        # paper-trading data accumulates with the same labels you'll see
+        # in production.
+        entry_score = self._compute_entry_score(symbol, side, entry_price)
+        opened_by_full = self._format_opened_by(opened_by, symbol,
+                                                 entry_score=entry_score)
         pos = {
             'symbol': symbol,
             'side': side,
@@ -1081,6 +1311,8 @@ class TradeManager:
             'opened_by': opened_by_full,
             'shadow': True,
         }
+        if entry_score is not None:
+            pos['entry_score'] = entry_score
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
@@ -1088,14 +1320,54 @@ class TradeManager:
         
         # Use colored circle for direction (instead of 📊)
         icon = '🟢' if side == 'LONG' else '🔴'
+        # Build the Telegram OPEN message. When Entry Score is present we
+        # tack on a multi-line breakdown so the user can see WHY the bot
+        # judged this signal as good/marginal/poor.
+        es_block = self._format_entry_score_telegram(entry_score)
         msg = (
             f"{icon} <b>[TEST] OPEN {side}</b>: #{symbol}\n"
             f"📍 Entry: {self._fmt_price(entry_price)}\n"
             f"📋 {opened_by_full}\n"
+            f"{es_block}"
             f"🧪 Paper trading (no real order)"
         )
         self._notify(msg, is_test=True)
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
+    
+    def _format_entry_score_telegram(self, entry_score: Optional[Dict]) -> str:
+        """Render the Entry Score as a 2-3 line block for Telegram OPEN
+        messages. Empty string when score is None (feature disabled or
+        evaluation failed) so the surrounding message stays clean.
+        """
+        if not entry_score:
+            return ''
+        score = entry_score.get('score', 0)
+        verdict = entry_score.get('verdict', '?')
+        sign = '+' if score >= 0 else ''
+        # Verdict emoji
+        emoji = {'good': '✅', 'marginal': '🟡', 'poor': '⚠️'}.get(verdict, '·')
+        summary = entry_score.get('summary', '')
+        # Pick the threshold so user can see how far above/below it we are
+        threshold = entry_score.get('threshold')
+        thr_str = f" (≥{threshold:.0f} for good)" if threshold is not None else ''
+        line = f"🎯 Entry Score: {emoji} <b>{sign}{score:.0f}</b> {verdict}{thr_str}\n"
+        if summary:
+            line += f"   {summary}\n"
+        return line
+    
+    def _format_entry_score_recap(self, entry_score: Optional[Dict]) -> str:
+        """Compact 1-line recap of the Entry Score for CLOSE messages. The
+        OPEN message already showed the breakdown — at close time we just
+        want a quick reminder so the user can spot mismatches between
+        bot expectation and actual outcome.
+        """
+        if not entry_score:
+            return ''
+        score = entry_score.get('score', 0)
+        verdict = entry_score.get('verdict', '?')
+        sign = '+' if score >= 0 else ''
+        emoji = {'good': '✅', 'marginal': '🟡', 'poor': '⚠️'}.get(verdict, '·')
+        return f"🎯 Entry was: {emoji} {sign}{score:.0f} {verdict}\n"
     
     def _close_shadow(self, symbol: str, exit_price: float, reason: str):
         """Close a paper position. No Bybit calls — Telegram only."""
@@ -1121,6 +1393,9 @@ class TradeManager:
             'reason': reason,
             'opened_by': pos.get('opened_by', ''),
             'shadow': True,
+            # Same as real-position close — preserve the entry snapshot for
+            # post-mortem analysis (was the entry score predictive?)
+            'entry_score': pos.get('entry_score'),
         }
         
         with self._lock:
@@ -1134,12 +1409,18 @@ class TradeManager:
         
         is_win = pnl_pct > 0
         icon = '✅' if is_win else '❌'
+        # Recap the entry score so the user sees how the bot's pre-trade
+        # assessment correlates with the actual outcome. This is what makes
+        # post-mortem analysis useful — "I closed at -2%, but Entry Score was
+        # 'good +50' — should I trust this score or down-weight it?"
+        es_recap = self._format_entry_score_recap(pos.get('entry_score'))
         msg = (
             f"{icon} <b>[TEST] CLOSE {pos['side']}</b>: #{symbol}\n"
             f"📍 Entry: {self._fmt_price(entry)}\n"
             f"📤 Exit: {self._fmt_price(exit_price)}\n"
             f"💰 PnL: {pnl_pct:+.2f}%\n"
             f"🔖 Reason: {self._reason_label(reason)}\n"
+            f"{es_recap}"
             f"🧪 Paper trade (no real close)"
         )
         self._notify(msg, is_test=True)
@@ -1304,6 +1585,13 @@ class TradeManager:
             sh_losses = sum(1 for c in self._shadow_closed if c.get('pnl_pct', 0) < 0)
             sh_avg_pnl = (sum(c.get('pnl_pct', 0) for c in self._shadow_closed) / sh_total) if sh_total else 0
             
+            # Entry Score validation stats — break down win rate by verdict
+            # so the user can see whether the scorer's "good" predictions
+            # actually outperform "marginal" / "poor" picks. This is the
+            # core feedback loop for tuning weights and threshold.
+            entry_stats = self._compute_entry_score_stats(self._closed_trades)
+            entry_stats_shadow = self._compute_entry_score_stats(self._shadow_closed)
+            
             return {
                 'enabled': self.is_enabled(),
                 'running': self._running,
@@ -1317,6 +1605,7 @@ class TradeManager:
                     'losses': losses,
                     'win_rate': round(wins / total_closed * 100, 1) if total_closed else 0,
                     'total_pnl_usd': round(total_pnl, 2),
+                    'entry_score_breakdown': entry_stats,
                 },
                 'shadow_positions': shadow_positions,
                 'shadow_closed': shadow_closed,
@@ -1326,9 +1615,39 @@ class TradeManager:
                     'losses': sh_losses,
                     'win_rate': round(sh_wins / sh_total * 100, 1) if sh_total else 0,
                     'avg_pnl_pct': round(sh_avg_pnl, 2),
+                    'entry_score_breakdown': entry_stats_shadow,
                 },
                 'settings': dict(self._settings),
             }
+    
+    @staticmethod
+    def _compute_entry_score_stats(closed_trades: List[Dict]) -> Dict:
+        """For each verdict bucket (good / marginal / poor / unknown),
+        compute count, win rate, average PnL%. The 'unknown' bucket
+        catches trades that closed before Entry Score existed (or while
+        the feature was disabled), so older history doesn't skew totals.
+        """
+        buckets = {'good': [], 'marginal': [], 'poor': [], 'unknown': []}
+        for c in closed_trades:
+            es = c.get('entry_score') or {}
+            v = es.get('verdict') if isinstance(es, dict) else None
+            bucket = v if v in ('good', 'marginal', 'poor') else 'unknown'
+            buckets[bucket].append(c)
+        
+        result = {}
+        for name, trades in buckets.items():
+            n = len(trades)
+            if n == 0:
+                result[name] = {'count': 0, 'win_rate': None, 'avg_pnl_pct': None}
+                continue
+            wins = sum(1 for t in trades if (t.get('pnl_pct') or 0) > 0)
+            avg = sum((t.get('pnl_pct') or 0) for t in trades) / n
+            result[name] = {
+                'count': n,
+                'win_rate': round(wins / n * 100, 1),
+                'avg_pnl_pct': round(avg, 2),
+            }
+        return result
     
     def manual_close(self, symbol: str) -> Dict:
         """Manually close a position via UI button."""
@@ -1412,14 +1731,22 @@ class TradeManager:
         icon = '🟢' if side == 'LONG' else '🔴'
         sl_str = self._fmt_price(pos['sl_price']) if pos.get('sl_price') else '—'
         tp_str = self._fmt_price(pos['tp_price']) if pos.get('tp_price') else '—'
+        # Entry Score block — same renderer as shadow side for consistency
+        es_block = self._format_entry_score_telegram(pos.get('entry_score'))
+        # Full opened_by (Forecast 1H + CTR + Entry score snapshot)
+        opened_by_line = ''
+        if pos.get('opened_by'):
+            opened_by_line = f"📋 {pos['opened_by']}\n"
         msg = (
             f"{icon} <b>OPEN {side}</b>: #{pos['symbol']}\n"
             f"📍 Entry: {self._fmt_price(pos['entry_price'])}\n"
             f"💼 Qty: {pos['qty']:.6g}\n"
             f"🛡 SL: {sl_str}\n"
             f"🎯 TP: {tp_str}\n"
-            f"⚙️ Lev: {self._settings.get('leverage', 10)}x"
-        )
+            f"⚙️ Lev: {self._settings.get('leverage', 10)}x\n"
+            f"{opened_by_line}"
+            f"{es_block}"
+        ).rstrip() + '\n'
         self._notify(msg)
     
     def _notify_close(self, closed):
@@ -1428,13 +1755,17 @@ class TradeManager:
         pnl_usd = closed['pnl_usd']
         is_win = pnl_pct > 0
         icon = '✅' if is_win else '❌'
+        # Show what the entry score said when we opened — useful for
+        # weight-tuning and spotting when the predictor was wrong.
+        es_recap = self._format_entry_score_recap(closed.get('entry_score'))
         msg = (
             f"{icon} <b>CLOSE {side}</b>: #{closed['symbol']}\n"
             f"📍 Entry: {self._fmt_price(closed['entry_price'])}\n"
             f"📤 Exit: {self._fmt_price(closed['exit_price'])}\n"
             f"💰 PnL: {pnl_pct:+.2f}% ({pnl_usd:+.2f}$)\n"
-            f"🔖 Reason: {self._reason_label(closed['reason'])}"
-        )
+            f"🔖 Reason: {self._reason_label(closed['reason'])}\n"
+            f"{es_recap}"
+        ).rstrip()
         self._notify(msg)
     
     @staticmethod
