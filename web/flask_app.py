@@ -2342,6 +2342,49 @@ def register_api_routes(app):
             return jsonify({'ok': False, 'reason': 'symbol required'})
         return jsonify(tm.manual_close(symbol))
     
+    @app.route('/api/tm/shadow/close', methods=['POST'])
+    def api_tm_shadow_close():
+        """Manually close an open paper-trading position. Body: {symbol: 'BTCUSDT'}"""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'symbol required'})
+        return jsonify(tm.manual_close_shadow(symbol))
+    
+    @app.route('/api/tm/closed/delete', methods=['POST'])
+    def api_tm_closed_delete():
+        """Permanently delete a real-trade entry from Recent Closed Trades.
+        Body: {index: <int>}. Stats are recomputed automatically.
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        idx = data.get('index')
+        if idx is None:
+            return jsonify({'ok': False, 'reason': 'index required'})
+        return jsonify(tm.delete_closed_trade(idx))
+    
+    @app.route('/api/tm/shadow_closed/delete', methods=['POST'])
+    def api_tm_shadow_closed_delete():
+        """Permanently delete a paper-trade entry from Recent Paper Closes.
+        Body: {index: <int>}. Stats are recomputed automatically.
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        idx = data.get('index')
+        if idx is None:
+            return jsonify({'ok': False, 'reason': 'index required'})
+        return jsonify(tm.delete_shadow_closed_trade(idx))
+    
     @app.route('/api/validator/toggle', methods=['GET', 'POST'])
     def api_validator_toggle():
         """Get or set Signal Validator (TradingView Signals) enabled state."""

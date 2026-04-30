@@ -568,6 +568,78 @@ class TradeManager:
         except Exception:
             return None
     
+    def _get_ctr(self, symbol: str) -> Optional[Dict]:
+        """Read the latest CTR (STC) for the symbol from forecast_engine cache."""
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if not fe:
+                return None
+            cached = fe.get(symbol)
+            if not cached:
+                return None
+            return cached.get('ctr')
+        except Exception:
+            return None
+    
+    def _format_opened_by(self, opened_by: str, symbol: str) -> str:
+        """Build a context-rich opened_by label that captures the state of
+        Forecast 1H and CTR at the moment a position was opened. The base
+        opened_by tag (e.g. 'choch_bos', 'choch') is preserved as the prefix
+        so existing logic that inspects it keeps working — see _close_position
+        and the reasonLabel mapping on the frontend.
+        
+        Format: '<base> · 🔮 <SIDE> +<pct>%·<conf>% · ⚡ <SIDE> <zone> <stc>'
+        Missing data is rendered with em-dashes so the slot is always present.
+        Examples:
+            choch_bos · 🔮 LONG +25%·50% · ⚡ LONG Overbought 89
+            choch · F:— · CTR:—
+        """
+        # Forecast 1H part
+        fc = self._get_forecast_1h(symbol)
+        if fc and fc.get('confidence', 0) > 0:
+            side_n = fc.get('side', 0)
+            side_lbl = 'LONG' if side_n > 0 else ('SHORT' if side_n < 0 else 'NEUTRAL')
+            pct = int(fc.get('pct', 0) or 0)
+            conf = int(fc.get('confidence', 0) or 0)
+            sign = '+' if pct > 0 else ''
+            fc_part = f"🔮 {side_lbl} {sign}{pct}%·{conf}%"
+        else:
+            fc_part = "F:—"
+        
+        # CTR part
+        ctr = self._get_ctr(symbol)
+        if ctr and ctr.get('stc') is not None:
+            stc = ctr.get('stc')
+            last_dir = ctr.get('last_dir') or '—'
+            try:
+                stc_int = int(round(float(stc)))
+            except Exception:
+                stc_int = stc
+            if stc_int != '—' and isinstance(stc_int, (int, float)):
+                if stc_int >= 75:
+                    zone = 'Overbought'
+                elif stc_int <= 25:
+                    zone = 'Oversold'
+                else:
+                    zone = 'Mid'
+                ctr_part = f"⚡ {last_dir} {zone} {stc_int}"
+            else:
+                ctr_part = "CTR:—"
+        else:
+            ctr_part = "CTR:—"
+        
+        return f"{opened_by} · {fc_part} · {ctr_part}"
+    
+    def _base_opened_by(self, opened_by: str) -> str:
+        """Strip the contextual suffix added by _format_opened_by.
+        Returns just the base tag ('choch_bos', 'choch', or 'manual').
+        Used for any logic that needs to compare opened_by tags.
+        """
+        if not opened_by:
+            return ''
+        return opened_by.split(' · ', 1)[0].strip()
+    
     def on_bos_event(self, symbol: str, direction: str, level: float, bar_t: int):
         """Called by SMC scanner when a BOS event is detected (any).
         Used for BOS-N partial closes.
@@ -659,8 +731,10 @@ class TradeManager:
             return
         
         order_id = result.get('order_id', '')
+        # Enrich opened_by with a snapshot of Forecast 1H + CTR state at open
+        opened_by_full = self._format_opened_by(opened_by, symbol)
         position = _new_position(symbol, side, entry_price, qty,
-                                   sl_price, tp_price, order_id, opened_by)
+                                   sl_price, tp_price, order_id, opened_by_full)
         
         with self._lock:
             self._positions[symbol] = position
@@ -762,12 +836,13 @@ class TradeManager:
     
     def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str):
         """Open a paper-trading position. No Bybit calls."""
+        opened_by_full = self._format_opened_by(opened_by, symbol)
         pos = {
             'symbol': symbol,
             'side': side,
             'entry_price': float(entry_price),
             'opened_at': time.time(),
-            'opened_by': opened_by,
+            'opened_by': opened_by_full,
             'shadow': True,
         }
         with self._lock:
@@ -779,6 +854,7 @@ class TradeManager:
         msg = (
             f"{icon} <b>[TEST] OPEN {side}</b>: #{symbol}\n"
             f"📍 Entry: {self._fmt_price(entry_price)}\n"
+            f"📋 {opened_by_full}\n"
             f"🧪 Paper trading (no real order)"
         )
         self._notify(msg, is_test=True)
@@ -1016,6 +1092,46 @@ class TradeManager:
         current = self._get_current_price(symbol) or pos['entry_price']
         self._close_position(symbol, current, reason='manual')
         return {'ok': True}
+    
+    def manual_close_shadow(self, symbol: str) -> Dict:
+        """Manually close a paper-trading position via UI button."""
+        with self._lock:
+            pos = self._shadow_positions.get(symbol)
+        if not pos:
+            return {'ok': False, 'reason': 'No open paper position for symbol'}
+        current = self._get_current_price(symbol) or pos['entry_price']
+        self._close_shadow(symbol, current, reason='manual')
+        return {'ok': True}
+    
+    def delete_closed_trade(self, idx: int) -> Dict:
+        """Permanently remove a closed real trade by index. Stats are
+        recomputed on the fly inside get_state(), so removing the entry from
+        the list is enough — the next state poll will show updated PnL/win
+        rate as if the trade never happened.
+        """
+        with self._lock:
+            try:
+                idx = int(idx)
+            except Exception:
+                return {'ok': False, 'reason': 'invalid index'}
+            if idx < 0 or idx >= len(self._closed_trades):
+                return {'ok': False, 'reason': 'index out of range'}
+            removed = self._closed_trades.pop(idx)
+        self._persist_closed_trades()
+        return {'ok': True, 'removed': removed.get('symbol', '')}
+    
+    def delete_shadow_closed_trade(self, idx: int) -> Dict:
+        """Permanently remove a closed paper trade by index."""
+        with self._lock:
+            try:
+                idx = int(idx)
+            except Exception:
+                return {'ok': False, 'reason': 'invalid index'}
+            if idx < 0 or idx >= len(self._shadow_closed):
+                return {'ok': False, 'reason': 'index out of range'}
+            removed = self._shadow_closed.pop(idx)
+        self._persist_shadow_closed()
+        return {'ok': True, 'removed': removed.get('symbol', '')}
     
     # ============================================================
     # Notifications

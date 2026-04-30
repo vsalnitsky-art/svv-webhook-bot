@@ -454,6 +454,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 }
 .tm-close-btn:hover { background: rgba(239, 68, 68, 0.25); }
 
+.tm-delete-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #888;
+    padding: 1px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    line-height: 1;
+}
+.tm-delete-btn:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+}
+
 .tm-stats {
     display: flex;
     gap: 16px;
@@ -905,10 +921,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📜 Recent Closed Trades</h3>
             <table class="tm-table" id="tm-closed-table">
                 <thead>
-                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th></tr>
+                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-closed-tbody">
-                    <tr><td colspan="7" class="tm-empty-msg">No closed trades yet</td></tr>
+                    <tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>
                 </tbody>
             </table>
             
@@ -947,20 +963,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </h3>
             <table class="tm-table" id="tm-shadow-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th></tr>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="6" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="7" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">Recent Paper Closes</h3>
             <table class="tm-table" id="tm-shadow-closed-table">
                 <thead>
-                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th></tr>
+                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-closed-tbody">
-                    <tr><td colspan="7" class="tm-empty-msg">No paper closes yet</td></tr>
+                    <tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>
                 </tbody>
             </table>
             
@@ -1933,13 +1949,18 @@ async function loadTMState() {
             }).join('');
         }
         
-        // Closed trades (most recent first)
-        const closed = (d.closed_trades || []).slice().reverse();
+        // Closed trades (most recent first). We render newest at top but
+        // need the ORIGINAL backend index for deletion — backend stores them
+        // in chronological order. Compute index = (rawList.length - 1 - i)
+        // where i is the position in the reversed slice.
+        const rawClosed = d.closed_trades || [];
+        const closed = rawClosed.slice().reverse();
         const closedTbody = document.getElementById('tm-closed-tbody');
         if (closed.length === 0) {
-            closedTbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No closed trades yet</td></tr>';
+            closedTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>';
         } else {
-            closedTbody.innerHTML = closed.slice(0, 50).map(c => {
+            closedTbody.innerHTML = closed.slice(0, 50).map((c, i) => {
+                const origIdx = rawClosed.length - 1 - i;
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = c.pnl_pct >= 0 ? '+' : '';
                 const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
@@ -1951,6 +1972,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}% (${pnlSign}$${c.pnl_usd.toFixed(2)})</td>
                     <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}</td>
+                    <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMClosed(${origIdx}, '${c.symbol}')">✕</button></td>
                 </tr>`;
             }).join('');
         }
@@ -1969,7 +1991,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -1982,16 +2004,19 @@ async function loadTMState() {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
                     <td style="color:#888;font-size:0.72rem">${p.opened_by || '—'}</td>
+                    <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');
         }
         
-        // Shadow closes
+        // Shadow closes (use original index for backend deletion)
+        const rawShadowClosed = d.shadow_closed || [];
         const shadowClosedTbody = document.getElementById('tm-shadow-closed-tbody');
         if (shadowClosed.length === 0) {
-            shadowClosedTbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No paper closes yet</td></tr>';
+            shadowClosedTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>';
         } else {
-            shadowClosedTbody.innerHTML = shadowClosed.slice(0, 50).map(c => {
+            shadowClosedTbody.innerHTML = shadowClosed.slice(0, 50).map((c, i) => {
+                const origIdx = rawShadowClosed.length - 1 - i;
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = c.pnl_pct >= 0 ? '+' : '';
                 const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
@@ -2003,6 +2028,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}%</td>
                     <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}</td>
+                    <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMShadowClosed(${origIdx}, '${c.symbol}')">✕</button></td>
                 </tr>`;
             }).join('');
         }
@@ -2027,6 +2053,63 @@ async function closeTMPosition(symbol) {
         }
     } catch (err) {
         alert('Close error: ' + err);
+    }
+}
+
+async function closeTMShadow(symbol) {
+    if (!confirm(`Закрити paper-позицію по ${symbol} зараз?`)) return;
+    try {
+        const res = await fetch('/api/tm/shadow/close', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol}),
+        });
+        const d = await res.json();
+        if (d.ok) {
+            setTimeout(loadTMState, 300);
+        } else {
+            alert('Close failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (err) {
+        alert('Close error: ' + err);
+    }
+}
+
+async function deleteTMClosed(idx, symbol) {
+    if (!confirm(`Видалити запис закритої угоди (${symbol}) назавжди? PnL/Win rate буде перераховано.`)) return;
+    try {
+        const res = await fetch('/api/tm/closed/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({index: idx}),
+        });
+        const d = await res.json();
+        if (d.ok) {
+            setTimeout(loadTMState, 200);
+        } else {
+            alert('Delete failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (err) {
+        alert('Delete error: ' + err);
+    }
+}
+
+async function deleteTMShadowClosed(idx, symbol) {
+    if (!confirm(`Видалити запис закритої paper-угоди (${symbol}) назавжди? Stats буде перераховано.`)) return;
+    try {
+        const res = await fetch('/api/tm/shadow_closed/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({index: idx}),
+        });
+        const d = await res.json();
+        if (d.ok) {
+            setTimeout(loadTMState, 200);
+        } else {
+            alert('Delete failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (err) {
+        alert('Delete error: ' + err);
     }
 }
 
