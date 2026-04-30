@@ -997,6 +997,90 @@ class TradeManager:
             print(f"[TM] Entry score error for {symbol}: {e}")
             return None
     
+    def compute_directional_bias(self, symbol: str,
+                                  current_price: float) -> Optional[Dict]:
+        """For a symbol with no open position, compute Entry Score for BOTH
+        LONG and SHORT directions and convert into a probability
+        distribution. Used by the chart panel to render a single "what
+        would the bot do here?" recommendation.
+        
+        Probabilities use softmax with temperature T=30. The temperature
+        is calibrated so that:
+            score_LONG=+50, score_SHORT=+10  →  ~80/20
+            score_LONG=+30, score_SHORT=+20  →  ~58/42
+            score_LONG=+10, score_SHORT=+10  →  50/50
+            score_LONG=-30, score_SHORT=-50  →  ~73/27 (relative still)
+        
+        Returns:
+            {
+                'long': <full evaluate_entry result>,
+                'short': <full evaluate_entry result>,
+                'prob_long': float in [0,1],
+                'prob_short': float in [0,1],
+                'recommended': 'LONG' | 'SHORT' | 'NEUTRAL',
+                'verdict': verdict of the recommended direction,
+            }
+        Returns None when feature is disabled or evaluation fails.
+        """
+        if not self._settings.get('entry_score_enabled', True):
+            return None
+        try:
+            from detection.position_evaluator import evaluate_entry
+        except Exception:
+            return None
+        
+        try:
+            cfg = self._build_entry_eval_config()
+            ctx_long = self._gather_entry_context(symbol, 'LONG', current_price)
+            ctx_short = self._gather_entry_context(symbol, 'SHORT', current_price)
+            res_long = evaluate_entry(config=cfg, **ctx_long)
+            res_short = evaluate_entry(config=cfg, **ctx_short)
+        except Exception as e:
+            print(f"[TM] Directional bias error for {symbol}: {e}")
+            return None
+        
+        # Softmax with temperature
+        import math
+        TEMPERATURE = 30.0
+        try:
+            sl = res_long.get('score', 0.0) / TEMPERATURE
+            ss = res_short.get('score', 0.0) / TEMPERATURE
+            # Subtract max to prevent overflow on extreme inputs
+            m = max(sl, ss)
+            el = math.exp(sl - m)
+            es = math.exp(ss - m)
+            total = el + es
+            prob_long = el / total if total > 0 else 0.5
+            prob_short = es / total if total > 0 else 0.5
+        except Exception:
+            prob_long = 0.5
+            prob_short = 0.5
+        
+        # Recommended direction = whichever has higher score, with NEUTRAL
+        # bucket only when scores are essentially identical (≤1 point diff).
+        # The user explicitly chose probabilistic output rather than a
+        # threshold-based "Wait" — so we always pick a winner.
+        sl_score = res_long.get('score', 0.0)
+        ss_score = res_short.get('score', 0.0)
+        if abs(sl_score - ss_score) <= 1.0:
+            recommended = 'NEUTRAL'
+            recommended_verdict = 'marginal'
+        elif sl_score > ss_score:
+            recommended = 'LONG'
+            recommended_verdict = res_long.get('verdict', 'marginal')
+        else:
+            recommended = 'SHORT'
+            recommended_verdict = res_short.get('verdict', 'marginal')
+        
+        return {
+            'long': res_long,
+            'short': res_short,
+            'prob_long': round(prob_long, 4),
+            'prob_short': round(prob_short, 4),
+            'recommended': recommended,
+            'verdict': recommended_verdict,
+        }
+    
     def _compute_health(self, pos: Dict, is_shadow: bool) -> Optional[Dict]:
         """Run the position evaluator for a single open position. Pulls
         fresh values from the SMC scanner's HTF cache and the forecast

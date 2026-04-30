@@ -746,6 +746,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-status-badge" id="sm-htf-badge" style="margin-left:6px;display:none"></span>
                     <span class="sm-status-badge" id="sm-forecast-badge" style="margin-left:6px;display:none"></span>
                     <span class="sm-status-badge" id="sm-ctr-badge" style="margin-left:6px;display:none"></span>
+                    <!-- Bot's recommendation: which direction wins by Entry Score -->
+                    <span class="sm-status-badge" id="sm-bias-badge" style="margin-left:6px;display:none"></span>
+                    <!-- Live health when a position is open on this symbol -->
+                    <span class="sm-status-badge" id="sm-health-badge" style="margin-left:6px;display:none"></span>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <button onclick="clearSignalsForCurrent()" id="sm-clear-signals-btn"
@@ -1498,6 +1502,10 @@ function clearChart() {
     if (fcBadge) fcBadge.style.display = 'none';
     const ctrBadge = document.getElementById('sm-ctr-badge');
     if (ctrBadge) ctrBadge.style.display = 'none';
+    const biasBadge = document.getElementById('sm-bias-badge');
+    if (biasBadge) biasBadge.style.display = 'none';
+    const healthBadge = document.getElementById('sm-health-badge');
+    if (healthBadge) healthBadge.style.display = 'none';
     const clrBtn = document.getElementById('sm-clear-signals-btn');
     if (clrBtn) clrBtn.style.display = 'none';
     document.getElementById('sm-chart-meta').textContent = '';
@@ -1766,6 +1774,115 @@ async function loadChart() {
             ctrBadge.title = tooltipParts.join('\n');
         } else {
             ctrBadge.style.display = 'none';
+        }
+        
+        // === Directional bias (Entry Score recommendation) ===
+        // Single badge that says "if you opened now, the bot would suggest X
+        // with Y% probability". Click/hover shows the full breakdown of
+        // both directions — useful when the call is close (e.g. 55/45)
+        // and you want to see what's pulling each side.
+        const biasBadge = document.getElementById('sm-bias-badge');
+        const bias = d.directional_bias;
+        if (bias && (bias.long || bias.short)) {
+            const probL = (bias.prob_long || 0) * 100;
+            const probS = (bias.prob_short || 0) * 100;
+            const rec = bias.recommended || 'NEUTRAL';
+            const verdict = bias.verdict || 'marginal';
+            // Color reflects both direction AND verdict strength
+            let bgColor, txtColor, icon;
+            if (rec === 'NEUTRAL') {
+                bgColor = 'rgba(160,160,160,0.12)';
+                txtColor = '#aaa';
+                icon = '⚖️';
+            } else if (rec === 'LONG') {
+                bgColor = verdict === 'good' ? 'rgba(34,197,94,0.20)' :
+                          verdict === 'marginal' ? 'rgba(34,197,94,0.10)' :
+                          'rgba(34,197,94,0.05)';
+                txtColor = verdict === 'good' ? '#86efac' :
+                           verdict === 'marginal' ? '#a7f3d0' : '#86efac';
+                icon = '🟢';
+            } else {
+                bgColor = verdict === 'good' ? 'rgba(239,68,68,0.20)' :
+                          verdict === 'marginal' ? 'rgba(239,68,68,0.10)' :
+                          'rgba(239,68,68,0.05)';
+                txtColor = verdict === 'good' ? '#fca5a5' :
+                           verdict === 'marginal' ? '#fecaca' : '#fca5a5';
+                icon = '🔴';
+            }
+            // Compact form: "🎯 LONG 78% · good (+52)"
+            const long = bias.long || {};
+            const short = bias.short || {};
+            const lScore = long.score !== undefined ? long.score : 0;
+            const sScore = short.score !== undefined ? short.score : 0;
+            const winner = rec === 'LONG' ? lScore : (rec === 'SHORT' ? sScore : Math.max(lScore, sScore));
+            const winnerSign = winner >= 0 ? '+' : '';
+            biasBadge.textContent = rec === 'NEUTRAL'
+                ? `🎯 ⚖️ Neutral (${probL.toFixed(0)}/${probS.toFixed(0)})`
+                : `🎯 ${icon} ${rec} ${rec === 'LONG' ? probL.toFixed(0) : probS.toFixed(0)}% · ${verdict} (${winnerSign}${winner.toFixed(0)})`;
+            biasBadge.className = 'sm-status-badge';
+            biasBadge.style.background = bgColor;
+            biasBadge.style.color = txtColor;
+            biasBadge.style.display = 'inline-block';
+            
+            // Detailed hover with full breakdown of BOTH directions
+            const tip = ['Entry Score recommendation (advisory)'];
+            tip.push(`Recommended: ${rec === 'NEUTRAL' ? '⚖️ Neutral' : icon + ' ' + rec} (${verdict})`);
+            tip.push('');
+            tip.push(`🟢 LONG  ${(lScore >= 0 ? '+' : '')}${lScore.toFixed(0)}  · ${probL.toFixed(0)}% prob · ${long.verdict || '—'}`);
+            if (long.summary) tip.push('   ' + long.summary);
+            tip.push(`🔴 SHORT ${(sScore >= 0 ? '+' : '')}${sScore.toFixed(0)}  · ${probS.toFixed(0)}% prob · ${short.verdict || '—'}`);
+            if (short.summary) tip.push('   ' + short.summary);
+            tip.push('');
+            tip.push('Probabilities use softmax with T=30:');
+            tip.push('  ~10pt difference → 58/42');
+            tip.push('  ~40pt difference → 79/21');
+            tip.push('  ~80pt difference → 96/4');
+            biasBadge.title = tip.join('\n');
+        } else {
+            biasBadge.style.display = 'none';
+        }
+        
+        // === Live Health Score (only when this symbol has an open position) ===
+        const healthBadge = document.getElementById('sm-health-badge');
+        const ch = d.chart_health;
+        if (ch && ch.health) {
+            const h = ch.health;
+            const score = h.score;
+            const verdict = h.verdict;
+            const sign = score >= 0 ? '+' : '';
+            const sideIcon = ch.side === 'LONG' ? '🟢' : '🔴';
+            const kindLabel = ch.kind === 'real' ? '' : ' [paper]';
+            // Match exact same color palette as TM panel
+            let bgColor, txtColor;
+            if (verdict === 'close') {
+                bgColor = 'rgba(239,68,68,0.20)'; txtColor = '#fca5a5';
+            } else if (verdict === 'caution') {
+                bgColor = 'rgba(234,179,8,0.15)'; txtColor = '#fde68a';
+            } else {
+                bgColor = 'rgba(34,197,94,0.15)'; txtColor = '#86efac';
+            }
+            healthBadge.textContent = `🩺 ${sideIcon} Health ${sign}${score.toFixed(0)} · ${verdict}${kindLabel}`;
+            healthBadge.className = 'sm-status-badge';
+            healthBadge.style.background = bgColor;
+            healthBadge.style.color = txtColor;
+            healthBadge.style.display = 'inline-block';
+            
+            // Hover shows component breakdown
+            const tip = [`Position Health Score (live)`];
+            tip.push(`${ch.kind} ${ch.side} entry ${ch.entry_price}`);
+            tip.push(`Verdict: ${verdict} (close threshold ${h.threshold})`);
+            if (h.summary) tip.push(`Summary: ${h.summary}`);
+            tip.push('');
+            const components = (h.components || [])
+                .filter(c => c.value !== 0)
+                .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+            for (const c of components) {
+                tip.push(`${c.value > 0 ? '+' : ''}${c.value.toFixed(0)}  ${c.label}`);
+            }
+            if (components.length === 0) tip.push('(no signals yet)');
+            healthBadge.title = tip.join('\n');
+        } else {
+            healthBadge.style.display = 'none';
         }
         
         const dot = document.getElementById('dot-' + currentSymbol);
