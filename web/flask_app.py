@@ -196,6 +196,17 @@ def create_app():
                 from detection.forecast_engine import init_forecast_engine
                 init_forecast_engine()
                 
+                # Momentum Strength module — feeds the Pine-equivalent
+                # momStrengthRaw filter into CTR signal evaluation. Without
+                # this, calc_ctr falls back to raw STC crossovers and shows
+                # signals that wouldn't fire in TradingView.
+                try:
+                    from detection.market_data import get_market_data
+                    from detection.momentum_strength import init_momentum_strength
+                    init_momentum_strength(get_market_data())
+                except Exception as ms_err:
+                    print(f"[APP] MomentumStrength init warning: {ms_err}")
+                
                 from detection.smc_scanner import init_smc_scanner
                 smc_tg = None
                 try:

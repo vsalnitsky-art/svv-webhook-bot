@@ -1683,8 +1683,19 @@ async function loadChart() {
                 tooltipParts.push(ctr.last_dir === 'LONG'
                     ? 'LONG = STC crossed up over 25 (exit Oversold)'
                     : 'SHORT = STC crossed down under 75 (exit Overbought)');
+            } else if (ctr.raw_dir) {
+                // Pine's strength filter killed this signal — surface that fact
+                // so the user understands why no LONG/SHORT marker appears
+                tooltipParts.push(`Raw STC fired ${ctr.raw_dir} but blocked by Strength filter`);
+                if (ctr.strength_raw !== null && ctr.strength_raw !== undefined) {
+                    const dir = ctr.strength_raw > 0 ? 'LONG' : ctr.strength_raw < 0 ? 'SHORT' : 'neutral';
+                    tooltipParts.push(`momStrengthRaw = ${ctr.strength_raw} (${dir})`);
+                }
             } else {
                 tooltipParts.push('No signal yet');
+            }
+            if (ctr.strength_raw !== null && ctr.strength_raw !== undefined && ctr.last_dir) {
+                tooltipParts.push(`Confirmed by Strength: ${ctr.strength_raw > 0 ? '+' : ''}${ctr.strength_raw} of ±7`);
             }
             ctrBadge.title = tooltipParts.join('\n');
         } else {

@@ -729,12 +729,17 @@ class SMCScanner:
                     self._htf_cache[symbol] = htf_bias
                 
                 # === Update Forecast 1H + CTR via forecast engine ===
-                # Best-effort, never blocks scan loop on error
+                # Best-effort, never blocks scan loop on error.
+                # IMPORTANT: we pass klines_closed (last bar dropped) so STC
+                # is computed only on confirmed candles — matches Pine
+                # behavior where ta.crossover() on barclose only fires after
+                # the bar is sealed. Using full klines would let an in-progress
+                # wick fire transient CTR signals that retract before close.
                 try:
                     from detection.forecast_engine import get_forecast_engine
                     fe = get_forecast_engine()
                     if fe:
-                        fe.update(symbol, ltf_klines=klines)
+                        fe.update(symbol, ltf_klines=klines_closed)
                 except Exception as fe_err:
                     if self._errors <= 5:
                         print(f"[SMC] Forecast update error for {symbol}: {fe_err}")
