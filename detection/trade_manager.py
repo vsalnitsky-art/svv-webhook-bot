@@ -105,6 +105,32 @@ DEFAULT_SETTINGS = {
     'bos_3_close_pct': 0,            # close additional 0% on BOS-3 (off by default)
     'bos_4_close_pct': 0,
     'trailing_after_bos_2': True,    # auto-activate trailing after BOS-2 partial
+    
+    # === Position Health Score (advisory rule-based AI) ===
+    # An expert system that aggregates HTF / Forecast 1H / CTR / LTF
+    # structure / PnL momentum / time-decay into a single -100..+100 score.
+    # The score is informational ONLY in this iteration — it is shown in the
+    # UI and Telegram, but does NOT close positions automatically. Users
+    # who want auto-close based on the score can wire that in later by
+    # promoting `health_score_action` from 'advise' to 'close'.
+    'health_score_enabled': True,
+    'health_score_preset': 'balanced',     # 'aggressive' | 'balanced' | 'conservative'
+    # Per-component weight overrides. Empty dict = use evaluator defaults.
+    # Slider UI in Smart Money page populates these. Each value is a positive
+    # number representing the maximum points that component can contribute.
+    'health_score_weights': {
+        'weight_htf_alignment': 25.0,
+        'weight_forecast_alignment': 30.0,
+        'weight_ltf_choch': 25.0,
+        'weight_ltf_bos': 12.0,
+        'weight_ctr_alignment': 15.0,
+        'weight_ctr_zone': 10.0,
+        'weight_pnl_momentum': 10.0,
+        'weight_time_decay': 10.0,
+    },
+    # If non-null, overrides the threshold from the preset. Used when the
+    # user fine-tunes from the UI without picking a different preset.
+    'health_score_threshold_override': None,
 }
 
 
@@ -152,10 +178,29 @@ class TradeManager:
         self._shadow_positions: Dict[str, Dict] = {}
         self._shadow_closed: List[Dict] = []
         
+        # Per-position state for the Health Score evaluator. Keyed by symbol,
+        # parallel to _positions / _shadow_positions. Tracks runtime stats
+        # that are NOT persisted in the position dict itself (so we don't
+        # bloat the canonical position record):
+        #   peak_pnl_pct: highest PnL the position has reached
+        #   bos_with_count / bos_against_count: BOS events since open
+        #   last_choch_after_open: latest CHoCH event observed AFTER open
+        # When a position closes, its entry is removed from these dicts.
+        self._pos_state: Dict[str, Dict] = {}
+        self._shadow_pos_state: Dict[str, Dict] = {}
+        
         self._load_positions()
         self._load_closed_trades()
         self._load_shadow_positions()
         self._load_shadow_closed()
+        
+        # Initialize evaluator state for any positions we restored from DB.
+        # We don't have history for them, so peak = current PnL at first
+        # tick (will be patched in _monitor_position), counts start at 0.
+        for sym in self._positions:
+            self._pos_state[sym] = self._fresh_pos_state()
+        for sym in self._shadow_positions:
+            self._shadow_pos_state[sym] = self._fresh_pos_state()
         
         # Stats
         self._tick_count = 0
@@ -297,8 +342,41 @@ class TradeManager:
                       'use_time_stop', 'use_trailing', 'use_be',
                       'use_forecast_1h_close', 'test_mode',
                       'telegram_alerts', 'test_telegram_alerts',
-                      'use_bos_partials', 'trailing_after_bos_2']:
+                      'use_bos_partials', 'trailing_after_bos_2',
+                      'health_score_enabled']:
                 self._settings[k] = bool(self._settings.get(k, False))
+            
+            # === Health Score validation ===
+            preset = self._settings.get('health_score_preset', 'balanced')
+            if preset not in ('aggressive', 'balanced', 'conservative'):
+                self._settings['health_score_preset'] = 'balanced'
+            
+            # Threshold override: None or float
+            tov = self._settings.get('health_score_threshold_override')
+            if tov is None or tov == '':
+                self._settings['health_score_threshold_override'] = None
+            else:
+                try:
+                    self._settings['health_score_threshold_override'] = float(tov)
+                except (TypeError, ValueError):
+                    self._settings['health_score_threshold_override'] = None
+            
+            # Weights: dict of floats. Sanitize each value, falling back to
+            # the default weight when the user supplied something invalid.
+            weights = self._settings.get('health_score_weights')
+            default_weights = DEFAULT_SETTINGS['health_score_weights']
+            if not isinstance(weights, dict):
+                weights = {}
+            cleaned = {}
+            for wkey, default_val in default_weights.items():
+                try:
+                    val = float(weights.get(wkey, default_val))
+                    # Clamp to a reasonable range so a UI slider mishap can't
+                    # drive scores into nonsense territory
+                    cleaned[wkey] = max(0.0, min(100.0, val))
+                except (TypeError, ValueError):
+                    cleaned[wkey] = float(default_val)
+            self._settings['health_score_weights'] = cleaned
             
             self._persist_settings()
             
@@ -369,6 +447,18 @@ class TradeManager:
         current_price = self._get_current_price(symbol)
         if current_price is None:
             return
+        
+        # Update Health Score evaluator state — peak PnL high-water mark.
+        # This is independent of any trailing/BE logic and never decreases.
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG':
+            current_pnl_pct = (current_price - entry) / entry * 100
+        else:
+            current_pnl_pct = (entry - current_price) / entry * 100
+        with self._lock:
+            st = self._pos_state.get(symbol)
+            if st is not None and current_pnl_pct > st.get('peak_pnl_pct', 0):
+                st['peak_pnl_pct'] = current_pnl_pct
         
         # 1) Hard exits — Stop Loss / Take Profit
         s = self._settings
@@ -525,6 +615,20 @@ class TradeManager:
         if not pos:
             return
         
+        # Record this CHoCH in the evaluator state (whether same-dir or opposite).
+        # The evaluator scores opposite CHoCH as a strong negative and same-dir
+        # as a small positive — it needs to see ALL CHoCH events after open.
+        choch_record = {
+            'dir': direction,
+            't': float(bar_t) if bar_t else time.time(),
+            'level': float(level) if level else None,
+        }
+        with self._lock:
+            if real and symbol in self._pos_state:
+                self._pos_state[symbol]['last_choch_after_open'] = choch_record
+            if shadow and symbol in self._shadow_pos_state:
+                self._shadow_pos_state[symbol]['last_choch_after_open'] = choch_record
+        
         pos_dir = 'bull' if pos['side'] == 'LONG' else 'bear'
         if direction == pos_dir:
             return  # same-direction CHoCH — not a reversal
@@ -640,44 +744,173 @@ class TradeManager:
             return ''
         return opened_by.split(' · ', 1)[0].strip()
     
+    @staticmethod
+    def _fresh_pos_state() -> Dict:
+        """Build a blank evaluator-state record. One per open position."""
+        return {
+            'peak_pnl_pct': 0.0,
+            'bos_with_count': 0,
+            'bos_against_count': 0,
+            'last_choch_after_open': None,  # {dir, t, level} or None
+        }
+    
+    def _build_eval_config(self):
+        """Construct an EvaluationConfig from current settings.
+        
+        Resolution order for threshold:
+          1) explicit override field health_score_threshold_override
+          2) value from selected preset
+          3) default (Balanced)
+        Weights come from settings.health_score_weights, with any missing
+        fields backed by the EvaluationConfig defaults.
+        """
+        from detection.position_evaluator import EvaluationConfig, PRESETS
+        s = self._settings
+        weights = dict(s.get('health_score_weights') or {})
+        
+        # Resolve threshold
+        override = s.get('health_score_threshold_override')
+        if override is not None:
+            try:
+                threshold = float(override)
+            except Exception:
+                threshold = None
+        else:
+            threshold = None
+        if threshold is None:
+            preset = s.get('health_score_preset', 'balanced')
+            preset_cfg = PRESETS.get(preset, PRESETS['balanced'])
+            threshold = preset_cfg.get('threshold', -40.0)
+        
+        weights['threshold'] = float(threshold)
+        return EvaluationConfig.from_dict(weights)
+    
+    def _compute_health(self, pos: Dict, is_shadow: bool) -> Optional[Dict]:
+        """Run the position evaluator for a single open position. Pulls
+        fresh values from the SMC scanner's HTF cache and the forecast
+        engine, plus the per-position state we maintain in _pos_state.
+        
+        Returns the evaluator's result dict, or None if Health Score is
+        disabled / not enough data to compute meaningfully.
+        """
+        if not self._settings.get('health_score_enabled', True):
+            return None
+        try:
+            from detection.position_evaluator import evaluate_position
+        except Exception:
+            return None
+        
+        symbol = pos.get('symbol')
+        if not symbol:
+            return None
+        
+        # Pull market state
+        htf_bias = 'neutral'
+        if self.scanner:
+            try:
+                htf_bias = self.scanner._htf_cache.get(symbol, {}).get('bias', 'neutral')
+            except Exception:
+                pass
+        
+        forecast = self._get_forecast_1h(symbol)
+        ctr = self._get_ctr(symbol)
+        
+        # Per-position state (keyed by symbol in the right dict)
+        state_dict = self._shadow_pos_state if is_shadow else self._pos_state
+        state = state_dict.get(symbol) or self._fresh_pos_state()
+        
+        # Current PnL
+        current = self._get_current_price(symbol) or pos['entry_price']
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG':
+            pnl_pct = (current - entry) / entry * 100
+        else:
+            pnl_pct = (entry - current) / entry * 100
+        
+        # Update peak inline (so the evaluator always sees latest peak even
+        # if the monitor loop hasn't ticked since the last price move)
+        if pnl_pct > state.get('peak_pnl_pct', 0):
+            state['peak_pnl_pct'] = pnl_pct
+        
+        try:
+            cfg = self._build_eval_config()
+            return evaluate_position(
+                side=pos['side'],
+                pnl_pct=pnl_pct,
+                opened_at=pos.get('opened_at', time.time()),
+                htf_bias=htf_bias,
+                forecast=forecast,
+                ctr=ctr,
+                recent_choch=state.get('last_choch_after_open'),
+                bos_count_with=state.get('bos_with_count', 0),
+                bos_count_against=state.get('bos_against_count', 0),
+                peak_pnl_pct=state.get('peak_pnl_pct'),
+                config=cfg,
+            )
+        except Exception as e:
+            print(f"[TM] Health eval error for {symbol}: {e}")
+            return None
+    
     def on_bos_event(self, symbol: str, direction: str, level: float, bar_t: int):
         """Called by SMC scanner when a BOS event is detected (any).
-        Used for BOS-N partial closes.
+        
+        Two responsibilities:
+          1) Update Health Score evaluator state (BOS counts in both directions)
+             for real AND shadow positions, regardless of TM enabled state.
+          2) Trigger BOS-N partial closes — only for real positions when TM is
+             enabled and use_bos_partials is on.
         """
+        # === Evaluator-state updates (always run if any position exists) ===
+        s = self._settings
+        with self._lock:
+            real = self._positions.get(symbol)
+            shadow = self._shadow_positions.get(symbol)
+            
+            for pos, state_dict in (
+                (real, self._pos_state),
+                (shadow, self._shadow_pos_state),
+            ):
+                if not pos or symbol not in state_dict:
+                    continue
+                pos_dir = 'bull' if pos['side'] == 'LONG' else 'bear'
+                if direction == pos_dir:
+                    state_dict[symbol]['bos_with_count'] = (
+                        state_dict[symbol].get('bos_with_count', 0) + 1)
+                else:
+                    state_dict[symbol]['bos_against_count'] = (
+                        state_dict[symbol].get('bos_against_count', 0) + 1)
+        
+        # === Partial-close logic (real positions only, requires TM enabled) ===
         if not self.is_enabled():
             return
-        s = self._settings
         if not s.get('use_bos_partials'):
             return
-        
-        with self._lock:
-            pos = self._positions.get(symbol)
-        if not pos:
+        if not real:
             return
         
-        # Only count BOS in same direction as our position
+        # Only count BOS in same direction as our position for the partial logic
         bos_side = 'LONG' if direction == 'bull' else 'SHORT'
-        if bos_side != pos['side']:
+        if bos_side != real['side']:
             return
         
         # Increment count
-        pos['bos_count_since_entry'] = pos.get('bos_count_since_entry', 1) + 1
-        n = pos['bos_count_since_entry']
+        real['bos_count_since_entry'] = real.get('bos_count_since_entry', 1) + 1
+        n = real['bos_count_since_entry']
         
         # Determine if this BOS triggers a partial
         partial_pct = s.get(f'bos_{n}_close_pct', 0)
         marker_key = f'bos_{n}'
         
-        if partial_pct > 0 and marker_key not in pos.get('partial_closes_done', []):
+        if partial_pct > 0 and marker_key not in real.get('partial_closes_done', []):
             current_price = self._get_current_price(symbol) or level
             self._partial_close(symbol, partial_pct, current_price,
                                 reason=f'bos_{n}_partial')
-            pos.setdefault('partial_closes_done', []).append(marker_key)
+            real.setdefault('partial_closes_done', []).append(marker_key)
             
             # Auto-activate trailing after BOS-2
             if n == 2 and s.get('trailing_after_bos_2'):
-                pos['trailing_active'] = True
-                pos['trailing_peak'] = current_price
+                real['trailing_active'] = True
+                real['trailing_peak'] = current_price
                 self._notify(f"📈 Trailing активовано після BOS-2: {symbol}")
             
             self._persist_positions()
@@ -738,6 +971,8 @@ class TradeManager:
         
         with self._lock:
             self._positions[symbol] = position
+            # Init evaluator state alongside the position
+            self._pos_state[symbol] = self._fresh_pos_state()
         self._persist_positions()
         
         self._notify_open(position)
@@ -783,6 +1018,7 @@ class TradeManager:
         
         with self._lock:
             self._positions.pop(symbol, None)
+            self._pos_state.pop(symbol, None)
             self._closed_trades.append(closed)
             if len(self._closed_trades) > CLOSED_TRADES_LIMIT:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
@@ -847,6 +1083,7 @@ class TradeManager:
         }
         with self._lock:
             self._shadow_positions[symbol] = pos
+            self._shadow_pos_state[symbol] = self._fresh_pos_state()
         self._persist_shadow_positions()
         
         # Use colored circle for direction (instead of 📊)
@@ -888,6 +1125,7 @@ class TradeManager:
         
         with self._lock:
             self._shadow_positions.pop(symbol, None)
+            self._shadow_pos_state.pop(symbol, None)
             self._shadow_closed.append(closed)
             if len(self._shadow_closed) > CLOSED_TRADES_LIMIT:
                 self._shadow_closed = self._shadow_closed[-CLOSED_TRADES_LIMIT:]
@@ -1021,11 +1259,16 @@ class TradeManager:
                     pnl_pct = (current - entry) / entry * 100
                 else:
                     pnl_pct = (entry - current) / entry * 100
-                positions.append({
+                pos_dict = {
                     **pos,
                     'current_price': current,
                     'pnl_pct': round(pnl_pct, 3),
-                })
+                }
+                # Attach Health Score (None when feature disabled)
+                health = self._compute_health(pos, is_shadow=False)
+                if health is not None:
+                    pos_dict['health'] = health
+                positions.append(pos_dict)
             
             closed = list(self._closed_trades[-50:])
             
@@ -1044,11 +1287,15 @@ class TradeManager:
                     pnl_pct = (current - entry) / entry * 100
                 else:
                     pnl_pct = (entry - current) / entry * 100
-                shadow_positions.append({
+                pos_dict = {
                     **pos,
                     'current_price': current,
                     'pnl_pct': round(pnl_pct, 3),
-                })
+                }
+                health = self._compute_health(pos, is_shadow=True)
+                if health is not None:
+                    pos_dict['health'] = health
+                shadow_positions.append(pos_dict)
             shadow_closed = list(self._shadow_closed[-50:])
             
             # Stats — shadow
