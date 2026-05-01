@@ -1237,21 +1237,23 @@ class SMCScanner:
         except Exception:
             pass
         
-        # === Directional bias (advisory entry recommendation) ===
-        # Asks "if we were to open a position right now, which direction
-        # would the bot recommend?" Computes Entry Score for both LONG and
-        # SHORT, then converts the pair into softmax probabilities so the
-        # user sees the strength of preference, not just a binary winner.
-        # Also pulls Health Score for the symbol if a position is open
-        # (real takes precedence over shadow) so the chart panel can show
-        # live position state without forcing the user back to TM.
-        directional_bias = None
-        chart_health = None
+        # === Decision Center verdict ===
+        # ONE unified analytical output that combines:
+        #   - Entry Score for both LONG and SHORT
+        #   - Probability distribution (softmax)
+        #   - Recommended direction with verdict (good/marginal/poor)
+        #   - One-line plain-English rationale
+        #   - Live Health Score for any open position on this symbol
+        #
+        # The chart panel renders this as a single Decision block — no more
+        # 3 separate badges (Entry-Long / Entry-Short / Health) crowding
+        # the header. The block expands on click to show the full breakdown
+        # for users who want to verify the bot's reasoning.
+        decision = None
         try:
             from detection.trade_manager import get_trade_manager
             tm = get_trade_manager()
             if tm:
-                # Use the latest close as the hypothetical entry price
                 last_price = None
                 if ohlc:
                     try:
@@ -1259,30 +1261,9 @@ class SMCScanner:
                     except Exception:
                         last_price = None
                 if last_price and last_price > 0:
-                    directional_bias = tm.compute_directional_bias(symbol, last_price)
-                
-                # Health for an existing position (if any).
-                # Real position takes precedence over shadow.
-                with tm._lock:
-                    real_pos = dict(tm._positions.get(symbol) or {})
-                    shadow_pos = dict(tm._shadow_positions.get(symbol) or {})
-                if real_pos:
-                    chart_health = {
-                        'kind': 'real',
-                        'side': real_pos.get('side'),
-                        'entry_price': real_pos.get('entry_price'),
-                        'health': tm._compute_health(real_pos, is_shadow=False),
-                    }
-                elif shadow_pos:
-                    chart_health = {
-                        'kind': 'shadow',
-                        'side': shadow_pos.get('side'),
-                        'entry_price': shadow_pos.get('entry_price'),
-                        'health': tm._compute_health(shadow_pos, is_shadow=True),
-                    }
+                    decision = tm.compute_decision(symbol, last_price)
         except Exception as e:
-            # Never break chart_data on TM/evaluator hiccups
-            print(f"[SMC] chart_data bias/health error: {e}")
+            print(f"[SMC] chart_data decision error: {e}")
         
         return {
             'symbol': symbol,
@@ -1299,13 +1280,12 @@ class SMCScanner:
             'htf_bias': htf_bias,
             'htf_method': htf_data.get('method', ''),
             'htf_timeframe': htf_settings.get('timeframe', ''),
-            # Forecast 1H + CTR (Pine PRO indicators)
+            # Forecast 1H + CTR (Pine PRO indicators) — kept for legacy
+            # consumers and the chart's auxiliary debug tooltip
             'forecast_1h': forecast_1h,
             'ctr': ctr,
-            # Entry Score recommendation (LONG vs SHORT softmax)
-            'directional_bias': directional_bias,
-            # Health snapshot when a position is open on this symbol
-            'chart_health': chart_health,
+            # Unified Decision Center verdict — primary advisory output
+            'decision': decision,
             # Swing Structure (size=swing_size)
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),

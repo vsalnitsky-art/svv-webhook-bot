@@ -738,63 +738,34 @@ class TradeManager:
     
     def _format_opened_by(self, opened_by: str, symbol: str,
                           entry_score: Optional[Dict] = None) -> str:
-        """Build a context-rich opened_by label that captures the state of
-        Forecast 1H and CTR at the moment a position was opened. The base
-        opened_by tag (e.g. 'choch_bos', 'choch') is preserved as the prefix
-        so existing logic that inspects it keeps working — see _close_position
-        and the reasonLabel mapping on the frontend.
+        """Build a compact opened_by label.
         
-        If `entry_score` is supplied (an evaluator result dict), a fourth
-        slot is appended showing the score and verdict. This lets the
-        Telegram OPEN message and the UI 'opened_by' column carry the
-        full snapshot of why the bot chose to enter.
+        Format: '<base> · 🧠 LONG 78% (good)'
         
-        Format: '<base> · 🔮 <SIDE> +<pct>%·<conf>% · ⚡ <SIDE> <zone> <stc> · 🎯 Entry +<score>'
-        Missing data is rendered with em-dashes so the slot is always present.
+        Previously this surfaced Forecast/CTR/Entry as three separate
+        chunks but the user feedback was that it was hard to read. Now
+        we delegate the whole verdict to the Decision Center headline,
+        which is one phrase humans actually parse at a glance. The base
+        opened_by tag (e.g. 'choch_bos', 'choch') is preserved as the
+        prefix so existing logic that inspects it keeps working.
+        
+        Falls back to '<base>' alone when no decision is available.
         """
-        # Forecast 1H part
-        fc = self._get_forecast_1h(symbol)
-        if fc and fc.get('confidence', 0) > 0:
-            side_n = fc.get('side', 0)
-            side_lbl = 'LONG' if side_n > 0 else ('SHORT' if side_n < 0 else 'NEUTRAL')
-            pct = int(fc.get('pct', 0) or 0)
-            conf = int(fc.get('confidence', 0) or 0)
-            sign = '+' if pct > 0 else ''
-            fc_part = f"🔮 {side_lbl} {sign}{pct}%·{conf}%"
-        else:
-            fc_part = "F:—"
-        
-        # CTR part
-        ctr = self._get_ctr(symbol)
-        if ctr and ctr.get('stc') is not None:
-            stc = ctr.get('stc')
-            last_dir = ctr.get('last_dir') or '—'
-            try:
-                stc_int = int(round(float(stc)))
-            except Exception:
-                stc_int = stc
-            if stc_int != '—' and isinstance(stc_int, (int, float)):
-                if stc_int >= 75:
-                    zone = 'Overbought'
-                elif stc_int <= 25:
-                    zone = 'Oversold'
-                else:
-                    zone = 'Mid'
-                ctr_part = f"⚡ {last_dir} {zone} {stc_int}"
+        parts = [opened_by]
+        if entry_score:
+            headline = entry_score.get('headline')
+            verdict = entry_score.get('verdict', '')
+            if headline:
+                parts.append(f"🧠 {headline} ({verdict})" if verdict else f"🧠 {headline}")
             else:
-                ctr_part = "CTR:—"
-        else:
-            ctr_part = "CTR:—"
-        
-        parts = [opened_by, fc_part, ctr_part]
-        
-        # Entry Score part — only append when provided (advisory snapshot)
-        if entry_score and entry_score.get('score') is not None:
-            score = entry_score['score']
-            verdict = entry_score.get('verdict', '?')
-            sign = '+' if score >= 0 else ''
-            parts.append(f"🎯 Entry {sign}{score:.0f} {verdict}")
-        
+                # Legacy entry_score shape — score+verdict only
+                score = entry_score.get('score')
+                if score is not None:
+                    sign = '+' if score >= 0 else ''
+                    if verdict:
+                        parts.append(f"🧠 {sign}{score:.0f} ({verdict})")
+                    else:
+                        parts.append(f"🧠 {sign}{score:.0f}")
         return ' · '.join(parts)
     
     def _base_opened_by(self, opened_by: str) -> str:
@@ -997,35 +968,24 @@ class TradeManager:
             print(f"[TM] Entry score error for {symbol}: {e}")
             return None
     
-    def compute_directional_bias(self, symbol: str,
-                                  current_price: float) -> Optional[Dict]:
-        """For a symbol with no open position, compute Entry Score for BOTH
-        LONG and SHORT directions and convert into a probability
-        distribution. Used by the chart panel to render a single "what
-        would the bot do here?" recommendation.
+    def compute_decision(self, symbol: str,
+                          current_price: float) -> Optional[Dict]:
+        """The single source of truth for "what does the bot think about
+        this symbol right now?". Returns a Decision Center verdict ready
+        to render in UI / quote in Telegram / log to history.
         
-        Probabilities use softmax with temperature T=30. The temperature
-        is calibrated so that:
-            score_LONG=+50, score_SHORT=+10  →  ~80/20
-            score_LONG=+30, score_SHORT=+20  →  ~58/42
-            score_LONG=+10, score_SHORT=+10  →  50/50
-            score_LONG=-30, score_SHORT=-50  →  ~73/27 (relative still)
+        This replaces the older split between compute_directional_bias()
+        (Entry-side) and chart_health snapshots (Health-side). The frontend
+        renders one block from this output.
         
-        Returns:
-            {
-                'long': <full evaluate_entry result>,
-                'short': <full evaluate_entry result>,
-                'prob_long': float in [0,1],
-                'prob_short': float in [0,1],
-                'recommended': 'LONG' | 'SHORT' | 'NEUTRAL',
-                'verdict': verdict of the recommended direction,
-            }
-        Returns None when feature is disabled or evaluation fails.
+        Returns None when the feature is disabled. Never raises.
         """
         if not self._settings.get('entry_score_enabled', True):
             return None
+        
         try:
             from detection.position_evaluator import evaluate_entry
+            from detection import decision_center
         except Exception:
             return None
         
@@ -1036,50 +996,58 @@ class TradeManager:
             res_long = evaluate_entry(config=cfg, **ctx_long)
             res_short = evaluate_entry(config=cfg, **ctx_short)
         except Exception as e:
-            print(f"[TM] Directional bias error for {symbol}: {e}")
+            print(f"[TM] compute_decision evaluator error for {symbol}: {e}")
             return None
         
-        # Softmax with temperature
-        import math
-        TEMPERATURE = 30.0
+        # Position context — provide health/PnL if a position exists on this
+        # symbol. Real takes precedence over shadow.
+        position = None
         try:
-            sl = res_long.get('score', 0.0) / TEMPERATURE
-            ss = res_short.get('score', 0.0) / TEMPERATURE
-            # Subtract max to prevent overflow on extreme inputs
-            m = max(sl, ss)
-            el = math.exp(sl - m)
-            es = math.exp(ss - m)
-            total = el + es
-            prob_long = el / total if total > 0 else 0.5
-            prob_short = es / total if total > 0 else 0.5
+            with self._lock:
+                real_pos = dict(self._positions.get(symbol) or {})
+                shadow_pos = dict(self._shadow_positions.get(symbol) or {})
+            
+            for pos, kind, is_shadow in [
+                (real_pos, 'real', False),
+                (shadow_pos, 'shadow', True),
+            ]:
+                if not pos:
+                    continue
+                # Compute live PnL
+                entry = pos.get('entry_price', 0)
+                pnl_pct = 0.0
+                if entry > 0:
+                    if pos['side'] == 'LONG':
+                        pnl_pct = (current_price - entry) / entry * 100
+                    else:
+                        pnl_pct = (entry - current_price) / entry * 100
+                health = self._compute_health(pos, is_shadow=is_shadow)
+                position = {
+                    'kind': kind,
+                    'side': pos['side'],
+                    'entry_price': entry,
+                    'pnl_pct': round(pnl_pct, 3),
+                    'health': health,
+                }
+                break  # real first, only one position per symbol expected
         except Exception:
-            prob_long = 0.5
-            prob_short = 0.5
+            pass
         
-        # Recommended direction = whichever has higher score, with NEUTRAL
-        # bucket only when scores are essentially identical (≤1 point diff).
-        # The user explicitly chose probabilistic output rather than a
-        # threshold-based "Wait" — so we always pick a winner.
-        sl_score = res_long.get('score', 0.0)
-        ss_score = res_short.get('score', 0.0)
-        if abs(sl_score - ss_score) <= 1.0:
-            recommended = 'NEUTRAL'
-            recommended_verdict = 'marginal'
-        elif sl_score > ss_score:
-            recommended = 'LONG'
-            recommended_verdict = res_long.get('verdict', 'marginal')
-        else:
-            recommended = 'SHORT'
-            recommended_verdict = res_short.get('verdict', 'marginal')
-        
-        return {
-            'long': res_long,
-            'short': res_short,
-            'prob_long': round(prob_long, 4),
-            'prob_short': round(prob_short, 4),
-            'recommended': recommended,
-            'verdict': recommended_verdict,
-        }
+        # Pull market state from contexts (already gathered)
+        return decision_center.build_decision(
+            long_eval=res_long,
+            short_eval=res_short,
+            htf_bias=ctx_long.get('htf_bias'),
+            forecast=ctx_long.get('forecast'),
+            ctr=ctx_long.get('ctr'),
+            position=position,
+        )
+    
+    # Legacy alias kept for backward-compat — the older chart_data response
+    # exposed `directional_bias`. Frontends gradually migrate to `decision`.
+    def compute_directional_bias(self, symbol: str,
+                                  current_price: float) -> Optional[Dict]:
+        return self.compute_decision(symbol, current_price)
     
     def _compute_health(self, pos: Dict, is_shadow: bool) -> Optional[Dict]:
         """Run the position evaluator for a single open position. Pulls
@@ -1260,17 +1228,24 @@ class TradeManager:
             return
         
         order_id = result.get('order_id', '')
-        # Compute Entry Score snapshot — advisory, captures full context at
-        # the moment we entered. Stored on the position so the UI can show
-        # both the entry-side score (frozen) and the live exit health.
-        entry_score = self._compute_entry_score(symbol, side, entry_price)
+        # Compute the unified Decision Center verdict — the same object
+        # the chart panel and Telegram messages display. Stored on the
+        # position so closed-trade analytics can correlate decision quality
+        # with actual outcome.
+        decision = None
+        try:
+            decision = self.compute_decision(symbol, entry_price)
+        except Exception as e:
+            print(f"[TM] decision compute error on open: {e}")
         opened_by_full = self._format_opened_by(opened_by, symbol,
-                                                 entry_score=entry_score)
+                                                 entry_score=decision)
         position = _new_position(symbol, side, entry_price, qty,
                                    sl_price, tp_price, order_id, opened_by_full)
-        # Attach the full evaluator result for UI tooltip / history
-        if entry_score is not None:
-            position['entry_score'] = entry_score
+        if decision is not None:
+            # Stored under entry_score key for backward-compat with the UI
+            # column and legacy load_positions code; the dict shape is the
+            # Decision Center verdict (headline, recommended, verdict, etc.).
+            position['entry_score'] = decision
         
         with self._lock:
             self._positions[symbol] = position
@@ -1380,13 +1355,14 @@ class TradeManager:
     
     def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str):
         """Open a paper-trading position. No Bybit calls."""
-        # Compute Entry Score snapshot. Advisory only — does not affect
-        # whether we open. We compute identically to real positions so
-        # paper-trading data accumulates with the same labels you'll see
-        # in production.
-        entry_score = self._compute_entry_score(symbol, side, entry_price)
+        # Compute unified Decision Center verdict — same shape as real open
+        decision = None
+        try:
+            decision = self.compute_decision(symbol, entry_price)
+        except Exception as e:
+            print(f"[TM] decision compute error on shadow open: {e}")
         opened_by_full = self._format_opened_by(opened_by, symbol,
-                                                 entry_score=entry_score)
+                                                 entry_score=decision)
         pos = {
             'symbol': symbol,
             'side': side,
@@ -1395,8 +1371,8 @@ class TradeManager:
             'opened_by': opened_by_full,
             'shadow': True,
         }
-        if entry_score is not None:
-            pos['entry_score'] = entry_score
+        if decision is not None:
+            pos['entry_score'] = decision
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
@@ -1404,10 +1380,8 @@ class TradeManager:
         
         # Use colored circle for direction (instead of 📊)
         icon = '🟢' if side == 'LONG' else '🔴'
-        # Build the Telegram OPEN message. When Entry Score is present we
-        # tack on a multi-line breakdown so the user can see WHY the bot
-        # judged this signal as good/marginal/poor.
-        es_block = self._format_entry_score_telegram(entry_score)
+        # Single-line decision summary instead of multi-line breakdown
+        es_block = self._format_entry_score_telegram(decision)
         msg = (
             f"{icon} <b>[TEST] OPEN {side}</b>: #{symbol}\n"
             f"📍 Entry: {self._fmt_price(entry_price)}\n"
@@ -1419,39 +1393,46 @@ class TradeManager:
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
     
     def _format_entry_score_telegram(self, entry_score: Optional[Dict]) -> str:
-        """Render the Entry Score as a 2-3 line block for Telegram OPEN
-        messages. Empty string when score is None (feature disabled or
-        evaluation failed) so the surrounding message stays clean.
+        """Single-line Decision Center summary for Telegram OPEN messages.
+        
+        Was previously a multi-line breakdown — replaced with a compact
+        one-liner per user feedback that the verbose form was confusing.
+        Produces output like:
+        
+            🧠 Decision: LONG 78% (good)
+            
+        Empty string when entry_score is missing/disabled. Despite the
+        legacy method name, this now reads from the Decision Center
+        verdict shape (which extends entry_score with headline/verdict).
         """
         if not entry_score:
             return ''
-        score = entry_score.get('score', 0)
+        # If entry_score already has a 'headline' (Decision Center shape),
+        # use it directly. Otherwise fall back to building one from raw
+        # score/verdict (legacy entry_score shape).
+        headline = entry_score.get('headline')
         verdict = entry_score.get('verdict', '?')
+        if headline:
+            return f"🧠 Decision: {headline} ({verdict})\n"
+        score = entry_score.get('score', 0)
         sign = '+' if score >= 0 else ''
-        # Verdict emoji
-        emoji = {'good': '✅', 'marginal': '🟡', 'poor': '⚠️'}.get(verdict, '·')
-        summary = entry_score.get('summary', '')
-        # Pick the threshold so user can see how far above/below it we are
-        threshold = entry_score.get('threshold')
-        thr_str = f" (≥{threshold:.0f} for good)" if threshold is not None else ''
-        line = f"🎯 Entry Score: {emoji} <b>{sign}{score:.0f}</b> {verdict}{thr_str}\n"
-        if summary:
-            line += f"   {summary}\n"
-        return line
+        return f"🧠 Decision: {sign}{score:.0f} ({verdict})\n"
     
     def _format_entry_score_recap(self, entry_score: Optional[Dict]) -> str:
-        """Compact 1-line recap of the Entry Score for CLOSE messages. The
-        OPEN message already showed the breakdown — at close time we just
-        want a quick reminder so the user can spot mismatches between
-        bot expectation and actual outcome.
+        """Compact one-line recap of the Decision Center verdict for
+        Telegram CLOSE messages. Format:
+        
+            🧠 Was: LONG 78% (good)
         """
         if not entry_score:
             return ''
-        score = entry_score.get('score', 0)
+        headline = entry_score.get('headline')
         verdict = entry_score.get('verdict', '?')
+        if headline:
+            return f"🧠 Was: {headline} ({verdict})\n"
+        score = entry_score.get('score', 0)
         sign = '+' if score >= 0 else ''
-        emoji = {'good': '✅', 'marginal': '🟡', 'poor': '⚠️'}.get(verdict, '·')
-        return f"🎯 Entry was: {emoji} {sign}{score:.0f} {verdict}\n"
+        return f"🧠 Was: {sign}{score:.0f} ({verdict})\n"
     
     def _close_shadow(self, symbol: str, exit_price: float, reason: str):
         """Close a paper position. No Bybit calls — Telegram only."""

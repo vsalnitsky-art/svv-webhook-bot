@@ -247,6 +247,134 @@
 .sm-trend-bull { background: rgba(74,222,128,0.2); color: #4ade80; }
 .sm-trend-bear { background: rgba(239,68,68,0.2); color: #ef4444; }
 
+/* ============= Decision Center ============= */
+.sm-decision {
+    background: linear-gradient(180deg, rgba(99,102,241,0.04), rgba(99,102,241,0.01));
+    border: 1px solid rgba(99,102,241,0.18);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 0 0 10px 0;
+}
+.sm-decision-main { display: flex; flex-direction: column; gap: 6px; }
+.sm-decision-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.sm-decision-icon { font-size: 1.05rem; }
+.sm-decision-headline {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+.sm-decision-verdict {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.sm-decision-verdict.good {
+    background: rgba(34,197,94,0.18); color: #86efac;
+    border: 1px solid rgba(34,197,94,0.35);
+}
+.sm-decision-verdict.marginal {
+    background: rgba(234,179,8,0.15); color: #fde68a;
+    border: 1px solid rgba(234,179,8,0.35);
+}
+.sm-decision-verdict.poor {
+    background: rgba(239,68,68,0.15); color: #fca5a5;
+    border: 1px solid rgba(239,68,68,0.35);
+}
+.sm-decision-headline.long  { color: #86efac; }
+.sm-decision-headline.short { color: #fca5a5; }
+.sm-decision-headline.neutral { color: #aaa; }
+
+.sm-decision-rationale {
+    color: #bbb;
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+.sm-decision-bar {
+    display: flex;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.04);
+    margin-top: 2px;
+}
+.sm-decision-bar-long {
+    background: linear-gradient(90deg, #22c55e, #4ade80);
+    height: 100%;
+    transition: width 250ms ease;
+}
+.sm-decision-bar-short {
+    background: linear-gradient(90deg, #f87171, #ef4444);
+    height: 100%;
+    transition: width 250ms ease;
+}
+.sm-decision-bar-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    margin-top: 1px;
+}
+.sm-dbl-long  { color: #86efac; font-weight: 600; }
+.sm-dbl-short { color: #fca5a5; font-weight: 600; }
+
+.sm-decision-position {
+    margin-top: 4px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px;
+    font-size: 0.78rem;
+    color: #bbb;
+}
+
+.sm-decision-toggle {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
+}
+.sm-decision-toggle-btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: #888;
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.7rem;
+}
+.sm-decision-toggle-btn:hover { color: #ddd; border-color: rgba(255,255,255,0.18); }
+
+.sm-decision-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+.sm-decision-details-col { font-size: 0.72rem; }
+.sm-decision-details-title {
+    color: #aaa;
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+.sm-dec-component {
+    display: flex;
+    justify-content: space-between;
+    padding: 1px 0;
+    color: #888;
+}
+.sm-dec-component-pos { color: #86efac; }
+.sm-dec-component-neg { color: #fca5a5; }
+.sm-dec-component-zero { color: #555; }
+
 .sm-pulse {
     display: inline-block;
     width: 8px;
@@ -743,13 +871,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div>
                     <span class="sm-chart-title" id="sm-chart-title">Select a symbol</span>
                     <span class="sm-status-badge" id="sm-trend-badge" style="margin-left:10px;display:none"></span>
-                    <span class="sm-status-badge" id="sm-htf-badge" style="margin-left:6px;display:none"></span>
-                    <span class="sm-status-badge" id="sm-forecast-badge" style="margin-left:6px;display:none"></span>
-                    <span class="sm-status-badge" id="sm-ctr-badge" style="margin-left:6px;display:none"></span>
-                    <!-- Bot's recommendation: which direction wins by Entry Score -->
-                    <span class="sm-status-badge" id="sm-bias-badge" style="margin-left:6px;display:none"></span>
-                    <!-- Live health when a position is open on this symbol -->
-                    <span class="sm-status-badge" id="sm-health-badge" style="margin-left:6px;display:none"></span>
+                    <!-- Hidden legacy badges — kept in DOM so old code paths
+                         that still reference these IDs don't crash, but they
+                         never become visible. The new Decision Center block
+                         below replaces all of them. -->
+                    <span class="sm-status-badge" id="sm-htf-badge" style="display:none !important"></span>
+                    <span class="sm-status-badge" id="sm-forecast-badge" style="display:none !important"></span>
+                    <span class="sm-status-badge" id="sm-ctr-badge" style="display:none !important"></span>
+                    <span class="sm-status-badge" id="sm-bias-badge" style="display:none !important"></span>
+                    <span class="sm-status-badge" id="sm-health-badge" style="display:none !important"></span>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <button onclick="clearSignalsForCurrent()" id="sm-clear-signals-btn"
@@ -758,6 +888,51 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         🗑 Clear Signals
                     </button>
                     <div class="sm-chart-meta" id="sm-chart-meta"></div>
+                </div>
+            </div>
+            <!-- ===== DECISION CENTER ===== -->
+            <!-- One unified analytical block. Replaces the multi-badge mess
+                 in the chart header. Hidden until first decision arrives. -->
+            <div class="sm-decision" id="sm-decision" style="display:none">
+                <div class="sm-decision-main">
+                    <div class="sm-decision-head" id="sm-decision-head">
+                        <span class="sm-decision-icon" id="sm-decision-icon">🧠</span>
+                        <span class="sm-decision-headline" id="sm-decision-headline">—</span>
+                        <span class="sm-decision-verdict" id="sm-decision-verdict"></span>
+                    </div>
+                    <div class="sm-decision-rationale" id="sm-decision-rationale"></div>
+                    <!-- Probability bar — fills LONG (left, green) and SHORT
+                         (right, red) proportionally to the softmax output.
+                         Visual confirmation of how strong the edge is. -->
+                    <div class="sm-decision-bar">
+                        <div class="sm-decision-bar-long" id="sm-decision-bar-long"></div>
+                        <div class="sm-decision-bar-short" id="sm-decision-bar-short"></div>
+                    </div>
+                    <div class="sm-decision-bar-labels">
+                        <span class="sm-dbl-long" id="sm-dbl-long">LONG —</span>
+                        <span class="sm-dbl-short" id="sm-dbl-short">SHORT —</span>
+                    </div>
+                    <!-- Position info (shown only when a position exists) -->
+                    <div class="sm-decision-position" id="sm-decision-position" style="display:none"></div>
+                </div>
+                <div class="sm-decision-toggle">
+                    <button onclick="toggleDecisionDetails()" id="sm-decision-toggle-btn"
+                            class="sm-decision-toggle-btn" title="Show detailed component breakdown">
+                        <span id="sm-decision-toggle-text">▾ details</span>
+                    </button>
+                </div>
+                <!-- Expandable details — hidden by default. Two columns:
+                     LONG components and SHORT components, each with their
+                     positive/negative contributors for full transparency. -->
+                <div class="sm-decision-details" id="sm-decision-details" style="display:none">
+                    <div class="sm-decision-details-col">
+                        <div class="sm-decision-details-title">🟢 LONG components</div>
+                        <div id="sm-decision-details-long"></div>
+                    </div>
+                    <div class="sm-decision-details-col">
+                        <div class="sm-decision-details-title">🔴 SHORT components</div>
+                        <div id="sm-decision-details-short"></div>
+                    </div>
                 </div>
             </div>
             <div class="sm-chart-wrap" id="sm-chart-wrap">
@@ -967,82 +1142,56 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </div>
                     </div>
                     
-                    <!-- Position Health Score (advisory) -->
+                    <!-- ===================================================
+                         🧠 Decision Center
+                         Single settings block for the bot's analytical brain.
+                         Replaces the previous Health Score + Entry Score
+                         sections (with their 17 weight sliders) with just
+                         the choices that meaningfully affect behavior:
+                         on/off, and how strict the bot should be when
+                         labeling verdicts good/marginal/poor.
+                         Power users who want to tune weights can edit the
+                         settings.json directly — they're still validated
+                         on the backend.
+                         =================================================== -->
                     <div class="sm-settings-section">
-                        <h3>🤖 Position Health Score <span style="color:#888;font-size:0.72rem;font-weight:normal">(advisory — does not auto-close)</span></h3>
+                        <h3>🧠 Decision Center
+                            <span style="color:#888;font-size:0.72rem;font-weight:normal">(advisory — never blocks trades)</span>
+                        </h3>
                         <div class="tm-row" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#a5b4fc;font-size:0.78rem">
-                            ℹ️ Експертна система яка комбінує всі індикатори (HTF Bias, Forecast 1H, CTR, LTF структура, PnL, час) у єдиний score від -100 до +100. Поки що тільки advisory — показує в UI колонку Health, не закриває позиції автоматично.
+                            ℹ️ Бот аналізує HTF, Forecast 1H, CTR, SMC структуру, об'єм, волатильність і обчислює рекомендований напрямок з імовірностями (LONG % vs SHORT %). Результат відображається на чарт-панелі та у Telegram. Ніколи не блокує і не змушує відкривати позиції — тільки рекомендує.
                         </div>
                         <div class="tm-row">
                             <label>
-                                <input type="checkbox" id="tm-health-enabled" onchange="saveTMSettings()">
-                                Enable Health Score calculation
+                                <!-- Both Entry and Health share this single toggle now,
+                                     since they're presented as one Decision block. -->
+                                <input type="checkbox" id="tm-entry-enabled" onchange="onDecisionToggle()">
+                                Enable Decision Center
                             </label>
                         </div>
                         <div class="tm-row">
-                            <label>Aggressiveness preset
-                                <span class="tm-help" title="Поріг score нижче якого позиція позначається як 'close' у UI. Aggressive: -20 (близько до neutral) → каже закривати при перших ознаках. Balanced: -40 (default) → потрібен консенсус кількох негативів. Conservative: -60 → тільки при сильному реверсі">?</span>
+                            <label>Selectivity
+                                <span class="tm-help" title="Як суворо називати сигнал 'good'. Aggressive: +10 (більшість сетапів = good). Balanced: +30 (потрібен помірний консенсус). Conservative: +50 (тільки A-grade)">?</span>
                             </label>
-                            <select id="tm-health-preset" onchange="saveTMSettings()" style="background:#1a1a1a;color:#ddd;border:1px solid #333;padding:3px 6px;border-radius:3px">
-                                <option value="aggressive">Aggressive (-20)</option>
-                                <option value="balanced">Balanced (-40)</option>
-                                <option value="conservative">Conservative (-60)</option>
+                            <select id="tm-entry-preset" onchange="onPresetChange()" style="background:#1a1a1a;color:#ddd;border:1px solid #333;padding:3px 6px;border-radius:3px">
+                                <option value="aggressive">Aggressive</option>
+                                <option value="balanced">Balanced (default)</option>
+                                <option value="conservative">Conservative</option>
                             </select>
                         </div>
-                        <div class="tm-row">
-                            <label>Threshold override
-                                <span class="tm-help" title="Якщо вказано — переважає preset. Наприклад -35 для проміжного значення між Aggressive і Balanced. Залиш порожнім щоб використовувати preset">?</span>
-                            </label>
-                            <input type="number" id="tm-health-threshold" min="-100" max="0" step="5" placeholder="(use preset)" onchange="saveTMSettings()" style="width:90px">
-                        </div>
-                        <div style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
-                            <h4 style="font-size:0.78rem;color:#a5b4fc;margin:0 0 8px 0">Component weights (max points each can contribute)</h4>
-                            <div id="tm-health-weights">
-                                <!-- Sliders generated by JS for clean code, see initHealthWeights() -->
-                            </div>
-                            <div class="tm-row" style="margin-top:8px">
-                                <button onclick="resetHealthWeights()" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:#888;padding:3px 10px;border-radius:3px;cursor:pointer;font-size:0.72rem">Reset to defaults</button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Entry Score (advisory) -->
-                    <div class="sm-settings-section">
-                        <h3>🎯 Entry Score <span style="color:#888;font-size:0.72rem;font-weight:normal">(advisory — does not block opens)</span></h3>
-                        <div class="tm-row" style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#a5b4fc;font-size:0.78rem">
-                            ℹ️ Дзеркальна логіка до Health Score, але оцінює якість сигналу <b>перед відкриттям</b>: HTF + Forecast 1H + CTR + свіжість CHoCH + близькість до Strong Low/Weak High + Premium/Discount + Volume + ATR. Score у діапазоні −100…+100, threshold позитивний (потрібен сигнал достатньо хороший щоб відкривати). Поки що advisory — пише в Telegram OPEN і UI snapshot, але <b>відкриває все одно</b>.
-                        </div>
-                        <div class="tm-row">
-                            <label>
-                                <input type="checkbox" id="tm-entry-enabled" onchange="saveTMSettings()">
-                                Enable Entry Score calculation
-                            </label>
-                        </div>
-                        <div class="tm-row">
-                            <label>Selectivity preset
-                                <span class="tm-help" title="Поріг для verdict 'good'. Aggressive: +10 (майже будь-який сигнал зараховується). Balanced: +30 (потрібен помірний консенсус позитивів). Conservative: +50 (тільки A-grade setups). Verdict нижче threshold позначаються 'marginal' (>0) або 'poor' (<0). У advisory режимі verdict не блокує відкриття, лише позначає у Telegram/UI">?</span>
-                            </label>
-                            <select id="tm-entry-preset" onchange="saveTMSettings()" style="background:#1a1a1a;color:#ddd;border:1px solid #333;padding:3px 6px;border-radius:3px">
-                                <option value="aggressive">Aggressive (+10)</option>
-                                <option value="balanced">Balanced (+30)</option>
-                                <option value="conservative">Conservative (+50)</option>
-                            </select>
-                        </div>
-                        <div class="tm-row">
-                            <label>Threshold override
-                                <span class="tm-help" title="Якщо вказано — переважає preset. Залиш порожнім щоб використовувати preset">?</span>
-                            </label>
-                            <input type="number" id="tm-entry-threshold" min="-100" max="100" step="5" placeholder="(use preset)" onchange="saveTMSettings()" style="width:90px">
-                        </div>
-                        <div style="margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
-                            <h4 style="font-size:0.78rem;color:#a5b4fc;margin:0 0 8px 0">Component weights</h4>
-                            <div id="tm-entry-weights">
-                                <!-- Generated by renderEntryWeights() -->
-                            </div>
-                            <div class="tm-row" style="margin-top:8px">
-                                <button onclick="resetEntryWeights()" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);color:#888;padding:3px 10px;border-radius:3px;cursor:pointer;font-size:0.72rem">Reset to defaults</button>
-                            </div>
-                        </div>
+                        <!-- Hidden inputs — kept in DOM so saveTMSettings()
+                             can still POST these fields. The Decision toggle
+                             above syncs them both to the same value. -->
+                        <input type="checkbox" id="tm-health-enabled" style="display:none">
+                        <select id="tm-health-preset" style="display:none">
+                            <option value="aggressive">Aggressive</option>
+                            <option value="balanced">Balanced</option>
+                            <option value="conservative">Conservative</option>
+                        </select>
+                        <input type="number" id="tm-health-threshold" style="display:none">
+                        <input type="number" id="tm-entry-threshold" style="display:none">
+                        <div id="tm-health-weights" style="display:none"></div>
+                        <div id="tm-entry-weights" style="display:none"></div>
                     </div>
                     
                 </div>
@@ -1056,9 +1205,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span>📈 win rate: <b>—</b></span>
                 <span>💰 PnL: <b>$0</b></span>
             </div>
-            <!-- Entry Score validation breakdown — empty if no scored trades yet -->
+            <!-- Decision Validation breakdown — shows win rate / avg PnL
+                 grouped by the verdict the bot assigned at open. Critical
+                 feedback loop: tells you whether the bot's "good" picks
+                 actually outperform "marginal" / "poor" picks. Hidden until
+                 there's enough scored data to be meaningful. -->
             <div class="tm-entry-stats" id="tm-entry-stats" style="display:none">
-                <span style="color:#888;font-size:0.72rem">🎯 Entry Score validation:</span>
+                <span style="color:#888;font-size:0.72rem">🧠 Decision validation:</span>
                 <span class="tm-es-cell" data-bucket="good"></span>
                 <span class="tm-es-cell" data-bucket="marginal"></span>
                 <span class="tm-es-cell" data-bucket="poor"></span>
@@ -1068,10 +1221,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
             <table class="tm-table" id="tm-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Qty</th><th>Entry Score</th><th>Health</th><th>Action</th></tr>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Qty</th><th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="9" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="8" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -1079,10 +1232,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📜 Recent Closed Trades</h3>
             <table class="tm-table" id="tm-closed-table">
                 <thead>
-                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th><th>Entry Score</th><th></th></tr>
+                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-closed-tbody">
-                    <tr><td colspan="9" class="tm-empty-msg">No closed trades yet</td></tr>
+                    <tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>
                 </tbody>
             </table>
             
@@ -1121,20 +1274,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </h3>
             <table class="tm-table" id="tm-shadow-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th><th>Entry Score</th><th>Health</th><th></th></tr>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th><th>Status</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="9" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="8" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
             <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">Recent Paper Closes</h3>
             <table class="tm-table" id="tm-shadow-closed-table">
                 <thead>
-                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th><th>Entry Score</th><th></th></tr>
+                    <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL %</th><th>Reason</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-closed-tbody">
-                    <tr><td colspan="9" class="tm-empty-msg">No paper closes yet</td></tr>
+                    <tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>
                 </tbody>
             </table>
             
@@ -1506,6 +1659,9 @@ function clearChart() {
     if (biasBadge) biasBadge.style.display = 'none';
     const healthBadge = document.getElementById('sm-health-badge');
     if (healthBadge) healthBadge.style.display = 'none';
+    // Hide unified Decision Center too
+    const dec = document.getElementById('sm-decision');
+    if (dec) dec.style.display = 'none';
     const clrBtn = document.getElementById('sm-clear-signals-btn');
     if (clrBtn) clrBtn.style.display = 'none';
     document.getElementById('sm-chart-meta').textContent = '';
@@ -1905,11 +2061,141 @@ async function loadChart() {
             chart.timeScale().fitContent();
         }
         
+        // === Render the unified Decision Center block ===
+        // This is the single visual element the user looks at to see what
+        // the bot thinks. It replaces the old multi-badge mess in the
+        // chart header.
+        renderDecision(d.decision);
+        
         lastChartSymbol = currentSymbol;
     } catch (err) {
         document.getElementById('sm-chart-meta').textContent = 'Error: ' + err.message;
         console.error('Chart load error:', err);
     }
+}
+
+// =================================================================
+// Decision Center renderer
+// =================================================================
+// All UI updates flow from one decision dict. The block has three sections:
+//   1. Headline — "LONG 78%" with verdict label
+//   2. Probability bar — visual confirmation of edge strength
+//   3. Rationale — one-sentence plain-English explanation
+//   4. Position info — only when an open position exists on this symbol
+// And an expandable details section showing per-component breakdown.
+
+function renderDecision(decision) {
+    const root = document.getElementById('sm-decision');
+    if (!decision || !decision.headline) {
+        if (root) root.style.display = 'none';
+        return;
+    }
+    if (root) root.style.display = 'block';
+    
+    const recommended = decision.recommended || 'NEUTRAL';
+    const verdict = decision.verdict || 'marginal';
+    const probLong = (decision.prob_long || 0) * 100;
+    const probShort = (decision.prob_short || 0) * 100;
+    
+    // Headline + color class
+    const headline = document.getElementById('sm-decision-headline');
+    headline.textContent = decision.headline;
+    headline.className = 'sm-decision-headline ' + recommended.toLowerCase();
+    
+    // Verdict badge (good/marginal/poor)
+    const vBadge = document.getElementById('sm-decision-verdict');
+    vBadge.textContent = verdict;
+    vBadge.className = 'sm-decision-verdict ' + verdict;
+    
+    // Icon — brain for normal, scale for neutral
+    const icon = document.getElementById('sm-decision-icon');
+    icon.textContent = recommended === 'NEUTRAL' ? '⚖️' : '🧠';
+    
+    // Rationale
+    document.getElementById('sm-decision-rationale').textContent =
+        decision.rationale || '';
+    
+    // Probability bar — proportional widths
+    document.getElementById('sm-decision-bar-long').style.width = probLong + '%';
+    document.getElementById('sm-decision-bar-short').style.width = probShort + '%';
+    document.getElementById('sm-dbl-long').textContent =
+        `LONG ${probLong.toFixed(0)}%`;
+    document.getElementById('sm-dbl-short').textContent =
+        `${probShort.toFixed(0)}% SHORT`;
+    
+    // Position block — surfaces health for currently open position on
+    // this symbol so user doesn't have to scroll down to TM.
+    const posDiv = document.getElementById('sm-decision-position');
+    const pos = decision.position;
+    if (pos) {
+        const sideIcon = pos.side === 'LONG' ? '🟢' : '🔴';
+        const pnlSign = pos.pnl_pct >= 0 ? '+' : '';
+        const pnlColor = pos.pnl_pct >= 0 ? '#86efac' : '#fca5a5';
+        const kindLabel = pos.kind === 'shadow' ? ' [paper]' : '';
+        const health = pos.health || {};
+        let healthLine = '';
+        if (typeof health.score === 'number') {
+            const hScoreSign = health.score >= 0 ? '+' : '';
+            const hVerdict = health.verdict || '';
+            const hColor = hVerdict === 'close' ? '#fca5a5'
+                         : hVerdict === 'caution' ? '#fde68a'
+                         : '#86efac';
+            healthLine = ` · Health: <span style="color:${hColor}">${hScoreSign}${health.score.toFixed(0)} ${hVerdict}</span>`;
+        }
+        posDiv.innerHTML =
+            `📍 Open ${sideIcon} ${pos.side}${kindLabel} @ ${fmtPriceJS(pos.entry_price)} · ` +
+            `<span style="color:${pnlColor}">${pnlSign}${(pos.pnl_pct || 0).toFixed(2)}%</span>${healthLine}`;
+        posDiv.style.display = 'block';
+    } else {
+        posDiv.style.display = 'none';
+    }
+    
+    // Cache for the expandable details panel — populated only when toggled
+    // open, so we don't render 18 component rows on every chart refresh.
+    window._lastDecision = decision;
+    if (document.getElementById('sm-decision-details').style.display === 'grid') {
+        renderDecisionDetails(decision);
+    }
+}
+
+function toggleDecisionDetails() {
+    const details = document.getElementById('sm-decision-details');
+    const text = document.getElementById('sm-decision-toggle-text');
+    if (details.style.display === 'grid') {
+        details.style.display = 'none';
+        text.textContent = '▾ details';
+    } else {
+        renderDecisionDetails(window._lastDecision);
+        details.style.display = 'grid';
+        text.textContent = '▴ hide details';
+    }
+}
+
+function renderDecisionDetails(decision) {
+    if (!decision) return;
+    const longCol = document.getElementById('sm-decision-details-long');
+    const shortCol = document.getElementById('sm-decision-details-short');
+    const renderCol = (components) => {
+        if (!components || components.length === 0) {
+            return '<div class="sm-dec-component-zero">(no signals)</div>';
+        }
+        const sorted = components.slice().sort((a, b) =>
+            Math.abs(b.value) - Math.abs(a.value));
+        return sorted.map(c => {
+            const v = c.value || 0;
+            const cls = v > 0 ? 'sm-dec-component-pos'
+                      : v < 0 ? 'sm-dec-component-neg'
+                      : 'sm-dec-component-zero';
+            const sign = v > 0 ? '+' : '';
+            const lbl = (c.label || '').replace(/^.+?:\s*/, '').replace(/[+-]?\d+$/, '').trim() || c.label;
+            return `<div class="sm-dec-component ${cls}">
+                <span>${lbl}</span>
+                <span>${sign}${v.toFixed(0)}</span>
+            </div>`;
+        }).join('');
+    };
+    longCol.innerHTML = renderCol(decision.components_long);
+    shortCol.innerHTML = renderCol(decision.components_short);
 }
 
 // Track user interactions to know they zoomed/panned
@@ -2003,24 +2289,60 @@ async function loadTMSettings() {
         document.getElementById('tm-bos4-pct').value = s.bos_4_close_pct;
         document.getElementById('tm-trailing-after-bos2').checked = !!s.trailing_after_bos_2;
         
-        // Health Score
-        document.getElementById('tm-health-enabled').checked = !!s.health_score_enabled;
-        document.getElementById('tm-health-preset').value = s.health_score_preset || 'balanced';
+        // === Decision Center (unified) ===
+        // The visible "Enable Decision Center" checkbox controls BOTH the
+        // entry-side and health-side feature flags. We treat them as one
+        // toggle from the user's perspective. When loading, if EITHER was
+        // enabled in the saved settings we treat the unified toggle as on.
+        // (In practice the saver below keeps them in sync, but this defensive
+        // OR handles legacy stored settings where they might disagree.)
+        const decisionOn = !!s.entry_score_enabled || !!s.health_score_enabled;
+        document.getElementById('tm-entry-enabled').checked = decisionOn;
+        document.getElementById('tm-health-enabled').checked = decisionOn;
+        // Selectivity preset — visible select. Both sides share the same
+        // semantic preset (Aggressive/Balanced/Conservative); we read from
+        // entry preset since that's what the user adjusts directly.
+        const preset = s.entry_score_preset || s.health_score_preset || 'balanced';
+        document.getElementById('tm-entry-preset').value = preset;
+        document.getElementById('tm-health-preset').value = preset;
+        // Threshold overrides remain persisted but aren't surfaced in the
+        // simplified UI. We still write the values so saveTMSettings reads
+        // the same numbers it loaded.
         const tov = s.health_score_threshold_override;
-        document.getElementById('tm-health-threshold').value = (tov === null || tov === undefined) ? '' : tov;
-        renderHealthWeights(s.health_score_weights || {});
-        
-        // Entry Score
-        document.getElementById('tm-entry-enabled').checked = !!s.entry_score_enabled;
-        document.getElementById('tm-entry-preset').value = s.entry_score_preset || 'balanced';
+        document.getElementById('tm-health-threshold').value =
+            (tov === null || tov === undefined) ? '' : tov;
         const etov = s.entry_score_threshold_override;
-        document.getElementById('tm-entry-threshold').value = (etov === null || etov === undefined) ? '' : etov;
-        renderEntryWeights(s.entry_score_weights || {});
+        document.getElementById('tm-entry-threshold').value =
+            (etov === null || etov === undefined) ? '' : etov;
+        // Weight sliders are hidden in the simplified UI — collectors
+        // gracefully fall back to defaults when DOM nodes aren't rendered,
+        // so we skip the render calls entirely.
         
         updateTMSummary();
     } catch (err) {
         console.error('TM settings load error', err);
     }
+}
+
+// Decision Center on/off click handler. The user sees one checkbox but
+// internally we maintain two settings (entry_score_enabled + health_score_enabled).
+// We mirror the visible toggle to the hidden one so saveTMSettings posts
+// matching values for both, treating Decision Center as a single feature.
+function onDecisionToggle() {
+    const visible = document.getElementById('tm-entry-enabled');
+    const hidden = document.getElementById('tm-health-enabled');
+    if (visible && hidden) hidden.checked = visible.checked;
+    saveTMSettings();
+}
+
+// Whenever the visible preset select changes, mirror it to the hidden
+// health preset so they stay in sync. Bound via onchange on the visible
+// select; saveTMSettings runs after we sync.
+function onPresetChange() {
+    const visible = document.getElementById('tm-entry-preset');
+    const hidden = document.getElementById('tm-health-preset');
+    if (visible && hidden) hidden.value = visible.value;
+    saveTMSettings();
 }
 
 function updateTMHeader(enabled) {
@@ -2374,21 +2696,50 @@ function reasonLabel(r) {
     }[r] || r;
 }
 
-// Render a Health Score badge for a position. Hover-tooltip shows the full
-// component breakdown so the user can see WHY the score is what it is.
-// Returns plain '—' when health is missing/disabled.
-function healthBadgeHTML(h) {
-    if (!h || typeof h.score !== 'number') return '<span style="color:#555">—</span>';
-    const cls = h.verdict === 'close' ? 'tm-health-close' :
-                h.verdict === 'caution' ? 'tm-health-caution' : 'tm-health-healthy';
-    const sign = h.score >= 0 ? '+' : '';
-    const components = (h.components || [])
-        .filter(c => c.value !== 0)
-        .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
-        .map(c => `${c.value > 0 ? '+' : ''}${c.value.toFixed(0)}  ${c.label}`)
-        .join('\n');
-    const tip = `Verdict: ${h.verdict} (threshold ${h.threshold})\nSummary: ${h.summary || '—'}\n\n${components || '(no signals yet)'}`;
-    return `<span class="tm-health-badge ${cls}" title="${tip.replace(/"/g, '&quot;')}">${sign}${h.score.toFixed(0)}</span>`;
+// Inline recap of the at-open decision for closed-trade rows. Compact —
+// just the headline. Empty string when no decision was captured.
+function decisionRecap(es) {
+    if (!es) return '';
+    if (es.headline) {
+        return ` · <span style="color:#888">was ${es.headline}</span>`;
+    }
+    if (typeof es.score === 'number') {
+        const sign = es.score >= 0 ? '+' : '';
+        return ` · <span style="color:#888">was ${sign}${es.score.toFixed(0)}</span>`;
+    }
+    return '';
+}
+
+// Combined Status badge — shows the position's Decision-Center headline
+// captured at open time (e.g. "LONG 78%") plus an indicator of live health.
+// Replaces the previous two-column setup (Entry Score badge + Health badge)
+// since users found the split confusing.
+function statusBadgeHTML(entryScore, health) {
+    // Headline from the entry-side decision (frozen at open time)
+    let entryPart = '';
+    if (entryScore && entryScore.headline) {
+        const verdict = entryScore.verdict || '';
+        const cls = verdict === 'good' ? 'tm-health-healthy' :
+                    verdict === 'marginal' ? 'tm-health-caution' :
+                    verdict === 'poor' ? 'tm-health-close' : '';
+        entryPart = `<span class="tm-health-badge ${cls}" title="At-open decision: ${entryScore.headline} (${verdict})\n${entryScore.rationale || ''}">${entryScore.headline}</span>`;
+    } else if (entryScore && typeof entryScore.score === 'number') {
+        // Legacy: just score+verdict
+        const sign = entryScore.score >= 0 ? '+' : '';
+        entryPart = `<span class="tm-health-badge">${sign}${entryScore.score.toFixed(0)}</span>`;
+    }
+    
+    // Live health indicator (small, just the score)
+    let healthPart = '';
+    if (health && typeof health.score === 'number') {
+        const cls = health.verdict === 'close' ? 'tm-health-close' :
+                    health.verdict === 'caution' ? 'tm-health-caution' : 'tm-health-healthy';
+        const sign = health.score >= 0 ? '+' : '';
+        healthPart = ` <span class="tm-health-badge ${cls}" title="Live health: ${sign}${health.score.toFixed(0)} (${health.verdict})\n${health.summary || ''}" style="font-size:0.65rem;opacity:0.85">🩺${sign}${health.score.toFixed(0)}</span>`;
+    }
+    
+    if (!entryPart && !healthPart) return '<span style="color:#555">—</span>';
+    return entryPart + healthPart;
 }
 
 // Entry Score badge — same visual language as health but color mapping is
@@ -2469,7 +2820,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -2482,8 +2833,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
-                    <td>${entryBadgeHTML(p.entry_score)}</td>
-                    <td>${healthBadgeHTML(p.health)}</td>
+                    <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');
@@ -2497,7 +2847,7 @@ async function loadTMState() {
         const closed = rawClosed.slice().reverse();
         const closedTbody = document.getElementById('tm-closed-tbody');
         if (closed.length === 0) {
-            closedTbody.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">No closed trades yet</td></tr>';
+            closedTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No closed trades yet</td></tr>';
         } else {
             closedTbody.innerHTML = closed.slice(0, 50).map((c, i) => {
                 const origIdx = rawClosed.length - 1 - i;
@@ -2511,8 +2861,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}% (${pnlSign}$${c.pnl_usd.toFixed(2)})</td>
-                    <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}</td>
-                    <td>${entryBadgeHTML(c.entry_score)}</td>
+                    <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}${decisionRecap(c.entry_score)}</td>
                     <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMClosed(${origIdx}, '${c.symbol}')">✕</button></td>
                 </tr>`;
             }).join('');
@@ -2532,7 +2881,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -2545,8 +2894,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
                     <td style="color:#888;font-size:0.72rem">${p.opened_by || '—'}</td>
-                    <td>${entryBadgeHTML(p.entry_score)}</td>
-                    <td>${healthBadgeHTML(p.health)}</td>
+                    <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');
@@ -2556,7 +2904,7 @@ async function loadTMState() {
         const rawShadowClosed = d.shadow_closed || [];
         const shadowClosedTbody = document.getElementById('tm-shadow-closed-tbody');
         if (shadowClosed.length === 0) {
-            shadowClosedTbody.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">No paper closes yet</td></tr>';
+            shadowClosedTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No paper closes yet</td></tr>';
         } else {
             shadowClosedTbody.innerHTML = shadowClosed.slice(0, 50).map((c, i) => {
                 const origIdx = rawShadowClosed.length - 1 - i;
@@ -2570,8 +2918,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}%</td>
-                    <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}</td>
-                    <td>${entryBadgeHTML(c.entry_score)}</td>
+                    <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}${decisionRecap(c.entry_score)}</td>
                     <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMShadowClosed(${origIdx}, '${c.symbol}')">✕</button></td>
                 </tr>`;
             }).join('');
