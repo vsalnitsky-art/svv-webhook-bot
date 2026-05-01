@@ -173,6 +173,12 @@ def _new_position(symbol, side, entry_price, qty, sl_price, tp_price, order_id, 
         'be_moved': False,
         'trailing_active': False,
         'trailing_peak': float(entry_price),  # high-water mark for LONG; low for SHORT
+        # Marker — set by on_bos_event when BOS-2 hook activates trailing.
+        # _update_trailing checks this so that BOS-2 trailing works even
+        # when the global use_trailing toggle is off. Default False means
+        # legacy positions loaded before this field existed continue to
+        # behave as if trailing is purely global-toggle controlled.
+        'trailing_via_bos2': False,
         'partial_closes_done': [],       # ['bos_2', 'bos_3', ...]
         'bos_count_since_entry': 1,      # the opening BOS itself counts as #1
     }
@@ -551,14 +557,25 @@ class TradeManager:
     
     def _update_trailing(self, pos, current_price):
         s = self._settings
-        if not s.get('use_trailing'):
+        # Two paths can activate trailing:
+        #   (a) Global use_trailing=True with price reaching trailing_activate_pct
+        #   (b) BOS-2 hook explicitly setting trailing_via_bos2=True
+        # Path (b) must work even when use_trailing is OFF — that's the
+        # explicit promise of the "Auto-activate Trailing after BOS-2"
+        # toggle. Otherwise users who disable global trailing but enable
+        # BOS-2 trailing would see no effect, which broke an entire
+        # trade-management feature.
+        global_trailing = s.get('use_trailing', False)
+        bos2_trailing = pos.get('trailing_via_bos2', False) and pos.get('trailing_active', False)
+        if not global_trailing and not bos2_trailing:
             return
         
         entry = pos['entry_price']
         side = pos['side']
         
-        # Activation
-        if not pos.get('trailing_active'):
+        # Activation — only via the global path. The BOS-2 path activates
+        # in on_bos_event by setting trailing_active and trailing_via_bos2.
+        if not pos.get('trailing_active') and global_trailing:
             activate_pct = s.get('trailing_activate_pct', 1.0) / 100
             if side == 'LONG' and current_price >= entry * (1 + activate_pct):
                 pos['trailing_active'] = True
@@ -1116,26 +1133,54 @@ class TradeManager:
             return None
     
     def on_bos_event(self, symbol: str, direction: str, level: float, bar_t: int):
-        """Called by SMC scanner when a BOS event is detected (any).
+        """Called by SMC scanner when a BOS event is detected.
         
-        Two responsibilities:
-          1) Update Health Score evaluator state (BOS counts in both directions)
-             for real AND shadow positions, regardless of TM enabled state.
-          2) Trigger BOS-N partial closes — only for real positions when TM is
-             enabled and use_bos_partials is on.
+        Three responsibilities:
+          1) Update Health Score evaluator state (BOS counts in BOTH directions)
+             for real AND shadow positions, always — regardless of TM enabled.
+          2) Maintain `bos_count_since_entry` on positions so we can
+             reference "BOS #2", "BOS #3", etc. The opening BOS (when
+             opened_by=choch_bos) counts as #1; opening on `choch` mode
+             starts the same way because the user explicitly mapped both
+             modes to BOS-2 = first BOS after entry.
+          3) Trigger BOS-N partial closes — for both REAL (via Bybit API)
+             and SHADOW (paper trading book-keeping) positions, gated by
+             use_bos_partials.
+        
+        Idempotency: scanner may emit the same BOS event multiple times
+        across re-scans of the same bar, especially around re-deploys or
+        cache invalidations. We dedupe on (symbol, position-instance, bar_t)
+        so a single physical BOS bar increments the counter exactly once
+        per position. Position-instance is implicit: when a new position
+        opens we reset `last_bos_bar_t` to None.
+        
+        Diagnostic logging is intentionally verbose so production logs
+        on Render show exactly what happened on every BOS — without it,
+        debugging "BOS-2 didn't fire" is essentially blind.
         """
-        # === Evaluator-state updates (always run if any position exists) ===
         s = self._settings
         with self._lock:
             real = self._positions.get(symbol)
             shadow = self._shadow_positions.get(symbol)
             
-            for pos, state_dict in (
-                (real, self._pos_state),
-                (shadow, self._shadow_pos_state),
+            # === Evaluator-state updates (always, both kinds) ===
+            # These also need bar_t-based dedup so health scores aren't
+            # inflated when scanner re-emits the same event.
+            for pos, state_dict, kind_label in (
+                (real, self._pos_state, 'real'),
+                (shadow, self._shadow_pos_state, 'shadow'),
             ):
                 if not pos or symbol not in state_dict:
                     continue
+                # Per-position last-seen BOS timestamp — separate from the
+                # per-position partial counter so evaluator state is updated
+                # even if partial close was already done at this bar.
+                last_t = state_dict[symbol].get('last_bos_bar_t')
+                if last_t is not None and bar_t and last_t >= bar_t:
+                    # Same or older bar — already counted, skip
+                    continue
+                state_dict[symbol]['last_bos_bar_t'] = bar_t
+                
                 pos_dir = 'bull' if pos['side'] == 'LONG' else 'bear'
                 if direction == pos_dir:
                     state_dict[symbol]['bos_with_count'] = (
@@ -1144,40 +1189,205 @@ class TradeManager:
                     state_dict[symbol]['bos_against_count'] = (
                         state_dict[symbol].get('bos_against_count', 0) + 1)
         
-        # === Partial-close logic (real positions only, requires TM enabled) ===
-        if not self.is_enabled():
-            return
+        # === Partial-close logic ===
+        # Two independent code paths:
+        #   1) Real positions — gated by is_enabled() AND use_bos_partials,
+        #      operate on _positions and call Bybit API via _partial_close
+        #   2) Shadow positions — gated by use_bos_partials only (test_mode
+        #      is supposed to work with TM master toggle OFF), operate on
+        #      _shadow_positions, no Bybit calls.
+        # Both paths run on every BOS event so a symbol with both a real
+        # AND a shadow position would partial-close both. In practice
+        # users only have one of the two at a time but the code is robust
+        # to either configuration.
+        
         if not s.get('use_bos_partials'):
-            return
-        if not real:
+            # User explicitly disabled the feature — log once and skip both paths.
+            print(f"[TM] BOS {symbol} {direction} ignored: use_bos_partials=False")
             return
         
-        # Only count BOS in same direction as our position for the partial logic
+        # ----- REAL position path -----
+        if real and self.is_enabled():
+            self._process_bos_real(symbol, direction, level, bar_t, real)
+        elif real and not self.is_enabled():
+            print(f"[TM] BOS {symbol} {direction} for real position ignored: TM disabled")
+        
+        # ----- SHADOW position path -----
+        # Always runs when a shadow position exists. test_mode by design
+        # operates while TM master toggle is off.
+        if shadow:
+            self._process_bos_shadow(symbol, direction, level, bar_t)
+        elif not real:
+            # Neither real nor shadow — nothing to do. Don't log to avoid
+            # noise from BOS events on watched symbols without trades.
+            pass
+    
+    def _process_bos_real(self, symbol: str, direction: str, level: float,
+                          bar_t: int, real: Dict):
+        """BOS-N partial close handler for the REAL position on `symbol`.
+        Extracted from on_bos_event so the two code paths (real vs shadow)
+        stay readable at the top level.
+        
+        Idempotent on bar_t — the same physical BOS bar will not increment
+        the counter twice even if scanner re-emits.
+        """
+        s = self._settings
+        
+        # Same direction as our position?
         bos_side = 'LONG' if direction == 'bull' else 'SHORT'
         if bos_side != real['side']:
+            print(f"[TM] BOS {symbol} {direction} ignored: opposite to position {real['side']}")
             return
         
-        # Increment count
-        real['bos_count_since_entry'] = real.get('bos_count_since_entry', 1) + 1
+        # bar_t-based dedup. If we've already processed a BOS at this bar
+        # for this position, skip silently. Different bar_t (newer BOS) is
+        # always processed.
+        last_t = real.get('last_bos_bar_t')
+        if last_t is not None and bar_t and last_t >= bar_t:
+            return
+        real['last_bos_bar_t'] = bar_t
+        
+        # Increment BOS counter. The starting value of 1 (set in
+        # _new_position) means the FIRST post-entry BOS becomes #2 — which
+        # the user has confirmed matches their settings layout where
+        # bos_2_close_pct = "first BOS after entry" for both alert modes.
+        prev_n = real.get('bos_count_since_entry', 1)
+        real['bos_count_since_entry'] = prev_n + 1
         n = real['bos_count_since_entry']
         
-        # Determine if this BOS triggers a partial
+        # Look up the configured percentage for this BOS number
         partial_pct = s.get(f'bos_{n}_close_pct', 0)
         marker_key = f'bos_{n}'
+        already_done = marker_key in real.get('partial_closes_done', [])
         
-        if partial_pct > 0 and marker_key not in real.get('partial_closes_done', []):
-            current_price = self._get_current_price(symbol) or level
+        print(f"[TM] BOS-{n} for {symbol} {real['side']}: "
+              f"pct={partial_pct}%, done={already_done}, "
+              f"opened_by={self._base_opened_by(real.get('opened_by', ''))}")
+        
+        if partial_pct <= 0:
+            # User has BOS-N partial disabled (e.g. bos_3_close_pct=0)
+            return
+        if already_done:
+            # Idempotency guard — same BOS event delivered twice shouldn't
+            # double-close. Can happen on scanner restarts or duplicate hooks.
+            return
+        
+        current_price = self._get_current_price(symbol) or level
+        try:
             self._partial_close(symbol, partial_pct, current_price,
                                 reason=f'bos_{n}_partial')
             real.setdefault('partial_closes_done', []).append(marker_key)
-            
-            # Auto-activate trailing after BOS-2
-            if n == 2 and s.get('trailing_after_bos_2'):
-                real['trailing_active'] = True
-                real['trailing_peak'] = current_price
-                self._notify(f"📈 Trailing активовано після BOS-2: {symbol}")
-            
-            self._persist_positions()
+            print(f"[TM] ✂️ BOS-{n} partial close executed: "
+                  f"{symbol} {real['side']} {partial_pct}% @ {self._fmt_price(current_price)}")
+        except Exception as e:
+            print(f"[TM] ❌ BOS-{n} partial close FAILED for {symbol}: {e}")
+            return
+        
+        # Auto-activate trailing after BOS-2 — this works even when the
+        # global use_trailing toggle is OFF, because the user explicitly
+        # opted into "trailing after BOS-2" as a separate gate. Note that
+        # _update_trailing checks use_trailing before tracking — so we
+        # also need to bypass that gate at update time. See _update_trailing
+        # for the matching logic that respects the BOS-activated state.
+        if n == 2 and s.get('trailing_after_bos_2'):
+            real['trailing_active'] = True
+            real['trailing_peak'] = current_price
+            real['trailing_via_bos2'] = True  # marker — bypass use_trailing gate
+            self._notify(f"📈 Trailing активовано після BOS-2: {symbol}")
+            print(f"[TM] 📈 Trailing activated for {symbol} via BOS-2 hook "
+                  f"(use_trailing={s.get('use_trailing')})")
+        
+        self._persist_positions()
+    
+    def _process_bos_shadow(self, symbol: str, direction: str, level: float, bar_t: int):
+        """Mirror of the BOS-N partial-close logic for SHADOW (paper) positions.
+        
+        Called from on_bos_event right after the real-position handling.
+        Same gates (use_bos_partials), same counter logic (first BOS after
+        entry → bos_2_close_pct), same trailing-after-BOS-2 wiring. The only
+        differences:
+          - Calls _partial_close_shadow (no Bybit API)
+          - Doesn't require TM master toggle to be enabled (test mode is
+            specifically designed to run while the master toggle is OFF)
+          - Idempotency uses partial_closes_done list inside the shadow pos
+        
+        This is what makes "BOS-N partials in test mode" actually work.
+        Without it, BOS events were tracked in evaluator state but never
+        triggered any shadow-side partial closes.
+        """
+        s = self._settings
+        if not s.get('use_bos_partials'):
+            return  # logged once at the top-level on_bos_event
+        
+        with self._lock:
+            shadow = self._shadow_positions.get(symbol)
+        if not shadow:
+            return
+        
+        # Same direction as our position?
+        bos_side = 'LONG' if direction == 'bull' else 'SHORT'
+        if bos_side != shadow['side']:
+            print(f"[TM] [TEST] BOS {symbol} {direction} ignored: "
+                  f"opposite to shadow position {shadow['side']}")
+            return
+        
+        # bar_t-based dedup so re-emitted BOS for the same bar doesn't
+        # over-increment the counter. Mirrors the real-side guard.
+        last_t = shadow.get('last_bos_bar_t')
+        if last_t is not None and bar_t and last_t >= bar_t:
+            return
+        shadow['last_bos_bar_t'] = bar_t
+        
+        # Increment counter (mirrors real-side semantics)
+        prev_n = shadow.get('bos_count_since_entry', 1)
+        shadow['bos_count_since_entry'] = prev_n + 1
+        n = shadow['bos_count_since_entry']
+        
+        partial_pct = s.get(f'bos_{n}_close_pct', 0)
+        marker_key = f'bos_{n}'
+        already_done = marker_key in shadow.get('partial_closes_done', [])
+        
+        print(f"[TM] [TEST] BOS-{n} for {symbol} {shadow['side']} (shadow): "
+              f"pct={partial_pct}%, done={already_done}")
+        
+        if partial_pct <= 0:
+            return
+        if already_done:
+            return
+        
+        current_price = self._get_current_price(symbol) or level
+        try:
+            self._partial_close_shadow(symbol, partial_pct, current_price,
+                                        reason=f'bos_{n}_partial')
+            # Note: _partial_close_shadow may have already removed the
+            # shadow position if remaining qty hit zero. Re-fetch before
+            # marking partial_closes_done.
+            with self._lock:
+                still_open = self._shadow_positions.get(symbol)
+            if still_open:
+                still_open.setdefault('partial_closes_done', []).append(marker_key)
+                self._persist_shadow_positions()
+        except Exception as e:
+            print(f"[TM] ❌ [TEST] BOS-{n} shadow partial FAILED for {symbol}: {e}")
+            return
+        
+        # Auto-activate trailing for shadow on BOS-2 (same logic as real).
+        # Note: shadow positions don't go through _update_trailing yet —
+        # there's no shadow monitor loop. We set the markers anyway so that
+        # if a future shadow monitor is added, the state is already there.
+        if n == 2 and s.get('trailing_after_bos_2'):
+            with self._lock:
+                still_open = self._shadow_positions.get(symbol)
+            if still_open:
+                still_open['trailing_active'] = True
+                still_open['trailing_peak'] = current_price
+                still_open['trailing_via_bos2'] = True
+                self._persist_shadow_positions()
+                self._notify(
+                    f"📈 [TEST] Trailing активовано після BOS-2: {symbol}",
+                    is_test=True,
+                )
+                print(f"[TM] [TEST] 📈 Shadow trailing activated for {symbol} via BOS-2 hook")
     
     # ============================================================
     # Position open / close / partial
@@ -1349,6 +1559,62 @@ class TradeManager:
             f"💼 Remaining: {new_remaining:.6g}"
         )
     
+    def _partial_close_shadow(self, symbol: str, pct: float,
+                              exit_price: float, reason: str):
+        """Paper-trading mirror of _partial_close. No Bybit calls — purely
+        book-keeping so shadow positions go through the same BOS-N partial
+        lifecycle as real ones.
+        
+        Behaviour:
+          - Reduces shadow_position.remaining_qty by `pct`%
+          - Logs a `[TEST] Partial close` Telegram message
+          - Does NOT create a separate closed_trade entry (that only happens
+            when remaining_qty hits 0; mirrors real-side behavior).
+          - When remaining_qty drops below 0.001 (effectively 0), we treat
+            the position as fully closed via _close_shadow with the same reason.
+        """
+        with self._lock:
+            pos = self._shadow_positions.get(symbol)
+        if not pos:
+            return
+        
+        remaining = pos.get('remaining_qty', pos.get('qty', 1.0))
+        close_qty = remaining * (pct / 100)
+        if close_qty <= 0:
+            return
+        
+        new_remaining = remaining - close_qty
+        # Floor very small remainders to fully close — avoids floating-point
+        # crumbs leaving a 0.0001 ghost position open.
+        if new_remaining < 0.001:
+            # This partial actually closes the entire remaining position
+            self._close_shadow(symbol, exit_price, reason=reason)
+            return
+        
+        with self._lock:
+            pos['remaining_qty'] = new_remaining
+        self._persist_shadow_positions()
+        
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG':
+            pnl_pct = (exit_price - entry) / entry * 100
+        else:
+            pnl_pct = (entry - exit_price) / entry * 100
+        
+        side_icon = '🟢' if pos['side'] == 'LONG' else '🔴'
+        self._notify(
+            f"{side_icon} <b>[TEST] Partial close</b>: #{symbol}\n"
+            f"📤 {pct:.0f}% of paper position closed\n"
+            f"📍 Exit: {self._fmt_price(exit_price)}\n"
+            f"💰 PnL: {pnl_pct:+.2f}%\n"
+            f"🔖 Reason: {self._reason_label(reason)}\n"
+            f"💼 Remaining: {new_remaining * 100:.0f}%\n"
+            f"🧪 Paper trade (no real close)",
+            is_test=True,
+        )
+        print(f"[TM] [TEST] Shadow partial close: {symbol} {pos['side']} "
+              f"{pct:.0f}% → remaining {new_remaining * 100:.0f}%")
+    
     # ============================================================
     # Shadow (paper) positions — for test_mode
     # ============================================================
@@ -1370,6 +1636,19 @@ class TradeManager:
             'opened_at': time.time(),
             'opened_by': opened_by_full,
             'shadow': True,
+            # === Fields needed for BOS-N partial closes on shadow positions ===
+            # We track qty as a unit (1.0) and remaining_qty as a fraction,
+            # so a "70% partial close" reduces remaining_qty from 1.0 to 0.3.
+            # This is purely book-keeping — no Bybit calls — but it lets
+            # shadow trades go through the same partial-close lifecycle as
+            # real trades for accurate paper-trading data.
+            'qty': 1.0,
+            'remaining_qty': 1.0,
+            'partial_closes_done': [],       # ['bos_2', 'bos_3', ...]
+            'bos_count_since_entry': 1,      # opening BOS counts as #1 (matches real)
+            'trailing_active': False,
+            'trailing_peak': float(entry_price),
+            'trailing_via_bos2': False,
         }
         if decision is not None:
             pos['entry_score'] = decision

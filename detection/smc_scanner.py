@@ -885,13 +885,23 @@ class SMCScanner:
             is_recent = to_age_secs <= recent_threshold_secs
             
             # === Forward BOS events to Trade Manager (always, before mode logic) ===
-            # TM uses these to count BOS-N for partial closes after position open.
-            # Independent of alert mode and dedup — TM has its own logic.
+            # TM uses these to:
+            #   1) Update Health Score evaluator state (BOS counts) — ALWAYS,
+            #      regardless of TM enabled / shadow mode.
+            #   2) Trigger BOS-N partial closes — only when a real position
+            #      exists and TM is enabled. The on_bos_event method itself
+            #      enforces those preconditions; we don't gate at the
+            #      scanner level so shadow positions can also receive
+            #      counter updates for evaluator/UI consistency.
+            # NOTE: We removed the prior `tm.is_enabled()` gate that lived
+            # here. It blocked all BOS routing in test_mode (TM disabled
+            # but shadow positions active) which prevented evaluator stats
+            # and any future shadow-side partial logic from ever firing.
             if tag == 'BOS' and is_recent:
                 try:
                     from detection.trade_manager import get_trade_manager
                     tm = get_trade_manager()
-                    if tm and tm.is_enabled():
+                    if tm:
                         tm.on_bos_event(symbol=symbol, direction=ev['dir'],
                                           level=ev['level'], bar_t=to_t)
                 except Exception as e:
