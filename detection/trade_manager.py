@@ -1661,15 +1661,109 @@ class TradeManager:
         icon = '🟢' if side == 'LONG' else '🔴'
         # Single-line decision summary instead of multi-line breakdown
         es_block = self._format_entry_score_telegram(decision)
+        # Order Block info — informational for now. Computed on demand from
+        # the scanner's klines cache. Failure to compute is non-fatal — we
+        # just skip the OB line in the message.
+        ob_line = self._format_last_ob_telegram(symbol)
         msg = (
             f"{icon} <b>[TEST] OPEN {side}</b>: #{symbol}\n"
             f"📍 Entry: {self._fmt_price(entry_price)}\n"
             f"📋 {opened_by_full}\n"
             f"{es_block}"
+            f"{ob_line}"
             f"🧪 Paper trading (no real order)"
         )
         self._notify(msg, is_test=True)
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
+    
+    def _format_last_ob_telegram(self, symbol: str) -> str:
+        """Render a one-line Order Block status for Telegram OPEN messages.
+        
+        Reads from DB cache (same source the OB Filter signal gate uses),
+        falling back to inline scanner-cache compute only when DB row is
+        absent. Format:
+        
+            🎯 OB Confirm: 🟢 LONG (1H) — when filter is on and OB matched
+            🎯 OB: 🟢 LONG (1H) zone 103,400—103,520 — info-only mode
+        
+        Returns empty string when no OB exists. Non-fatal — designed so
+        callers can splice the result into a message without conditionals.
+        
+        For OPEN messages this implicitly tells the user "the gate let
+        this through" because if filter were on and OB didn't match, the
+        signal would never have reached _open_*() in the first place.
+        """
+        if not self.scanner:
+            return ''
+        
+        # Read OB from DB — same row that gated the signal
+        try:
+            from storage.db_operations import get_db
+            ob_tf = self.scanner._settings.get('ob_filter_timeframe', '1h')
+            filter_on = bool(self.scanner._settings.get('ob_filter_enabled', False))
+            row = get_db().get_smc_ob_state(symbol, ob_tf)
+        except Exception as e:
+            print(f"[TM] OB DB lookup error for {symbol}: {e}")
+            return ''
+        
+        # If DB row is missing, try the inline path (scanner just started)
+        if row is None or not row.get('bias'):
+            try:
+                from detection.ob_detector import detect_last_order_block
+                with self.scanner._lock:
+                    cached = dict(self.scanner._cache.get(symbol) or {})
+                klines = cached.get('klines') or []
+                analysis = cached.get('analysis') or {}
+                if klines:
+                    internal = analysis.get('internal') or {}
+                    klines_closed = klines[:-1] if len(klines) >= 2 else klines
+                    ob = detect_last_order_block(
+                        klines=klines_closed,
+                        pivots=internal.get('pivots', []),
+                        events=internal.get('events', []),
+                    )
+                    if ob:
+                        row = {
+                            'bias': ob['bias'],
+                            'bar_high': ob['bar_high'],
+                            'bar_low': ob['bar_low'],
+                            'bar_time': ob['bar_time'],
+                        }
+            except Exception:
+                pass
+        
+        if not row or not row.get('bias'):
+            return ''
+        
+        bias = row['bias']
+        bias_label = 'LONG' if bias == 'BULLISH' else 'SHORT'
+        bias_icon = '🟢' if bias == 'BULLISH' else '🔴'
+        tf_label = ob_tf.upper()
+        
+        # Age — bar_time is ms epoch
+        bar_time_ms = row.get('bar_time') or 0
+        age_str = ''
+        if bar_time_ms:
+            try:
+                age_secs = max(0, time.time() - (bar_time_ms / 1000))
+                if age_secs < 3600:
+                    age_str = f" (~{int(age_secs / 60)}m ago)"
+                elif age_secs < 86400:
+                    age_str = f" (~{int(age_secs / 3600)}h ago)"
+                else:
+                    age_str = f" (~{int(age_secs / 86400)}d ago)"
+            except Exception:
+                pass
+        
+        if filter_on:
+            # Filter mode: short confirmation line — the gate already
+            # validated direction match, so we just affirm it for the user.
+            return f"🎯 OB Confirm: {bias_icon} {bias_label} ({tf_label}){age_str}\n"
+        else:
+            # Info-only mode: also show the zone bounds for context
+            zone = (f"{self._fmt_price(row['bar_low'])}—"
+                    f"{self._fmt_price(row['bar_high'])}")
+            return f"🎯 OB: {bias_icon} {bias_label} ({tf_label}) zone {zone}{age_str}\n"
     
     def _format_entry_score_telegram(self, entry_score: Optional[Dict]) -> str:
         """Single-line Decision Center summary for Telegram OPEN messages.

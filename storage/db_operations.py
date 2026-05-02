@@ -8,7 +8,7 @@ from sqlalchemy import desc, and_, or_
 from storage.db_models import (
     get_session, init_db,
     SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
-    SymbolBlacklist
+    SymbolBlacklist, SMCOBState
 )
 from config import DEFAULT_SETTINGS
 
@@ -740,6 +740,103 @@ class DBOperations:
                 ):
                     added += 1
         return added
+    
+    # ============================================================
+    # SMC Order Block State (Pine SMC_PRO_BOT__47_)
+    # ============================================================
+    # Single-row-per-(symbol,timeframe) cache. Updated on every scan tick
+    # for every watchlist symbol. Used by:
+    #   1) Chart panel — to render the OB badge without re-running detection
+    #   2) Signal gate — to block opens that don't match the OB direction
+    #
+    # Both readers and writers share this table so there's no race between
+    # "what the user sees" and "what the gate checks".
+    
+    def upsert_smc_ob_state(self, symbol: str, timeframe: str,
+                              ob_data: Optional[Dict]) -> bool:
+        """Update (or insert) the SMC OB state for a symbol+timeframe.
+        
+        Pass ob_data=None when the detector found no valid OB — we still
+        write a row with bias=None so the gate sees "we computed and
+        nothing exists" (different from "we never computed").
+        
+        Returns True on successful write, False on DB error.
+        """
+        session = get_session()
+        try:
+            row = session.query(SMCOBState).filter_by(
+                symbol=symbol, timeframe=timeframe).first()
+            if row is None:
+                row = SMCOBState(symbol=symbol, timeframe=timeframe)
+                session.add(row)
+            
+            if ob_data:
+                row.bias = ob_data.get('bias')
+                row.bar_high = ob_data.get('bar_high')
+                row.bar_low = ob_data.get('bar_low')
+                row.bar_time_ms = ob_data.get('bar_time')
+                row.bar_idx = ob_data.get('bar_idx')
+                row.created_at_idx = ob_data.get('created_at_idx')
+                row.created_at_t = ob_data.get('created_at_t')
+            else:
+                # Explicitly clear when no OB exists — important for the gate.
+                row.bias = None
+                row.bar_high = None
+                row.bar_low = None
+                row.bar_time_ms = None
+                row.bar_idx = None
+                row.created_at_idx = None
+                row.created_at_t = None
+            
+            row.computed_at = datetime.utcnow()
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] upsert_smc_ob_state error for {symbol}@{timeframe}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def get_smc_ob_state(self, symbol: str,
+                          timeframe: str) -> Optional[Dict]:
+        """Fetch the cached OB state. Returns None if no row exists yet
+        (i.e. scanner hasn't computed for this symbol+TF), or a dict with
+        `bias=None` when scanner ran but found no valid OB.
+        
+        The distinction matters: 'never computed' is reasonable to
+        wait-and-retry, while 'computed and empty' is a definitive signal
+        for the gate to block.
+        """
+        session = get_session()
+        try:
+            row = session.query(SMCOBState).filter_by(
+                symbol=symbol, timeframe=timeframe).first()
+            if row is None:
+                return None
+            return row.to_dict()
+        except Exception as e:
+            print(f"[DB] get_smc_ob_state error for {symbol}@{timeframe}: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def delete_smc_ob_state_for_symbol(self, symbol: str) -> int:
+        """Wipe all OB state rows for a symbol — called when symbol is
+        removed from watchlist so we don't accumulate stale data.
+        Returns count of rows deleted.
+        """
+        session = get_session()
+        try:
+            n = session.query(SMCOBState).filter_by(symbol=symbol).delete()
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] delete_smc_ob_state_for_symbol error for {symbol}: {e}")
+            return 0
+        finally:
+            session.close()
 
 
 # Singleton instance
