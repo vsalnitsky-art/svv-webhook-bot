@@ -2,7 +2,7 @@
 Database Models - SQLAlchemy models for Sleeper OB Bot
 """
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, DateTime, Text, Index
+from sqlalchemy import create_engine, Column, Integer, BigInteger, String, Float, Boolean, DateTime, Text, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from config import DATABASE_URL
@@ -619,6 +619,49 @@ def migrate_sleeper_candidates_v3():
                 conn.rollback()
     
     print("[DB MIGRATE] Migration complete")
+    
+    # ==========================================================
+    # Migrate SMCOBState — bar_time_ms / created_at_t Integer→BigInteger
+    # ==========================================================
+    # The first deploy of SMCOBState used Integer (32-bit) for ms-epoch
+    # columns. PostgreSQL Integer max is ~2.1B; ms timestamps are ~1.78e12
+    # and overflow on every insert. This migration alters those columns
+    # in-place. Idempotent — checks current column type before altering.
+    # SQLite ignores this entirely (it stores as INTEGER 64-bit always).
+    smc_ob_table = f"{TABLE_PREFIX}smc_ob_state"
+    smc_ob_bigint_cols = ['bar_time_ms', 'created_at_t']
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for col_name in smc_ob_bigint_cols:
+            try:
+                # PostgreSQL only — SQLite has dynamic typing
+                # Check if column exists AND is currently INTEGER
+                check_sql = text(f"""
+                    SELECT data_type FROM information_schema.columns
+                    WHERE table_name = '{smc_ob_table}'
+                      AND column_name = '{col_name}'
+                """)
+                result = conn.execute(check_sql).fetchone()
+                if result and result[0] == 'integer':
+                    alter_sql = text(
+                        f"ALTER TABLE {smc_ob_table} "
+                        f"ALTER COLUMN {col_name} TYPE BIGINT "
+                        f"USING {col_name}::BIGINT"
+                    )
+                    conn.execute(alter_sql)
+                    conn.commit()
+                    print(f"[DB MIGRATE] Altered {smc_ob_table}.{col_name} → BIGINT")
+                # If result is None: table doesn't exist yet (will be created
+                # with correct types by Base.metadata.create_all). If type is
+                # already 'bigint': nothing to do.
+            except Exception as e:
+                # Don't crash boot — just log. SQLite raises here because
+                # information_schema doesn't exist; that's expected and fine.
+                error_str = str(e)
+                if 'no such table: information_schema' not in error_str.lower() \
+                   and 'no such column' not in error_str.lower():
+                    print(f"[DB MIGRATE] OB state migration warning ({col_name}): {e}")
+                conn.rollback()
 
 
 def get_session():
@@ -658,10 +701,14 @@ class SMCOBState(Base):
     bias = Column(String(10))         # 'BULLISH' | 'BEARISH' | NULL
     bar_high = Column(Float)
     bar_low = Column(Float)
-    bar_time_ms = Column(Integer)     # ms epoch — Pine barTime
+    # IMPORTANT: ms-epoch timestamps need BigInteger (64-bit). Postgres
+    # Integer is signed 32-bit (max ~2.1B) and 13-digit ms epochs overflow.
+    # Without BigInteger every upsert fails with NumericValueOutOfRange and
+    # the entire OB Filter pipeline silently writes nothing to DB.
+    bar_time_ms = Column(BigInteger)  # ms epoch — Pine barTime
     bar_idx = Column(Integer)
     created_at_idx = Column(Integer)  # bar where the BOS/CHoCH triggered storage
-    created_at_t = Column(Integer)    # ms epoch of the triggering event
+    created_at_t = Column(BigInteger) # ms epoch of the triggering event
     
     # When this row was last refreshed by the scanner
     computed_at = Column(DateTime, default=datetime.utcnow)
