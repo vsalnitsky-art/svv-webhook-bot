@@ -830,6 +830,31 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <div class="sm-settings-section">
+                <h3>OB Filter</h3>
+                <div class="sm-controls">
+                    <!-- OB Filter — independent of HTF Bias. Gates signals
+                         against the last valid Pine SMC Order Block on the
+                         configured timeframe. LONG requires BULLISH OB,
+                         SHORT requires BEARISH OB. Missing OB = block. -->
+                    <label class="sm-checkbox"
+                           title="When ON: a signal only opens a position when the latest valid Order Block on the chosen timeframe matches the signal direction. LONG requires Bullish OB; SHORT requires Bearish OB. Missing or mitigated OB blocks the signal entirely.">
+                        <input type="checkbox" id="sm-ob-filter-enabled"
+                               onchange="updateOBFilter()">
+                        Require OB Match
+                    </label>
+                    <div class="sm-control-item">
+                        <label>OB Timeframe:</label>
+                        <select id="sm-ob-filter-tf" onchange="updateOBFilter()">
+                            <option value="15m">15M</option>
+                            <option value="30m">30M</option>
+                            <option value="1h" selected>1H</option>
+                            <option value="4h">4H</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sm-settings-section">
                 <h3>Alerts</h3>
                 <div class="sm-controls">
                     <div class="sm-control-item">
@@ -1454,6 +1479,11 @@ async function loadSettings() {
             document.getElementById('sm-htf-slow').value = s.htf_ema_slow || 21;
             document.getElementById('sm-htf-trend').value = s.htf_ema_trend || 50;
             document.getElementById('sm-htf-isize').value = s.htf_internal_size || 3;
+            // OB Filter — independent of HTF Bias
+            const obEnabled = document.getElementById('sm-ob-filter-enabled');
+            if (obEnabled) obEnabled.checked = !!s.ob_filter_enabled;
+            const obTf = document.getElementById('sm-ob-filter-tf');
+            if (obTf) obTf.value = s.ob_filter_timeframe || '1h';
             updateHTFFieldVisibility();
             updateSettingsSummary();
         }
@@ -1493,10 +1523,15 @@ function updateSettingsSummary() {
     const htfOn = document.getElementById('sm-htf-enabled').checked;
     const htfTf = document.getElementById('sm-htf-timeframe').value.toUpperCase();
     const htfMethod = document.getElementById('sm-htf-method').value;
+    const obOn = document.getElementById('sm-ob-filter-enabled');
+    const obTf = document.getElementById('sm-ob-filter-tf');
     
     let summary = `${tf} · size ${isize} · ${modeLabel}`;
     if (dedup) summary += ' · dedup';
     if (htfOn) summary += ` · HTF ${htfTf} (${htfMethod})`;
+    if (obOn && obOn.checked && obTf) {
+        summary += ` · OB ${obTf.value.toUpperCase()}`;
+    }
     document.getElementById('sm-settings-summary-right').textContent = summary;
 }
 
@@ -1510,6 +1545,25 @@ async function updateDedup() {
         });
         updateSettingsSummary();
     } catch (err) { alert('Dedup update error: ' + err); }
+}
+
+// OB Filter — single handler for both checkbox and dropdown change events.
+// We POST both fields together so a partial state never reaches the
+// backend (e.g. enabled=true but TF still on stale value).
+async function updateOBFilter() {
+    const enabled = document.getElementById('sm-ob-filter-enabled').checked;
+    const tf = document.getElementById('sm-ob-filter-tf').value || '1h';
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                ob_filter_enabled: enabled,
+                ob_filter_timeframe: tf,
+            }),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('OB Filter update error: ' + err); }
 }
 
 async function updateAlertMode() {
@@ -1838,11 +1892,16 @@ async function loadChart() {
         // support/resistance.
         const obBadge = document.getElementById('sm-ob-badge');
         const ob = d.last_ob;
+        const obFilterOn = !!d.ob_filter_enabled;
+        const obTf = (d.ob_filter_timeframe || '1h').toUpperCase();
         if (obBadge && ob && ob.bias) {
             const isBull = ob.bias === 'BULLISH';
             const sideLabel = isBull ? 'Long' : 'Short';
             const icon = isBull ? '🟢' : '🔴';
-            obBadge.textContent = `${icon} OB ${sideLabel}`;
+            // When filter is active prepend ✓ so user sees this OB is
+            // actually gating signals, not just informational.
+            const filterMark = obFilterOn ? '🔒' : '';
+            obBadge.textContent = `${filterMark}${icon} OB ${sideLabel} ${obTf}`;
             obBadge.className = 'sm-status-badge';
             obBadge.style.background = isBull
                 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
@@ -1857,8 +1916,13 @@ async function loadChart() {
             if (ageSec < 3600)        ageStr = `${Math.floor(ageSec / 60)}m ago`;
             else if (ageSec < 86400)  ageStr = `${Math.floor(ageSec / 3600)}h ago`;
             else                      ageStr = `${Math.floor(ageSec / 86400)}d ago`;
+            const filterStatus = obFilterOn
+                ? '🔒 FILTER ACTIVE — gates new signals'
+                : '📊 Informational only (filter OFF)';
             const tip = [
-                `Last valid Order Block (${ob.bias})`,
+                `Last valid Order Block · ${ob.bias} · ${obTf}`,
+                filterStatus,
+                '',
                 `Zone: ${fmtPriceJS(ob.bar_low)} — ${fmtPriceJS(ob.bar_high)}`,
                 `Created: ${ageStr}`,
                 '',
@@ -1869,7 +1933,18 @@ async function loadChart() {
             ].join('\n');
             obBadge.title = tip;
         } else if (obBadge) {
-            obBadge.style.display = 'none';
+            // No valid OB exists. If filter is on, show a warning state so
+            // user understands all signals will be blocked until an OB forms.
+            if (obFilterOn) {
+                obBadge.textContent = `🔒⚠️ No OB ${obTf}`;
+                obBadge.className = 'sm-status-badge';
+                obBadge.style.background = 'rgba(234,179,8,0.15)';
+                obBadge.style.color = '#fde68a';
+                obBadge.style.display = 'inline-block';
+                obBadge.title = `OB Filter ACTIVE on ${obTf} but no valid Order Block exists.\nAll signals will be BLOCKED until a BOS or CHoCH creates a new OB.`;
+            } else {
+                obBadge.style.display = 'none';
+            }
         }
         
         // === HTF info badge (shows method + timeframe) ===

@@ -83,6 +83,20 @@ DEFAULT_SETTINGS = {
     # uses the LAST CHoCH event's direction as the trend. Pine "Deduplicate
     # 1 per trend, CHoCH only" semantics: BOS events don't change trend.
     'htf_internal_size': 3,
+    
+    # === OB FILTER (Pine SMC_PRO_BOT__47_ Order Blocks) ===
+    # Independent of HTF Bias filter. When enabled, every signal is gated
+    # against the last valid Order Block on `ob_timeframe`:
+    #   LONG signal requires last_ob.bias == BULLISH
+    #   SHORT signal requires last_ob.bias == BEARISH
+    # Missing OB (no BOS/CHoCH yet, or all OBs mitigated) blocks signals
+    # in BOTH directions — user explicitly chose hard-block semantics for
+    # this filter, identical to how HTF Bias works when no clear bias.
+    # The OB itself is computed per-symbol on every scan tick and cached
+    # in DB (table sob_smc_ob_state) so chart panel and signal gate share
+    # the same source of truth.
+    'ob_filter_enabled': False,
+    'ob_filter_timeframe': '1h',  # 15m / 30m / 1h / 4h
 }
 
 
@@ -453,6 +467,13 @@ class SMCScanner:
                         del self._last_alerted[k]
                 # Clear persisted signals from DB
                 self._delete_signals(symbol)
+                # Clear cached SMC OB state — consistent with user's spec
+                # that OB info lives only as long as the symbol is watched.
+                try:
+                    from storage.db_operations import get_db
+                    get_db().delete_smc_ob_state_for_symbol(symbol)
+                except Exception as e:
+                    print(f"[SMC] OB cleanup error for {symbol}: {e}")
                 return {'ok': True, 'watchlist': list(self._watchlist)}
         return {'ok': False, 'reason': 'Not in watchlist'}
     
@@ -481,7 +502,9 @@ class SMCScanner:
                        'deduplicate_signals',
                        'htf_enabled', 'htf_timeframe', 'htf_method',
                        'htf_ema_fast', 'htf_ema_slow', 'htf_ema_trend',
-                       'htf_internal_size']
+                       'htf_internal_size',
+                       # OB filter
+                       'ob_filter_enabled', 'ob_filter_timeframe']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
@@ -555,6 +578,16 @@ class SMCScanner:
                 self._settings['htf_internal_size'] = max(2, min(20, int(self._settings.get('htf_internal_size', 3))))
             except:
                 self._settings['htf_internal_size'] = 3
+            
+            # === OB Filter validation ===
+            # Boolean toggle — coerce in case the UI sent string/None
+            self._settings['ob_filter_enabled'] = bool(
+                self._settings.get('ob_filter_enabled', False))
+            # Timeframe — only allow the four user-requested options.
+            # Anything else (including 5m, 1m, 1d) silently snaps to 1h.
+            ALLOWED_OB_TFS = ('15m', '30m', '1h', '4h')
+            if self._settings.get('ob_filter_timeframe') not in ALLOWED_OB_TFS:
+                self._settings['ob_filter_timeframe'] = '1h'
             
             # Reset cache on relevant changes
             new_tf = self._settings['timeframe']
@@ -744,6 +777,20 @@ class SMCScanner:
                     if self._errors <= 5:
                         print(f"[SMC] Forecast update error for {symbol}: {fe_err}")
                 
+                # === Compute & persist last valid SMC OB ===
+                # Runs every scan tick for every watchlist symbol so the
+                # chart panel and the signal gate see consistent state.
+                # We fetch klines on the OB-specific timeframe (independent
+                # of the main alert timeframe) — the user may want signals
+                # on 15M but OB confirmation on 1H. ATR(200) needs 200+
+                # bars to seed cleanly so we request 400 to give a margin.
+                # Best-effort: errors are logged but never block alerts.
+                try:
+                    self._update_smc_ob(symbol, md)
+                except Exception as ob_err:
+                    if self._errors <= 5:
+                        print(f"[SMC] OB update error for {symbol}: {ob_err}")
+                
                 # Alerts run on CLOSED bars only — won't fire from intra-bar
                 # wicks that retract before close
                 self._process_alerts(symbol, result_closed)
@@ -802,6 +849,128 @@ class SMCScanner:
             )
         except Exception as e:
             return {'bias': 'neutral', 'method': method, 'reason': f'error: {e}'}
+    
+    # ========================================
+    # SMC Order Block — per-tick update
+    # ========================================
+    
+    def _update_smc_ob(self, symbol: str, md):
+        """Compute the last valid SMC OB for this symbol on the OB-filter
+        timeframe and persist it to DB.
+        
+        Runs on every scan tick for every watchlist symbol. The DB row is
+        the single source of truth shared between:
+          - chart panel (reads via get_chart_data → DB)
+          - signal gate (reads in _process_alerts → DB)
+        
+        Best-effort: any error is logged but doesn't abort the surrounding
+        scan loop. We always upsert (even with `None` ob_data when the
+        detector found nothing) so the gate can distinguish "scanner ran,
+        no OB exists" from "scanner never ran on this symbol".
+        """
+        ob_tf = self._settings.get('ob_filter_timeframe', '1h')
+        # Whether or not the filter is enabled, we still maintain the OB
+        # state so the chart panel always shows accurate info. Disabling
+        # the filter just makes the gate skip the check.
+        try:
+            from detection.ob_detector import detect_last_order_block
+            from storage.db_operations import get_db
+        except Exception:
+            return
+        
+        # Fetch enough klines to seed ATR(200) cleanly. Pine uses ta.atr(200)
+        # which stabilizes at bar 199 with SMA seed. We pull 400 bars to give
+        # a 200-bar warmup before the first OB-eligible bar — this is the
+        # minimum where parsedHigh/parsedLow classifications are reliable.
+        OB_KLINES_LIMIT = 400
+        try:
+            if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames:
+                klines = md.fetch_klines(symbol, limit=OB_KLINES_LIMIT, interval=ob_tf)
+            else:
+                klines = md.fetch_klines(symbol, limit=OB_KLINES_LIMIT)
+        except Exception as e:
+            # Network blip or rate-limit — don't crash, just skip this tick.
+            return
+        
+        if not klines or len(klines) < 220:
+            # Insufficient history for stable ATR. Leave any prior DB row
+            # intact (don't wipe it), so the gate can still use the older
+            # snapshot until we accumulate enough bars.
+            return
+        
+        # Drop in-progress bar — Pine OB detection runs on closed bars only,
+        # otherwise parsedHigh/Low and mitigation flips on intrabar wicks
+        klines_closed = klines[:-1] if len(klines) >= 2 else klines
+        
+        # We need pivots and events on the same TF as the klines. Run the
+        # SMC structure detector on this TF specifically — it's a separate
+        # analysis from the main scan TF (e.g. main=15m, OB=1h).
+        from detection.smc_structure import detect_smc_structure
+        isize = self.get_internal_size()
+        ssize = int(self._settings.get('swing_size', 50))
+        result = detect_smc_structure(klines_closed,
+                                       internal_size=isize,
+                                       swing_size=ssize)
+        internal = result.get('internal', {})
+        
+        ob = detect_last_order_block(
+            klines=klines_closed,
+            pivots=internal.get('pivots', []),
+            events=internal.get('events', []),
+        )
+        
+        # Persist (None ob means "computed but no valid OB" — explicit clear)
+        try:
+            db = get_db()
+            db.upsert_smc_ob_state(symbol, ob_tf, ob)
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[SMC] DB upsert OB error for {symbol}@{ob_tf}: {e}")
+    
+    def _ob_filter_allows(self, symbol: str, side: str) -> bool:
+        """OB Filter gate decision for a fresh signal.
+        
+        Returns True if the signal is allowed to proceed:
+          - LONG signal allowed iff last_ob.bias == 'BULLISH'
+          - SHORT signal allowed iff last_ob.bias == 'BEARISH'
+        Returns False (block) when:
+          - No DB row exists yet (scanner hasn't computed for this symbol)
+          - Row exists with bias=None (computed, no OB)
+          - Row's bias is opposite to signal side
+          - DB read fails
+        
+        We err on the side of blocking: any uncertainty = block. The user
+        explicitly chose hard-block semantics for this filter.
+        """
+        try:
+            from storage.db_operations import get_db
+        except Exception:
+            return False
+        
+        ob_tf = self._settings.get('ob_filter_timeframe', '1h')
+        try:
+            row = get_db().get_smc_ob_state(symbol, ob_tf)
+        except Exception:
+            return False
+        
+        if row is None:
+            # Never computed — block until next scan tick produces a row.
+            # In practice this happens for ~30s after a symbol is added to
+            # the watchlist (one scan tick later we have the row).
+            return False
+        
+        bias = row.get('bias')
+        if bias is None:
+            # Computed, but no valid OB exists at this timeframe right now.
+            # Block — same as if HTF Bias filter was on but bias=neutral.
+            return False
+        
+        if side == 'LONG' and bias == 'BULLISH':
+            return True
+        if side == 'SHORT' and bias == 'BEARISH':
+            return True
+        # Opposite direction — block
+        return False
     
     # ========================================
     # Alerts logic
@@ -1008,6 +1177,21 @@ class SMCScanner:
         try:
             is_bull = event['dir'] == 'bull'
             side_label = 'LONG' if is_bull else 'SHORT'
+            
+            # === OB Filter gate ===
+            # When the user has enabled OB Filter, we require directional
+            # agreement between the signal and the LAST VALID OB on the
+            # configured OB timeframe (read from DB — same source the chart
+            # panel uses). Hard-block semantics: if OB is missing or
+            # opposite, the signal is dropped completely (no markers, no
+            # dedup state update, no TM hook). The user explicitly chose
+            # this behavior.
+            if self._settings.get('ob_filter_enabled', False):
+                if not self._ob_filter_allows(symbol, side_label):
+                    # Drop silently — no marker, no TM call. Logged so
+                    # production can verify filter is actually firing.
+                    print(f"[SMC] 🚫 OB Filter blocked {symbol} {side_label} signal")
+                    return
             
             # Live entry price — close of the bar where the BOS/CHoCH crossover
             # occurred. This is the price at the actual moment the signal fired.
@@ -1276,24 +1460,49 @@ class SMCScanner:
             print(f"[SMC] chart_data decision error: {e}")
         
         # === Compute last valid Order Block (Pine SMC_PRO_BOT__47_) ===
-        # Best-effort — never crashes chart_data if OB module fails.
-        # Uses INTERNAL pivots/events (size=5 by default) since the user's
-        # Pine setup has internalOrderBlocksSizeInput=5 as the primary
-        # display target. Drop the in-progress bar (last kline) so OB
-        # boundaries stabilize the same way they would on a closed Pine bar.
+        # === Last valid Order Block (Pine SMC_PRO_BOT__47_) ===
+        # Read from DB cache (table sob_smc_ob_state) — the SAME source
+        # the OB Filter signal gate consults. This guarantees the chart
+        # panel and the gate never disagree about the current OB state.
+        # The DB row is updated by the scan loop on every tick via
+        # _update_smc_ob() at the user-configured ob_filter_timeframe.
+        # If no row exists yet (symbol just added; scanner hasn't run),
+        # fall back to inline compute on the chart's TF — better to show
+        # something approximate than a blank badge.
         last_ob = None
+        ob_tf_used = self._settings.get('ob_filter_timeframe', '1h')
         try:
-            from detection.ob_detector import detect_last_order_block
-            klines_closed = klines[:-1] if len(klines) >= 2 else klines
-            internal_pivots = internal.get('pivots', [])
-            internal_events = internal.get('events', [])
-            last_ob = detect_last_order_block(
-                klines=klines_closed,
-                pivots=internal_pivots,
-                events=internal_events,
-            )
+            from storage.db_operations import get_db
+            row = get_db().get_smc_ob_state(symbol, ob_tf_used)
+            if row and row.get('bias'):
+                # DB row has actual OB data
+                last_ob = {
+                    'bias': row['bias'],
+                    'bar_high': row['bar_high'],
+                    'bar_low': row['bar_low'],
+                    'bar_time': row['bar_time'],
+                    'bar_idx': row['bar_idx'],
+                    'created_at_idx': row['created_at_idx'],
+                    'created_at_t': row['created_at_t'],
+                }
+            elif row is None:
+                # Fallback — scanner hasn't run yet for this (symbol, TF).
+                # Compute inline on the chart's main TF as a best-effort
+                # display so user doesn't see an empty badge for a long
+                # time after adding a symbol.
+                try:
+                    from detection.ob_detector import detect_last_order_block
+                    klines_closed = klines[:-1] if len(klines) >= 2 else klines
+                    last_ob = detect_last_order_block(
+                        klines=klines_closed,
+                        pivots=internal.get('pivots', []),
+                        events=internal.get('events', []),
+                    )
+                except Exception as e:
+                    print(f"[SMC] OB inline-fallback error for {symbol}: {e}")
+            # row exists with bias=None → last_ob stays None (no valid OB)
         except Exception as e:
-            print(f"[SMC] OB detector error for {symbol}: {e}")
+            print(f"[SMC] chart_data OB-read error for {symbol}: {e}")
         
         return {
             'symbol': symbol,
@@ -1326,6 +1535,12 @@ class SMCScanner:
             # primarily on internal structure for entries.
             # Returns None when no OB has survived mitigation.
             'last_ob': last_ob,
+            # OB Filter UI metadata — chart panel uses these to show the
+            # source TF in the badge tooltip and the filter status (active
+            # vs informational). Independent from the OB itself: even when
+            # ob_filter_enabled=False we still publish last_ob for display.
+            'ob_filter_enabled': bool(self._settings.get('ob_filter_enabled', False)),
+            'ob_filter_timeframe': ob_tf_used,
             # Swing Structure (size=swing_size)
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),
