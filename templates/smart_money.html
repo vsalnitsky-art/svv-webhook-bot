@@ -1871,7 +1871,16 @@ async function loadChart() {
         const trendBadge = document.getElementById('sm-trend-badge');
         const htfFilterActive = !!d.htf_filter_active;
         const trendPrefix = htfFilterActive ? 'HTF ' : '';
-        if (d.trend === 1) {
+        // === OB Filter takes over as primary direction indicator ===
+        // When OB Filter is ON, the trend badge becomes redundant noise.
+        // The OB badge (🔒🟢 OB Long 1H) IS the directional state — the
+        // trend that actually gates signals. Keeping both visible led to
+        // confusion (e.g. seeing "BEARISH" + "OB Long" simultaneously).
+        // We hide the trend badge entirely in this mode.
+        const obFilterOnForBadge = !!d.ob_filter_enabled;
+        if (obFilterOnForBadge) {
+            trendBadge.style.display = 'none';
+        } else if (d.trend === 1) {
             trendBadge.textContent = `🟢 ${trendPrefix}BULLISH`;
             trendBadge.className = 'sm-status-badge sm-trend-bull';
             trendBadge.style.display = 'inline-block';

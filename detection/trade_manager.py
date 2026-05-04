@@ -633,10 +633,19 @@ class TradeManager:
         side: 'LONG' or 'SHORT'
         opened_by: 'choch' or 'choch_bos'
         
-        Behavior:
-          - TM enabled + no existing real position → open real on Bybit
-          - TM disabled + test_mode + no shadow position → open shadow (paper)
-          - Reverse SMC handled in on_choch_event (event-level, not signal-level)
+        Behavior matrix:
+          - No existing position: open (real if enabled, shadow if test_mode)
+          - Same-direction position exists: ignore (dedup at signal level)
+          - Opposite-direction position exists: REVERSE — close existing
+            with reason='reverse_signal' first, then open the new one.
+            This is distinct from on_choch_event Reverse SMC: that fires
+            on EVERY CHoCH (no filters). reverse_signal fires only when
+            the new signal has cleared ALL gates (dedup, HTF, OB filter,
+            mode-specific recency) — i.e. it's a "qualified" reversal,
+            same caliber as a fresh entry.
+        
+        The reverse path runs in BOTH real and shadow modes so paper-trading
+        produces the same trade history as a live deployment would.
         """
         s = self._settings
         enabled = self.is_enabled()
@@ -649,8 +658,26 @@ class TradeManager:
         if enabled:
             # Real-money mode
             if existing_real:
-                # Already have a real position — Reverse handled by on_choch_event
+                if existing_real['side'] == side:
+                    # Same direction — already in this trend, no-op
+                    return
+                # OPPOSITE direction — reverse: close + open
+                print(f"[TM] 🔄 Reverse signal for {symbol}: "
+                      f"closing {existing_real['side']} → opening {side}")
+                try:
+                    self._close_position(symbol, entry_price, reason='reverse_signal')
+                except Exception as e:
+                    print(f"[TM] ❌ Reverse-close failed for {symbol}: {e}")
+                    # Bail out — don't leave the user with two positions or
+                    # one stale position if the close call errored. Better
+                    # to skip the new open and let next signal retry.
+                    return
+                if not self._is_tradeable(symbol):
+                    print(f"[TM] {symbol} not in tradeable list — reverse-open skipped")
+                    return
+                self._open_position(symbol, side, entry_price, opened_by)
                 return
+            # No existing real position
             if not self._is_tradeable(symbol):
                 print(f"[TM] {symbol} not in tradeable list — signal ignored")
                 return
@@ -658,7 +685,17 @@ class TradeManager:
         elif test_mode:
             # Paper mode — track shadow position
             if existing_shadow:
-                # Already shadowing this symbol
+                if existing_shadow['side'] == side:
+                    return
+                # OPPOSITE direction — same reverse semantics for paper trades
+                print(f"[TM] 🔄 [TEST] Reverse signal for {symbol}: "
+                      f"closing {existing_shadow['side']} → opening {side}")
+                try:
+                    self._close_shadow(symbol, entry_price, reason='reverse_signal')
+                except Exception as e:
+                    print(f"[TM] ❌ [TEST] Reverse-close-shadow failed for {symbol}: {e}")
+                    return
+                self._open_shadow(symbol, side, entry_price, opened_by)
                 return
             self._open_shadow(symbol, side, entry_price, opened_by)
     
@@ -2212,6 +2249,7 @@ class TradeManager:
             'stop_loss': '🛡 Stop Loss',
             'take_profit': '🎯 Take Profit',
             'reverse_smc': '🔄 Reverse SMC (CHoCH)',
+            'reverse_signal': '🔁 Reverse Signal (qualified)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
             'htf_flip': '📡 HTF Trend Flip',
             'time_stop': '⏱ Time Stop',
