@@ -930,17 +930,28 @@ class SMCScanner:
     def _ob_filter_allows(self, symbol: str, side: str) -> bool:
         """OB Filter gate decision for a fresh signal.
         
-        Returns True if the signal is allowed to proceed:
-          - LONG signal allowed iff last_ob.bias == 'BULLISH'
-          - SHORT signal allowed iff last_ob.bias == 'BEARISH'
-        Returns False (block) when:
-          - No DB row exists yet (scanner hasn't computed for this symbol)
-          - Row exists with bias=None (computed, no OB)
-          - Row's bias is opposite to signal side
-          - DB read fails
+        Returns True only when ALL of these hold:
+          1) DB has a computed row for this (symbol, ob_timeframe)
+          2) Row has a non-null bias matching the signal side
+          3) The OB was created by a CHoCH event (not BOS)
         
-        We err on the side of blocking: any uncertainty = block. The user
-        explicitly chose hard-block semantics for this filter.
+        Condition (3) is the strict-mode addition: Pine fires
+        storeOrdeBlock on BOTH BOS and CHoCH events. CHoCH-created OBs
+        mark fresh trend reversals — the entry pivot of a new trend.
+        BOS-created OBs are continuation OBs, fired when an already-going
+        trend pushes through another swing point. Trading the BOS-created
+        OB means entering after the trend is already in motion, which is
+        a worse setup with worse R:R. The user explicitly asked to trade
+        only fresh CHoCH-pivot OBs.
+        
+        Note that since obs[] is ordered newest-first in the detector and
+        any new event (BOS or CHoCH) creates a fresh OB on top, checking
+        only the latest OB is sufficient. If a BOS fires after a CHoCH,
+        the BOS-created OB becomes the new top → blocked. To trade again
+        we wait for a fresh CHoCH (which puts CHoCH-created OB back on
+        top).
+        
+        We err on the side of blocking: any uncertainty = block.
         """
         try:
             from storage.db_operations import get_db
@@ -955,22 +966,27 @@ class SMCScanner:
         
         if row is None:
             # Never computed — block until next scan tick produces a row.
-            # In practice this happens for ~30s after a symbol is added to
-            # the watchlist (one scan tick later we have the row).
             return False
         
         bias = row.get('bias')
         if bias is None:
             # Computed, but no valid OB exists at this timeframe right now.
-            # Block — same as if HTF Bias filter was on but bias=neutral.
             return False
         
-        if side == 'LONG' and bias == 'BULLISH':
-            return True
-        if side == 'SHORT' and bias == 'BEARISH':
-            return True
-        # Opposite direction — block
-        return False
+        # Direction match check
+        if side == 'LONG' and bias != 'BULLISH':
+            return False
+        if side == 'SHORT' and bias != 'BEARISH':
+            return False
+        
+        # Strict-mode: require CHoCH-created OB (no BOS continuation)
+        created_by = (row.get('created_by_tag') or '').upper()
+        if created_by != 'CHOCH':
+            print(f"[SMC] 🚫 OB Filter blocked {symbol} {side}: "
+                  f"OB created by {created_by or 'unknown'}, requires CHoCH")
+            return False
+        
+        return True
     
     # ========================================
     # Alerts logic
@@ -1484,6 +1500,7 @@ class SMCScanner:
                     'bar_idx': row['bar_idx'],
                     'created_at_idx': row['created_at_idx'],
                     'created_at_t': row['created_at_t'],
+                    'created_by_tag': row.get('created_by_tag', ''),
                 }
             elif row is None:
                 # Fallback — scanner hasn't run yet for this (symbol, TF).

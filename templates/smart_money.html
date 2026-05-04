@@ -1907,14 +1907,31 @@ async function loadChart() {
             const isBull = ob.bias === 'BULLISH';
             const sideLabel = isBull ? 'Long' : 'Short';
             const icon = isBull ? '🟢' : '🔴';
-            // When filter is active prepend ✓ so user sees this OB is
-            // actually gating signals, not just informational.
             const filterMark = obFilterOn ? '🔒' : '';
-            obBadge.textContent = `${filterMark}${icon} OB ${sideLabel} ${obTf}`;
+            // Fresh CHoCH-created vs continuation BOS-created. When the
+            // filter is ON, only CHoCH-created OBs allow signals; BOS-
+            // created continuation OBs block. We surface this in the
+            // badge so user sees at a glance whether the OB is tradeable.
+            const createdBy = (ob.created_by_tag || '').toUpperCase();
+            const isChoCH = createdBy === 'CHOCH';
+            // ★ for CHoCH (fresh), → for BOS continuation; nothing if unknown
+            // (older OB rows from before the migration may have empty tag).
+            let freshnessMark = '';
+            if (createdBy === 'CHOCH')      freshnessMark = ' ★';
+            else if (createdBy === 'BOS')   freshnessMark = ' →';
+            obBadge.textContent = `${filterMark}${icon} OB ${sideLabel} ${obTf}${freshnessMark}`;
             obBadge.className = 'sm-status-badge';
-            obBadge.style.background = isBull
-                ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
-            obBadge.style.color = isBull ? '#86efac' : '#fca5a5';
+            // Slightly dim color for BOS-continuation when filter is on,
+            // so user immediately sees it won't trigger entries.
+            const isContinuationBlocked = obFilterOn && createdBy === 'BOS';
+            if (isContinuationBlocked) {
+                obBadge.style.background = 'rgba(120,120,120,0.15)';
+                obBadge.style.color = '#888';
+            } else {
+                obBadge.style.background = isBull
+                    ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+                obBadge.style.color = isBull ? '#86efac' : '#fca5a5';
+            }
             obBadge.style.display = 'inline-block';
             // Tooltip with zone + age. bar_time is in ms epoch (Pine semantic)
             // so divide by 1000 to compare with browser Date.now()/1000.
@@ -1925,12 +1942,19 @@ async function loadChart() {
             if (ageSec < 3600)        ageStr = `${Math.floor(ageSec / 60)}m ago`;
             else if (ageSec < 86400)  ageStr = `${Math.floor(ageSec / 3600)}h ago`;
             else                      ageStr = `${Math.floor(ageSec / 86400)}d ago`;
+            let freshnessLine = '';
+            if (createdBy === 'CHOCH') {
+                freshnessLine = '★ Created by CHoCH — fresh trend reversal (TRADEABLE)';
+            } else if (createdBy === 'BOS') {
+                freshnessLine = '→ Created by BOS — continuation (NOT tradeable, wait for next CHoCH)';
+            }
             const filterStatus = obFilterOn
                 ? '🔒 FILTER ACTIVE — gates new signals'
                 : '📊 Informational only (filter OFF)';
             const tip = [
                 `Last valid Order Block · ${ob.bias} · ${obTf}`,
                 filterStatus,
+                freshnessLine,
                 '',
                 `Zone: ${fmtPriceJS(ob.bar_low)} — ${fmtPriceJS(ob.bar_high)}`,
                 `Created: ${ageStr}`,
@@ -1939,7 +1963,7 @@ async function loadChart() {
                 '• parsedHigh/Low volatility filter (ATR 200)',
                 '• storeOrdeBlock on internal BOS/CHoCH',
                 '• Mitigated when high>OB.barHigh (bear) or low<OB.barLow (bull)',
-            ].join('\n');
+            ].filter(s => s !== '').join('\n');
             obBadge.title = tip;
         } else if (obBadge) {
             // No valid OB exists. If filter is on, show a warning state so

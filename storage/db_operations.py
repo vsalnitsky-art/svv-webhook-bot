@@ -778,6 +778,7 @@ class DBOperations:
                 row.bar_idx = ob_data.get('bar_idx')
                 row.created_at_idx = ob_data.get('created_at_idx')
                 row.created_at_t = ob_data.get('created_at_t')
+                row.created_by_tag = ob_data.get('created_by_tag')
             else:
                 # Explicitly clear when no OB exists — important for the gate.
                 row.bias = None
@@ -787,6 +788,7 @@ class DBOperations:
                 row.bar_idx = None
                 row.created_at_idx = None
                 row.created_at_t = None
+                row.created_by_tag = None
             
             row.computed_at = datetime.utcnow()
             session.commit()

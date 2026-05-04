@@ -230,6 +230,15 @@ def detect_last_order_block(
                 'bar_idx': parsed_idx,
                 'created_at_idx': i,
                 'created_at_t': t,
+                # Track which event tag created this OB. Pine semantics:
+                # storeOrdeBlock fires on BOTH BOS and CHoCH equally.
+                # We expose the tag so downstream filters can distinguish:
+                #   CHoCH-created = fresh trend reversal OB (first signal of new trend)
+                #   BOS-created   = continuation OB (trend already in motion)
+                # Trading the CHoCH-created OB only is a much tighter setup —
+                # you enter at the pivot point of a confirmed trend change,
+                # not a continuation move that's already extended.
+                'created_by_tag': ev.get('tag', ''),  # 'CHoCH' or 'BOS'
             }
             
             # Pine: if orderBlocks.size() >= 100: orderBlocks.pop()
@@ -255,6 +264,8 @@ def detect_last_order_block(
         'bar_idx': int(last_ob['bar_idx']),
         'created_at_idx': int(last_ob['created_at_idx']),
         'created_at_t': int(last_ob['created_at_t']),
+        # 'CHoCH' or 'BOS' — used downstream to gate "fresh-only" trades
+        'created_by_tag': str(last_ob.get('created_by_tag', '')),
     }
 
 

@@ -1792,15 +1792,29 @@ class TradeManager:
             except Exception:
                 pass
         
+        # Indicate freshness (CHoCH-created = ★ fresh trend reversal,
+        # the only case the strict gate allows when filter is on).
+        created_by = (row.get('created_by_tag') or '').upper()
+        if created_by == 'CHOCH':
+            fresh_mark = ' ★ fresh CHoCH'
+        elif created_by == 'BOS':
+            fresh_mark = ' (BOS continuation)'
+        else:
+            fresh_mark = ''
+        
         if filter_on:
             # Filter mode: short confirmation line — the gate already
-            # validated direction match, so we just affirm it for the user.
-            return f"🎯 OB Confirm: {bias_icon} {bias_label} ({tf_label}){age_str}\n"
+            # validated direction match AND CHoCH creation, so we just
+            # affirm both for the user. Filter wouldn't have let this
+            # signal through if the OB wasn't fresh.
+            return (f"🎯 OB Confirm: {bias_icon} {bias_label} "
+                    f"({tf_label}){fresh_mark}{age_str}\n")
         else:
             # Info-only mode: also show the zone bounds for context
             zone = (f"{self._fmt_price(row['bar_low'])}—"
                     f"{self._fmt_price(row['bar_high'])}")
-            return f"🎯 OB: {bias_icon} {bias_label} ({tf_label}) zone {zone}{age_str}\n"
+            return (f"🎯 OB: {bias_icon} {bias_label} ({tf_label}) "
+                    f"zone {zone}{fresh_mark}{age_str}\n")
     
     def _format_entry_score_telegram(self, entry_score: Optional[Dict]) -> str:
         """Single-line Decision Center summary for Telegram OPEN messages.

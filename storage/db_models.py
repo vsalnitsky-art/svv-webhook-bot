@@ -662,6 +662,40 @@ def migrate_sleeper_candidates_v3():
                    and 'no such column' not in error_str.lower():
                     print(f"[DB MIGRATE] OB state migration warning ({col_name}): {e}")
                 conn.rollback()
+        
+        # Add `created_by_tag` column on tables that pre-date its introduction.
+        # Same approach: check information_schema first, ALTER if missing.
+        # On SQLite this is a no-op via the same swallow-errors path below.
+        try:
+            check_sql = text(f"""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = '{smc_ob_table}'
+                  AND column_name = 'created_by_tag'
+            """)
+            result = conn.execute(check_sql).fetchone()
+            if result is None:
+                # Column missing — add it. NULL is fine for existing rows;
+                # next scan tick will populate with the live value.
+                # But we also need to verify the table itself exists first
+                # (check_sql returns None whether table missing OR column missing).
+                table_check = conn.execute(text(f"""
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = '{smc_ob_table}'
+                """)).fetchone()
+                if table_check is not None:
+                    alter_sql = text(
+                        f"ALTER TABLE {smc_ob_table} "
+                        f"ADD COLUMN created_by_tag VARCHAR(10)"
+                    )
+                    conn.execute(alter_sql)
+                    conn.commit()
+                    print(f"[DB MIGRATE] Added {smc_ob_table}.created_by_tag")
+        except Exception as e:
+            error_str = str(e)
+            if 'no such table: information_schema' not in error_str.lower() \
+               and 'duplicate column' not in error_str.lower():
+                print(f"[DB MIGRATE] OB state created_by_tag warning: {e}")
+            conn.rollback()
 
 
 def get_session():
@@ -709,6 +743,11 @@ class SMCOBState(Base):
     bar_idx = Column(Integer)
     created_at_idx = Column(Integer)  # bar where the BOS/CHoCH triggered storage
     created_at_t = Column(BigInteger) # ms epoch of the triggering event
+    # Which event tag created this OB — 'CHoCH' or 'BOS'. Pine fires
+    # storeOrdeBlock on both equally; we keep the tag so the OB Filter
+    # can require CHoCH-only (fresh trend reversal) and reject continuation
+    # OBs created by BOS-after-CHoCH.
+    created_by_tag = Column(String(10))
     
     # When this row was last refreshed by the scanner
     computed_at = Column(DateTime, default=datetime.utcnow)
@@ -728,5 +767,6 @@ class SMCOBState(Base):
             'bar_idx': self.bar_idx,
             'created_at_idx': self.created_at_idx,
             'created_at_t': self.created_at_t,
+            'created_by_tag': self.created_by_tag,
             'computed_at': self.computed_at,
         }
