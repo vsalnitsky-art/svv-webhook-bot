@@ -824,6 +824,32 @@ class DBOperations:
         finally:
             session.close()
     
+    def get_smc_ob_states_bulk(self, symbols: List[str],
+                                timeframe: str) -> Dict[str, Dict]:
+        """Batch fetcher: returns dict {symbol → ob_state_dict} for all
+        rows matching the requested symbols at the given timeframe.
+        Symbols with no row are simply absent from the returned dict
+        (caller can treat absence as "not yet computed").
+        
+        Used by SMCScanner.get_state() to efficiently populate per-symbol
+        OB markers in the watchlist UI without doing one DB roundtrip
+        per symbol (would be 20+ queries on every /api/smc/state poll).
+        """
+        if not symbols:
+            return {}
+        session = get_session()
+        try:
+            rows = session.query(SMCOBState).filter(
+                SMCOBState.timeframe == timeframe,
+                SMCOBState.symbol.in_(symbols)
+            ).all()
+            return {r.symbol: r.to_dict() for r in rows}
+        except Exception as e:
+            print(f"[DB] get_smc_ob_states_bulk error: {e}")
+            return {}
+        finally:
+            session.close()
+    
     def delete_smc_ob_state_for_symbol(self, symbol: str) -> int:
         """Wipe all OB state rows for a symbol — called when symbol is
         removed from watchlist so we don't accumulate stale data.

@@ -1599,6 +1599,32 @@ class SMCScanner:
             # Per-symbol HTF biases
             htf_biases = {sym: dict(b) for sym, b in self._htf_cache.items()}
             
+            # Per-symbol OB state (for watchlist colored star markers).
+            # Only populated when the OB Filter is enabled — otherwise
+            # the UI shouldn't show stars (would be visual noise when
+            # filter isn't gating anything). Single batch DB query for
+            # all watchlist symbols at the configured filter TF.
+            ob_filter_enabled = self._settings.get('ob_filter_enabled', False)
+            ob_filter_tf = self._settings.get('ob_filter_timeframe', '1h')
+            ob_states = {}
+            if ob_filter_enabled and self._watchlist:
+                try:
+                    from storage.db_operations import get_db
+                    rows = get_db().get_smc_ob_states_bulk(
+                        list(self._watchlist), ob_filter_tf)
+                    # Flatten to compact dict — UI only needs bias and tag.
+                    # Sending the full row would inflate /api/smc/state
+                    # payload by ~400 bytes per symbol on every 10s poll.
+                    for sym, row in rows.items():
+                        ob_states[sym] = {
+                            'bias': row.get('bias'),
+                            'created_by_tag': row.get('created_by_tag'),
+                        }
+                except Exception as e:
+                    # Don't fail the whole state call on a DB hiccup —
+                    # UI just won't show stars this poll, refreshes next time
+                    print(f"[SMC] ob_states fetch error: {e}")
+            
             return {
                 'running': self._running,
                 'enabled': self._settings.get('enabled', True),
@@ -1611,6 +1637,9 @@ class SMCScanner:
                 'trends': trends,
                 'htf_filter_active': htf_active,
                 'htf_biases': htf_biases,
+                'ob_filter_enabled': ob_filter_enabled,
+                'ob_filter_timeframe': ob_filter_tf,
+                'ob_states': ob_states,
                 'pending_choch': {k: {'dir': v['dir'], 'level': v['level']}
                                    for k, v in self._pending_choch.items()},
             }

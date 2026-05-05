@@ -1460,17 +1460,29 @@ async function clearSignalsForCurrent() {
 // === Watchlist ===
 async function loadWatchlist() {
     try {
-        // Get watchlist + tradeable list in single state call
+        // Get watchlist + tradeable list + OB states in single state call.
+        // OB states only populated when OB Filter is enabled; otherwise
+        // empty dict and UI skips the star rendering.
         const res = await fetch('/api/smc/state');
         const d = await res.json();
         const list = d.watchlist || [];
         const tradeable = d.tradeable || [];
         tmTradeable = new Set(tradeable);
+        // Stash OB states + filter metadata for renderWatchlist
+        wlObFilterEnabled = !!d.ob_filter_enabled;
+        wlObFilterTimeframe = d.ob_filter_timeframe || '1h';
+        wlObStates = d.ob_states || {};
         renderWatchlist(list);
     } catch (err) {
         console.error('watchlist load err:', err);
     }
 }
+
+// Watchlist OB-marker state — module-scoped so renderWatchlist can use them
+// without an extra round-trip. Updated on every loadWatchlist call.
+let wlObFilterEnabled = false;
+let wlObFilterTimeframe = '1h';
+let wlObStates = {};
 
 function renderWatchlist(list) {
     const el = document.getElementById('sm-wl-list');
@@ -1490,8 +1502,37 @@ function renderWatchlist(list) {
         const flagTitle = isTradeable
             ? '✅ Tradeable: позиції на цій монеті будуть відкриватися. Click щоб вимкнути.'
             : '❌ Not tradeable: сигнали ігноруються. Click щоб дозволити торгівлю.';
+        
+        // OB marker — only shown when OB Filter is enabled. Three states:
+        //   ★ green   = BULLISH OB matches — LONG signals will pass gate
+        //   ★ red     = BEARISH OB matches — SHORT signals will pass gate
+        //   (nothing) = no valid OB OR filter off
+        // The strict CHoCH-only gate means BOS-created OBs would block
+        // signals, so we render those as a dimmer grey star with a different
+        // tooltip — visible but clearly "not tradeable" by the strict gate.
+        let obStarHtml = '';
+        if (wlObFilterEnabled) {
+            const ob = wlObStates[sym];
+            if (ob && ob.bias) {
+                const tag = (ob.created_by_tag || '').toUpperCase();
+                const isBull = ob.bias === 'BULLISH';
+                const isChoCH = tag === 'CHOCH';
+                let starColor, starTitle;
+                if (isChoCH) {
+                    // Tradeable by strict gate
+                    starColor = isBull ? '#22c55e' : '#ef4444';
+                    starTitle = `OB ${isBull ? 'Long' : 'Short'} ${wlObFilterTimeframe.toUpperCase()} — ★ fresh CHoCH (signals will pass gate)`;
+                } else {
+                    // BOS continuation — strict gate blocks. Dim grey.
+                    starColor = '#666';
+                    starTitle = `OB ${isBull ? 'Long' : 'Short'} ${wlObFilterTimeframe.toUpperCase()} — → BOS continuation (signals BLOCKED by strict gate)`;
+                }
+                obStarHtml = `<span class="wl-ob-star" title="${escapeHtml(starTitle)}" style="color:${starColor};margin-right:4px;font-size:0.85rem">★</span>`;
+            }
+        }
+        
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span><span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${obStarHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -1660,6 +1701,10 @@ async function updateOBFilter() {
             }),
         });
         updateSettingsSummary();
+        // Refresh watchlist immediately so the star markers appear/disappear
+        // without waiting for the next 10-second poll. Without this the
+        // user toggles the filter and sees no visible feedback for 10s.
+        loadWatchlist();
     } catch (err) { alert('OB Filter update error: ' + err); }
 }
 
@@ -2481,6 +2526,24 @@ async function updateStatus() {
                 const t = trends[sym] || 0;
                 dot.className = 'trend-dot ' + (t === 1 ? 'bull' : t === -1 ? 'bear' : '');
             }
+        }
+        
+        // Sync OB filter state and re-render watchlist OB markers.
+        // We always re-render when the filter is enabled — cheap DOM work
+        // for ~20 items, and avoids any subtle "stars not updating"
+        // bugs from comparing cached vs new state. When the filter is
+        // off and was off, nothing to do.
+        const newObEnabled = !!d.ob_filter_enabled;
+        const newObTf = d.ob_filter_timeframe || '1h';
+        const newObStates = d.ob_states || {};
+        const wasEnabled = wlObFilterEnabled;
+        wlObFilterEnabled = newObEnabled;
+        wlObFilterTimeframe = newObTf;
+        wlObStates = newObStates;
+        if (newObEnabled || wasEnabled) {
+            // Re-render if filter is currently on (to update stars to
+            // latest OB state) OR was on (to clear stars after toggle off).
+            renderWatchlist(d.watchlist || []);
         }
     } catch (err) {}
 }
