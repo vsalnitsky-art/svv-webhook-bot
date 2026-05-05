@@ -35,7 +35,7 @@ from typing import Dict, List, Optional
 # Defaults
 DEFAULT_INTERVAL_SECS = 60
 DEFAULT_ALERT_MODE = 'choch'  # 'choch' or 'choch_bos'
-KLINES_LIMIT = 700            # bars to fetch per scan
+KLINES_LIMIT = 1000           # bars to fetch per scan (Bybit max; gives ~10 days at 15m, ~166 days at 4h)
 DEFAULT_TIMEFRAME = '5m'      # default timeframe
 DEFAULT_INTERNAL_SIZE = 5     # default Pine Internal Structure size
 MAX_WATCHLIST = 50
