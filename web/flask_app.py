@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -269,6 +269,51 @@ def create_app():
                     print("[APP] CTR Scanner auto-start scheduled (worker process)")
             except Exception as e:
                 print(f"[APP] CTR auto-start check failed: {e}")
+        
+        # TOP-100 4H OB Scanner — Variant B (scheduled scan, informational)
+        # Always init the scanner so settings can be read via API. Whether
+        # the scheduler thread actually starts is controlled by the
+        # `top100_ob_enabled` setting (default OFF — user opts in).
+        if not _auto_started['top100ob']:
+            _auto_started['top100ob'] = True
+            try:
+                from detection.top100_ob_scanner import get_top100_ob_scanner
+                top100_tg = None
+                try:
+                    from alerts.telegram_notifier import get_notifier
+                    top100_tg = get_notifier()
+                except Exception:
+                    pass
+                scanner = get_top100_ob_scanner(telegram_notifier=top100_tg)
+                # Restore persisted settings from DB so user's choices
+                # survive worker restart on Render. We mirror only the
+                # toggleable bits — schedule/throttle/timeframe stay code
+                # constants since they don't need to be user-tunable yet.
+                try:
+                    db = get_db()
+                    enabled = db.get_setting('top100_ob_enabled', '0') == '1'
+                    tg_alerts = db.get_setting('top100_ob_telegram', '1') == '1'
+                    include_bos = db.get_setting('top100_ob_include_bos', '0') == '1'
+                    min_vol_str = db.get_setting('top100_ob_min_vol_usd', '100000000')
+                    try:
+                        min_vol = float(min_vol_str)
+                    except (TypeError, ValueError):
+                        min_vol = 100_000_000
+                    scanner.update_settings(
+                        enabled=enabled,
+                        telegram_alerts=tg_alerts,
+                        include_bos_alerts=include_bos,
+                        min_quote_volume_usd=min_vol,
+                    )
+                    if enabled:
+                        scanner.start()
+                        print("[APP] TOP-100 OB Scanner auto-started")
+                    else:
+                        print("[APP] TOP-100 OB Scanner initialized (disabled by setting)")
+                except Exception as e:
+                    print(f"[APP] TOP-100 OB Scanner settings restore failed: {e}")
+            except Exception as e:
+                print(f"[APP] Failed to init TOP-100 OB Scanner: {e}")
     
     return app
 
@@ -2316,6 +2361,171 @@ def register_api_routes(app):
         symbol = data.get('symbol', '')
         tradeable = bool(data.get('tradeable', False))
         return jsonify(s.set_tradeable(symbol, tradeable))
+    
+    # ========================================
+    # TOP-100 4H OB Radar — Variant B routes
+    # ========================================
+    # All endpoints under /api/top100-ob/. Lives as a sub-section of the
+    # Smart Money page (no separate top-level page) — reuses smart_money.html.
+    
+    @app.route('/api/top100-ob/state')
+    def api_top100_ob_state():
+        """Return scanner settings + last scan summary."""
+        from detection.top100_ob_scanner import get_top100_ob_scanner
+        try:
+            from alerts.telegram_notifier import get_notifier
+            scanner = get_top100_ob_scanner(telegram_notifier=get_notifier())
+        except Exception:
+            scanner = get_top100_ob_scanner()
+        return jsonify(scanner.get_settings())
+    
+    @app.route('/api/top100-ob/settings', methods=['POST'])
+    def api_top100_ob_settings():
+        """Update scanner settings.
+        Body may contain any subset of:
+          enabled, telegram_alerts, include_bos_alerts,
+          min_quote_volume_usd, top_n
+        Toggling 'enabled' true→false stops the scheduler; false→true starts it.
+        Persists to DB so settings survive worker restart on Render.
+        """
+        from detection.top100_ob_scanner import get_top100_ob_scanner
+        try:
+            from alerts.telegram_notifier import get_notifier
+            scanner = get_top100_ob_scanner(telegram_notifier=get_notifier())
+        except Exception:
+            scanner = get_top100_ob_scanner()
+        data = request.get_json() or {}
+        was_enabled = scanner.get_settings()['enabled']
+        new_settings = scanner.update_settings(
+            enabled=data.get('enabled'),
+            telegram_alerts=data.get('telegram_alerts'),
+            include_bos_alerts=data.get('include_bos_alerts'),
+            min_quote_volume_usd=data.get('min_quote_volume_usd'),
+            top_n=data.get('top_n'),
+        )
+        # Persist to DB. We only write the fields the caller actually
+        # tried to change — sending an empty body keeps prior values.
+        # Setting names mirror the scanner's internal attrs.
+        try:
+            db = get_db()
+            if 'enabled' in data:
+                db.set_setting('top100_ob_enabled',
+                               '1' if new_settings['enabled'] else '0')
+            if 'telegram_alerts' in data:
+                db.set_setting('top100_ob_telegram',
+                               '1' if new_settings['telegram_alerts'] else '0')
+            if 'include_bos_alerts' in data:
+                db.set_setting('top100_ob_include_bos',
+                               '1' if new_settings['include_bos_alerts'] else '0')
+            if 'min_quote_volume_usd' in data:
+                db.set_setting('top100_ob_min_vol_usd',
+                               str(int(new_settings['min_quote_volume_usd'])))
+        except Exception as e:
+            print(f"[APP] top100_ob settings persistence error: {e}")
+            # Don't fail the request — settings still applied in-memory,
+            # they just won't survive a worker restart. User will see
+            # them work normally for the rest of this process.
+        # Start/stop scheduler when enabled flips
+        if not was_enabled and new_settings['enabled']:
+            scanner.start()
+        elif was_enabled and not new_settings['enabled']:
+            scanner.stop()
+        return jsonify({'ok': True, 'settings': new_settings})
+    
+    @app.route('/api/top100-ob/scan', methods=['POST'])
+    def api_top100_ob_scan_now():
+        """Manual scan trigger ("Refresh now" button). Returns immediately
+        with a status — actual scan happens in this thread (might take ~60s).
+        Caller should set a long timeout client-side or use the polling
+        approach: start scan async (TODO?), then poll /api/top100-ob/state
+        for is_scanning=False.
+        
+        For now we run synchronously — Flask will hold the connection ~60s
+        which is fine for a manual user-clicked button. Gunicorn timeout
+        on Render is typically 30s default; overridden in Procfile/render.yaml
+        if needed. If user reports issues we can switch to async.
+        """
+        from detection.top100_ob_scanner import get_top100_ob_scanner
+        try:
+            from alerts.telegram_notifier import get_notifier
+            scanner = get_top100_ob_scanner(telegram_notifier=get_notifier())
+        except Exception:
+            scanner = get_top100_ob_scanner()
+        # Run scan in a background thread so we can return immediately and
+        # let the UI poll for completion. Otherwise Gunicorn worker would
+        # be tied up for 60+ seconds.
+        import threading
+        def _bg():
+            try:
+                scanner.scan(triggered_by='manual')
+            except Exception as e:
+                print(f'[TOP100-OB] Manual scan thread error: {e}')
+        t = threading.Thread(target=_bg, name='Top100OB-manual',
+                             daemon=True)
+        t.start()
+        return jsonify({'ok': True, 'message': 'Scan started in background',
+                        'is_scanning': True})
+    
+    @app.route('/api/top100-ob/snapshots')
+    def api_top100_ob_snapshots():
+        """List current snapshots. Query params:
+          only_with_ob (bool): default true — hide rows with no OB
+          min_quote_volume (float): override the configured min
+        """
+        from detection.top100_ob_scanner import get_top100_ob_scanner
+        from storage.db_operations import get_db
+        scanner = get_top100_ob_scanner()
+        # Default to filtering to symbols with active OBs — that's the
+        # interesting view. UI can flip the toggle to see all.
+        only_with_ob_q = request.args.get('only_with_ob', 'true').lower()
+        only_with_ob = (only_with_ob_q != 'false')
+        try:
+            min_vol = float(request.args.get('min_quote_volume',
+                                             scanner._min_quote_volume_usd))
+        except (TypeError, ValueError):
+            min_vol = scanner._min_quote_volume_usd
+        rows = get_db().list_top100_ob_snapshots(
+            only_with_ob=only_with_ob, min_quote_volume=min_vol)
+        return jsonify({'ok': True, 'count': len(rows), 'snapshots': rows})
+    
+    @app.route('/api/top100-ob/history')
+    def api_top100_ob_history():
+        """Recent OB lifecycle events (the "Recent Discoveries" feed).
+        Query params:
+          hours (int): lookback window, default 24
+          event_types (csv): filter to specific events, e.g. 'created,replaced'
+          limit (int): max rows, default 100
+        """
+        from storage.db_operations import get_db
+        try:
+            hours = int(request.args.get('hours', '24'))
+        except (TypeError, ValueError):
+            hours = 24
+        types_arg = request.args.get('event_types', '')
+        types = [t.strip() for t in types_arg.split(',') if t.strip()] or None
+        try:
+            limit = min(500, int(request.args.get('limit', '100')))
+        except (TypeError, ValueError):
+            limit = 100
+        rows = get_db().list_top100_ob_history(
+            hours=hours, event_types=types, limit=limit)
+        return jsonify({'ok': True, 'count': len(rows), 'history': rows})
+    
+    @app.route('/api/top100-ob/add-to-watchlist', methods=['POST'])
+    def api_top100_ob_add_to_watchlist():
+        """Push a symbol from the TOP-100 view into the SMC scanner
+        watchlist. Convenience for "Add to SMC Watchlist" button.
+        Body: {symbol: 'BTCUSDT'}
+        """
+        from detection.smc_scanner import get_smc_scanner
+        smc = get_smc_scanner()
+        if not smc:
+            return jsonify({'ok': False, 'reason': 'SMC scanner not initialized'})
+        data = request.get_json() or {}
+        symbol = (data.get('symbol') or '').upper().strip()
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'Missing symbol'})
+        return jsonify(smc.add_symbol(symbol))
     
     # ===== Trade Manager =====
     

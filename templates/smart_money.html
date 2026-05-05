@@ -1323,6 +1323,103 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
         </div>
     </div>
+    
+    <!-- ===== TOP-100 4H OB RADAR ===== -->
+    <!-- Variant B (scheduled scan): polls Binance Futures TOP-N USDT-perps
+         every 4 hours (synced to bar close) for newly-formed 4H Order Blocks.
+         Informational only — does NOT gate signals or trigger trades.
+         User can opt-in per-symbol via "Add to SMC Watchlist" button. -->
+    <div class="tm-panel" id="top100-panel" style="margin-top:14px">
+        <div class="tm-header" id="top100-header">
+            <h2>📡 TOP-100 4H OB Radar
+                <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">
+                    (informational — Binance Futures top-N by 24h volume)
+                </span>
+            </h2>
+            <div class="tm-master-toggle">
+                <span id="top100-status-label" style="font-size:0.8rem;color:#888">Disabled</span>
+                <label class="tm-toggle-switch">
+                    <input type="checkbox" id="top100-enabled" onchange="onTop100EnabledToggle()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        <div class="tm-body" id="top100-body">
+            
+            <div class="tm-row" style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#86efac;font-size:0.78rem">
+                ℹ️ Сканує TOP-100 USDT-perp монет на Binance Futures раз на 4 години (після закриття 4H бара) для виявлення нових Order Blocks. Не торгує, не гейтить SMC сигнали — тільки відображає кандидатів. CHoCH-created OBs позначені ★ (fresh trend reversal); BOS-created — → (continuation).
+            </div>
+            
+            <!-- Settings row -->
+            <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:8px 10px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+                <label style="display:flex;align-items:center;gap:6px">
+                    <input type="checkbox" id="top100-tg-alerts" onchange="saveTop100Settings()">
+                    📨 Telegram alerts (fresh CHoCH OBs)
+                </label>
+                <label style="display:flex;align-items:center;gap:6px">
+                    <input type="checkbox" id="top100-include-bos" onchange="saveTop100Settings()">
+                    Include BOS continuation in alerts
+                </label>
+                <label style="display:flex;align-items:center;gap:6px">
+                    Min 24h vol ($M):
+                    <input type="number" id="top100-min-vol" min="0" max="10000" step="10"
+                           style="width:80px;padding:3px 6px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="saveTop100Settings()">
+                </label>
+                <button onclick="top100ScanNow()" id="top100-scan-btn"
+                        style="padding:5px 12px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.5);color:#a5b4fc;border-radius:3px;cursor:pointer;font-size:0.78rem">
+                    🔄 Refresh now
+                </button>
+                <span id="top100-last-scan" style="color:#666;font-size:0.72rem;margin-left:auto"></span>
+            </div>
+            
+            <!-- Active OBs section -->
+            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">
+                Active Order Blocks
+                <span id="top100-active-count" style="color:#666;font-weight:normal">(0)</span>
+                <span style="margin-left:10px;font-weight:normal;font-size:0.72rem">
+                    Filter:
+                    <select id="top100-filter" onchange="renderTop100Active()" 
+                            style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.72rem">
+                        <option value="all">All</option>
+                        <option value="fresh-choch" selected>Fresh CHoCH only ★</option>
+                        <option value="all-choch">All CHoCH</option>
+                        <option value="long">LONG only</option>
+                        <option value="short">SHORT only</option>
+                    </select>
+                </span>
+            </h3>
+            <table class="tm-table" id="top100-active-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Direction</th>
+                        <th>Tag</th>
+                        <th>Zone</th>
+                        <th>Price</th>
+                        <th>24h Vol</th>
+                        <th>Age</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="top100-active-tbody">
+                    <tr><td colspan="8" class="tm-empty-msg">No data — enable the scanner above and click "Refresh now"</td></tr>
+                </tbody>
+            </table>
+            
+            <!-- Recent Discoveries feed -->
+            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:14px 0 4px 0">
+                Recent Discoveries
+                <span style="color:#666;font-weight:normal;font-size:0.72rem">(last 24h)</span>
+            </h3>
+            <div id="top100-history-feed" style="max-height:300px;overflow-y:auto;background:rgba(255,255,255,0.015);border:1px solid rgba(255,255,255,0.04);border-radius:4px;padding:8px">
+                <div style="color:#666;font-size:0.78rem;text-align:center;padding:20px">
+                    No recent events. Run a scan to see discoveries.
+                </div>
+            </div>
+            
+        </div>
+    </div>
 </div>
 
 <script>
@@ -3199,6 +3296,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadTMSettings();
     await loadWatchlist();
     await loadTMState();
+    await loadTop100State();
+    await loadTop100Snapshots();
+    await loadTop100History();
     updateStatus();
     setInterval(updateStatus, 10000);
     setInterval(() => {
@@ -3206,7 +3306,361 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 30000);
     // Refresh TM state every 5s when there are open positions, every 15s otherwise
     setInterval(loadTMState, 5000);
+    // Refresh TOP-100 every 60s — scans only happen every 4h, but during
+    // a scan we want fast updates so user sees rows appear progressively.
+    // Snapshot endpoint is cheap (single DB query), no real cost.
+    setInterval(loadTop100State, 30000);
+    setInterval(loadTop100Snapshots, 60000);
+    setInterval(loadTop100History, 60000);
 });
 
+// ============================================================
+// TOP-100 4H OB Radar — frontend logic
+// ============================================================
+//
+// Three pieces of state:
+//   - settings (enabled, telegram_alerts, include_bos_alerts, min_vol)
+//     loaded from /api/top100-ob/state, saved via POST /settings
+//   - snapshots (current OBs per symbol) — table rows, polled every 60s
+//   - history (lifecycle events last 24h) — feed, polled every 60s
+// All three are cheap queries, so we just refresh on a fixed interval
+// rather than coordinate with manual scan completion.
+
+let _top100Snapshots = [];  // raw rows from /api/top100-ob/snapshots
+
+async function loadTop100State() {
+    try {
+        const r = await fetch('/api/top100-ob/state');
+        const data = await r.json();
+        // Settings UI
+        const enabledEl = document.getElementById('top100-enabled');
+        const tgEl = document.getElementById('top100-tg-alerts');
+        const bosEl = document.getElementById('top100-include-bos');
+        const minVolEl = document.getElementById('top100-min-vol');
+        const statusEl = document.getElementById('top100-status-label');
+        if (enabledEl) enabledEl.checked = !!data.enabled;
+        if (tgEl) tgEl.checked = !!data.telegram_alerts;
+        if (bosEl) bosEl.checked = !!data.include_bos_alerts;
+        if (minVolEl) {
+            // Display as $M for user-friendliness
+            minVolEl.value = Math.round((data.min_quote_volume_usd || 0) / 1_000_000);
+        }
+        if (statusEl) {
+            if (data.is_scanning) {
+                statusEl.textContent = 'Scanning…';
+                statusEl.style.color = '#fbbf24';
+            } else if (data.enabled) {
+                statusEl.textContent = 'Enabled';
+                statusEl.style.color = '#86efac';
+            } else {
+                statusEl.textContent = 'Disabled';
+                statusEl.style.color = '#888';
+            }
+        }
+        // "Last scan" timestamp + summary
+        const lastEl = document.getElementById('top100-last-scan');
+        if (lastEl) {
+            if (data.last_scan_at) {
+                const dt = new Date(data.last_scan_at + 'Z');  // server is UTC
+                const ageMin = Math.floor((Date.now() - dt.getTime()) / 60000);
+                let when = '';
+                if (ageMin < 1) when = 'just now';
+                else if (ageMin < 60) when = `${ageMin}m ago`;
+                else if (ageMin < 1440) when = `${Math.floor(ageMin/60)}h ${ageMin%60}m ago`;
+                else when = `${Math.floor(ageMin/1440)}d ago`;
+                const s = data.last_scan_summary || {};
+                let extra = '';
+                if (s.symbols_scanned) {
+                    extra = ` · ${s.symbols_scanned} scanned, ${s.ob_found || 0} with OB`;
+                    if (s.fresh_choch_count) extra += `, ★${s.fresh_choch_count} fresh`;
+                }
+                lastEl.textContent = `Last scan: ${when}${extra}`;
+            } else {
+                lastEl.textContent = 'Never scanned';
+            }
+        }
+        // Disable scan button while scanning to avoid duplicate triggers
+        const scanBtn = document.getElementById('top100-scan-btn');
+        if (scanBtn) {
+            if (data.is_scanning) {
+                scanBtn.disabled = true;
+                scanBtn.textContent = '⏳ Scanning…';
+                scanBtn.style.opacity = '0.6';
+            } else {
+                scanBtn.disabled = false;
+                scanBtn.textContent = '🔄 Refresh now';
+                scanBtn.style.opacity = '1';
+            }
+        }
+    } catch (e) {
+        console.error('loadTop100State failed', e);
+    }
+}
+
+async function onTop100EnabledToggle() {
+    // Same pattern as TM master toggle — POST settings, then reload state
+    const enabled = document.getElementById('top100-enabled').checked;
+    try {
+        await fetch('/api/top100-ob/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
+        });
+        await loadTop100State();
+    } catch (e) {
+        console.error('top100 enable toggle failed', e);
+    }
+}
+
+async function saveTop100Settings() {
+    const tgAlerts = document.getElementById('top100-tg-alerts').checked;
+    const includeBos = document.getElementById('top100-include-bos').checked;
+    const minVolM = parseFloat(document.getElementById('top100-min-vol').value) || 0;
+    const minVolUsd = minVolM * 1_000_000;
+    try {
+        await fetch('/api/top100-ob/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                telegram_alerts: tgAlerts,
+                include_bos_alerts: includeBos,
+                min_quote_volume_usd: minVolUsd,
+            })
+        });
+    } catch (e) {
+        console.error('top100 settings save failed', e);
+    }
+}
+
+async function top100ScanNow() {
+    // Triggers a manual scan in the background. Server returns immediately
+    // so the UI doesn't hang for ~60s. State polling picks up is_scanning
+    // and disables the button.
+    try {
+        const r = await fetch('/api/top100-ob/scan', {method: 'POST'});
+        const data = await r.json();
+        if (data.ok) {
+            // Bump state right away so user sees "Scanning..." quickly
+            await loadTop100State();
+        } else {
+            console.warn('top100 scan triggered but got non-ok:', data);
+        }
+    } catch (e) {
+        console.error('top100 scan trigger failed', e);
+    }
+}
+
+async function loadTop100Snapshots() {
+    try {
+        // We always pull only-with-ob and let the client filter further.
+        // Snapshots without OB are not interesting for the table view.
+        const r = await fetch('/api/top100-ob/snapshots?only_with_ob=true');
+        const data = await r.json();
+        _top100Snapshots = data.snapshots || [];
+        renderTop100Active();
+    } catch (e) {
+        console.error('loadTop100Snapshots failed', e);
+    }
+}
+
+function renderTop100Active() {
+    const tbody = document.getElementById('top100-active-tbody');
+    const countEl = document.getElementById('top100-active-count');
+    if (!tbody) return;
+    
+    const filterEl = document.getElementById('top100-filter');
+    const filter = filterEl ? filterEl.value : 'fresh-choch';
+    
+    // Apply filter. "Fresh CHoCH" is a strict view: created_by_tag==CHoCH
+    // AND last_seen_at indicates the OB is still confirmed by latest scan.
+    // We loosen "fresh" to "discovered in last 12h" since 4H bars cycle
+    // and an OB can be valid for a while after discovery.
+    const now = Date.now();
+    const twelveHoursMs = 12 * 3600 * 1000;
+    
+    let rows = _top100Snapshots.filter(s => s.bias);
+    if (filter === 'fresh-choch') {
+        rows = rows.filter(s => {
+            if ((s.created_by_tag || '').toUpperCase() !== 'CHOCH') return false;
+            if (!s.discovered_at) return false;
+            const age = now - new Date(s.discovered_at + 'Z').getTime();
+            return age <= twelveHoursMs;
+        });
+    } else if (filter === 'all-choch') {
+        rows = rows.filter(s => (s.created_by_tag || '').toUpperCase() === 'CHOCH');
+    } else if (filter === 'long') {
+        rows = rows.filter(s => s.bias === 'BULLISH');
+    } else if (filter === 'short') {
+        rows = rows.filter(s => s.bias === 'BEARISH');
+    }
+    
+    if (countEl) countEl.textContent = `(${rows.length})`;
+    
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No matches for current filter</td></tr>';
+        return;
+    }
+    
+    let html = '';
+    for (const s of rows) {
+        const isBull = s.bias === 'BULLISH';
+        const dirIcon = isBull ? '🟢 LONG' : '🔴 SHORT';
+        const dirColor = isBull ? '#86efac' : '#fca5a5';
+        const tag = (s.created_by_tag || '').toUpperCase();
+        let tagDisplay = tag;
+        let tagColor = '#888';
+        if (tag === 'CHOCH') {
+            tagDisplay = '★ CHoCH';
+            tagColor = '#fbbf24';
+        } else if (tag === 'BOS') {
+            tagDisplay = '→ BOS';
+            tagColor = '#9ca3af';
+        }
+        const zone = `${fmtPriceJS(s.bar_low)} — ${fmtPriceJS(s.bar_high)}`;
+        const price = fmtPriceJS(s.last_price);
+        const volM = (s.quote_volume_24h || 0) / 1_000_000;
+        const volStr = volM >= 1000 ? `$${(volM/1000).toFixed(1)}B` : `$${Math.round(volM)}M`;
+        // Age based on discovered_at — when WE first saw this OB
+        let ageStr = '?';
+        if (s.discovered_at) {
+            const ageMs = now - new Date(s.discovered_at + 'Z').getTime();
+            const ageH = ageMs / 3600 / 1000;
+            if (ageH < 1) ageStr = `${Math.floor(ageH * 60)}m`;
+            else if (ageH < 24) ageStr = `${Math.floor(ageH)}h`;
+            else ageStr = `${Math.floor(ageH / 24)}d`;
+        }
+        html += `<tr>
+            <td><strong>${escapeHtml(s.symbol)}</strong></td>
+            <td style="color:${dirColor}">${dirIcon}</td>
+            <td style="color:${tagColor};font-size:0.78rem">${tagDisplay}</td>
+            <td style="font-family:monospace;font-size:0.78rem">${zone}</td>
+            <td style="font-family:monospace;font-size:0.78rem">${price}</td>
+            <td style="font-size:0.78rem">${volStr}</td>
+            <td style="color:#888;font-size:0.78rem">${ageStr}</td>
+            <td><button onclick="top100AddToWatchlist('${escapeHtml(s.symbol)}', this)"
+                       style="padding:2px 8px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.4);color:#a5b4fc;border-radius:3px;cursor:pointer;font-size:0.72rem">
+                + Watchlist
+            </button></td>
+        </tr>`;
+    }
+    tbody.innerHTML = html;
+}
+
+async function top100AddToWatchlist(symbol, btn) {
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '...';
+    }
+    try {
+        const r = await fetch('/api/top100-ob/add-to-watchlist', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol})
+        });
+        const data = await r.json();
+        if (btn) {
+            if (data.ok) {
+                btn.textContent = '✓ added';
+                btn.style.background = 'rgba(34,197,94,0.2)';
+                btn.style.color = '#86efac';
+                // Reload SMC watchlist so user sees the new symbol there
+                if (typeof loadWatchlist === 'function') loadWatchlist();
+            } else {
+                btn.textContent = data.reason || 'failed';
+                btn.style.background = 'rgba(239,68,68,0.2)';
+                btn.style.color = '#fca5a5';
+                setTimeout(() => {
+                    btn.disabled = false;
+                    btn.textContent = '+ Watchlist';
+                    btn.style.background = 'rgba(99,102,241,0.15)';
+                    btn.style.color = '#a5b4fc';
+                }, 2500);
+            }
+        }
+    } catch (e) {
+        console.error('top100AddToWatchlist failed', e);
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '+ Watchlist';
+        }
+    }
+}
+
+async function loadTop100History() {
+    const feedEl = document.getElementById('top100-history-feed');
+    if (!feedEl) return;
+    try {
+        const r = await fetch('/api/top100-ob/history?hours=24&limit=50');
+        const data = await r.json();
+        const events = data.history || [];
+        if (events.length === 0) {
+            feedEl.innerHTML = '<div style="color:#666;font-size:0.78rem;text-align:center;padding:20px">No recent events. Run a scan to see discoveries.</div>';
+            return;
+        }
+        const now = Date.now();
+        let html = '';
+        for (const ev of events) {
+            const isBull = ev.bias === 'BULLISH';
+            const isMit = ev.event_type === 'mitigated';
+            const tag = (ev.created_by_tag || '').toUpperCase();
+            
+            let icon, line, color;
+            if (isMit) {
+                icon = '✗';
+                color = '#9ca3af';
+                line = `${ev.symbol} — ${isBull ? 'LONG' : 'SHORT'} OB mitigated`;
+            } else {
+                icon = isBull ? '🟢' : '🔴';
+                color = isBull ? '#86efac' : '#fca5a5';
+                const evLabel = ev.event_type === 'created' ? 'fresh' : 'replaced';
+                const tagLabel = tag === 'CHOCH' ? '★ CHoCH' : (tag === 'BOS' ? '→ BOS continuation' : tag);
+                const zone = (ev.bar_low && ev.bar_high) 
+                    ? ` zone ${fmtPriceJS(ev.bar_low)}-${fmtPriceJS(ev.bar_high)}`
+                    : '';
+                line = `${ev.symbol} — ${evLabel} ${isBull ? 'LONG' : 'SHORT'} ${tagLabel}${zone}`;
+            }
+            
+            let ageStr = '';
+            if (ev.created_at) {
+                const ageMs = now - new Date(ev.created_at + 'Z').getTime();
+                const ageMin = Math.floor(ageMs / 60000);
+                if (ageMin < 1) ageStr = 'just now';
+                else if (ageMin < 60) ageStr = `${ageMin}m ago`;
+                else if (ageMin < 1440) ageStr = `${Math.floor(ageMin/60)}h ago`;
+                else ageStr = `${Math.floor(ageMin/1440)}d ago`;
+            }
+            
+            html += `<div style="padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.78rem;display:flex;justify-content:space-between;align-items:center">
+                <span><span style="color:${color};margin-right:6px">${icon}</span><strong>${escapeHtml(line)}</strong></span>
+                <span style="color:#666;font-size:0.72rem;margin-left:10px;white-space:nowrap">${ageStr}</span>
+            </div>`;
+        }
+        feedEl.innerHTML = html;
+    } catch (e) {
+        console.error('loadTop100History failed', e);
+    }
+}
+
+// Reuse helpers if they exist; define minimal fallbacks if not.
+// Note: smart_money.html already has fmtPriceJS at line ~2918 — these
+// fallbacks only kick in if the script load order ever changes.
+if (typeof escapeHtml === 'undefined') {
+    var escapeHtml = function(s) {
+        if (!s) return '';
+        return String(s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    };
+}
+if (typeof fmtPriceJS === 'undefined') {
+    var fmtPriceJS = function(p) {
+        if (p == null || p === 0) return '0';
+        if (p >= 1000) return p.toLocaleString('en-US', {maximumFractionDigits: 0});
+        if (p >= 1) return p.toFixed(2);
+        if (p >= 0.01) return p.toFixed(4);
+        if (p >= 0.0001) return p.toFixed(6);
+        return p.toFixed(8);
+    };
+}
 </script>
 {% endblock %}

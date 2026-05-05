@@ -177,6 +177,68 @@ class MarketData:
         return None
     
     # ========================================
+    # TOP-N PERP UNIVERSE (Binance only)
+    # ========================================
+    
+    def fetch_top_perp_symbols(self, n: int = 100, min_quote_volume_usd: float = 0.0
+                                ) -> Optional[List[Dict]]:
+        """Fetch top-N USDT-perpetual symbols from Binance Futures, sorted by
+        24h quote volume (USD turnover) descending.
+        
+        Returns list of dicts: [{'symbol', 'quote_volume', 'last_price',
+        'price_change_pct'}, ...]  ordered by quote_volume desc, length<=n,
+        all entries have quote_volume >= min_quote_volume_usd.
+        
+        Only Binance is queried — no fallback. The TOP-100 universe should
+        come from a single canonical source so the list stays stable
+        between scans (different exchanges rank differently).
+        
+        Filters out:
+          - Non-USDT pairs (BUSD, USDC, BTC quote, etc.)
+          - Symbols ending in _<date> (delivery contracts, not perpetuals)
+          - Inactive / suspended symbols (price_change == 0 with 0 volume)
+        """
+        try:
+            r = self._session.get(
+                'https://fapi.binance.com/fapi/v1/ticker/24hr',
+                timeout=REQUEST_TIMEOUT)
+            if r.status_code != 200:
+                return None
+            tickers = r.json()
+        except Exception as e:
+            print(f"[MarketData] fetch_top_perp_symbols error: {e}")
+            return None
+        
+        rows = []
+        for t in tickers:
+            symbol = t.get('symbol', '')
+            # USDT-perp filter: must end with USDT and not have an underscore
+            # (BTCUSDT_240927 = quarterly delivery, BTCUSDT = perpetual).
+            if not symbol.endswith('USDT') or '_' in symbol:
+                continue
+            try:
+                quote_vol = float(t.get('quoteVolume', 0))
+                last_price = float(t.get('lastPrice', 0))
+                pct_change = float(t.get('priceChangePercent', 0))
+            except (TypeError, ValueError):
+                continue
+            # Drop dead pairs — zero turnover means delisted or stale
+            if quote_vol <= 0 or last_price <= 0:
+                continue
+            if quote_vol < min_quote_volume_usd:
+                continue
+            rows.append({
+                'symbol': symbol,
+                'quote_volume': quote_vol,  # USD turnover 24h
+                'last_price': last_price,
+                'price_change_pct': pct_change,
+            })
+        
+        # Sort by quote volume descending, take top N
+        rows.sort(key=lambda x: x['quote_volume'], reverse=True)
+        return rows[:n]
+    
+    # ========================================
     # OPEN INTEREST
     # ========================================
     

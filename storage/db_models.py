@@ -770,3 +770,126 @@ class SMCOBState(Base):
             'created_by_tag': self.created_by_tag,
             'computed_at': self.computed_at,
         }
+
+
+# ============================================================
+# TOP-100 4H OB Radar (Variant B: scheduled scan)
+# ============================================================
+# Two tables for the TOP-100 OB scanner module.
+#
+# Top100OBSnapshot — current state: one row per symbol with the latest
+#   detected OB on the 4H timeframe (or NULL if no valid OB exists).
+#   Overwritten on every scan. Plus tracking metadata: when we first saw
+#   this OB (`discovered_at`) and when we last confirmed it
+#   (`last_seen_at`). A "fresh" OB is one whose discovered_at == this
+#   scan's timestamp — i.e. didn't exist on the previous scan.
+#
+# Top100OBHistory — append-only audit log. Each row records an event:
+#   when an OB was created, mitigated, or replaced by a newer OB on the
+#   same symbol. This is what the "Recent Discoveries" UI feed reads.
+#
+# This is INTENTIONALLY separate from SMCOBState (the per-watchlist gate
+# table). Different scanner, different cadence, different semantics. The
+# TOP-100 scanner does NOT gate signals — purely informational.
+
+class Top100OBSnapshot(Base):
+    """Current state of the latest 4H OB for each TOP-100 symbol."""
+    __tablename__ = f'{TABLE_PREFIX}top100_ob_snapshots'
+    
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String(30), nullable=False, unique=True, index=True)
+    
+    # 24h market context — captured at scan time so UI doesn't have to
+    # re-fetch tickers when rendering
+    quote_volume_24h = Column(Float)   # USD turnover, used for min vol filter
+    last_price = Column(Float)
+    price_change_24h = Column(Float)   # % change
+    
+    # OB data — NULL if no valid OB exists
+    bias = Column(String(10))         # 'BULLISH' | 'BEARISH' | NULL
+    bar_high = Column(Float)
+    bar_low = Column(Float)
+    bar_time_ms = Column(BigInteger)  # ms epoch of OB pivot bar
+    created_at_t = Column(BigInteger) # ms epoch when OB was created
+    created_by_tag = Column(String(10))  # 'CHoCH' or 'BOS'
+    
+    # Lifecycle tracking — separates "first time seeing this OB" from
+    # "OB still here from previous scan". `discovered_at` is set when the
+    # OB first appears (created_at_t differs from prior scan's value).
+    # `last_seen_at` updates every scan that the same OB is still valid.
+    discovered_at = Column(DateTime)   # First scan when this exact OB appeared
+    last_seen_at = Column(DateTime)    # Last scan that confirmed this OB
+    
+    # Snapshot metadata
+    scanned_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_top100_snapshot_symbol', 'symbol', unique=True),
+    )
+    
+    def to_dict(self):
+        return {
+            'symbol': self.symbol,
+            'quote_volume_24h': self.quote_volume_24h,
+            'last_price': self.last_price,
+            'price_change_24h': self.price_change_24h,
+            'bias': self.bias,
+            'bar_high': self.bar_high,
+            'bar_low': self.bar_low,
+            'bar_time_ms': self.bar_time_ms,
+            'created_at_t': self.created_at_t,
+            'created_by_tag': self.created_by_tag,
+            'discovered_at': self.discovered_at.isoformat() if self.discovered_at else None,
+            'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
+            'scanned_at': self.scanned_at.isoformat() if self.scanned_at else None,
+        }
+
+
+class Top100OBHistory(Base):
+    """Audit log of OB lifecycle events for TOP-100 4H scanner."""
+    __tablename__ = f'{TABLE_PREFIX}top100_ob_history'
+    
+    # BIGINT id — this table grows continuously (one row per event ~5-30
+    # rows per scan × 6 scans/day = up to 180 rows/day = ~65k/year).
+    # Standard Integer would last ~33k years anyway, but BigInteger
+    # signals "this is meant to grow" and matches existing conventions.
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    symbol = Column(String(30), nullable=False, index=True)
+    
+    # 'created' = OB first appeared (snapshot didn't have it last scan)
+    # 'mitigated' = OB was active, now no longer valid
+    # 'replaced' = newer OB took the same direction (BOS continuation usually)
+    event_type = Column(String(20), nullable=False)
+    
+    # Snapshot of the OB at event time (denormalized for audit clarity)
+    bias = Column(String(10))
+    bar_high = Column(Float)
+    bar_low = Column(Float)
+    bar_time_ms = Column(BigInteger)
+    created_by_tag = Column(String(10))
+    
+    # Market context at event time
+    price_at_event = Column(Float)
+    quote_volume_24h = Column(Float)
+    
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    __table_args__ = (
+        Index('idx_top100_history_symbol_time', 'symbol', 'created_at'),
+        Index('idx_top100_history_event_time', 'event_type', 'created_at'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'event_type': self.event_type,
+            'bias': self.bias,
+            'bar_high': self.bar_high,
+            'bar_low': self.bar_low,
+            'bar_time_ms': self.bar_time_ms,
+            'created_by_tag': self.created_by_tag,
+            'price_at_event': self.price_at_event,
+            'quote_volume_24h': self.quote_volume_24h,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }

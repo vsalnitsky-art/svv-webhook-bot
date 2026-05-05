@@ -8,7 +8,8 @@ from sqlalchemy import desc, and_, or_
 from storage.db_models import (
     get_session, init_db,
     SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
-    SymbolBlacklist, SMCOBState
+    SymbolBlacklist, SMCOBState,
+    Top100OBSnapshot, Top100OBHistory
 )
 from config import DEFAULT_SETTINGS
 
@@ -836,6 +837,200 @@ class DBOperations:
         except Exception as e:
             session.rollback()
             print(f"[DB] delete_smc_ob_state_for_symbol error for {symbol}: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # ============================================================
+    # TOP-100 4H OB Radar — snapshot + history
+    # ============================================================
+    
+    def upsert_top100_ob_snapshot(self, symbol: str, market_ctx: Dict,
+                                    ob_data: Optional[Dict],
+                                    is_fresh_for_symbol: bool = False) -> bool:
+        """Upsert a TOP-100 OB snapshot row.
+        
+        Args:
+            symbol: e.g. 'BTCUSDT'
+            market_ctx: dict with 'quote_volume_24h', 'last_price',
+                'price_change_24h' from the ticker fetch.
+            ob_data: dict from ob_detector.detect_last_order_block (may be
+                None if no valid OB exists for this symbol right now).
+            is_fresh_for_symbol: True if this OB is different from the
+                previous snapshot (created_at_t differs). When True,
+                discovered_at is set to now; when False, only last_seen_at
+                advances. Caller should compute this by comparing with the
+                prior snapshot before calling.
+        
+        Returns True on successful write.
+        """
+        session = get_session()
+        try:
+            row = session.query(Top100OBSnapshot).filter_by(symbol=symbol).first()
+            now = datetime.utcnow()
+            if row is None:
+                row = Top100OBSnapshot(symbol=symbol)
+                session.add(row)
+                # First time we've seen this symbol — if it has an OB now,
+                # treat it as freshly discovered.
+                if ob_data:
+                    row.discovered_at = now
+            
+            row.quote_volume_24h = market_ctx.get('quote_volume_24h')
+            row.last_price = market_ctx.get('last_price')
+            row.price_change_24h = market_ctx.get('price_change_24h')
+            
+            if ob_data:
+                row.bias = ob_data.get('bias')
+                row.bar_high = ob_data.get('bar_high')
+                row.bar_low = ob_data.get('bar_low')
+                row.bar_time_ms = ob_data.get('bar_time')
+                row.created_at_t = ob_data.get('created_at_t')
+                row.created_by_tag = ob_data.get('created_by_tag')
+                if is_fresh_for_symbol:
+                    # Caller indicated this is a different OB than before
+                    row.discovered_at = now
+                row.last_seen_at = now
+            else:
+                # No valid OB — clear OB fields but keep symbol row alive
+                # so we still have market_ctx tracking.
+                row.bias = None
+                row.bar_high = None
+                row.bar_low = None
+                row.bar_time_ms = None
+                row.created_at_t = None
+                row.created_by_tag = None
+                # Don't touch discovered_at — preserve "we last saw this
+                # OB at X" history. last_seen_at also preserved for the
+                # same reason — UI can show "OB lost N hours ago".
+            
+            row.scanned_at = now
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] upsert_top100_ob_snapshot error for {symbol}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def get_top100_ob_snapshot(self, symbol: str) -> Optional[Dict]:
+        """Get a single symbol's current snapshot row, or None."""
+        session = get_session()
+        try:
+            row = session.query(Top100OBSnapshot).filter_by(symbol=symbol).first()
+            return row.to_dict() if row else None
+        except Exception as e:
+            print(f"[DB] get_top100_ob_snapshot error for {symbol}: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def list_top100_ob_snapshots(self, only_with_ob: bool = False,
+                                   min_quote_volume: float = 0.0
+                                   ) -> List[Dict]:
+        """Return all current snapshots (optionally filtered).
+        
+        Args:
+            only_with_ob: if True, return only rows where bias is set
+                (i.e. an OB currently exists). Default False — UI may
+                want to show "no OB" symbols too.
+            min_quote_volume: filter out symbols with 24h vol below this.
+        """
+        session = get_session()
+        try:
+            q = session.query(Top100OBSnapshot)
+            if only_with_ob:
+                q = q.filter(Top100OBSnapshot.bias.isnot(None))
+            if min_quote_volume > 0:
+                q = q.filter(Top100OBSnapshot.quote_volume_24h >= min_quote_volume)
+            # Sort by quote_volume descending — most-traded first
+            q = q.order_by(Top100OBSnapshot.quote_volume_24h.desc())
+            return [r.to_dict() for r in q.all()]
+        except Exception as e:
+            print(f"[DB] list_top100_ob_snapshots error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def add_top100_ob_history(self, symbol: str, event_type: str,
+                                ob_data: Optional[Dict],
+                                price_at_event: Optional[float],
+                                quote_volume_24h: Optional[float]) -> bool:
+        """Append a history row. event_type: 'created' | 'mitigated' | 'replaced'.
+        
+        For 'mitigated' events ob_data should be the OB that was mitigated
+        (snapshot from the previous scan). For 'created' / 'replaced' it's
+        the new OB. Caller is responsible for providing the right snapshot.
+        """
+        if event_type not in ('created', 'mitigated', 'replaced'):
+            print(f"[DB] add_top100_ob_history: invalid event_type {event_type!r}")
+            return False
+        session = get_session()
+        try:
+            h = Top100OBHistory(
+                symbol=symbol,
+                event_type=event_type,
+                bias=ob_data.get('bias') if ob_data else None,
+                bar_high=ob_data.get('bar_high') if ob_data else None,
+                bar_low=ob_data.get('bar_low') if ob_data else None,
+                bar_time_ms=ob_data.get('bar_time') if ob_data else None,
+                created_by_tag=ob_data.get('created_by_tag') if ob_data else None,
+                price_at_event=price_at_event,
+                quote_volume_24h=quote_volume_24h,
+            )
+            session.add(h)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] add_top100_ob_history error for {symbol}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def list_top100_ob_history(self, hours: int = 24,
+                                 event_types: Optional[List[str]] = None,
+                                 limit: int = 100) -> List[Dict]:
+        """Return recent history events.
+        
+        Args:
+            hours: how far back to look (default 24h for the "Recent
+                Discoveries" feed).
+            event_types: optional filter to specific event types.
+            limit: cap result count.
+        """
+        from datetime import timedelta
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            q = session.query(Top100OBHistory).filter(
+                Top100OBHistory.created_at >= cutoff)
+            if event_types:
+                q = q.filter(Top100OBHistory.event_type.in_(event_types))
+            q = q.order_by(Top100OBHistory.created_at.desc()).limit(limit)
+            return [r.to_dict() for r in q.all()]
+        except Exception as e:
+            print(f"[DB] list_top100_ob_history error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def cleanup_top100_ob_history(self, retention_days: int = 30) -> int:
+        """Delete history rows older than `retention_days`. Called daily by
+        the scanner. Returns rows deleted.
+        """
+        from datetime import timedelta
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=retention_days)
+            n = session.query(Top100OBHistory).filter(
+                Top100OBHistory.created_at < cutoff).delete()
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] cleanup_top100_ob_history error: {e}")
             return 0
         finally:
             session.close()
