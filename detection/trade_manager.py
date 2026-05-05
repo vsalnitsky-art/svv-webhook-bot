@@ -83,6 +83,17 @@ DEFAULT_SETTINGS = {
     # Either condition alone won't close — needs both (confluence).
     'use_forecast_1h_close': True,
     
+    # === Opposite-OB exit (Structure-Detection TF) ===
+    # Closes position when an OB with the OPPOSITE bias appears on the
+    # Structure-Detection timeframe (the same TF as the main scan,
+    # typically 15M). This is a faster mean-reversion exit than HTF flip
+    # or Forecast — it triggers as soon as the LTF structure produces a
+    # counter-direction OB, regardless of CHoCH/BOS tag.
+    # Example: position LONG, then on 15M an OB with bias=BEARISH appears
+    #          → close immediately with reason='opposite_ob_exit'.
+    # Default OFF — opt-in for users who want the strict-bias-flip exit.
+    'use_opposite_ob_exit': False,
+    
     # === Test mode (paper trading for exit-rule validation) ===
     # When ON: signals create "shadow" positions tracked in memory only.
     # No Bybit orders. Exit rules still evaluate and send Telegram alerts
@@ -368,7 +379,8 @@ class TradeManager:
             
             for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_htf_flip',
                       'use_time_stop', 'use_trailing', 'use_be',
-                      'use_forecast_1h_close', 'test_mode',
+                      'use_forecast_1h_close', 'use_opposite_ob_exit',
+                      'test_mode',
                       'telegram_alerts', 'test_telegram_alerts',
                       'use_bos_partials', 'trailing_after_bos_2',
                       'health_score_enabled',
@@ -761,6 +773,71 @@ class TradeManager:
                 self._close_position(symbol, current_price, reason='reverse_smc')
             elif shadow and s.get('test_mode'):
                 self._close_shadow(symbol, current_price, reason='reverse_smc')
+    
+    def on_main_ob_update(self, symbol: str, ob_data: Optional[Dict]):
+        """Called by SMC scanner whenever the OB on the main (Structure
+        Detection) timeframe is recomputed for `symbol`.
+        
+        Implements the "opposite-OB exit" rule: if a position is open and
+        the just-computed OB has the OPPOSITE bias to the position's
+        direction, close immediately. Triggered by ob_data being non-None
+        and bias-non-None — bias=None means "no valid OB right now" and
+        is ignored (no signal to act on).
+        
+        Why hooked here vs in _tick: shadow positions aren't monitored on
+        price ticks (they're event-driven), and the OB bias only changes
+        when the scanner re-runs the detector. Calling this from inside
+        the scanner's per-symbol pass means we react in the same pass
+        that computed the new OB — no polling, no race window.
+        
+        Gate is the global `use_opposite_ob_exit` toggle. Off by default;
+        users who want this behavior opt in via the Exit Rules block.
+        """
+        s = self._settings
+        if not s.get('use_opposite_ob_exit'):
+            return
+        if not ob_data or not ob_data.get('bias'):
+            # No valid OB on main TF right now — nothing to compare against.
+            # Don't treat the absence of OB as opposite signal; OBs come and
+            # go on every mitigation, and we'd churn closes.
+            return
+        
+        with self._lock:
+            real = self._positions.get(symbol)
+            shadow = self._shadow_positions.get(symbol)
+        
+        pos = real or shadow
+        if not pos:
+            return  # No open position for this symbol
+        
+        # Compare OB bias vs position direction
+        ob_bias = ob_data.get('bias')  # 'BULLISH' | 'BEARISH'
+        pos_long = pos['side'] == 'LONG'
+        
+        # OB is opposite when:
+        #   position LONG  and OB BEARISH   → close
+        #   position SHORT and OB BULLISH   → close
+        is_opposite = ((pos_long and ob_bias == 'BEARISH')
+                       or (not pos_long and ob_bias == 'BULLISH'))
+        if not is_opposite:
+            return  # Same-side OB — keep position; OB is supporting it
+        
+        # === Close ===
+        # The position was opened against this exact direction's structure;
+        # the LTF telling us it's reversing. Close in the same way other
+        # exit rules close — real first, fallback shadow.
+        current_price = self._get_current_price(symbol) or pos['entry_price']
+        ob_tag = (ob_data.get('created_by_tag') or '').upper()
+        # Diagnostic log so user can correlate exits with OB events
+        print(f"[TM] 🔃 Opposite OB exit triggered for {symbol} "
+              f"({pos['side']} → opposite OB={ob_bias}/{ob_tag or '?'})")
+        
+        if real:
+            self._close_position(symbol, current_price,
+                                  reason='opposite_ob_exit')
+        elif shadow and s.get('test_mode'):
+            self._close_shadow(symbol, current_price,
+                                reason='opposite_ob_exit')
     
     def _get_forecast_1h(self, symbol: str) -> Optional[Dict]:
         """Read the latest Forecast 1H for the symbol from forecast_engine cache."""
@@ -2264,6 +2341,7 @@ class TradeManager:
             'take_profit': '🎯 Take Profit',
             'reverse_smc': '🔄 Reverse SMC (CHoCH)',
             'reverse_signal': '🔁 Reverse Signal (qualified)',
+            'opposite_ob_exit': '🔃 Opposite OB Exit',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
             'htf_flip': '📡 HTF Trend Flip',
             'time_stop': '⏱ Time Stop',

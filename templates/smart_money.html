@@ -1091,6 +1091,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         
                         <div class="tm-row">
                             <label>
+                                <input type="checkbox" id="tm-use-opposite-ob-exit" onchange="saveTMSettings()">
+                                Opposite OB Exit (Structure TF)
+                                <span class="tm-help" title="Закриває позицію коли на основному Structure-Detection TF (зазвичай 15M) утворюється OB протилежного напрямку. LONG → BEARISH OB = close. SHORT → BULLISH OB = close. Будь-який OB (CHoCH або BOS), не лише fresh CHoCH. Швидкий mean-reversion exit — спрацьовує одразу як LTF структура розвертається. За замовчуванням ВИМКНЕНО.">?</span>
+                            </label>
+                        </div>
+                        
+                        <div class="tm-row">
+                            <label>
                                 <input type="checkbox" id="tm-use-htf-flip" onchange="saveTMSettings()">
                                 HTF Trend Flip
                                 <span class="tm-help" title="Закриває позицію коли HTF (старший таймфрейм) тренд змінюється проти неї. Працює тільки якщо HTF Filter увімкнений у налаштуваннях SMC">?</span>
@@ -2582,6 +2590,7 @@ async function loadTMSettings() {
         document.getElementById('tm-tp-pct').value = s.tp_pct;
         document.getElementById('tm-use-reverse').checked = !!s.use_reverse_smc;
         document.getElementById('tm-use-forecast-close').checked = !!s.use_forecast_1h_close;
+        document.getElementById('tm-use-opposite-ob-exit').checked = !!s.use_opposite_ob_exit;
         document.getElementById('tm-use-htf-flip').checked = !!s.use_htf_flip;
         document.getElementById('tm-use-time-stop').checked = !!s.use_time_stop;
         document.getElementById('tm-time-stop-hours').value = s.time_stop_hours;
@@ -2779,6 +2788,7 @@ async function saveTMSettings() {
             tp_pct: parseFloat(document.getElementById('tm-tp-pct').value) || 5,
             use_reverse_smc: document.getElementById('tm-use-reverse').checked,
             use_forecast_1h_close: document.getElementById('tm-use-forecast-close').checked,
+            use_opposite_ob_exit: document.getElementById('tm-use-opposite-ob-exit').checked,
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
             use_time_stop: document.getElementById('tm-use-time-stop').checked,
             time_stop_hours: parseFloat(document.getElementById('tm-time-stop-hours').value) || 4,
