@@ -878,11 +878,13 @@ class SMCScanner:
         except Exception:
             return
         
-        # Fetch enough klines to seed ATR(200) cleanly. Pine uses ta.atr(200)
-        # which stabilizes at bar 199 with SMA seed. We pull 400 bars to give
-        # a 200-bar warmup before the first OB-eligible bar — this is the
-        # minimum where parsedHigh/parsedLow classifications are reliable.
-        OB_KLINES_LIMIT = 400
+        # Fetch klines for OB detection. We pull 700 bars to give ATR(200)
+        # a 500-bar warmup (instead of just 200) — this stabilizes the
+        # parsedHigh/Low volatility-filter classifications which are
+        # sensitive to ATR jitter near the seed bar. Also gives a longer
+        # pivot history so internal_size=5 has 700/5=140 potential pivots
+        # to work with on the rolling window.
+        OB_KLINES_LIMIT = 700
         try:
             if hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames:
                 klines = md.fetch_klines(symbol, limit=OB_KLINES_LIMIT, interval=ob_tf)
@@ -892,6 +894,9 @@ class SMCScanner:
             # Network blip or rate-limit — don't crash, just skip this tick.
             return
         
+        # Insufficient history check: ATR(200) Wilder needs at least 200 bars
+        # for the SMA seed plus a few more for stability. Below 220 the
+        # parsedHigh/Low classifications are unreliable.
         if not klines or len(klines) < 220:
             # Insufficient history for stable ATR. Leave any prior DB row
             # intact (don't wipe it), so the gate can still use the older

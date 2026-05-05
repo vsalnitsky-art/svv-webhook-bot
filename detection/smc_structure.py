@@ -88,10 +88,14 @@ def _process(klines: List[Dict], size: int) -> Dict:
     """Single-pass SMC detection at given pivot size."""
     n = len(klines)
     
-    # Pine `var leg = 0` — but 0 collides with BEARISH_LEG. We use None to mean
-    # "uninitialized" so the very first leg detection doesn't fire a phantom
-    # pivot transition.
-    leg_state = None
+    # Pine `var leg = 0`. So leg starts at BEARISH_LEG (= 0).
+    # First `newLegHigh` after start: leg stays 0 — `ta.change` returns 0 — no pivot.
+    # First `newLegLow` after start:  leg becomes 1 — `ta.change` returns +1 — pivot fires.
+    # This is asymmetric on purpose in Pine (probably a quirk, but we match
+    # exactly to avoid divergence with TradingView). My earlier port used
+    # `leg_state = None` and skipped both first detections — that gave a
+    # cleaner semantic but caused a 1-2 pivot offset vs TV.
+    leg_state = BEARISH_LEG  # matches Pine `var leg = 0`
     
     high_pivot = {'level': None, 'last_level': None, 'crossed': False,
                    't': None, 'idx': None}
@@ -121,10 +125,10 @@ def _process(klines: List[Dict], size: int) -> Dict:
         elif new_leg_low:
             leg_state = BULLISH_LEG
         
-        # Pivot only forms on a real leg transition (not on first init)
-        new_pivot = (prev_leg is not None and 
-                     leg_state is not None and 
-                     leg_state != prev_leg)
+        # Pivot only forms on a real leg transition — `ta.change(leg) != 0`.
+        # Since leg_state is now always set (initialized to BEARISH_LEG=0),
+        # we just compare prev vs new.
+        new_pivot = (leg_state != prev_leg)
         
         if new_pivot:
             if leg_state == BULLISH_LEG:

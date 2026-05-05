@@ -164,29 +164,18 @@ def detect_last_order_block(
         lows.append(low)
         times.append(t)
         
-        # === Pine 605-626: deleteOrderBlocks (mitigation) ===
-        # Run BEFORE store so that the OB created on this bar isn't
-        # incorrectly mitigated by its own bar's high/low. Pine evaluates
-        # delete on the new bar's high/low against existing OBs, then
-        # store runs on the same bar and adds the new one.
-        if mitigation_method == 'HIGHLOW':
-            bear_src = high   # bearishOrderBlockMitigationSource
-            bull_src = low    # bullishOrderBlockMitigationSource
-        else:  # CLOSE
-            close_v = float(bar.get('p', 0))
-            bear_src = close_v
-            bull_src = close_v
-        
-        # Iterate in reverse so .pop(idx) doesn't shift unprocessed indices.
-        # Pine `for [index, eachOrderBlock] in orderBlocks` walks low-to-high
-        # but uses `orderBlocks.remove(index)` which in Pine slices the array;
-        # in Python pop-by-index works the same when iterated in reverse.
-        for ob_idx in range(len(obs) - 1, -1, -1):
-            ob = obs[ob_idx]
-            if ob['bias'] == BEARISH and bear_src > ob['bar_high']:
-                obs.pop(ob_idx)
-            elif ob['bias'] == BULLISH and bull_src < ob['bar_low']:
-                obs.pop(ob_idx)
+        # Pine main-loop ordering on every bar (lines 908-924):
+        #   1. getCurrentStructure (pivot detection — done already, in `events`)
+        #   2. displayStructure → storeOrdeBlock      ← CREATE first
+        #   3. deleteOrderBlocks                       ← THEN mitigate
+        #
+        # This ordering means a new OB CAN be mitigated by the very same bar
+        # that created it — if current bar's high (for BEARISH OB) exceeds
+        # the parsedHigh-extreme it just stored. Common scenario: a strong
+        # breakdown bar where the breakdown wick reaches above the swing
+        # high zone the algorithm picked. Pine treats that OB as instantly
+        # invalid; my earlier port had this REVERSED, causing OBs to appear
+        # in our system that TradingView never displays.
         
         # === Pine 633-651: storeOrdeBlock — for any event ending at this bar ===
         for ev in events_by_idx.get(i, []):
@@ -247,6 +236,30 @@ def detect_last_order_block(
             if len(obs) >= 100:
                 obs.pop()  # drop oldest (last index)
             obs.insert(0, ob)  # unshift = prepend
+        
+        # === Pine 605-626: deleteOrderBlocks (mitigation) — runs AFTER store ===
+        # The current bar's high/low (or close, if mitigation_method='CLOSE')
+        # is checked against every OB still in the array — INCLUDING the OB
+        # potentially just stored by the events loop above. This is the
+        # missing-link the previous port reversed.
+        if mitigation_method == 'HIGHLOW':
+            bear_src = high   # bearishOrderBlockMitigationSource
+            bull_src = low    # bullishOrderBlockMitigationSource
+        else:  # CLOSE
+            close_v = float(bar.get('p', 0))
+            bear_src = close_v
+            bull_src = close_v
+        
+        # Iterate in reverse so .pop(idx) doesn't shift unprocessed indices.
+        # Pine `for [index, eachOrderBlock] in orderBlocks` walks low-to-high
+        # but uses `orderBlocks.remove(index)` which in Pine slices the array;
+        # in Python pop-by-index works the same when iterated in reverse.
+        for ob_idx in range(len(obs) - 1, -1, -1):
+            ob = obs[ob_idx]
+            if ob['bias'] == BEARISH and bear_src > ob['bar_high']:
+                obs.pop(ob_idx)
+            elif ob['bias'] == BULLISH and bull_src < ob['bar_low']:
+                obs.pop(ob_idx)
     
     # User wants only the latest valid OB. After the full pass, if the list
     # is non-empty, index 0 is the most recently stored AND not yet mitigated
