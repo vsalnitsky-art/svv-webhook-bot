@@ -83,16 +83,16 @@ DEFAULT_SETTINGS = {
     # Either condition alone won't close — needs both (confluence).
     'use_forecast_1h_close': True,
     
-    # === Opposite-OB exit (Structure-Detection TF) ===
+    # === Opposite-OB exit (configurable timeframe) ===
     # Closes position when an OB with the OPPOSITE bias appears on the
-    # Structure-Detection timeframe (the same TF as the main scan,
-    # typically 15M). This is a faster mean-reversion exit than HTF flip
-    # or Forecast — it triggers as soon as the LTF structure produces a
-    # counter-direction OB, regardless of CHoCH/BOS tag.
-    # Example: position LONG, then on 15M an OB with bias=BEARISH appears
-    #          → close immediately with reason='opposite_ob_exit'.
-    # Default OFF — opt-in for users who want the strict-bias-flip exit.
+    # configured timeframe. This is a faster mean-reversion exit than
+    # HTF flip or Forecast — it triggers as soon as the LTF structure
+    # produces a counter-direction OB, regardless of CHoCH/BOS tag.
+    # Example: position LONG, then on the configured TF an OB with
+    #          bias=BEARISH appears → close immediately.
+    # Default OFF + 15m TF — opt-in for users who want the strict-bias-flip exit.
     'use_opposite_ob_exit': False,
+    'opposite_ob_exit_timeframe': '15m',  # 15m / 30m / 1h / 4h
     
     # === Test mode (paper trading for exit-rule validation) ===
     # When ON: signals create "shadow" positions tracked in memory only.
@@ -386,6 +386,11 @@ class TradeManager:
                       'health_score_enabled',
                       'entry_score_enabled']:
                 self._settings[k] = bool(self._settings.get(k, False))
+            
+            # opposite_ob_exit_timeframe — validated string, default '15m'
+            ALLOWED_EXIT_TFS = ('15m', '30m', '1h', '4h')
+            if self._settings.get('opposite_ob_exit_timeframe') not in ALLOWED_EXIT_TFS:
+                self._settings['opposite_ob_exit_timeframe'] = '15m'
             
             # === Health Score validation ===
             preset = self._settings.get('health_score_preset', 'balanced')
@@ -774,15 +779,20 @@ class TradeManager:
             elif shadow and s.get('test_mode'):
                 self._close_shadow(symbol, current_price, reason='reverse_smc')
     
-    def on_main_ob_update(self, symbol: str, ob_data: Optional[Dict]):
-        """Called by SMC scanner whenever the OB on the main (Structure
-        Detection) timeframe is recomputed for `symbol`.
+    def on_main_ob_update(self, symbol: str, ob_data: Optional[Dict] = None):
+        """Called by SMC scanner whenever any OB might have changed for `symbol`.
+        
+        TM reads its CONFIGURED `opposite_ob_exit_timeframe` from DB and
+        evaluates the rule against that. The `ob_data` parameter is kept
+        for backward compatibility but is no longer the source of truth —
+        the configured TF may differ from whatever ob_data the scanner
+        passes (e.g. user picked 1h exit but scanner passed 15m main-TF
+        OB). DB read ensures we always check the right TF.
         
         Implements the "opposite-OB exit" rule: if a position is open and
-        the just-computed OB has the OPPOSITE bias to the position's
-        direction, close immediately. Triggered by ob_data being non-None
-        and bias-non-None — bias=None means "no valid OB right now" and
-        is ignored (no signal to act on).
+        the OB on the configured TF has the OPPOSITE bias to the position's
+        direction, close immediately. Triggered by bias-non-None — bias=None
+        means "no valid OB right now" and is ignored (no signal to act on).
         
         Why hooked here vs in _tick: shadow positions aren't monitored on
         price ticks (they're event-driven), and the OB bias only changes
@@ -796,11 +806,6 @@ class TradeManager:
         s = self._settings
         if not s.get('use_opposite_ob_exit'):
             return
-        if not ob_data or not ob_data.get('bias'):
-            # No valid OB on main TF right now — nothing to compare against.
-            # Don't treat the absence of OB as opposite signal; OBs come and
-            # go on every mitigation, and we'd churn closes.
-            return
         
         with self._lock:
             real = self._positions.get(symbol)
@@ -810,8 +815,24 @@ class TradeManager:
         if not pos:
             return  # No open position for this symbol
         
-        # Compare OB bias vs position direction
-        ob_bias = ob_data.get('bias')  # 'BULLISH' | 'BEARISH'
+        # Read OB at the configured exit TF from DB.
+        # We don't trust ob_data parameter — scanner may have passed a
+        # different TF's OB. The DB row at our configured TF is authoritative.
+        exit_tf = s.get('opposite_ob_exit_timeframe', '15m')
+        try:
+            from storage.db_operations import get_db
+            row = get_db().get_smc_ob_state(symbol, exit_tf)
+        except Exception as e:
+            print(f"[TM] opposite_ob_exit DB read error for {symbol}@{exit_tf}: {e}")
+            return
+        
+        if row is None or not row.get('bias'):
+            # Either scanner never computed this TF, or no valid OB right now.
+            # Don't treat absence as opposite signal; OBs come and go on every
+            # mitigation, and we'd churn closes.
+            return
+        
+        ob_bias = row['bias']
         pos_long = pos['side'] == 'LONG'
         
         # OB is opposite when:
@@ -823,14 +844,12 @@ class TradeManager:
             return  # Same-side OB — keep position; OB is supporting it
         
         # === Close ===
-        # The position was opened against this exact direction's structure;
-        # the LTF telling us it's reversing. Close in the same way other
-        # exit rules close — real first, fallback shadow.
         current_price = self._get_current_price(symbol) or pos['entry_price']
-        ob_tag = (ob_data.get('created_by_tag') or '').upper()
+        ob_tag = (row.get('created_by_tag') or '').upper()
         # Diagnostic log so user can correlate exits with OB events
         print(f"[TM] 🔃 Opposite OB exit triggered for {symbol} "
-              f"({pos['side']} → opposite OB={ob_bias}/{ob_tag or '?'})")
+              f"({pos['side']} → opposite OB={ob_bias}/{ob_tag or '?'} "
+              f"@ {exit_tf})")
         
         if real:
             self._close_position(symbol, current_price,

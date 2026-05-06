@@ -777,73 +777,103 @@ class SMCScanner:
                     if self._errors <= 5:
                         print(f"[SMC] Forecast update error for {symbol}: {fe_err}")
                 
-                # === Compute & persist last valid SMC OB ===
-                # Runs every scan tick for every watchlist symbol so the
-                # chart panel and the signal gate see consistent state.
-                # We fetch klines on the OB-specific timeframe (independent
-                # of the main alert timeframe) — the user may want signals
-                # on 15M but OB confirmation on 1H. ATR(200) needs 200+
-                # bars to seed cleanly so we request 400 to give a margin.
-                # Best-effort: errors are logged but never block alerts.
+                # === Compute & persist OBs on all active timeframes ===
+                # Three timeframes can need an OB row in DB:
+                #   1. main_tf (always — used for chart display, opposite_exit
+                #      default, etc.)
+                #   2. ob_filter_tf (entry gate, computed by _update_smc_ob)
+                #   3. opposite_exit_tf (TM's exit rule, configurable)
+                # We dedupe to avoid double work, and reuse already-fetched
+                # klines for main_tf (klines_closed in scope).
+                main_tf = self._settings.get('timeframe', '15m')
+                ob_filter_tf = self._settings.get('ob_filter_timeframe', '1h')
+                
+                # Collect TFs the TM might need (informational — TM gates
+                # internally, but we still want OB rows ready in DB).
+                opposite_exit_tf = main_tf  # safe default
+                try:
+                    from detection.trade_manager import get_trade_manager
+                    tm = get_trade_manager()
+                    if tm is not None:
+                        # Always populate the configured exit TF, even when
+                        # use_opposite_ob_exit is OFF — that way toggling it
+                        # ON in the UI doesn't have to wait a full scan tick
+                        # for the row to materialize.
+                        opposite_exit_tf = tm._settings.get(
+                            'opposite_ob_exit_timeframe', '15m')
+                except Exception:
+                    pass
+                
+                from detection.ob_detector import detect_last_order_block
+                from storage.db_operations import get_db
+                
+                # 1) main_tf — always compute using already-fetched klines
+                try:
+                    ob_main = detect_last_order_block(
+                        klines=klines_closed,
+                        pivots=result_closed.get('internal', {}).get('pivots', []),
+                        events=result_closed.get('internal', {}).get('events', []),
+                    )
+                    get_db().upsert_smc_ob_state(symbol, main_tf, ob_main)
+                except Exception as ob_main_err:
+                    if self._errors <= 5:
+                        print(f"[SMC] Main-TF OB compute error for {symbol}: {ob_main_err}")
+                    ob_main = None
+                
+                # 2) ob_filter_tf — handled by _update_smc_ob below
                 try:
                     self._update_smc_ob(symbol, md)
                 except Exception as ob_err:
                     if self._errors <= 5:
                         print(f"[SMC] OB update error for {symbol}: {ob_err}")
                 
-                # === Compute & persist main-TF OB (for opposite-OB exit) ===
-                # The main scan timeframe (typically 15M) gets its own OB
-                # row in DB. This is what TM's `use_opposite_ob_exit` rule
-                # reads — when an open position's direction conflicts with
-                # the just-computed main-TF OB bias, TM closes immediately.
-                # Same `klines_closed` already used for result_closed above
-                # so no extra fetch — we already have the data.
-                # Skip if main_tf == ob_filter_tf to avoid double-write
-                # of the same row (which would be wasted DB ops).
-                main_tf = self._settings.get('timeframe', '15m')
-                ob_filter_tf = self._settings.get('ob_filter_timeframe', '1h')
-                if main_tf != ob_filter_tf:
+                # 3) opposite_exit_tf — only compute if it's a NEW TF (not
+                # main_tf and not ob_filter_tf). This is the only path that
+                # might add a fresh klines fetch. For most users (default
+                # opposite_exit_tf=15m == main_tf=15m), this branch is skipped.
+                extra_tf = None
+                if opposite_exit_tf and \
+                   opposite_exit_tf not in (main_tf, ob_filter_tf):
+                    extra_tf = opposite_exit_tf
+                if extra_tf is not None:
                     try:
-                        from detection.ob_detector import detect_last_order_block
-                        from storage.db_operations import get_db
-                        ob_main = detect_last_order_block(
-                            klines=klines_closed,
-                            pivots=result_closed.get('internal', {}).get('pivots', []),
-                            events=result_closed.get('internal', {}).get('events', []),
-                        )
-                        get_db().upsert_smc_ob_state(symbol, main_tf, ob_main)
-                    except Exception as ob_main_err:
-                        if self._errors <= 5:
-                            print(f"[SMC] Main-TF OB compute error for {symbol}: {ob_main_err}")
-                        ob_main = None
-                else:
-                    # main_tf and ob_filter_tf are the same — _update_smc_ob
-                    # already wrote the row, just re-read it for the hook.
-                    try:
-                        from storage.db_operations import get_db
-                        row = get_db().get_smc_ob_state(symbol, main_tf)
-                        if row and row.get('bias'):
-                            ob_main = {
-                                'bias': row['bias'],
-                                'bar_high': row.get('bar_high'),
-                                'bar_low': row.get('bar_low'),
-                                'created_by_tag': row.get('created_by_tag'),
-                            }
+                        # Reuse the same fetcher path as _update_smc_ob; we
+                        # request 700 bars to give ATR(200) a 500-bar warmup.
+                        if hasattr(md, 'fetch_klines') and \
+                           'interval' in md.fetch_klines.__code__.co_varnames:
+                            klines_extra = md.fetch_klines(
+                                symbol, limit=700, interval=extra_tf)
                         else:
-                            ob_main = None
-                    except Exception:
-                        ob_main = None
+                            klines_extra = md.fetch_klines(symbol, limit=700)
+                        if klines_extra and len(klines_extra) >= 220:
+                            klines_extra_closed = klines_extra[:-1] if len(klines_extra) >= 2 else klines_extra
+                            from detection.smc_structure import detect_smc_structure
+                            isize_e = self.get_internal_size()
+                            ssize_e = int(self._settings.get('swing_size', 50))
+                            result_extra = detect_smc_structure(
+                                klines_extra_closed,
+                                internal_size=isize_e,
+                                swing_size=ssize_e)
+                            ob_extra = detect_last_order_block(
+                                klines=klines_extra_closed,
+                                pivots=result_extra.get('internal', {}).get('pivots', []),
+                                events=result_extra.get('internal', {}).get('events', []),
+                            )
+                            get_db().upsert_smc_ob_state(symbol, extra_tf, ob_extra)
+                    except Exception as extra_err:
+                        if self._errors <= 5:
+                            print(f"[SMC] Extra-TF OB ({extra_tf}) error for {symbol}: {extra_err}")
                 
-                # === Notify TM about updated main-TF OB ===
-                # TM's on_main_ob_update is gated by use_opposite_ob_exit;
-                # if the toggle is off, the call is essentially a no-op.
-                # We always fire (instead of checking the toggle here) so
-                # TM's gate logic stays in one place.
+                # === Notify TM that OBs may have changed ===
+                # TM reads its own configured TF from DB internally —
+                # we just signal "hey, refresh your view".
+                # Always fire (regardless of use_opposite_ob_exit toggle);
+                # TM's gate keeps the toggle logic in one place.
                 try:
                     from detection.trade_manager import get_trade_manager
                     tm = get_trade_manager()
                     if tm:
-                        tm.on_main_ob_update(symbol, ob_main)
+                        tm.on_main_ob_update(symbol)
                 except Exception as tm_err:
                     if self._errors <= 5:
                         print(f"[SMC] TM main-OB hook error for {symbol}: {tm_err}")

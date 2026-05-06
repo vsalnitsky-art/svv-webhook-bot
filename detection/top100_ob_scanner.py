@@ -331,6 +331,24 @@ class Top100OBScanner:
                     'zone_str': '', 'age_hours': 0,
                     'last_price': last_price, 'quote_volume_24h': quote_vol}
         
+        # === Compute Premium/Discount/Equilibrium zone for the OB ===
+        # The zone classifies where the OB sits within the latest SWING
+        # range (not internal — swing is what defines the macro trading
+        # range). Standard SMC fib levels:
+        #   pos_pct < 38.2  → Discount  (bottom third, buy-the-dip zone)
+        #   pos_pct > 61.8  → Premium   (top third, sell-the-rally zone)
+        #   else            → Equilibrium
+        # zone_correct is True when:
+        #   BULLISH OB in Discount (LONG entry from cheap zone — ideal)
+        #   BEARISH OB in Premium  (SHORT entry from rich zone — ideal)
+        # Anything else is "wrong zone" — mathematically valid OB but
+        # poor R:R because price is not at an extreme yet.
+        if ob and ob.get('bias'):
+            zone = self._compute_zone(ob, structure.get('swing', {}).get('pivots', []))
+            zone_correct = self._is_zone_correct(zone, ob['bias'])
+            ob['zone'] = zone
+            ob['zone_correct'] = zone_correct
+        
         # Compare with previous snapshot to determine event type
         prev = self.db.get_top100_ob_snapshot(symbol)
         prev_has_ob = prev and prev.get('bias') is not None
@@ -414,6 +432,78 @@ class Top100OBScanner:
             'last_price': last_price,
             'quote_volume_24h': quote_vol,
         }
+    
+    @staticmethod
+    def _compute_zone(ob_data: Dict, swing_pivots: List[Dict]) -> Optional[str]:
+        """Classify where an OB sits within the latest swing range.
+        
+        Uses standard SMC Fibonacci-based zones:
+          pos_pct < 38.2   → 'Discount'    (bottom third)
+          pos_pct > 61.8   → 'Premium'     (top third)
+          otherwise        → 'Equilibrium'
+        
+        Returns None when the swing range can't be determined (not enough
+        pivots, or invalid range). The UI treats None as "unknown zone"
+        which is filtered out by the zone-correct filter — i.e. unknown
+        is treated as not tradeable, conservative default.
+        
+        We use the LATEST swing high and LATEST swing low — they bound
+        the most recent trading range. Older pivots are ignored even if
+        they're more extreme, because we want the *current* range.
+        """
+        if not ob_data or 'bar_high' not in ob_data or 'bar_low' not in ob_data:
+            return None
+        
+        latest_high = None  # latest swing HIGH price
+        latest_low = None   # latest swing LOW price
+        # Walk pivots in reverse chronological order. swing_pivots are
+        # appended in order they're created, so reversed() gives newest
+        # first. Pivot types: 'HH'/'LH' = high pivots, 'HL'/'LL' = low pivots.
+        for p in reversed(swing_pivots):
+            ptype = p.get('type', '')
+            if ptype in ('HH', 'LH') and latest_high is None:
+                latest_high = p.get('price')
+            elif ptype in ('HL', 'LL') and latest_low is None:
+                latest_low = p.get('price')
+            if latest_high is not None and latest_low is not None:
+                break
+        
+        if latest_high is None or latest_low is None:
+            return None  # Not enough swing context yet
+        if latest_high <= latest_low:
+            return None  # Invalid (would yield zero or negative range)
+        
+        range_size = latest_high - latest_low
+        # Use OB MIDPOINT for the zone test — using just bar_high or
+        # bar_low could push borderline OBs into the "wrong" classification
+        # depending on which boundary we pick. Midpoint is symmetric.
+        ob_mid = (ob_data['bar_high'] + ob_data['bar_low']) / 2
+        pos_pct = (ob_mid - latest_low) / range_size * 100
+        
+        if pos_pct < 38.2:
+            return 'Discount'
+        if pos_pct > 61.8:
+            return 'Premium'
+        return 'Equilibrium'
+    
+    @staticmethod
+    def _is_zone_correct(zone: Optional[str], bias: Optional[str]) -> bool:
+        """Returns True when the OB's zone aligns with its trade direction.
+        
+          BULLISH OB in Discount  → True   (LONG from cheap — ideal R:R)
+          BEARISH OB in Premium   → True   (SHORT from rich — ideal R:R)
+          Equilibrium / wrong-zone / unknown → False
+        
+        Used by the UI's "Correct Zone" filter to surface only setups where
+        the OB direction agrees with where price is in the swing range.
+        """
+        if not zone or not bias:
+            return False
+        if bias == 'BULLISH':
+            return zone == 'Discount'
+        if bias == 'BEARISH':
+            return zone == 'Premium'
+        return False
     
     @staticmethod
     def _fmt_price(p: float) -> str:

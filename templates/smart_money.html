@@ -1092,9 +1092,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <div class="tm-row">
                             <label>
                                 <input type="checkbox" id="tm-use-opposite-ob-exit" onchange="saveTMSettings()">
-                                Opposite OB Exit (Structure TF)
-                                <span class="tm-help" title="Закриває позицію коли на основному Structure-Detection TF (зазвичай 15M) утворюється OB протилежного напрямку. LONG → BEARISH OB = close. SHORT → BULLISH OB = close. Будь-який OB (CHoCH або BOS), не лише fresh CHoCH. Швидкий mean-reversion exit — спрацьовує одразу як LTF структура розвертається. За замовчуванням ВИМКНЕНО.">?</span>
+                                Opposite OB Exit
+                                <span class="tm-help" title="Закриває позицію коли на обраному TF утворюється OB протилежного напрямку. LONG → BEARISH OB = close. SHORT → BULLISH OB = close. Будь-який OB (CHoCH або BOS), не лише fresh CHoCH. Швидкий mean-reversion exit — спрацьовує одразу як LTF структура розвертається. За замовчуванням ВИМКНЕНО.">?</span>
                             </label>
+                            <span style="margin-left:8px;font-size:0.78rem;color:#888">TF:</span>
+                            <select id="tm-opposite-ob-exit-tf" onchange="saveTMSettings()"
+                                    style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem;margin-left:4px">
+                                <option value="15m">15M</option>
+                                <option value="30m">30M</option>
+                                <option value="1h">1H</option>
+                                <option value="4h">4H</option>
+                            </select>
                         </div>
                         
                         <div class="tm-row">
@@ -1390,7 +1398,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <select id="top100-filter" onchange="renderTop100Active()" 
                             style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.72rem">
                         <option value="all">All</option>
-                        <option value="fresh-choch" selected>Fresh CHoCH only ★</option>
+                        <option value="fresh-choch-zone" selected>Fresh CHoCH ★ + Correct Zone</option>
+                        <option value="fresh-choch">Fresh CHoCH only ★</option>
+                        <option value="correct-zone">Correct Zone only</option>
                         <option value="all-choch">All CHoCH</option>
                         <option value="long">LONG only</option>
                         <option value="short">SHORT only</option>
@@ -2591,6 +2601,11 @@ async function loadTMSettings() {
         document.getElementById('tm-use-reverse').checked = !!s.use_reverse_smc;
         document.getElementById('tm-use-forecast-close').checked = !!s.use_forecast_1h_close;
         document.getElementById('tm-use-opposite-ob-exit').checked = !!s.use_opposite_ob_exit;
+        // Validate TF before assigning to <select> — fall back to 15m for
+        // unknown values so the dropdown doesn't end up in a blank state.
+        const oppExitTf = ['15m', '30m', '1h', '4h'].includes(s.opposite_ob_exit_timeframe)
+            ? s.opposite_ob_exit_timeframe : '15m';
+        document.getElementById('tm-opposite-ob-exit-tf').value = oppExitTf;
         document.getElementById('tm-use-htf-flip').checked = !!s.use_htf_flip;
         document.getElementById('tm-use-time-stop').checked = !!s.use_time_stop;
         document.getElementById('tm-time-stop-hours').value = s.time_stop_hours;
@@ -2789,6 +2804,7 @@ async function saveTMSettings() {
             use_reverse_smc: document.getElementById('tm-use-reverse').checked,
             use_forecast_1h_close: document.getElementById('tm-use-forecast-close').checked,
             use_opposite_ob_exit: document.getElementById('tm-use-opposite-ob-exit').checked,
+            opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
             use_htf_flip: document.getElementById('tm-use-htf-flip').checked,
             use_time_stop: document.getElementById('tm-use-time-stop').checked,
             time_stop_hours: parseFloat(document.getElementById('tm-time-stop-hours').value) || 4,
@@ -3542,23 +3558,31 @@ function renderTop100Active() {
     if (!tbody) return;
     
     const filterEl = document.getElementById('top100-filter');
-    const filter = filterEl ? filterEl.value : 'fresh-choch';
+    const filter = filterEl ? filterEl.value : 'fresh-choch-zone';
     
-    // Apply filter. "Fresh CHoCH" is a strict view: created_by_tag==CHoCH
-    // AND last_seen_at indicates the OB is still confirmed by latest scan.
-    // We loosen "fresh" to "discovered in last 12h" since 4H bars cycle
-    // and an OB can be valid for a while after discovery.
+    // Apply filter. "Fresh CHoCH" loosens to "discovered in last 12h"
+    // since 4H bars cycle and a CHoCH-created OB is still tradeable for
+    // a while after the bar closes that triggered it.
     const now = Date.now();
     const twelveHoursMs = 12 * 3600 * 1000;
     
+    function isFreshChoCH(s) {
+        if ((s.created_by_tag || '').toUpperCase() !== 'CHOCH') return false;
+        if (!s.discovered_at) return false;
+        const age = now - new Date(s.discovered_at + 'Z').getTime();
+        return age <= twelveHoursMs;
+    }
+    
     let rows = _top100Snapshots.filter(s => s.bias);
-    if (filter === 'fresh-choch') {
-        rows = rows.filter(s => {
-            if ((s.created_by_tag || '').toUpperCase() !== 'CHOCH') return false;
-            if (!s.discovered_at) return false;
-            const age = now - new Date(s.discovered_at + 'Z').getTime();
-            return age <= twelveHoursMs;
-        });
+    if (filter === 'fresh-choch-zone') {
+        // Most strict: fresh CHoCH ★ AND OB direction matches its zone
+        // (BULLISH in Discount or BEARISH in Premium). This is the
+        // ideal-setup view — every row here is a tradeable candidate.
+        rows = rows.filter(s => isFreshChoCH(s) && s.zone_correct === true);
+    } else if (filter === 'fresh-choch') {
+        rows = rows.filter(isFreshChoCH);
+    } else if (filter === 'correct-zone') {
+        rows = rows.filter(s => s.zone_correct === true);
     } else if (filter === 'all-choch') {
         rows = rows.filter(s => (s.created_by_tag || '').toUpperCase() === 'CHOCH');
     } else if (filter === 'long') {
@@ -3566,6 +3590,16 @@ function renderTop100Active() {
     } else if (filter === 'short') {
         rows = rows.filter(s => s.bias === 'BEARISH');
     }
+    
+    // === Sort by age ascending (newest first) ===
+    // Compute age once per row and store on a temp field. Rows lacking
+    // discovered_at sink to the bottom (treated as +Infinity).
+    rows.forEach(s => {
+        s._age_ms = s.discovered_at
+            ? (now - new Date(s.discovered_at + 'Z').getTime())
+            : Number.POSITIVE_INFINITY;
+    });
+    rows.sort((a, b) => a._age_ms - b._age_ms);
     
     if (countEl) countEl.textContent = `(${rows.length})`;
     
@@ -3589,24 +3623,50 @@ function renderTop100Active() {
             tagDisplay = '→ BOS';
             tagColor = '#9ca3af';
         }
-        const zone = `${fmtPriceJS(s.bar_low)} — ${fmtPriceJS(s.bar_high)}`;
+        // === Zone badge: Premium / Discount / Equilibrium with correctness ===
+        // Color reflects whether the zone aligns with OB direction:
+        //   green border = correct zone (BULL+Discount or BEAR+Premium)
+        //   red border   = wrong zone (BULL+Premium or BEAR+Discount)
+        //   gray border  = Equilibrium / unknown — neutral, not an edge
+        let zoneBadge;
+        const zoneText = s.zone || '—';
+        const correct = s.zone_correct === true;
+        if (s.zone === 'Discount') {
+            const bg = correct ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)';
+            const fg = correct ? '#86efac' : '#fca5a5';
+            zoneBadge = `<span title="${correct ? 'OB direction matches zone — ideal R:R' : 'OB direction is BEARISH but in Discount — wrong setup'}" 
+                          style="padding:1px 6px;background:${bg};color:${fg};border-radius:3px;font-size:0.72rem">${zoneText}</span>`;
+        } else if (s.zone === 'Premium') {
+            const bg = correct ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)';
+            const fg = correct ? '#86efac' : '#fca5a5';
+            zoneBadge = `<span title="${correct ? 'OB direction matches zone — ideal R:R' : 'OB direction is BULLISH but in Premium — wrong setup'}"
+                          style="padding:1px 6px;background:${bg};color:${fg};border-radius:3px;font-size:0.72rem">${zoneText}</span>`;
+        } else if (s.zone === 'Equilibrium') {
+            zoneBadge = `<span title="OB sits in middle of swing range — no zone edge"
+                          style="padding:1px 6px;background:rgba(120,120,120,0.15);color:#aaa;border-radius:3px;font-size:0.72rem">Equilibrium</span>`;
+        } else {
+            zoneBadge = `<span title="Insufficient swing pivots — zone unknown"
+                          style="padding:1px 6px;background:rgba(120,120,120,0.10);color:#666;border-radius:3px;font-size:0.72rem">—</span>`;
+        }
         const price = fmtPriceJS(s.last_price);
         const volM = (s.quote_volume_24h || 0) / 1_000_000;
         const volStr = volM >= 1000 ? `$${(volM/1000).toFixed(1)}B` : `$${Math.round(volM)}M`;
         // Age based on discovered_at — when WE first saw this OB
         let ageStr = '?';
         if (s.discovered_at) {
-            const ageMs = now - new Date(s.discovered_at + 'Z').getTime();
-            const ageH = ageMs / 3600 / 1000;
+            const ageH = s._age_ms / 3600 / 1000;
             if (ageH < 1) ageStr = `${Math.floor(ageH * 60)}m`;
             else if (ageH < 24) ageStr = `${Math.floor(ageH)}h`;
             else ageStr = `${Math.floor(ageH / 24)}d`;
         }
+        // Tooltip on the symbol cell shows the OB price range, since we
+        // replaced the price-range column with the PD-zone column above.
+        const priceRangeTip = `OB zone: ${fmtPriceJS(s.bar_low)} — ${fmtPriceJS(s.bar_high)}`;
         html += `<tr>
-            <td><strong>${escapeHtml(s.symbol)}</strong></td>
+            <td title="${escapeHtml(priceRangeTip)}"><strong>${escapeHtml(s.symbol)}</strong></td>
             <td style="color:${dirColor}">${dirIcon}</td>
             <td style="color:${tagColor};font-size:0.78rem">${tagDisplay}</td>
-            <td style="font-family:monospace;font-size:0.78rem">${zone}</td>
+            <td>${zoneBadge}</td>
             <td style="font-family:monospace;font-size:0.78rem">${price}</td>
             <td style="font-size:0.78rem">${volStr}</td>
             <td style="color:#888;font-size:0.78rem">${ageStr}</td>

@@ -696,6 +696,40 @@ def migrate_sleeper_candidates_v3():
                and 'duplicate column' not in error_str.lower():
                 print(f"[DB MIGRATE] OB state created_by_tag warning: {e}")
             conn.rollback()
+        
+        # Add `zone` and `zone_correct` columns on Top100OBSnapshot. Pre-
+        # existing tables won't have them; new schema does. Idempotent —
+        # checks information_schema before each ALTER.
+        top100_table = f"{TABLE_PREFIX}top100_ob_snapshots"
+        top100_new_cols = [
+            ('zone', 'VARCHAR(15)'),
+            ('zone_correct', 'BOOLEAN'),
+        ]
+        try:
+            table_check = conn.execute(text(f"""
+                SELECT 1 FROM information_schema.tables
+                WHERE table_name = '{top100_table}'
+            """)).fetchone()
+            if table_check is not None:
+                for col_name, col_type in top100_new_cols:
+                    col_check = conn.execute(text(f"""
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = '{top100_table}'
+                          AND column_name = '{col_name}'
+                    """)).fetchone()
+                    if col_check is None:
+                        conn.execute(text(
+                            f"ALTER TABLE {top100_table} "
+                            f"ADD COLUMN {col_name} {col_type}"
+                        ))
+                        conn.commit()
+                        print(f"[DB MIGRATE] Added {top100_table}.{col_name}")
+        except Exception as e:
+            error_str = str(e)
+            if 'no such table: information_schema' not in error_str.lower() \
+               and 'duplicate column' not in error_str.lower():
+                print(f"[DB MIGRATE] Top100 zone migration warning: {e}")
+            conn.rollback()
 
 
 def get_session():
@@ -813,6 +847,23 @@ class Top100OBSnapshot(Base):
     created_at_t = Column(BigInteger) # ms epoch when OB was created
     created_by_tag = Column(String(10))  # 'CHoCH' or 'BOS'
     
+    # Premium/Discount/Equilibrium zone classification.
+    # Computed at scan time using the latest swing high/low pivots:
+    #   range = swing_high.level - swing_low.level
+    #   ob_mid = (bar_high + bar_low) / 2
+    #   pos_pct = (ob_mid - swing_low) / range × 100
+    # Classification:
+    #   pos_pct < 38.2  → 'Discount'  (lower third — favorable for LONG)
+    #   pos_pct > 61.8  → 'Premium'   (upper third — favorable for SHORT)
+    #   otherwise       → 'Equilibrium'
+    # zone_correct: True when zone aligns with OB direction:
+    #   BULLISH OB in Discount  → True
+    #   BEARISH OB in Premium   → True
+    #   anything else           → False
+    # NULL when range cannot be determined (no swing pivots yet).
+    zone = Column(String(15))         # 'Discount' | 'Equilibrium' | 'Premium' | NULL
+    zone_correct = Column(Boolean)    # True if zone aligns with OB bias
+    
     # Lifecycle tracking — separates "first time seeing this OB" from
     # "OB still here from previous scan". `discovered_at` is set when the
     # OB first appears (created_at_t differs from prior scan's value).
@@ -839,6 +890,8 @@ class Top100OBSnapshot(Base):
             'bar_time_ms': self.bar_time_ms,
             'created_at_t': self.created_at_t,
             'created_by_tag': self.created_by_tag,
+            'zone': self.zone,
+            'zone_correct': self.zone_correct,
             'discovered_at': self.discovered_at.isoformat() if self.discovered_at else None,
             'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
             'scanned_at': self.scanned_at.isoformat() if self.scanned_at else None,

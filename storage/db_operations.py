@@ -913,6 +913,9 @@ class DBOperations:
                 row.bar_time_ms = ob_data.get('bar_time')
                 row.created_at_t = ob_data.get('created_at_t')
                 row.created_by_tag = ob_data.get('created_by_tag')
+                # Zone fields supplied by scanner via ob_data extension
+                row.zone = ob_data.get('zone')
+                row.zone_correct = ob_data.get('zone_correct')
                 if is_fresh_for_symbol:
                     # Caller indicated this is a different OB than before
                     row.discovered_at = now
@@ -926,6 +929,8 @@ class DBOperations:
                 row.bar_time_ms = None
                 row.created_at_t = None
                 row.created_by_tag = None
+                row.zone = None
+                row.zone_correct = None
                 # Don't touch discovered_at — preserve "we last saw this
                 # OB at X" history. last_seen_at also preserved for the
                 # same reason — UI can show "OB lost N hours ago".
