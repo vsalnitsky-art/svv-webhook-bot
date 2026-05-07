@@ -857,23 +857,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-settings-section">
                 <h3>PD Zone Filter</h3>
                 <div class="sm-controls">
-                    <!-- PD Zone Filter (Premium/Discount) — gates signals
-                         by current price position within the trailing range
-                         on the configured timeframe. Practical SMC half-
-                         range thresholds:
-                           Discount    = pos_pct < 47.5%   (LONG)
-                           Equilibrium = 47.5-52.5%       (no edge — block)
-                           Premium     = pos_pct > 52.5%  (SHORT)
+                    <!-- PD Zone Filter — threshold-based gate. Two sliders:
+                         pd_long_max_pct (default 75) blocks LONG when
+                         price is too high; pd_short_min_pct (default 25)
+                         blocks SHORT when price is too low. The middle
+                         zone (between thresholds) allows both directions.
                          Default ON, 1H — wider context than the main scan
                          TF gives more stable zones. -->
                     <label class="sm-checkbox"
-                           title="When ON: LONG signals only fire when current price is in Discount zone (lower half, <47.5% of trailing range); SHORT signals only fire in Premium zone (upper half, >52.5%). Equilibrium (middle 5%, 47.5-52.5%) blocks all signals. Range computed Pine-faithfully via trailing.top/bottom.">
+                           title="When ON: blocks LONG when price is at/above the LONG-max threshold (default 75% of trailing range), blocks SHORT when price is at/below the SHORT-min threshold (default 25%). Middle zone allows both. Range computed Pine-faithfully via trailing.top/bottom.">
                         <input type="checkbox" id="sm-pd-zone-filter-enabled"
                                checked onchange="updatePDZoneFilter()">
-                        Require Correct PD Zone
+                        Filter by Price Position
                     </label>
                     <div class="sm-control-item">
-                        <label>PD Zone TF:</label>
+                        <label>TF:</label>
                         <select id="sm-pd-zone-tf" onchange="updatePDZoneFilter()">
                             <option value="15m">15M</option>
                             <option value="30m">30M</option>
@@ -881,9 +879,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="4h">4H</option>
                         </select>
                     </div>
-                    <span style="margin-left:8px;font-size:0.72rem;color:#888">
-                        (LONG → Discount, SHORT → Premium)
-                    </span>
+                    <div class="sm-control-item"
+                         title="Block LONG signals when price is at or above this % of the trailing range. 75% means: don't buy when price is in the top quarter of the range.">
+                        <label>Block LONG ≥</label>
+                        <input type="number" id="sm-pd-long-max" min="0" max="100" step="1"
+                               value="75" onchange="updatePDZoneFilter()"
+                               style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
+                        <span style="font-size:0.78rem;color:#888">%</span>
+                    </div>
+                    <div class="sm-control-item"
+                         title="Block SHORT signals when price is at or below this % of the trailing range. 25% means: don't sell when price is in the bottom quarter of the range.">
+                        <label>Block SHORT ≤</label>
+                        <input type="number" id="sm-pd-short-min" min="0" max="100" step="1"
+                               value="25" onchange="updatePDZoneFilter()"
+                               style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
+                        <span style="font-size:0.78rem;color:#888">%</span>
+                    </div>
                 </div>
             </div>
             
@@ -1688,6 +1699,10 @@ async function loadSettings() {
             if (pdEnabled) pdEnabled.checked = (s.use_pd_zone_filter !== false);
             const pdTf = document.getElementById('sm-pd-zone-tf');
             if (pdTf) pdTf.value = s.pd_zone_timeframe || '1h';
+            const pdLongMax = document.getElementById('sm-pd-long-max');
+            if (pdLongMax) pdLongMax.value = (typeof s.pd_long_max_pct === 'number') ? s.pd_long_max_pct : 75;
+            const pdShortMin = document.getElementById('sm-pd-short-min');
+            if (pdShortMin) pdShortMin.value = (typeof s.pd_short_min_pct === 'number') ? s.pd_short_min_pct : 25;
             updateHTFFieldVisibility();
             updateSettingsSummary();
         }
@@ -1780,11 +1795,17 @@ async function updateOBFilter() {
     } catch (err) { alert('OB Filter update error: ' + err); }
 }
 
-// PD Zone Filter — boolean toggle plus TF dropdown. Matches the OB Filter
-// pattern: post both fields together so partial state never reaches backend.
+// PD Zone Filter — boolean toggle, TF dropdown, and two threshold inputs.
+// Saves all four fields together so partial state never reaches backend.
 async function updatePDZoneFilter() {
     const enabled = document.getElementById('sm-pd-zone-filter-enabled').checked;
     const tf = document.getElementById('sm-pd-zone-tf').value || '1h';
+    // Parse threshold inputs. Backend will clamp to [0,100] and ensure
+    // short ≤ long, but we send sane defaults if user clears the field.
+    let longMax = parseFloat(document.getElementById('sm-pd-long-max').value);
+    let shortMin = parseFloat(document.getElementById('sm-pd-short-min').value);
+    if (!isFinite(longMax)) longMax = 75;
+    if (!isFinite(shortMin)) shortMin = 25;
     try {
         await fetch('/api/smc/settings', {
             method: 'POST',
@@ -1792,14 +1813,11 @@ async function updatePDZoneFilter() {
             body: JSON.stringify({
                 use_pd_zone_filter: enabled,
                 pd_zone_timeframe: tf,
+                pd_long_max_pct: longMax,
+                pd_short_min_pct: shortMin,
             }),
         });
         updateSettingsSummary();
-        // No watchlist refresh needed — PD Zone is a price-position
-        // filter, not a per-symbol attribute that affects the watchlist
-        // display. The chart-header badge updates on the next poll
-        // (~5s) which is fast enough that immediate refresh isn't worth
-        // the network round-trip.
     } catch (err) { alert('PD Zone Filter update error: ' + err); }
 }
 
@@ -2217,93 +2235,85 @@ async function loadChart() {
             }
         }
         
-        // === PD Zone badge (Discount/Equilibrium/Premium/Between) ===
-        // Practical SMC half-range zones with out-of-range catch-all:
-        //   🟢 Discount    — pos_pct < 47.5%        (LONG-favorable)
-        //   🔴 Premium     — pos_pct > 52.5%        (SHORT-favorable)
-        //   ⚖ Equilibrium  — 47.5-52.5%             (no edge, blocked)
-        //   ⚪ Between      — out of range (overshoot, blocked)
+        // === PD Zone badge (threshold-based) ===
+        // Shows price position % with color encoding based on user's
+        // configured thresholds:
+        //   pct ≥ long_max_pct       → 🔴 red    (LONG blocked, SHORT allowed)
+        //   pct ≤ short_min_pct      → 🟢 green  (SHORT blocked, LONG allowed)
+        //   short_min < pct < long_max → 🟡 yellow (both LONG & SHORT allowed)
         // 🔒 prefix when filter is ON (signals are gated by this badge).
         const pdBadge = document.getElementById('sm-pd-zone-badge');
-        const pdZone = d.pd_zone;
         const pdPct = d.pd_zone_pct;
         const pdFilterOn = !!d.pd_zone_filter_enabled;
         const pdTf = (d.pd_zone_timeframe || '1h').toUpperCase();
-        if (pdBadge && pdZone) {
-            // Display pct as integer for badge density — fractions don't
-            // help in a quick-glance UI. Out-of-range values (e.g. -10%
-            // or 110% — categorized as 'Between') are shown as-is so
-            // user knows price has overshot the trailing range.
+        const longMax = (typeof d.pd_long_max_pct === 'number') ? d.pd_long_max_pct : 75;
+        const shortMin = (typeof d.pd_short_min_pct === 'number') ? d.pd_short_min_pct : 25;
+        if (pdBadge && pdPct !== null && pdPct !== undefined) {
+            // Display pct as integer for badge density. Out-of-range
+            // values (e.g. -10% or 110% — rare overshoot before new pivot)
+            // shown as-is so user sees the actual number.
             const displayPct = Math.round(pdPct);
             const filterMark = pdFilterOn ? '🔒' : '';
-            let icon, bg, color, badgeText;
-            if (pdZone === 'Discount') {
-                icon = '🟢'; bg = 'rgba(34,197,94,0.15)'; color = '#86efac';
-                badgeText = `${filterMark}${icon} Discount ${displayPct}%`;
-            } else if (pdZone === 'Premium') {
+            
+            // Color coding by zone reachability:
+            //   At/above long_max  — only SHORT can enter (price too high for LONG)
+            //   At/below short_min — only LONG can enter (price too low for SHORT)
+            //   In between         — both directions valid
+            let icon, bg, color, sideHint;
+            if (pdPct >= longMax) {
+                // High-zone: SHORT-only
                 icon = '🔴'; bg = 'rgba(239,68,68,0.15)'; color = '#fca5a5';
-                badgeText = `${filterMark}${icon} Premium ${displayPct}%`;
-            } else if (pdZone === 'Equilibrium') {
-                icon = '⚖'; bg = 'rgba(168,85,247,0.15)'; color = '#c4b5fd';
-                badgeText = `${filterMark}${icon} Equilibrium ${displayPct}%`;
+                sideHint = 'SHORT only';
+            } else if (pdPct <= shortMin) {
+                // Low-zone: LONG-only
+                icon = '🟢'; bg = 'rgba(34,197,94,0.15)'; color = '#86efac';
+                sideHint = 'LONG only';
             } else {
-                // 'Between' — price is outside the trailing range (rare
-                // edge case: an extreme overshoot before a new swing
-                // pivot has formed). Direction is unclear — could be
-                // breakout starting new trend, or fake-out about to
-                // revert. Blocked by the filter (no edge to trade).
-                icon = '⚪'; bg = 'rgba(120,120,120,0.15)'; color = '#aaa';
-                badgeText = `${filterMark}${icon} Between ${displayPct}%`;
+                // Mid-zone: both allowed
+                icon = '🟡'; bg = 'rgba(234,179,8,0.15)'; color = '#fde68a';
+                sideHint = 'LONG/SHORT';
             }
-            pdBadge.textContent = badgeText;
+            pdBadge.textContent = `${filterMark}${icon} ${displayPct}% ${pdTf}`;
             pdBadge.className = 'sm-status-badge';
             pdBadge.style.background = bg;
             pdBadge.style.color = color;
             pdBadge.style.display = 'inline-block';
             
-            // Tooltip with semantic explanation. We tell the user exactly
-            // which side this zone allows — easier to read than mental math.
+            // Tooltip explains the threshold logic and current state
             let allowsLine = '';
             if (pdFilterOn) {
-                if (pdZone === 'Discount') {
-                    allowsLine = '🔒 FILTER ACTIVE — only LONG signals allowed';
-                } else if (pdZone === 'Premium') {
-                    allowsLine = '🔒 FILTER ACTIVE — only SHORT signals allowed';
-                } else if (pdZone === 'Equilibrium') {
-                    allowsLine = '🔒 FILTER ACTIVE — ALL signals BLOCKED (no edge in Equilibrium)';
+                if (pdPct >= longMax) {
+                    allowsLine = `🔒 FILTER ACTIVE — LONG blocked (≥${longMax}%); SHORT allowed`;
+                } else if (pdPct <= shortMin) {
+                    allowsLine = `🔒 FILTER ACTIVE — SHORT blocked (≤${shortMin}%); LONG allowed`;
                 } else {
-                    // 'Between' — out of trailing range, direction unclear
-                    allowsLine = '🔒 FILTER ACTIVE — ALL signals BLOCKED (price out of trailing range)';
+                    allowsLine = `🔒 FILTER ACTIVE — both LONG & SHORT allowed (price in mid zone)`;
                 }
             } else {
                 allowsLine = '📊 Informational only (filter OFF)';
             }
             const tip = [
-                `Premium/Discount Zone (${pdTf}) · ${pdZone} ${displayPct}%`,
+                `Price Position (${pdTf}) · ${displayPct}% · ${sideHint}`,
                 allowsLine,
                 '',
-                'Practical SMC half-range zones:',
-                '   < 0%          → Between      (price overshot below — block)',
-                '   0-47.5%       → Discount     (LONG-favorable)',
-                '   47.5-52.5%    → Equilibrium  (no edge — block)',
-                '   52.5-100%     → Premium      (SHORT-favorable)',
-                '   > 100%        → Between      (price overshot above — block)',
+                'Threshold-based gate:',
+                `   pct ≥ ${longMax}%   → block LONG  (price too high to buy)`,
+                `   pct ≤ ${shortMin}%   → block SHORT (price too low to sell)`,
+                `   between        → both LONG & SHORT allowed`,
                 '',
                 'Range: trailing.top/bottom from latest swing pivots,',
                 'extended via running max/min of subsequent bars.',
             ].join('\n');
             pdBadge.title = tip;
         } else if (pdBadge) {
-            // No zone computed yet (insufficient pivots, fresh symbol).
-            // When filter is on, show warning so user understands signals
-            // are blocked until pivots form.
+            // No pct computed yet — fresh symbol or insufficient pivots
             if (pdFilterOn) {
-                pdBadge.textContent = `🔒⚠️ PD Zone unknown ${pdTf}`;
+                pdBadge.textContent = `🔒⚠️ ${pdTf} unknown`;
                 pdBadge.className = 'sm-status-badge';
                 pdBadge.style.background = 'rgba(234,179,8,0.15)';
                 pdBadge.style.color = '#fde68a';
                 pdBadge.style.display = 'inline-block';
-                pdBadge.title = `PD Zone Filter ACTIVE on ${pdTf} but the trailing range cannot be determined yet.\nAll signals will be BLOCKED until enough pivots form.`;
+                pdBadge.title = `PD Zone Filter ACTIVE on ${pdTf} but range cannot be determined yet.\nAll signals BLOCKED until enough swing pivots form.`;
             } else {
                 pdBadge.style.display = 'none';
             }

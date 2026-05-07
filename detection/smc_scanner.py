@@ -98,25 +98,19 @@ DEFAULT_SETTINGS = {
     'ob_filter_enabled': False,
     'ob_filter_timeframe': '1h',  # 15m / 30m / 1h / 4h
     
-    # === PD Zone Filter (Premium/Discount) ===
-    # Classifies CURRENT PRICE position within the trailing range on
-    # the configured timeframe. When enabled, gates signals to high-
-    # conviction R:R setups:
-    #   LONG  signals only fire when price is in Discount zone
-    #   SHORT signals only fire when price is in Premium zone
+    # === PD Zone Filter (threshold-based) ===
+    # Gates signals based on CURRENT PRICE position within the trailing
+    # range. Two configurable thresholds:
+    #   long_max_pct  — block LONG  if pos_pct >= this value (default 75%)
+    #   short_min_pct — block SHORT if pos_pct <= this value (default 25%)
     #
-    # Zone classification — practical SMC half-range with narrow
-    # equilibrium buffer plus out-of-range catch-all:
-    #   pos_pct < 0%           → Between     (below trailing low — overshoot)
-    #   0% ≤ pos < 47.5%       → Discount    (lower half, LONG-favorable)
-    #   47.5% ≤ pos ≤ 52.5%    → Equilibrium (middle 5% — no edge, block)
-    #   52.5% < pos ≤ 100%     → Premium     (upper half, SHORT-favorable)
-    #   pos > 100%             → Between     (above trailing high — overshoot)
-    #
-    # Most of the range is workable for trading except the narrow 5%
-    # equilibrium band and the rare out-of-range cases. This matches
-    # standard SMC trading methodology — buy below midpoint, sell
-    # above, avoid mean-reversion at fair value.
+    # Semantics:
+    #   • LONG entries valid in lower portion of range, blocked when
+    #     price is too high (≥75% by default — "no buying expensive")
+    #   • SHORT entries valid in upper portion of range, blocked when
+    #     price is too low (≤25% by default — "no selling cheap")
+    #   • Middle zone (25% < pos_pct < 75%) — both LONG and SHORT
+    #     allowed, no filter restriction
     #
     # Range is computed Pine-faithfully using `trailing.top`/`bottom`
     # (Pine SMC_PRO_BOT__47_ lines 835-841): the running max/min of
@@ -124,12 +118,13 @@ DEFAULT_SETTINGS = {
     # resets these to the pivot price when a new swing forms, then
     # maintains running max/min on every subsequent bar.
     #
-    # Default ON — this is a core SMC concept and most users want this
-    # protection. Default TF is 1H — the wider context produces more
-    # stable, meaningful zones than a 15m range that compresses every
-    # few hours.
+    # Default ON — matches standard SMC sentiment "buy low, sell high".
+    # Default TF is 1H — wider context produces more stable, meaningful
+    # zones than a 15m range that compresses every few hours.
     'use_pd_zone_filter': True,
-    'pd_zone_timeframe': '1h',  # 15m / 30m / 1h / 4h
+    'pd_zone_timeframe': '1h',     # 15m / 30m / 1h / 4h
+    'pd_long_max_pct': 75.0,       # block LONG  if pos_pct >= this (0-100)
+    'pd_short_min_pct': 25.0,      # block SHORT if pos_pct <= this (0-100)
 }
 
 
@@ -546,8 +541,9 @@ class SMCScanner:
                        'htf_internal_size',
                        # OB filter
                        'ob_filter_enabled', 'ob_filter_timeframe',
-                       # PD Zone filter (Premium/Discount)
-                       'use_pd_zone_filter', 'pd_zone_timeframe']
+                       # PD Zone filter (threshold-based)
+                       'use_pd_zone_filter', 'pd_zone_timeframe',
+                       'pd_long_max_pct', 'pd_short_min_pct']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
@@ -647,6 +643,30 @@ class SMCScanner:
             ALLOWED_PD_TFS = ('15m', '30m', '1h', '4h')
             if self._settings.get('pd_zone_timeframe') not in ALLOWED_PD_TFS:
                 self._settings['pd_zone_timeframe'] = '1h'
+            
+            # PD Zone thresholds — clamp to [0, 100] and ensure short ≤ long.
+            # If the UI sends nonsense values (negative, >100, or short>long
+            # which would create a contradictory gate), snap back to safe
+            # defaults (75/25). We don't error — silent correction prevents
+            # the filter from breaking signal flow when settings are typed
+            # incorrectly.
+            try:
+                lm = float(self._settings.get('pd_long_max_pct', 75))
+                sm = float(self._settings.get('pd_short_min_pct', 25))
+                # Clamp to valid percentage range
+                lm = max(0.0, min(100.0, lm))
+                sm = max(0.0, min(100.0, sm))
+                # Ensure short threshold ≤ long threshold. If user sets
+                # them swapped, restore defaults — both being equal is
+                # technically valid but creates a single fence point with
+                # no buffer, which is unusual; let the user reset manually.
+                if sm > lm:
+                    lm, sm = 75.0, 25.0
+                self._settings['pd_long_max_pct'] = lm
+                self._settings['pd_short_min_pct'] = sm
+            except (ValueError, TypeError):
+                self._settings['pd_long_max_pct'] = 75.0
+                self._settings['pd_short_min_pct'] = 25.0
             
             # Reset cache on relevant changes
             new_tf = self._settings['timeframe']
@@ -956,9 +976,9 @@ class SMCScanner:
                 # main_tf / ob_filter_tf / opposite_exit_tf we reuse the
                 # already-fetched klines and structure. Otherwise one
                 # additional API request fetches the right TF.
-                # Cache stores zone + percent for use by:
+                # Cache stores percent for use by:
                 #   1. Signal gate _pd_zone_filter_allows (when toggle on)
-                #   2. chart_data badge in UI
+                #   2. chart_data badge in UI (with thresholds for color-coding)
                 try:
                     pd_data = _get_tf_data(pd_zone_tf)
                     if pd_data:
@@ -966,13 +986,12 @@ class SMCScanner:
                         pd_swing_pivots = pd_data['structure'].get(
                             'swing', {}).get('pivots', [])
                         pd_price = pd_klines[-1].get('p') if pd_klines else None
-                        pd_zone, pd_pct = self._compute_pd_zone(
+                        pd_pct = self._compute_pd_pct(
                             pd_klines, pd_swing_pivots, pd_price)
                     else:
-                        pd_zone, pd_pct = None, None
+                        pd_pct = None
                     with self._lock:
                         self._pd_zone_cache[symbol] = {
-                            'zone': pd_zone,
                             'pct': pd_pct,
                             'tf': pd_zone_tf,
                             'updated_at': time.time(),
@@ -1198,10 +1217,10 @@ class SMCScanner:
         return True
     
     @staticmethod
-    def _compute_pd_zone(klines: List[Dict], swing_pivots: List[Dict],
-                          current_price: float) -> tuple:
-        """Classify CURRENT PRICE within the trailing range as
-        Discount / Equilibrium / Premium / Between.
+    def _compute_pd_pct(klines: List[Dict], swing_pivots: List[Dict],
+                         current_price: float) -> Optional[float]:
+        """Compute CURRENT PRICE position within the trailing range as a
+        single percentage (0-100% in-range, can exceed for overshoots).
         
         Range definition is Pine-faithful (Pine SMC_PRO_BOT__47_ lines
         835-841 — `updateTrailingExtremes`). `trailing.top` and
@@ -1214,35 +1233,21 @@ class SMCScanner:
         that new max — Pine's range expands to include it. Plain
         "latest swing pivot" would lag behind.
         
-        Zone CLASSIFICATION uses practical SMC half-range thresholds
-        with a narrow Equilibrium buffer and an out-of-range Between
-        catch-all:
+        Returns:
+          float (rounded to 1 decimal) — position percent. Values can
+                exceed [0, 100] when price has overshot the trailing
+                extremes between bar updates (rare).
+          None  — range can't be determined (no pivots yet, or
+                  inverted/zero range).
         
-            pos_pct < 0%           → Between     (below trailing low — overshoot)
-            0% ≤ pos < 47.5%       → Discount    (lower half, LONG-favorable)
-            47.5% ≤ pos ≤ 52.5%    → Equilibrium (middle 5% — no edge, block)
-            52.5% < pos ≤ 100%     → Premium     (upper half, SHORT-favorable)
-            pos > 100%             → Between     (above trailing high — overshoot)
-        
-        The entire IN-RANGE region is workable for trading except the
-        narrow 5% equilibrium band. Out-of-range positions (Between)
-        are blocked because direction is unclear — could be a genuine
-        breakout starting a new trend, or a fake-out about to revert.
-        Wait for a new pivot to form before re-evaluating.
-        
-        Returns (zone, pct):
-          zone: 'Discount' | 'Equilibrium' | 'Premium' | 'Between' | None
-                None means range can't be determined (no pivots yet).
-          pct:  raw position percent within trailing range, rounded to
-                1 decimal. Can exceed [0,100] when price has overshot
-                the trailing extremes — corresponds to 'Between' zone.
+        Zone classification was removed — caller (signal gate) compares
+        the raw pct against configurable thresholds (pd_long_max_pct /
+        pd_short_min_pct) for the actual filter decision.
         """
         if not swing_pivots or current_price is None or current_price <= 0:
-            return None, None
+            return None
         
         # Find latest swing high pivot AND latest swing low pivot.
-        # We need both the price level AND the bar index so we can walk
-        # forward to compute the running max/min (trailing extremes).
         latest_high_pivot = None
         latest_low_pivot = None
         for p in reversed(swing_pivots):
@@ -1255,12 +1260,9 @@ class SMCScanner:
                 break
         
         if latest_high_pivot is None or latest_low_pivot is None:
-            return None, None
+            return None
         
         # === Compute trailing extremes (Pine updateTrailingExtremes) ===
-        # Pine: after pivot reset, trailing.top := max(high, trailing.top)
-        # on every bar. Equivalent: max of (pivot.price, all subsequent
-        # highs from pivot bar to end of series).
         high_pivot_idx = latest_high_pivot.get('idx', 0) or 0
         low_pivot_idx = latest_low_pivot.get('idx', 0) or 0
         
@@ -1268,9 +1270,6 @@ class SMCScanner:
         trailing_bottom = float(latest_low_pivot.get('price', 0))
         
         n = len(klines) if klines else 0
-        # Walk from each pivot's bar to end, tracking running max/min.
-        # If klines is None or empty (defensive), trailing extremes stay
-        # at the pivot price — equivalent to no further updates.
         if n > 0:
             for i in range(min(high_pivot_idx, n), n):
                 h = klines[i].get('h', klines[i].get('p', 0))
@@ -1284,77 +1283,60 @@ class SMCScanner:
         if trailing_top <= trailing_bottom:
             # Inverted or zero range — happens at start of series before
             # pivots stabilize. Skip gracefully.
-            return None, None
+            return None
         
         range_size = trailing_top - trailing_bottom
         pos_pct = (current_price - trailing_bottom) / range_size * 100
-        
-        # === SMC half-range classification with out-of-range guard ===
-        # Layout (positions in percent):
-        #   pos < 0%               → Between     (price below trailing low — extreme overshoot)
-        #   0% ≤ pos < 47.5%       → Discount    (lower half, LONG-favorable)
-        #   47.5% ≤ pos ≤ 52.5%    → Equilibrium (middle 5% buffer — no edge, BLOCK)
-        #   52.5% < pos ≤ 100%     → Premium     (upper half, SHORT-favorable)
-        #   pos > 100%             → Between     (price above trailing high — extreme overshoot)
-        #
-        # 'Between' captures the edge case where price has broken outside
-        # the trailing range without yet establishing a new swing pivot.
-        # It's NOT a tradeable zone — direction is unclear (could be
-        # genuine breakout starting new trend, or fake-out about to revert).
-        # The signal gate blocks Between just like Equilibrium.
-        if pos_pct < 0 or pos_pct > 100:
-            zone = 'Between'
-        elif pos_pct < 47.5:
-            zone = 'Discount'
-        elif pos_pct > 52.5:
-            zone = 'Premium'
-        else:
-            zone = 'Equilibrium'
-        
-        return zone, round(pos_pct, 1)
+        return round(pos_pct, 1)
     
     def _pd_zone_filter_allows(self, symbol: str, side: str) -> bool:
-        """PD Zone gate decision for a fresh signal.
+        """PD Zone gate — threshold-based.
         
-        Returns True iff the cached PD zone is favorable for `side`:
-          LONG  → only allowed in Discount  (0 ≤ pos < 47.5%)
-          SHORT → only allowed in Premium   (52.5% < pos ≤ 100%)
-        Equilibrium / Between / unknown → blocked.
+        Two configurable thresholds:
+          pd_long_max_pct  (default 75) — block LONG  if pos_pct >= this
+          pd_short_min_pct (default 25) — block SHORT if pos_pct <= this
         
-        Zone semantics:
-          Discount    = lower half (LONG entry — buying cheap)
-          Premium     = upper half (SHORT entry — selling expensive)
-          Equilibrium = middle 5% (47.5-52.5% — no edge, block)
-          Between     = out-of-range (overshoot — direction unclear, block)
+        Returns True (allow) when:
+          • Filter is disabled
+          • Pct unknown (defensive) — actually blocks instead, see below
+          • For LONG:  pos_pct < pd_long_max_pct
+          • For SHORT: pos_pct > pd_short_min_pct
         
-        Returns True (no-op) when the filter setting is off.
+        Returns False (block) when:
+          • Pct hasn't been computed yet (insufficient pivots, fresh symbol)
+          • Pct is at/beyond the side's threshold
+        
+        Note on "no pct → block": some users might prefer "no filter
+        info → allow", but blocking on missing data is safer — SMC
+        signals are rare enough that one extra scan tick of patience
+        won't matter, and we avoid opening risky positions when the
+        filter doesn't yet have data.
         """
         if not self._settings.get('use_pd_zone_filter', True):
             return True  # Filter disabled — pass through
         
         cached = self._pd_zone_cache.get(symbol)
         if not cached:
-            # Never computed — block. In practice this happens only for
-            # ~1 scan tick after a symbol is added to the watchlist;
-            # the very first scan populates the cache.
             print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} {side}: "
-                  f"zone not yet computed")
+                  f"pct not yet computed")
             return False
         
-        zone = cached.get('zone')
-        if zone is None:
+        pct = cached.get('pct')
+        if pct is None:
             print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} {side}: "
                   f"insufficient swing pivots (range undefined)")
             return False
         
-        pct = cached.get('pct')
-        if side == 'LONG' and zone != 'Discount':
+        long_max = float(self._settings.get('pd_long_max_pct', 75.0))
+        short_min = float(self._settings.get('pd_short_min_pct', 25.0))
+        
+        if side == 'LONG' and pct >= long_max:
             print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} LONG: "
-                  f"price in {zone} ({pct}%) — needs Discount (<47.5%)")
+                  f"price at {pct}% — too high (threshold ≥{long_max}%)")
             return False
-        if side == 'SHORT' and zone != 'Premium':
+        if side == 'SHORT' and pct <= short_min:
             print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} SHORT: "
-                  f"price in {zone} ({pct}%) — needs Premium (>52.5%)")
+                  f"price at {pct}% — too low (threshold ≤{short_min}%)")
             return False
         
         return True
@@ -1948,10 +1930,16 @@ class SMCScanner:
             # chart-header next to OB / Forecast / CTR.
             # Filter toggle is published separately so the badge can show
             # a 🔒 prefix when the filter is actively gating signals.
-            'pd_zone': self._pd_zone_cache.get(symbol, {}).get('zone'),
+            # === PD Zone — threshold-based filter data ===
+            # No more zone classification — just the raw pct and the
+            # configured thresholds. UI uses the thresholds for color-
+            # coding the badge: green when within both bounds, red/yellow
+            # when crossing either threshold.
             'pd_zone_pct': self._pd_zone_cache.get(symbol, {}).get('pct'),
             'pd_zone_filter_enabled': bool(self._settings.get('use_pd_zone_filter', True)),
             'pd_zone_timeframe': self._settings.get('pd_zone_timeframe', '1h'),
+            'pd_long_max_pct': float(self._settings.get('pd_long_max_pct', 75.0)),
+            'pd_short_min_pct': float(self._settings.get('pd_short_min_pct', 25.0)),
             # Swing Structure (size=swing_size)
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),
