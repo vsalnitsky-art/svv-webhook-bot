@@ -855,6 +855,28 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <div class="sm-settings-section">
+                <h3>PD Zone Filter</h3>
+                <div class="sm-controls">
+                    <!-- PD Zone Filter (Premium/Discount) — gates signals
+                         by current price position within the latest swing
+                         range on the Structure Detection timeframe.
+                         LONG only allowed in Discount zone (lower 38.2%).
+                         SHORT only allowed in Premium zone (upper 61.8%).
+                         Equilibrium and unknown zones block all signals.
+                         Default ON — opt-out for users who want raw flow. -->
+                    <label class="sm-checkbox"
+                           title="When ON: LONG signals only fire when current price is in Discount zone (lower 38.2% of swing range); SHORT signals only fire in Premium zone (upper 61.8%). Equilibrium and unknown zones block all signals. Uses the Structure Detection timeframe — same as the main scan TF.">
+                        <input type="checkbox" id="sm-pd-zone-filter-enabled"
+                               checked onchange="updatePDZoneFilter()">
+                        Require Correct PD Zone
+                    </label>
+                    <span style="margin-left:8px;font-size:0.72rem;color:#888">
+                        (LONG → Discount, SHORT → Premium)
+                    </span>
+                </div>
+            </div>
+            
+            <div class="sm-settings-section">
                 <h3>Alerts</h3>
                 <div class="sm-controls">
                     <div class="sm-control-item">
@@ -901,6 +923,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          recent unmitigated internal OB. Hidden when no OB
                          exists for the symbol or all have been mitigated. -->
                     <span class="sm-status-badge" id="sm-ob-badge" style="margin-left:6px;display:none"></span>
+                    <!-- PD Zone (Premium/Discount/Equilibrium) — current
+                         price position within the latest swing range on
+                         the Structure Detection TF. Tooltip shows pct and
+                         filter status. When the filter is active and
+                         price is in the wrong zone, the badge shows a 🔒
+                         prefix to indicate signals would be blocked. -->
+                    <span class="sm-status-badge" id="sm-pd-zone-badge" style="margin-left:6px;display:none"></span>
                     <!-- Hidden legacy badges — kept in DOM so old code paths
                          that still reference these IDs don't crash, but they
                          never become visible. The new Decision Center block
@@ -1640,6 +1669,12 @@ async function loadSettings() {
             if (obEnabled) obEnabled.checked = !!s.ob_filter_enabled;
             const obTf = document.getElementById('sm-ob-filter-tf');
             if (obTf) obTf.value = s.ob_filter_timeframe || '1h';
+            // PD Zone Filter — defaults TRUE when the field is missing
+            // from the response (older deployments without the setting).
+            // We use `!== false` instead of `!!` so undefined → checked,
+            // matching the DEFAULT_SETTINGS truthy default in the backend.
+            const pdEnabled = document.getElementById('sm-pd-zone-filter-enabled');
+            if (pdEnabled) pdEnabled.checked = (s.use_pd_zone_filter !== false);
             updateHTFFieldVisibility();
             updateSettingsSummary();
         }
@@ -1681,12 +1716,17 @@ function updateSettingsSummary() {
     const htfMethod = document.getElementById('sm-htf-method').value;
     const obOn = document.getElementById('sm-ob-filter-enabled');
     const obTf = document.getElementById('sm-ob-filter-tf');
+    const pdOn = document.getElementById('sm-pd-zone-filter-enabled');
     
     let summary = `${tf} · size ${isize} · ${modeLabel}`;
     if (dedup) summary += ' · dedup';
     if (htfOn) summary += ` · HTF ${htfTf} (${htfMethod})`;
     if (obOn && obOn.checked && obTf) {
         summary += ` · OB ${obTf.value.toUpperCase()}`;
+    }
+    if (pdOn && pdOn.checked) {
+        // No TF qualifier — PD Zone always uses the Structure Detection TF
+        summary += ' · PD Zone';
     }
     document.getElementById('sm-settings-summary-right').textContent = summary;
 }
@@ -1724,6 +1764,27 @@ async function updateOBFilter() {
         // user toggles the filter and sees no visible feedback for 10s.
         loadWatchlist();
     } catch (err) { alert('OB Filter update error: ' + err); }
+}
+
+// PD Zone Filter — single boolean toggle. No TF dropdown because the
+// filter intentionally uses the Structure Detection TF (= main scan TF)
+// as its source of truth — switching that TF automatically switches the
+// zone calculation.
+async function updatePDZoneFilter() {
+    const enabled = document.getElementById('sm-pd-zone-filter-enabled').checked;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({use_pd_zone_filter: enabled}),
+        });
+        updateSettingsSummary();
+        // No watchlist refresh needed — PD Zone is a price-position
+        // filter, not a per-symbol attribute that affects the watchlist
+        // display. The chart-header badge updates on the next poll
+        // (~5s) which is fast enough that immediate refresh isn't worth
+        // the network round-trip.
+    } catch (err) { alert('PD Zone Filter update error: ' + err); }
 }
 
 async function updateAlertMode() {
@@ -2137,6 +2198,77 @@ async function loadChart() {
                 obBadge.title = `OB Filter ACTIVE on ${obTf} but no valid Order Block exists.\nAll signals will be BLOCKED until a BOS or CHoCH creates a new OB.`;
             } else {
                 obBadge.style.display = 'none';
+            }
+        }
+        
+        // === PD Zone badge (Premium/Discount/Equilibrium) ===
+        // Shows current price position within the latest swing range on the
+        // Structure Detection TF. Color encodes the zone:
+        //   🟢 Discount   — price low in range (LONG-favorable)
+        //   🔴 Premium    — price high in range (SHORT-favorable)
+        //   ⚪ Equilibrium — middle, no edge
+        // 🔒 prefix when filter is ON (signals are gated by this badge).
+        const pdBadge = document.getElementById('sm-pd-zone-badge');
+        const pdZone = d.pd_zone;
+        const pdPct = d.pd_zone_pct;
+        const pdFilterOn = !!d.pd_zone_filter_enabled;
+        if (pdBadge && pdZone) {
+            // Clamp pct for display only — out-of-range values (price
+            // beyond swing extremes) mean "very Premium" or "very Discount"
+            // but the user only needs to see 0-100% in the badge.
+            const displayPct = Math.max(0, Math.min(100, Math.round(pdPct)));
+            const filterMark = pdFilterOn ? '🔒' : '';
+            let icon, bg, color;
+            if (pdZone === 'Discount') {
+                icon = '🟢'; bg = 'rgba(34,197,94,0.15)'; color = '#86efac';
+            } else if (pdZone === 'Premium') {
+                icon = '🔴'; bg = 'rgba(239,68,68,0.15)'; color = '#fca5a5';
+            } else {
+                icon = '⚪'; bg = 'rgba(120,120,120,0.15)'; color = '#aaa';
+            }
+            pdBadge.textContent = `${filterMark}${icon} ${pdZone} ${displayPct}%`;
+            pdBadge.className = 'sm-status-badge';
+            pdBadge.style.background = bg;
+            pdBadge.style.color = color;
+            pdBadge.style.display = 'inline-block';
+            
+            // Tooltip with semantic explanation. We tell the user exactly
+            // which side this zone allows — easier to read than mental math.
+            let allowsLine = '';
+            if (pdFilterOn) {
+                if (pdZone === 'Discount') {
+                    allowsLine = '🔒 FILTER ACTIVE — only LONG signals allowed';
+                } else if (pdZone === 'Premium') {
+                    allowsLine = '🔒 FILTER ACTIVE — only SHORT signals allowed';
+                } else {
+                    allowsLine = '🔒 FILTER ACTIVE — ALL signals BLOCKED (no edge in Equilibrium)';
+                }
+            } else {
+                allowsLine = '📊 Informational only (filter OFF)';
+            }
+            const tip = [
+                `Premium/Discount Zone · ${pdZone} ${displayPct}%`,
+                allowsLine,
+                '',
+                'Position calc: (price − swing_low) / (swing_high − swing_low) × 100',
+                '   < 38.2%  → Discount  (LONG-favorable)',
+                '   > 61.8%  → Premium   (SHORT-favorable)',
+                '   else     → Equilibrium',
+            ].join('\n');
+            pdBadge.title = tip;
+        } else if (pdBadge) {
+            // No zone computed yet (insufficient pivots, fresh symbol).
+            // When filter is on, show warning so user understands signals
+            // are blocked until pivots form.
+            if (pdFilterOn) {
+                pdBadge.textContent = '🔒⚠️ PD Zone unknown';
+                pdBadge.className = 'sm-status-badge';
+                pdBadge.style.background = 'rgba(234,179,8,0.15)';
+                pdBadge.style.color = '#fde68a';
+                pdBadge.style.display = 'inline-block';
+                pdBadge.title = 'PD Zone Filter ACTIVE but the latest swing range cannot be determined yet.\nAll signals will be BLOCKED until enough pivots form.';
+            } else {
+                pdBadge.style.display = 'none';
             }
         }
         

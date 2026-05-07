@@ -97,6 +97,27 @@ DEFAULT_SETTINGS = {
     # the same source of truth.
     'ob_filter_enabled': False,
     'ob_filter_timeframe': '1h',  # 15m / 30m / 1h / 4h
+    
+    # === PD Zone Filter (Premium/Discount) ===
+    # Classifies CURRENT PRICE position within the latest swing range on
+    # the Structure Detection timeframe (= main scan TF). When enabled,
+    # gates signals to high-conviction R:R setups:
+    #   LONG  signals only fire when price is in Discount zone
+    #   SHORT signals only fire when price is in Premium zone
+    #
+    # Zone classification (standard SMC Fibonacci levels):
+    #   pos_pct < 38.2 → Discount     (lower third — buy zone)
+    #   pos_pct > 61.8 → Premium      (upper third — sell zone)
+    #   else           → Equilibrium  (middle — no edge)
+    #
+    # Computed per scan tick using the most-recent swing high and swing
+    # low pivots. Position percent = (current_price - swing_low) / range
+    # * 100, clamped to [0, 100] for display only (raw pct used for zone
+    # classification preserves out-of-range cases).
+    #
+    # Default ON — this is a core SMC concept and most users want this
+    # protection. Can be toggled off for users who want raw signal flow.
+    'use_pd_zone_filter': True,
 }
 
 
@@ -230,6 +251,13 @@ class SMCScanner:
         
         # HTF Bias cache per symbol: {symbol: {'bias', 'method', ...}}
         self._htf_cache: Dict[str, Dict] = {}
+        
+        # PD Zone cache per symbol — Premium/Discount/Equilibrium classification
+        # of CURRENT PRICE within the latest swing range. Updated on every
+        # scan tick; consumed by the signal gate (when use_pd_zone_filter
+        # is on) and the chart-header badge.
+        # {symbol: {'zone': str|None, 'pct': float|None, 'updated_at': float}}
+        self._pd_zone_cache: Dict[str, Dict] = {}
         
         # Signal markers per symbol — points on the chart where Telegram alerts
         # actually fired. Used to display LONG/SHORT dots on the chart.
@@ -455,6 +483,7 @@ class SMCScanner:
                 self._first_scan_done.pop(symbol, None)
                 self._seen_events.pop(symbol, None)
                 self._htf_cache.pop(symbol, None)
+                self._pd_zone_cache.pop(symbol, None)
                 self._signal_markers.pop(symbol, None)
                 self._last_signal_dir.pop(symbol, None)
                 self._cache.pop(symbol, None)
@@ -504,7 +533,9 @@ class SMCScanner:
                        'htf_ema_fast', 'htf_ema_slow', 'htf_ema_trend',
                        'htf_internal_size',
                        # OB filter
-                       'ob_filter_enabled', 'ob_filter_timeframe']
+                       'ob_filter_enabled', 'ob_filter_timeframe',
+                       # PD Zone filter (Premium/Discount)
+                       'use_pd_zone_filter']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
@@ -588,6 +619,15 @@ class SMCScanner:
             ALLOWED_OB_TFS = ('15m', '30m', '1h', '4h')
             if self._settings.get('ob_filter_timeframe') not in ALLOWED_OB_TFS:
                 self._settings['ob_filter_timeframe'] = '1h'
+            
+            # === PD Zone Filter validation ===
+            # Boolean toggle. Default True (set in DEFAULT_SETTINGS), but
+            # update_settings can omit it — coerce explicitly so flipping
+            # from True to False through the UI sticks. Without this cast,
+            # an empty string from a missing form field would resolve as
+            # truthy through `or` chains downstream.
+            self._settings['use_pd_zone_filter'] = bool(
+                self._settings.get('use_pd_zone_filter', True))
             
             # Reset cache on relevant changes
             new_tf = self._settings['timeframe']
@@ -760,6 +800,30 @@ class SMCScanner:
                                                     swing_trend=result_closed.get('swing', {}).get('trend', 0))
                 with self._lock:
                     self._htf_cache[symbol] = htf_bias
+                
+                # === Compute PD Zone (Premium/Discount/Equilibrium) ===
+                # Classifies CURRENT PRICE within the latest swing range.
+                # Uses swing pivots from result_closed (the SMC structure
+                # detection on closed bars only — same data source as the
+                # SMC events). current_price is the close of the most
+                # recent CLOSED bar — matches the bar-state Pine sees.
+                # Cache stores zone + percent for use by:
+                #   1. Signal gate _pd_zone_filter_allows (when toggle on)
+                #   2. chart_data badge in UI
+                #   3. /api/smc/state for watchlist (future use)
+                try:
+                    swing_pivots = result_closed.get('swing', {}).get('pivots', [])
+                    last_close_price = klines_closed[-1].get('p') if klines_closed else None
+                    pd_zone, pd_pct = self._compute_pd_zone(swing_pivots, last_close_price)
+                    with self._lock:
+                        self._pd_zone_cache[symbol] = {
+                            'zone': pd_zone,
+                            'pct': pd_pct,
+                            'updated_at': time.time(),
+                        }
+                except Exception as pd_err:
+                    if self._errors <= 5:
+                        print(f"[SMC] PD Zone compute error for {symbol}: {pd_err}")
                 
                 # === Update Forecast 1H + CTR via forecast engine ===
                 # Best-effort, never blocks scan loop on error.
@@ -1080,6 +1144,102 @@ class SMCScanner:
         
         return True
     
+    @staticmethod
+    def _compute_pd_zone(swing_pivots: List[Dict], current_price: float
+                          ) -> tuple:
+        """Classify CURRENT PRICE within the latest swing range as
+        Premium / Discount / Equilibrium.
+        
+        Uses standard SMC Fibonacci levels (38.2 / 61.8) on the range
+        bounded by the latest swing high and latest swing low. These
+        are the most-recent valid pivots — older pivots are ignored
+        even if they're more extreme, because we want the *current*
+        trading range, not historical extremes.
+        
+        Returns (zone, pct) tuple:
+          zone: 'Discount' | 'Equilibrium' | 'Premium' | None
+          pct:  position percent (0-100) of price within the range,
+                rounded to 1 decimal. None when range can't be determined.
+        
+        Note: pct is the RAW position; values may exceed [0,100] when
+        price has moved outside the swing range (price > swing_high or
+        price < swing_low). UI clamps for display, but raw value is used
+        for zone classification — out-of-range price is naturally
+        captured as Discount (< 0) or Premium (> 100), which is what
+        we want for an extreme-zone signal filter.
+        """
+        if not swing_pivots or current_price is None or current_price <= 0:
+            return None, None
+        
+        latest_high = None
+        latest_low = None
+        for p in reversed(swing_pivots):
+            ptype = p.get('type', '')
+            if ptype in ('HH', 'LH') and latest_high is None:
+                latest_high = p.get('price')
+            elif ptype in ('HL', 'LL') and latest_low is None:
+                latest_low = p.get('price')
+            if latest_high is not None and latest_low is not None:
+                break
+        
+        if latest_high is None or latest_low is None:
+            return None, None
+        if latest_high <= latest_low:
+            # Inverted or zero range — can happen at start of series
+            # before pivots stabilize. Skip gracefully.
+            return None, None
+        
+        range_size = latest_high - latest_low
+        pos_pct = (current_price - latest_low) / range_size * 100
+        
+        if pos_pct < 38.2:
+            zone = 'Discount'
+        elif pos_pct > 61.8:
+            zone = 'Premium'
+        else:
+            zone = 'Equilibrium'
+        
+        return zone, round(pos_pct, 1)
+    
+    def _pd_zone_filter_allows(self, symbol: str, side: str) -> bool:
+        """PD Zone gate decision for a fresh signal.
+        
+        Returns True iff the cached PD zone is favorable for `side`:
+          LONG  → only allowed in Discount
+          SHORT → only allowed in Premium
+        Equilibrium / unknown / opposite → blocked.
+        
+        Returns True (no-op) when the filter setting is off.
+        """
+        if not self._settings.get('use_pd_zone_filter', True):
+            return True  # Filter disabled — pass through
+        
+        cached = self._pd_zone_cache.get(symbol)
+        if not cached:
+            # Never computed — block. In practice this happens only for
+            # ~1 scan tick after a symbol is added to the watchlist;
+            # the very first scan populates the cache.
+            print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} {side}: "
+                  f"zone not yet computed")
+            return False
+        
+        zone = cached.get('zone')
+        if zone is None:
+            print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} {side}: "
+                  f"insufficient swing pivots")
+            return False
+        
+        if side == 'LONG' and zone != 'Discount':
+            print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} LONG: "
+                  f"price in {zone} ({cached.get('pct')}%) — needs Discount")
+            return False
+        if side == 'SHORT' and zone != 'Premium':
+            print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} SHORT: "
+                  f"price in {zone} ({cached.get('pct')}%) — needs Premium")
+            return False
+        
+        return True
+    
     # ========================================
     # Alerts logic
     # ========================================
@@ -1300,6 +1460,19 @@ class SMCScanner:
                     # production can verify filter is actually firing.
                     print(f"[SMC] 🚫 OB Filter blocked {symbol} {side_label} signal")
                     return
+            
+            # === PD Zone Filter (Premium/Discount) ===
+            # Independent of OB Filter — this is a price-position filter,
+            # OB is a structure filter. Both can be on simultaneously
+            # for max selectivity. Same hard-block semantics as OB Filter:
+            # blocked signals leave no marker and don't reach TM.
+            #
+            # The toggle defaults ON because trading against the zone
+            # (e.g. LONG from Premium = high risk) is the most common
+            # newbie mistake; default protection is more useful than
+            # default permissiveness.
+            if not self._pd_zone_filter_allows(symbol, side_label):
+                return  # Already logged inside the helper
             
             # Live entry price — close of the bar where the BOS/CHoCH crossover
             # occurred. This is the price at the actual moment the signal fired.
@@ -1650,6 +1823,15 @@ class SMCScanner:
             # ob_filter_enabled=False we still publish last_ob for display.
             'ob_filter_enabled': bool(self._settings.get('ob_filter_enabled', False)),
             'ob_filter_timeframe': ob_tf_used,
+            # === PD Zone (Premium/Discount/Equilibrium) badge data ===
+            # Where current price sits within the latest swing range on
+            # the Structure Detection TF. UI renders as a badge in the
+            # chart-header next to OB / Forecast / CTR.
+            # Filter toggle is published separately so the badge can show
+            # a 🔒 prefix when the filter is actively gating signals.
+            'pd_zone': self._pd_zone_cache.get(symbol, {}).get('zone'),
+            'pd_zone_pct': self._pd_zone_cache.get(symbol, {}).get('pct'),
+            'pd_zone_filter_enabled': bool(self._settings.get('use_pd_zone_filter', True)),
             # Swing Structure (size=swing_size)
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),
