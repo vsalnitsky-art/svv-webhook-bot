@@ -99,25 +99,37 @@ DEFAULT_SETTINGS = {
     'ob_filter_timeframe': '1h',  # 15m / 30m / 1h / 4h
     
     # === PD Zone Filter (Premium/Discount) ===
-    # Classifies CURRENT PRICE position within the latest swing range on
-    # the Structure Detection timeframe (= main scan TF). When enabled,
-    # gates signals to high-conviction R:R setups:
+    # Classifies CURRENT PRICE position within the trailing range on
+    # the configured timeframe. When enabled, gates signals to high-
+    # conviction R:R setups:
     #   LONG  signals only fire when price is in Discount zone
     #   SHORT signals only fire when price is in Premium zone
     #
-    # Zone classification (standard SMC Fibonacci levels):
-    #   pos_pct < 38.2 → Discount     (lower third — buy zone)
-    #   pos_pct > 61.8 → Premium      (upper third — sell zone)
-    #   else           → Equilibrium  (middle — no edge)
+    # Zone classification — practical SMC half-range with narrow
+    # equilibrium buffer plus out-of-range catch-all:
+    #   pos_pct < 0%           → Between     (below trailing low — overshoot)
+    #   0% ≤ pos < 47.5%       → Discount    (lower half, LONG-favorable)
+    #   47.5% ≤ pos ≤ 52.5%    → Equilibrium (middle 5% — no edge, block)
+    #   52.5% < pos ≤ 100%     → Premium     (upper half, SHORT-favorable)
+    #   pos > 100%             → Between     (above trailing high — overshoot)
     #
-    # Computed per scan tick using the most-recent swing high and swing
-    # low pivots. Position percent = (current_price - swing_low) / range
-    # * 100, clamped to [0, 100] for display only (raw pct used for zone
-    # classification preserves out-of-range cases).
+    # Most of the range is workable for trading except the narrow 5%
+    # equilibrium band and the rare out-of-range cases. This matches
+    # standard SMC trading methodology — buy below midpoint, sell
+    # above, avoid mean-reversion at fair value.
+    #
+    # Range is computed Pine-faithfully using `trailing.top`/`bottom`
+    # (Pine SMC_PRO_BOT__47_ lines 835-841): the running max/min of
+    # high/low from the latest swing pivot to the current bar. Pine
+    # resets these to the pivot price when a new swing forms, then
+    # maintains running max/min on every subsequent bar.
     #
     # Default ON — this is a core SMC concept and most users want this
-    # protection. Can be toggled off for users who want raw signal flow.
+    # protection. Default TF is 1H — the wider context produces more
+    # stable, meaningful zones than a 15m range that compresses every
+    # few hours.
     'use_pd_zone_filter': True,
+    'pd_zone_timeframe': '1h',  # 15m / 30m / 1h / 4h
 }
 
 
@@ -535,7 +547,7 @@ class SMCScanner:
                        # OB filter
                        'ob_filter_enabled', 'ob_filter_timeframe',
                        # PD Zone filter (Premium/Discount)
-                       'use_pd_zone_filter']
+                       'use_pd_zone_filter', 'pd_zone_timeframe']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
@@ -628,6 +640,13 @@ class SMCScanner:
             # truthy through `or` chains downstream.
             self._settings['use_pd_zone_filter'] = bool(
                 self._settings.get('use_pd_zone_filter', True))
+            # PD Zone TF: same allowed list as OB Filter. Falls back to
+            # 1h if the supplied value is unknown — 1h is the default
+            # because it gives a wider, more stable swing context than
+            # 15m which compresses too often for clean PD zones.
+            ALLOWED_PD_TFS = ('15m', '30m', '1h', '4h')
+            if self._settings.get('pd_zone_timeframe') not in ALLOWED_PD_TFS:
+                self._settings['pd_zone_timeframe'] = '1h'
             
             # Reset cache on relevant changes
             new_tf = self._settings['timeframe']
@@ -801,30 +820,6 @@ class SMCScanner:
                 with self._lock:
                     self._htf_cache[symbol] = htf_bias
                 
-                # === Compute PD Zone (Premium/Discount/Equilibrium) ===
-                # Classifies CURRENT PRICE within the latest swing range.
-                # Uses swing pivots from result_closed (the SMC structure
-                # detection on closed bars only — same data source as the
-                # SMC events). current_price is the close of the most
-                # recent CLOSED bar — matches the bar-state Pine sees.
-                # Cache stores zone + percent for use by:
-                #   1. Signal gate _pd_zone_filter_allows (when toggle on)
-                #   2. chart_data badge in UI
-                #   3. /api/smc/state for watchlist (future use)
-                try:
-                    swing_pivots = result_closed.get('swing', {}).get('pivots', [])
-                    last_close_price = klines_closed[-1].get('p') if klines_closed else None
-                    pd_zone, pd_pct = self._compute_pd_zone(swing_pivots, last_close_price)
-                    with self._lock:
-                        self._pd_zone_cache[symbol] = {
-                            'zone': pd_zone,
-                            'pct': pd_pct,
-                            'updated_at': time.time(),
-                        }
-                except Exception as pd_err:
-                    if self._errors <= 5:
-                        print(f"[SMC] PD Zone compute error for {symbol}: {pd_err}")
-                
                 # === Update Forecast 1H + CTR via forecast engine ===
                 # Best-effort, never blocks scan loop on error.
                 # IMPORTANT: we pass klines_closed (last bar dropped) so STC
@@ -842,15 +837,18 @@ class SMCScanner:
                         print(f"[SMC] Forecast update error for {symbol}: {fe_err}")
                 
                 # === Compute & persist OBs on all active timeframes ===
-                # Three timeframes can need an OB row in DB:
+                # Three timeframes can need data this tick:
                 #   1. main_tf (always — used for chart display, opposite_exit
                 #      default, etc.)
                 #   2. ob_filter_tf (entry gate, computed by _update_smc_ob)
                 #   3. opposite_exit_tf (TM's exit rule, configurable)
-                # We dedupe to avoid double work, and reuse already-fetched
-                # klines for main_tf (klines_closed in scope).
+                #   4. pd_zone_tf (PD Zone Filter — configurable, default 1h)
+                # We build a per-TF cache so each unique TF is fetched and
+                # SMC-detected at most once. Caches are scoped to this
+                # symbol on this tick — discarded after.
                 main_tf = self._settings.get('timeframe', '15m')
                 ob_filter_tf = self._settings.get('ob_filter_timeframe', '1h')
+                pd_zone_tf = self._settings.get('pd_zone_timeframe', '1h')
                 
                 # Collect TFs the TM might need (informational — TM gates
                 # internally, but we still want OB rows ready in DB).
@@ -869,7 +867,48 @@ class SMCScanner:
                     pass
                 
                 from detection.ob_detector import detect_last_order_block
+                from detection.smc_structure import detect_smc_structure
                 from storage.db_operations import get_db
+                
+                # Per-TF cache: avoids duplicate fetch+detect on the same
+                # TF. Pre-populate main_tf with already-computed data.
+                isize_v = self.get_internal_size()
+                ssize_v = int(self._settings.get('swing_size', 50))
+                tf_data = {
+                    main_tf: {
+                        'klines_closed': klines_closed,
+                        'structure': result_closed,
+                    },
+                }
+                
+                def _get_tf_data(tf):
+                    """Lazy fetch+compute structure for a given TF, with
+                    per-tick caching. Returns dict or None on failure."""
+                    if tf in tf_data:
+                        return tf_data[tf]
+                    try:
+                        if hasattr(md, 'fetch_klines') and \
+                           'interval' in md.fetch_klines.__code__.co_varnames:
+                            kl = md.fetch_klines(symbol, limit=700, interval=tf)
+                        else:
+                            kl = md.fetch_klines(symbol, limit=700)
+                        if not kl or len(kl) < 220:
+                            tf_data[tf] = None
+                            return None
+                        kl_closed = kl[:-1] if len(kl) >= 2 else kl
+                        result = detect_smc_structure(
+                            kl_closed,
+                            internal_size=isize_v, swing_size=ssize_v)
+                        tf_data[tf] = {
+                            'klines_closed': kl_closed,
+                            'structure': result,
+                        }
+                        return tf_data[tf]
+                    except Exception as e:
+                        if self._errors <= 5:
+                            print(f"[SMC] TF data fetch error {symbol}@{tf}: {e}")
+                        tf_data[tf] = None
+                        return None
                 
                 # 1) main_tf — always compute using already-fetched klines
                 try:
@@ -891,42 +930,56 @@ class SMCScanner:
                     if self._errors <= 5:
                         print(f"[SMC] OB update error for {symbol}: {ob_err}")
                 
-                # 3) opposite_exit_tf — only compute if it's a NEW TF (not
-                # main_tf and not ob_filter_tf). This is the only path that
-                # might add a fresh klines fetch. For most users (default
-                # opposite_exit_tf=15m == main_tf=15m), this branch is skipped.
-                extra_tf = None
+                # 3) opposite_exit_tf — only compute OB if it's a NEW TF (not
+                # main_tf and not ob_filter_tf). The cache helper handles the
+                # lazy fetch; reuses prior compute if pd_zone_tf landed first.
                 if opposite_exit_tf and \
                    opposite_exit_tf not in (main_tf, ob_filter_tf):
-                    extra_tf = opposite_exit_tf
-                if extra_tf is not None:
                     try:
-                        # Reuse the same fetcher path as _update_smc_ob; we
-                        # request 700 bars to give ATR(200) a 500-bar warmup.
-                        if hasattr(md, 'fetch_klines') and \
-                           'interval' in md.fetch_klines.__code__.co_varnames:
-                            klines_extra = md.fetch_klines(
-                                symbol, limit=700, interval=extra_tf)
-                        else:
-                            klines_extra = md.fetch_klines(symbol, limit=700)
-                        if klines_extra and len(klines_extra) >= 220:
-                            klines_extra_closed = klines_extra[:-1] if len(klines_extra) >= 2 else klines_extra
-                            from detection.smc_structure import detect_smc_structure
-                            isize_e = self.get_internal_size()
-                            ssize_e = int(self._settings.get('swing_size', 50))
-                            result_extra = detect_smc_structure(
-                                klines_extra_closed,
-                                internal_size=isize_e,
-                                swing_size=ssize_e)
+                        td_extra = _get_tf_data(opposite_exit_tf)
+                        if td_extra:
                             ob_extra = detect_last_order_block(
-                                klines=klines_extra_closed,
-                                pivots=result_extra.get('internal', {}).get('pivots', []),
-                                events=result_extra.get('internal', {}).get('events', []),
+                                klines=td_extra['klines_closed'],
+                                pivots=td_extra['structure'].get('internal', {}).get('pivots', []),
+                                events=td_extra['structure'].get('internal', {}).get('events', []),
                             )
-                            get_db().upsert_smc_ob_state(symbol, extra_tf, ob_extra)
+                            get_db().upsert_smc_ob_state(symbol, opposite_exit_tf, ob_extra)
                     except Exception as extra_err:
                         if self._errors <= 5:
-                            print(f"[SMC] Extra-TF OB ({extra_tf}) error for {symbol}: {extra_err}")
+                            print(f"[SMC] Extra-TF OB ({opposite_exit_tf}) error for {symbol}: {extra_err}")
+                
+                # === Compute PD Zone (Premium/Discount/Equilibrium) ===
+                # PD Zone classifies the CURRENT PRICE within the trailing
+                # range on the user-configured `pd_zone_timeframe` (default
+                # 1H — wider context produces more stable zones than 15m).
+                # _get_tf_data caches per-tick: if pd_zone_tf collides with
+                # main_tf / ob_filter_tf / opposite_exit_tf we reuse the
+                # already-fetched klines and structure. Otherwise one
+                # additional API request fetches the right TF.
+                # Cache stores zone + percent for use by:
+                #   1. Signal gate _pd_zone_filter_allows (when toggle on)
+                #   2. chart_data badge in UI
+                try:
+                    pd_data = _get_tf_data(pd_zone_tf)
+                    if pd_data:
+                        pd_klines = pd_data['klines_closed']
+                        pd_swing_pivots = pd_data['structure'].get(
+                            'swing', {}).get('pivots', [])
+                        pd_price = pd_klines[-1].get('p') if pd_klines else None
+                        pd_zone, pd_pct = self._compute_pd_zone(
+                            pd_klines, pd_swing_pivots, pd_price)
+                    else:
+                        pd_zone, pd_pct = None, None
+                    with self._lock:
+                        self._pd_zone_cache[symbol] = {
+                            'zone': pd_zone,
+                            'pct': pd_pct,
+                            'tf': pd_zone_tf,
+                            'updated_at': time.time(),
+                        }
+                except Exception as pd_err:
+                    if self._errors <= 5:
+                        print(f"[SMC] PD Zone compute error for {symbol}: {pd_err}")
                 
                 # === Notify TM that OBs may have changed ===
                 # TM reads its own configured TF from DB internally —
@@ -1145,56 +1198,115 @@ class SMCScanner:
         return True
     
     @staticmethod
-    def _compute_pd_zone(swing_pivots: List[Dict], current_price: float
-                          ) -> tuple:
-        """Classify CURRENT PRICE within the latest swing range as
-        Premium / Discount / Equilibrium.
+    def _compute_pd_zone(klines: List[Dict], swing_pivots: List[Dict],
+                          current_price: float) -> tuple:
+        """Classify CURRENT PRICE within the trailing range as
+        Discount / Equilibrium / Premium / Between.
         
-        Uses standard SMC Fibonacci levels (38.2 / 61.8) on the range
-        bounded by the latest swing high and latest swing low. These
-        are the most-recent valid pivots — older pivots are ignored
-        even if they're more extreme, because we want the *current*
-        trading range, not historical extremes.
+        Range definition is Pine-faithful (Pine SMC_PRO_BOT__47_ lines
+        835-841 — `updateTrailingExtremes`). `trailing.top` and
+        `trailing.bottom` are running max/min of high/low, RESET to the
+        swing pivot's price when a new swing forms, then EXTEND via
+        `max(high, trailing.top)` and `min(low, trailing.bottom)` on
+        every subsequent bar.
+        Practical effect: if price has crept above the latest swing
+        high (without yet forming a new pivot), trailing.top tracks
+        that new max — Pine's range expands to include it. Plain
+        "latest swing pivot" would lag behind.
         
-        Returns (zone, pct) tuple:
-          zone: 'Discount' | 'Equilibrium' | 'Premium' | None
-          pct:  position percent (0-100) of price within the range,
-                rounded to 1 decimal. None when range can't be determined.
+        Zone CLASSIFICATION uses practical SMC half-range thresholds
+        with a narrow Equilibrium buffer and an out-of-range Between
+        catch-all:
         
-        Note: pct is the RAW position; values may exceed [0,100] when
-        price has moved outside the swing range (price > swing_high or
-        price < swing_low). UI clamps for display, but raw value is used
-        for zone classification — out-of-range price is naturally
-        captured as Discount (< 0) or Premium (> 100), which is what
-        we want for an extreme-zone signal filter.
+            pos_pct < 0%           → Between     (below trailing low — overshoot)
+            0% ≤ pos < 47.5%       → Discount    (lower half, LONG-favorable)
+            47.5% ≤ pos ≤ 52.5%    → Equilibrium (middle 5% — no edge, block)
+            52.5% < pos ≤ 100%     → Premium     (upper half, SHORT-favorable)
+            pos > 100%             → Between     (above trailing high — overshoot)
+        
+        The entire IN-RANGE region is workable for trading except the
+        narrow 5% equilibrium band. Out-of-range positions (Between)
+        are blocked because direction is unclear — could be a genuine
+        breakout starting a new trend, or a fake-out about to revert.
+        Wait for a new pivot to form before re-evaluating.
+        
+        Returns (zone, pct):
+          zone: 'Discount' | 'Equilibrium' | 'Premium' | 'Between' | None
+                None means range can't be determined (no pivots yet).
+          pct:  raw position percent within trailing range, rounded to
+                1 decimal. Can exceed [0,100] when price has overshot
+                the trailing extremes — corresponds to 'Between' zone.
         """
         if not swing_pivots or current_price is None or current_price <= 0:
             return None, None
         
-        latest_high = None
-        latest_low = None
+        # Find latest swing high pivot AND latest swing low pivot.
+        # We need both the price level AND the bar index so we can walk
+        # forward to compute the running max/min (trailing extremes).
+        latest_high_pivot = None
+        latest_low_pivot = None
         for p in reversed(swing_pivots):
             ptype = p.get('type', '')
-            if ptype in ('HH', 'LH') and latest_high is None:
-                latest_high = p.get('price')
-            elif ptype in ('HL', 'LL') and latest_low is None:
-                latest_low = p.get('price')
-            if latest_high is not None and latest_low is not None:
+            if ptype in ('HH', 'LH') and latest_high_pivot is None:
+                latest_high_pivot = p
+            elif ptype in ('HL', 'LL') and latest_low_pivot is None:
+                latest_low_pivot = p
+            if latest_high_pivot is not None and latest_low_pivot is not None:
                 break
         
-        if latest_high is None or latest_low is None:
-            return None, None
-        if latest_high <= latest_low:
-            # Inverted or zero range — can happen at start of series
-            # before pivots stabilize. Skip gracefully.
+        if latest_high_pivot is None or latest_low_pivot is None:
             return None, None
         
-        range_size = latest_high - latest_low
-        pos_pct = (current_price - latest_low) / range_size * 100
+        # === Compute trailing extremes (Pine updateTrailingExtremes) ===
+        # Pine: after pivot reset, trailing.top := max(high, trailing.top)
+        # on every bar. Equivalent: max of (pivot.price, all subsequent
+        # highs from pivot bar to end of series).
+        high_pivot_idx = latest_high_pivot.get('idx', 0) or 0
+        low_pivot_idx = latest_low_pivot.get('idx', 0) or 0
         
-        if pos_pct < 38.2:
+        trailing_top = float(latest_high_pivot.get('price', 0))
+        trailing_bottom = float(latest_low_pivot.get('price', 0))
+        
+        n = len(klines) if klines else 0
+        # Walk from each pivot's bar to end, tracking running max/min.
+        # If klines is None or empty (defensive), trailing extremes stay
+        # at the pivot price — equivalent to no further updates.
+        if n > 0:
+            for i in range(min(high_pivot_idx, n), n):
+                h = klines[i].get('h', klines[i].get('p', 0))
+                if h > trailing_top:
+                    trailing_top = h
+            for i in range(min(low_pivot_idx, n), n):
+                l = klines[i].get('l', klines[i].get('p', 0))
+                if l < trailing_bottom:
+                    trailing_bottom = l
+        
+        if trailing_top <= trailing_bottom:
+            # Inverted or zero range — happens at start of series before
+            # pivots stabilize. Skip gracefully.
+            return None, None
+        
+        range_size = trailing_top - trailing_bottom
+        pos_pct = (current_price - trailing_bottom) / range_size * 100
+        
+        # === SMC half-range classification with out-of-range guard ===
+        # Layout (positions in percent):
+        #   pos < 0%               → Between     (price below trailing low — extreme overshoot)
+        #   0% ≤ pos < 47.5%       → Discount    (lower half, LONG-favorable)
+        #   47.5% ≤ pos ≤ 52.5%    → Equilibrium (middle 5% buffer — no edge, BLOCK)
+        #   52.5% < pos ≤ 100%     → Premium     (upper half, SHORT-favorable)
+        #   pos > 100%             → Between     (price above trailing high — extreme overshoot)
+        #
+        # 'Between' captures the edge case where price has broken outside
+        # the trailing range without yet establishing a new swing pivot.
+        # It's NOT a tradeable zone — direction is unclear (could be
+        # genuine breakout starting new trend, or fake-out about to revert).
+        # The signal gate blocks Between just like Equilibrium.
+        if pos_pct < 0 or pos_pct > 100:
+            zone = 'Between'
+        elif pos_pct < 47.5:
             zone = 'Discount'
-        elif pos_pct > 61.8:
+        elif pos_pct > 52.5:
             zone = 'Premium'
         else:
             zone = 'Equilibrium'
@@ -1205,9 +1317,15 @@ class SMCScanner:
         """PD Zone gate decision for a fresh signal.
         
         Returns True iff the cached PD zone is favorable for `side`:
-          LONG  → only allowed in Discount
-          SHORT → only allowed in Premium
-        Equilibrium / unknown / opposite → blocked.
+          LONG  → only allowed in Discount  (0 ≤ pos < 47.5%)
+          SHORT → only allowed in Premium   (52.5% < pos ≤ 100%)
+        Equilibrium / Between / unknown → blocked.
+        
+        Zone semantics:
+          Discount    = lower half (LONG entry — buying cheap)
+          Premium     = upper half (SHORT entry — selling expensive)
+          Equilibrium = middle 5% (47.5-52.5% — no edge, block)
+          Between     = out-of-range (overshoot — direction unclear, block)
         
         Returns True (no-op) when the filter setting is off.
         """
@@ -1226,16 +1344,17 @@ class SMCScanner:
         zone = cached.get('zone')
         if zone is None:
             print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} {side}: "
-                  f"insufficient swing pivots")
+                  f"insufficient swing pivots (range undefined)")
             return False
         
+        pct = cached.get('pct')
         if side == 'LONG' and zone != 'Discount':
             print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} LONG: "
-                  f"price in {zone} ({cached.get('pct')}%) — needs Discount")
+                  f"price in {zone} ({pct}%) — needs Discount (<47.5%)")
             return False
         if side == 'SHORT' and zone != 'Premium':
             print(f"[SMC] 🚫 PD Zone Filter blocked {symbol} SHORT: "
-                  f"price in {zone} ({cached.get('pct')}%) — needs Premium")
+                  f"price in {zone} ({pct}%) — needs Premium (>52.5%)")
             return False
         
         return True
@@ -1832,6 +1951,7 @@ class SMCScanner:
             'pd_zone': self._pd_zone_cache.get(symbol, {}).get('zone'),
             'pd_zone_pct': self._pd_zone_cache.get(symbol, {}).get('pct'),
             'pd_zone_filter_enabled': bool(self._settings.get('use_pd_zone_filter', True)),
+            'pd_zone_timeframe': self._settings.get('pd_zone_timeframe', '1h'),
             # Swing Structure (size=swing_size)
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),
