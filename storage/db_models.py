@@ -704,6 +704,11 @@ def migrate_sleeper_candidates_v3():
         top100_new_cols = [
             ('zone', 'VARCHAR(15)'),
             ('zone_correct', 'BOOLEAN'),
+            # zone_pct: position % of OB midpoint within the latest swing
+            # range. Added in the threshold-based-filter rework (1H Top-100
+            # default). FLOAT lets us store fractions (e.g. 12.3%) and
+            # values outside [0,100] when OB is beyond range extremes.
+            ('zone_pct', 'FLOAT'),
         ]
         try:
             table_check = conn.execute(text(f"""
@@ -861,8 +866,13 @@ class Top100OBSnapshot(Base):
     #   BEARISH OB in Premium   → True
     #   anything else           → False
     # NULL when range cannot be determined (no swing pivots yet).
-    zone = Column(String(15))         # 'Discount' | 'Equilibrium' | 'Premium' | NULL
+    zone = Column(String(15))         # 'Discount' | 'Mid' | 'Premium' | NULL
     zone_correct = Column(Boolean)    # True if zone aligns with OB bias
+    # Position percent within the latest swing range. Range [0, 100] for
+    # OBs inside the trading range; can exceed when OB is beyond extremes.
+    # Stored separately from `zone` so UI can show the exact percent
+    # alongside the zone label (e.g. "Discount 12%" vs "Premium 87%").
+    zone_pct = Column(Float)
     
     # Lifecycle tracking — separates "first time seeing this OB" from
     # "OB still here from previous scan". `discovered_at` is set when the
@@ -892,6 +902,7 @@ class Top100OBSnapshot(Base):
             'created_by_tag': self.created_by_tag,
             'zone': self.zone,
             'zone_correct': self.zone_correct,
+            'zone_pct': self.zone_pct,
             'discovered_at': self.discovered_at.isoformat() if self.discovered_at else None,
             'last_seen_at': self.last_seen_at.isoformat() if self.last_seen_at else None,
             'scanned_at': self.scanned_at.isoformat() if self.scanned_at else None,

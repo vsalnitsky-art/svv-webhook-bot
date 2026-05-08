@@ -299,11 +299,42 @@ def create_app():
                         min_vol = float(min_vol_str)
                     except (TypeError, ValueError):
                         min_vol = 100_000_000
+                    # New tunables: TF, scan interval, fresh-window, zone
+                    # thresholds. All persisted as strings, parsed to the
+                    # right type with safe-default fallbacks. Whitelisted
+                    # values are also re-validated inside update_settings()
+                    # so a corrupt DB row can't poison the scanner state.
+                    timeframe = db.get_setting('top100_ob_timeframe', '1h')
+                    try:
+                        scan_interval_min = int(db.get_setting(
+                            'top100_ob_scan_interval_min', '10'))
+                    except (TypeError, ValueError):
+                        scan_interval_min = 10
+                    try:
+                        fresh_hours = float(db.get_setting(
+                            'top100_ob_fresh_window_hours', '3'))
+                    except (TypeError, ValueError):
+                        fresh_hours = 3.0
+                    try:
+                        long_max = float(db.get_setting(
+                            'top100_ob_long_max_pct', '20'))
+                    except (TypeError, ValueError):
+                        long_max = 20.0
+                    try:
+                        short_min = float(db.get_setting(
+                            'top100_ob_short_min_pct', '80'))
+                    except (TypeError, ValueError):
+                        short_min = 80.0
                     scanner.update_settings(
                         enabled=enabled,
                         telegram_alerts=tg_alerts,
                         include_bos_alerts=include_bos,
                         min_quote_volume_usd=min_vol,
+                        timeframe=timeframe,
+                        scan_interval_min=scan_interval_min,
+                        fresh_window_hours=fresh_hours,
+                        long_max_pct=long_max,
+                        short_min_pct=short_min,
                     )
                     if enabled:
                         scanner.start()
@@ -2384,8 +2415,11 @@ def register_api_routes(app):
         """Update scanner settings.
         Body may contain any subset of:
           enabled, telegram_alerts, include_bos_alerts,
-          min_quote_volume_usd, top_n
+          min_quote_volume_usd, top_n,
+          timeframe, scan_interval_min, fresh_window_hours,
+          long_max_pct, short_min_pct
         Toggling 'enabled' true→false stops the scheduler; false→true starts it.
+        Changing 'timeframe' clears stored snapshots (TF-specific data).
         Persists to DB so settings survive worker restart on Render.
         """
         from detection.top100_ob_scanner import get_top100_ob_scanner
@@ -2402,6 +2436,11 @@ def register_api_routes(app):
             include_bos_alerts=data.get('include_bos_alerts'),
             min_quote_volume_usd=data.get('min_quote_volume_usd'),
             top_n=data.get('top_n'),
+            timeframe=data.get('timeframe'),
+            scan_interval_min=data.get('scan_interval_min'),
+            fresh_window_hours=data.get('fresh_window_hours'),
+            long_max_pct=data.get('long_max_pct'),
+            short_min_pct=data.get('short_min_pct'),
         )
         # Persist to DB. We only write the fields the caller actually
         # tried to change — sending an empty body keeps prior values.
@@ -2420,6 +2459,22 @@ def register_api_routes(app):
             if 'min_quote_volume_usd' in data:
                 db.set_setting('top100_ob_min_vol_usd',
                                str(int(new_settings['min_quote_volume_usd'])))
+            # New settings persistence
+            if 'timeframe' in data:
+                db.set_setting('top100_ob_timeframe',
+                               str(new_settings['timeframe']))
+            if 'scan_interval_min' in data:
+                db.set_setting('top100_ob_scan_interval_min',
+                               str(int(new_settings['scan_interval_min'])))
+            if 'fresh_window_hours' in data:
+                db.set_setting('top100_ob_fresh_window_hours',
+                               str(float(new_settings['fresh_window_hours'])))
+            if 'long_max_pct' in data:
+                db.set_setting('top100_ob_long_max_pct',
+                               str(float(new_settings['long_max_pct'])))
+            if 'short_min_pct' in data:
+                db.set_setting('top100_ob_short_min_pct',
+                               str(float(new_settings['short_min_pct'])))
         except Exception as e:
             print(f"[APP] top100_ob settings persistence error: {e}")
             # Don't fail the request — settings still applied in-memory,

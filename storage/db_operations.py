@@ -916,6 +916,7 @@ class DBOperations:
                 # Zone fields supplied by scanner via ob_data extension
                 row.zone = ob_data.get('zone')
                 row.zone_correct = ob_data.get('zone_correct')
+                row.zone_pct = ob_data.get('zone_pct')
                 if is_fresh_for_symbol:
                     # Caller indicated this is a different OB than before
                     row.discovered_at = now
@@ -931,6 +932,7 @@ class DBOperations:
                 row.created_by_tag = None
                 row.zone = None
                 row.zone_correct = None
+                row.zone_pct = None
                 # Don't touch discovered_at — preserve "we last saw this
                 # OB at X" history. last_seen_at also preserved for the
                 # same reason — UI can show "OB lost N hours ago".
@@ -942,6 +944,26 @@ class DBOperations:
             session.rollback()
             print(f"[DB] upsert_top100_ob_snapshot error for {symbol}: {e}")
             return False
+        finally:
+            session.close()
+    
+    def clear_top100_ob_snapshots(self) -> int:
+        """Remove ALL Top100 OB snapshot rows. Returns row count cleared.
+        
+        Used when the scanner timeframe changes — OBs computed on different
+        TFs aren't comparable, so a clean slate is the only safe option.
+        We DON'T touch the history table (sob_top100_ob_history); it's
+        an audit log of past events and stays intact for analytics.
+        """
+        session = get_session()
+        try:
+            count = session.query(Top100OBSnapshot).delete(synchronize_session=False)
+            session.commit()
+            return int(count or 0)
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] clear_top100_ob_snapshots error: {e}")
+            return 0
         finally:
             session.close()
     

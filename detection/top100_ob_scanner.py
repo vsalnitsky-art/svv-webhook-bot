@@ -32,17 +32,43 @@ from storage.db_operations import get_db
 
 
 # Tuneable defaults — overridable via settings
+# === Defaults ===
+# Numbers below are starting points; user can change at runtime via UI.
 DEFAULT_TOP_N = 100
 DEFAULT_MIN_QUOTE_VOLUME_USD = 100_000_000  # $100M default per spec
 DEFAULT_THROTTLE_MS = 600
 KLINES_LIMIT = 400          # ATR-200 needs at least 200 + buffer
-SCAN_TIMEFRAME = '4h'
-SCAN_INTERVAL_HOURS = 4     # Schedule cadence
+
+# Timeframe — was 4H originally; changed to 1H per user request for faster
+# feedback. Configurable via update_settings(timeframe=...).
+DEFAULT_SCAN_TIMEFRAME = '1h'
+ALLOWED_SCAN_TIMEFRAMES = ('15m', '30m', '1h', '2h', '4h')
+
+# Schedule cadence (minutes between scheduled scans). 1H scans tighter than
+# the old 4H+30min approach — 10-minute cadence catches new OBs within
+# half a candle while still respecting Binance/Bybit rate limits with
+# 100 symbols × ~600ms throttle per scan.
+DEFAULT_SCAN_INTERVAL_MIN = 10
+
+# "Fresh" OB window. With 4H bars, 12h ≈ 3 candles; with 1H bars the same
+# notion needs to scale down. Default 3h on 1H ≈ 3 candles, mirroring the
+# original 12h-on-4H ratio. User-customizable too if they want stricter
+# (1h) or looser (6h) freshness.
+DEFAULT_FRESH_WINDOW_HOURS = 3
+
+# Zone-correctness thresholds (percent of latest swing range):
+#   BULLISH OB valid (zone-correct) when pct ≤ long_max_pct  (default 20)
+#   BEARISH OB valid (zone-correct) when pct ≥ short_min_pct (default 80)
+# These are stricter than the old SMC Fib defaults (38.2/61.8) because the
+# user wants only deep-extreme OBs flagged as ★. Still configurable.
+DEFAULT_LONG_MAX_PCT = 20.0
+DEFAULT_SHORT_MIN_PCT = 80.0
+
 HISTORY_RETENTION_DAYS = 30
 
 
 class Top100OBScanner:
-    """Daemon-backed scanner for TOP-N 4H OBs."""
+    """Daemon-backed scanner for TOP-N OBs on a configurable timeframe."""
     
     def __init__(self, telegram_notifier=None):
         self.md = get_market_data()
@@ -56,6 +82,12 @@ class Top100OBScanner:
         self._min_quote_volume_usd = DEFAULT_MIN_QUOTE_VOLUME_USD
         self._top_n = DEFAULT_TOP_N
         self._throttle_ms = DEFAULT_THROTTLE_MS
+        # New: TF + scheduling + zone thresholds
+        self._timeframe = DEFAULT_SCAN_TIMEFRAME
+        self._scan_interval_min = DEFAULT_SCAN_INTERVAL_MIN
+        self._fresh_window_hours = DEFAULT_FRESH_WINDOW_HOURS
+        self._long_max_pct = DEFAULT_LONG_MAX_PCT
+        self._short_min_pct = DEFAULT_SHORT_MIN_PCT
         
         # Runtime state
         self._scan_lock = threading.Lock()  # Prevents concurrent scans
@@ -73,8 +105,21 @@ class Top100OBScanner:
                         telegram_alerts: Optional[bool] = None,
                         include_bos_alerts: Optional[bool] = None,
                         min_quote_volume_usd: Optional[float] = None,
-                        top_n: Optional[int] = None) -> Dict:
-        """Update scanner settings. Returns the merged settings dict."""
+                        top_n: Optional[int] = None,
+                        timeframe: Optional[str] = None,
+                        scan_interval_min: Optional[int] = None,
+                        fresh_window_hours: Optional[float] = None,
+                        long_max_pct: Optional[float] = None,
+                        short_min_pct: Optional[float] = None) -> Dict:
+        """Update scanner settings. Returns the merged settings dict.
+        
+        SIDE EFFECT — TF change clears the snapshot table:
+        OBs computed on 4H aren't comparable to OBs on 1H (different
+        bar boundaries, different swing pivots, different mitigation
+        outcomes). Mixing them produces stale "fresh" markers and
+        misleading age values. So when the user picks a new TF, we
+        truncate the DB so the next scan starts clean.
+        """
         if enabled is not None:
             self._enabled = bool(enabled)
         if telegram_alerts is not None:
@@ -96,6 +141,63 @@ class Top100OBScanner:
                     self._top_n = n
             except (TypeError, ValueError):
                 pass
+        if timeframe is not None:
+            tf = str(timeframe).lower().strip()
+            if tf in ALLOWED_SCAN_TIMEFRAMES and tf != self._timeframe:
+                # TF actually changed — clear all stored OBs since they're
+                # tied to the old TF's bar boundaries and no longer valid.
+                # Logged so production has a paper trail of when this happens.
+                old_tf = self._timeframe
+                try:
+                    cleared = self.db.clear_top100_ob_snapshots()
+                    print(f'[TOP100-OB] TF changed {old_tf} → {tf}; '
+                          f'cleared {cleared} snapshot rows for clean restart')
+                except Exception as e:
+                    print(f'[TOP100-OB] TF change cleanup failed: {e}')
+                self._timeframe = tf
+            elif tf in ALLOWED_SCAN_TIMEFRAMES:
+                # Same TF re-asserted — no-op (don't truncate)
+                self._timeframe = tf
+        if scan_interval_min is not None:
+            try:
+                m = int(scan_interval_min)
+                # Lower bound: 5 min (even faster invites rate-limit issues
+                # on Binance for 100-symbol scans). Upper bound: 60 min
+                # (longer than that and the scanner is essentially dormant).
+                if 5 <= m <= 60:
+                    self._scan_interval_min = m
+            except (TypeError, ValueError):
+                pass
+        if fresh_window_hours is not None:
+            try:
+                h = float(fresh_window_hours)
+                # 0.5h floor (anything tighter and few OBs ever qualify);
+                # 24h ceiling (longer and "fresh" loses meaning).
+                if 0.5 <= h <= 24:
+                    self._fresh_window_hours = h
+            except (TypeError, ValueError):
+                pass
+        if long_max_pct is not None:
+            try:
+                v = float(long_max_pct)
+                if 0 <= v <= 100:
+                    self._long_max_pct = v
+            except (TypeError, ValueError):
+                pass
+        if short_min_pct is not None:
+            try:
+                v = float(short_min_pct)
+                if 0 <= v <= 100:
+                    self._short_min_pct = v
+            except (TypeError, ValueError):
+                pass
+        # Sanity check: long_max should be ≤ short_min (otherwise the
+        # filter would simultaneously block both directions in some range).
+        # If user inverted them, restore defaults — silent correction
+        # is friendlier than rejecting the save.
+        if self._long_max_pct >= self._short_min_pct:
+            self._long_max_pct = DEFAULT_LONG_MAX_PCT
+            self._short_min_pct = DEFAULT_SHORT_MIN_PCT
         return self.get_settings()
     
     def get_settings(self) -> Dict:
@@ -105,7 +207,11 @@ class Top100OBScanner:
             'include_bos_alerts': self._include_bos_alerts,
             'min_quote_volume_usd': self._min_quote_volume_usd,
             'top_n': self._top_n,
-            'timeframe': SCAN_TIMEFRAME,
+            'timeframe': self._timeframe,
+            'scan_interval_min': self._scan_interval_min,
+            'fresh_window_hours': self._fresh_window_hours,
+            'long_max_pct': self._long_max_pct,
+            'short_min_pct': self._short_min_pct,
             'last_scan_at': self._last_scan_at.isoformat() if self._last_scan_at else None,
             'last_scan_summary': self._last_scan_summary,
             'is_scanning': self._is_scanning,
@@ -133,27 +239,35 @@ class Top100OBScanner:
         print('[TOP100-OB] Scheduler stop requested')
     
     def _scheduler_loop(self):
-        """Wakes up every minute, runs scan if (a) enabled and (b) we're
-        within the first ~2 minutes of a 4-hour boundary (00:01-00:02,
-        04:01-04:02, etc.) AND we haven't scanned this boundary yet.
+        """Run scans every `scan_interval_min` minutes when enabled.
         
-        Why minute-resolution polling instead of `schedule` lib: keeps it
-        simple, no extra dep. The cost (60 wakeups/hour each doing a
-        cheap timestamp check) is negligible.
+        Old behavior: locked to 4H bar boundaries (00:00, 04:00, ...) plus
+        a 1-2 minute window. Made sense when the scanner was specifically
+        4H-only — scans aligned to bar close.
+        
+        New behavior: simple minute-cadence. We track the last scan's
+        wall-clock time and trigger a new one when enough minutes have
+        elapsed. Doesn't try to align to bar boundaries (1H/15m/etc), so
+        a scan on a 1H deployment may catch the 1H bar a couple minutes
+        after close — close enough for OB detection given that the
+        underlying detector requires CONFIRMED bars only (klines[:-1]).
         """
-        last_scheduled_run_hour = -1
+        last_scan_started_at: Optional[datetime] = None
         while not self._stop_event.is_set():
             try:
                 if self._enabled:
                     now = datetime.now(timezone.utc)
-                    # 4H boundaries: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
-                    is_4h_boundary = (now.hour % SCAN_INTERVAL_HOURS == 0)
-                    is_in_window = (now.minute == 1 or now.minute == 2)
-                    not_yet_run = (now.hour != last_scheduled_run_hour)
-                    if is_4h_boundary and is_in_window and not_yet_run:
-                        print(f'[TOP100-OB] Scheduled scan triggered at {now}')
+                    interval = max(1, int(self._scan_interval_min))
+                    is_due = (
+                        last_scan_started_at is None
+                        or (now - last_scan_started_at).total_seconds()
+                            >= interval * 60
+                    )
+                    if is_due:
+                        last_scan_started_at = now
+                        print(f'[TOP100-OB] Scheduled scan triggered at {now} '
+                              f'(every {interval} min, TF={self._timeframe})')
                         self.scan(triggered_by='schedule')
-                        last_scheduled_run_hour = now.hour
             except Exception as e:
                 # Never let scheduler thread die — log and continue
                 print(f'[TOP100-OB] Scheduler error: {e}')
@@ -297,9 +411,10 @@ class Top100OBScanner:
             'price_change_24h': ticker_entry.get('price_change_pct', 0.0),
         }
         
-        # Fetch klines on the configured timeframe
+        # Fetch klines on the configured timeframe (self._timeframe is
+        # the user-selected TF; defaults to 1H but can be 15m/30m/2h/4h).
         klines = self.md.fetch_klines(symbol, limit=KLINES_LIMIT,
-                                       interval=SCAN_TIMEFRAME)
+                                       interval=self._timeframe)
         if not klines or len(klines) < 50:
             # Not enough data — clear any stale snapshot OB but keep
             # market_ctx tracking
@@ -343,11 +458,19 @@ class Top100OBScanner:
         #   BEARISH OB in Premium  (SHORT entry from rich zone — ideal)
         # Anything else is "wrong zone" — mathematically valid OB but
         # poor R:R because price is not at an extreme yet.
+        # === Compute Discount/Mid/Premium zone for the OB ===
+        # User-configurable thresholds (default 20% / 80%):
+        #   pct ≤ long_max_pct (20)  → Discount  (BULLISH OB → zone-correct)
+        #   pct ≥ short_min_pct (80) → Premium   (BEARISH OB → zone-correct)
+        #   else                     → Mid       (never zone-correct)
+        # zone_pct is also stored for the UI to display the exact percent —
+        # users want to see "12%" or "85%" alongside the zone label.
         if ob and ob.get('bias'):
-            zone = self._compute_zone(ob, structure.get('swing', {}).get('pivots', []))
-            zone_correct = self._is_zone_correct(zone, ob['bias'])
+            pct = self._compute_zone_pct(ob, structure.get('swing', {}).get('pivots', []))
+            zone, zone_correct = self._classify_zone(pct, ob['bias'])
             ob['zone'] = zone
             ob['zone_correct'] = zone_correct
+            ob['zone_pct'] = pct  # raw percent for table display
         
         # Compare with previous snapshot to determine event type
         prev = self.db.get_top100_ob_snapshot(symbol)
@@ -434,31 +557,30 @@ class Top100OBScanner:
         }
     
     @staticmethod
-    def _compute_zone(ob_data: Dict, swing_pivots: List[Dict]) -> Optional[str]:
-        """Classify where an OB sits within the latest swing range.
+    def _compute_zone_pct(ob_data: Dict, swing_pivots: List[Dict]
+                           ) -> Optional[float]:
+        """Compute where the OB midpoint sits within the latest swing
+        range, returned as a percent (0-100).
         
-        Uses standard SMC Fibonacci-based zones:
-          pos_pct < 38.2   → 'Discount'    (bottom third)
-          pos_pct > 61.8   → 'Premium'     (top third)
-          otherwise        → 'Equilibrium'
+        Range bounds = latest swing high (`HH` or `LH`) and latest swing
+        low (`HL` or `LL`). We use the LATEST pivots — older ones are
+        ignored even if they're more extreme — because the goal is to
+        classify against the *current* trading range, not historical.
         
-        Returns None when the swing range can't be determined (not enough
-        pivots, or invalid range). The UI treats None as "unknown zone"
-        which is filtered out by the zone-correct filter — i.e. unknown
-        is treated as not tradeable, conservative default.
+        Returns:
+          float — percent rounded to 1 decimal. Can exceed [0, 100] when
+                the OB sits beyond the latest swing range (rare).
+          None  — range can't be determined (no pivots, inverted range).
         
-        We use the LATEST swing high and LATEST swing low — they bound
-        the most recent trading range. Older pivots are ignored even if
-        they're more extreme, because we want the *current* range.
+        We use the OB MIDPOINT for the position test — using just bar_high
+        or bar_low could push borderline OBs into a wrong zone depending
+        on which boundary we pick. Midpoint is symmetric.
         """
         if not ob_data or 'bar_high' not in ob_data or 'bar_low' not in ob_data:
             return None
         
         latest_high = None  # latest swing HIGH price
         latest_low = None   # latest swing LOW price
-        # Walk pivots in reverse chronological order. swing_pivots are
-        # appended in order they're created, so reversed() gives newest
-        # first. Pivot types: 'HH'/'LH' = high pivots, 'HL'/'LL' = low pivots.
         for p in reversed(swing_pivots):
             ptype = p.get('type', '')
             if ptype in ('HH', 'LH') and latest_high is None:
@@ -469,41 +591,47 @@ class Top100OBScanner:
                 break
         
         if latest_high is None or latest_low is None:
-            return None  # Not enough swing context yet
+            return None
         if latest_high <= latest_low:
             return None  # Invalid (would yield zero or negative range)
         
         range_size = latest_high - latest_low
-        # Use OB MIDPOINT for the zone test — using just bar_high or
-        # bar_low could push borderline OBs into the "wrong" classification
-        # depending on which boundary we pick. Midpoint is symmetric.
         ob_mid = (ob_data['bar_high'] + ob_data['bar_low']) / 2
         pos_pct = (ob_mid - latest_low) / range_size * 100
-        
-        if pos_pct < 38.2:
-            return 'Discount'
-        if pos_pct > 61.8:
-            return 'Premium'
-        return 'Equilibrium'
+        return round(pos_pct, 1)
     
-    @staticmethod
-    def _is_zone_correct(zone: Optional[str], bias: Optional[str]) -> bool:
-        """Returns True when the OB's zone aligns with its trade direction.
+    def _classify_zone(self, pct: Optional[float], bias: Optional[str]
+                       ) -> tuple:
+        """Threshold-based zone classification.
         
-          BULLISH OB in Discount  → True   (LONG from cheap — ideal R:R)
-          BEARISH OB in Premium   → True   (SHORT from rich — ideal R:R)
-          Equilibrium / wrong-zone / unknown → False
+        Uses scanner's configured `long_max_pct` and `short_min_pct` to
+        determine if an OB is in its "right" zone (high R:R extreme):
         
-        Used by the UI's "Correct Zone" filter to surface only setups where
-        the OB direction agrees with where price is in the swing range.
+            BULLISH OB zone-correct  iff  pct ≤ long_max_pct   (deep low)
+            BEARISH OB zone-correct  iff  pct ≥ short_min_pct  (deep high)
+        
+        Anything in between (or unknown) is NOT zone-correct.
+        
+        Returns (zone_label, zone_correct):
+          zone_label: 'Discount' | 'Mid' | 'Premium' | None
+                Display label for the table column. Discount = below
+                long_max, Premium = above short_min, Mid = between, None
+                = unknown range.
+          zone_correct: bool
+                True iff this OB's bias matches its zone (ideal R:R).
+        
+        Note: 'Discount' / 'Premium' here are RELATIVE TO USER THRESHOLDS,
+        not the SMC Fib defaults (38.2/61.8). With the requested 20/80
+        defaults, only the deepest 20% of either end gets labelled —
+        much stricter than classic SMC.
         """
-        if not zone or not bias:
-            return False
-        if bias == 'BULLISH':
-            return zone == 'Discount'
-        if bias == 'BEARISH':
-            return zone == 'Premium'
-        return False
+        if pct is None or bias is None:
+            return None, False
+        if pct <= self._long_max_pct:
+            return 'Discount', (bias == 'BULLISH')
+        if pct >= self._short_min_pct:
+            return 'Premium', (bias == 'BEARISH')
+        return 'Mid', False  # Between thresholds → not zone-correct
     
     @staticmethod
     def _fmt_price(p: float) -> str:

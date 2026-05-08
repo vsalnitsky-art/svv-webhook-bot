@@ -1391,14 +1391,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
     </div>
     
-    <!-- ===== TOP-100 4H OB RADAR ===== -->
+    <!-- ===== TOP-100 OB RADAR ===== -->
     <!-- Variant B (scheduled scan): polls Binance Futures TOP-N USDT-perps
-         every 4 hours (synced to bar close) for newly-formed 4H Order Blocks.
+         every N minutes for newly-formed Order Blocks on the configured TF.
          Informational only — does NOT gate signals or trigger trades.
          User can opt-in per-symbol via "Add to SMC Watchlist" button. -->
     <div class="tm-panel" id="top100-panel" style="margin-top:14px">
         <div class="tm-header" id="top100-header">
-            <h2>📡 TOP-100 4H OB Radar
+            <h2>📡 TOP-100 OB Radar
+                <span id="top100-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
                 <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">
                     (informational — Binance Futures top-N by 24h volume)
                 </span>
@@ -1414,11 +1415,65 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div class="tm-body" id="top100-body">
             
             <div class="tm-row" style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#86efac;font-size:0.78rem">
-                ℹ️ Сканує TOP-100 USDT-perp монет на Binance Futures раз на 4 години (після закриття 4H бара) для виявлення нових Order Blocks. Не торгує, не гейтить SMC сигнали — тільки відображає кандидатів. CHoCH-created OBs позначені ★ (fresh trend reversal); BOS-created — → (continuation).
+                ℹ️ Сканує TOP-100 USDT-perp монет на Binance Futures з налаштовуваним інтервалом для виявлення нових Order Blocks на обраному таймфреймі. Не торгує, не гейтить SMC сигнали — тільки відображає кандидатів. CHoCH-created OBs позначені ★ (fresh trend reversal); BOS-created — → (continuation). При зміні TF — DB очищується (різні TFs мають різні OBs).
             </div>
             
-            <!-- Settings row -->
+            <!-- Settings row 1: scan basics -->
+            <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:8px 10px;margin-bottom:6px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+                <label style="display:flex;align-items:center;gap:6px"
+                       title="Scan timeframe — bar size that the OB detector uses. Changing this clears the DB for a clean restart (OBs aren't comparable across TFs).">
+                    TF:
+                    <select id="top100-tf" style="padding:3px 6px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                            onchange="saveTop100Settings()">
+                        <option value="15m">15M</option>
+                        <option value="30m">30M</option>
+                        <option value="1h" selected>1H</option>
+                        <option value="2h">2H</option>
+                        <option value="4h">4H</option>
+                    </select>
+                </label>
+                <label style="display:flex;align-items:center;gap:6px"
+                       title="How often the scanner runs (in minutes). Lower = more responsive, higher = less API load. Range 5-60.">
+                    Interval (min):
+                    <input type="number" id="top100-scan-interval" min="5" max="60" step="1"
+                           style="width:60px;padding:3px 6px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="saveTop100Settings()">
+                </label>
+                <label style="display:flex;align-items:center;gap:6px"
+                       title="How recent an OB must be to count as 'Fresh'. With 1H bars, 3h ≈ 3 candles. With 4H bars, you'd want ~12h. Range 0.5-24.">
+                    Fresh window (h):
+                    <input type="number" id="top100-fresh-hours" min="0.5" max="24" step="0.5"
+                           style="width:60px;padding:3px 6px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="saveTop100Settings()">
+                </label>
+                <label style="display:flex;align-items:center;gap:6px"
+                       title="Minimum 24h quote volume in millions of USD. Filters out illiquid coins.">
+                    Min 24h vol ($M):
+                    <input type="number" id="top100-min-vol" min="0" max="10000" step="10"
+                           style="width:80px;padding:3px 6px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="saveTop100Settings()">
+                </label>
+            </div>
+            
+            <!-- Settings row 2: zone thresholds + alerts -->
             <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:8px 10px;margin-bottom:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+                <label style="display:flex;align-items:center;gap:6px"
+                       title="A BULLISH OB is zone-correct (★) when its midpoint is at this percent or below within the latest swing range. Default 20% — strict 'deep Discount' filter.">
+                    LONG OB ≤
+                    <input type="number" id="top100-long-max" min="0" max="100" step="1"
+                           style="width:55px;padding:3px 6px;background:#1a1a1a;border:1px solid #333;color:#86efac;border-radius:3px"
+                           onchange="saveTop100Settings()">
+                    <span style="color:#888">%</span>
+                </label>
+                <label style="display:flex;align-items:center;gap:6px"
+                       title="A BEARISH OB is zone-correct (★) when its midpoint is at this percent or above within the latest swing range. Default 80% — strict 'deep Premium' filter.">
+                    SHORT OB ≥
+                    <input type="number" id="top100-short-min" min="0" max="100" step="1"
+                           style="width:55px;padding:3px 6px;background:#1a1a1a;border:1px solid #333;color:#fca5a5;border-radius:3px"
+                           onchange="saveTop100Settings()">
+                    <span style="color:#888">%</span>
+                </label>
+                <span style="border-left:1px solid #333;height:18px;margin:0 4px"></span>
                 <label style="display:flex;align-items:center;gap:6px">
                     <input type="checkbox" id="top100-tg-alerts" onchange="saveTop100Settings()">
                     📨 Telegram alerts (fresh CHoCH OBs)
@@ -1427,17 +1482,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <input type="checkbox" id="top100-include-bos" onchange="saveTop100Settings()">
                     Include BOS continuation in alerts
                 </label>
-                <label style="display:flex;align-items:center;gap:6px">
-                    Min 24h vol ($M):
-                    <input type="number" id="top100-min-vol" min="0" max="10000" step="10"
-                           style="width:80px;padding:3px 6px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="saveTop100Settings()">
-                </label>
                 <button onclick="top100ScanNow()" id="top100-scan-btn"
-                        style="padding:5px 12px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.5);color:#a5b4fc;border-radius:3px;cursor:pointer;font-size:0.78rem">
+                        style="padding:5px 12px;background:rgba(99,102,241,0.2);border:1px solid rgba(99,102,241,0.5);color:#a5b4fc;border-radius:3px;cursor:pointer;font-size:0.78rem;margin-left:auto">
                     🔄 Refresh now
                 </button>
-                <span id="top100-last-scan" style="color:#666;font-size:0.72rem;margin-left:auto"></span>
+                <span id="top100-last-scan" style="color:#666;font-size:0.72rem"></span>
             </div>
             
             <!-- Active OBs section -->
@@ -3605,6 +3654,12 @@ async function loadTop100State() {
         const tgEl = document.getElementById('top100-tg-alerts');
         const bosEl = document.getElementById('top100-include-bos');
         const minVolEl = document.getElementById('top100-min-vol');
+        const tfEl = document.getElementById('top100-tf');
+        const tfLabelEl = document.getElementById('top100-tf-label');
+        const intervalEl = document.getElementById('top100-scan-interval');
+        const freshEl = document.getElementById('top100-fresh-hours');
+        const longMaxEl = document.getElementById('top100-long-max');
+        const shortMinEl = document.getElementById('top100-short-min');
         const statusEl = document.getElementById('top100-status-label');
         if (enabledEl) enabledEl.checked = !!data.enabled;
         if (tgEl) tgEl.checked = !!data.telegram_alerts;
@@ -3613,6 +3668,14 @@ async function loadTop100State() {
             // Display as $M for user-friendliness
             minVolEl.value = Math.round((data.min_quote_volume_usd || 0) / 1_000_000);
         }
+        // New fields — fall back to sensible defaults if missing from
+        // an older deployment that hasn't been redeployed yet.
+        if (tfEl) tfEl.value = data.timeframe || '1h';
+        if (tfLabelEl) tfLabelEl.textContent = (data.timeframe || '1h').toUpperCase();
+        if (intervalEl) intervalEl.value = data.scan_interval_min || 10;
+        if (freshEl) freshEl.value = data.fresh_window_hours || 3;
+        if (longMaxEl) longMaxEl.value = (data.long_max_pct != null) ? data.long_max_pct : 20;
+        if (shortMinEl) shortMinEl.value = (data.short_min_pct != null) ? data.short_min_pct : 80;
         if (statusEl) {
             if (data.is_scanning) {
                 statusEl.textContent = 'Scanning…';
@@ -3685,6 +3748,13 @@ async function saveTop100Settings() {
     const includeBos = document.getElementById('top100-include-bos').checked;
     const minVolM = parseFloat(document.getElementById('top100-min-vol').value) || 0;
     const minVolUsd = minVolM * 1_000_000;
+    // Pull new fields with safe parses — empty inputs default to current
+    // server values, parsed as ints/floats. Backend re-validates ranges.
+    const tf = document.getElementById('top100-tf').value || '1h';
+    const interval = parseInt(document.getElementById('top100-scan-interval').value) || 10;
+    const freshHours = parseFloat(document.getElementById('top100-fresh-hours').value) || 3;
+    const longMax = parseFloat(document.getElementById('top100-long-max').value);
+    const shortMin = parseFloat(document.getElementById('top100-short-min').value);
     try {
         await fetch('/api/top100-ob/settings', {
             method: 'POST',
@@ -3693,8 +3763,19 @@ async function saveTop100Settings() {
                 telegram_alerts: tgAlerts,
                 include_bos_alerts: includeBos,
                 min_quote_volume_usd: minVolUsd,
+                timeframe: tf,
+                scan_interval_min: interval,
+                fresh_window_hours: freshHours,
+                long_max_pct: isFinite(longMax) ? longMax : 20,
+                short_min_pct: isFinite(shortMin) ? shortMin : 80,
             })
         });
+        // Reload state — TF change may have cleared the snapshot table,
+        // and we want the badge label to update immediately.
+        await loadTop100State();
+        // Refetch snapshots so the table reflects the cleared state
+        // (or new threshold-based zone-correct flags for unchanged data).
+        await loadTop100Snapshots();
     } catch (e) {
         console.error('top100 settings save failed', e);
     }
@@ -3739,17 +3820,20 @@ function renderTop100Active() {
     const filterEl = document.getElementById('top100-filter');
     const filter = filterEl ? filterEl.value : 'fresh-choch-zone';
     
-    // Apply filter. "Fresh CHoCH" loosens to "discovered in last 12h"
-    // since 4H bars cycle and a CHoCH-created OB is still tradeable for
-    // a while after the bar closes that triggered it.
+    // Apply filter. "Fresh CHoCH" uses the user-configured fresh-window
+    // (default 3h on 1H bars; 12h was historical default for 4H bars).
+    // Read from the settings input directly so the filter responds to
+    // changes without waiting for a state-poll round-trip.
     const now = Date.now();
-    const twelveHoursMs = 12 * 3600 * 1000;
+    const freshHoursEl = document.getElementById('top100-fresh-hours');
+    const freshHours = freshHoursEl ? (parseFloat(freshHoursEl.value) || 3) : 3;
+    const freshWindowMs = freshHours * 3600 * 1000;
     
     function isFreshChoCH(s) {
         if ((s.created_by_tag || '').toUpperCase() !== 'CHOCH') return false;
         if (!s.discovered_at) return false;
         const age = now - new Date(s.discovered_at + 'Z').getTime();
-        return age <= twelveHoursMs;
+        return age <= freshWindowMs;
     }
     
     let rows = _top100Snapshots.filter(s => s.bias);
@@ -3802,27 +3886,40 @@ function renderTop100Active() {
             tagDisplay = '→ BOS';
             tagColor = '#9ca3af';
         }
-        // === Zone badge: Premium / Discount / Equilibrium with correctness ===
-        // Color reflects whether the zone aligns with OB direction:
-        //   green border = correct zone (BULL+Discount or BEAR+Premium)
-        //   red border   = wrong zone (BULL+Premium or BEAR+Discount)
-        //   gray border  = Equilibrium / unknown — neutral, not an edge
+        // === Zone badge with percent — threshold-based ===
+        // Zone label is one of:
+        //   'Discount' — pct ≤ long_max_pct (default 20%)
+        //   'Premium'  — pct ≥ short_min_pct (default 80%)
+        //   'Mid'      — between (never zone-correct)
+        // Color encodes correctness, not zone identity:
+        //   green = zone-correct (BULL+Discount or BEAR+Premium)
+        //   red   = wrong zone (BULL+Premium or BEAR+Discount)
+        //   gray  = Mid or unknown — no edge regardless of bias
+        // We append the actual percent so user sees "Discount 12%" or
+        // "Premium 87%" — concrete number > vague label.
         let zoneBadge;
-        const zoneText = s.zone || '—';
         const correct = s.zone_correct === true;
+        const pct = (typeof s.zone_pct === 'number') ? Math.round(s.zone_pct) : null;
+        const pctStr = (pct !== null) ? ` ${pct}%` : '';
         if (s.zone === 'Discount') {
             const bg = correct ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)';
             const fg = correct ? '#86efac' : '#fca5a5';
-            zoneBadge = `<span title="${correct ? 'OB direction matches zone — ideal R:R' : 'OB direction is BEARISH but in Discount — wrong setup'}" 
-                          style="padding:1px 6px;background:${bg};color:${fg};border-radius:3px;font-size:0.72rem">${zoneText}</span>`;
+            const tip = correct
+                ? `BULLISH OB at ${pct}% — Discount, ideal LONG entry`
+                : `BEARISH OB at ${pct}% — wrong zone (should be Premium)`;
+            zoneBadge = `<span title="${tip}" 
+                          style="padding:1px 6px;background:${bg};color:${fg};border-radius:3px;font-size:0.72rem">Discount${pctStr}</span>`;
         } else if (s.zone === 'Premium') {
             const bg = correct ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)';
             const fg = correct ? '#86efac' : '#fca5a5';
-            zoneBadge = `<span title="${correct ? 'OB direction matches zone — ideal R:R' : 'OB direction is BULLISH but in Premium — wrong setup'}"
-                          style="padding:1px 6px;background:${bg};color:${fg};border-radius:3px;font-size:0.72rem">${zoneText}</span>`;
-        } else if (s.zone === 'Equilibrium') {
-            zoneBadge = `<span title="OB sits in middle of swing range — no zone edge"
-                          style="padding:1px 6px;background:rgba(120,120,120,0.15);color:#aaa;border-radius:3px;font-size:0.72rem">Equilibrium</span>`;
+            const tip = correct
+                ? `BEARISH OB at ${pct}% — Premium, ideal SHORT entry`
+                : `BULLISH OB at ${pct}% — wrong zone (should be Discount)`;
+            zoneBadge = `<span title="${tip}"
+                          style="padding:1px 6px;background:${bg};color:${fg};border-radius:3px;font-size:0.72rem">Premium${pctStr}</span>`;
+        } else if (s.zone === 'Mid') {
+            zoneBadge = `<span title="OB in middle of swing range (${pct}%) — no extreme-zone edge"
+                          style="padding:1px 6px;background:rgba(120,120,120,0.15);color:#aaa;border-radius:3px;font-size:0.72rem">Mid${pctStr}</span>`;
         } else {
             zoneBadge = `<span title="Insufficient swing pivots — zone unknown"
                           style="padding:1px 6px;background:rgba(120,120,120,0.10);color:#666;border-radius:3px;font-size:0.72rem">—</span>`;
