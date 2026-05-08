@@ -2521,6 +2521,29 @@ def register_api_routes(app):
         return jsonify({'ok': True, 'message': 'Scan started in background',
                         'is_scanning': True})
     
+    @app.route('/api/top100-ob/clear', methods=['POST'])
+    def api_top100_ob_clear():
+        """Clear all stored Top-100 OB snapshots from the DB.
+        
+        Use case: user wants a clean slate (e.g., after settings tweak or
+        when stale OBs are showing up that no longer reflect current
+        market structure). The next scan repopulates from scratch.
+        
+        We DON'T touch the history table (sob_top100_ob_history) — it's
+        an audit log and stays intact for analytics/debugging.
+        
+        Returns count of rows cleared so the UI can display feedback.
+        """
+        try:
+            db = get_db()
+            cleared = db.clear_top100_ob_snapshots()
+            print(f'[APP] Top-100 OB snapshots cleared by user '
+                  f'({cleared} rows)')
+            return jsonify({'ok': True, 'cleared': cleared})
+        except Exception as e:
+            print(f'[APP] Top-100 OB clear error: {e}')
+            return jsonify({'ok': False, 'error': str(e)}), 500
+    
     @app.route('/api/top100-ob/snapshots')
     def api_top100_ob_snapshots():
         """List current snapshots. Query params:

@@ -1490,10 +1490,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <!-- Active OBs section -->
-            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0">
-                Active Order Blocks
-                <span id="top100-active-count" style="color:#666;font-weight:normal">(0)</span>
-                <span style="margin-left:10px;font-weight:normal;font-size:0.72rem">
+            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:12px 0 4px 0;display:flex;align-items:center;flex-wrap:wrap;gap:10px">
+                <span>Active Order Blocks
+                    <span id="top100-active-count" style="color:#666;font-weight:normal">(0)</span>
+                </span>
+                <span style="font-weight:normal;font-size:0.72rem">
                     Filter:
                     <select id="top100-filter" onchange="renderTop100Active()" 
                             style="background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.72rem">
@@ -1506,6 +1507,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="short">SHORT only</option>
                     </select>
                 </span>
+                <!-- Clear button — drops all stored OB snapshots so the
+                     next scan repopulates from scratch. Useful when stale
+                     OBs persist past their relevance (e.g., after a TF
+                     change or major market regime shift). Confirms before
+                     wiping to prevent accidental clicks. -->
+                <button id="top100-clear-btn" onclick="top100ClearAll()"
+                        title="Drop all stored OB snapshots — next scan repopulates from scratch"
+                        style="margin-left:auto;padding:3px 10px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#fca5a5;border-radius:3px;cursor:pointer;font-size:0.72rem;font-weight:normal">
+                    🗑️ Clear all
+                </button>
             </h3>
             <table class="tm-table" id="top100-active-table">
                 <thead>
@@ -3799,6 +3810,40 @@ async function top100ScanNow() {
     }
 }
 
+async function top100ClearAll() {
+    // Confirm before wiping — this drops ALL stored OB snapshots and
+    // can't be undone. The next scheduled scan (or manual Refresh) will
+    // repopulate; we trigger a manual scan immediately so the table
+    // doesn't sit empty for up to 10 minutes.
+    if (!confirm('Очистити всі збережені OBs?\n\nНа наступному скані (або клацнути "Refresh now") дані з\'являться знову. Історія НЕ видаляється.')) {
+        return;
+    }
+    const btn = document.getElementById('top100-clear-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Clearing...'; }
+    try {
+        const r = await fetch('/api/top100-ob/clear', {method: 'POST'});
+        const data = await r.json();
+        if (!data.ok) {
+            alert('Clear failed: ' + (data.error || 'unknown error'));
+            return;
+        }
+        console.log(`[TOP100] Cleared ${data.cleared} rows`);
+        // Reload UI immediately so user sees empty table
+        await loadTop100Snapshots();
+        await loadTop100State();
+        // Trigger a fresh scan so data comes back without waiting for the
+        // 10-minute schedule. User typically clears specifically because
+        // they want fresh data, not an empty list.
+        await fetch('/api/top100-ob/scan', {method: 'POST'});
+        await loadTop100State();
+    } catch (e) {
+        console.error('top100 clear failed', e);
+        alert('Clear error: ' + e);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🗑️ Clear all'; }
+    }
+}
+
 async function loadTop100Snapshots() {
     try {
         // We always pull only-with-ob and let the client filter further.
@@ -3886,40 +3931,42 @@ function renderTop100Active() {
             tagDisplay = '→ BOS';
             tagColor = '#9ca3af';
         }
-        // === Zone badge with percent — threshold-based ===
-        // Zone label is one of:
-        //   'Discount' — pct ≤ long_max_pct (default 20%)
-        //   'Premium'  — pct ≥ short_min_pct (default 80%)
-        //   'Mid'      — between (never zone-correct)
-        // Color encodes correctness, not zone identity:
-        //   green = zone-correct (BULL+Discount or BEAR+Premium)
-        //   red   = wrong zone (BULL+Premium or BEAR+Discount)
-        //   gray  = Mid or unknown — no edge regardless of bias
+        // === Zone badge with percent — colored by zone identity ===
+        // The percent reflects CURRENT PRICE position within the trailing
+        // range (matching PD Zone Filter exactly — see SMC scanner).
+        //   🟢 Discount   — green   (price in lower part: LONG-favorable region)
+        //   🔴 Premium    — red     (price in upper part: SHORT-favorable region)
+        //   🟡 Mid         — yellow  (price in middle: no extreme-zone edge)
+        //   —             — none    (insufficient pivots)
         // We append the actual percent so user sees "Discount 12%" or
-        // "Premium 87%" — concrete number > vague label.
+        // "Premium 87%" — concrete number > vague label. zone_correct
+        // is still surfaced in the tooltip and is the basis for the
+        // "Correct Zone" filter (BULLISH OB + Discount = correct LONG;
+        // BEARISH OB + Premium = correct SHORT; everything else = wrong).
         let zoneBadge;
         const correct = s.zone_correct === true;
         const pct = (typeof s.zone_pct === 'number') ? Math.round(s.zone_pct) : null;
         const pctStr = (pct !== null) ? ` ${pct}%` : '';
         if (s.zone === 'Discount') {
-            const bg = correct ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)';
-            const fg = correct ? '#86efac' : '#fca5a5';
+            // Green for Discount regardless of bias — the zone IS LONG-zone.
+            // BULLISH OBs here are zone-correct; BEARISH OBs are wrong-zone
+            // but badge color still represents "price is cheap NOW".
             const tip = correct
-                ? `BULLISH OB at ${pct}% — Discount, ideal LONG entry`
-                : `BEARISH OB at ${pct}% — wrong zone (should be Premium)`;
+                ? `Price at ${pct}% — Discount zone, BULLISH OB aligned (ideal LONG entry now)`
+                : `Price at ${pct}% — Discount zone, but OB is BEARISH (wrong direction, no edge)`;
             zoneBadge = `<span title="${tip}" 
-                          style="padding:1px 6px;background:${bg};color:${fg};border-radius:3px;font-size:0.72rem">Discount${pctStr}</span>`;
+                          style="padding:1px 6px;background:rgba(34,197,94,0.20);color:#86efac;border:1px solid rgba(34,197,94,0.35);border-radius:3px;font-size:0.72rem;font-weight:600">🟢 Discount${pctStr}</span>`;
         } else if (s.zone === 'Premium') {
-            const bg = correct ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)';
-            const fg = correct ? '#86efac' : '#fca5a5';
+            // Red for Premium regardless of bias — the zone IS SHORT-zone.
             const tip = correct
-                ? `BEARISH OB at ${pct}% — Premium, ideal SHORT entry`
-                : `BULLISH OB at ${pct}% — wrong zone (should be Discount)`;
+                ? `Price at ${pct}% — Premium zone, BEARISH OB aligned (ideal SHORT entry now)`
+                : `Price at ${pct}% — Premium zone, but OB is BULLISH (wrong direction, no edge)`;
             zoneBadge = `<span title="${tip}"
-                          style="padding:1px 6px;background:${bg};color:${fg};border-radius:3px;font-size:0.72rem">Premium${pctStr}</span>`;
+                          style="padding:1px 6px;background:rgba(239,68,68,0.20);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);border-radius:3px;font-size:0.72rem;font-weight:600">🔴 Premium${pctStr}</span>`;
         } else if (s.zone === 'Mid') {
-            zoneBadge = `<span title="OB in middle of swing range (${pct}%) — no extreme-zone edge"
-                          style="padding:1px 6px;background:rgba(120,120,120,0.15);color:#aaa;border-radius:3px;font-size:0.72rem">Mid${pctStr}</span>`;
+            // Yellow for Mid — distinct from gray (which now signals "no data")
+            zoneBadge = `<span title="Price at ${pct}% — middle of trailing range, between LONG & SHORT thresholds. No extreme-zone edge."
+                          style="padding:1px 6px;background:rgba(234,179,8,0.18);color:#fde68a;border:1px solid rgba(234,179,8,0.30);border-radius:3px;font-size:0.72rem;font-weight:600">🟡 Mid${pctStr}</span>`;
         } else {
             zoneBadge = `<span title="Insufficient swing pivots — zone unknown"
                           style="padding:1px 6px;background:rgba(120,120,120,0.10);color:#666;border-radius:3px;font-size:0.72rem">—</span>`;

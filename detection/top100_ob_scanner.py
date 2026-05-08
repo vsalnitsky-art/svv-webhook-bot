@@ -446,27 +446,34 @@ class Top100OBScanner:
                     'zone_str': '', 'age_hours': 0,
                     'last_price': last_price, 'quote_volume_24h': quote_vol}
         
-        # === Compute Premium/Discount/Equilibrium zone for the OB ===
-        # The zone classifies where the OB sits within the latest SWING
-        # range (not internal — swing is what defines the macro trading
-        # range). Standard SMC fib levels:
-        #   pos_pct < 38.2  → Discount  (bottom third, buy-the-dip zone)
-        #   pos_pct > 61.8  → Premium   (top third, sell-the-rally zone)
-        #   else            → Equilibrium
-        # zone_correct is True when:
-        #   BULLISH OB in Discount (LONG entry from cheap zone — ideal)
-        #   BEARISH OB in Premium  (SHORT entry from rich zone — ideal)
-        # Anything else is "wrong zone" — mathematically valid OB but
-        # poor R:R because price is not at an extreme yet.
+        # === Compute Discount/Mid/Premium/OutOfRange zone for the OB ===
         # === Compute Discount/Mid/Premium zone for the OB ===
-        # User-configurable thresholds (default 20% / 80%):
-        #   pct ≤ long_max_pct (20)  → Discount  (BULLISH OB → zone-correct)
-        #   pct ≥ short_min_pct (80) → Premium   (BEARISH OB → zone-correct)
-        #   else                     → Mid       (never zone-correct)
-        # zone_pct is also stored for the UI to display the exact percent —
-        # users want to see "12%" or "85%" alongside the zone label.
+        # Algorithm matches PD Zone Filter exactly (SMCScanner._compute_pd_pct):
+        #   • Position of CURRENT PRICE within trailing range (NOT OB midpoint)
+        #   • Trailing extremes = running max/min from latest pivots (Pine-faithful)
+        #
+        # IMPORTANT: we pass the FULL klines (incl. the forming bar) to the
+        # trailing-extremes loop, NOT klines_closed. Reason: the live-ticker
+        # `last_price` reflects the most recent tick INSIDE the forming bar,
+        # so the forming bar's high/low must be in the trailing range or we
+        # get nonsense overshoots (e.g., pct=2922% when price spiked on the
+        # current bar but trailing_top was capped at the previous closed
+        # bar's high). Pivots themselves are still computed from closed bars
+        # (correct — pivots need confirmed bars to validate), but trailing
+        # extremes need the most recent high/low even if the bar is forming.
+        #
+        # User-configurable thresholds (default 20/80):
+        #   pct ≤ long_max_pct (20)    → Discount  (BULLISH OB → zone-correct)
+        #   long_max < pct < short_min → Mid       (never zone-correct)
+        #   pct ≥ short_min_pct (80)   → Premium   (BEARISH OB → zone-correct)
+        #   pct < 0 or pct > 100       → Mid       (out-of-range — defensive,
+        #                                          should not happen normally
+        #                                          with full-klines extremes)
         if ob and ob.get('bias'):
-            pct = self._compute_zone_pct(ob, structure.get('swing', {}).get('pivots', []))
+            pct = self._compute_zone_pct(
+                structure.get('swing', {}).get('pivots', []),
+                klines,        # full klines incl. forming bar — see comment
+                last_price)
             zone, zone_correct = self._classify_zone(pct, ob['bias'])
             ob['zone'] = zone
             ob['zone_correct'] = zone_correct
@@ -557,81 +564,116 @@ class Top100OBScanner:
         }
     
     @staticmethod
-    def _compute_zone_pct(ob_data: Dict, swing_pivots: List[Dict]
-                           ) -> Optional[float]:
-        """Compute where the OB midpoint sits within the latest swing
-        range, returned as a percent (0-100).
+    def _compute_zone_pct(swing_pivots: List[Dict],
+                          klines: List[Dict],
+                          current_price: float) -> Optional[float]:
+        """Compute CURRENT PRICE position within the trailing range,
+        returned as a percent (0-100% in-range, can exceed for overshoots).
         
-        Range bounds = latest swing high (`HH` or `LH`) and latest swing
-        low (`HL` or `LL`). We use the LATEST pivots — older ones are
-        ignored even if they're more extreme — because the goal is to
-        classify against the *current* trading range, not historical.
+        IMPORTANT: this matches the PD Zone Filter algorithm exactly
+        (SMCScanner._compute_pd_pct). We use CURRENT PRICE — not the OB
+        midpoint — because:
+          • OB midpoint can be at a price level from an old structure,
+            far outside the current swing range, producing nonsense
+            percents like -89% or 332% that have no trading meaning.
+          • Current price is what matters for entry decisions: "is the
+            market right now in a zone that favors this OB's direction?"
+          • TradingView's PD zone visualization is anchored to current
+            price within trailing range — so this matches what the user
+            sees on the chart.
+        
+        Pine-faithful range (Pine SMC_PRO_BOT__47_ lines 835-841 —
+        `updateTrailingExtremes`):
+          trailing.top    = max(latest_high_pivot.price, all subsequent highs)
+          trailing.bottom = min(latest_low_pivot.price, all subsequent lows)
         
         Returns:
-          float — percent rounded to 1 decimal. Can exceed [0, 100] when
-                the OB sits beyond the latest swing range (rare).
+          float — percent rounded to 1 decimal. Normally in [0, 100];
+                values outside that range are rare overshoots that
+                happen briefly when price breaks beyond trailing
+                extremes before a new pivot forms.
           None  — range can't be determined (no pivots, inverted range).
-        
-        We use the OB MIDPOINT for the position test — using just bar_high
-        or bar_low could push borderline OBs into a wrong zone depending
-        on which boundary we pick. Midpoint is symmetric.
         """
-        if not ob_data or 'bar_high' not in ob_data or 'bar_low' not in ob_data:
+        if (not swing_pivots or current_price is None
+                or current_price <= 0):
             return None
         
-        latest_high = None  # latest swing HIGH price
-        latest_low = None   # latest swing LOW price
+        # Find latest swing high pivot AND latest swing low pivot.
+        latest_high_pivot = None
+        latest_low_pivot = None
         for p in reversed(swing_pivots):
             ptype = p.get('type', '')
-            if ptype in ('HH', 'LH') and latest_high is None:
-                latest_high = p.get('price')
-            elif ptype in ('HL', 'LL') and latest_low is None:
-                latest_low = p.get('price')
-            if latest_high is not None and latest_low is not None:
+            if ptype in ('HH', 'LH') and latest_high_pivot is None:
+                latest_high_pivot = p
+            elif ptype in ('HL', 'LL') and latest_low_pivot is None:
+                latest_low_pivot = p
+            if latest_high_pivot is not None and latest_low_pivot is not None:
                 break
         
-        if latest_high is None or latest_low is None:
+        if latest_high_pivot is None or latest_low_pivot is None:
             return None
-        if latest_high <= latest_low:
-            return None  # Invalid (would yield zero or negative range)
         
-        range_size = latest_high - latest_low
-        ob_mid = (ob_data['bar_high'] + ob_data['bar_low']) / 2
-        pos_pct = (ob_mid - latest_low) / range_size * 100
+        # === Compute trailing extremes (Pine updateTrailingExtremes) ===
+        high_pivot_idx = latest_high_pivot.get('idx', 0) or 0
+        low_pivot_idx = latest_low_pivot.get('idx', 0) or 0
+        
+        trailing_top = float(latest_high_pivot.get('price', 0))
+        trailing_bottom = float(latest_low_pivot.get('price', 0))
+        
+        n = len(klines) if klines else 0
+        if n > 0:
+            for i in range(min(high_pivot_idx, n), n):
+                h = klines[i].get('h', klines[i].get('p', 0))
+                if h > trailing_top:
+                    trailing_top = h
+            for i in range(min(low_pivot_idx, n), n):
+                l = klines[i].get('l', klines[i].get('p', 0))
+                if l < trailing_bottom:
+                    trailing_bottom = l
+        
+        if trailing_top <= trailing_bottom:
+            return None  # Invalid range
+        
+        range_size = trailing_top - trailing_bottom
+        pos_pct = (current_price - trailing_bottom) / range_size * 100
         return round(pos_pct, 1)
     
     def _classify_zone(self, pct: Optional[float], bias: Optional[str]
                        ) -> tuple:
-        """Threshold-based zone classification.
+        """Threshold-based zone classification with strict bounds.
         
-        Uses scanner's configured `long_max_pct` and `short_min_pct` to
-        determine if an OB is in its "right" zone (high R:R extreme):
+        Layout (with default thresholds 20/80):
+          pct < 0% or pct > 100%   → 'Mid'       (out of range — defensive)
+          0% ≤ pct ≤ long_max_pct  → 'Discount'  (LONG-favorable region)
+          short_min_pct ≤ pct ≤ 100% → 'Premium' (SHORT-favorable region)
+          else                     → 'Mid'       (no extreme — block)
         
-            BULLISH OB zone-correct  iff  pct ≤ long_max_pct   (deep low)
-            BEARISH OB zone-correct  iff  pct ≥ short_min_pct  (deep high)
-        
-        Anything in between (or unknown) is NOT zone-correct.
+        Why strict bounds: with full-klines trailing extremes (caller passes
+        full klines incl. forming bar), pct should naturally land in [0, 100].
+        Any value outside that range means something unusual (a tick after
+        the kline fetch, or stale data) — safest to treat as Mid (not zone-
+        correct) so the "Correct Zone" filter excludes it. Old behavior was
+        to map -89% to Discount and +2922% to Premium, which let stale
+        breakout situations show up as ideal entries.
         
         Returns (zone_label, zone_correct):
           zone_label: 'Discount' | 'Mid' | 'Premium' | None
-                Display label for the table column. Discount = below
-                long_max, Premium = above short_min, Mid = between, None
-                = unknown range.
-          zone_correct: bool
-                True iff this OB's bias matches its zone (ideal R:R).
-        
-        Note: 'Discount' / 'Premium' here are RELATIVE TO USER THRESHOLDS,
-        not the SMC Fib defaults (38.2/61.8). With the requested 20/80
-        defaults, only the deepest 20% of either end gets labelled —
-        much stricter than classic SMC.
+          zone_correct: bool — True iff this OB's bias matches its zone
+                          (ideal R:R). Only Discount-BULLISH and Premium-
+                          BEARISH are correct; Mid (incl. out-of-range)
+                          and wrong-direction extreme are False.
         """
         if pct is None or bias is None:
             return None, False
+        # Strict out-of-range guard: defensive only with full-klines extremes,
+        # but catches edge cases (live tick after kline fetch, data issues).
+        if pct < 0.0 or pct > 100.0:
+            return 'Mid', False
         if pct <= self._long_max_pct:
             return 'Discount', (bias == 'BULLISH')
         if pct >= self._short_min_pct:
             return 'Premium', (bias == 'BEARISH')
-        return 'Mid', False  # Between thresholds → not zone-correct
+        return 'Mid', False
     
     @staticmethod
     def _fmt_price(p: float) -> str:
