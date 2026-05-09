@@ -1507,6 +1507,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="short">SHORT only</option>
                     </select>
                 </span>
+                <!-- Bybit-only filter — hides symbols that don't exist on
+                     Bybit Futures (the radar scans against Binance, but
+                     the user trades on Bybit, so non-Bybit OBs aren't
+                     actionable). Default ON since this matches the user's
+                     trading reality. Set list is fetched once per session
+                     (5-min server-side cache, in-memory client cache). -->
+                <label style="font-weight:normal;font-size:0.72rem;display:flex;align-items:center;gap:4px;cursor:pointer"
+                       title="Hide symbols that aren't tradeable on Bybit Futures. Symbol list cached for 5 min server-side.">
+                    <input type="checkbox" id="top100-bybit-only" checked
+                           onchange="renderTop100Active()">
+                    <span>🔵 Bybit only</span>
+                    <span id="top100-bybit-count" style="color:#666"></span>
+                </label>
                 <!-- Clear button — drops all stored OB snapshots so the
                      next scan repopulates from scratch. Useful when stale
                      OBs persist past their relevance (e.g., after a TF
@@ -3627,6 +3640,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadTop100State();
     await loadTop100Snapshots();
     await loadTop100History();
+    // Fire-and-forget: Bybit symbol list for the "Bybit only" filter.
+    // Awaited (not parallel) so the count badge is correct on first
+    // render, but it's ~50ms server-side from cache so no real cost.
+    await loadBybitSymbols();
+    // Re-render once the set is in — the snapshots loaded above were
+    // rendered before the Bybit set was available, so the filter was
+    // a no-op. Now that we have the set, re-apply.
+    renderTop100Active();
     updateStatus();
     setInterval(updateStatus, 10000);
     setInterval(() => {
@@ -3655,6 +3676,42 @@ document.addEventListener('DOMContentLoaded', async () => {
 // rather than coordinate with manual scan completion.
 
 let _top100Snapshots = [];  // raw rows from /api/top100-ob/snapshots
+
+// Bybit symbol set — used by the "Bybit only" filter on Top-100 OB radar.
+// Loaded once per page session via /api/bybit/perpetual-symbols (server-
+// side cache: 5 min). null = not loaded yet (filter is a no-op until load
+// completes); empty Set = API failed (filter still a no-op, fail-safe);
+// non-empty Set = filter active. The dual sentinel (null vs empty) lets
+// us distinguish "still loading" from "failed" if we ever want to surface
+// that to the user, though current UX just shows the count silently.
+let _bybitSymbolsSet = null;
+
+async function loadBybitSymbols() {
+    // Idempotent — only fetches the first call. The set rarely changes
+    // (a few new perps per day) and the server caches for 5 min anyway,
+    // so refreshing client-side every page load is overkill. If a long-
+    // lived UI session runs into a missing symbol, the user can refresh
+    // the page; not worth a TTL on the client.
+    if (_bybitSymbolsSet !== null) return _bybitSymbolsSet;
+    try {
+        const r = await fetch('/api/bybit/perpetual-symbols');
+        const data = await r.json();
+        _bybitSymbolsSet = new Set(data.symbols || []);
+        const countEl = document.getElementById('top100-bybit-count');
+        if (countEl) {
+            // Show how many symbols Bybit knows about — quick sanity
+            // signal (660-ish is normal; 0 means the API call failed).
+            countEl.textContent = _bybitSymbolsSet.size > 0
+                ? `(${_bybitSymbolsSet.size})` : '(unavailable)';
+        }
+    } catch (e) {
+        console.warn('Bybit symbols fetch failed', e);
+        _bybitSymbolsSet = new Set();  // empty → filter no-op
+        const countEl = document.getElementById('top100-bybit-count');
+        if (countEl) countEl.textContent = '(unavailable)';
+    }
+    return _bybitSymbolsSet;
+}
 
 async function loadTop100State() {
     try {
@@ -3882,6 +3939,18 @@ function renderTop100Active() {
     }
     
     let rows = _top100Snapshots.filter(s => s.bias);
+    
+    // === Bybit-only filter (applied first, before role-based filters) ===
+    // The radar scans Binance Futures, but if the user trades on Bybit,
+    // Binance-only symbols are useless. Filter against the cached set.
+    // If the cache is empty (still loading or API failure) we treat the
+    // filter as a no-op rather than blanking the table — fail-safe.
+    const bybitOnlyEl = document.getElementById('top100-bybit-only');
+    const bybitOnly = bybitOnlyEl ? bybitOnlyEl.checked : false;
+    if (bybitOnly && _bybitSymbolsSet && _bybitSymbolsSet.size > 0) {
+        rows = rows.filter(s => _bybitSymbolsSet.has(s.symbol));
+    }
+    
     if (filter === 'fresh-choch-zone') {
         // Most strict: fresh CHoCH ★ AND OB direction matches its zone
         // (BULLISH in Discount or BEARISH in Premium). This is the

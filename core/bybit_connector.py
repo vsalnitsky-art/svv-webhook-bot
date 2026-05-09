@@ -22,6 +22,15 @@ class BybitConnector:
         
         # Створити сесію
         self.session = self._create_session()
+        
+        # Cache for the list of available USDT-perp symbols on Bybit Futures.
+        # Used by the Top-100 OB radar to filter out coins that aren't
+        # tradeable here (since the Binance-side scan returns symbols that
+        # may not exist on Bybit). The list changes only when new perps are
+        # listed/delisted (rare — maybe once per day at most), so we cache
+        # for 5 minutes to avoid hammering the API on every UI poll.
+        self._perp_symbols_cache: Optional[set] = None
+        self._perp_symbols_cached_at: float = 0.0
     
     def _create_session(self) -> HTTP:
         """Створити HTTP сесію pybit"""
@@ -67,6 +76,53 @@ class BybitConnector:
             import traceback
             traceback.print_exc()
             return []
+    
+    def get_perpetual_symbols(self, force_refresh: bool = False) -> set:
+        """Get the set of available USDT-perpetual symbols on Bybit Futures.
+        
+        Returns a set of symbol strings (e.g. {'BTCUSDT', 'ETHUSDT', ...}).
+        Cached for 5 minutes — perpetual listings change rarely (a handful
+        of new symbols per day at most) and the Top-100 radar polls this
+        on every UI render. Without caching we'd hit the Bybit ticker API
+        many times per minute.
+        
+        Filters: only USDT-margined perps. Returns ONLY the symbol field;
+        other ticker data (price, volume) isn't relevant for the
+        availability check.
+        
+        force_refresh=True bypasses the cache, useful when the user
+        explicitly hits a "refresh symbol list" button. Default cached
+        path is what the per-render filter calls.
+        
+        On API failure, returns the last cached set (even if stale) — and
+        if there's no cache yet, returns an empty set. The empty set
+        causes the UI filter to gracefully NOT filter (treat all symbols
+        as available) rather than blank the table.
+        """
+        now = time.time()
+        cache_age = now - self._perp_symbols_cached_at
+        if (not force_refresh
+                and self._perp_symbols_cache is not None
+                and cache_age < 300):  # 5-minute cache
+            return self._perp_symbols_cache
+        try:
+            tickers = self.get_tickers(category='linear')
+            # Filter to USDT-perps and dedupe via set comprehension. We
+            # check both .endswith('USDT') AND the contract type isn't
+            # "InverseFutures" — but Bybit's `linear` category by name
+            # only returns USDT/USDC perps, so endswith is sufficient.
+            symbols = {t.get('symbol', '') for t in tickers
+                       if t.get('symbol', '').endswith('USDT')}
+            symbols.discard('')  # remove empty if any malformed entries
+            if symbols:
+                self._perp_symbols_cache = symbols
+                self._perp_symbols_cached_at = now
+                return symbols
+            # Empty result — keep stale cache if we have one
+            return self._perp_symbols_cache or set()
+        except Exception as e:
+            print(f"[BYBIT] get_perpetual_symbols error: {e}")
+            return self._perp_symbols_cache or set()
     
     def get_ticker(self, symbol: str, category: str = "linear") -> Optional[Dict]:
         """Отримати тікер для одного символу"""

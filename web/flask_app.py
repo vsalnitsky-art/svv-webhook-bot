@@ -2544,6 +2544,34 @@ def register_api_routes(app):
             print(f'[APP] Top-100 OB clear error: {e}')
             return jsonify({'ok': False, 'error': str(e)}), 500
     
+    @app.route('/api/bybit/perpetual-symbols')
+    def api_bybit_perpetual_symbols():
+        """Return the set of USDT-perpetual symbols available on Bybit
+        Futures, used by the Top-100 OB radar to filter out coins that
+        only exist on Binance (which the radar scans against).
+        
+        Response shape:
+          { "symbols": ["BTCUSDT", "ETHUSDT", ...], "count": N }
+        
+        Cached server-side for 5 minutes (in BybitConnector). Frontend
+        caches the result in-memory for the session.
+        """
+        try:
+            from core.bybit_connector import get_connector
+            bc = get_connector()
+            symbols = bc.get_perpetual_symbols()
+            return jsonify({
+                'symbols': sorted(list(symbols)),
+                'count': len(symbols),
+            })
+        except Exception as e:
+            print(f'[APP] Bybit perpetual symbols fetch error: {e}')
+            # Return empty list — frontend treats this as "filter
+            # disabled" (everything passes through), which is safer
+            # than blanking the table on a transient API hiccup.
+            return jsonify({'symbols': [], 'count': 0,
+                            'error': str(e)}), 200
+    
     @app.route('/api/top100-ob/snapshots')
     def api_top100_ob_snapshots():
         """List current snapshots. Query params:
