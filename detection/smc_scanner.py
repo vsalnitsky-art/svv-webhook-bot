@@ -125,6 +125,30 @@ DEFAULT_SETTINGS = {
     'pd_zone_timeframe': '1h',     # 15m / 30m / 1h / 4h
     'pd_long_max_pct': 75.0,       # block LONG  if pos_pct >= this (0-100)
     'pd_short_min_pct': 25.0,      # block SHORT if pos_pct <= this (0-100)
+    
+    # === Volumized Order Blocks (port of TradingView "Volumized OBs" indicator) ===
+    # Informational trend detector: finds the latest formed OB (Bull/Bear)
+    # on the configured timeframe, and exposes its direction as a "trend"
+    # signal in the UI panel and watchlist. Does NOT gate signals — works
+    # alongside the existing CHoCH+BOS alert mode.
+    #
+    # All 5 algorithm-affecting Pine inputs are exposed verbatim:
+    #   volumized_timeframe        — TF (15m/30m/1h/4h)
+    #   volumized_swing_length     — Pine `swingLength`, default 10 (min 3)
+    #   volumized_ob_end_method    — Pine `obEndMethod`: 'Wick' or 'Close'
+    #   volumized_max_atr_mult     — Pine `maxATRMult`, default 3.5 (OB size filter)
+    #   volumized_zone_count       — Pine `zoneCount`: 'One'/'Low'/'Medium'/'High'
+    #   volumized_combine_obs      — Pine `combineOBs`, merge overlapping zones
+    #
+    # Default ON — gives user immediate visual feedback on trend direction.
+    # Default TF is 1H — same rationale as PD Zone (stable structure).
+    'use_volumized_ob': True,
+    'volumized_timeframe': '1h',
+    'volumized_swing_length': 10,
+    'volumized_ob_end_method': 'Wick',     # 'Wick' or 'Close'
+    'volumized_max_atr_mult': 3.5,
+    'volumized_zone_count': 'Low',          # 'One' / 'Low' / 'Medium' / 'High'
+    'volumized_combine_obs': True,
 }
 
 
@@ -265,6 +289,14 @@ class SMCScanner:
         # is on) and the chart-header badge.
         # {symbol: {'zone': str|None, 'pct': float|None, 'updated_at': float}}
         self._pd_zone_cache: Dict[str, Dict] = {}
+        # Volumized OB Trend cache — keyed by symbol. Each entry holds
+        # {'trend': 'LONG'|'SHORT'|None, 'meta': {...}, 'tf': '1h',
+        #  'updated_at': float}. Populated per-scan-tick, consumed by
+        # /api/smc/state for watchlist trend column, and by chart_data
+        # for the chart-header trend badge. Cleared per-tick via the
+        # same eviction path as _pd_zone_cache when a symbol falls out
+        # of the watchlist.
+        self._volumized_trend_cache: Dict[str, Dict] = {}
         
         # Signal markers per symbol — points on the chart where Telegram alerts
         # actually fired. Used to display LONG/SHORT dots on the chart.
@@ -491,6 +523,7 @@ class SMCScanner:
                 self._seen_events.pop(symbol, None)
                 self._htf_cache.pop(symbol, None)
                 self._pd_zone_cache.pop(symbol, None)
+                self._volumized_trend_cache.pop(symbol, None)
                 self._signal_markers.pop(symbol, None)
                 self._last_signal_dir.pop(symbol, None)
                 self._cache.pop(symbol, None)
@@ -543,7 +576,12 @@ class SMCScanner:
                        'ob_filter_enabled', 'ob_filter_timeframe',
                        # PD Zone filter (threshold-based)
                        'use_pd_zone_filter', 'pd_zone_timeframe',
-                       'pd_long_max_pct', 'pd_short_min_pct']
+                       'pd_long_max_pct', 'pd_short_min_pct',
+                       # Volumized OB Trend (Pine port)
+                       'use_volumized_ob', 'volumized_timeframe',
+                       'volumized_swing_length', 'volumized_ob_end_method',
+                       'volumized_max_atr_mult', 'volumized_zone_count',
+                       'volumized_combine_obs']
             
             # Detect changes that require cache reset
             old_tf = self._settings.get('timeframe', DEFAULT_TIMEFRAME)
@@ -667,6 +705,38 @@ class SMCScanner:
             except (ValueError, TypeError):
                 self._settings['pd_long_max_pct'] = 75.0
                 self._settings['pd_short_min_pct'] = 25.0
+            
+            # === Volumized OB Trend validation ===
+            # All 5 algorithm-affecting Pine parameters + the TF selector.
+            # Each falls back to its DEFAULT_SETTINGS value on bad input,
+            # never accepting silently corrupting values.
+            ALLOWED_VOL_TFS = ('15m', '30m', '1h', '4h')
+            if self._settings.get('volumized_timeframe') not in ALLOWED_VOL_TFS:
+                self._settings['volumized_timeframe'] = '1h'
+            
+            try:
+                sl = int(self._settings.get('volumized_swing_length', 10))
+                # Pine minval = 3 (line 24: `input.int(10, ..., minval=3)`)
+                self._settings['volumized_swing_length'] = max(3, sl)
+            except (ValueError, TypeError):
+                self._settings['volumized_swing_length'] = 10
+            
+            if self._settings.get('volumized_ob_end_method') not in ('Wick', 'Close'):
+                self._settings['volumized_ob_end_method'] = 'Wick'
+            
+            try:
+                mam = float(self._settings.get('volumized_max_atr_mult', 3.5))
+                # Pine has no explicit max but 50× ATR is already absurd.
+                # Negative or zero would disable all OBs (size > 0 always).
+                self._settings['volumized_max_atr_mult'] = max(0.1, min(50.0, mam))
+            except (ValueError, TypeError):
+                self._settings['volumized_max_atr_mult'] = 3.5
+            
+            if self._settings.get('volumized_zone_count') not in ('One', 'Low', 'Medium', 'High'):
+                self._settings['volumized_zone_count'] = 'Low'
+            
+            self._settings['volumized_combine_obs'] = bool(
+                self._settings.get('volumized_combine_obs', True))
             
             # Reset cache on relevant changes
             new_tf = self._settings['timeframe']
@@ -999,6 +1069,54 @@ class SMCScanner:
                 except Exception as pd_err:
                     if self._errors <= 5:
                         print(f"[SMC] PD Zone compute error for {symbol}: {pd_err}")
+                
+                # === Compute Volumized OB Trend ===
+                # Pine port — finds the LATEST formed OB (Bull or Bear) and
+                # exposes its direction as `trend` (LONG/SHORT). Purely
+                # informational — does NOT gate CHoCH/BOS signals. Shown
+                # in the chart-header trend badge and the watchlist
+                # "Trend" column so the user knows which direction the
+                # last institutional impulse pointed before deciding
+                # whether to trust the next CHoCH/BOS alert.
+                #
+                # We pass FULL klines (incl. the forming bar) — same
+                # rationale as PD Zone Filter: trailing extremes must
+                # see the live price's reach or the OB filter's ATR
+                # filter compares against stale ATR. The detector is
+                # idempotent on the unchanged closed bars; the only
+                # difference is the last entry now reflects the forming
+                # bar instead of being missing.
+                if self._settings.get('use_volumized_ob', True):
+                    try:
+                        vol_tf = self._settings.get('volumized_timeframe', '1h')
+                        vol_data = _get_tf_data(vol_tf)
+                        if vol_data:
+                            from detection.volumized_ob import get_latest_ob_trend
+                            vol_klines = vol_data.get('klines') or vol_data.get('klines_closed') or []
+                            vol_result = get_latest_ob_trend(
+                                vol_klines,
+                                swing_length=int(self._settings.get('volumized_swing_length', 10)),
+                                ob_end_method=self._settings.get('volumized_ob_end_method', 'Wick'),
+                                max_atr_mult=float(self._settings.get('volumized_max_atr_mult', 3.5)),
+                                zone_count=self._settings.get('volumized_zone_count', 'Low'),
+                                combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
+                            )
+                            with self._lock:
+                                self._volumized_trend_cache[symbol] = {
+                                    'trend': vol_result.get('trend'),
+                                    'meta': vol_result.get('trend_meta', {}),
+                                    'tf': vol_tf,
+                                    'updated_at': time.time(),
+                                }
+                        else:
+                            # No TF data — clear cache so stale entries
+                            # don't linger (e.g., user changed TF and
+                            # the new TF has no klines yet).
+                            with self._lock:
+                                self._volumized_trend_cache.pop(symbol, None)
+                    except Exception as vol_err:
+                        if self._errors <= 5:
+                            print(f"[SMC] Volumized OB error for {symbol}: {vol_err}")
                 
                 # === Notify TM that OBs may have changed ===
                 # TM reads its own configured TF from DB internally —
@@ -1940,6 +2058,16 @@ class SMCScanner:
             'pd_zone_timeframe': self._settings.get('pd_zone_timeframe', '1h'),
             'pd_long_max_pct': float(self._settings.get('pd_long_max_pct', 75.0)),
             'pd_short_min_pct': float(self._settings.get('pd_short_min_pct', 25.0)),
+            # === Volumized OB Trend ===
+            # Trend = direction of latest formed OB on volumized_timeframe.
+            # 'LONG' = latest OB is Bull, 'SHORT' = latest OB is Bear,
+            # None = no OB detected yet (warmup or filtered out by ATR).
+            # trend_meta carries price levels + volume for the chart badge
+            # to render e.g. "🟢 LONG • Bull OB $58k-$59k • vol 1.2M".
+            'volumized_trend': self._volumized_trend_cache.get(symbol, {}).get('trend'),
+            'volumized_trend_meta': self._volumized_trend_cache.get(symbol, {}).get('meta', {}),
+            'volumized_timeframe': self._settings.get('volumized_timeframe', '1h'),
+            'volumized_enabled': bool(self._settings.get('use_volumized_ob', True)),
             # Swing Structure (size=swing_size)
             'swing_pivots': fmt_pivots(swing),
             'swing_events': fmt_events(swing),
@@ -2022,6 +2150,16 @@ class SMCScanner:
                 'ob_filter_enabled': ob_filter_enabled,
                 'ob_filter_timeframe': ob_filter_tf,
                 'ob_states': ob_states,
+                # Volumized OB trend per symbol — flat map keyed by
+                # symbol, value 'LONG'/'SHORT'/None. Watchlist table
+                # renders a column from this. Small payload — single
+                # token per symbol — so no need to gate by toggle.
+                'volumized_trends': {
+                    sym: cache.get('trend')
+                    for sym, cache in self._volumized_trend_cache.items()
+                },
+                'volumized_enabled': bool(self._settings.get('use_volumized_ob', True)),
+                'volumized_timeframe': self._settings.get('volumized_timeframe', '1h'),
                 'pending_choch': {k: {'dir': v['dir'], 'level': v['level']}
                                    for k, v in self._pending_choch.items()},
             }

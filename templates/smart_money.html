@@ -855,24 +855,29 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <div class="sm-settings-section">
-                <h3>PD Zone Filter</h3>
+                <h3>📦 Volumized OB Trend</h3>
                 <div class="sm-controls">
-                    <!-- PD Zone Filter — threshold-based gate. Two sliders:
-                         pd_long_max_pct (default 75) blocks LONG when
-                         price is too high; pd_short_min_pct (default 25)
-                         blocks SHORT when price is too low. The middle
-                         zone (between thresholds) allows both directions.
-                         Default ON, 1H — wider context than the main scan
-                         TF gives more stable zones. -->
+                    <!-- Volumized OB Trend — Pine port of "Volumized Order
+                         Blocks | SVV Charts" indicator. Finds the LATEST
+                         formed OB on the configured TF and exposes its
+                         direction as `trend` (LONG=Bull OB / SHORT=Bear OB).
+                         INFORMATIONAL only — does NOT gate CHoCH/BOS alerts.
+                         Used by the chart-header badge and the watchlist
+                         Trend column to inform "which way did the last
+                         institutional impulse point?". Combined with the
+                         configured Alert mode (CHoCH+BOS or CHoCH), this
+                         is what tells the user whether to act on the next
+                         alert in this symbol. All 5 algorithm-affecting
+                         Pine inputs exposed verbatim (no hidden defaults). -->
                     <label class="sm-checkbox"
-                           title="When ON: blocks LONG when price is at/above the LONG-max threshold (default 75% of trailing range), blocks SHORT when price is at/below the SHORT-min threshold (default 25%). Middle zone allows both. Range computed Pine-faithfully via trailing.top/bottom.">
-                        <input type="checkbox" id="sm-pd-zone-filter-enabled"
-                               checked onchange="updatePDZoneFilter()">
-                        Filter by Price Position
+                           title="Enable Volumized OB Trend detection — finds latest formed OB and exposes its direction as trend signal. Pine-faithful port of Volumized Order Blocks indicator.">
+                        <input type="checkbox" id="sm-volumized-enabled"
+                               checked onchange="updateVolumizedSettings()">
+                        Enable
                     </label>
                     <div class="sm-control-item">
                         <label>TF:</label>
-                        <select id="sm-pd-zone-tf" onchange="updatePDZoneFilter()">
+                        <select id="sm-volumized-tf" onchange="updateVolumizedSettings()">
                             <option value="15m">15M</option>
                             <option value="30m">30M</option>
                             <option value="1h" selected>1H</option>
@@ -880,22 +885,45 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </select>
                     </div>
                     <div class="sm-control-item"
-                         title="Block LONG signals when price is at or above this % of the trailing range. 75% means: don't buy when price is in the top quarter of the range.">
-                        <label>Block LONG ≥</label>
-                        <input type="number" id="sm-pd-long-max" min="0" max="100" step="1"
-                               value="75" onchange="updatePDZoneFilter()"
-                               style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
-                        <span style="font-size:0.78rem;color:#888">%</span>
+                         title="Pine `swingLength` — used to find pivot/swing points. Smaller values = more, smaller OBs. Pine default 10, minimum 3.">
+                        <label>Swing Length:</label>
+                        <input type="number" id="sm-volumized-swing" min="3" step="1"
+                               value="10" onchange="updateVolumizedSettings()"
+                               style="width:55px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
                     </div>
                     <div class="sm-control-item"
-                         title="Block SHORT signals when price is at or below this % of the trailing range. 25% means: don't sell when price is in the bottom quarter of the range.">
-                        <label>Block SHORT ≤</label>
-                        <input type="number" id="sm-pd-short-min" min="0" max="100" step="1"
-                               value="25" onchange="updatePDZoneFilter()"
-                               style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
-                        <span style="font-size:0.78rem;color:#888">%</span>
+                         title="Pine `obEndMethod` — Wick: OB invalidated when low/high pierces OB bottom/top. Close: OB invalidated only when min(open,close) crosses OB level. Wick is more sensitive (default).">
+                        <label>Zone Invalidation:</label>
+                        <select id="sm-volumized-end-method" onchange="updateVolumizedSettings()">
+                            <option value="Wick" selected>Wick</option>
+                            <option value="Close">Close</option>
+                        </select>
                     </div>
+                    <div class="sm-control-item"
+                         title="Pine `maxATRMult` — max OB size in ATR(10) units. OBs larger than this are rejected as 'too volatile' (e.g., crash bars). Pine default 3.5.">
+                        <label>Max ATR Mult:</label>
+                        <input type="number" id="sm-volumized-atr-mult" min="0.1" max="50" step="0.1"
+                               value="3.5" onchange="updateVolumizedSettings()"
+                               style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
+                    </div>
+                    <div class="sm-control-item"
+                         title="Pine `zoneCount` — One: 1 OB visible | Low: 3 (default) | Medium: 5 | High: 10. Affects trimming after detection. 'Latest OB' (trend) is always the most recent across visible OBs.">
+                        <label>Zone Count:</label>
+                        <select id="sm-volumized-zone-count" onchange="updateVolumizedSettings()">
+                            <option value="One">One</option>
+                            <option value="Low" selected>Low (3)</option>
+                            <option value="Medium">Medium (5)</option>
+                            <option value="High">High (10)</option>
+                        </select>
+                    </div>
+                    <label class="sm-checkbox"
+                           title="Pine `combineOBs` — merge overlapping same-type OBs into one larger box. Default ON.">
+                        <input type="checkbox" id="sm-volumized-combine"
+                               checked onchange="updateVolumizedSettings()">
+                        Combine Zones
+                    </label>
                 </div>
+                <div id="sm-volumized-summary" style="font-size:0.72rem;color:#888;margin-top:6px"></div>
             </div>
             
             <div class="sm-settings-section">
@@ -945,12 +973,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          recent unmitigated internal OB. Hidden when no OB
                          exists for the symbol or all have been mitigated. -->
                     <span class="sm-status-badge" id="sm-ob-badge" style="margin-left:6px;display:none"></span>
-                    <!-- PD Zone (Premium/Discount/Equilibrium) — current
-                         price position within the latest swing range on
-                         the Structure Detection TF. Tooltip shows pct and
-                         filter status. When the filter is active and
-                         price is in the wrong zone, the badge shows a 🔒
-                         prefix to indicate signals would be blocked. -->
+                    <!-- Volumized OB Trend — direction of the LATEST formed
+                         OB on volumized_timeframe (Pine "Volumized OBs"). 
+                         🟢 LONG = latest OB is Bull (price expected to rise).
+                         🔴 SHORT = latest OB is Bear (price expected to fall).
+                         Hidden when no OB formed yet (warmup or all rejected
+                         by ATR-size filter). Tooltip shows TF, OB price range
+                         and volume — quick at-a-glance trend confirmation. -->
+                    <span class="sm-status-badge" id="sm-volumized-badge" style="margin-left:6px;display:none"></span>
+                    <!-- Legacy PD Zone badge — still rendered but only when
+                         backend keeps producing pd_zone_pct (it does, the
+                         backend code wasn't removed). Hidden by default
+                         since the user opted out of the filter UI; renders
+                         when present so users with old layouts still see it. -->
                     <span class="sm-status-badge" id="sm-pd-zone-badge" style="margin-left:6px;display:none"></span>
                     <!-- Hidden legacy badges — kept in DOM so old code paths
                          that still reference these IDs don't crash, but they
@@ -1614,6 +1649,13 @@ async function loadWatchlist() {
         wlObFilterEnabled = !!d.ob_filter_enabled;
         wlObFilterTimeframe = d.ob_filter_timeframe || '1h';
         wlObStates = d.ob_states || {};
+        // Stash Volumized OB Trend state — small dict, populated only
+        // for symbols in the watchlist that the scanner has processed.
+        // Symbols not yet scanned (just added) will be absent and render
+        // no trend pill until next scan tick (60s default).
+        wlVolumizedEnabled = !!d.volumized_enabled;
+        wlVolumizedTimeframe = d.volumized_timeframe || '1h';
+        wlVolumizedTrends = d.volumized_trends || {};
         renderWatchlist(list);
     } catch (err) {
         console.error('watchlist load err:', err);
@@ -1625,6 +1667,13 @@ async function loadWatchlist() {
 let wlObFilterEnabled = false;
 let wlObFilterTimeframe = '1h';
 let wlObStates = {};
+// Volumized OB Trend state — populated from /api/smc/state. Map of
+// symbol → 'LONG' | 'SHORT' | null. Rendered as a small colored
+// trend pill next to each watchlist symbol so the user sees direction
+// at a glance without clicking into the chart.
+let wlVolumizedEnabled = false;
+let wlVolumizedTimeframe = '1h';
+let wlVolumizedTrends = {};
 
 function renderWatchlist(list) {
     const el = document.getElementById('sm-wl-list');
@@ -1673,8 +1722,26 @@ function renderWatchlist(list) {
             }
         }
         
+        // Volumized OB Trend pill — direction of latest formed OB on
+        // volumized_timeframe. Renders only when Volumized is enabled
+        // AND a trend has been computed for this symbol. Compact form:
+        // ▲ (green) for LONG, ▼ (red) for SHORT. Tooltip explains.
+        let volTrendHtml = '';
+        if (wlVolumizedEnabled) {
+            const vt = wlVolumizedTrends[sym];
+            if (vt === 'LONG' || vt === 'SHORT') {
+                const isLong = (vt === 'LONG');
+                const pillColor = isLong ? '#22c55e' : '#ef4444';
+                const pillIcon = isLong ? '▲' : '▼';
+                const pillTitle = `Volumized OB Trend (${wlVolumizedTimeframe.toUpperCase()}): ${vt}\n`
+                    + 'Latest formed OB is ' + (isLong ? 'Bullish' : 'Bearish')
+                    + ' → wait for matching CHoCH/BOS alert.';
+                volTrendHtml = `<span title="${escapeHtml(pillTitle)}" style="color:${pillColor};margin-right:4px;font-size:0.8rem;font-weight:bold">${pillIcon}</span>`;
+            }
+        }
+        
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${obStarHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${obStarHtml}${volTrendHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -1764,18 +1831,29 @@ async function loadSettings() {
             if (obEnabled) obEnabled.checked = !!s.ob_filter_enabled;
             const obTf = document.getElementById('sm-ob-filter-tf');
             if (obTf) obTf.value = s.ob_filter_timeframe || '1h';
-            // PD Zone Filter — defaults TRUE when the field is missing
-            // from the response (older deployments without the setting).
-            // We use `!== false` instead of `!!` so undefined → checked,
-            // matching the DEFAULT_SETTINGS truthy default in the backend.
-            const pdEnabled = document.getElementById('sm-pd-zone-filter-enabled');
-            if (pdEnabled) pdEnabled.checked = (s.use_pd_zone_filter !== false);
-            const pdTf = document.getElementById('sm-pd-zone-tf');
-            if (pdTf) pdTf.value = s.pd_zone_timeframe || '1h';
-            const pdLongMax = document.getElementById('sm-pd-long-max');
-            if (pdLongMax) pdLongMax.value = (typeof s.pd_long_max_pct === 'number') ? s.pd_long_max_pct : 75;
-            const pdShortMin = document.getElementById('sm-pd-short-min');
-            if (pdShortMin) pdShortMin.value = (typeof s.pd_short_min_pct === 'number') ? s.pd_short_min_pct : 25;
+            // PD Zone Filter loader removed — Volumized OB Trend replaces it
+            // in the UI. The PD Zone backend code is still present (signal
+            // gate, /api/smc/state fields) but the user no longer configures
+            // it; defaults stay in DB and are simply not displayed.
+            // === Volumized OB Trend — 7 inputs ===
+            // Defaults from DEFAULT_SETTINGS — fallback to those values
+            // when the field is missing from the response (older deploys).
+            const volEnabled = document.getElementById('sm-volumized-enabled');
+            if (volEnabled) volEnabled.checked = (s.use_volumized_ob !== false);
+            const volTf = document.getElementById('sm-volumized-tf');
+            if (volTf) volTf.value = s.volumized_timeframe || '1h';
+            const volSwing = document.getElementById('sm-volumized-swing');
+            if (volSwing) volSwing.value = (typeof s.volumized_swing_length === 'number')
+                ? s.volumized_swing_length : 10;
+            const volEndMethod = document.getElementById('sm-volumized-end-method');
+            if (volEndMethod) volEndMethod.value = s.volumized_ob_end_method || 'Wick';
+            const volAtrMult = document.getElementById('sm-volumized-atr-mult');
+            if (volAtrMult) volAtrMult.value = (typeof s.volumized_max_atr_mult === 'number')
+                ? s.volumized_max_atr_mult : 3.5;
+            const volZoneCount = document.getElementById('sm-volumized-zone-count');
+            if (volZoneCount) volZoneCount.value = s.volumized_zone_count || 'Low';
+            const volCombine = document.getElementById('sm-volumized-combine');
+            if (volCombine) volCombine.checked = (s.volumized_combine_obs !== false);
             updateHTFFieldVisibility();
             updateSettingsSummary();
         }
@@ -1817,7 +1895,7 @@ function updateSettingsSummary() {
     const htfMethod = document.getElementById('sm-htf-method').value;
     const obOn = document.getElementById('sm-ob-filter-enabled');
     const obTf = document.getElementById('sm-ob-filter-tf');
-    const pdOn = document.getElementById('sm-pd-zone-filter-enabled');
+    const volOn = document.getElementById('sm-volumized-enabled');
     
     let summary = `${tf} · size ${isize} · ${modeLabel}`;
     if (dedup) summary += ' · dedup';
@@ -1825,10 +1903,14 @@ function updateSettingsSummary() {
     if (obOn && obOn.checked && obTf) {
         summary += ` · OB ${obTf.value.toUpperCase()}`;
     }
-    if (pdOn && pdOn.checked) {
-        const pdTf = document.getElementById('sm-pd-zone-tf');
-        const pdTfStr = pdTf ? pdTf.value.toUpperCase() : '1H';
-        summary += ` · PD Zone ${pdTfStr}`;
+    // Volumized OB Trend line — only show TF + zone count, full settings
+    // would clutter. User can hover the section for individual tooltips.
+    if (volOn && volOn.checked) {
+        const volTf = document.getElementById('sm-volumized-tf');
+        const volZc = document.getElementById('sm-volumized-zone-count');
+        const tfStr = volTf ? volTf.value.toUpperCase() : '1H';
+        const zcStr = volZc ? volZc.value : 'Low';
+        summary += ` · 📦 Vol ${tfStr} (${zcStr})`;
     }
     document.getElementById('sm-settings-summary-right').textContent = summary;
 }
@@ -1868,30 +1950,41 @@ async function updateOBFilter() {
     } catch (err) { alert('OB Filter update error: ' + err); }
 }
 
-// PD Zone Filter — boolean toggle, TF dropdown, and two threshold inputs.
-// Saves all four fields together so partial state never reaches backend.
-async function updatePDZoneFilter() {
-    const enabled = document.getElementById('sm-pd-zone-filter-enabled').checked;
-    const tf = document.getElementById('sm-pd-zone-tf').value || '1h';
-    // Parse threshold inputs. Backend will clamp to [0,100] and ensure
-    // short ≤ long, but we send sane defaults if user clears the field.
-    let longMax = parseFloat(document.getElementById('sm-pd-long-max').value);
-    let shortMin = parseFloat(document.getElementById('sm-pd-short-min').value);
-    if (!isFinite(longMax)) longMax = 75;
-    if (!isFinite(shortMin)) shortMin = 25;
+// Volumized OB Trend — Pine port. Saves all 7 settings together so the
+// backend never sees a partial state (enabled=true but TF stale, etc.).
+// Backend validates each field independently and falls back to defaults
+// on bad input, so a junk value here doesn't corrupt persistent state.
+async function updateVolumizedSettings() {
+    const enabled = document.getElementById('sm-volumized-enabled').checked;
+    const tf = document.getElementById('sm-volumized-tf').value || '1h';
+    let swingLen = parseInt(document.getElementById('sm-volumized-swing').value);
+    const endMethod = document.getElementById('sm-volumized-end-method').value || 'Wick';
+    let atrMult = parseFloat(document.getElementById('sm-volumized-atr-mult').value);
+    const zoneCount = document.getElementById('sm-volumized-zone-count').value || 'Low';
+    const combine = document.getElementById('sm-volumized-combine').checked;
+    // Fallbacks if user clears fields. Backend clamps anyway but these
+    // keep the UI responsive (no `NaN` flicker before backend response).
+    if (!Number.isFinite(swingLen) || swingLen < 3) swingLen = 10;
+    if (!Number.isFinite(atrMult) || atrMult <= 0) atrMult = 3.5;
     try {
         await fetch('/api/smc/settings', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                use_pd_zone_filter: enabled,
-                pd_zone_timeframe: tf,
-                pd_long_max_pct: longMax,
-                pd_short_min_pct: shortMin,
+                use_volumized_ob: enabled,
+                volumized_timeframe: tf,
+                volumized_swing_length: swingLen,
+                volumized_ob_end_method: endMethod,
+                volumized_max_atr_mult: atrMult,
+                volumized_zone_count: zoneCount,
+                volumized_combine_obs: combine,
             }),
         });
         updateSettingsSummary();
-    } catch (err) { alert('PD Zone Filter update error: ' + err); }
+        // Refresh watchlist so the new Trend column reflects updated TF
+        // immediately (otherwise user waits up to 60s for next scan tick).
+        loadWatchlist();
+    } catch (err) { alert('Volumized OB update error: ' + err); }
 }
 
 async function updateAlertMode() {
@@ -2306,6 +2399,51 @@ async function loadChart() {
             } else {
                 obBadge.style.display = 'none';
             }
+        }
+        
+        // === Volumized OB Trend badge ===
+        // Latest formed OB determines trend. 🟢 LONG = last OB was Bull,
+        // 🔴 SHORT = last OB was Bear, hidden when none formed yet.
+        // Tooltip shows TF, OB price range, volume, and breaker state.
+        // This is the user's primary "which way to trade" indicator
+        // working alongside the configured CHoCH/BOS Alert mode.
+        const volBadge = document.getElementById('sm-volumized-badge');
+        const volEnabled = !!d.volumized_enabled;
+        const volTrend = d.volumized_trend;  // 'LONG'|'SHORT'|null
+        const volMeta = d.volumized_trend_meta || {};
+        const volTf = (d.volumized_timeframe || '1h').toUpperCase();
+        if (volBadge && volEnabled && volTrend) {
+            const icon = (volTrend === 'LONG') ? '🟢' : '🔴';
+            const bg = (volTrend === 'LONG')
+                ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+            const color = (volTrend === 'LONG') ? '#86efac' : '#fca5a5';
+            const breakerMark = volMeta.breaker ? '⚠' : '';
+            volBadge.textContent = `${icon} ${volTrend} ${volTf}${breakerMark}`;
+            volBadge.className = 'sm-status-badge';
+            volBadge.style.background = bg;
+            volBadge.style.color = color;
+            volBadge.style.display = 'inline-block';
+            // Build tooltip with OB price range + volume
+            const top = (typeof volMeta.top === 'number') ? volMeta.top.toFixed(8).replace(/\.?0+$/, '') : '?';
+            const bottom = (typeof volMeta.bottom === 'number') ? volMeta.bottom.toFixed(8).replace(/\.?0+$/, '') : '?';
+            const vol = (typeof volMeta.ob_volume === 'number') ? volMeta.ob_volume.toLocaleString() : '?';
+            const breakerNote = volMeta.breaker
+                ? '\n⚠ OB is in BREAKER state (price has invalidated it but it remains tracked until removal).'
+                : '';
+            const combinedNote = volMeta.combined
+                ? '\n(Combined from multiple overlapping OBs)' : '';
+            volBadge.title = [
+                `Volumized OB Trend — ${volTrend}`,
+                `Latest OB type: ${volMeta.ob_type || '?'}`,
+                `OB range: ${bottom} — ${top}`,
+                `OB volume (3-bar impulse): ${vol}`,
+                `Timeframe: ${volTf}`,
+                breakerNote + combinedNote,
+                '',
+                'Wait for matching CHoCH+BOS or CHoCH alert on this symbol.',
+            ].filter(Boolean).join('\n');
+        } else if (volBadge) {
+            volBadge.style.display = 'none';
         }
         
         // === PD Zone badge (threshold-based) ===
@@ -2810,9 +2948,16 @@ async function updateStatus() {
         wlObFilterEnabled = newObEnabled;
         wlObFilterTimeframe = newObTf;
         wlObStates = newObStates;
-        if (newObEnabled || wasEnabled) {
-            // Re-render if filter is currently on (to update stars to
-            // latest OB state) OR was on (to clear stars after toggle off).
+        // Sync Volumized trend state — same one-shot update + re-render.
+        // We trigger re-render if either filter changed state, since the
+        // pill render happens in the same function.
+        const newVolEnabled = !!d.volumized_enabled;
+        const newVolTrends = d.volumized_trends || {};
+        const wasVolEnabled = wlVolumizedEnabled;
+        wlVolumizedEnabled = newVolEnabled;
+        wlVolumizedTimeframe = d.volumized_timeframe || '1h';
+        wlVolumizedTrends = newVolTrends;
+        if (newObEnabled || wasEnabled || newVolEnabled || wasVolEnabled) {
             renderWatchlist(d.watchlist || []);
         }
     } catch (err) {}
