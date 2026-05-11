@@ -1784,6 +1784,41 @@ class SMCScanner:
             return f"${price:.4f}"
         return f"${price:,.2f}"
     
+    def _build_volumized_chart_meta(self, symbol: str) -> Dict:
+        """Enrich the cached Volumized trend meta for chart rendering.
+        
+        Cache stores `start_time` in ms (matching klines `t` field which
+        is ms-epoch). LightweightCharts expects time values in SECONDS,
+        so we compute `start_time_sec` here and add it alongside the
+        original. The frontend uses `start_time_sec` for the OB box's
+        x-axis position; `start_time` (ms) is kept for tooltip display
+        and any other consumers that prefer ms.
+        
+        Returns the meta dict (possibly empty if no trend cached yet).
+        Empty/no-trend case still returns {} so frontend code can
+        gate on `Object.keys(meta).length > 0` instead of null-checking.
+        """
+        meta = dict(self._volumized_trend_cache.get(symbol, {}).get('meta', {}))
+        if not meta:
+            return {}
+        # Convert start_time (ms) → start_time_sec (s) for the chart.
+        # break_time same treatment if present (breaker OBs).
+        st_ms = meta.get('start_time')
+        if isinstance(st_ms, (int, float)) and st_ms > 0:
+            # ms epochs are ~1.7e12 in 2024; sec epochs are ~1.7e9. If the
+            # value is already < 1e11, assume seconds and don't divide.
+            if st_ms > 1e11:
+                meta['start_time_sec'] = int(st_ms / 1000)
+            else:
+                meta['start_time_sec'] = int(st_ms)
+        bt_ms = meta.get('break_time')
+        if isinstance(bt_ms, (int, float)) and bt_ms > 0:
+            if bt_ms > 1e11:
+                meta['break_time_sec'] = int(bt_ms / 1000)
+            else:
+                meta['break_time_sec'] = int(bt_ms)
+        return meta
+    
     # ========================================
     # Public API — Chart data
     # ========================================
@@ -2064,8 +2099,11 @@ class SMCScanner:
             # None = no OB detected yet (warmup or filtered out by ATR).
             # trend_meta carries price levels + volume for the chart badge
             # to render e.g. "🟢 LONG • Bull OB $58k-$59k • vol 1.2M".
+            # We also enrich meta with `start_time_sec` (seconds) so the
+            # frontend doesn't need to know whether the raw start_time is
+            # ms or seconds — LightweightCharts expects seconds.
             'volumized_trend': self._volumized_trend_cache.get(symbol, {}).get('trend'),
-            'volumized_trend_meta': self._volumized_trend_cache.get(symbol, {}).get('meta', {}),
+            'volumized_trend_meta': self._build_volumized_chart_meta(symbol),
             'volumized_timeframe': self._settings.get('volumized_timeframe', '1h'),
             'volumized_enabled': bool(self._settings.get('use_volumized_ob', True)),
             # Swing Structure (size=swing_size)

@@ -927,6 +927,49 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <div class="sm-settings-section">
+                <h3>Filter by Price Position</h3>
+                <div class="sm-controls">
+                    <!-- PD Zone Filter — threshold-based signal gate.
+                         Independent of Volumized OB Trend (informational).
+                         pd_long_max_pct (default 75) blocks LONG when
+                         price is too high; pd_short_min_pct (default 25)
+                         blocks SHORT when price is too low. Middle zone
+                         allows both. Default ON. -->
+                    <label class="sm-checkbox"
+                           title="When ON: blocks LONG when price is at/above the LONG-max threshold (default 75% of trailing range), blocks SHORT when price is at/below the SHORT-min threshold (default 25%). Middle zone allows both. Range computed Pine-faithfully via trailing.top/bottom.">
+                        <input type="checkbox" id="sm-pd-zone-filter-enabled"
+                               checked onchange="updatePDZoneFilter()">
+                        Enable
+                    </label>
+                    <div class="sm-control-item">
+                        <label>TF:</label>
+                        <select id="sm-pd-zone-tf" onchange="updatePDZoneFilter()">
+                            <option value="15m">15M</option>
+                            <option value="30m">30M</option>
+                            <option value="1h" selected>1H</option>
+                            <option value="4h">4H</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item"
+                         title="Block LONG signals when price is at or above this % of the trailing range. 75% means: don't buy when price is in the top quarter of the range.">
+                        <label>Block LONG ≥</label>
+                        <input type="number" id="sm-pd-long-max" min="0" max="100" step="1"
+                               value="75" onchange="updatePDZoneFilter()"
+                               style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
+                        <span style="font-size:0.78rem;color:#888">%</span>
+                    </div>
+                    <div class="sm-control-item"
+                         title="Block SHORT signals when price is at or below this % of the trailing range. 25% means: don't sell when price is in the bottom quarter of the range.">
+                        <label>Block SHORT ≤</label>
+                        <input type="number" id="sm-pd-short-min" min="0" max="100" step="1"
+                               value="25" onchange="updatePDZoneFilter()"
+                               style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
+                        <span style="font-size:0.78rem;color:#888">%</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sm-settings-section">
                 <h3>Alerts</h3>
                 <div class="sm-controls">
                     <div class="sm-control-item">
@@ -1604,6 +1647,12 @@ let chart = null;
 let candleSeries = null;
 let currentSymbol = null;
 let activeLines = [];
+// Volumized OB lines — kept separate from `activeLines` because OB
+// rendering happens OUTSIDE the `if (structureChanged)` gate (so OB
+// box reflects latest cached trend on every tick), while activeLines
+// only clears when structure events change. Without this separation
+// OB lines would accumulate on the chart every kline-only update.
+let volumizedObLines = [];
 let activeMarkers = [];
 let showPivots = false; // HH/HL/LH/LL toggle, default OFF
 let showStructure = true;  // BOS/CHoCH toggle, default ON
@@ -1831,10 +1880,17 @@ async function loadSettings() {
             if (obEnabled) obEnabled.checked = !!s.ob_filter_enabled;
             const obTf = document.getElementById('sm-ob-filter-tf');
             if (obTf) obTf.value = s.ob_filter_timeframe || '1h';
-            // PD Zone Filter loader removed — Volumized OB Trend replaces it
-            // in the UI. The PD Zone backend code is still present (signal
-            // gate, /api/smc/state fields) but the user no longer configures
-            // it; defaults stay in DB and are simply not displayed.
+            // PD Zone Filter — restored alongside Volumized OB Trend.
+            // Defaults TRUE when missing from response (older deploys
+            // without the setting). Backend already had the data path.
+            const pdEnabled = document.getElementById('sm-pd-zone-filter-enabled');
+            if (pdEnabled) pdEnabled.checked = (s.use_pd_zone_filter !== false);
+            const pdTf = document.getElementById('sm-pd-zone-tf');
+            if (pdTf) pdTf.value = s.pd_zone_timeframe || '1h';
+            const pdLongMax = document.getElementById('sm-pd-long-max');
+            if (pdLongMax) pdLongMax.value = (typeof s.pd_long_max_pct === 'number') ? s.pd_long_max_pct : 75;
+            const pdShortMin = document.getElementById('sm-pd-short-min');
+            if (pdShortMin) pdShortMin.value = (typeof s.pd_short_min_pct === 'number') ? s.pd_short_min_pct : 25;
             // === Volumized OB Trend — 7 inputs ===
             // Defaults from DEFAULT_SETTINGS — fallback to those values
             // when the field is missing from the response (older deploys).
@@ -1895,6 +1951,7 @@ function updateSettingsSummary() {
     const htfMethod = document.getElementById('sm-htf-method').value;
     const obOn = document.getElementById('sm-ob-filter-enabled');
     const obTf = document.getElementById('sm-ob-filter-tf');
+    const pdOn = document.getElementById('sm-pd-zone-filter-enabled');
     const volOn = document.getElementById('sm-volumized-enabled');
     
     let summary = `${tf} · size ${isize} · ${modeLabel}`;
@@ -1902,6 +1959,11 @@ function updateSettingsSummary() {
     if (htfOn) summary += ` · HTF ${htfTf} (${htfMethod})`;
     if (obOn && obOn.checked && obTf) {
         summary += ` · OB ${obTf.value.toUpperCase()}`;
+    }
+    if (pdOn && pdOn.checked) {
+        const pdTf = document.getElementById('sm-pd-zone-tf');
+        const pdTfStr = pdTf ? pdTf.value.toUpperCase() : '1H';
+        summary += ` · PD ${pdTfStr}`;
     }
     // Volumized OB Trend line — only show TF + zone count, full settings
     // would clutter. User can hover the section for individual tooltips.
@@ -1948,6 +2010,31 @@ async function updateOBFilter() {
         // user toggles the filter and sees no visible feedback for 10s.
         loadWatchlist();
     } catch (err) { alert('OB Filter update error: ' + err); }
+}
+
+// PD Zone Filter — threshold-based signal gate. Lives alongside the
+// new Volumized OB Trend (which is informational, not gating). Saves
+// all four fields together so partial state never reaches backend.
+async function updatePDZoneFilter() {
+    const enabled = document.getElementById('sm-pd-zone-filter-enabled').checked;
+    const tf = document.getElementById('sm-pd-zone-tf').value || '1h';
+    let longMax = parseFloat(document.getElementById('sm-pd-long-max').value);
+    let shortMin = parseFloat(document.getElementById('sm-pd-short-min').value);
+    if (!isFinite(longMax)) longMax = 75;
+    if (!isFinite(shortMin)) shortMin = 25;
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                use_pd_zone_filter: enabled,
+                pd_zone_timeframe: tf,
+                pd_long_max_pct: longMax,
+                pd_short_min_pct: shortMin,
+            }),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('PD Zone Filter update error: ' + err); }
 }
 
 // Volumized OB Trend — Pine port. Saves all 7 settings together so the
@@ -2285,6 +2372,72 @@ async function loadChart() {
             candleSeries.setMarkers(markers);
         }
         lastEventsKey = eventsKey;
+        
+        // === Volumized OB box on chart ===
+        // Render the LATEST formed OB (Bull or Bear) as two horizontal
+        // lines (top + bottom of the OB box) spanning from the OB's
+        // start_time to the rightmost visible bar. LightweightCharts
+        // has no native rectangle primitive, but two thin lines give
+        // a clean visual ref without any custom canvas drawing.
+        //
+        // Color: green for Bull OB (LONG trend), red for Bear OB (SHORT).
+        // Style: solid for active OB, DASHED for breaker (still tracked
+        // but price has invalidated it). Wider line for emphasis.
+        //
+        // OB lines live in their own storage (volumizedObLines) — we
+        // clear and rebuild them on every render so the latest trend is
+        // always visible without accumulating stale lines across ticks.
+        volumizedObLines.forEach(s => {
+            try { chart.removeSeries(s); } catch (e) {}
+        });
+        volumizedObLines = [];
+        const volMeta = d.volumized_trend_meta || {};
+        const volEnabled = !!d.volumized_enabled;
+        if (volEnabled && volMeta.start_time_sec
+                && typeof volMeta.top === 'number'
+                && typeof volMeta.bottom === 'number'
+                && ohlc.length > 0) {
+            const startT = volMeta.start_time_sec;
+            const endT = ohlc[ohlc.length - 1].time;
+            // Guard against negative span (OB from "future" — shouldn't
+            // happen but if it does, skip rendering to avoid LightWeight
+            // throwing on out-of-order data).
+            if (endT > startT) {
+                const isBull = volMeta.ob_type === 'Bull';
+                const isBreaker = !!volMeta.breaker;
+                const obColor = isBull ? '#16a34a' : '#dc2626';   // green / red
+                const obStyle = isBreaker ? 2 : 0;                 // dashed if breaker
+                const obWidth = isBreaker ? 1 : 2;                 // thinner if breaker
+                // Top line
+                const topLine = chart.addLineSeries({
+                    color: obColor,
+                    lineWidth: obWidth,
+                    lineStyle: obStyle,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                });
+                topLine.setData([
+                    { time: startT, value: volMeta.top },
+                    { time: endT,   value: volMeta.top },
+                ]);
+                volumizedObLines.push(topLine);
+                // Bottom line
+                const botLine = chart.addLineSeries({
+                    color: obColor,
+                    lineWidth: obWidth,
+                    lineStyle: obStyle,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                    crosshairMarkerVisible: false,
+                });
+                botLine.setData([
+                    { time: startT, value: volMeta.bottom },
+                    { time: endT,   value: volMeta.bottom },
+                ]);
+                volumizedObLines.push(botLine);
+            }
+        }
         
         // === Trend badge ===
         // When HTF filter is active, the trend reflects HTF direction
