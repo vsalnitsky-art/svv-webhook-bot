@@ -2561,9 +2561,12 @@ async function loadChart() {
         // This is the user's primary "which way to trade" indicator
         // working alongside the configured CHoCH/BOS Alert mode.
         const volBadge = document.getElementById('sm-volumized-badge');
-        const volEnabled = !!d.volumized_enabled;
+        // NOTE: volEnabled and volMeta are already declared above in the
+        // "Volumized OB box on chart" block (same function scope). Pure
+        // `const` redeclaration in the same scope throws SyntaxError at
+        // parse time, which kills the entire script and leaves the UI
+        // empty (watchlist=0/50, no API calls fired). Reuse them.
         const volTrend = d.volumized_trend;  // 'LONG'|'SHORT'|null
-        const volMeta = d.volumized_trend_meta || {};
         const volTf = (d.volumized_timeframe || '1h').toUpperCase();
         if (volBadge && volEnabled && volTrend) {
             const icon = (volTrend === 'LONG') ? '🟢' : '🔴';
