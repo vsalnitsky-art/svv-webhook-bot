@@ -40,28 +40,180 @@ class TradeStatus(Enum):
 BINANCE_API_KEY = os.environ.get('BINANCE_API_KEY', '')
 BINANCE_API_SECRET = os.environ.get('BINANCE_API_SECRET', '')
 
-# === Bybit API Keys (plain only) ===
-# Encryption-aware loading was removed at the user's request. Render
-# environment variables are already encrypted at rest and access-controlled,
-# so plaintext storage there is acceptable for keys with IP-whitelist and
-# Read+Trade-only permissions (no Withdraw). The previous loader tried
-# _ENCRYPTED variants first and fell back to plain — that priority caused
-# stale `_ENCRYPTED` values to silently shadow new plain keys whenever a
-# user updated plain keys without clearing the _ENCRYPTED slots.
+# === Bybit API Keys — three-tier resolver ===
+# Priority (highest → lowest):
+#   1. DB encrypted blob (set via UI → "Save (encrypted)" button)
+#   2. ENV plain (`BYBIT_API_KEY` / `BYBIT_API_SECRET`)
+#   3. ENV encrypted (`BYBIT_API_KEY_ENCRYPTED` / `BYBIT_API_SECRET_ENCRYPTED`)
 #
-# Now: ONLY `BYBIT_API_KEY` and `BYBIT_API_SECRET` are consulted.
-# `BYBIT_API_KEY_ENCRYPTED`, `BYBIT_API_SECRET_ENCRYPTED`, `ENCRYPTION_KEY`
-# are ignored even if set — no surprise fallbacks.
-BYBIT_API_KEY = os.environ.get('BYBIT_API_KEY', '').strip()
-BYBIT_API_SECRET = os.environ.get('BYBIT_API_SECRET', '').strip()
-if BYBIT_API_KEY and BYBIT_API_SECRET:
-    print(f"[CONFIG] ✅ Bybit keys loaded (plain, {len(BYBIT_API_KEY)} chars)")
-elif BYBIT_API_KEY or BYBIT_API_SECRET:
-    # Only one set — surface the inconsistency loudly so it's not silently
-    # treated as "no auth". Trade Executor will fail; better to know now.
-    print(f"[CONFIG] ❌ Bybit keys INCOMPLETE — set both BYBIT_API_KEY and BYBIT_API_SECRET")
-else:
-    print(f"[CONFIG] ⚠️ Bybit keys not set — public API only (no trading)")
+# The DB-first priority fixes the original bug that caused us to remove
+# the encryption layer: stale ENV `_ENCRYPTED` values silently shadowing
+# plain keys when the user updated plain after `_ENCRYPTED` expired. Now
+# the most recent action (UI save → DB) always wins, ENV is fallback only.
+#
+# Master encryption key (`ENCRYPTION_KEY` env var) is REQUIRED only if
+# you actually use encrypted storage (DB or ENV). Pure plain ENV works
+# without it. Generate with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# The UI exposes a "Generate" button that produces this for you.
+
+def _decrypt_fernet(encrypted_value: str, encryption_key: str) -> str:
+    """Decrypt a Fernet-encrypted blob with the given master key.
+    
+    Returns the decrypted plaintext, or empty string on failure (with
+    a printed warning — never raises). Empty input → empty output, no
+    error log (treated as "nothing to decrypt", not a failure).
+    """
+    if not encrypted_value or not encryption_key:
+        return ''
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(encryption_key.encode() if isinstance(encryption_key, str)
+                   else encryption_key)
+        decrypted = f.decrypt(encrypted_value.encode() if isinstance(encrypted_value, str)
+                              else encrypted_value)
+        return decrypted.decode()
+    except Exception as e:
+        print(f"[CONFIG] ⚠️ Fernet decrypt failed: {e}")
+        return ''
+
+
+def _encrypt_fernet(plaintext: str, encryption_key: str) -> str:
+    """Encrypt plaintext with Fernet (master key from ENCRYPTION_KEY env).
+    
+    Returned blob is the standard URL-safe-base64 Fernet token (starts
+    with `gAAAA...`). Stored in DB and/or shown to user for copy-paste
+    into ENV vars. Returns empty string on failure.
+    """
+    if not plaintext or not encryption_key:
+        return ''
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(encryption_key.encode() if isinstance(encryption_key, str)
+                   else encryption_key)
+        token = f.encrypt(plaintext.encode() if isinstance(plaintext, str)
+                          else plaintext)
+        return token.decode()
+    except Exception as e:
+        print(f"[CONFIG] ⚠️ Fernet encrypt failed: {e}")
+        return ''
+
+
+def _resolve_bybit_keys_from_db():
+    """Try to load encrypted keys from DB. Returns (key, secret, source_tag) or None.
+    
+    Lazy DB import — bot_settings is imported very early in the boot
+    chain, before storage.db_operations is fully wired. The import here
+    handles both cases: if DB is up, we use it; if not, we silently fall
+    through to env fallbacks.
+    """
+    enc_key = os.environ.get('ENCRYPTION_KEY', '').strip()
+    if not enc_key:
+        return None  # No master key → can't decrypt anything
+    try:
+        from storage.db_operations import get_db
+        db = get_db()
+        if db is None:
+            return None
+        # Use get_setting which returns the stored value or default ''
+        db_key_enc = db.get_setting('bybit_api_key_encrypted', '') or ''
+        db_secret_enc = db.get_setting('bybit_api_secret_encrypted', '') or ''
+        if not (db_key_enc and db_secret_enc):
+            return None
+        k = _decrypt_fernet(db_key_enc, enc_key)
+        s = _decrypt_fernet(db_secret_enc, enc_key)
+        if k and s:
+            return k, s, 'db_encrypted'
+        return None
+    except Exception as e:
+        # DB not ready or any other failure — silent fall-through.
+        # We don't print here because this gets called at module import
+        # time when DB might not be initialised yet (expected race).
+        return None
+
+
+def _resolve_bybit_keys():
+    """Three-tier resolver — see module-level docstring for priority order.
+    
+    Returns (api_key, api_secret). Both empty when nothing configured
+    (bot still runs in public-API mode without trading).
+    
+    Logs which source won at INFO level so users can verify in startup
+    logs which key set is active. The log includes char count (NOT the
+    key itself — never log credentials) for quick visual sanity check.
+    """
+    enc_key = os.environ.get('ENCRYPTION_KEY', '').strip()
+    
+    # 1) DB encrypted — highest priority (most recent user action wins)
+    db_result = _resolve_bybit_keys_from_db()
+    if db_result:
+        k, s, _ = db_result
+        print(f"[CONFIG] ✅ Bybit keys: DB encrypted ({len(k)} chars)")
+        return k, s
+    
+    # 2) ENV plain — simple Render setup, no encryption needed
+    env_plain_key = os.environ.get('BYBIT_API_KEY', '').strip()
+    env_plain_secret = os.environ.get('BYBIT_API_SECRET', '').strip()
+    if env_plain_key and env_plain_secret:
+        print(f"[CONFIG] ✅ Bybit keys: ENV plain ({len(env_plain_key)} chars)")
+        return env_plain_key, env_plain_secret
+    
+    # 3) ENV encrypted — legacy / explicit fallback
+    env_enc_key = os.environ.get('BYBIT_API_KEY_ENCRYPTED', '').strip()
+    env_enc_secret = os.environ.get('BYBIT_API_SECRET_ENCRYPTED', '').strip()
+    if env_enc_key and env_enc_secret and enc_key:
+        k = _decrypt_fernet(env_enc_key, enc_key)
+        s = _decrypt_fernet(env_enc_secret, enc_key)
+        if k and s:
+            print(f"[CONFIG] ✅ Bybit keys: ENV encrypted ({len(k)} chars)")
+            return k, s
+        else:
+            # Decrypt failed even though both vars are set — surface this
+            # loudly because it usually means a wrong ENCRYPTION_KEY.
+            print(f"[CONFIG] ❌ ENV encrypted keys present but DECRYPT FAILED — "
+                  f"check ENCRYPTION_KEY matches the one used for encryption")
+    
+    # Diagnose what was missing for the user's benefit
+    if (env_plain_key and not env_plain_secret) or (env_plain_secret and not env_plain_key):
+        print(f"[CONFIG] ❌ Bybit ENV plain INCOMPLETE — both BYBIT_API_KEY and "
+              f"BYBIT_API_SECRET must be set together")
+    elif (env_enc_key or env_enc_secret) and not enc_key:
+        print(f"[CONFIG] ❌ Bybit ENV encrypted set but ENCRYPTION_KEY missing — "
+              f"can't decrypt")
+    else:
+        print(f"[CONFIG] ⚠️ Bybit keys not configured — public API only "
+              f"(set via UI Credentials panel, or BYBIT_API_KEY env)")
+    return '', ''
+
+
+# Module-level constants — read once at startup (before DB is fully ready,
+# so this typically picks up ENV-based keys). If keys are stored in DB,
+# the call to _resolve_bybit_keys_from_db() returns None here (DB not
+# initialised yet) — but reload_bybit_keys() is called later from
+# main_bot startup AFTER db is ready, picking up the DB values.
+BYBIT_API_KEY, BYBIT_API_SECRET = _resolve_bybit_keys()
+
+
+def reload_bybit_keys():
+    """Re-read Bybit keys from all sources. Called after DB init AND after
+    UI save to pick up new keys without a full restart.
+    
+    Mutates module-level BYBIT_API_KEY and BYBIT_API_SECRET. Code that
+    imports those at module load time still has stale references — to
+    use the fresh values on each access, call this module's
+    `get_bybit_keys()` instead.
+    """
+    global BYBIT_API_KEY, BYBIT_API_SECRET
+    BYBIT_API_KEY, BYBIT_API_SECRET = _resolve_bybit_keys()
+    return BYBIT_API_KEY, BYBIT_API_SECRET
+
+
+def get_bybit_keys():
+    """Fresh getter — always resolves at call time. Use this in places
+    that need up-to-date keys (e.g., after a UI save). For startup-time
+    config, the module constants are fine.
+    """
+    return _resolve_bybit_keys()
 
 # Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')

@@ -2544,6 +2544,349 @@ def register_api_routes(app):
             print(f'[APP] Top-100 OB clear error: {e}')
             return jsonify({'ok': False, 'error': str(e)}), 500
     
+    # ====================================================================
+    # === Bybit API Credentials management ===
+    # ====================================================================
+    # Five endpoints power the UI Credentials panel:
+    #   GET  /api/credentials/status            — current source + masked preview
+    #   POST /api/credentials/save              — plain → encrypt → DB
+    #   POST /api/credentials/save-encrypted    — already-encrypted blobs → DB
+    #   POST /api/credentials/clear             — remove from DB (fall back to ENV)
+    #   POST /api/credentials/test              — call Bybit private API with auth
+    #   POST /api/credentials/generate-master   — generate new ENCRYPTION_KEY
+    # All endpoints return JSON and never echo secrets back to the client.
+    
+    def _mask(secret: str) -> str:
+        """Return masked preview: '••••••AB12' (8 dots + last 4 chars).
+        Empty string returns 'none' so the UI shows a clear 'not set' state.
+        """
+        if not secret:
+            return 'none'
+        if len(secret) <= 4:
+            return '•' * len(secret)
+        return '•' * 8 + secret[-4:]
+    
+    @app.route('/api/credentials/status')
+    def api_credentials_status():
+        """Status of Bybit credentials: which source won, masked preview,
+        whether ENCRYPTION_KEY is set, whether DB has stored values.
+        
+        Used by the UI to render the status badge and decide which
+        action buttons to enable (e.g., 'Save (encrypted)' is disabled
+        when ENCRYPTION_KEY is missing).
+        """
+        from config.bot_settings import get_bybit_keys, _resolve_bybit_keys_from_db
+        from storage.db_operations import get_db
+        
+        api_key, api_secret = get_bybit_keys()
+        
+        # Determine source by re-running the resolver paths
+        source = 'none'
+        if api_key and api_secret:
+            db_result = _resolve_bybit_keys_from_db()
+            if db_result and db_result[0] == api_key:
+                source = 'db_encrypted'
+            elif os.environ.get('BYBIT_API_KEY', '').strip() == api_key:
+                source = 'env_plain'
+            else:
+                source = 'env_encrypted'
+        
+        encryption_key_set = bool(os.environ.get('ENCRYPTION_KEY', '').strip())
+        
+        # Check if DB has stored encrypted values (regardless of whether
+        # they decrypt — user may want to know they're there)
+        db_has_stored = False
+        try:
+            db = get_db()
+            db_has_stored = bool(
+                db.get_setting('bybit_api_key_encrypted', '')
+                and db.get_setting('bybit_api_secret_encrypted', '')
+            )
+        except Exception:
+            pass
+        
+        return jsonify({
+            'ok': True,
+            'source': source,                    # 'db_encrypted' | 'env_plain' | 'env_encrypted' | 'none'
+            'has_keys': bool(api_key and api_secret),
+            'key_preview': _mask(api_key),
+            'secret_preview': _mask(api_secret),
+            'encryption_key_set': encryption_key_set,
+            'db_has_stored': db_has_stored,
+            'env_plain_set': bool(os.environ.get('BYBIT_API_KEY', '').strip()
+                                  and os.environ.get('BYBIT_API_SECRET', '').strip()),
+            'env_encrypted_set': bool(os.environ.get('BYBIT_API_KEY_ENCRYPTED', '').strip()
+                                      and os.environ.get('BYBIT_API_SECRET_ENCRYPTED', '').strip()),
+        })
+    
+    @app.route('/api/credentials/save', methods=['POST'])
+    def api_credentials_save():
+        """Encrypt plain key+secret and save to DB.
+        
+        Request body (JSON):
+          {"api_key": "...", "api_secret": "..."}
+        
+        Server-side:
+          1. Validates ENCRYPTION_KEY is set
+          2. Encrypts each with Fernet
+          3. Stores encrypted blobs in DB under keys
+             `bybit_api_key_encrypted` and `bybit_api_secret_encrypted`
+          4. Reloads the Bybit connector with new keys
+          5. Returns success + new masked preview
+        
+        We never echo the plaintext back. The encrypted form is also
+        not echoed by default (use save-encrypted endpoint if you need
+        to see it). This prevents accidental key exposure in browser
+        history / network tabs of shared screens.
+        """
+        from config.bot_settings import _encrypt_fernet, reload_bybit_keys, get_bybit_keys
+        from storage.db_operations import get_db
+        from core.bybit_connector import get_connector
+        
+        enc_key = os.environ.get('ENCRYPTION_KEY', '').strip()
+        if not enc_key:
+            return jsonify({'ok': False,
+                'error': 'ENCRYPTION_KEY env var not set. Generate one via '
+                         '/api/credentials/generate-master and add it to '
+                         'Render env vars first.'}), 400
+        
+        data = request.get_json(silent=True) or {}
+        api_key = (data.get('api_key') or '').strip()
+        api_secret = (data.get('api_secret') or '').strip()
+        if not api_key or not api_secret:
+            return jsonify({'ok': False,
+                'error': 'Both api_key and api_secret required'}), 400
+        
+        # Sanity: Bybit keys are typically 18 chars for key, 36 for secret.
+        # Don't enforce strictly (Bybit may change formats), but warn if way off.
+        if len(api_key) < 8 or len(api_secret) < 16:
+            return jsonify({'ok': False,
+                'error': f'Keys look too short (key={len(api_key)} chars, '
+                         f'secret={len(api_secret)} chars). Did you paste '
+                         f'them correctly?'}), 400
+        
+        # Encrypt with Fernet
+        key_enc = _encrypt_fernet(api_key, enc_key)
+        secret_enc = _encrypt_fernet(api_secret, enc_key)
+        if not (key_enc and secret_enc):
+            return jsonify({'ok': False,
+                'error': 'Encryption failed — check ENCRYPTION_KEY format '
+                         '(must be valid Fernet base64)'}), 500
+        
+        # Persist
+        try:
+            db = get_db()
+            db.set_setting('bybit_api_key_encrypted', key_enc)
+            db.set_setting('bybit_api_secret_encrypted', secret_enc)
+        except Exception as e:
+            return jsonify({'ok': False,
+                'error': f'DB write failed: {e}'}), 500
+        
+        # Refresh resolver and Bybit connector
+        reload_bybit_keys()
+        try:
+            connector = get_connector()
+            if connector:
+                connector.reload_keys()
+        except Exception as e:
+            # DB save succeeded, connector reload failed — surface but
+            # don't fail the whole request. Next restart will pick it up.
+            print(f"[CREDS] Connector reload after save failed: {e}")
+        
+        new_key, _ = get_bybit_keys()
+        print(f"[CREDS] ✅ Bybit keys updated via UI (now {len(new_key)} chars, "
+              f"source=DB encrypted)")
+        return jsonify({
+            'ok': True,
+            'source': 'db_encrypted',
+            'key_preview': _mask(new_key),
+            'message': 'Keys encrypted and saved. Active immediately.',
+        })
+    
+    @app.route('/api/credentials/save-encrypted', methods=['POST'])
+    def api_credentials_save_encrypted():
+        """Save already-encrypted blobs to DB without re-encrypting.
+        
+        For users who already have Fernet-encrypted values (e.g. from
+        a previous deployment's ENV vars they want to migrate to DB).
+        
+        Request body (JSON):
+          {"api_key_encrypted": "gAAAA...", "api_secret_encrypted": "gAAAA..."}
+        
+        Server verifies they decrypt with the current ENCRYPTION_KEY
+        before storing — protects against putting unreachable garbage
+        into the DB.
+        """
+        from config.bot_settings import _decrypt_fernet, reload_bybit_keys
+        from storage.db_operations import get_db
+        from core.bybit_connector import get_connector
+        
+        enc_key = os.environ.get('ENCRYPTION_KEY', '').strip()
+        if not enc_key:
+            return jsonify({'ok': False,
+                'error': 'ENCRYPTION_KEY env var not set'}), 400
+        
+        data = request.get_json(silent=True) or {}
+        key_enc = (data.get('api_key_encrypted') or '').strip()
+        secret_enc = (data.get('api_secret_encrypted') or '').strip()
+        if not key_enc or not secret_enc:
+            return jsonify({'ok': False,
+                'error': 'Both api_key_encrypted and api_secret_encrypted required'}), 400
+        
+        # Verify both decrypt cleanly — never store unreachable blobs
+        test_key = _decrypt_fernet(key_enc, enc_key)
+        test_secret = _decrypt_fernet(secret_enc, enc_key)
+        if not test_key or not test_secret:
+            return jsonify({'ok': False,
+                'error': 'Decrypt verification failed — these blobs were '
+                         'NOT encrypted with the current ENCRYPTION_KEY'}), 400
+        
+        try:
+            db = get_db()
+            db.set_setting('bybit_api_key_encrypted', key_enc)
+            db.set_setting('bybit_api_secret_encrypted', secret_enc)
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'DB write failed: {e}'}), 500
+        
+        reload_bybit_keys()
+        try:
+            c = get_connector()
+            if c: c.reload_keys()
+        except Exception:
+            pass
+        print(f"[CREDS] ✅ Encrypted Bybit keys imported to DB ({len(test_key)} chars)")
+        return jsonify({
+            'ok': True,
+            'source': 'db_encrypted',
+            'key_preview': _mask(test_key),
+        })
+    
+    @app.route('/api/credentials/clear', methods=['POST'])
+    def api_credentials_clear():
+        """Delete DB-stored keys, fall back to ENV vars.
+        
+        Use case: user wants to revert to env-var-based config without
+        manually editing the DB. After clear, the next resolver call
+        skips the DB tier and uses ENV plain or ENV encrypted.
+        """
+        from config.bot_settings import reload_bybit_keys
+        from storage.db_operations import get_db
+        from core.bybit_connector import get_connector
+        
+        try:
+            db = get_db()
+            db.set_setting('bybit_api_key_encrypted', '')
+            db.set_setting('bybit_api_secret_encrypted', '')
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'DB write failed: {e}'}), 500
+        
+        reload_bybit_keys()
+        try:
+            c = get_connector()
+            if c: c.reload_keys()
+        except Exception:
+            pass
+        print(f"[CREDS] ✅ DB-stored Bybit keys cleared; falling back to ENV")
+        return jsonify({'ok': True, 'message': 'DB keys cleared. Falling back to ENV.'})
+    
+    @app.route('/api/credentials/test', methods=['POST'])
+    def api_credentials_test():
+        """Test the currently-active Bybit keys by calling a private endpoint.
+        
+        We use `get_wallet_balance` which requires auth but doesn't move
+        any money. Errors are sanitized — we return Bybit's `retCode`
+        and `retMsg` plus a friendly mapped explanation (e.g.,
+        33004 → 'API key expired').
+        """
+        from core.bybit_connector import get_connector
+        c = get_connector()
+        if c is None:
+            return jsonify({'ok': False, 'error': 'Connector not initialised'}), 500
+        if not (c.api_key and c.api_secret):
+            return jsonify({'ok': False, 'error': 'No keys configured'}), 400
+        try:
+            # Try a lightweight private call. Use whatever pybit exposes for
+            # account info — wallet balance is universal.
+            r = c.session.get_wallet_balance(accountType='UNIFIED')
+            ret_code = r.get('retCode', -1)
+            ret_msg = r.get('retMsg', 'unknown')
+            if ret_code == 0:
+                # Auth works — but don't echo any balance numbers back.
+                return jsonify({
+                    'ok': True,
+                    'auth_works': True,
+                    'message': 'Authentication successful — keys are valid',
+                    'key_preview': _mask(c.api_key),
+                })
+            else:
+                # Common error codes:
+                #   10003 — invalid API key
+                #   33004 — API key expired
+                #   10004 — sign error (wrong secret)
+                #   10005 — permissions error
+                #   10006 — rate limited
+                friendly = {
+                    10003: 'Invalid API key',
+                    10004: 'Sign error (wrong API secret)',
+                    10005: 'Permission denied — key missing Read+Trade scope',
+                    10006: 'Rate limited — try again in a few seconds',
+                    33004: 'API key EXPIRED — create new ones on Bybit',
+                }.get(ret_code, ret_msg)
+                return jsonify({
+                    'ok': False,
+                    'auth_works': False,
+                    'ret_code': ret_code,
+                    'ret_msg': ret_msg,
+                    'friendly': friendly,
+                })
+        except Exception as e:
+            err = str(e)
+            return jsonify({
+                'ok': False,
+                'auth_works': False,
+                'error': err[:300],  # avoid huge stack traces in UI
+            }), 200
+    
+    @app.route('/api/credentials/generate-master', methods=['POST'])
+    def api_credentials_generate_master():
+        """Generate a new Fernet master key for ENCRYPTION_KEY env var.
+        
+        Returns the generated key to display in the UI. User copies it
+        to Render env vars manually (we can't write env vars from inside
+        the app — that's a Render dashboard action). After they save
+        the env var and redeploy, the new ENCRYPTION_KEY is active.
+        
+        Note: rotating the master key requires re-encrypting all stored
+        keys. To keep this simple, we ALSO return a flag indicating
+        whether the user has stored DB keys (which would become
+        unreadable after a key rotation).
+        """
+        try:
+            from cryptography.fernet import Fernet
+            new_key = Fernet.generate_key().decode()
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)}), 500
+        
+        # Check whether user has DB-encrypted keys (which would need re-encryption)
+        try:
+            from storage.db_operations import get_db
+            db = get_db()
+            has_db_keys = bool(
+                db.get_setting('bybit_api_key_encrypted', '')
+                and db.get_setting('bybit_api_secret_encrypted', '')
+            )
+        except Exception:
+            has_db_keys = False
+        
+        return jsonify({
+            'ok': True,
+            'encryption_key': new_key,
+            'has_stored_keys': has_db_keys,
+            'warning': ('You have DB-stored encrypted keys. Changing ENCRYPTION_KEY '
+                        'will make them unreadable. Re-save your plain keys after '
+                        'updating the env var.') if has_db_keys else None,
+        })
+    
     @app.route('/api/bybit/perpetual-symbols')
     def api_bybit_perpetual_symbols():
         """Return the set of USDT-perpetual symbols available on Bybit

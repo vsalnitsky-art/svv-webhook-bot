@@ -14,6 +14,7 @@
         <!-- Tabs -->
         <div class="settings-tabs">
             <button type="button" class="tab-btn active" data-tab="general">General</button>
+            <button type="button" class="tab-btn" data-tab="credentials">🔐 API Credentials</button>
             <button type="button" class="tab-btn" data-tab="trend">📈 Trend Context</button>
             <button type="button" class="tab-btn" data-tab="sleeper">Sleeper Detection</button>
             <button type="button" class="tab-btn" data-tab="orderblock">Order Blocks</button>
@@ -71,6 +72,158 @@
                             <button type="button" class="btn btn-secondary" onclick="resetPaperBalance()">Reset to $10K</button>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 🔐 API Credentials Tab -->
+        <!-- 
+          Three-tier resolver UI:
+            1. DB encrypted (managed here)
+            2. ENV plain (BYBIT_API_KEY)
+            3. ENV encrypted (BYBIT_API_KEY_ENCRYPTED)
+          
+          The UI shows current status, lets user encrypt+save plain keys,
+          import already-encrypted blobs, clear DB to fall back to ENV,
+          test current keys against Bybit's auth, and generate a new
+          master ENCRYPTION_KEY if needed.
+        -->
+        <div class="tab-content" id="tab-credentials">
+            <div class="settings-section">
+                <h2>🔐 Bybit API Credentials</h2>
+                <p class="section-desc">
+                    Manage your Bybit API keys. Keys can be entered in plain form
+                    (the bot encrypts them with Fernet and stores in DB) or pasted
+                    already-encrypted. The DB-stored keys override ENV vars, so UI
+                    changes always take effect immediately.
+                </p>
+
+                <!-- Current status block — populated by JS from /api/credentials/status -->
+                <div id="creds-status-block" style="background: rgba(255,255,255,0.04); border: 1px solid #444; border-radius: 6px; padding: 16px; margin-bottom: 20px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">Current source</div>
+                            <div style="font-size: 1.1rem; font-weight: 600;" id="creds-status-source">Loading…</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">API Key</div>
+                            <div style="font-family: monospace; font-size: 0.95rem;" id="creds-status-key">…</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">ENCRYPTION_KEY env</div>
+                            <div id="creds-status-master" style="font-size: 0.95rem;">…</div>
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-secondary" onclick="testCredentials()" id="creds-test-btn">
+                                🧪 Test against Bybit
+                            </button>
+                        </div>
+                    </div>
+                    <div id="creds-test-result" style="margin-top: 10px; padding: 8px 12px; border-radius: 4px; display: none; font-size: 0.9rem;"></div>
+                </div>
+
+                <!-- Master key generation — surfaces only when ENCRYPTION_KEY not set -->
+                <div id="creds-no-master" style="background: rgba(255,193,7,0.1); border: 1px solid rgba(255,193,7,0.4); border-radius: 6px; padding: 14px; margin-bottom: 20px; display: none;">
+                    <div style="font-weight: 600; margin-bottom: 6px; color: #ffc107;">
+                        ⚠️ ENCRYPTION_KEY not set
+                    </div>
+                    <p style="margin: 0 0 10px 0; font-size: 0.9rem;">
+                        To save encrypted keys in DB, you need a master encryption key
+                        in the <code>ENCRYPTION_KEY</code> env var. Click below to generate
+                        one, copy it to Render env vars, redeploy, then come back here.
+                    </p>
+                    <button type="button" class="btn btn-secondary" onclick="generateMasterKey()">
+                        🔑 Generate ENCRYPTION_KEY
+                    </button>
+                    <div id="creds-generated-master" style="margin-top: 10px; display: none;">
+                        <div style="font-size: 0.85rem; color: #888; margin-bottom: 4px;">
+                            Generated key — copy this to Render env var <code>ENCRYPTION_KEY</code>:
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="creds-generated-master-value" readonly
+                                   style="flex: 1; padding: 8px; background: #1a1a1a; border: 1px solid #555; color: #fff; border-radius: 4px; font-family: monospace; font-size: 0.85rem;">
+                            <button type="button" class="btn btn-secondary"
+                                    onclick="copyToClipboard('creds-generated-master-value')">📋 Copy</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab strip for entry mode -->
+                <div style="border-bottom: 1px solid #444; margin-bottom: 16px;">
+                    <button type="button" class="creds-subtab active" data-subtab="plain"
+                            onclick="switchCredsSubtab('plain')"
+                            style="background: none; border: none; color: #fff; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid #4a9eff;">
+                        Enter plain keys (bot encrypts)
+                    </button>
+                    <button type="button" class="creds-subtab" data-subtab="encrypted"
+                            onclick="switchCredsSubtab('encrypted')"
+                            style="background: none; border: none; color: #888; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent;">
+                        Import pre-encrypted
+                    </button>
+                </div>
+
+                <!-- Plain entry subtab — bot encrypts before storing -->
+                <div id="creds-subtab-plain" class="creds-subtab-content">
+                    <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 14px;">
+                        Paste the API Key and Secret from your Bybit account.
+                        The bot encrypts them server-side with Fernet (using
+                        the <code>ENCRYPTION_KEY</code> env var) before storing
+                        in the database. Plaintext is never logged or echoed back.
+                    </p>
+                    <div class="form-group">
+                        <label for="creds-plain-key">API Key</label>
+                        <input type="password" id="creds-plain-key" class="form-control"
+                               placeholder="e.g. xJ8aBcDeFgHiJkLmNo" autocomplete="off">
+                        <small>Click the eye icon in your browser's password field to peek.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="creds-plain-secret">API Secret</label>
+                        <input type="password" id="creds-plain-secret" class="form-control"
+                               placeholder="36-character secret" autocomplete="off">
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="saveCredentialsPlain()"
+                            id="creds-save-plain-btn">
+                        💾 Encrypt & Save to DB
+                    </button>
+                </div>
+
+                <!-- Pre-encrypted entry subtab — paste Fernet blobs directly -->
+                <div id="creds-subtab-encrypted" class="creds-subtab-content" style="display: none;">
+                    <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 14px;">
+                        Paste already-encrypted blobs (Fernet tokens starting with
+                        <code>gAAAA...</code>). The bot verifies they decrypt with
+                        the current <code>ENCRYPTION_KEY</code> before storing —
+                        you'll get an error if they were encrypted with a different key.
+                    </p>
+                    <div class="form-group">
+                        <label for="creds-enc-key">Encrypted API Key</label>
+                        <input type="text" id="creds-enc-key" class="form-control"
+                               placeholder="gAAAAA..." autocomplete="off"
+                               style="font-family: monospace; font-size: 0.85rem;">
+                    </div>
+                    <div class="form-group">
+                        <label for="creds-enc-secret">Encrypted API Secret</label>
+                        <input type="text" id="creds-enc-secret" class="form-control"
+                               placeholder="gAAAAA..." autocomplete="off"
+                               style="font-family: monospace; font-size: 0.85rem;">
+                    </div>
+                    <button type="button" class="btn btn-primary" onclick="saveCredentialsEncrypted()"
+                            id="creds-save-enc-btn">
+                        💾 Save Encrypted Blobs to DB
+                    </button>
+                </div>
+
+                <!-- Danger zone — clear DB-stored keys to fall back to ENV -->
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #333;">
+                    <h3 style="font-size: 1rem; color: #ff6b6b;">Danger zone</h3>
+                    <p style="font-size: 0.85rem; color: #888; margin-bottom: 10px;">
+                        Clear DB-stored keys to fall back to ENV vars
+                        (<code>BYBIT_API_KEY</code> or <code>BYBIT_API_KEY_ENCRYPTED</code>).
+                        Useful when reverting to env-based config.
+                    </p>
+                    <button type="button" class="btn btn-secondary" onclick="clearCredentials()">
+                        🗑️ Clear DB keys (fall back to ENV)
+                    </button>
                 </div>
             </div>
         </div>
@@ -1752,6 +1905,232 @@ document.addEventListener('DOMContentLoaded', function() {
     if (document.getElementById('blacklist-items')) {
         loadBlacklist();
     }
+    // Load credentials status if the credentials tab exists
+    if (document.getElementById('creds-status-block')) {
+        loadCredentialsStatus();
+    }
 });
+
+// ====================================================================
+// 🔐 API Credentials — UI handlers for the three-tier resolver
+// ====================================================================
+//
+// Five operations, all gated on the credentials tab being present so
+// this code is harmless to load on pages that don't expose it:
+//   loadCredentialsStatus()    — populate the status block
+//   saveCredentialsPlain()     — encrypt + save plain key/secret
+//   saveCredentialsEncrypted() — save pre-encrypted blobs (no re-encryption)
+//   clearCredentials()         — drop DB keys → fall back to ENV
+//   testCredentials()          — call Bybit auth API to verify keys work
+//   generateMasterKey()        — generate new ENCRYPTION_KEY for ENV
+//
+// We never store secrets in JS variables longer than needed — inputs
+// are cleared after successful save, and the test result only echoes
+// the masked preview (never the raw key).
+
+async function loadCredentialsStatus() {
+    try {
+        const r = await fetch('/api/credentials/status');
+        const d = await r.json();
+        if (!d.ok) return;
+        
+        // Source label with color coding so user sees status at a glance
+        const sourceEl = document.getElementById('creds-status-source');
+        const sourceLabel = {
+            'db_encrypted': '🟢 DB (encrypted)',
+            'env_plain': '🟡 ENV plain',
+            'env_encrypted': '🟢 ENV encrypted',
+            'none': '🔴 Not configured',
+        }[d.source] || d.source;
+        sourceEl.textContent = sourceLabel;
+        
+        document.getElementById('creds-status-key').textContent = d.key_preview;
+        
+        // Master key indicator + show/hide the generation panel
+        const masterEl = document.getElementById('creds-status-master');
+        masterEl.textContent = d.encryption_key_set ? '✅ set' : '❌ NOT set';
+        masterEl.style.color = d.encryption_key_set ? '#4caf50' : '#f44336';
+        document.getElementById('creds-no-master').style.display =
+            d.encryption_key_set ? 'none' : 'block';
+        
+        // Disable the encrypted-save button if master key missing
+        const savePlainBtn = document.getElementById('creds-save-plain-btn');
+        const saveEncBtn = document.getElementById('creds-save-enc-btn');
+        if (savePlainBtn) savePlainBtn.disabled = !d.encryption_key_set;
+        if (saveEncBtn) saveEncBtn.disabled = !d.encryption_key_set;
+    } catch (e) {
+        console.error('Failed to load credentials status:', e);
+    }
+}
+
+function switchCredsSubtab(name) {
+    document.querySelectorAll('.creds-subtab').forEach(btn => {
+        const active = btn.dataset.subtab === name;
+        btn.style.color = active ? '#fff' : '#888';
+        btn.style.borderBottomColor = active ? '#4a9eff' : 'transparent';
+    });
+    document.querySelectorAll('.creds-subtab-content').forEach(el => {
+        el.style.display = el.id === `creds-subtab-${name}` ? 'block' : 'none';
+    });
+}
+
+async function saveCredentialsPlain() {
+    const keyEl = document.getElementById('creds-plain-key');
+    const secretEl = document.getElementById('creds-plain-secret');
+    const apiKey = keyEl.value.trim();
+    const apiSecret = secretEl.value.trim();
+    if (!apiKey || !apiSecret) {
+        alert('Both API Key and Secret are required');
+        return;
+    }
+    const btn = document.getElementById('creds-save-plain-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Encrypting & saving…';
+    try {
+        const r = await fetch('/api/credentials/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({api_key: apiKey, api_secret: apiSecret}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            // Clear inputs so the secret doesn't sit in the DOM
+            keyEl.value = '';
+            secretEl.value = '';
+            showToast('✅ Keys encrypted and saved. Active immediately.');
+            await loadCredentialsStatus();
+        } else {
+            alert('Save failed: ' + (d.error || 'unknown error'));
+        }
+    } catch (e) {
+        alert('Network error: ' + e);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '💾 Encrypt & Save to DB';
+    }
+}
+
+async function saveCredentialsEncrypted() {
+    const keyEl = document.getElementById('creds-enc-key');
+    const secretEl = document.getElementById('creds-enc-secret');
+    const apiKeyEnc = keyEl.value.trim();
+    const apiSecretEnc = secretEl.value.trim();
+    if (!apiKeyEnc || !apiSecretEnc) {
+        alert('Both encrypted blobs are required');
+        return;
+    }
+    const btn = document.getElementById('creds-save-enc-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Verifying & saving…';
+    try {
+        const r = await fetch('/api/credentials/save-encrypted', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                api_key_encrypted: apiKeyEnc,
+                api_secret_encrypted: apiSecretEnc,
+            }),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            keyEl.value = '';
+            secretEl.value = '';
+            showToast('✅ Encrypted blobs verified and saved.');
+            await loadCredentialsStatus();
+        } else {
+            alert('Save failed: ' + (d.error || 'unknown error'));
+        }
+    } catch (e) {
+        alert('Network error: ' + e);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '💾 Save Encrypted Blobs to DB';
+    }
+}
+
+async function clearCredentials() {
+    if (!confirm('Clear DB-stored Bybit keys?\n\nNew keys will be loaded '
+                 + 'from ENV vars (BYBIT_API_KEY or BYBIT_API_KEY_ENCRYPTED). '
+                 + 'If ENV is not set, the bot will run in public-API mode '
+                 + '(no trading).')) return;
+    try {
+        const r = await fetch('/api/credentials/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.ok) {
+            showToast('✅ ' + d.message);
+            await loadCredentialsStatus();
+        } else {
+            alert('Clear failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) {
+        alert('Network error: ' + e);
+    }
+}
+
+async function testCredentials() {
+    const resultEl = document.getElementById('creds-test-result');
+    const btn = document.getElementById('creds-test-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Testing…';
+    resultEl.style.display = 'none';
+    try {
+        const r = await fetch('/api/credentials/test', {method: 'POST'});
+        const d = await r.json();
+        resultEl.style.display = 'block';
+        if (d.ok && d.auth_works) {
+            resultEl.style.background = 'rgba(76,175,80,0.15)';
+            resultEl.style.border = '1px solid rgba(76,175,80,0.4)';
+            resultEl.style.color = '#a5d6a7';
+            resultEl.innerHTML = `✅ <b>Authentication OK.</b> Keys are valid. Preview: <code>${d.key_preview}</code>`;
+        } else {
+            resultEl.style.background = 'rgba(244,67,54,0.15)';
+            resultEl.style.border = '1px solid rgba(244,67,54,0.4)';
+            resultEl.style.color = '#ef9a9a';
+            const friendly = d.friendly || d.error || d.ret_msg || 'unknown error';
+            const code = d.ret_code ? ` (code ${d.ret_code})` : '';
+            resultEl.innerHTML = `❌ <b>Auth failed${code}:</b> ${friendly}`;
+        }
+    } catch (e) {
+        resultEl.style.display = 'block';
+        resultEl.style.background = 'rgba(244,67,54,0.15)';
+        resultEl.style.color = '#ef9a9a';
+        resultEl.innerHTML = `❌ Network error: ${e}`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🧪 Test against Bybit';
+    }
+}
+
+async function generateMasterKey() {
+    try {
+        const r = await fetch('/api/credentials/generate-master', {method: 'POST'});
+        const d = await r.json();
+        if (!d.ok) {
+            alert('Generation failed: ' + (d.error || 'unknown'));
+            return;
+        }
+        const valueEl = document.getElementById('creds-generated-master-value');
+        valueEl.value = d.encryption_key;
+        document.getElementById('creds-generated-master').style.display = 'block';
+        if (d.warning) {
+            alert('⚠️ Warning: ' + d.warning);
+        }
+    } catch (e) {
+        alert('Network error: ' + e);
+    }
+}
+
+function copyToClipboard(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.select();
+    navigator.clipboard.writeText(el.value).then(() => {
+        showToast('📋 Copied to clipboard');
+    }).catch(() => {
+        // Fallback for older browsers
+        document.execCommand('copy');
+        showToast('📋 Copied');
+    });
+}
 </script>
 {% endblock %}

@@ -32,6 +32,30 @@ class BybitConnector:
         self._perp_symbols_cache: Optional[set] = None
         self._perp_symbols_cached_at: float = 0.0
     
+    def reload_keys(self) -> bool:
+        """Re-read API keys from config (after UI save) and rebuild HTTP session.
+        
+        Called from `/api/credentials/save` and related endpoints when the
+        user updates keys via the UI. Avoids a full service restart —
+        the new session is wired up immediately, all subsequent private
+        API calls use the new credentials.
+        
+        Returns True if keys were loaded (have non-empty values), False
+        if the resolver returned empty (public-only mode). The caller
+        decides whether to surface that as an error in the UI response.
+        """
+        from config.bot_settings import get_bybit_keys, reload_bybit_keys
+        # Refresh module-level constants too (in case other code reads them)
+        reload_bybit_keys()
+        k, s = get_bybit_keys()
+        self.api_key = k
+        self.api_secret = s
+        # Rebuild session with new keys (or as public-only if cleared)
+        self.session = self._create_session()
+        # Invalidate any cached state that depended on auth (Bybit's
+        # perpetual symbols list is public, so it survives a key change.)
+        return bool(self.api_key and self.api_secret)
+    
     def _create_session(self) -> HTTP:
         """Створити HTTP сесію pybit"""
         if self.api_key and self.api_secret:

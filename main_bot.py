@@ -132,6 +132,21 @@ def initialize_database():
         
         db.log_event("INFO", "SYSTEM", "Database initialized")
         print("   ✓ Database ready")
+        
+        # Re-resolve Bybit keys now that DB is ready. At module-import
+        # time bot_settings runs the resolver, but DB isn't initialised
+        # yet → it falls through to ENV. With DB now up, re-run so any
+        # DB-stored encrypted keys win over ENV. This is the only path
+        # that picks up UI-saved keys on cold start.
+        try:
+            from config.bot_settings import reload_bybit_keys, get_bybit_keys
+            reload_bybit_keys()
+            k, _ = get_bybit_keys()
+            if k:
+                print(f"   ✓ Bybit keys re-resolved post-DB-init ({len(k)} chars)")
+        except Exception as e:
+            print(f"   ⚠️ Post-DB key reload failed: {e}")
+        
         return True
         
     except Exception as e:
