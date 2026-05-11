@@ -973,15 +973,27 @@ class SMCScanner:
                 
                 def _get_tf_data(tf):
                     """Lazy fetch+compute structure for a given TF, with
-                    per-tick caching. Returns dict or None on failure."""
+                    per-tick caching. Returns dict or None on failure.
+                    
+                    Limit raised from 700 → 2000 to match (and slightly
+                    exceed) Pine's maxDistanceToLastBar=1750 from the
+                    Volumized Order Blocks indicator. Pine processes the
+                    last 1750 bars and accumulates state from up to 5000
+                    (max_bars_back). With only 700 we'd see different OB
+                    sequences than TradingView, especially on 4H where
+                    700 bars = ~117 days but bear OBs from older swing
+                    points could still be active. 2000 1H bars = ~83 days,
+                    2000 4H = ~333 days — plenty of history without
+                    runaway API cost (one fetch per scan tick, cached).
+                    """
                     if tf in tf_data:
                         return tf_data[tf]
                     try:
                         if hasattr(md, 'fetch_klines') and \
                            'interval' in md.fetch_klines.__code__.co_varnames:
-                            kl = md.fetch_klines(symbol, limit=700, interval=tf)
+                            kl = md.fetch_klines(symbol, limit=2000, interval=tf)
                         else:
-                            kl = md.fetch_klines(symbol, limit=700)
+                            kl = md.fetch_klines(symbol, limit=2000)
                         if not kl or len(kl) < 220:
                             tf_data[tf] = None
                             return None

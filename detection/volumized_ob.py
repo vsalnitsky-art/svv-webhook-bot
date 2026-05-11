@@ -146,9 +146,19 @@ def detect_volumized_obs(
     atrs = _compute_atr(klines, period=atr_period)
     
     # === State (Pine `var` equivalents) ===
-    # swing_type: 0 = high swing active, 1 = low swing active, -1 = undefined
-    swing_type = -1
-    prev_swing_type = -1
+    # swing_type: 0 = high swing active, 1 = low swing active
+    # IMPORTANT: Pine initialises with `var swingType = 0` (line 230 of source).
+    # That's NOT a "no swing detected yet" marker — it means "treat first
+    # state as if a high swing already exists, only trigger on transitions".
+    # The trigger condition `swingType == 0 and swingType[1] != 0` evaluates
+    # false at startup (both 0), so the first top swing is registered only
+    # AFTER a 1→0 transition (i.e., low swing happens first, then a high).
+    # If we'd started from -1 (our previous bug), the first high swing would
+    # fire immediately, producing a different OB sequence than Pine — the
+    # latest_ob direction could then disagree with TradingView, which is
+    # exactly what we saw on the NEARUSDT chart.
+    swing_type = 0
+    prev_swing_type = 0
     # Each swing point: {'x': bar_idx, 'y': price, 'volume': vol, 'crossed': bool}
     top_swing: Optional[Dict[str, Any]] = None
     bottom_swing: Optional[Dict[str, Any]] = None
