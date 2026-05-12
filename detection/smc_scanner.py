@@ -1113,13 +1113,45 @@ class SMCScanner:
                                 zone_count=self._settings.get('volumized_zone_count', 'Low'),
                                 combine_obs=bool(self._settings.get('volumized_combine_obs', True)),
                             )
+                            new_vol_trend = vol_result.get('trend')  # 'LONG'|'SHORT'|None
                             with self._lock:
+                                old_vol_trend = (
+                                    self._volumized_trend_cache.get(symbol, {})
+                                    .get('trend')
+                                )
                                 self._volumized_trend_cache[symbol] = {
-                                    'trend': vol_result.get('trend'),
+                                    'trend': new_vol_trend,
                                     'meta': vol_result.get('trend_meta', {}),
                                     'tf': vol_tf,
                                     'updated_at': time.time(),
                                 }
+                            
+                            # === Auto-reset dedup on Vol direction flip ===
+                            # User-requested behavior: dedup state should
+                            # always be aligned with the current Volumized
+                            # direction. When Vol flips (LONG ↔ SHORT) we
+                            # reset _last_signal_dir for the symbol so the
+                            # next signal in the new direction is allowed
+                            # to fire (gate goes OPEN). Without this, a
+                            # symbol can get stuck "waiting for SHORT"
+                            # even after Vol has flipped to SHORT and the
+                            # previous LONG alert is no longer aligned with
+                            # the current trend phase.
+                            #
+                            # Conditions: only reset on REAL direction flips
+                            # (LONG → SHORT or SHORT → LONG). Transitions
+                            # involving None (warmup or rejected by ATR) do
+                            # NOT trigger a reset, since "direction
+                            # unknown" isn't a true flip.
+                            if (old_vol_trend in ('LONG', 'SHORT')
+                                    and new_vol_trend in ('LONG', 'SHORT')
+                                    and old_vol_trend != new_vol_trend):
+                                with self._lock:
+                                    prev = self._last_signal_dir.pop(symbol, None)
+                                if prev is not None:
+                                    print(f"[SMC] {symbol} Vol flipped "
+                                          f"{old_vol_trend}→{new_vol_trend}, "
+                                          f"dedup reset (was locked={prev})")
                         else:
                             # No TF data — clear cache so stale entries
                             # don't linger (e.g., user changed TF and
@@ -1595,7 +1627,19 @@ class SMCScanner:
                     if not self._htf_allows(symbol, ev['dir']):
                         print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
                     elif not self._dedup_allows(symbol, ev['dir']):
-                        print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by dedup (already fired this direction)")
+                        # _dedup_allows blocks for two possible reasons —
+                        # log which one fired so the user can debug "why
+                        # didn't this alert?" without reading the code.
+                        side_label = 'LONG' if ev['dir'] == 'bull' else 'SHORT'
+                        vt = (self._volumized_trend_cache.get(symbol, {})
+                              .get('trend'))
+                        if (self._settings.get('use_volumized_ob', True)
+                                and vt in ('LONG', 'SHORT')
+                                and vt != side_label):
+                            print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked: "
+                                  f"goes against Volumized direction (Vol={vt}, signal={side_label})")
+                        else:
+                            print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by dedup (already fired this direction)")
                     else:
                         self._send_alert(symbol, ev, mode='choch')
             
@@ -1640,17 +1684,46 @@ class SMCScanner:
     def _dedup_allows(self, symbol: str, event_dir: str) -> bool:
         """Check if signal deduplication permits an alert in this direction.
         
-        Returns True if dedup is OFF, or if direction differs from last signal.
-        Returns False only when dedup is ON AND the same direction was last
-        signaled (Pine 'Deduplicate Signals (1 per trend)' behavior).
+        Two-layer gate:
+        
+        Layer 1 — Volumized direction filter (when use_volumized_ob is True
+        AND Vol direction is determined for this symbol). Blocks signals
+        that go AGAINST current Vol trend. This is what makes the dedup
+        pip in the UI consistent with the Vol pip — there is no possible
+        state where Vol says SHORT and dedup is locked LONG, because no
+        LONG signal could have fired against a SHORT Vol direction in
+        the first place. The exception is when Vol is None (warmup or
+        rejected by ATR) — we let signals through since direction is
+        undetermined.
+        
+        Layer 2 — Pine `proDeduplicateInput` behavior (when
+        deduplicate_signals is True). Blocks signals matching the last
+        fired direction. After a Vol flip, _last_signal_dir is reset
+        (in the scan loop), so the next aligned signal can fire.
+        
+        Returns False (blocked) if EITHER layer rejects. Returns True
+        (allowed) if both layers pass or if both are disabled.
         """
+        side_label = 'LONG' if event_dir == 'bull' else 'SHORT'
+        
+        # === Layer 1: Vol direction filter ===
+        # Block signals that contradict the current Volumized trend.
+        # Without this, a LONG signal could fire while Vol says SHORT,
+        # locking dedup against the actual trend direction.
+        if self._settings.get('use_volumized_ob', True):
+            vol_trend = (self._volumized_trend_cache.get(symbol, {})
+                         .get('trend'))
+            if vol_trend in ('LONG', 'SHORT') and vol_trend != side_label:
+                # Vol says one direction, signal says the other → block.
+                # Don't touch _last_signal_dir; we never fired.
+                return False
+        
+        # === Layer 2: Pine `proDeduplicateInput` ===
         if not self._settings.get('deduplicate_signals', True):
             return True
         last_side = self._last_signal_dir.get(symbol)
-        # event_dir is 'bull' / 'bear'; last_side is 'LONG' / 'SHORT'
-        side_label = 'LONG' if event_dir == 'bull' else 'SHORT'
         if last_side is None:
-            return True  # first signal ever for this symbol
+            return True  # first signal ever (or after Vol-flip reset)
         return last_side != side_label
     
     def _htf_allows(self, symbol: str, event_dir: str) -> bool:

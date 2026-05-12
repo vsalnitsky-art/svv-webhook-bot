@@ -1842,43 +1842,81 @@ function renderWatchlist(list) {
             }
         }
         
-        // Dedup pill — Pine "1 per trend" gate state. Rendered as a
-        // compact gradient-filled rounded square ("pip") instead of an
-        // arrow, for a more polished look than the prior ↑/↓/🔓 glyphs.
-        // Color-coded by direction; filled = gate locked, dashed = OPEN.
+        // Dedup pill — Pine "1 per trend" gate state, now Vol-aligned.
+        // After the Vol-flip auto-reset (backend), dedup state can only
+        // be (a) None/OPEN (just after Vol flip — ready to fire), or
+        // (b) locked in the SAME direction as Vol (already fired in this
+        // trend phase). The visual reflects this:
         //
-        // Three visible states (hidden when dedup is OFF in settings):
-        //   filled green pip    LONG fired, only SHORT can flip the gate
-        //   filled red pip      SHORT fired, only LONG can flip
-        //   dashed grey pip     OPEN — no signal yet, next of any direction fires
+        //   OPEN (sym not in dedup state):
+        //     • Vol unknown  → no pip
+        //     • Vol = LONG   → green dashed outline = "ready, expecting LONG"
+        //     • Vol = SHORT  → red dashed outline = "ready, expecting SHORT"
         //
-        // The shape (rounded square ~9px) intentionally differs from:
-        //   • the trend-dot (small circle) used for internal trend bias
-        //   • the volumized triangle ▲▼ used for latest OB direction
-        // so users can distinguish the three indicators at a glance.
+        //   FIRED (dedup_state[sym] matches Vol direction):
+        //     • Vol = LONG, dedup = LONG → filled green = "LONG fired, done for this phase"
+        //     • Vol = SHORT, dedup = SHORT → filled red = "SHORT fired, done"
+        //
+        // Vol-disagreement should never happen post-reset, but if seen
+        // (e.g., stale state right at flip boundary), show grey dashed
+        // = "stale, will re-align on next scan".
+        //
+        // Hidden when dedup is OFF in settings (then no gate, every
+        // signal fires regardless).
         let dedupHtml = '';
         if (wlDedupEnabled) {
-            const lastDir = wlDedupState[sym];  // 'LONG' | 'SHORT' | undefined
-            let pipStyle, title;
-            if (lastDir === 'LONG') {
-                // Gem-style green filled pip with subtle glow
-                pipStyle = 'background:linear-gradient(135deg,#22c55e,#15803d);'
-                         + 'box-shadow:0 0 4px rgba(34,197,94,0.55)';
-                title = 'Dedup: LONG fired\n→ Gate locked. Next alert must be SHORT to fire.';
-            } else if (lastDir === 'SHORT') {
-                pipStyle = 'background:linear-gradient(135deg,#ef4444,#b91c1c);'
-                         + 'box-shadow:0 0 4px rgba(239,68,68,0.55)';
-                title = 'Dedup: SHORT fired\n→ Gate locked. Next alert must be LONG to fire.';
-            } else {
-                // Dashed hollow outline — OPEN, waiting for first signal
+            const lastDir = wlDedupState[sym];               // 'LONG' | 'SHORT' | undefined
+            const volDir  = (wlVolumizedTrends || {})[sym];  // 'LONG' | 'SHORT' | null
+            let pipStyle = null, title;
+            const volTfTag = wlVolumizedTimeframe ? wlVolumizedTimeframe.toUpperCase() : '1H';
+            
+            if (lastDir === volDir && volDir) {
+                // Aligned + fired — locked in current Vol phase
+                if (volDir === 'LONG') {
+                    pipStyle = 'background:linear-gradient(135deg,#22c55e,#15803d);'
+                             + 'box-shadow:0 0 4px rgba(34,197,94,0.55)';
+                    title = `Dedup gate: LONG fired this Vol phase (${volTfTag}).\n`
+                          + '→ Next LONG blocked until Vol flips to SHORT (auto-resets the gate).';
+                } else {
+                    pipStyle = 'background:linear-gradient(135deg,#ef4444,#b91c1c);'
+                             + 'box-shadow:0 0 4px rgba(239,68,68,0.55)';
+                    title = `Dedup gate: SHORT fired this Vol phase (${volTfTag}).\n`
+                          + '→ Next SHORT blocked until Vol flips to LONG (auto-resets the gate).';
+                }
+            } else if (!lastDir && volDir === 'LONG') {
+                // Open + Vol LONG — ready to fire next LONG signal
+                pipStyle = 'background:transparent;border:1.5px dashed #22c55e;'
+                         + 'box-sizing:border-box';
+                title = `Dedup gate OPEN, Vol direction = LONG (${volTfTag}).\n`
+                      + '→ Next LONG alert will fire and lock the gate.';
+            } else if (!lastDir && volDir === 'SHORT') {
+                pipStyle = 'background:transparent;border:1.5px dashed #ef4444;'
+                         + 'box-sizing:border-box';
+                title = `Dedup gate OPEN, Vol direction = SHORT (${volTfTag}).\n`
+                      + '→ Next SHORT alert will fire and lock the gate.';
+            } else if (!lastDir && !volDir) {
+                // Both unknown — no pip needed, dedup is fully open and
+                // there's no trend direction to indicate.
                 pipStyle = 'background:transparent;border:1.5px dashed #6b7280;'
                          + 'box-sizing:border-box';
-                title = 'Dedup OPEN: no signal yet.\n→ Next signal (any direction) will alert.';
+                title = 'Dedup OPEN, Vol direction not yet computed.\n'
+                      + '→ Next signal of any direction will fire.';
+            } else {
+                // Stale/mismatched state — shouldn't persist past one scan
+                // cycle thanks to auto-reset. Show muted grey so user
+                // notices something is transitioning.
+                pipStyle = 'background:transparent;border:1.5px dashed #888;'
+                         + 'box-sizing:border-box;opacity:0.6';
+                title = `Dedup transitioning: last fired ${lastDir}, Vol = ${volDir || 'unknown'}.\n`
+                      + 'Will auto-reset on next scan tick to align with Vol.';
             }
-            dedupHtml = `<span title="${escapeHtml(title)}" `
-                      + `style="display:inline-block;width:9px;height:9px;`
-                      + `border-radius:2.5px;margin-right:5px;vertical-align:middle;`
-                      + `${pipStyle}"></span>`;
+            
+            if (pipStyle) {
+                dedupHtml = `<span title="${escapeHtml(title)}" `
+                          + `style="display:inline-block;width:9px;height:9px;`
+                          + `border-radius:2.5px;margin-right:5px;vertical-align:middle;`
+                          + `${pipStyle}"></span>`;
+            }
         }
         
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
@@ -2695,39 +2733,63 @@ async function loadChart() {
         }
         
         // === Dedup gate badge ===
-        // Renders the "1 per trend" gate state for the currently-displayed
-        // symbol. Hidden when dedup is OFF in settings. Click handler calls
-        // resetDedupForCurrent() which prompts then resets via API.
-        //
-        // Uses the same gradient-pip visual as the watchlist pills (filled
-        // green = LONG fired, filled red = SHORT fired, dashed grey = OPEN)
-        // for visual consistency. The pip sits before the text label inside
-        // the badge so the user sees both the color signal AND the verbal
-        // state at a glance.
+        // Vol-aligned readiness indicator (matches the watchlist pip).
+        // After Vol-flip auto-reset, the gate is always either:
+        //   • OPEN and waiting for the Vol-direction signal (outlined)
+        //   • FIRED and locked in the Vol direction (filled)
+        // Click → resetDedupForCurrent() to manually force OPEN.
         const dedupBadge = document.getElementById('sm-dedup-badge');
         if (dedupBadge && wlDedupEnabled && currentSymbol) {
-            const lastDir = wlDedupState[currentSymbol];  // 'LONG' | 'SHORT' | undefined
+            const lastDir = wlDedupState[currentSymbol];
+            const volDir  = (wlVolumizedTrends || {})[currentSymbol];
+            const volTfTag = wlVolumizedTimeframe ? wlVolumizedTimeframe.toUpperCase() : '1H';
             let pipStyle, text, bg, color, title;
-            if (lastDir === 'LONG') {
-                pipStyle = 'background:linear-gradient(135deg,#22c55e,#15803d);'
-                         + 'box-shadow:0 0 5px rgba(34,197,94,0.65)';
-                text = 'LONG fired';
-                bg = 'rgba(34,197,94,0.15)'; color = '#22c55e';
-                title = `Dedup: last alert was LONG → next alert must be SHORT to fire.\nClick to reset (force gate to OPEN).`;
-            } else if (lastDir === 'SHORT') {
-                pipStyle = 'background:linear-gradient(135deg,#ef4444,#b91c1c);'
-                         + 'box-shadow:0 0 5px rgba(239,68,68,0.65)';
-                text = 'SHORT fired';
-                bg = 'rgba(239,68,68,0.15)'; color = '#ef4444';
-                title = `Dedup: last alert was SHORT → next alert must be LONG to fire.\nClick to reset (force gate to OPEN).`;
-            } else {
+            
+            if (lastDir === volDir && volDir) {
+                // Already fired in current Vol phase
+                if (volDir === 'LONG') {
+                    pipStyle = 'background:linear-gradient(135deg,#22c55e,#15803d);'
+                             + 'box-shadow:0 0 5px rgba(34,197,94,0.65)';
+                    text = `LONG fired (Vol ${volTfTag})`;
+                    bg = 'rgba(34,197,94,0.15)'; color = '#22c55e';
+                    title = `LONG already fired this Vol phase (${volTfTag}).\n`
+                          + 'Next LONG blocked until Vol flips to SHORT (auto-resets gate).\n'
+                          + 'Click to force OPEN.';
+                } else {
+                    pipStyle = 'background:linear-gradient(135deg,#ef4444,#b91c1c);'
+                             + 'box-shadow:0 0 5px rgba(239,68,68,0.65)';
+                    text = `SHORT fired (Vol ${volTfTag})`;
+                    bg = 'rgba(239,68,68,0.15)'; color = '#ef4444';
+                    title = `SHORT already fired this Vol phase (${volTfTag}).\n`
+                          + 'Next SHORT blocked until Vol flips to LONG (auto-resets gate).\n'
+                          + 'Click to force OPEN.';
+                }
+            } else if (!lastDir && volDir === 'LONG') {
+                pipStyle = 'background:transparent;border:1.5px dashed #22c55e;box-sizing:border-box';
+                text = `Awaiting LONG (Vol ${volTfTag})`;
+                bg = 'rgba(34,197,94,0.08)'; color = '#22c55e';
+                title = `Gate OPEN, Vol direction = LONG (${volTfTag}).\n`
+                      + 'Next LONG signal will fire and lock the gate.';
+            } else if (!lastDir && volDir === 'SHORT') {
+                pipStyle = 'background:transparent;border:1.5px dashed #ef4444;box-sizing:border-box';
+                text = `Awaiting SHORT (Vol ${volTfTag})`;
+                bg = 'rgba(239,68,68,0.08)'; color = '#ef4444';
+                title = `Gate OPEN, Vol direction = SHORT (${volTfTag}).\n`
+                      + 'Next SHORT signal will fire and lock the gate.';
+            } else if (!lastDir && !volDir) {
                 pipStyle = 'background:transparent;border:1.5px dashed #888;box-sizing:border-box';
                 text = 'Dedup OPEN';
                 bg = 'rgba(255,255,255,0.05)'; color = '#888';
-                title = `Dedup OPEN: no signal yet for ${currentSymbol} — next signal of any direction will alert.`;
+                title = `Gate OPEN, Vol direction not yet computed for ${currentSymbol}.\n`
+                      + 'Next signal of any direction will fire.';
+            } else {
+                pipStyle = 'background:transparent;border:1.5px dashed #888;box-sizing:border-box;opacity:0.6';
+                text = `Transitioning…`;
+                bg = 'rgba(255,255,255,0.05)'; color = '#888';
+                title = `Dedup transitioning: last fired ${lastDir}, Vol = ${volDir || 'unknown'}.\n`
+                      + 'Will auto-realign on next scan tick.';
             }
-            // innerHTML used because we need the pip <span> inline. All
-            // values are constants (no user input), so XSS is not a concern.
+            
             dedupBadge.innerHTML = `<span style="display:inline-block;width:9px;height:9px;`
                                   + `border-radius:2.5px;margin-right:6px;vertical-align:middle;`
                                   + `${pipStyle}"></span>${text}`;
