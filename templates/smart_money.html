@@ -1639,16 +1639,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </tbody>
             </table>
             
-            <!-- Recent Discoveries feed -->
-            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:14px 0 4px 0">
-                Recent Discoveries
-                <span style="color:#666;font-weight:normal;font-size:0.72rem">(last 24h)</span>
-            </h3>
-            <div id="top100-history-feed" style="max-height:300px;overflow-y:auto;background:rgba(255,255,255,0.015);border:1px solid rgba(255,255,255,0.04);border-radius:4px;padding:8px">
-                <div style="color:#666;font-size:0.78rem;text-align:center;padding:20px">
-                    No recent events. Run a scan to see discoveries.
+            <!-- Recent Discoveries feed (collapsible) -->
+            <details style="margin-top:14px">
+                <summary style="cursor:pointer;font-size:0.85rem;color:#a5b4fc;user-select:none">
+                    Recent Discoveries
+                    <span style="color:#666;font-weight:normal;font-size:0.72rem">(last 24h)</span>
+                </summary>
+                <div id="top100-history-feed" style="max-height:300px;overflow-y:auto;background:rgba(255,255,255,0.015);border:1px solid rgba(255,255,255,0.04);border-radius:4px;padding:8px;margin-top:6px">
+                    <div style="color:#666;font-size:0.78rem;text-align:center;padding:20px">
+                        No recent events. Run a scan to see discoveries.
+                    </div>
                 </div>
-            </div>
+            </details>
             
         </div>
     </div>
@@ -1665,12 +1667,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h2>📦 Volumized OB Radar
                 <span id="volradar-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
             </h2>
-            <div style="display:flex;gap:10px;align-items:center;margin-left:auto">
-                <span id="volradar-active-count" style="font-size:0.78rem;color:#a5b4fc">0 active</span>
+            <div class="tm-master-toggle">
+                <span id="volradar-active-count" style="font-size:0.78rem;color:#a5b4fc;margin-right:8px">0 active</span>
                 <span id="volradar-status-label" style="font-size:0.8rem;color:#888">Disabled</span>
-                <label class="toggle-switch" style="margin:0">
+                <label class="tm-toggle-switch">
                     <input type="checkbox" id="volradar-enabled" onchange="onVolradarEnabledToggle()">
-                    <span class="toggle-slider"></span>
+                    <span class="slider"></span>
                 </label>
             </div>
         </div>
@@ -1679,80 +1681,88 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 ℹ️ Сканує TOP-N USDT-perp монет на Binance Futures та шукає <strong>fresh Volumized OBs</strong>. Кваліфікується тільки якщо OB сидить у <strong>Discount</strong> (BULL, ≤38.2%) або <strong>Premium</strong> (BEAR, ≥61.8%) зоні від поточного swing range. Mode A — додає у watchlist на 24h; якщо за цей час SMC дав сигнал → монета залишається у watchlist як звичайна. Якщо ні → auto-remove.
             </div>
             
-            <!-- ============ Settings row ============ -->
-            <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:10px;margin-bottom:14px">
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Scan Timeframe</label>
-                    <select id="volradar-tf" style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                            onchange="updateVolradarSetting('timeframe', this.value)">
-                        <option value="15m">15m</option>
-                        <option value="30m">30m</option>
-                        <option value="1h" selected>1H</option>
-                        <option value="2h">2H</option>
-                        <option value="4h">4H</option>
-                    </select>
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Scan Interval (min)</label>
-                    <input type="number" id="volradar-scan-interval" min="1" max="240" step="1"
-                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="updateVolradarSetting('scan_interval_min', parseInt(this.value))">
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Fresh Window (hours)</label>
-                    <input type="number" id="volradar-fresh-hours" min="1" max="168" step="1"
-                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="updateVolradarSetting('fresh_window_hours', parseInt(this.value))">
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Min 24h Volume (M USD)</label>
-                    <input type="number" id="volradar-min-vol" min="0" max="10000" step="10"
-                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="updateVolradarSetting('min_quote_volume_usd', parseFloat(this.value) * 1e6)">
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">TTL (hours)</label>
-                    <input type="number" id="volradar-ttl-hours" min="1" max="168" step="1"
-                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="updateVolradarSetting('ttl_hours', parseInt(this.value))">
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Cooldown (hours)</label>
-                    <input type="number" id="volradar-cooldown-hours" min="0" max="168" step="1"
-                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="updateVolradarSetting('cooldown_hours', parseInt(this.value))">
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Max Concurrent</label>
-                    <input type="number" id="volradar-max-concurrent" min="1" max="100" step="1"
-                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="updateVolradarSetting('max_concurrent_items', parseInt(this.value))">
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Discount Threshold (%)</label>
-                    <input type="number" id="volradar-discount" min="1" max="49" step="0.1"
-                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="updateVolradarSetting('discount_threshold', parseFloat(this.value))">
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Premium Threshold (%)</label>
-                    <input type="number" id="volradar-premium" min="51" max="99" step="0.1"
-                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
-                           onchange="updateVolradarSetting('premium_threshold', parseFloat(this.value))">
-                </div>
-            </div>
-            
-            <!-- ============ Volumized algorithm params (collapsible) ============ -->
+            <!-- ============ All settings (collapsible) ============ -->
             <details style="margin-bottom:14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px">
                 <summary style="cursor:pointer;padding:8px 11px;font-size:0.78rem;color:#a5b4fc;user-select:none">
-                    Volumized algorithm params (independent from main scanner)
+                    ⚙️ Settings & Volumized algorithm params (independent from main scanner)
                 </summary>
                 <div style="padding:0 11px 11px 11px">
-                    <div style="display:flex;gap:8px;margin-bottom:9px">
+                    <div style="display:flex;gap:8px;margin-bottom:11px">
                         <button onclick="volradarCopyFromMain()"
                                 style="padding:5px 11px;background:rgba(168,85,247,0.18);border:1px solid rgba(168,85,247,0.4);color:#c4b5fd;border-radius:3px;cursor:pointer;font-size:0.74rem">
-                            📋 Copy from main settings
+                            📋 Copy Volumized params from main settings
                         </button>
+                    </div>
+                    
+                    <!-- General scan parameters -->
+                    <div style="font-size:0.7rem;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;padding-bottom:3px;border-bottom:1px solid rgba(255,255,255,0.05)">
+                        Scan parameters
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(170px, 1fr));gap:9px;margin-bottom:14px">
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Scan Timeframe</label>
+                            <select id="volradar-tf" style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                    onchange="updateVolradarSetting('timeframe', this.value)">
+                                <option value="15m">15m</option>
+                                <option value="30m">30m</option>
+                                <option value="1h" selected>1H</option>
+                                <option value="2h">2H</option>
+                                <option value="4h">4H</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Scan Interval (min)</label>
+                            <input type="number" id="volradar-scan-interval" min="1" max="240" step="1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('scan_interval_min', parseInt(this.value))">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Fresh Window (hours)</label>
+                            <input type="number" id="volradar-fresh-hours" min="1" max="168" step="1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('fresh_window_hours', parseInt(this.value))">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Min 24h Volume (M USD)</label>
+                            <input type="number" id="volradar-min-vol" min="0" max="10000" step="10"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('min_quote_volume_usd', parseFloat(this.value) * 1e6)">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">TTL (hours)</label>
+                            <input type="number" id="volradar-ttl-hours" min="1" max="168" step="1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('ttl_hours', parseInt(this.value))">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Cooldown (hours)</label>
+                            <input type="number" id="volradar-cooldown-hours" min="0" max="168" step="1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('cooldown_hours', parseInt(this.value))">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Max Concurrent</label>
+                            <input type="number" id="volradar-max-concurrent" min="1" max="100" step="1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('max_concurrent_items', parseInt(this.value))">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Discount Threshold (%)</label>
+                            <input type="number" id="volradar-discount" min="1" max="49" step="0.1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('discount_threshold', parseFloat(this.value))">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Premium Threshold (%)</label>
+                            <input type="number" id="volradar-premium" min="51" max="99" step="0.1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('premium_threshold', parseFloat(this.value))">
+                        </div>
+                    </div>
+                    
+                    <!-- Volumized algorithm params -->
+                    <div style="font-size:0.7rem;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;padding-bottom:3px;border-bottom:1px solid rgba(255,255,255,0.05)">
+                        Volumized OB algorithm params
                     </div>
                     <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(170px, 1fr));gap:9px">
                         <div>
