@@ -1842,32 +1842,43 @@ function renderWatchlist(list) {
             }
         }
         
-        // Dedup pill — Pine "1 per trend" gate state. Tells you whether the
-        // next signal of either direction will fire, or only the opposite of
-        // the last one. Hidden when dedup is OFF (since every signal alerts).
+        // Dedup pill — Pine "1 per trend" gate state. Rendered as a
+        // compact gradient-filled rounded square ("pip") instead of an
+        // arrow, for a more polished look than the prior ↑/↓/🔓 glyphs.
+        // Color-coded by direction; filled = gate locked, dashed = OPEN.
         //
-        // Three visible states:
-        //   🔓 (grey)    OPEN — no signal fired yet, next one alerts regardless
-        //   ↑ (green)    LONG fired, only SHORT can flip the gate
-        //   ↓ (red)      SHORT fired, only LONG can flip
+        // Three visible states (hidden when dedup is OFF in settings):
+        //   filled green pip    LONG fired, only SHORT can flip the gate
+        //   filled red pip      SHORT fired, only LONG can flip
+        //   dashed grey pip     OPEN — no signal yet, next of any direction fires
         //
-        // Tooltip on hover spells it out. The pill renders BEFORE the trend
-        // dot so the visual order is: [OB ★][Vol ▲▼][Dedup gate][trend dot][symbol].
+        // The shape (rounded square ~9px) intentionally differs from:
+        //   • the trend-dot (small circle) used for internal trend bias
+        //   • the volumized triangle ▲▼ used for latest OB direction
+        // so users can distinguish the three indicators at a glance.
         let dedupHtml = '';
         if (wlDedupEnabled) {
             const lastDir = wlDedupState[sym];  // 'LONG' | 'SHORT' | undefined
-            let icon, color, title;
+            let pipStyle, title;
             if (lastDir === 'LONG') {
-                icon = '↑'; color = '#22c55e';
-                title = 'Dedup: last alert was LONG\n→ Next alert must be SHORT to fire (gate locked for LONG).';
+                // Gem-style green filled pip with subtle glow
+                pipStyle = 'background:linear-gradient(135deg,#22c55e,#15803d);'
+                         + 'box-shadow:0 0 4px rgba(34,197,94,0.55)';
+                title = 'Dedup: LONG fired\n→ Gate locked. Next alert must be SHORT to fire.';
             } else if (lastDir === 'SHORT') {
-                icon = '↓'; color = '#ef4444';
-                title = 'Dedup: last alert was SHORT\n→ Next alert must be LONG to fire (gate locked for SHORT).';
+                pipStyle = 'background:linear-gradient(135deg,#ef4444,#b91c1c);'
+                         + 'box-shadow:0 0 4px rgba(239,68,68,0.55)';
+                title = 'Dedup: SHORT fired\n→ Gate locked. Next alert must be LONG to fire.';
             } else {
-                icon = '🔓'; color = '#888';
-                title = 'Dedup: no signal fired yet\n→ Next signal of any direction will alert (gate open).';
+                // Dashed hollow outline — OPEN, waiting for first signal
+                pipStyle = 'background:transparent;border:1.5px dashed #6b7280;'
+                         + 'box-sizing:border-box';
+                title = 'Dedup OPEN: no signal yet.\n→ Next signal (any direction) will alert.';
             }
-            dedupHtml = `<span title="${escapeHtml(title)}" style="color:${color};margin-right:4px;font-size:0.7rem;font-weight:bold;opacity:0.85">${icon}</span>`;
+            dedupHtml = `<span title="${escapeHtml(title)}" `
+                      + `style="display:inline-block;width:9px;height:9px;`
+                      + `border-radius:2.5px;margin-right:5px;vertical-align:middle;`
+                      + `${pipStyle}"></span>`;
         }
         
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
@@ -2685,32 +2696,41 @@ async function loadChart() {
         
         // === Dedup gate badge ===
         // Renders the "1 per trend" gate state for the currently-displayed
-        // symbol. Hidden when dedup is OFF in settings (since alerts ignore
-        // the state, there's nothing meaningful to show). Click handler
-        // calls resetDedupForCurrent() which prompts then resets via API.
+        // symbol. Hidden when dedup is OFF in settings. Click handler calls
+        // resetDedupForCurrent() which prompts then resets via API.
         //
-        // The actual dedup_state comes from /api/smc/state which loadWatchlist
-        // already polls. We mirror those module-scope vars (wlDedupEnabled,
-        // wlDedupState) into the chart header here so a single source of
-        // truth drives both the watchlist pills AND this badge.
+        // Uses the same gradient-pip visual as the watchlist pills (filled
+        // green = LONG fired, filled red = SHORT fired, dashed grey = OPEN)
+        // for visual consistency. The pip sits before the text label inside
+        // the badge so the user sees both the color signal AND the verbal
+        // state at a glance.
         const dedupBadge = document.getElementById('sm-dedup-badge');
         if (dedupBadge && wlDedupEnabled && currentSymbol) {
             const lastDir = wlDedupState[currentSymbol];  // 'LONG' | 'SHORT' | undefined
-            let icon, text, bg, color, title;
+            let pipStyle, text, bg, color, title;
             if (lastDir === 'LONG') {
-                icon = '↑'; text = 'LONG fired';
+                pipStyle = 'background:linear-gradient(135deg,#22c55e,#15803d);'
+                         + 'box-shadow:0 0 5px rgba(34,197,94,0.65)';
+                text = 'LONG fired';
                 bg = 'rgba(34,197,94,0.15)'; color = '#22c55e';
                 title = `Dedup: last alert was LONG → next alert must be SHORT to fire.\nClick to reset (force gate to OPEN).`;
             } else if (lastDir === 'SHORT') {
-                icon = '↓'; text = 'SHORT fired';
+                pipStyle = 'background:linear-gradient(135deg,#ef4444,#b91c1c);'
+                         + 'box-shadow:0 0 5px rgba(239,68,68,0.65)';
+                text = 'SHORT fired';
                 bg = 'rgba(239,68,68,0.15)'; color = '#ef4444';
                 title = `Dedup: last alert was SHORT → next alert must be LONG to fire.\nClick to reset (force gate to OPEN).`;
             } else {
-                icon = '🔓'; text = 'Dedup OPEN';
+                pipStyle = 'background:transparent;border:1.5px dashed #888;box-sizing:border-box';
+                text = 'Dedup OPEN';
                 bg = 'rgba(255,255,255,0.05)'; color = '#888';
-                title = `Dedup: no signal fired yet for ${currentSymbol} — next signal of any direction will alert.`;
+                title = `Dedup OPEN: no signal yet for ${currentSymbol} — next signal of any direction will alert.`;
             }
-            dedupBadge.textContent = `${icon} ${text}`;
+            // innerHTML used because we need the pip <span> inline. All
+            // values are constants (no user input), so XSS is not a concern.
+            dedupBadge.innerHTML = `<span style="display:inline-block;width:9px;height:9px;`
+                                  + `border-radius:2.5px;margin-right:6px;vertical-align:middle;`
+                                  + `${pipStyle}"></span>${text}`;
             dedupBadge.style.background = bg;
             dedupBadge.style.color = color;
             dedupBadge.style.display = 'inline-block';
