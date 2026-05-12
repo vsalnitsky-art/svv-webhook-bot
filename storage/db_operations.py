@@ -9,7 +9,8 @@ from storage.db_models import (
     get_session, init_db,
     SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
     SymbolBlacklist, SMCOBState,
-    Top100OBSnapshot, Top100OBHistory
+    Top100OBSnapshot, Top100OBHistory,
+    VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot
 )
 from config import DEFAULT_SETTINGS
 
@@ -1084,6 +1085,252 @@ class DBOperations:
         except Exception as e:
             session.rollback()
             print(f"[DB] cleanup_top100_ob_history error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # ============================================================
+    # Volumized OB Radar — metadata / stats / snapshots
+    # ============================================================
+    
+    def volradar_get_metadata(self, symbol: str) -> Optional[Dict]:
+        """Return active radar metadata for a symbol, or None if not tracked."""
+        session = get_session()
+        try:
+            row = session.query(VolumizedRadarMetadata).filter_by(symbol=symbol).first()
+            return row.to_dict() if row else None
+        except Exception as e:
+            print(f"[DB] volradar_get_metadata error: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def volradar_list_metadata(self) -> List[Dict]:
+        """All currently tracked radar items (for dashboard view)."""
+        session = get_session()
+        try:
+            rows = session.query(VolumizedRadarMetadata).order_by(
+                VolumizedRadarMetadata.added_at.desc()).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] volradar_list_metadata error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def volradar_add(self, symbol: str, ob_direction: str,
+                    ob_top: float, ob_bottom: float, ob_volume: float,
+                    pd_zone_pct: float, scan_tf: str,
+                    ttl_hours: int = 24) -> bool:
+        """Insert metadata row + bump stats. Returns True if new add, False
+        if a row already existed (radar shouldn't re-add the same symbol).
+        
+        Stats: times_added++, last_added_at=now.
+        """
+        session = get_session()
+        try:
+            # Idempotency: refuse to insert if metadata already present.
+            existing = session.query(VolumizedRadarMetadata).filter_by(symbol=symbol).first()
+            if existing:
+                return False
+            
+            now = datetime.utcnow()
+            session.add(VolumizedRadarMetadata(
+                symbol=symbol,
+                added_at=now,
+                expires_at=now + timedelta(hours=ttl_hours),
+                ob_direction=ob_direction,
+                ob_top=ob_top,
+                ob_bottom=ob_bottom,
+                ob_volume=ob_volume,
+                pd_zone_pct=pd_zone_pct,
+                scan_tf=scan_tf,
+            ))
+            
+            # Stats upsert
+            stat = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            if stat is None:
+                stat = VolumizedRadarStat(symbol=symbol, times_added=1, last_added_at=now)
+                session.add(stat)
+            else:
+                stat.times_added = (stat.times_added or 0) + 1
+                stat.last_added_at = now
+            
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_add error for {symbol}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def volradar_mark_signal_fired(self, symbol: str) -> bool:
+        """Called from smc_scanner._send_alert hook. If symbol is tracked by
+        radar, latch signal_fired_at and bump times_signal_fired. Deletes
+        the metadata row (symbol "graduates" to normal watchlist flow).
+        
+        Returns True if a row was removed; False if symbol wasn't tracked
+        (which is the normal case for most alerts).
+        """
+        session = get_session()
+        try:
+            row = session.query(VolumizedRadarMetadata).filter_by(symbol=symbol).first()
+            if row is None:
+                return False
+            
+            stat = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            if stat is not None:
+                stat.times_signal_fired = (stat.times_signal_fired or 0) + 1
+            
+            session.delete(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_mark_signal_fired error: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def volradar_remove(self, symbol: str, reason: str,
+                       cooldown_hours: int = 6) -> bool:
+        """Delete metadata row + bump correct removal counter + set cooldown.
+        
+        Args:
+            reason: 'auto_ttl' | 'manual' — drives which counter ++
+            cooldown_hours: future re-adds blocked until now+cooldown
+        """
+        session = get_session()
+        try:
+            row = session.query(VolumizedRadarMetadata).filter_by(symbol=symbol).first()
+            if row is None:
+                return False
+            
+            stat = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            if stat is not None:
+                if reason == 'auto_ttl':
+                    stat.times_auto_removed = (stat.times_auto_removed or 0) + 1
+                elif reason == 'manual':
+                    stat.times_manual_removed = (stat.times_manual_removed or 0) + 1
+                stat.last_cooldown_until = datetime.utcnow() + timedelta(hours=cooldown_hours)
+            
+            session.delete(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_remove error: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def volradar_find_expired(self) -> List[str]:
+        """Return symbols whose TTL has elapsed (cleanup daemon's worklist)."""
+        session = get_session()
+        try:
+            rows = session.query(VolumizedRadarMetadata.symbol).filter(
+                VolumizedRadarMetadata.expires_at < datetime.utcnow()).all()
+            return [r[0] for r in rows]
+        except Exception as e:
+            print(f"[DB] volradar_find_expired error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def volradar_get_stat(self, symbol: str) -> Optional[Dict]:
+        """Lifetime counters for a symbol. None if never tracked."""
+        session = get_session()
+        try:
+            row = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            return row.to_dict() if row else None
+        except Exception as e:
+            print(f"[DB] volradar_get_stat error: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def volradar_list_stats(self, limit: int = 100) -> List[Dict]:
+        """All stats rows sorted by times_added desc (top-performers first)."""
+        session = get_session()
+        try:
+            rows = session.query(VolumizedRadarStat).order_by(
+                VolumizedRadarStat.times_added.desc()).limit(limit).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] volradar_list_stats error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def volradar_is_on_cooldown(self, symbol: str) -> bool:
+        """True if symbol is still inside its post-removal cooldown window."""
+        session = get_session()
+        try:
+            stat = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            if stat is None or stat.last_cooldown_until is None:
+                return False
+            return stat.last_cooldown_until > datetime.utcnow()
+        except Exception as e:
+            print(f"[DB] volradar_is_on_cooldown error: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def volradar_log_snapshot(self, symbol: str, qualified: bool, action: str,
+                              ob_direction: Optional[str] = None,
+                              ob_top: Optional[float] = None,
+                              ob_bottom: Optional[float] = None,
+                              pd_zone_pct: Optional[float] = None,
+                              error_msg: Optional[str] = None) -> None:
+        """Append one audit-log entry per (scan, symbol). Cheap & idempotent."""
+        session = get_session()
+        try:
+            session.add(VolumizedRadarSnapshot(
+                scan_time=datetime.utcnow(),
+                symbol=symbol,
+                ob_direction=ob_direction,
+                ob_top=ob_top,
+                ob_bottom=ob_bottom,
+                pd_zone_pct=pd_zone_pct,
+                qualified=qualified,
+                action=action,
+                error_msg=error_msg,
+            ))
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_log_snapshot error: {e}")
+        finally:
+            session.close()
+    
+    def volradar_list_snapshots(self, hours: int = 24, limit: int = 500) -> List[Dict]:
+        """Recent audit log entries (default last 24h, capped at 500 rows)."""
+        session = get_session()
+        try:
+            since = datetime.utcnow() - timedelta(hours=hours)
+            rows = session.query(VolumizedRadarSnapshot).filter(
+                VolumizedRadarSnapshot.scan_time >= since
+            ).order_by(VolumizedRadarSnapshot.scan_time.desc()).limit(limit).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] volradar_list_snapshots error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def volradar_prune_snapshots(self, retention_days: int = 7) -> int:
+        """Daily cleanup — keep last `retention_days` of audit log."""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=retention_days)
+            n = session.query(VolumizedRadarSnapshot).filter(
+                VolumizedRadarSnapshot.scan_time < cutoff).delete()
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_prune_snapshots error: {e}")
             return 0
         finally:
             session.close()

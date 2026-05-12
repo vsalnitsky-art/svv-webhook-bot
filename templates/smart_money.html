@@ -1654,6 +1654,218 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
 </div>
 
+<!-- ===== VOLUMIZED OB RADAR ===== -->
+<!-- Sibling panel to TOP-100. Same daemon-driven flow but uses Pine
+     Volumized OB algorithm + P/D zone filter. Mode A only: auto-adds
+     qualifying symbols to the SMC watchlist (TTL 24h) — Trade Manager
+     fires only when SMC actually fires a signal on the symbol. -->
+<div style="margin-top:14px">
+    <div class="tm-panel" id="volradar-panel">
+        <div class="tm-header" id="volradar-header">
+            <h2>📦 Volumized OB Radar
+                <span id="volradar-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
+            </h2>
+            <div style="display:flex;gap:10px;align-items:center;margin-left:auto">
+                <span id="volradar-active-count" style="font-size:0.78rem;color:#a5b4fc">0 active</span>
+                <span id="volradar-status-label" style="font-size:0.8rem;color:#888">Disabled</span>
+                <label class="toggle-switch" style="margin:0">
+                    <input type="checkbox" id="volradar-enabled" onchange="onVolradarEnabledToggle()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+        <div class="tm-body" id="volradar-body">
+            <div style="background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.2);border-radius:4px;padding:9px 11px;margin-bottom:10px;font-size:0.78rem;color:#c4b5fd;line-height:1.45">
+                ℹ️ Сканує TOP-N USDT-perp монет на Binance Futures та шукає <strong>fresh Volumized OBs</strong>. Кваліфікується тільки якщо OB сидить у <strong>Discount</strong> (BULL, ≤38.2%) або <strong>Premium</strong> (BEAR, ≥61.8%) зоні від поточного swing range. Mode A — додає у watchlist на 24h; якщо за цей час SMC дав сигнал → монета залишається у watchlist як звичайна. Якщо ні → auto-remove.
+            </div>
+            
+            <!-- ============ Settings row ============ -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:10px;margin-bottom:14px">
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Scan Timeframe</label>
+                    <select id="volradar-tf" style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                            onchange="updateVolradarSetting('timeframe', this.value)">
+                        <option value="15m">15m</option>
+                        <option value="30m">30m</option>
+                        <option value="1h" selected>1H</option>
+                        <option value="2h">2H</option>
+                        <option value="4h">4H</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Scan Interval (min)</label>
+                    <input type="number" id="volradar-scan-interval" min="1" max="240" step="1"
+                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="updateVolradarSetting('scan_interval_min', parseInt(this.value))">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Fresh Window (hours)</label>
+                    <input type="number" id="volradar-fresh-hours" min="1" max="168" step="1"
+                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="updateVolradarSetting('fresh_window_hours', parseInt(this.value))">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Min 24h Volume (M USD)</label>
+                    <input type="number" id="volradar-min-vol" min="0" max="10000" step="10"
+                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="updateVolradarSetting('min_quote_volume_usd', parseFloat(this.value) * 1e6)">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">TTL (hours)</label>
+                    <input type="number" id="volradar-ttl-hours" min="1" max="168" step="1"
+                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="updateVolradarSetting('ttl_hours', parseInt(this.value))">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Cooldown (hours)</label>
+                    <input type="number" id="volradar-cooldown-hours" min="0" max="168" step="1"
+                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="updateVolradarSetting('cooldown_hours', parseInt(this.value))">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Max Concurrent</label>
+                    <input type="number" id="volradar-max-concurrent" min="1" max="100" step="1"
+                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="updateVolradarSetting('max_concurrent_items', parseInt(this.value))">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Discount Threshold (%)</label>
+                    <input type="number" id="volradar-discount" min="1" max="49" step="0.1"
+                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="updateVolradarSetting('discount_threshold', parseFloat(this.value))">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Premium Threshold (%)</label>
+                    <input type="number" id="volradar-premium" min="51" max="99" step="0.1"
+                           style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                           onchange="updateVolradarSetting('premium_threshold', parseFloat(this.value))">
+                </div>
+            </div>
+            
+            <!-- ============ Volumized algorithm params (collapsible) ============ -->
+            <details style="margin-bottom:14px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px">
+                <summary style="cursor:pointer;padding:8px 11px;font-size:0.78rem;color:#a5b4fc;user-select:none">
+                    Volumized algorithm params (independent from main scanner)
+                </summary>
+                <div style="padding:0 11px 11px 11px">
+                    <div style="display:flex;gap:8px;margin-bottom:9px">
+                        <button onclick="volradarCopyFromMain()"
+                                style="padding:5px 11px;background:rgba(168,85,247,0.18);border:1px solid rgba(168,85,247,0.4);color:#c4b5fd;border-radius:3px;cursor:pointer;font-size:0.74rem">
+                            📋 Copy from main settings
+                        </button>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(170px, 1fr));gap:9px">
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Swing Length</label>
+                            <input type="number" id="volradar-swing-length" min="3" max="50" step="1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('swing_length', parseInt(this.value))">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">OB End Method</label>
+                            <select id="volradar-ob-end" style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                    onchange="updateVolradarSetting('ob_end_method', this.value)">
+                                <option value="Wick">Wick</option>
+                                <option value="Close">Close</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Max ATR Mult</label>
+                            <input type="number" id="volradar-max-atr" min="0.5" max="20" step="0.1"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('max_atr_mult', parseFloat(this.value))">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Zone Count</label>
+                            <select id="volradar-zone-count" style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                    onchange="updateVolradarSetting('zone_count', this.value)">
+                                <option value="One">One</option>
+                                <option value="Low">Low</option>
+                                <option value="Medium">Medium</option>
+                                <option value="High">High</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;align-items:center;margin-top:18px">
+                            <label style="display:flex;align-items:center;gap:5px;font-size:0.74rem;color:#aaa;cursor:pointer">
+                                <input type="checkbox" id="volradar-combine-obs"
+                                       onchange="updateVolradarSetting('combine_obs', this.checked)">
+                                Combine OBs
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </details>
+            
+            <!-- ============ Action buttons ============ -->
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+                <button onclick="volradarScanNow()" id="volradar-scan-btn"
+                        style="padding:6px 14px;background:rgba(168,85,247,0.2);border:1px solid rgba(168,85,247,0.45);color:#c4b5fd;border-radius:3px;cursor:pointer;font-size:0.78rem">
+                    🔍 Scan now
+                </button>
+                <span id="volradar-last-scan" style="font-size:0.74rem;color:#666">Last scan: never</span>
+                <span id="volradar-last-summary" style="font-size:0.74rem;color:#888;margin-left:auto"></span>
+            </div>
+            
+            <!-- ============ Active radar items (live countdown) ============ -->
+            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:14px 0 6px 0">
+                Active Radar Items
+                <span style="color:#666;font-weight:normal;font-size:0.72rem">(removed automatically after TTL)</span>
+            </h3>
+            <table class="tm-table" id="volradar-active-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Direction</th>
+                        <th>OB Zone</th>
+                        <th>P/D Pct</th>
+                        <th>Added</th>
+                        <th>TTL Remaining</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="volradar-active-tbody">
+                    <tr><td colspan="7" class="tm-empty-msg">No active radar items.</td></tr>
+                </tbody>
+            </table>
+            
+            <!-- ============ Recent snapshots feed (audit log) ============ -->
+            <details style="margin-top:14px">
+                <summary style="cursor:pointer;font-size:0.85rem;color:#a5b4fc;user-select:none">
+                    Recent Scan Decisions <span style="color:#666;font-weight:normal;font-size:0.72rem">(last 24h, audit log)</span>
+                </summary>
+                <div id="volradar-snapshots-feed" style="max-height:260px;overflow-y:auto;background:rgba(255,255,255,0.015);border:1px solid rgba(255,255,255,0.04);border-radius:4px;padding:8px;margin-top:6px">
+                    <div style="color:#666;font-size:0.78rem;text-align:center;padding:18px">
+                        No recent decisions. Run a scan to populate.
+                    </div>
+                </div>
+            </details>
+            
+            <!-- ============ Per-symbol lifetime stats ============ -->
+            <details style="margin-top:10px">
+                <summary style="cursor:pointer;font-size:0.85rem;color:#a5b4fc;user-select:none">
+                    Per-Symbol Stats <span style="color:#666;font-weight:normal;font-size:0.72rem">(conversion-rate analytics)</span>
+                </summary>
+                <table class="tm-table" id="volradar-stats-table" style="margin-top:6px">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Added</th>
+                            <th>Fired</th>
+                            <th>Auto-rm</th>
+                            <th>Manual-rm</th>
+                            <th>Conv. Rate</th>
+                            <th>Last Added</th>
+                        </tr>
+                    </thead>
+                    <tbody id="volradar-stats-tbody">
+                        <tr><td colspan="7" class="tm-empty-msg">No statistics yet.</td></tr>
+                    </tbody>
+                </table>
+            </details>
+        </div>
+    </div>
+</div>
+
 <script>
 let chart = null;
 let candleSeries = null;
@@ -1919,8 +2131,41 @@ function renderWatchlist(list) {
             }
         }
         
+        // 📦 Volumized Radar pip — shows when this symbol was auto-added by
+        // the Volumized OB Radar. Renders as a small box icon with a LIVE
+        // countdown (e.g. "📦 23h" / "📦 45m"). Hovering shows full tooltip
+        // with OB context. Updated client-side every 60s by tickVolradarCountdowns
+        // (no extra API calls needed — TTL math is local from `expires_at`).
+        let radarHtml = '';
+        const radarMeta = (wlVolradarItems || {})[sym];
+        if (radarMeta) {
+            const dir = radarMeta.ob_direction;       // 'BULL' | 'BEAR'
+            const color = dir === 'BULL' ? '#22c55e' : '#ef4444';
+            const remaining = computeRadarRemaining(radarMeta.expires_at);
+            const obZone = `${formatPriceCompact(radarMeta.ob_bottom)}–${formatPriceCompact(radarMeta.ob_top)}`;
+            const title = `📦 Added by Volumized Radar\n`
+                + `Direction: ${dir} OB\n`
+                + `Zone: ${obZone}\n`
+                + `P/D Position: ${radarMeta.pd_zone_pct?.toFixed(1) ?? '?'}%\n`
+                + `Scan TF: ${(radarMeta.scan_tf || '').toUpperCase()}\n`
+                + `TTL: ${remaining.full}\n\n`
+                + `Auto-removed after 24h if no SMC signal fires.`;
+            // Subtle warning style when <1h remaining
+            const isUrgent = remaining.minutes < 60;
+            const baseStyle = `display:inline-flex;align-items:center;gap:3px;`
+                + `padding:1px 5px;margin-right:5px;`
+                + `background:rgba(168,85,247,${isUrgent ? '0.28' : '0.15'});`
+                + `border:1px solid rgba(168,85,247,${isUrgent ? '0.6' : '0.35'});`
+                + `border-radius:3px;font-size:0.62rem;`
+                + `color:${isUrgent ? '#ddd6fe' : '#c4b5fd'};`
+                + `font-weight:600;line-height:1;cursor:help;vertical-align:middle`;
+            radarHtml = `<span class="sm-radar-pip" data-sym="${sym}" data-expires="${radarMeta.expires_at}" `
+                + `title="${escapeHtml(title)}" style="${baseStyle}">`
+                + `📦 <span class="sm-radar-ttl">${remaining.short}</span></span>`;
+        }
+        
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -1929,6 +2174,355 @@ function renderWatchlist(list) {
         </div>`;
     }
     el.innerHTML = html;
+}
+
+// ============================================================
+// 📦 Volumized OB Radar — UI controller
+// ============================================================
+// Mirror of the TOP-100 radar panel (different daemon, different filter).
+// Polls /api/vol-radar/state every ~30s and refreshes the active-items
+// table, settings form values, and snapshot feed. Watchlist pips reuse
+// the wlVolradarItems map so refreshes happen in lockstep with loadWatchlist.
+//
+// Local concerns only — backend already enforces every rule (cooldown,
+// capacity, dedup, P/D zone). UI just renders state and surfaces actions.
+
+let wlVolradarItems = {};      // symbol → metadata row dict (for watchlist pip)
+let volradarSettings = null;   // last-known settings (avoids unnecessary writes)
+let volradarPollTimer = null;
+let volradarCountdownTimer = null;
+let volradarScanInProgress = false;
+
+// Compute remaining TTL from ISO `expires_at`. Returns:
+//   { short: '23h' | '45m' | '<1m', full: '23 hours 12 minutes', minutes: number }
+function computeRadarRemaining(expiresAtIso) {
+    if (!expiresAtIso) return { short: '?', full: 'unknown', minutes: 0 };
+    const expiresMs = new Date(expiresAtIso).getTime();
+    const remainingMs = Math.max(0, expiresMs - Date.now());
+    const minutes = Math.floor(remainingMs / 60000);
+    if (minutes >= 60) {
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        return {
+            short: `${hours}h`,
+            full: `${hours} hours ${mins} minutes`,
+            minutes,
+        };
+    }
+    if (minutes >= 1) {
+        return { short: `${minutes}m`, full: `${minutes} minutes`, minutes };
+    }
+    return { short: '<1m', full: 'less than a minute', minutes: 0 };
+}
+
+function formatPriceCompact(p) {
+    if (p == null) return '?';
+    if (p >= 1000) return p.toFixed(2);
+    if (p >= 1) return p.toFixed(4);
+    if (p >= 0.01) return p.toFixed(6);
+    return p.toFixed(8);
+}
+
+// Tick every 60s — updates the SHORT label and urgent styling without a
+// full re-render. Cheap DOM mutation; works on however many pips exist.
+function tickVolradarCountdowns() {
+    document.querySelectorAll('.sm-radar-pip').forEach(pip => {
+        const expIso = pip.getAttribute('data-expires');
+        const r = computeRadarRemaining(expIso);
+        const ttlSpan = pip.querySelector('.sm-radar-ttl');
+        if (ttlSpan) ttlSpan.textContent = r.short;
+        // Switch to urgent styling when <1h left
+        if (r.minutes < 60) {
+            pip.style.background = 'rgba(168,85,247,0.28)';
+            pip.style.borderColor = 'rgba(168,85,247,0.6)';
+            pip.style.color = '#ddd6fe';
+        }
+    });
+}
+
+async function loadVolradarState() {
+    try {
+        const r = await fetch('/api/vol-radar/state');
+        const d = await r.json();
+        if (!d.ok) return;
+        
+        // Cache settings — guards against echoing form changes back to user
+        volradarSettings = d.settings;
+        
+        // Toggle + status label
+        const cb = document.getElementById('volradar-enabled');
+        if (cb) cb.checked = !!d.settings.enabled;
+        const status = document.getElementById('volradar-status-label');
+        if (status) {
+            status.textContent = d.daemon_running ? 'Running' : (d.settings.enabled ? 'Starting…' : 'Disabled');
+            status.style.color = d.daemon_running ? '#22c55e' : (d.settings.enabled ? '#fbbf24' : '#888');
+        }
+        
+        // Update form fields (skip if user is currently editing one)
+        const tfEl = document.getElementById('volradar-tf');
+        if (tfEl && document.activeElement !== tfEl) tfEl.value = d.settings.timeframe;
+        const tfLabel = document.getElementById('volradar-tf-label');
+        if (tfLabel) tfLabel.textContent = d.settings.timeframe.toUpperCase();
+        
+        const fields = {
+            'volradar-scan-interval': d.settings.scan_interval_min,
+            'volradar-fresh-hours': d.settings.fresh_window_hours,
+            'volradar-min-vol': d.settings.min_quote_volume_usd / 1e6,
+            'volradar-ttl-hours': d.settings.ttl_hours,
+            'volradar-cooldown-hours': d.settings.cooldown_hours,
+            'volradar-max-concurrent': d.settings.max_concurrent_items,
+            'volradar-discount': d.settings.discount_threshold,
+            'volradar-premium': d.settings.premium_threshold,
+            'volradar-swing-length': d.settings.swing_length,
+            'volradar-ob-end': d.settings.ob_end_method,
+            'volradar-max-atr': d.settings.max_atr_mult,
+            'volradar-zone-count': d.settings.zone_count,
+        };
+        for (const [id, val] of Object.entries(fields)) {
+            const el = document.getElementById(id);
+            if (el && document.activeElement !== el) el.value = val;
+        }
+        const combineEl = document.getElementById('volradar-combine-obs');
+        if (combineEl && document.activeElement !== combineEl) combineEl.checked = !!d.settings.combine_obs;
+        
+        // Active items table + watchlist-pip map
+        const items = d.active_items || [];
+        wlVolradarItems = {};
+        items.forEach(it => { wlVolradarItems[it.symbol] = it; });
+        renderVolradarActiveTable(items);
+        
+        // Active count badge
+        const countEl = document.getElementById('volradar-active-count');
+        if (countEl) {
+            countEl.textContent = `${items.length} active / ${d.settings.max_concurrent_items} cap`;
+            countEl.style.color = items.length >= d.settings.max_concurrent_items ? '#fbbf24' : '#a5b4fc';
+        }
+        
+        // Last scan info
+        if (d.last_scan_at) {
+            const dt = new Date(d.last_scan_at);
+            const lastEl = document.getElementById('volradar-last-scan');
+            if (lastEl) lastEl.textContent = `Last scan: ${dt.toLocaleTimeString()}`;
+        }
+        if (d.last_scan_summary && d.last_scan_summary.status) {
+            const s = d.last_scan_summary;
+            const summary = `${s.symbols_scanned || 0} scanned, ${s.added || 0} added, `
+                + `${s.skipped_already_in_watchlist || 0} skip-exist, `
+                + `${s.skipped_cooldown || 0} skip-cooldown, `
+                + `${s.expired_removed || 0} expired`;
+            const summaryEl = document.getElementById('volradar-last-summary');
+            if (summaryEl) summaryEl.textContent = summary;
+        }
+        
+        // Snapshot feed
+        renderVolradarSnapshots(d.recent_snapshots || []);
+        // Top-stats analytics
+        renderVolradarStats(d.top_stats || []);
+    } catch (e) {
+        console.error('loadVolradarState error:', e);
+    }
+}
+
+function renderVolradarActiveTable(items) {
+    const tbody = document.getElementById('volradar-active-tbody');
+    if (!tbody) return;
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No active radar items.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = items.map(it => {
+        const dir = it.ob_direction;
+        const dirColor = dir === 'BULL' ? '#22c55e' : '#ef4444';
+        const dirIcon = dir === 'BULL' ? '🟢' : '🔴';
+        const r = computeRadarRemaining(it.expires_at);
+        const ttlColor = r.minutes < 60 ? '#fbbf24' : (r.minutes < 360 ? '#a5b4fc' : '#888');
+        const added = new Date(it.added_at).toLocaleString();
+        const zone = `${formatPriceCompact(it.ob_bottom)} – ${formatPriceCompact(it.ob_top)}`;
+        return `<tr>
+            <td><strong>${it.symbol}</strong></td>
+            <td style="color:${dirColor}">${dirIcon} ${dir}</td>
+            <td style="font-family:monospace;font-size:0.78rem">${zone}</td>
+            <td>${it.pd_zone_pct?.toFixed(1) ?? '?'}%</td>
+            <td style="color:#888;font-size:0.74rem">${added}</td>
+            <td style="color:${ttlColor};font-weight:600" class="vradar-ttl-cell" data-expires="${it.expires_at}">${r.full}</td>
+            <td><button onclick="volradarRemove('${it.symbol}')" style="padding:3px 9px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#fca5a5;border-radius:3px;cursor:pointer;font-size:0.72rem">🗑 Remove</button></td>
+        </tr>`;
+    }).join('');
+}
+
+function renderVolradarSnapshots(snaps) {
+    const el = document.getElementById('volradar-snapshots-feed');
+    if (!el) return;
+    if (!snaps.length) {
+        el.innerHTML = '<div style="color:#666;font-size:0.78rem;text-align:center;padding:18px">No recent decisions.</div>';
+        return;
+    }
+    // Group by action type for readability
+    const actionColors = {
+        'added': '#22c55e',
+        'skipped_already_in_watchlist': '#888',
+        'skipped_cooldown': '#fbbf24',
+        'skipped_capacity_full': '#fbbf24',
+        'skipped_not_in_zone': '#666',
+        'skipped_ob_too_old': '#666',
+        'skipped_no_ob': '#555',
+        'skipped_no_swings': '#555',
+        'error': '#ef4444',
+    };
+    el.innerHTML = snaps.map(s => {
+        const dt = new Date(s.scan_time).toLocaleTimeString();
+        const color = actionColors[s.action] || '#888';
+        const dirIcon = s.ob_direction === 'BULL' ? '🟢' : (s.ob_direction === 'BEAR' ? '🔴' : '');
+        const pd = s.pd_zone_pct != null ? `P/D ${s.pd_zone_pct.toFixed(1)}%` : '';
+        const err = s.error_msg ? ` — ${s.error_msg}` : '';
+        return `<div style="padding:4px 6px;border-bottom:1px solid rgba(255,255,255,0.03);font-size:0.72rem;display:flex;gap:8px;align-items:center">
+            <span style="color:#666;font-family:monospace">${dt}</span>
+            <strong>${s.symbol}</strong>
+            <span>${dirIcon}</span>
+            <span style="color:#888">${pd}</span>
+            <span style="color:${color};margin-left:auto">${s.action.replace(/_/g, ' ')}${err}</span>
+        </div>`;
+    }).join('');
+}
+
+function renderVolradarStats(stats) {
+    const tbody = document.getElementById('volradar-stats-tbody');
+    if (!tbody) return;
+    if (!stats.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No statistics yet.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = stats.map(s => {
+        const conv = (s.conversion_rate * 100).toFixed(1);
+        const convColor = s.conversion_rate >= 0.5 ? '#22c55e' : (s.conversion_rate >= 0.25 ? '#fbbf24' : '#ef4444');
+        const lastAdded = s.last_added_at ? new Date(s.last_added_at).toLocaleDateString() : '—';
+        return `<tr>
+            <td><strong>${s.symbol}</strong></td>
+            <td>${s.times_added}</td>
+            <td style="color:#22c55e">${s.times_signal_fired}</td>
+            <td style="color:#888">${s.times_auto_removed}</td>
+            <td style="color:#888">${s.times_manual_removed}</td>
+            <td style="color:${convColor};font-weight:600">${conv}%</td>
+            <td style="color:#888;font-size:0.74rem">${lastAdded}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function onVolradarEnabledToggle() {
+    const cb = document.getElementById('volradar-enabled');
+    if (!cb) return;
+    await updateVolradarSetting('enabled', cb.checked);
+    // Status label updates on next poll; pulse-refresh to feel snappy
+    setTimeout(loadVolradarState, 500);
+}
+
+async function updateVolradarSetting(key, value) {
+    try {
+        const body = {};
+        body[key] = value;
+        const r = await fetch('/api/vol-radar/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (!d.ok) console.warn('updateVolradarSetting failed:', d.reason);
+    } catch (e) {
+        console.error('updateVolradarSetting error:', e);
+    }
+}
+
+async function volradarCopyFromMain() {
+    try {
+        const r = await fetch('/api/vol-radar/copy-from-main', {method: 'POST'});
+        const d = await r.json();
+        if (d.ok) {
+            await loadVolradarState();
+        } else {
+            alert('Copy from main failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (e) {
+        console.error('volradarCopyFromMain error:', e);
+    }
+}
+
+async function volradarScanNow() {
+    if (volradarScanInProgress) return;
+    volradarScanInProgress = true;
+    const btn = document.getElementById('volradar-scan-btn');
+    const origText = btn?.textContent;
+    if (btn) {
+        btn.textContent = '⏳ Scanning…';
+        btn.disabled = true;
+    }
+    try {
+        const r = await fetch('/api/vol-radar/scan', {method: 'POST'});
+        const d = await r.json();
+        if (d.ok) {
+            await loadVolradarState();
+            // Trigger watchlist refresh — radar may have added items
+            if (typeof loadWatchlist === 'function') {
+                loadWatchlist();
+            }
+        } else {
+            alert('Scan failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (e) {
+        console.error('volradarScanNow error:', e);
+    } finally {
+        if (btn) {
+            btn.textContent = origText || '🔍 Scan now';
+            btn.disabled = false;
+        }
+        volradarScanInProgress = false;
+    }
+}
+
+async function volradarRemove(symbol) {
+    if (!confirm(`Remove ${symbol} from Volumized Radar tracking?\n\n`
+        + 'This also removes the symbol from your SMC watchlist.\n'
+        + 'A 6h cooldown will block re-adds.')) return;
+    try {
+        const r = await fetch('/api/vol-radar/remove', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            await loadVolradarState();
+            if (typeof loadWatchlist === 'function') {
+                loadWatchlist();
+            }
+        } else {
+            alert('Remove failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (e) {
+        console.error('volradarRemove error:', e);
+    }
+}
+
+// Bootstrap: load state on first render, then poll every 30s, and tick
+// countdowns every 60s. Stops on page navigation (timers don't survive).
+function startVolradarUI() {
+    loadVolradarState();
+    if (volradarPollTimer) clearInterval(volradarPollTimer);
+    if (volradarCountdownTimer) clearInterval(volradarCountdownTimer);
+    volradarPollTimer = setInterval(loadVolradarState, 30_000);
+    volradarCountdownTimer = setInterval(() => {
+        tickVolradarCountdowns();
+        // Also update active-items table TTL cells without full re-render
+        document.querySelectorAll('.vradar-ttl-cell').forEach(cell => {
+            const r = computeRadarRemaining(cell.getAttribute('data-expires'));
+            cell.textContent = r.full;
+            cell.style.color = r.minutes < 60 ? '#fbbf24' : (r.minutes < 360 ? '#a5b4fc' : '#888');
+        });
+    }, 60_000);
+}
+
+// Run once DOM is ready (this script is at end of body so DOM is loaded)
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startVolradarUI);
+} else {
+    startVolradarUI();
 }
 
 async function addSymbol() {

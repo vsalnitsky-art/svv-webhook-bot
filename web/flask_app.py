@@ -345,6 +345,32 @@ def create_app():
                     print(f"[APP] TOP-100 OB Scanner settings restore failed: {e}")
             except Exception as e:
                 print(f"[APP] Failed to init TOP-100 OB Scanner: {e}")
+        
+        # Volumized OB Radar — same auto-start pattern as TOP-100 but a
+        # different scanner (Pine Volumized algorithm + P/D zone filter).
+        # Settings live as a single JSON blob under 'volumized_radar_settings',
+        # loaded inside the singleton constructor — so all we do here is
+        # call get_volumized_ob_radar() (constructs + auto-loads) and start
+        # the daemon thread if `enabled=True` in those settings.
+        _auto_started.setdefault('volradar', False)
+        if not _auto_started['volradar']:
+            _auto_started['volradar'] = True
+            try:
+                from detection.volumized_ob_radar import get_volumized_ob_radar
+                vol_tg = None
+                try:
+                    from alerts.telegram_notifier import get_notifier
+                    vol_tg = get_notifier()
+                except Exception:
+                    pass
+                radar = get_volumized_ob_radar(telegram_notifier=vol_tg)
+                if radar.get_settings().get('enabled'):
+                    radar.start()
+                    print("[APP] Volumized OB Radar auto-started")
+                else:
+                    print("[APP] Volumized OB Radar initialized (disabled by setting)")
+            except Exception as e:
+                print(f"[APP] Failed to init Volumized OB Radar: {e}")
     
     return app
 
@@ -3343,6 +3369,89 @@ def register_api_routes(app):
             return jsonify({'ok': True, 'cleared': count})
         except Exception as e:
             return jsonify({'ok': False, 'error': str(e)})
+    
+    # ============================================================
+    # Volumized OB Radar — 6 endpoints (mirrors TOP-100 OB Radar style)
+    # ============================================================
+    
+    @app.route('/api/vol-radar/state')
+    def api_volradar_state():
+        """One-shot dashboard payload: settings + active items + recent
+        snapshots + top stats. UI polls every ~30s."""
+        try:
+            from detection.volumized_ob_radar import get_volumized_ob_radar
+            radar = get_volumized_ob_radar()
+            return jsonify({'ok': True, **radar.get_state()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/vol-radar/settings', methods=['POST'])
+    def api_volradar_settings():
+        """Update settings. Body: any subset of settings keys (see
+        radar.get_settings() for the full key list)."""
+        try:
+            from detection.volumized_ob_radar import get_volumized_ob_radar
+            radar = get_volumized_ob_radar()
+            data = request.get_json() or {}
+            new_settings = radar.update_settings(**data)
+            return jsonify({'ok': True, 'settings': new_settings})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/vol-radar/copy-from-main', methods=['POST'])
+    def api_volradar_copy_from_main():
+        """Pull Volumized algorithm params from the main SMC scanner's
+        settings — single-button convenience that mirrors swing_length,
+        ob_end_method, max_atr_mult, zone_count, combine_obs, timeframe."""
+        try:
+            from detection.volumized_ob_radar import get_volumized_ob_radar
+            radar = get_volumized_ob_radar()
+            new_settings = radar.copy_from_main_volumized()
+            return jsonify({'ok': True, 'settings': new_settings})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/vol-radar/scan', methods=['POST'])
+    def api_volradar_scan():
+        """Trigger a manual scan tick. Blocks until done; large scans (~100
+        symbols × 600ms throttle) can take 60+ seconds. Frontend should
+        show a spinner. Returns the same summary shape as scheduled scans."""
+        try:
+            from detection.volumized_ob_radar import get_volumized_ob_radar
+            radar = get_volumized_ob_radar()
+            summary = radar.scan(triggered_by='manual')
+            return jsonify({'ok': True, 'summary': summary})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/vol-radar/remove', methods=['POST'])
+    def api_volradar_remove():
+        """Manual remove from radar tracking. Body: {symbol: 'BTCUSDT'}.
+        Removes from watchlist + bumps manual counter + starts cooldown.
+        Same effect as user clicking 🗑 in the watchlist UI."""
+        try:
+            from detection.volumized_ob_radar import get_volumized_ob_radar
+            data = request.get_json() or {}
+            symbol = data.get('symbol', '')
+            if not symbol:
+                return jsonify({'ok': False, 'reason': 'symbol required'})
+            radar = get_volumized_ob_radar()
+            return jsonify(radar.manual_remove(symbol))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/vol-radar/stats/<symbol>')
+    def api_volradar_stat(symbol):
+        """Per-symbol lifetime stats. Useful for "how often does radar
+        pick BTC, and what's its conversion rate?" — shown in tooltip."""
+        try:
+            from storage.db_operations import get_db
+            stat = get_db().volradar_get_stat(symbol.upper())
+            if stat is None:
+                return jsonify({'ok': True, 'stat': None})
+            return jsonify({'ok': True, 'stat': stat})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
     
     # End of register_api_routes
 

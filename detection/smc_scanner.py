@@ -543,6 +543,20 @@ class SMCScanner:
                     get_db().delete_smc_ob_state_for_symbol(symbol)
                 except Exception as e:
                     print(f"[SMC] OB cleanup error for {symbol}: {e}")
+                
+                # === Volumized Radar hook ===
+                # If the symbol was being tracked by the radar (24h TTL),
+                # a manual remove counts as a "user rejection" — bump the
+                # manual counter and set cooldown so the radar doesn't
+                # immediately re-add the same symbol next scan. Best-effort:
+                # if the DB call fails, the watchlist removal still completes.
+                try:
+                    from storage.db_operations import get_db as _gd
+                    _gd().volradar_remove(symbol, reason='manual',
+                                          cooldown_hours=6)
+                except Exception as e:
+                    print(f"[SMC] volradar manual hook error: {e}")
+                
                 return {'ok': True, 'watchlist': list(self._watchlist)}
         return {'ok': False, 'reason': 'Not in watchlist'}
     
@@ -1837,6 +1851,19 @@ class SMCScanner:
                                  entry_price=entry_price, opened_by=mode)
             except Exception as e:
                 print(f"[SMC] TM hook error: {e}")
+            
+            # === Volumized OB Radar hook ===
+            # If this symbol was added by the radar (within the 24h TTL),
+            # the SMC signal firing means it "graduated" out of radar tracking.
+            # The DB call deletes the metadata row and bumps times_signal_fired.
+            # The symbol stays in the watchlist as a normal item — same as
+            # any other after a signal. Lazy import to avoid circular import.
+            try:
+                graduated = self.db.volradar_mark_signal_fired(symbol)
+                if graduated:
+                    print(f"[SMC] {symbol} graduated from Volumized Radar tracking (signal fired)")
+            except Exception as e:
+                print(f"[SMC] volradar_mark_signal_fired error: {e}")
         except Exception as e:
             print(f"[SMC] Alert send error: {e}")
     

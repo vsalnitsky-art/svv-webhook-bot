@@ -957,3 +957,155 @@ class Top100OBHistory(Base):
             'quote_volume_24h': self.quote_volume_24h,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
+
+
+# ============================================================
+# Volumized OB Radar — three tables
+# ============================================================
+# 1. VolumizedRadarMetadata — per-symbol tracking while item is "owned" by
+#    the radar. Row exists only between auto-add and removal (auto/manual/
+#    signal-fired). Indexed on `expires_at` for fast cleanup-daemon scan.
+# 2. VolumizedRadarStat — lifetime counters per symbol. Survives metadata
+#    row removal. Used for analytics ("how often does BTC give radar
+#    signals that actually fire?") and for cooldown enforcement.
+# 3. VolumizedRadarSnapshot — per-scan audit log. Records every scan
+#    decision for inspection. Indexed on scan_time for time-range queries.
+# ============================================================
+
+class VolumizedRadarMetadata(Base):
+    """Tracking metadata for symbols currently watched by Volumized OB Radar.
+    
+    Lifecycle: row inserted on auto-add (qualifying Volumized OB found in
+    P/D zone). Deleted when (a) SMC signal fires within 24h → row +
+    stats.times_signal_fired++; (b) 24h passes without signal → row +
+    stats.times_auto_removed++ + cooldown set; (c) user manually removes
+    from watchlist → row + stats.times_manual_removed++ + cooldown.
+    
+    The radar never reads this for "is symbol in watchlist?" — that's the
+    smc_watchlist JSON list's job. This table is solely for radar's own
+    bookkeeping: who's on the clock, until when, with what OB context.
+    """
+    __tablename__ = 'volumized_radar_metadata'
+    
+    symbol = Column(String(20), primary_key=True)
+    added_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # 24h after added_at by default. Stored explicitly to make cleanup
+    # query trivial (`WHERE expires_at < now`) without datetime arithmetic.
+    expires_at = Column(DateTime, nullable=False)
+    
+    # OB context when added — for UI tooltip and audit
+    ob_direction = Column(String(10))     # 'BULL' | 'BEAR'
+    ob_top = Column(Float)
+    ob_bottom = Column(Float)
+    ob_volume = Column(Float)              # OB's volume (for Vol indicator)
+    pd_zone_pct = Column(Float)            # 0.0-100.0; ≤38.2 = Discount, ≥61.8 = Premium
+    scan_tf = Column(String(10))           # '1h' | '4h' etc. — Volumized scan TF
+    
+    # Latched the moment _send_alert fires for this symbol. Used by cleanup
+    # daemon to remove the row WITHOUT also removing from watchlist (user
+    # said: "сигнал спрацював — символ переходить у normal flow як всі").
+    signal_fired_at = Column(DateTime, nullable=True)
+    
+    __table_args__ = (
+        # Cleanup daemon scans this index — fastest possible TTL-expiry query
+        Index('idx_volradar_expires', 'expires_at'),
+    )
+    
+    def to_dict(self):
+        return {
+            'symbol': self.symbol,
+            'added_at': self.added_at.isoformat() if self.added_at else None,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'ob_direction': self.ob_direction,
+            'ob_top': self.ob_top,
+            'ob_bottom': self.ob_bottom,
+            'ob_volume': self.ob_volume,
+            'pd_zone_pct': self.pd_zone_pct,
+            'scan_tf': self.scan_tf,
+            'signal_fired_at': self.signal_fired_at.isoformat() if self.signal_fired_at else None,
+        }
+
+
+class VolumizedRadarStat(Base):
+    """Lifetime counters per symbol — survives metadata row removal.
+    
+    Powers the radar analytics view: which coins does the radar pick up most
+    often, what's their signal-fire conversion rate, how often were they
+    manually rejected. Also stores `last_cooldown_until` to enforce the
+    re-add cooldown (default 6h after any removal — prevents the radar
+    from re-adding a symbol the user just dismissed).
+    """
+    __tablename__ = 'volumized_radar_stats'
+    
+    symbol = Column(String(20), primary_key=True)
+    times_added = Column(Integer, default=0, nullable=False)
+    times_signal_fired = Column(Integer, default=0, nullable=False)
+    times_auto_removed = Column(Integer, default=0, nullable=False)
+    times_manual_removed = Column(Integer, default=0, nullable=False)
+    last_added_at = Column(DateTime, nullable=True)
+    last_cooldown_until = Column(DateTime, nullable=True)
+    
+    def to_dict(self):
+        total_resolved = (self.times_signal_fired + self.times_auto_removed
+                         + self.times_manual_removed)
+        conv_rate = (self.times_signal_fired / total_resolved
+                    if total_resolved > 0 else 0.0)
+        return {
+            'symbol': self.symbol,
+            'times_added': self.times_added,
+            'times_signal_fired': self.times_signal_fired,
+            'times_auto_removed': self.times_auto_removed,
+            'times_manual_removed': self.times_manual_removed,
+            'conversion_rate': round(conv_rate, 3),
+            'last_added_at': self.last_added_at.isoformat() if self.last_added_at else None,
+            'last_cooldown_until': self.last_cooldown_until.isoformat() if self.last_cooldown_until else None,
+        }
+
+
+class VolumizedRadarSnapshot(Base):
+    """Per-scan audit log — one row per (scan_time, symbol) tuple.
+    
+    Records EVERY scan decision (not only successful adds). Lets users
+    answer "why didn't this symbol get added?" by inspecting the snapshot:
+    qualifies/doesn't, action taken, P/D zone pct, etc.
+    
+    Auto-pruned by db_operations.prune_volradar_snapshots() — keeps last
+    7 days by default.
+    """
+    __tablename__ = 'volumized_radar_snapshots'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    scan_time = Column(DateTime, nullable=False, default=datetime.utcnow)
+    symbol = Column(String(20), nullable=False)
+    
+    # OB context (nullable when no OB found at all)
+    ob_direction = Column(String(10), nullable=True)
+    ob_top = Column(Float, nullable=True)
+    ob_bottom = Column(Float, nullable=True)
+    pd_zone_pct = Column(Float, nullable=True)
+    
+    qualified = Column(Boolean, default=False, nullable=False)
+    # 'added' | 'skipped_already_in_watchlist' | 'skipped_cooldown'
+    # | 'skipped_not_in_zone' | 'skipped_no_swings' | 'skipped_no_ob'
+    # | 'skipped_capacity_full' | 'error'
+    action = Column(String(40), nullable=False)
+    error_msg = Column(Text, nullable=True)
+    
+    __table_args__ = (
+        Index('idx_volradar_snap_time', 'scan_time'),
+        Index('idx_volradar_snap_symbol_time', 'symbol', 'scan_time'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'scan_time': self.scan_time.isoformat() if self.scan_time else None,
+            'symbol': self.symbol,
+            'ob_direction': self.ob_direction,
+            'ob_top': self.ob_top,
+            'ob_bottom': self.ob_bottom,
+            'pd_zone_pct': self.pd_zone_pct,
+            'qualified': self.qualified,
+            'action': self.action,
+            'error_msg': self.error_msg,
+        }

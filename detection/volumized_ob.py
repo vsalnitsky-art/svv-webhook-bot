@@ -393,6 +393,19 @@ def detect_volumized_obs(
         'latest_ob': latest_ob,
         'trend': trend,
         'trend_meta': trend_meta,
+        # Swing extremes for Premium/Discount zone calculation.
+        # These reflect the most recently DETECTED swing points (Pine
+        # `top_swing.y` / `bottom_swing.y` equivalents in the indicator's
+        # original lexicon). Used by the Volumized OB Radar to decide
+        # whether a fresh OB sits in Discount (<38.2%) or Premium (>61.8%)
+        # of the current swing range. None when no swings have been
+        # confirmed yet (very early data).
+        'swing_high': top_swing['y'] if top_swing else None,
+        'swing_low': bottom_swing['y'] if bottom_swing else None,
+        # Current close — final closed bar's close, useful as a reference
+        # price for distance/zone-pct calculations downstream. None when
+        # the kline list is empty.
+        'current_close': closes[-1] if closes else None,
     }
 
 
