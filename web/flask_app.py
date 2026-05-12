@@ -2318,6 +2318,35 @@ def register_api_routes(app):
             return jsonify({'running': False, 'error': 'Not initialized'})
         return jsonify(s.get_state())
     
+    @app.route('/api/smc/dedup/reset', methods=['POST'])
+    def api_smc_dedup_reset():
+        """Reset dedup state for one symbol or all.
+        
+        Body: {"symbol": "BTCUSDT"}  → reset just that symbol
+              {}                      → reset all symbols
+        
+        After reset, the next signal of any direction will fire (state
+        becomes "no prior signal"). Useful when the user knows the trend
+        changed but no opposite signal has come through to flip dedup,
+        or when re-entering a trade they manually closed.
+        """
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'error': 'Scanner not initialised'}), 500
+        body = request.get_json(silent=True) or {}
+        symbol = (body.get('symbol') or '').strip().upper()
+        try:
+            if symbol:
+                s._last_signal_dir.pop(symbol, None)
+                msg = f"Dedup reset for {symbol}"
+            else:
+                s._last_signal_dir.clear()
+                msg = "Dedup reset for all symbols"
+            return jsonify({'ok': True, 'message': msg})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)}), 500
+    
     @app.route('/api/smc/watchlist', methods=['GET'])
     def api_smc_watchlist():
         from detection.smc_scanner import get_smc_scanner

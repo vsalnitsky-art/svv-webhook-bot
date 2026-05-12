@@ -1024,6 +1024,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          by ATR-size filter). Tooltip shows TF, OB price range
                          and volume — quick at-a-glance trend confirmation. -->
                     <span class="sm-status-badge" id="sm-volumized-badge" style="margin-left:6px;display:none"></span>
+                    <!-- Dedup gate badge — shows the current state of the
+                         "1 per trend" guard for the currently-selected symbol.
+                         Visible only when dedup is enabled in settings. Three
+                         states color-coded:
+                           grey 🔓 OPEN          — no signal yet, next alerts
+                           green ↑ LONG fired   — waiting for SHORT to flip
+                           red   ↓ SHORT fired  — waiting for LONG to flip
+                         Click → confirms then calls /api/smc/dedup/reset for
+                         this symbol so user can force the gate back to OPEN. -->
+                    <span class="sm-status-badge" id="sm-dedup-badge"
+                          style="margin-left:6px;display:none;cursor:pointer"
+                          onclick="resetDedupForCurrent()"></span>
                     <!-- Legacy PD Zone badge — still rendered but only when
                          backend keeps producing pd_zone_pct (it does, the
                          backend code wasn't removed). Hidden by default
@@ -1683,6 +1695,35 @@ async function clearSignalsForCurrent() {
     } catch (err) { alert('Clear error: ' + err); }
 }
 
+// Reset the dedup gate for the currently-selected symbol.
+// After reset, the gate returns to OPEN — the next signal of either
+// direction will fire (no longer requires the opposite of the last alert).
+// Useful when the user manually closed a position and wants to re-enter,
+// or when they know the trend changed but no opposite signal flipped the gate.
+async function resetDedupForCurrent() {
+    if (!currentSymbol) return;
+    const lastDir = wlDedupState[currentSymbol];
+    const stateDesc = lastDir
+        ? `Currently locked: last alert was ${lastDir}, only ${lastDir === 'LONG' ? 'SHORT' : 'LONG'} can fire.`
+        : 'Currently OPEN — reset has no effect.';
+    if (!confirm(`Reset dedup gate for ${currentSymbol}?\n\n${stateDesc}\n\nAfter reset: next signal of any direction will fire.`)) return;
+    try {
+        const r = await fetch('/api/smc/dedup/reset', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: currentSymbol}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            // Reload watchlist so the pill + badge re-render with new state.
+            loadWatchlist();
+            loadChart();
+        } else {
+            alert('Reset failed: ' + (d.error || 'unknown'));
+        }
+    } catch (err) { alert('Reset error: ' + err); }
+}
+
 // === Watchlist ===
 async function loadWatchlist() {
     try {
@@ -1705,6 +1746,11 @@ async function loadWatchlist() {
         wlVolumizedEnabled = !!d.volumized_enabled;
         wlVolumizedTimeframe = d.volumized_timeframe || '1h';
         wlVolumizedTrends = d.volumized_trends || {};
+        // Dedup state: map of symbol → 'LONG' | 'SHORT' (last-alerted direction).
+        // Absence from the map means no signal has fired for that symbol yet,
+        // so the next signal of either direction will alert.
+        wlDedupEnabled = !!d.dedup_enabled;
+        wlDedupState = d.dedup_state || {};
         renderWatchlist(list);
     } catch (err) {
         console.error('watchlist load err:', err);
@@ -1723,6 +1769,13 @@ let wlObStates = {};
 let wlVolumizedEnabled = false;
 let wlVolumizedTimeframe = '1h';
 let wlVolumizedTrends = {};
+// Dedup state — Pine "1 per trend" guard. UI surfaces three pill states:
+//   not in wlDedupState   → "🔓 OPEN" — first signal will fire any direction
+//   wlDedupState[sym]=LONG → "🟢 ↑" — last fired LONG, waiting for SHORT
+//   wlDedupState[sym]=SHORT → "🔴 ↓" — last fired SHORT, waiting for LONG
+// Pill is hidden when wlDedupEnabled is false (since alerts ignore state).
+let wlDedupEnabled = true;
+let wlDedupState = {};
 
 function renderWatchlist(list) {
     const el = document.getElementById('sm-wl-list');
@@ -1789,8 +1842,36 @@ function renderWatchlist(list) {
             }
         }
         
+        // Dedup pill — Pine "1 per trend" gate state. Tells you whether the
+        // next signal of either direction will fire, or only the opposite of
+        // the last one. Hidden when dedup is OFF (since every signal alerts).
+        //
+        // Three visible states:
+        //   🔓 (grey)    OPEN — no signal fired yet, next one alerts regardless
+        //   ↑ (green)    LONG fired, only SHORT can flip the gate
+        //   ↓ (red)      SHORT fired, only LONG can flip
+        //
+        // Tooltip on hover spells it out. The pill renders BEFORE the trend
+        // dot so the visual order is: [OB ★][Vol ▲▼][Dedup gate][trend dot][symbol].
+        let dedupHtml = '';
+        if (wlDedupEnabled) {
+            const lastDir = wlDedupState[sym];  // 'LONG' | 'SHORT' | undefined
+            let icon, color, title;
+            if (lastDir === 'LONG') {
+                icon = '↑'; color = '#22c55e';
+                title = 'Dedup: last alert was LONG\n→ Next alert must be SHORT to fire (gate locked for LONG).';
+            } else if (lastDir === 'SHORT') {
+                icon = '↓'; color = '#ef4444';
+                title = 'Dedup: last alert was SHORT\n→ Next alert must be LONG to fire (gate locked for SHORT).';
+            } else {
+                icon = '🔓'; color = '#888';
+                title = 'Dedup: no signal fired yet\n→ Next signal of any direction will alert (gate open).';
+            }
+            dedupHtml = `<span title="${escapeHtml(title)}" style="color:${color};margin-right:4px;font-size:0.7rem;font-weight:bold;opacity:0.85">${icon}</span>`;
+        }
+        
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${obStarHtml}${volTrendHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -2600,6 +2681,42 @@ async function loadChart() {
             ].filter(Boolean).join('\n');
         } else if (volBadge) {
             volBadge.style.display = 'none';
+        }
+        
+        // === Dedup gate badge ===
+        // Renders the "1 per trend" gate state for the currently-displayed
+        // symbol. Hidden when dedup is OFF in settings (since alerts ignore
+        // the state, there's nothing meaningful to show). Click handler
+        // calls resetDedupForCurrent() which prompts then resets via API.
+        //
+        // The actual dedup_state comes from /api/smc/state which loadWatchlist
+        // already polls. We mirror those module-scope vars (wlDedupEnabled,
+        // wlDedupState) into the chart header here so a single source of
+        // truth drives both the watchlist pills AND this badge.
+        const dedupBadge = document.getElementById('sm-dedup-badge');
+        if (dedupBadge && wlDedupEnabled && currentSymbol) {
+            const lastDir = wlDedupState[currentSymbol];  // 'LONG' | 'SHORT' | undefined
+            let icon, text, bg, color, title;
+            if (lastDir === 'LONG') {
+                icon = '↑'; text = 'LONG fired';
+                bg = 'rgba(34,197,94,0.15)'; color = '#22c55e';
+                title = `Dedup: last alert was LONG → next alert must be SHORT to fire.\nClick to reset (force gate to OPEN).`;
+            } else if (lastDir === 'SHORT') {
+                icon = '↓'; text = 'SHORT fired';
+                bg = 'rgba(239,68,68,0.15)'; color = '#ef4444';
+                title = `Dedup: last alert was SHORT → next alert must be LONG to fire.\nClick to reset (force gate to OPEN).`;
+            } else {
+                icon = '🔓'; text = 'Dedup OPEN';
+                bg = 'rgba(255,255,255,0.05)'; color = '#888';
+                title = `Dedup: no signal fired yet for ${currentSymbol} — next signal of any direction will alert.`;
+            }
+            dedupBadge.textContent = `${icon} ${text}`;
+            dedupBadge.style.background = bg;
+            dedupBadge.style.color = color;
+            dedupBadge.style.display = 'inline-block';
+            dedupBadge.title = title;
+        } else if (dedupBadge) {
+            dedupBadge.style.display = 'none';
         }
         
         // === PD Zone badge (threshold-based) ===

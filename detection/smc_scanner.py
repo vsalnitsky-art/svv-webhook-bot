@@ -2212,6 +2212,22 @@ class SMCScanner:
                 'volumized_timeframe': self._settings.get('volumized_timeframe', '1h'),
                 'pending_choch': {k: {'dir': v['dir'], 'level': v['level']}
                                    for k, v in self._pending_choch.items()},
+                
+                # === Dedup state (Pine "1 per trend") ===
+                # Per-symbol record of the last-alerted direction. Three
+                # possible states the UI surfaces as a pill in the watchlist:
+                #
+                #   not in dict      → "🔓 OPEN" (no signal fired yet — first
+                #                       signal in either direction will alert)
+                #   "LONG"           → "🟢 ↑ LONG fired" (next alert must be
+                #                       SHORT to pass the dedup gate)
+                #   "SHORT"          → "🔴 ↓ SHORT fired" (next must be LONG)
+                #
+                # The pill is rendered only when `deduplicate_signals: true`
+                # in settings — otherwise every signal is alerted regardless
+                # of prior state, so the pill carries no useful information.
+                'dedup_state': dict(self._last_signal_dir),
+                'dedup_enabled': bool(self._settings.get('deduplicate_signals', True)),
             }
 
 
