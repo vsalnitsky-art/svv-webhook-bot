@@ -35,7 +35,13 @@ from typing import Dict, List, Optional
 # Defaults
 DEFAULT_INTERVAL_SECS = 60
 DEFAULT_ALERT_MODE = 'choch'  # 'choch' or 'choch_bos'
-KLINES_LIMIT = 1000           # bars to fetch per scan (Bybit max; gives ~10 days at 15m, ~166 days at 4h)
+KLINES_LIMIT = 3000           # bars to fetch per scan via paginated API.
+                              # 3000 × 15m = ~31 days. Larger lookback gives
+                              # the SMC structure detector enough history to
+                              # stabilize trend state — matches what TV does
+                              # by default. Tested against TV ZECUSDT.P: 1000
+                              # bars produced a different CHoCH/BOS sequence
+                              # because of insufficient warmup; 3000+ converges.
 DEFAULT_TIMEFRAME = '5m'      # default timeframe
 DEFAULT_INTERNAL_SIZE = 5     # default Pine Internal Structure size
 MAX_WATCHLIST = 50

@@ -88,93 +88,259 @@ class MarketData:
     # KLINES (taker buy/sell volumes)
     # ========================================
     
-    def fetch_klines(self, symbol: str, limit: int = 60, interval: str = '1m') -> Optional[List[Dict]]:
+    # ────────────────────────────────────────────────────────────────────
+    # Provider-specific page-size limits (per single API call).
+    # Binance Futures: max 1500 per call (we use 1000 for safety margin).
+    # Bybit V5:       max 1000 per call.
+    # OKX:            max 300 per call (history endpoint).
+    # ────────────────────────────────────────────────────────────────────
+    _BN_PAGE_MAX  = 1000
+    _BB_PAGE_MAX  = 1000
+    _OKX_PAGE_MAX = 300
+    _PAGE_DELAY   = 0.1   # Small pause between paginated calls to be polite
+    _MAX_PAGES    = 20    # Safety cap — at 1000/page that's 20k bars max
+    
+    def fetch_klines(self, symbol: str, limit: int = 60,
+                       interval: str = '1m') -> Optional[List[Dict]]:
         """Fetch klines with taker buy/sell. Returns [{p, v, b, s, h, l, o, t}, ...]
+        in chronological order (oldest first).
         
         interval: '1m', '5m', '15m', '30m', '1h', '4h', '1d'  (Binance format)
-        """
-        # Map for OKX/Bybit
-        okx_interval = _to_okx_interval(interval)
-        bb_interval = _to_bybit_interval(interval)
         
-        # Try Binance
-        try:
-            r = self._session.get(BN_KLINE,
-                params={'symbol': symbol, 'interval': interval, 'limit': limit},
-                timeout=REQUEST_TIMEOUT)
-            if r.status_code == 200:
-                candles = []
+        When `limit` exceeds a provider's single-page maximum, the method
+        transparently paginates via `endTime`/`end`/`before` API parameters
+        and concatenates pages chronologically. Pagination stays within ONE
+        provider to avoid mixing prices from different exchanges. If the
+        primary provider (Binance) yields less than requested due to history
+        depth, the function returns what's available rather than failing —
+        callers can detect short returns by checking len() vs limit.
+        """
+        # Try each provider in order. Each provider call returns either a
+        # full chronological array (oldest→newest) or None on failure.
+        candles = self._fetch_binance(symbol, limit, interval)
+        if candles:
+            self._sources['klines'] = 'Binance'
+            return candles
+        
+        time.sleep(DELAY)
+        candles = self._fetch_okx(symbol, limit, interval)
+        if candles:
+            self._sources['klines'] = 'OKX'
+            return candles
+        
+        time.sleep(DELAY)
+        candles = self._fetch_bybit(symbol, limit, interval)
+        if candles:
+            self._sources['klines'] = 'Bybit'
+            return candles
+        
+        return None
+    
+    # ────────────────────────────────────────────────────────────────────
+    # Per-provider paginated fetchers
+    # All return oldest-first chronological array, or None on hard failure.
+    # ────────────────────────────────────────────────────────────────────
+    
+    def _fetch_binance(self, symbol: str, limit: int,
+                          interval: str) -> Optional[List[Dict]]:
+        """Binance Futures with endTime pagination (newest→older chained)."""
+        all_bars: List[Dict] = []
+        remaining = limit
+        end_time: Optional[int] = None
+        pages = 0
+        
+        while remaining > 0 and pages < self._MAX_PAGES:
+            pages += 1
+            page_limit = min(remaining, self._BN_PAGE_MAX)
+            
+            try:
+                params = {'symbol': symbol, 'interval': interval,
+                          'limit': page_limit}
+                if end_time is not None:
+                    params['endTime'] = end_time
+                r = self._session.get(BN_KLINE, params=params,
+                                        timeout=REQUEST_TIMEOUT)
+                if r.status_code != 200:
+                    if pages == 1:
+                        self._bn_errors += 1
+                        return None  # First-page failure → try fallback
+                    break  # Mid-pagination failure → keep what we have
+                
+                page = []
                 for k in r.json():
                     try:
                         tv = float(k[7]); tb = float(k[10])
-                        candles.append({'t': int(k[0]), 'p': float(k[4]), 'v': round(tv),
-                                       'b': round(tb), 's': round(tv - tb),
-                                       'h': float(k[2]), 'l': float(k[3]), 'o': float(k[1])})
-                    except:
+                        page.append({'t': int(k[0]), 'p': float(k[4]),
+                                     'v': round(tv), 'b': round(tb),
+                                     's': round(tv - tb),
+                                     'h': float(k[2]), 'l': float(k[3]),
+                                     'o': float(k[1])})
+                    except Exception:
                         continue
-                if candles:
-                    self._sources['klines'] = 'Binance'
-                    return candles
-        except:
-            self._bn_errors += 1
+                
+                if not page:
+                    break  # Empty page → no more history available
+                
+                # Binance returns oldest→newest within a page. Detect overlap
+                # with already-fetched data to avoid infinite loops.
+                if all_bars and page[-1]['t'] >= all_bars[0]['t']:
+                    break
+                
+                all_bars = page + all_bars  # older + newer
+                
+                # Stop if we got fewer than requested — no older data exists
+                if len(page) < page_limit:
+                    break
+                
+                # Next page: end strictly before oldest bar we have
+                end_time = all_bars[0]['t'] - 1
+                remaining = limit - len(all_bars)
+                
+                if remaining > 0:
+                    time.sleep(self._PAGE_DELAY)
+            except Exception:
+                if pages == 1:
+                    self._bn_errors += 1
+                    return None
+                break
         
-        # Fallback: OKX
-        try:
-            time.sleep(DELAY)
-            okx_sym = _okx_symbol(symbol)
-            r = self._session.get(OKX_KLINE,
-                params={'instId': okx_sym, 'bar': okx_interval, 'limit': str(limit)},
-                timeout=REQUEST_TIMEOUT)
-            if r.status_code == 200:
+        return all_bars if all_bars else None
+    
+    def _fetch_okx(self, symbol: str, limit: int,
+                     interval: str) -> Optional[List[Dict]]:
+        """OKX with `before` pagination. OKX returns newest→oldest within a
+        page; we reverse per-page for chronological consistency."""
+        all_bars: List[Dict] = []
+        remaining = limit
+        before: Optional[int] = None
+        pages = 0
+        okx_sym = _okx_symbol(symbol)
+        okx_interval = _to_okx_interval(interval)
+        
+        while remaining > 0 and pages < self._MAX_PAGES:
+            pages += 1
+            page_limit = min(remaining, self._OKX_PAGE_MAX)
+            
+            try:
+                params = {'instId': okx_sym, 'bar': okx_interval,
+                          'limit': str(page_limit)}
+                if before is not None:
+                    # OKX `before` returns bars with ts < before (older)
+                    params['before'] = str(before)
+                r = self._session.get(OKX_KLINE, params=params,
+                                        timeout=REQUEST_TIMEOUT)
+                if r.status_code != 200:
+                    if pages == 1:
+                        self._okx_errors += 1
+                        return None
+                    break
+                
                 data = r.json().get('data', [])
-                candles = []
+                page = []
                 for k in data:
                     try:
                         tv = float(k[7])
                         o = float(k[1]); c = float(k[4])
                         buy_ratio = 0.6 if c > o else 0.4 if c < o else 0.5
                         tb = tv * buy_ratio
-                        candles.append({'t': int(k[0]), 'p': c, 'v': round(tv),
-                                       'b': round(tb), 's': round(tv - tb),
-                                       'h': float(k[2]), 'l': float(k[3]), 'o': o})
-                    except:
+                        page.append({'t': int(k[0]), 'p': c, 'v': round(tv),
+                                     'b': round(tb), 's': round(tv - tb),
+                                     'h': float(k[2]), 'l': float(k[3]), 'o': o})
+                    except Exception:
                         continue
-                candles.reverse()
-                if candles:
-                    self._sources['klines'] = 'OKX'
-                    return candles
-        except:
-            self._okx_errors += 1
+                
+                if not page:
+                    break
+                
+                page.reverse()  # OKX returns newest-first; flip to oldest-first
+                
+                if all_bars and page[-1]['t'] >= all_bars[0]['t']:
+                    break
+                
+                all_bars = page + all_bars
+                
+                if len(page) < page_limit:
+                    break
+                
+                before = all_bars[0]['t']
+                remaining = limit - len(all_bars)
+                
+                if remaining > 0:
+                    time.sleep(self._PAGE_DELAY)
+            except Exception:
+                if pages == 1:
+                    self._okx_errors += 1
+                    return None
+                break
         
-        # Fallback 2: Bybit
-        try:
-            time.sleep(DELAY)
-            r = self._session.get(BB_KLINE,
-                params={'category': 'linear', 'symbol': symbol, 'interval': bb_interval, 'limit': limit},
-                timeout=REQUEST_TIMEOUT)
-            if r.status_code == 200:
+        return all_bars if all_bars else None
+    
+    def _fetch_bybit(self, symbol: str, limit: int,
+                       interval: str) -> Optional[List[Dict]]:
+        """Bybit V5 with `end` pagination. Bybit returns newest→oldest."""
+        all_bars: List[Dict] = []
+        remaining = limit
+        end_ms: Optional[int] = None
+        pages = 0
+        bb_interval = _to_bybit_interval(interval)
+        
+        while remaining > 0 and pages < self._MAX_PAGES:
+            pages += 1
+            page_limit = min(remaining, self._BB_PAGE_MAX)
+            
+            try:
+                params = {'category': 'linear', 'symbol': symbol,
+                          'interval': bb_interval, 'limit': page_limit}
+                if end_ms is not None:
+                    params['end'] = end_ms
+                r = self._session.get(BB_KLINE, params=params,
+                                        timeout=REQUEST_TIMEOUT)
+                if r.status_code != 200:
+                    if pages == 1:
+                        self._bb_errors += 1
+                        return None
+                    break
+                
                 result = r.json().get('result', {})
                 data = result.get('list', [])
-                candles = []
+                page = []
                 for k in data:
                     try:
                         tv = float(k[6])
                         o = float(k[1]); c = float(k[4])
                         buy_ratio = 0.6 if c > o else 0.4 if c < o else 0.5
                         tb = tv * buy_ratio
-                        candles.append({'t': int(k[0]), 'p': c, 'v': round(tv),
-                                       'b': round(tb), 's': round(tv - tb),
-                                       'h': float(k[2]), 'l': float(k[3]), 'o': o})
-                    except:
+                        page.append({'t': int(k[0]), 'p': c, 'v': round(tv),
+                                     'b': round(tb), 's': round(tv - tb),
+                                     'h': float(k[2]), 'l': float(k[3]), 'o': o})
+                    except Exception:
                         continue
-                candles.reverse()
-                if candles:
-                    self._sources['klines'] = 'Bybit'
-                    return candles
-        except:
-            self._bb_errors += 1
+                
+                if not page:
+                    break
+                
+                page.reverse()  # Bybit returns newest-first; flip
+                
+                if all_bars and page[-1]['t'] >= all_bars[0]['t']:
+                    break
+                
+                all_bars = page + all_bars
+                
+                if len(page) < page_limit:
+                    break
+                
+                end_ms = all_bars[0]['t'] - 1
+                remaining = limit - len(all_bars)
+                
+                if remaining > 0:
+                    time.sleep(self._PAGE_DELAY)
+            except Exception:
+                if pages == 1:
+                    self._bb_errors += 1
+                    return None
+                break
         
-        return None
+        return all_bars if all_bars else None
     
     # ========================================
     # TOP-N PERP UNIVERSE (Binance only)
