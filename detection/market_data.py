@@ -1,9 +1,13 @@
 """
-Market Data Provider v1.1 — Multi-Exchange with Fallback
+Market Data Provider v1.2 — Multi-Exchange with Fallback + Pagination
 
-Primary: Binance Futures (free, no key)
-Fallback 1: OKX (free, no key)
-Fallback 2: Bybit (free, no key) — for Bybit-exclusive coins
+KLINES priority: Bybit → Binance → OKX
+  Bybit is primary because the bot trades there and TV's *.P reference
+  charts pull from Bybit. Same exchange = identical OHLC = identical
+  pivot detection.
+
+Other data types (OI, depth, taker ratio) keep Binance Futures as primary
+where the endpoint surface is richer.
 
 Tracks which exchange provided data for UI display.
 """
@@ -107,16 +111,34 @@ class MarketData:
         
         interval: '1m', '5m', '15m', '30m', '1h', '4h', '1d'  (Binance format)
         
+        ─── Provider priority: Bybit → Binance → OKX ───
+        Bybit is queried first because the bot trades on Bybit and the user's
+        TradingView reference charts show `*USDT.P` symbols which are Bybit
+        perpetuals. Using Bybit data here means our SMC structure detection
+        runs on the exact same OHLC the user sees on TV — no exchange-to-
+        exchange wick/close mismatches that would shift pivot bars by 1-2
+        and produce subtly different CHoCH/BOS sequences.
+        
+        Binance Futures stays as the first fallback because it has the
+        deepest history and the highest single-page limit (1500). OKX is
+        the last resort for symbols that exist on neither Bybit nor Binance.
+        
         When `limit` exceeds a provider's single-page maximum, the method
-        transparently paginates via `endTime`/`end`/`before` API parameters
+        transparently paginates via `end`/`endTime`/`before` API parameters
         and concatenates pages chronologically. Pagination stays within ONE
         provider to avoid mixing prices from different exchanges. If the
-        primary provider (Binance) yields less than requested due to history
-        depth, the function returns what's available rather than failing —
-        callers can detect short returns by checking len() vs limit.
+        primary provider yields less than requested due to history depth,
+        the function returns what's available rather than failing — callers
+        can detect short returns by checking len() vs limit.
         """
         # Try each provider in order. Each provider call returns either a
         # full chronological array (oldest→newest) or None on failure.
+        candles = self._fetch_bybit(symbol, limit, interval)
+        if candles:
+            self._sources['klines'] = 'Bybit'
+            return candles
+        
+        time.sleep(DELAY)
         candles = self._fetch_binance(symbol, limit, interval)
         if candles:
             self._sources['klines'] = 'Binance'
@@ -126,12 +148,6 @@ class MarketData:
         candles = self._fetch_okx(symbol, limit, interval)
         if candles:
             self._sources['klines'] = 'OKX'
-            return candles
-        
-        time.sleep(DELAY)
-        candles = self._fetch_bybit(symbol, limit, interval)
-        if candles:
-            self._sources['klines'] = 'Bybit'
             return candles
         
         return None
