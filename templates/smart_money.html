@@ -1817,9 +1817,25 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <!-- ============ Active radar items (live countdown) ============ -->
-            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:14px 0 6px 0">
-                Active Radar Items
-                <span style="color:#666;font-weight:normal;font-size:0.72rem">(removed automatically after TTL)</span>
+            <h3 style="font-size:0.85rem;color:#a5b4fc;margin:14px 0 6px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <span>Active Radar Items
+                    <span style="color:#666;font-weight:normal;font-size:0.72rem">(removed automatically after TTL)</span>
+                </span>
+                <!-- Bybit-only display filter — mirrors the same toggle on
+                     the TOP-100 OB radar. Hides items whose symbol isn't
+                     on Bybit Futures. The radar still scans the full
+                     universe (matches TOP-100 behaviour) but the user
+                     trades on Bybit so non-Bybit rows aren't actionable.
+                     Default ON. If the Bybit symbol set hasn't loaded
+                     (cold start / API hiccup) the filter is a no-op so
+                     the table doesn't blank out. -->
+                <label style="font-weight:normal;font-size:0.72rem;display:flex;align-items:center;gap:4px;cursor:pointer;margin-left:auto"
+                       title="Hide items whose symbol isn't tradeable on Bybit Futures. Same symbol set as the TOP-100 panel — cached for 5 min server-side.">
+                    <input type="checkbox" id="volradar-bybit-only" checked
+                           onchange="renderVolradarActiveTableCached()">
+                    <span>🔵 Bybit only</span>
+                    <span id="volradar-bybit-count" style="color:#666"></span>
+                </label>
             </h3>
             <table class="tm-table" id="volradar-active-table">
                 <thead>
@@ -2198,10 +2214,22 @@ function renderWatchlist(list) {
 // capacity, dedup, P/D zone). UI just renders state and surfaces actions.
 
 let wlVolradarItems = {};      // symbol → metadata row dict (for watchlist pip)
+let _lastVolradarItems = [];   // raw items array from last load — used by the
+                               // Bybit-only checkbox to re-filter without
+                               // re-fetching. Kept in sync by renderVolradar-
+                               // ActiveTable on every call.
 let volradarSettings = null;   // last-known settings (avoids unnecessary writes)
 let volradarPollTimer = null;
 let volradarCountdownTimer = null;
 let volradarScanInProgress = false;
+
+// Re-render the active items table from the cached items array. Called by
+// the Bybit-only checkbox onchange so toggling is instant — no /api round-
+// trip needed. Safe to call before any data has loaded (renderer handles
+// the empty case).
+function renderVolradarActiveTableCached() {
+    renderVolradarActiveTable(_lastVolradarItems);
+}
 
 // Compute remaining TTL from ISO `expires_at`. Returns:
 //   { short: '23h' | '45m' | '<1m', full: '23 hours 12 minutes', minutes: number }
@@ -2334,13 +2362,50 @@ async function loadVolradarState() {
 }
 
 function renderVolradarActiveTable(items) {
+    // Cache the raw items so the Bybit-only checkbox can re-filter without
+    // re-fetching from the server. Same pattern as TOP-100's _top100Snapshots.
+    _lastVolradarItems = Array.isArray(items) ? items.slice() : [];
+    
     const tbody = document.getElementById('volradar-active-tbody');
     if (!tbody) return;
-    if (!items.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No active radar items.</td></tr>';
+    
+    // === Bybit-only filter (applied first, fail-safe on missing set) ===
+    // Identical semantics to the TOP-100 OB radar: checkbox default ON,
+    // empty/null _bybitSymbolsSet → no filtering (so we never blank the
+    // table while the symbol list is still loading or after an API hiccup).
+    let rows = _lastVolradarItems;
+    const bybitOnlyEl = document.getElementById('volradar-bybit-only');
+    const bybitOnly = bybitOnlyEl ? bybitOnlyEl.checked : false;
+    const hadBybitSet = bybitOnly && _bybitSymbolsSet && _bybitSymbolsSet.size > 0;
+    if (hadBybitSet) {
+        rows = rows.filter(it => _bybitSymbolsSet.has(it.symbol));
+    }
+    
+    // Show "filtered" hint next to the toggle when items were hidden.
+    // Keeps the user oriented when they wonder why the row count dropped.
+    const countEl = document.getElementById('volradar-bybit-count');
+    if (countEl) {
+        const hidden = _lastVolradarItems.length - rows.length;
+        if (hadBybitSet && hidden > 0) {
+            countEl.textContent = `(−${hidden} hidden)`;
+            countEl.style.color = '#fbbf24';
+        } else if (_bybitSymbolsSet && _bybitSymbolsSet.size > 0) {
+            countEl.textContent = `(${_bybitSymbolsSet.size})`;
+            countEl.style.color = '#666';
+        } else {
+            countEl.textContent = '(unavailable)';
+            countEl.style.color = '#666';
+        }
+    }
+    
+    if (!rows.length) {
+        const msg = (_lastVolradarItems.length > 0 && hadBybitSet)
+            ? 'All active items are hidden by the Bybit-only filter.'
+            : 'No active radar items.';
+        tbody.innerHTML = `<tr><td colspan="7" class="tm-empty-msg">${msg}</td></tr>`;
         return;
     }
-    tbody.innerHTML = items.map(it => {
+    tbody.innerHTML = rows.map(it => {
         const dir = it.ob_direction;
         const dirColor = dir === 'BULL' ? '#22c55e' : '#ef4444';
         const dirIcon = dir === 'BULL' ? '🟢' : '🔴';
@@ -4752,6 +4817,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // rendered before the Bybit set was available, so the filter was
     // a no-op. Now that we have the set, re-apply.
     renderTop100Active();
+    // Same story for the Volumized OB Radar — its periodic poll
+    // (loadVolradarState every 30s) may have run before the Bybit
+    // set was available. Re-render once from cached items.
+    renderVolradarActiveTableCached();
     updateStatus();
     setInterval(updateStatus, 10000);
     setInterval(() => {

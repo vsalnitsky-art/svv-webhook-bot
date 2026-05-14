@@ -617,7 +617,8 @@ class VolumizedOBRadar:
         # so checking anchor age against a 1-6h fresh window rejects newly
         # formed OBs that are still actionable. Backward-compat fallback to
         # start_time when formation_time is absent (older OB dicts in tests).
-        ob_formation_ms = latest.get('formation_time') or latest.get('start_time', 0)
+        ob_start_ms = latest.get('start_time', 0)          # anchor bar (for display)
+        ob_formation_ms = latest.get('formation_time') or ob_start_ms  # trigger bar (for freshness)
         ob_age_hours = (time.time() * 1000 - ob_formation_ms) / 3_600_000.0
         if ob_age_hours > self._fresh_window_hours:
             return {
