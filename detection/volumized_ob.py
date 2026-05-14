@@ -271,6 +271,13 @@ def detect_volumized_obs(
                     'bottom': box_btm,
                     'start_time': box_loc,
                     'start_idx': i,
+                    # formation_time = timestamp of the bar where the OB
+                    # was TRIGGERED (close crossed the swing). This is the
+                    # "when did this OB become a thing" timestamp, distinct
+                    # from `start_time` which is the ANCHOR bar (the wick
+                    # we walked back to). Use formation_time for "freshness"
+                    # checks; use start_time only for box positioning.
+                    'formation_time': times[i],
                     'ob_volume': ob_volume,
                     'ob_low_volume': ob_low_volume,
                     'ob_high_volume': ob_high_volume,
@@ -339,6 +346,9 @@ def detect_volumized_obs(
                     'bottom': box_btm,
                     'start_time': box_loc,
                     'start_idx': i,
+                    # See Bull OB above — formation_time is the trigger bar;
+                    # start_time is the anchor bar (where the wick lives).
+                    'formation_time': times[i],
                     'ob_volume': ob_volume,
                     'ob_low_volume': ob_low_volume,
                     'ob_high_volume': ob_high_volume,
@@ -362,14 +372,17 @@ def detect_volumized_obs(
     visible_bull = bullish_obs[:visible_count]
     visible_bear = bearish_obs[:visible_count]
     
-    # === Latest OB across both lists (most recent start_time) ===
+    # === Latest OB across both lists (most recent formation_time) ===
     # User's principle: "trend = direction of the latest formed OB".
-    # We consider ALL OBs (including breakers) because Pine doesn't filter
-    # by breaker state when determining the most recent impulse.
+    # We sort by formation_time (the bar where the OB was TRIGGERED), not
+    # start_time (the wick-anchor bar). Two OBs can form on consecutive
+    # bars but anchor far back — using start_time would pick whichever
+    # OB has a more recent anchor, which is unrelated to "what formed last".
     all_visible = visible_bull + visible_bear
     latest_ob: Optional[Dict[str, Any]] = None
     if all_visible:
-        latest_ob = max(all_visible, key=lambda ob: ob['start_time'])
+        latest_ob = max(all_visible,
+                          key=lambda ob: ob.get('formation_time', ob['start_time']))
     
     trend: Optional[str] = None
     trend_meta: Dict[str, Any] = {}
@@ -476,6 +489,15 @@ def _combine_obs_func(obs: List[Dict]) -> List[Dict]:
                     'bottom': min(ob1['bottom'], ob2['bottom']),
                     'start_time': min(ob1['start_time'], ob2['start_time']),
                     'start_idx': min(ob1.get('start_idx', 0), ob2.get('start_idx', 0)),
+                    # formation_time of the merged OB: take the LATER of the
+                    # two formations — this is the moment the merge actually
+                    # happened (second OB came in and overlapped the first).
+                    # Using min() here would make a merged OB look ancient
+                    # even when one half just formed seconds ago.
+                    'formation_time': max(
+                        ob1.get('formation_time', ob1['start_time']),
+                        ob2.get('formation_time', ob2['start_time']),
+                    ),
                     'ob_volume': ob1['ob_volume'] + ob2['ob_volume'],
                     'ob_low_volume': ob1.get('ob_low_volume', 0) + ob2.get('ob_low_volume', 0),
                     'ob_high_volume': ob1.get('ob_high_volume', 0) + ob2.get('ob_high_volume', 0),

@@ -399,6 +399,8 @@ class VolumizedOBRadar:
         skipped_cooldown = 0
         skipped_capacity = 0
         skipped_not_in_zone = 0
+        skipped_too_old = 0
+        skipped_no_swings = 0
         added_symbols: List[Dict] = []
         errors = 0
         
@@ -417,14 +419,46 @@ class VolumizedOBRadar:
                 qualifies = scan_result['qualifies']
                 
                 if not qualifies:
-                    skipped_not_in_zone += 1
+                    # Refine in-memory counter (was always bumping
+                    # skipped_not_in_zone even on too-old / no-swings).
+                    skip_reason = scan_result.get('skip_reason', 'skipped_not_in_zone')
+                    if skip_reason == 'skipped_ob_too_old':
+                        skipped_too_old += 1
+                    elif skip_reason == 'skipped_no_swings':
+                        skipped_no_swings += 1
+                    else:
+                        skipped_not_in_zone += 1
+                    
+                    # Build a diagnostic line that lands in the Snapshots
+                    # panel's error_msg column. Surfaces WHY we rejected:
+                    #   - skipped_ob_too_old      → "age=4.2h (limit 1h)"
+                    #   - skipped_not_in_zone     → "BULL pd=52% (need ≤45)"
+                    #     or                      → "BEAR pd=48% (need ≥55)"
+                    #   - skipped_no_swings       → "no swings formed yet"
+                    diag_msg = None
+                    if ob_info and skip_reason == 'skipped_ob_too_old':
+                        diag_msg = (f"age={ob_info.get('age_hours','?')}h "
+                                    f"(limit {self._fresh_window_hours}h)")
+                    elif ob_info and skip_reason == 'skipped_not_in_zone':
+                        d = ob_info.get('direction', '?')
+                        p = ob_info.get('pd_zone_pct')
+                        if d == 'BULL':
+                            diag_msg = (f"BULL pd={p}% "
+                                        f"(need ≤{self._discount_threshold})")
+                        elif d == 'BEAR':
+                            diag_msg = (f"BEAR pd={p}% "
+                                        f"(need ≥{self._premium_threshold})")
+                    elif skip_reason == 'skipped_no_swings':
+                        diag_msg = 'no swings formed yet'
+                    
                     self.db.volradar_log_snapshot(
                         symbol=symbol, qualified=False,
-                        action=scan_result.get('skip_reason', 'skipped_not_in_zone'),
+                        action=skip_reason,
                         ob_direction=ob_info.get('direction') if ob_info else None,
                         ob_top=ob_info.get('top') if ob_info else None,
                         ob_bottom=ob_info.get('bottom') if ob_info else None,
                         pd_zone_pct=ob_info.get('pd_zone_pct') if ob_info else None,
+                        error_msg=diag_msg,
                     )
                     continue
                 
@@ -513,6 +547,8 @@ class VolumizedOBRadar:
             'skipped_cooldown': skipped_cooldown,
             'skipped_capacity_full': skipped_capacity,
             'skipped_not_in_zone': skipped_not_in_zone,
+            'skipped_too_old': skipped_too_old,
+            'skipped_no_swings': skipped_no_swings,
             'expired_removed': expired_removed,
             'errors': errors,
             'added_symbols': added_symbols,
@@ -522,7 +558,10 @@ class VolumizedOBRadar:
         
         print(f'[VOLRADAR] Scan done in {duration_sec:.1f}s: '
               f'{added_count} added, {expired_removed} expired, '
-              f'{ob_qualified} qualified, {symbols_scanned} scanned')
+              f'{ob_qualified} qualified, {symbols_scanned} scanned '
+              f'| skip: zone={skipped_not_in_zone} old={skipped_too_old} '
+              f'noswing={skipped_no_swings} cap={skipped_capacity} '
+              f'cooldown={skipped_cooldown} existing={skipped_existing}')
         
         # Telegram alert for adds
         if added_symbols:
@@ -571,9 +610,15 @@ class VolumizedOBRadar:
             return {'ob_info': None, 'qualifies': False, 'skip_reason': 'skipped_no_swings'}
         
         # === Freshness check ===
-        # latest['start_time'] is millis. Compare to fresh_window_hours.
-        ob_start_ms = latest.get('start_time', 0)
-        ob_age_hours = (time.time() * 1000 - ob_start_ms) / 3_600_000.0
+        # IMPORTANT: use formation_time (the bar where the OB was TRIGGERED
+        # by close crossing the swing), NOT start_time (the wick-anchor bar
+        # we walked back to). The latter can be many bars before formation
+        # — on 1H with swing_length=8, anchors typically sit 5-30 hours back,
+        # so checking anchor age against a 1-6h fresh window rejects newly
+        # formed OBs that are still actionable. Backward-compat fallback to
+        # start_time when formation_time is absent (older OB dicts in tests).
+        ob_formation_ms = latest.get('formation_time') or latest.get('start_time', 0)
+        ob_age_hours = (time.time() * 1000 - ob_formation_ms) / 3_600_000.0
         if ob_age_hours > self._fresh_window_hours:
             return {
                 'ob_info': {
@@ -581,7 +626,7 @@ class VolumizedOBRadar:
                     'top': latest['top'], 'bottom': latest['bottom'],
                     'volume': latest.get('ob_volume', 0.0),
                     'pd_zone_pct': None,
-                    'age_hours': ob_age_hours,
+                    'age_hours': round(ob_age_hours, 2),
                 },
                 'qualifies': False,
                 'skip_reason': 'skipped_ob_too_old',
