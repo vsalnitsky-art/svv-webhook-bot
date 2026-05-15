@@ -59,6 +59,22 @@ DEFAULT_SETTINGS = {
     'use_sl': True,                  # Stop Loss
     'sl_pct': 2.0,                   # %
     
+    # === SL strategy ===
+    # Two modes determine WHERE the stop is placed when use_sl is on:
+    #   'pct'           — classic % offset from entry price (sl_pct above).
+    #   'volumized_ob'  — anchor SL to the Volumized OB block boundary:
+    #                       LONG  → ob_bottom × (1 − sl_vob_buffer_pct/100)
+    #                       SHORT → ob_top    × (1 + sl_vob_buffer_pct/100)
+    #                     Available only when the SMC scanner has the
+    #                     Volumized OB Trend filter ENABLED (use_volumized_ob)
+    #                     — without that filter we don't maintain the OB-meta
+    #                     cache so there's nothing to anchor against. Falls
+    #                     back to 'pct' on any failure (filter off, missing
+    #                     cached OB meta, OB direction mismatch, or computed
+    #                     SL on the wrong side of entry).
+    'sl_mode': 'pct',
+    'sl_vob_buffer_pct': 0.2,        # % buffer beyond OB boundary
+    
     'use_tp': True,                  # Take Profit
     'tp_pct': 5.0,                   # %
     
@@ -370,12 +386,23 @@ class TradeManager:
             
             for k in ['fixed_usd_amount', 'fixed_pct_balance', 'risk_pct_balance',
                       'sl_pct', 'tp_pct', 'time_stop_hours',
+                      'sl_vob_buffer_pct',
                       'trailing_activate_pct', 'trailing_distance_pct', 'be_trigger_pct',
                       'bos_2_close_pct', 'bos_3_close_pct', 'bos_4_close_pct']:
                 try:
                     self._settings[k] = float(self._settings.get(k, DEFAULT_SETTINGS.get(k, 0)))
                 except:
                     self._settings[k] = float(DEFAULT_SETTINGS.get(k, 0))
+            
+            # sl_mode — validated string. Unknown → 'pct' (safe fallback).
+            if self._settings.get('sl_mode') not in ('pct', 'volumized_ob'):
+                self._settings['sl_mode'] = 'pct'
+            # sl_vob_buffer_pct — clamp to a sane band. 0 = SL exactly at the
+            # OB boundary (risky — slightest wick hits). 5 = a generous 5%
+            # past the block. Default 0.2 mirrors the user's earlier ATR-buffer
+            # convention used by the LuxAlgo PRO Engine SL output.
+            self._settings['sl_vob_buffer_pct'] = max(0.0, min(5.0,
+                float(self._settings.get('sl_vob_buffer_pct', 0.2))))
             
             for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_htf_flip',
                       'use_time_stop', 'use_trailing', 'use_be',
@@ -1541,7 +1568,7 @@ class TradeManager:
             return
         
         # Calculate SL / TP prices
-        sl_price = self._calc_sl_price(side, entry_price) if s.get('use_sl') else None
+        sl_price = self._calc_sl_price(side, entry_price, symbol) if s.get('use_sl') else None
         tp_price = self._calc_tp_price(side, entry_price) if s.get('use_tp') else None
         
         # Set leverage on Bybit
@@ -2050,11 +2077,114 @@ class TradeManager:
             qty = round(qty, 3)
         return max(0, qty)
     
-    def _calc_sl_price(self, side: str, entry: float) -> float:
+    def _calc_sl_price(self, side: str, entry: float,
+                         symbol: Optional[str] = None) -> float:
+        """Compute SL price using the configured strategy. Falls back to
+        percentage mode on any failure so the trade still opens with a
+        sane stop instead of being blocked or sent without protection."""
+        sl_mode = self._settings.get('sl_mode', 'pct')
+        
+        if sl_mode == 'volumized_ob' and symbol:
+            sl = self._calc_sl_from_volumized_ob(side, entry, symbol)
+            if sl is not None:
+                return sl
+            # Fall through with logging done inside the helper
+        
+        # Default: percentage offset from entry
         sl_pct = self._settings.get('sl_pct', 2.0) / 100
         if side == 'LONG':
             return entry * (1 - sl_pct)
         return entry * (1 + sl_pct)
+    
+    def _calc_sl_from_volumized_ob(self, side: str, entry: float,
+                                     symbol: str) -> Optional[float]:
+        """Compute SL from the Volumized OB block boundary.
+        
+            LONG  → ob_bottom × (1 − buffer_pct/100)
+            SHORT → ob_top    × (1 + buffer_pct/100)
+        
+        The OB is read from the SMC scanner's `_volumized_trend_cache`,
+        which is updated on every scan tick for every watchlist symbol
+        when `use_volumized_ob` is on. We rely on the scanner caching
+        rather than recomputing OBs here so SL placement is identical
+        to what the user sees on the chart's Vol OB badge at the moment
+        the trade fires.
+        
+        Returns None — and the caller falls back to pct mode — if:
+          - Scanner reference unavailable (TM started without scanner)
+          - Volumized OB filter disabled in scanner settings (no cache fed)
+          - No OB meta cached for this symbol (first scan since restart,
+            or symbol just added to watchlist)
+          - Latest OB direction doesn't match the trade direction
+            (LONG signal but latest OB is Bear, or vice versa — rare race
+            where the trend flipped between signal and execution)
+          - Computed SL would be on the WRONG side of entry, i.e. would
+            trigger immediately on market open (OB boundary too tight)
+        """
+        if not self.scanner:
+            print(f"[TM] {symbol}: SL=Vol-OB requested but scanner ref "
+                  f"unavailable — falling back to pct")
+            return None
+        
+        # Scanner must have the filter on, otherwise the cache isn't fed
+        try:
+            scn_settings = self.scanner._settings or {}
+        except Exception:
+            scn_settings = {}
+        if not scn_settings.get('use_volumized_ob', True):
+            print(f"[TM] {symbol}: SL=Vol-OB but scanner's Volumized OB "
+                  f"filter is OFF — falling back to pct")
+            return None
+        
+        # Read OB meta from the scanner cache (live, refreshed each scan)
+        try:
+            vol_cache = self.scanner._volumized_trend_cache.get(symbol, {})
+        except Exception:
+            vol_cache = {}
+        meta = vol_cache.get('meta') or {}
+        
+        ob_type = meta.get('ob_type')           # 'Bull' / 'Bear'
+        ob_top = meta.get('top')
+        ob_bottom = meta.get('bottom')
+        
+        if ob_top is None or ob_bottom is None or ob_type is None:
+            print(f"[TM] {symbol}: SL=Vol-OB but no cached OB meta yet "
+                  f"— falling back to pct")
+            return None
+        
+        # Direction sanity: LONG trades anchor on Bull OB, SHORT on Bear OB.
+        # A direction mismatch typically means the Volumized trend flipped
+        # between signal fire and position open. Falling back is safer than
+        # placing SL above entry for a LONG (and vice versa).
+        expected_type = 'Bull' if side == 'LONG' else 'Bear'
+        if ob_type != expected_type:
+            print(f"[TM] {symbol}: SL=Vol-OB but latest OB is {ob_type} "
+                  f"and trade is {side} — direction mismatch, falling "
+                  f"back to pct")
+            return None
+        
+        buffer_pct = self._settings.get('sl_vob_buffer_pct', 0.2) / 100
+        
+        if side == 'LONG':
+            sl = ob_bottom * (1 - buffer_pct)
+            # SL must be BELOW entry for LONG. If the OB bottom (with
+            # buffer) sits at or above entry, it can't function as a
+            # stop — would close instantly. Fall back to pct.
+            if sl >= entry:
+                print(f"[TM] {symbol} LONG: SL=Vol-OB ({sl:.6f}) ≥ entry "
+                      f"({entry:.6f}); OB bottom above entry, fallback to pct")
+                return None
+        else:  # SHORT
+            sl = ob_top * (1 + buffer_pct)
+            if sl <= entry:
+                print(f"[TM] {symbol} SHORT: SL=Vol-OB ({sl:.6f}) ≤ entry "
+                      f"({entry:.6f}); OB top below entry, fallback to pct")
+                return None
+        
+        print(f"[TM] {symbol} {side}: SL=Vol-OB → {sl:.6f} "
+              f"(OB {ob_type} {ob_bottom:.6f}–{ob_top:.6f}, "
+              f"buffer {buffer_pct*100:.2f}%)")
+        return sl
     
     def _calc_tp_price(self, side: str, entry: float) -> float:
         tp_pct = self._settings.get('tp_pct', 5.0) / 100
@@ -2177,6 +2307,19 @@ class TradeManager:
             entry_stats = self._compute_entry_score_stats(self._closed_trades)
             entry_stats_shadow = self._compute_entry_score_stats(self._shadow_closed)
             
+            # Derive scanner-side flag used by the UI to gate the new
+            # SL mode (sl_mode='volumized_ob'). The UI shows that option
+            # only when the SMC scanner has the Volumized OB Trend filter
+            # turned on — otherwise the OB-meta cache isn't being fed and
+            # the SL anchor would be unavailable at order time.
+            vol_filter_enabled = False
+            if self.scanner:
+                try:
+                    vol_filter_enabled = bool(
+                        self.scanner._settings.get('use_volumized_ob', True))
+                except Exception:
+                    pass
+            
             return {
                 'enabled': self.is_enabled(),
                 'running': self._running,
@@ -2203,6 +2346,7 @@ class TradeManager:
                     'entry_score_breakdown': entry_stats_shadow,
                 },
                 'settings': dict(self._settings),
+                'scanner_volumized_filter_enabled': vol_filter_enabled,
             }
     
     @staticmethod

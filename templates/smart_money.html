@@ -1204,6 +1204,34 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <span style="color:#888;font-size:0.75rem">%</span>
                         </div>
                         
+                        <!-- SL Mode selector — Percentage (default) or Volumized OB block.
+                             Vol-OB mode anchors SL to the OB boundary with a small buffer:
+                               LONG  → SL = ob_bottom × (1 − buffer%)
+                               SHORT → SL = ob_top    × (1 + buffer%)
+                             Only meaningful when the SMC scanner has the Volumized OB Trend
+                             filter ENABLED — otherwise the cache that feeds the OB meta
+                             isn't maintained. The dropdown shows the Vol-OB option as
+                             disabled with a tooltip when the scanner filter is off. -->
+                        <div class="tm-row" id="tm-sl-mode-row" style="padding-left:24px">
+                            <label style="font-size:0.78rem;color:#a5b4fc">
+                                SL Mode
+                                <span class="tm-help" title="Спосіб обчислення стопа.&#10;• Percentage — класичний % від ціни входу (значення вище).&#10;• Volumized OB — стоп прив'язується до межі OB-блока: для LONG — низ блока мінус буфер, для SHORT — верх блока плюс буфер. Доступний лише коли в SMC-сканері увімкнено фільтр Volumized OB Trend (інакше OB-кеш порожній).&#10;&#10;У разі будь-якої проблеми (фільтр вимкнено, OB не закешований, напрям не збігається, SL по неправильний бік від entry) автоматично відбувається фолбек на Percentage.">?</span>
+                            </label>
+                            <select id="tm-sl-mode" onchange="onTMSlModeChange()"
+                                    style="padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px">
+                                <option value="pct">Percentage</option>
+                                <option value="volumized_ob">Volumized OB Block</option>
+                            </select>
+                            <span id="tm-sl-mode-vol-controls" style="display:none;align-items:center;gap:4px">
+                                <span style="color:#888;font-size:0.74rem;margin-left:6px">buffer</span>
+                                <input type="number" id="tm-sl-vob-buffer" min="0" max="5" step="0.05"
+                                       style="width:64px" onchange="saveTMSettings()">
+                                <span style="color:#888;font-size:0.74rem">%</span>
+                            </span>
+                            <span id="tm-sl-mode-vol-warning"
+                                  style="display:none;color:#fbbf24;font-size:0.72rem;margin-left:6px"></span>
+                        </div>
+                        
                         <div class="tm-row">
                             <label>
                                 <input type="checkbox" id="tm-use-tp" onchange="saveTMSettings()">
@@ -4017,6 +4045,16 @@ async function loadTMSettings() {
         // Exit rules
         document.getElementById('tm-use-sl').checked = !!s.use_sl;
         document.getElementById('tm-sl-pct').value = s.sl_pct;
+        // SL Mode + Vol-OB buffer. Default 'pct' covers older settings rows.
+        const slMode = (s.sl_mode === 'volumized_ob') ? 'volumized_ob' : 'pct';
+        document.getElementById('tm-sl-mode').value = slMode;
+        document.getElementById('tm-sl-vob-buffer').value =
+            (typeof s.sl_vob_buffer_pct === 'number') ? s.sl_vob_buffer_pct : 0.2;
+        // Pass scanner state so onTMSlModeChange can decide whether the
+        // Vol-OB option is actually usable right now (it requires the SMC
+        // scanner's Volumized OB Trend filter to be on).
+        applyTMSlModeGating(!!d.scanner_volumized_filter_enabled);
+        onTMSlModeChange();  // toggles buffer visibility
         document.getElementById('tm-use-tp').checked = !!s.use_tp;
         document.getElementById('tm-tp-pct').value = s.tp_pct;
         document.getElementById('tm-use-reverse').checked = !!s.use_reverse_smc;
@@ -4182,6 +4220,54 @@ function onTMSizingChange() {
     saveTMSettings();
 }
 
+// SL mode dropdown — toggles visibility of the Volumized-OB buffer input
+// based on selection. Also fires saveTMSettings so the change persists
+// without waiting for the user to interact with another field.
+function onTMSlModeChange() {
+    const sel = document.getElementById('tm-sl-mode');
+    const mode = sel ? sel.value : 'pct';
+    const volWrap = document.getElementById('tm-sl-mode-vol-controls');
+    if (volWrap) {
+        volWrap.style.display = (mode === 'volumized_ob') ? 'inline-flex' : 'none';
+    }
+    saveTMSettings();
+}
+
+// Apply scanner-side gating to the SL mode dropdown: when the SMC scanner
+// has the Volumized OB Trend filter OFF, the OB-meta cache is empty so
+// the new SL mode would always fall back to pct. We surface that state
+// by disabling the option and showing an inline warning. The setting on
+// the server is still respected — this is purely a UX guard rail.
+function applyTMSlModeGating(volFilterEnabled) {
+    const sel = document.getElementById('tm-sl-mode');
+    const warn = document.getElementById('tm-sl-mode-vol-warning');
+    if (!sel) return;
+    const volOpt = sel.querySelector('option[value="volumized_ob"]');
+    if (!volOpt) return;
+    
+    if (volFilterEnabled) {
+        volOpt.disabled = false;
+        volOpt.textContent = 'Volumized OB Block';
+        if (warn) {
+            warn.style.display = 'none';
+            warn.textContent = '';
+        }
+    } else {
+        volOpt.disabled = true;
+        volOpt.textContent = 'Volumized OB Block (filter off)';
+        // If the user previously chose Vol-OB but the scanner filter is
+        // now off, the server still falls back to pct on every trade;
+        // we surface this so it's not a silent failure.
+        if (sel.value === 'volumized_ob' && warn) {
+            warn.textContent = '⚠ Vol OB filter is off in scanner — SL will fall back to %';
+            warn.style.display = 'inline';
+        } else if (warn) {
+            warn.style.display = 'none';
+            warn.textContent = '';
+        }
+    }
+}
+
 async function onTMToggle() {
     const enabled = document.getElementById('tm-enabled').checked;
     
@@ -4220,6 +4306,8 @@ async function saveTMSettings() {
             leverage: parseInt(document.getElementById('tm-leverage').value) || 10,
             use_sl: document.getElementById('tm-use-sl').checked,
             sl_pct: parseFloat(document.getElementById('tm-sl-pct').value) || 2,
+            sl_mode: document.getElementById('tm-sl-mode').value || 'pct',
+            sl_vob_buffer_pct: parseFloat(document.getElementById('tm-sl-vob-buffer').value) || 0.2,
             use_tp: document.getElementById('tm-use-tp').checked,
             tp_pct: parseFloat(document.getElementById('tm-tp-pct').value) || 5,
             use_reverse_smc: document.getElementById('tm-use-reverse').checked,
