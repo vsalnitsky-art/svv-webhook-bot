@@ -91,6 +91,16 @@ DEFAULT_SETTINGS = {
     
     'use_be': True,                  # Break-Even Move
     'be_trigger_pct': 0.5,           # move SL to entry after +X% profit
+    # === BE commission buffer ===
+    # When BE fires, SL is normally placed exactly at entry. If the SL
+    # then triggers, the trade closes at ~0 PnL but trading FEES (maker/
+    # taker on Bybit, applied to both open and close orders) push the net
+    # PnL slightly negative. Adding a small offset past entry compensates:
+    #     LONG  SL → entry × (1 + buf/100)   ← slightly ABOVE entry
+    #     SHORT SL → entry × (1 − buf/100)   ← slightly BELOW entry
+    # Default 0.12% ≈ round-trip taker fee on Bybit Perpetual (0.06% × 2).
+    # Range 0..1%. Set to 0 to disable buffer (legacy behavior).
+    'be_commission_buffer_pct': 0.12,
     
     # === Forecast 1H Confluence Close exit ===
     # Closes position when both:
@@ -388,6 +398,7 @@ class TradeManager:
                       'sl_pct', 'tp_pct', 'time_stop_hours',
                       'sl_vob_buffer_pct',
                       'trailing_activate_pct', 'trailing_distance_pct', 'be_trigger_pct',
+                      'be_commission_buffer_pct',
                       'bos_2_close_pct', 'bos_3_close_pct', 'bos_4_close_pct']:
                 try:
                     self._settings[k] = float(self._settings.get(k, DEFAULT_SETTINGS.get(k, 0)))
@@ -403,6 +414,12 @@ class TradeManager:
             # convention used by the LuxAlgo PRO Engine SL output.
             self._settings['sl_vob_buffer_pct'] = max(0.0, min(5.0,
                 float(self._settings.get('sl_vob_buffer_pct', 0.2))))
+            # be_commission_buffer_pct — clamp to a sane band. 0 means no
+            # buffer (legacy: SL exactly at entry). 1% is the upper bound;
+            # anything bigger isn't "fee compensation" anymore, it's a
+            # profit lock-in (use trailing for that).
+            self._settings['be_commission_buffer_pct'] = max(0.0, min(1.0,
+                float(self._settings.get('be_commission_buffer_pct', 0.12))))
             
             for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_htf_flip',
                       'use_time_stop', 'use_trailing', 'use_be',
@@ -739,18 +756,31 @@ class TradeManager:
             return
         
         trigger = s.get('be_trigger_pct', 0.5) / 100
+        # Commission buffer — SL is placed slightly past entry so when it
+        # triggers, the close covers round-trip trading fees instead of
+        # leaving the user with a small loss. Default 0.12% ≈ Bybit Perp
+        # round-trip taker (0.06% open + 0.06% close). Setting to 0 gives
+        # the legacy behavior (SL exactly at entry).
+        buf = s.get('be_commission_buffer_pct', 0.12) / 100
         entry = pos['entry_price']
+        
         if pos['side'] == 'LONG' and current_price >= entry * (1 + trigger):
-            pos['sl_price'] = entry
+            new_sl = entry * (1 + buf)
+            pos['sl_price'] = new_sl
             pos['be_moved'] = True
-            self._update_exchange_sl(pos['symbol'], entry)
-            self._notify(f"⚖️ BE: SL → entry for {pos['symbol']} @ {self._fmt_price(entry)}")
+            self._update_exchange_sl(pos['symbol'], new_sl)
+            buf_note = f" (+{buf*100:.2f}% buffer)" if buf > 0 else ""
+            self._notify(f"⚖️ BE: SL → {self._fmt_price(new_sl)} for "
+                          f"{pos['symbol']}{buf_note}")
             self._persist_positions()
         elif pos['side'] == 'SHORT' and current_price <= entry * (1 - trigger):
-            pos['sl_price'] = entry
+            new_sl = entry * (1 - buf)
+            pos['sl_price'] = new_sl
             pos['be_moved'] = True
-            self._update_exchange_sl(pos['symbol'], entry)
-            self._notify(f"⚖️ BE: SL → entry for {pos['symbol']} @ {self._fmt_price(entry)}")
+            self._update_exchange_sl(pos['symbol'], new_sl)
+            buf_note = f" (−{buf*100:.2f}% buffer)" if buf > 0 else ""
+            self._notify(f"⚖️ BE: SL → {self._fmt_price(new_sl)} for "
+                          f"{pos['symbol']}{buf_note}")
             self._persist_positions()
     
     # ============================================================
