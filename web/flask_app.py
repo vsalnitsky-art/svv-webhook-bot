@@ -3080,6 +3080,36 @@ def register_api_routes(app):
             return jsonify({'ok': False, 'reason': 'symbol required'})
         return jsonify(tm.manual_close_shadow(symbol))
     
+    @app.route('/api/tm/positions/manual-sl-tp', methods=['POST'])
+    def api_tm_manual_sl_tp():
+        """Set or clear per-position manual SL/TP override.
+        
+        Body: {
+            symbol: 'BTCUSDT',
+            manual_sl?: <float>,    # absolute price, 0/'' clears
+            manual_tp?: <float>,    # absolute price, 0/'' clears
+            is_shadow?: bool        # default False (real position)
+        }
+        
+        Either or both of manual_sl/manual_tp can be in the body.
+        Omitting a field leaves it unchanged on the position; passing
+        0 or empty string explicitly clears it.
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'symbol required'})
+        return jsonify(tm.update_manual_sl_tp(
+            symbol=symbol,
+            manual_sl=data.get('manual_sl'),
+            manual_tp=data.get('manual_tp'),
+            is_shadow=bool(data.get('is_shadow')),
+        ))
+    
     @app.route('/api/tm/closed/delete', methods=['POST'])
     def api_tm_closed_delete():
         """Permanently delete a real-trade entry from Recent Closed Trades.

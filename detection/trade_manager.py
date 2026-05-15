@@ -529,6 +529,7 @@ class TradeManager:
         self._tick_count += 1
         with self._lock:
             symbols = list(self._positions.keys())
+            shadow_symbols = list(self._shadow_positions.keys())
         
         for sym in symbols:
             try:
@@ -536,6 +537,16 @@ class TradeManager:
             except Exception as e:
                 if self._errors <= 10:
                     print(f"[TM] Monitor error {sym}: {e}")
+                self._errors += 1
+        
+        # Shadow positions: only manual SL/TP is tick-driven (other exit
+        # rules for shadows still fire from SMC scanner events as before).
+        for sym in shadow_symbols:
+            try:
+                self._monitor_shadow_position(sym)
+            except Exception as e:
+                if self._errors <= 10:
+                    print(f"[TM] Shadow monitor error {sym}: {e}")
                 self._errors += 1
     
     def _monitor_position(self, symbol: str):
@@ -559,6 +570,16 @@ class TradeManager:
             st = self._pos_state.get(symbol)
             if st is not None and current_pnl_pct > st.get('peak_pnl_pct', 0):
                 st['peak_pnl_pct'] = current_pnl_pct
+        
+        # === Manual SL/TP (per-position overrides set via UI) ===
+        # These are user-entered absolute price levels (separate from the
+        # position's automatic sl_price/tp_price). They fire FIRST so a
+        # manually-set tight stop takes precedence over the strategy's
+        # original SL. Empty / 0 / None → not active for that field.
+        manual_reason = self._check_manual_sl_tp(pos, current_price)
+        if manual_reason:
+            self._close_position(symbol, current_price, reason=manual_reason)
+            return
         
         # 1) Hard exits — Stop Loss / Take Profit
         s = self._settings
@@ -598,6 +619,70 @@ class TradeManager:
         # === Position-management actions (no closes) ===
         self._update_trailing(pos, current_price)
         self._update_be(pos, current_price)
+    
+    def _check_manual_sl_tp(self, pos: Dict,
+                              current_price: float) -> Optional[str]:
+        """Return 'manual_sl' / 'manual_tp' / None depending on whether the
+        user-entered manual stop level has been breached. Works for both
+        real and shadow positions — the only thing that matters is the
+        position dict shape.
+        
+        Manual levels are absolute prices (not %). Empty / 0 / None / non-
+        numeric values are treated as 'not set' and never trigger. This
+        lets the UI represent 'no manual stop' by simply leaving the field
+        blank, which is the most natural input pattern.
+        
+        Manual SL fires when price crosses the configured level AGAINST
+        the position:
+            LONG  · manual_sl: price ≤ level
+            LONG  · manual_tp: price ≥ level
+            SHORT · manual_sl: price ≥ level
+            SHORT · manual_tp: price ≤ level
+        """
+        def _to_float(v):
+            try:
+                f = float(v)
+                return f if f > 0 else None
+            except (TypeError, ValueError):
+                return None
+        
+        manual_sl = _to_float(pos.get('manual_sl'))
+        manual_tp = _to_float(pos.get('manual_tp'))
+        side = pos.get('side')
+        
+        if manual_sl is not None:
+            hit = ((side == 'LONG' and current_price <= manual_sl)
+                   or (side == 'SHORT' and current_price >= manual_sl))
+            if hit:
+                return 'manual_sl'
+        
+        if manual_tp is not None:
+            hit = ((side == 'LONG' and current_price >= manual_tp)
+                   or (side == 'SHORT' and current_price <= manual_tp))
+            if hit:
+                return 'manual_tp'
+        
+        return None
+    
+    def _monitor_shadow_position(self, symbol: str):
+        """Per-tick monitor for shadow positions — currently only enforces
+        manual SL/TP overrides. The strategy's automatic SL/TP and other
+        exit rules (HTF flip, reverse SMC, etc.) for shadow positions are
+        still driven by SMC scanner events, not by this tick — that's the
+        existing design and we leave it alone. Manual levels are the only
+        thing that NEEDS a tick because they have no scanner-event hook."""
+        with self._lock:
+            pos = self._shadow_positions.get(symbol)
+        if not pos:
+            return
+        
+        current_price = self._get_current_price(symbol)
+        if current_price is None:
+            return
+        
+        manual_reason = self._check_manual_sl_tp(pos, current_price)
+        if manual_reason:
+            self._close_shadow(symbol, current_price, reason=manual_reason)
     
     def _update_trailing(self, pos, current_price):
         s = self._settings
@@ -2096,6 +2181,102 @@ class TradeManager:
             return entry * (1 - sl_pct)
         return entry * (1 + sl_pct)
     
+    def _read_volumized_meta_from_cache(self, symbol: str) -> Optional[Dict]:
+        """Pull pre-computed Volumized OB meta from the scanner's cache.
+        Returns the meta dict (with ob_type/top/bottom) or None when:
+          - Scanner has no entry for this symbol
+          - Scanner's Volumized filter has been off long enough that the
+            cache is stale or missing
+          - Meta lacks required keys (corrupt or pre-init state)
+        Cheap (just a dict lookup); used as the fast path before falling
+        through to on-demand recompute."""
+        if not self.scanner:
+            return None
+        try:
+            vol_cache = self.scanner._volumized_trend_cache.get(symbol, {})
+        except Exception:
+            return None
+        meta = vol_cache.get('meta') or {}
+        # Treat half-populated meta as "no meta" so the on-demand path
+        # gets a chance to compute fresh data.
+        if not all(k in meta for k in ('ob_type', 'top', 'bottom')):
+            return None
+        return meta
+    
+    def _compute_volumized_meta_on_demand(self, symbol: str) -> Optional[Dict]:
+        """Compute Volumized OB meta from klines RIGHT NOW, independent of
+        the scanner's Vol-OB filter setting. This makes the SL Vol-OB
+        feature usable even when the user has the Volumized OB Trend
+        filter turned off in SMC settings.
+        
+        Steps:
+          1. Pull klines on volumized_timeframe (default 1h) from scanner's
+             cache for this symbol (no extra API call when the scanner has
+             already fetched them).
+          2. If scanner doesn't have klines for this TF, return None — we
+             refuse to do a fresh HTTP fetch here because this runs on the
+             trade-open hot path and an extra network round-trip would
+             delay order placement. The pct fallback is acceptable.
+          3. Run `get_latest_ob_trend()` with the same parameters the
+             scanner would use, so the OB matches what's displayed on the
+             chart's Vol OB badge.
+        
+        Returns the trend_meta dict (with ob_type/top/bottom) or None on
+        any failure."""
+        if not self.scanner:
+            return None
+        try:
+            scn_settings = self.scanner._settings or {}
+        except Exception:
+            scn_settings = {}
+        vol_tf = scn_settings.get('volumized_timeframe', '1h')
+        
+        # Grab klines from the scanner's per-TF cache. The scanner's main
+        # loop populates this whenever it scans the symbol on any TF, so
+        # we usually have something to work with.
+        try:
+            tf_cache = self.scanner._tf_klines_cache.get(symbol, {}) \
+                if hasattr(self.scanner, '_tf_klines_cache') else {}
+        except Exception:
+            tf_cache = {}
+        klines = (tf_cache.get(vol_tf, {}) or {}).get('klines')
+        
+        # Secondary source: if main TF happens to match vol_tf, the symbol
+        # cache might have klines directly (scanner._cache[symbol]).
+        if not klines:
+            try:
+                main_cache = self.scanner._cache.get(symbol, {}) \
+                    if hasattr(self.scanner, '_cache') else {}
+                main_tf = scn_settings.get('timeframe', '15m')
+                if main_tf == vol_tf:
+                    klines = main_cache.get('klines')
+            except Exception:
+                pass
+        
+        if not klines or len(klines) < 60:
+            return None  # Not enough history — abandon to pct fallback
+        
+        try:
+            from detection.volumized_ob import get_latest_ob_trend
+            vol_result = get_latest_ob_trend(
+                klines,
+                swing_length=int(scn_settings.get('volumized_swing_length', 10)),
+                ob_end_method=scn_settings.get('volumized_ob_end_method', 'Wick'),
+                max_atr_mult=float(scn_settings.get('volumized_max_atr_mult', 3.5)),
+                zone_count=scn_settings.get('volumized_zone_count', 'Low'),
+                combine_obs=bool(scn_settings.get('volumized_combine_obs', True)),
+            )
+        except Exception as e:
+            print(f"[TM] {symbol}: on-demand Vol-OB compute error: {e}")
+            return None
+        
+        meta = vol_result.get('trend_meta') or {}
+        if not all(k in meta for k in ('ob_type', 'top', 'bottom')):
+            return None
+        print(f"[TM] {symbol}: Vol-OB meta computed on-demand "
+              f"({meta.get('ob_type')} {meta.get('bottom'):.6f}–{meta.get('top'):.6f})")
+        return meta
+    
     def _calc_sl_from_volumized_ob(self, side: str, entry: float,
                                      symbol: str) -> Optional[float]:
         """Compute SL from the Volumized OB block boundary.
@@ -2103,59 +2284,53 @@ class TradeManager:
             LONG  → ob_bottom × (1 − buffer_pct/100)
             SHORT → ob_top    × (1 + buffer_pct/100)
         
-        The OB is read from the SMC scanner's `_volumized_trend_cache`,
-        which is updated on every scan tick for every watchlist symbol
-        when `use_volumized_ob` is on. We rely on the scanner caching
-        rather than recomputing OBs here so SL placement is identical
-        to what the user sees on the chart's Vol OB badge at the moment
-        the trade fires.
+        Source of the OB: prefer the SMC scanner's `_volumized_trend_cache`
+        (fast path — already computed during the scan tick). When that cache
+        isn't populated — e.g., the scanner's Volumized OB Trend filter is
+        OFF, or this symbol hasn't been scanned yet — we compute the OB
+        on-the-fly here using the scanner's klines cache and the same
+        `get_latest_ob_trend()` function. This makes the SL mode a
+        standalone, self-sufficient feature: works regardless of the
+        scanner's filter setting, just like the user expects.
         
         Returns None — and the caller falls back to pct mode — if:
           - Scanner reference unavailable (TM started without scanner)
-          - Volumized OB filter disabled in scanner settings (no cache fed)
-          - No OB meta cached for this symbol (first scan since restart,
-            or symbol just added to watchlist)
-          - Latest OB direction doesn't match the trade direction
-            (LONG signal but latest OB is Bear, or vice versa — rare race
-            where the trend flipped between signal and execution)
-          - Computed SL would be on the WRONG side of entry, i.e. would
-            trigger immediately on market open (OB boundary too tight)
+          - On-demand compute also fails (no klines available, ATR warmup
+            not done, no swings detected, etc.)
+          - Latest OB direction doesn't match the trade direction (LONG
+            signal but latest OB is Bear — rare race where Vol direction
+            flipped between signal fire and position open)
+          - Computed SL would be on the WRONG side of entry (would close
+            instantly on market open — sanity guard)
         """
         if not self.scanner:
-            print(f"[TM] {symbol}: SL=Vol-OB requested but scanner ref "
-                  f"unavailable — falling back to pct")
+            print(f"[TM] {symbol}: SL=Vol-OB but scanner ref unavailable "
+                  f"— falling back to pct")
             return None
         
-        # Scanner must have the filter on, otherwise the cache isn't fed
-        try:
-            scn_settings = self.scanner._settings or {}
-        except Exception:
-            scn_settings = {}
-        if not scn_settings.get('use_volumized_ob', True):
-            print(f"[TM] {symbol}: SL=Vol-OB but scanner's Volumized OB "
-                  f"filter is OFF — falling back to pct")
-            return None
+        # ---- Fast path: read pre-computed cache (filter was on during scan) ----
+        meta = self._read_volumized_meta_from_cache(symbol)
         
-        # Read OB meta from the scanner cache (live, refreshed each scan)
-        try:
-            vol_cache = self.scanner._volumized_trend_cache.get(symbol, {})
-        except Exception:
-            vol_cache = {}
-        meta = vol_cache.get('meta') or {}
+        # ---- Slow path: cache empty → compute on-demand from klines ----
+        if not meta:
+            meta = self._compute_volumized_meta_on_demand(symbol)
+        
+        if not meta:
+            print(f"[TM] {symbol}: SL=Vol-OB no OB meta available "
+                  f"(cache + on-demand both failed) — falling back to pct")
+            return None
         
         ob_type = meta.get('ob_type')           # 'Bull' / 'Bear'
         ob_top = meta.get('top')
         ob_bottom = meta.get('bottom')
         
         if ob_top is None or ob_bottom is None or ob_type is None:
-            print(f"[TM] {symbol}: SL=Vol-OB but no cached OB meta yet "
-                  f"— falling back to pct")
+            print(f"[TM] {symbol}: SL=Vol-OB meta incomplete — falling back to pct")
             return None
         
         # Direction sanity: LONG trades anchor on Bull OB, SHORT on Bear OB.
-        # A direction mismatch typically means the Volumized trend flipped
-        # between signal fire and position open. Falling back is safer than
-        # placing SL above entry for a LONG (and vice versa).
+        # Mismatch typically means the Volumized trend flipped between
+        # signal fire and position open.
         expected_type = 'Bull' if side == 'LONG' else 'Bear'
         if ob_type != expected_type:
             print(f"[TM] {symbol}: SL=Vol-OB but latest OB is {ob_type} "
@@ -2307,19 +2482,6 @@ class TradeManager:
             entry_stats = self._compute_entry_score_stats(self._closed_trades)
             entry_stats_shadow = self._compute_entry_score_stats(self._shadow_closed)
             
-            # Derive scanner-side flag used by the UI to gate the new
-            # SL mode (sl_mode='volumized_ob'). The UI shows that option
-            # only when the SMC scanner has the Volumized OB Trend filter
-            # turned on — otherwise the OB-meta cache isn't being fed and
-            # the SL anchor would be unavailable at order time.
-            vol_filter_enabled = False
-            if self.scanner:
-                try:
-                    vol_filter_enabled = bool(
-                        self.scanner._settings.get('use_volumized_ob', True))
-                except Exception:
-                    pass
-            
             return {
                 'enabled': self.is_enabled(),
                 'running': self._running,
@@ -2346,7 +2508,6 @@ class TradeManager:
                     'entry_score_breakdown': entry_stats_shadow,
                 },
                 'settings': dict(self._settings),
-                'scanner_volumized_filter_enabled': vol_filter_enabled,
             }
     
     @staticmethod
@@ -2397,6 +2558,72 @@ class TradeManager:
         current = self._get_current_price(symbol) or pos['entry_price']
         self._close_shadow(symbol, current, reason='manual')
         return {'ok': True}
+    
+    def update_manual_sl_tp(self, symbol: str, manual_sl=None,
+                              manual_tp=None, is_shadow: bool = False) -> Dict:
+        """Set or clear the per-position manual SL/TP override.
+        
+        `manual_sl` / `manual_tp` semantics:
+          - None  → leave field unchanged (this is how the UI can update
+                    one without touching the other)
+          - 0 / '' → CLEAR the field (no manual stop on that side)
+          - >0  → set to that absolute price level
+        
+        Returns ok plus the updated position dict (with normalized fields).
+        Persists immediately so a server restart preserves the override.
+        """
+        def _parse(v):
+            """Returns ('skip',), ('clear',) or ('set', float)."""
+            if v is None:
+                return ('skip',)
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return ('skip',)
+            if f <= 0:
+                return ('clear',)
+            return ('set', f)
+        
+        sl_op = _parse(manual_sl)
+        tp_op = _parse(manual_tp)
+        
+        store = self._shadow_positions if is_shadow else self._positions
+        kind = 'shadow' if is_shadow else 'real'
+        
+        with self._lock:
+            pos = store.get(symbol)
+            if not pos:
+                return {'ok': False,
+                        'reason': f'No open {kind} position for {symbol}'}
+            
+            if sl_op[0] == 'set':
+                pos['manual_sl'] = sl_op[1]
+            elif sl_op[0] == 'clear':
+                pos.pop('manual_sl', None)
+            
+            if tp_op[0] == 'set':
+                pos['manual_tp'] = tp_op[1]
+            elif tp_op[0] == 'clear':
+                pos.pop('manual_tp', None)
+            
+            updated = dict(pos)
+        
+        # Persist outside the lock — DB call can be slow on Render with
+        # PostgreSQL backend, no need to block monitors.
+        try:
+            if is_shadow:
+                self._persist_shadow_positions()
+            else:
+                self._persist_positions()
+        except Exception as e:
+            print(f"[TM] manual SL/TP persist warn for {symbol}: {e}")
+        
+        # Log the change so operator can correlate with later closes.
+        sl_disp = f"{updated.get('manual_sl')}" if 'manual_sl' in updated else '—'
+        tp_disp = f"{updated.get('manual_tp')}" if 'manual_tp' in updated else '—'
+        print(f"[TM] Manual SL/TP updated for {symbol} ({kind}): "
+              f"SL={sl_disp} TP={tp_disp}")
+        return {'ok': True, 'position': updated}
     
     def delete_closed_trade(self, idx: int) -> Dict:
         """Permanently remove a closed real trade by index. Stats are
@@ -2510,6 +2737,8 @@ class TradeManager:
             'time_stop': '⏱ Time Stop',
             'trailing_stop': '📈 Trailing Stop',
             'manual': '✋ Manual',
+            'manual_sl': '✋🛡 Manual SL',
+            'manual_tp': '✋🎯 Manual TP',
             'bos_2_partial': '✂️ BOS-2 partial',
             'bos_3_partial': '✂️ BOS-3 partial',
             'bos_4_partial': '✂️ BOS-4 partial',

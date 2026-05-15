@@ -1208,14 +1208,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                              Vol-OB mode anchors SL to the OB boundary with a small buffer:
                                LONG  → SL = ob_bottom × (1 − buffer%)
                                SHORT → SL = ob_top    × (1 + buffer%)
-                             Only meaningful when the SMC scanner has the Volumized OB Trend
-                             filter ENABLED — otherwise the cache that feeds the OB meta
-                             isn't maintained. The dropdown shows the Vol-OB option as
-                             disabled with a tooltip when the scanner filter is off. -->
+                             Operates independently of the SMC scanner's Volumized OB
+                             Trend filter — when the scanner cache is empty, the TM
+                             computes the OB on-demand from klines. Falls back to the
+                             percentage above on any compute failure (no klines yet,
+                             OB direction mismatch, or SL would be on the wrong side
+                             of entry). The buffer field is shown only when this mode
+                             is selected. -->
                         <div class="tm-row" id="tm-sl-mode-row" style="padding-left:24px">
                             <label style="font-size:0.78rem;color:#a5b4fc">
                                 SL Mode
-                                <span class="tm-help" title="Спосіб обчислення стопа.&#10;• Percentage — класичний % від ціни входу (значення вище).&#10;• Volumized OB — стоп прив'язується до межі OB-блока: для LONG — низ блока мінус буфер, для SHORT — верх блока плюс буфер. Доступний лише коли в SMC-сканері увімкнено фільтр Volumized OB Trend (інакше OB-кеш порожній).&#10;&#10;У разі будь-якої проблеми (фільтр вимкнено, OB не закешований, напрям не збігається, SL по неправильний бік від entry) автоматично відбувається фолбек на Percentage.">?</span>
+                                <span class="tm-help" title="Спосіб обчислення стопа.&#10;• Percentage — класичний % від ціни входу (значення вище).&#10;• Volumized OB Block — стоп прив'язується до межі OB-блока: для LONG — низ блока мінус буфер, для SHORT — верх блока плюс буфер. Працює незалежно від SMC-фільтра Volumized OB Trend: якщо в сканера ще немає OB-кешу, TM обчислює OB на льоту.&#10;&#10;Fallback на Percentage при будь-якій проблемі (немає достатньо клайнів, напрям не збігається, SL по неправильний бік від entry).">?</span>
                             </label>
                             <select id="tm-sl-mode" onchange="onTMSlModeChange()"
                                     style="padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px">
@@ -1228,8 +1231,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                        style="width:64px" onchange="saveTMSettings()">
                                 <span style="color:#888;font-size:0.74rem">%</span>
                             </span>
-                            <span id="tm-sl-mode-vol-warning"
-                                  style="display:none;color:#fbbf24;font-size:0.72rem;margin-left:6px"></span>
                         </div>
                         
                         <div class="tm-row">
@@ -1436,10 +1437,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
             <table class="tm-table" id="tm-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Qty</th><th>Status</th><th>Action</th></tr>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Qty</th>
+                        <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
+                        <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
+                        <th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="8" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="10" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -1489,10 +1493,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </h3>
             <table class="tm-table" id="tm-shadow-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th><th>Status</th><th></th></tr>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th>
+                        <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
+                        <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
+                        <th>Status</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="8" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="10" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -4050,10 +4057,6 @@ async function loadTMSettings() {
         document.getElementById('tm-sl-mode').value = slMode;
         document.getElementById('tm-sl-vob-buffer').value =
             (typeof s.sl_vob_buffer_pct === 'number') ? s.sl_vob_buffer_pct : 0.2;
-        // Pass scanner state so onTMSlModeChange can decide whether the
-        // Vol-OB option is actually usable right now (it requires the SMC
-        // scanner's Volumized OB Trend filter to be on).
-        applyTMSlModeGating(!!d.scanner_volumized_filter_enabled);
         onTMSlModeChange();  // toggles buffer visibility
         document.getElementById('tm-use-tp').checked = !!s.use_tp;
         document.getElementById('tm-tp-pct').value = s.tp_pct;
@@ -4231,41 +4234,6 @@ function onTMSlModeChange() {
         volWrap.style.display = (mode === 'volumized_ob') ? 'inline-flex' : 'none';
     }
     saveTMSettings();
-}
-
-// Apply scanner-side gating to the SL mode dropdown: when the SMC scanner
-// has the Volumized OB Trend filter OFF, the OB-meta cache is empty so
-// the new SL mode would always fall back to pct. We surface that state
-// by disabling the option and showing an inline warning. The setting on
-// the server is still respected — this is purely a UX guard rail.
-function applyTMSlModeGating(volFilterEnabled) {
-    const sel = document.getElementById('tm-sl-mode');
-    const warn = document.getElementById('tm-sl-mode-vol-warning');
-    if (!sel) return;
-    const volOpt = sel.querySelector('option[value="volumized_ob"]');
-    if (!volOpt) return;
-    
-    if (volFilterEnabled) {
-        volOpt.disabled = false;
-        volOpt.textContent = 'Volumized OB Block';
-        if (warn) {
-            warn.style.display = 'none';
-            warn.textContent = '';
-        }
-    } else {
-        volOpt.disabled = true;
-        volOpt.textContent = 'Volumized OB Block (filter off)';
-        // If the user previously chose Vol-OB but the scanner filter is
-        // now off, the server still falls back to pct on every trade;
-        // we surface this so it's not a silent failure.
-        if (sel.value === 'volumized_ob' && warn) {
-            warn.textContent = '⚠ Vol OB filter is off in scanner — SL will fall back to %';
-            warn.style.display = 'inline';
-        } else if (warn) {
-            warn.style.display = 'none';
-            warn.textContent = '';
-        }
-    }
 }
 
 async function onTMToggle() {
@@ -4673,7 +4641,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -4686,6 +4654,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
+                    ${manualSlTpCellsHTML(p, false)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -4734,7 +4703,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -4747,6 +4716,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
                     <td style="color:#888;font-size:0.72rem">${p.opened_by || '—'}</td>
+                    ${manualSlTpCellsHTML(p, true)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -4778,6 +4748,79 @@ async function loadTMState() {
         }
     } catch (err) {
         console.error('TM state load error', err);
+    }
+}
+
+// ┌────────────────────────────────────────────────────────────────┐
+// │ Manual SL/TP per-position overrides                            │
+// │ Inline-editable cells in the Open Positions and Open Paper     │
+// │ Positions tables. Empty → not active. Numeric → bot closes the │
+// │ position when price crosses that level.                        │
+// │                                                                │
+// │ We don't preserve focus across renders — the tables refresh    │
+// │ every 5s and tracking focus through innerHTML rebuilds adds    │
+// │ complexity for marginal value. Users edit, blur, the value     │
+// │ saves; next refresh shows the persisted state.                 │
+// └────────────────────────────────────────────────────────────────┘
+
+// Render two <td> cells (Manual SL, Manual TP) for a position row.
+// Each cell is an editable number input; on blur OR Enter it POSTs
+// the new value (or clears the override if empty/0). isShadow=true
+// targets the paper-positions table.
+function manualSlTpCellsHTML(p, isShadow) {
+    const sym = p.symbol;
+    const shFlag = isShadow ? 'true' : 'false';
+    // Render existing values raw — input handler does the parsing on
+    // save. Showing the stored float as-is is good enough for now;
+    // we can format later if precision becomes an issue.
+    const sl = (p.manual_sl !== undefined && p.manual_sl !== null) ? p.manual_sl : '';
+    const tp = (p.manual_tp !== undefined && p.manual_tp !== null) ? p.manual_tp : '';
+    const inpStyle = "width:90px;padding:3px 5px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;font-size:0.75rem;font-family:monospace";
+    return `
+        <td>
+            <input type="number" step="any" min="0" placeholder="—"
+                   value="${sl}"
+                   style="${inpStyle}"
+                   onblur="submitManualSlTp('${sym}', this.value, null, ${shFlag})"
+                   onkeydown="if(event.key==='Enter'){this.blur();}">
+        </td>
+        <td>
+            <input type="number" step="any" min="0" placeholder="—"
+                   value="${tp}"
+                   style="${inpStyle}"
+                   onblur="submitManualSlTp('${sym}', null, this.value, ${shFlag})"
+                   onkeydown="if(event.key==='Enter'){this.blur();}">
+        </td>`;
+}
+
+// POST the new manual SL or TP to the server. Pass `null` for the
+// field you don't want to change. Pass empty string or 0 to clear.
+async function submitManualSlTp(symbol, manualSl, manualTp, isShadow) {
+    // Build payload — only include fields we mean to change. The server
+    // treats `null`/missing as "leave unchanged" and 0/'' as "clear".
+    const body = { symbol, is_shadow: !!isShadow };
+    if (manualSl !== null) body.manual_sl = (manualSl === '' ? 0 : parseFloat(manualSl));
+    if (manualTp !== null) body.manual_tp = (manualTp === '' ? 0 : parseFloat(manualTp));
+    
+    try {
+        const res = await fetch('/api/tm/positions/manual-sl-tp', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const d = await res.json();
+        if (!d.ok) {
+            // Soft warning — don't alert() on every keystroke, just log.
+            // The most common cause is the position was just closed by
+            // another exit rule, in which case the row will vanish on the
+            // next refresh anyway.
+            console.warn('Manual SL/TP update failed:', d.reason || 'unknown');
+        }
+        // Refresh table so the persisted value is reflected (and any
+        // immediate close fires if the entered level was already breached).
+        setTimeout(loadTMState, 200);
+    } catch (err) {
+        console.error('Manual SL/TP error:', err);
     }
 }
 
