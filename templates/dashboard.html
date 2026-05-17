@@ -2907,136 +2907,209 @@ function liqmapDrawChart(data) {
         .range([0, innerW]);
 
     // ========================================================================
-    // LAYER 1 — Heatmap density bands behind everything
-    // Aggregate events per price-bucket (sum usd_added) to find heaviest
-    // levels. Each gets a horizontal background band scaled by intensity.
+    // Aggregate events → buckets in memory.
+    //
+    // This is the KEY insight: the reference renders each price-level as
+    // ONE horizontal dashed line spanning the full chart width, not as
+    // many scattered short dashes. Visual texture comes from SVG
+    // stroke-dasharray, not from per-event positioning.
+    //
+    // Group key: (price, side). Leverage is summed for visualization but
+    // retained per-bucket for tooltips.
     // ========================================================================
     const events = data.events || [];
-    const priceLevelSums = new Map();   // bucket_price → total_usd
+    const bucketMap = new Map();   // "price|side" → bucket
     for (const e of events) {
         if (e.mitigated_at_ts) continue;
-        priceLevelSums.set(e.bucket_price,
-            (priceLevelSums.get(e.bucket_price) || 0) + e.usd_added);
+        const key = `${e.bucket_price}|${e.side}`;
+        let b = bucketMap.get(key);
+        if (!b) {
+            b = {
+                price: e.bucket_price,
+                side: e.side,
+                totalUsd: 0,
+                count: 0,
+                leverages: {25: 0, 50: 0, 100: 0},
+                sources: {estimation: 0, hyperliquid: 0},
+                firstTs: e.ts,
+                lastTs: e.ts,
+            };
+            bucketMap.set(key, b);
+        }
+        b.totalUsd += e.usd_added;
+        b.count += 1;
+        b.leverages[e.leverage] = (b.leverages[e.leverage] || 0) + e.usd_added;
+        b.sources[e.source] = (b.sources[e.source] || 0) + e.usd_added;
+        if (e.ts < b.firstTs) b.firstTs = e.ts;
+        if (e.ts > b.lastTs) b.lastTs = e.ts;
     }
-    const sortedLevels = [...priceLevelSums.entries()].sort((a,b) => b[1] - a[1]);
-    const maxLevelUsd = sortedLevels.length ? sortedLevels[0][1] : 1;
+    let buckets = [...bucketMap.values()].sort((a, b) => b.totalUsd - a.totalUsd);
 
-    const heatG = g.append('g').attr('class', 'lm-heatmap');
-    // Top-N heaviest levels get visible bands; render lightest first so
-    // the strongest end up on top of the stack.
-    const heatBands = sortedLevels.slice(0, 12).reverse();
-    for (const [price, totalUsd] of heatBands) {
-        const y = yScale(price);
-        if (y < -8 || y > innerH + 8) continue;
-        const intensity = totalUsd / maxLevelUsd;
-        const height = 8 + 8 * intensity;
-        const isShort = price > mark;
-        const fill = isShort
-            ? `rgba(232,192,32,${(0.16 + 0.50 * intensity).toFixed(3)})`
-            : `rgba(91,140,255,${(0.14 + 0.42 * intensity).toFixed(3)})`;
-        heatG.append('rect')
-            .attr('x', 0).attr('width', innerW)
-            .attr('y', y - height/2).attr('height', height)
-            .attr('fill', fill);
-    }
+    // Drop noise — keep top-25 by volume, ignore the rest. Most of the
+    // "tail" is sub-percent contributions that just clutter the chart.
+    buckets = buckets.slice(0, 25);
+    const maxUsd = buckets[0]?.totalUsd || 1;
 
     // ========================================================================
-    // LAYER 2 — Cluster magnet zones (bright thick stripes for highest-volume
-    // adjacent price levels with magnet_score >= 0.5)
+    // Detect clusters: adjacent same-side buckets within 0.5% of each other.
+    // We do this in JS instead of trusting backend's find_clusters because
+    // the threshold there ($1M minimum) is too strict for early data.
+    // Top 2 clusters by volume = magnet zones.
     // ========================================================================
-    const clustersG = g.append('g').attr('class', 'lm-clusters');
-    for (const c of (data.cluster_zones || [])) {
-        if (c.magnet_score < 0.5) continue;
-        const yHigh = yScale(c.price_high);
-        const yLow = yScale(c.price_low);
-        const yTop = Math.min(yHigh, yLow) - 6;
-        const yBot = Math.max(yHigh, yLow) + 6;
-        const baseColor = c.side === 'long' ? '#3a6ad6' : '#c9a318';
-        clustersG.append('rect')
-            .attr('x', 0).attr('width', innerW)
-            .attr('y', yTop).attr('height', yBot - yTop)
-            .attr('fill', baseColor)
-            .attr('opacity', 0.16 + 0.18 * c.magnet_score);
-        const midY = (yTop + yBot) / 2;
-        clustersG.append('rect')
-            .attr('x', 0).attr('width', innerW)
-            .attr('y', midY - 2.5).attr('height', 5)
-            .attr('fill', baseColor)
-            .attr('opacity', 0.50 + 0.35 * c.magnet_score);
-        clustersG.append('text')
-            .attr('x', innerW - 6).attr('y', midY - 7)
-            .attr('text-anchor', 'end')
-            .attr('fill', baseColor)
-            .attr('font-size', '9.5px')
-            .attr('font-family', 'monospace')
-            .attr('opacity', 0.9)
-            .text(liqmapFormatUsd(c.total_usd) + ' · ' + (c.magnet_score*100).toFixed(0) + '%');
+    function detectClustersJS(bs, markPrice) {
+        const sorted = [...bs].sort((a, b) => a.price - b.price);
+        const groups = [];
+        let current = null;
+        for (const b of sorted) {
+            if (!current || b.side !== current.side
+                || (b.price - current.priceHigh) / markPrice > 0.005) {
+                if (current && current.priceLow !== current.priceHigh) {
+                    groups.push(current);
+                }
+                current = {
+                    side: b.side, priceLow: b.price, priceHigh: b.price,
+                    totalUsd: b.totalUsd, members: [b],
+                    leverages: {...b.leverages},
+                };
+            } else {
+                current.priceHigh = b.price;
+                current.totalUsd += b.totalUsd;
+                current.members.push(b);
+                for (const lev of [25, 50, 100]) {
+                    current.leverages[lev] = (current.leverages[lev] || 0) + (b.leverages[lev] || 0);
+                }
+            }
+        }
+        if (current && current.priceLow !== current.priceHigh) {
+            groups.push(current);
+        }
+        // Compute magnet score (volume 70% + proximity 30%)
+        const maxGroupUsd = Math.max(...groups.map(g => g.totalUsd), 1);
+        for (const g of groups) {
+            const mid = (g.priceLow + g.priceHigh) / 2;
+            const distPct = Math.abs(mid - markPrice) / markPrice;
+            const proxScore = Math.max(0, 1 - distPct / 0.10);
+            const volScore = g.totalUsd / maxGroupUsd;
+            g.magnetScore = 0.7 * volScore + 0.3 * proxScore;
+        }
+        groups.sort((a, b) => b.totalUsd - a.totalUsd);
+        return groups;
     }
 
-    // ========================================================================
-    // LAYER 3 — INDIVIDUAL EVENT DASHES. Each event = one short dash at
-    // (event.ts, event.bucket_price). This is what gives the Hyblock-style
-    // "scattered across time" texture.
-    //
-    // Dash visual width scales with usd_added (relative to global max).
-    // Leverage tier picks stroke thickness. Color = side, with cluster-shade
-    // for big-volume events. Mitigated events dimmed.
-    // ========================================================================
-    const maxUsd = d3.max(events, e => e.usd_added) || 1;
-    const bucketsG = g.append('g').attr('class', 'lm-events');
-    // Sub-pixel jitter so concurrent events at same (ts, price) don't fully
-    // overlap. Deterministic per-event so the picture is stable on refresh.
-    function eventJitter(e) {
-        return ((e.id || (e.ts * 31 + e.bucket_price * 7)) % 7) - 3;
-    }
-    // Time-window in seconds → minimum dash width in seconds. We want dashes
-    // around 4-12px wide for visual texture. With innerW ≈ 1100px and 24h
-    // lookback (86400s), 1px ≈ 78s. So a 6px dash = ~470s wide. We use a
-    // BASE dash size that's roughly that, then scale by usd_added.
-    const baseDashSec = (nowSec - xStart) / 220;  // ~220 dashes per width
-
-    for (const e of events) {
-        const y = yScale(e.bucket_price);
-        if (y < -3 || y > innerH + 3) continue;
-        const yAdj = y + eventJitter(e);
-
-        const usdRatio = e.usd_added / maxUsd;
-        const dashSec = baseDashSec * (0.6 + 1.6 * Math.sqrt(usdRatio));
-        const x1 = xScale(e.ts);
-        const x2 = xScale(e.ts + dashSec);
-        if (x2 - x1 < 0.8) continue;
-
-        const isMitigated = !!e.mitigated_at_ts;
-        const opacity = isMitigated ? 0.20 : (0.55 + 0.40 * Math.sqrt(usdRatio));
-        const color = e.side === 'long'
-            ? (usdRatio > 0.5 ? '#3a6ad6' : '#5b8cff')
-            : (usdRatio > 0.5 ? '#d4a818' : '#e8c020');
-        const sw = e.leverage === 100 ? 2.4
-                 : e.leverage === 50 ? 1.9
-                 : 1.3;
-
-        bucketsG.append('line')
-            .attr('class', 'lm-event')
-            .attr('x1', x1).attr('x2', x2)
-            .attr('y1', yAdj).attr('y2', yAdj)
-            .attr('stroke', color)
-            .attr('stroke-width', sw)
-            .attr('stroke-linecap', 'butt')
-            .attr('opacity', opacity)
-            .datum(e)
-            .on('mouseover', liqmapEventHover)
-            .on('mouseout', liqmapEventUnhover);
-
-        // Hyperliquid provenance dot — small white tick on the right
-        if (e.source === 'hyperliquid' && !isMitigated && usdRatio > 0.15) {
-            bucketsG.append('circle')
-                .attr('cx', x2 + 1).attr('cy', yAdj).attr('r', 1.2)
-                .attr('fill', '#ffffff').attr('opacity', 0.8);
+    const clusters = detectClustersJS(buckets, mark);
+    // Mark cluster bucket prices so we render them differently
+    const clusterPrices = new Set();
+    const clusterCount = Math.min(3, clusters.length);
+    for (let i = 0; i < clusterCount; i++) {
+        for (const m of clusters[i].members) {
+            clusterPrices.add(`${m.price}|${m.side}`);
         }
     }
 
     // ========================================================================
-    // LAYER 4 — Price action overlay (small zigzag line in center)
+    // LAYER 1 — Heatmap density background bands behind cluster zones.
+    // Wide soft amber/blue rect that gives the "halo around magnet" look
+    // visible in the reference image.
+    // ========================================================================
+    const heatG = g.append('g').attr('class', 'lm-heatmap');
+    for (let i = 0; i < clusterCount; i++) {
+        const c = clusters[i];
+        const yHigh = yScale(c.priceHigh);
+        const yLow = yScale(c.priceLow);
+        const yMid = (yHigh + yLow) / 2;
+        const halfBand = 18;  // halo height in px
+        const fillColor = c.side === 'long'
+            ? `rgba(176,120,40,0.42)`   // amber-brown halo (matches reference)
+            : `rgba(176,120,40,0.42)`;
+        // Outer wider lighter band
+        heatG.append('rect')
+            .attr('x', 0).attr('width', innerW)
+            .attr('y', yMid - halfBand).attr('height', halfBand * 2)
+            .attr('fill', fillColor);
+        // Inner narrower band darker
+        heatG.append('rect')
+            .attr('x', 0).attr('width', innerW)
+            .attr('y', yMid - 7).attr('height', 14)
+            .attr('fill', 'rgba(140,95,30,0.55)');
+    }
+
+    // ========================================================================
+    // LAYER 2 — Individual price-level lines as horizontal dashed strokes.
+    //
+    // Each bucket = ONE <line> spanning innerW with stroke-dasharray
+    // creating the "broken line" texture. Color: blue for non-cluster,
+    // bright yellow for cluster prices.
+    // ========================================================================
+    const linesG = g.append('g').attr('class', 'lm-lines');
+
+    for (const b of buckets) {
+        const y = yScale(b.price);
+        if (y < -3 || y > innerH + 3) continue;
+        const isCluster = clusterPrices.has(`${b.price}|${b.side}`);
+        const usdRatio = b.totalUsd / maxUsd;
+
+        if (isCluster) {
+            // CLUSTER row — thick bright yellow line + darker dash overlay
+            // for that "filled magnet zone" look in the reference
+            linesG.append('line')
+                .attr('x1', 4).attr('x2', innerW - 4)
+                .attr('y1', y).attr('y2', y)
+                .attr('stroke', '#e8c020')
+                .attr('stroke-width', 7)
+                .attr('opacity', 0.92)
+                .datum(b)
+                .on('mouseover', liqmapEventHover)
+                .on('mouseout', liqmapEventUnhover);
+            // Darker dashed overlay creates internal texture
+            linesG.append('line')
+                .attr('x1', 4).attr('x2', innerW - 4)
+                .attr('y1', y).attr('y2', y)
+                .attr('stroke', '#8a6a1a')
+                .attr('stroke-width', 4)
+                .attr('stroke-dasharray', '8 16')
+                .attr('opacity', 0.85);
+        } else {
+            // Individual level — single blue dashed line
+            const sw = b.leverages[100] > b.leverages[50] && b.leverages[100] > b.leverages[25] ? 2.6
+                     : b.leverages[50] > b.leverages[25] ? 2.2
+                     : 1.8;
+            const opacity = 0.50 + 0.42 * Math.sqrt(usdRatio);
+            linesG.append('line')
+                .attr('x1', 4).attr('x2', innerW - 4)
+                .attr('y1', y).attr('y2', y)
+                .attr('stroke', '#5b8cff')
+                .attr('stroke-width', sw)
+                .attr('stroke-dasharray', '22 9')
+                .attr('opacity', opacity)
+                .datum(b)
+                .on('mouseover', liqmapEventHover)
+                .on('mouseout', liqmapEventUnhover);
+        }
+    }
+
+    // ========================================================================
+    // LAYER 3 — Cluster volume + magnet-score labels at right edge of band
+    // (positioned to NOT overlap with mark price tag on the right axis).
+    // ========================================================================
+    const clusterLabelsG = g.append('g').attr('class', 'lm-cluster-labels');
+    for (let i = 0; i < clusterCount; i++) {
+        const c = clusters[i];
+        const mid = (c.priceLow + c.priceHigh) / 2;
+        const yMid = yScale(mid);
+        // Skip label if too close to mark price (would overlap red tag)
+        if (Math.abs(mid - mark) / mark < 0.005) continue;
+        clusterLabelsG.append('text')
+            .attr('x', innerW - 8).attr('y', yMid - 10)
+            .attr('text-anchor', 'end')
+            .attr('fill', '#e8c020')
+            .attr('font-size', '10px')
+            .attr('font-family', 'monospace')
+            .attr('opacity', 0.92)
+            .text(liqmapFormatUsd(c.totalUsd) + ' · ' + Math.round(c.magnetScore*100) + '%');
+    }
+
+    // ========================================================================
+    // LAYER 4 — Price action overlay (small zigzag in center)
     // Fetched async; rendered when ready (so first frame isn't blocked).
     // ========================================================================
     g.append('g').attr('class', 'lm-price-action');
@@ -3195,27 +3268,41 @@ async function liqmapDrawPriceAction(svg, xScale, yScale, margin, innerW, innerH
 }
 
 function liqmapEventHover(event, d) {
-    const e = d || d3.select(this).datum();
-    if (!e) return;
+    const b = d || d3.select(this).datum();
+    if (!b) return;
     const tt = document.getElementById('liqmap-tooltip');
-    const sideClass = e.side === 'long' ? 'tt-side-long' : 'tt-side-short';
-    const sideLabel = e.side === 'long' ? 'LONG liq' : 'SHORT liq';
-    const sourceLabel = e.source === 'hyperliquid' ? 'Hyperliquid (real)' : 'OI estimation';
-    const mitigatedRow = e.mitigated_at_ts
-        ? `<div class="tt-row"><span>Status</span><span style="color:#888">mitigated</span></div>`
-        : '';
+    const sideClass = b.side === 'long' ? 'tt-side-long' : 'tt-side-short';
+    const sideLabel = b.side === 'long' ? 'LONG liq' : 'SHORT liq';
+
+    // Bucket shape (new): {price, side, totalUsd, count, leverages, sources, firstTs, lastTs}
+    const price = b.price ?? b.bucket_price;
+    const totalUsd = b.totalUsd ?? b.usd_added;
+    const count = b.count ?? 1;
+    const firstTs = b.firstTs ?? b.ts;
+
+    // Leverage mix breakdown
+    const levMix = b.leverages || {};
+    const mixStr = [25, 50, 100]
+        .filter(l => (levMix[l] || 0) > 0)
+        .map(l => `${l}x:${Math.round((levMix[l]/totalUsd)*100)}%`)
+        .join(' / ') || '—';
+
+    // Source split
+    const sources = b.sources || {};
+    const hlPct = totalUsd > 0 ? Math.round(((sources.hyperliquid || 0) / totalUsd) * 100) : 0;
+
     tt.innerHTML =
-        `<div class="tt-title ${sideClass}">${sideLabel} @ $${liqmapFormatPrice(e.bucket_price)}</div>` +
-        `<div class="tt-row"><span>Leverage</span><span>${e.leverage}x</span></div>` +
-        `<div class="tt-row"><span>Position size</span><span>${liqmapFormatUsd(e.usd_added)}</span></div>` +
-        `<div class="tt-row"><span>Source</span><span>${sourceLabel}</span></div>` +
-        `<div class="tt-row"><span>Opened</span><span>${liqmapTimeAgo(e.ts)}</span></div>` +
-        mitigatedRow;
+        `<div class="tt-title ${sideClass}">${sideLabel} @ $${liqmapFormatPrice(price)}</div>` +
+        `<div class="tt-row"><span>Cumulative liq</span><span>${liqmapFormatUsd(totalUsd)}</span></div>` +
+        `<div class="tt-row"><span>Events</span><span>${count}</span></div>` +
+        `<div class="tt-row"><span>Leverage mix</span><span>${mixStr}</span></div>` +
+        `<div class="tt-row"><span>Hyperliquid share</span><span>${hlPct}%</span></div>` +
+        `<div class="tt-row"><span>First seen</span><span>${liqmapTimeAgo(firstTs)}</span></div>`;
     tt.style.display = 'block';
 
     const wrap = document.querySelector('.liqmap-chart-wrap');
     const rect = wrap.getBoundingClientRect();
-    const x = Math.min(event.clientX - rect.left + 12, rect.width - 200);
+    const x = Math.min(event.clientX - rect.left + 12, rect.width - 220);
     const y = Math.min(event.clientY - rect.top + 12, rect.height - 175);
     tt.style.left = x + 'px';
     tt.style.top = y + 'px';
