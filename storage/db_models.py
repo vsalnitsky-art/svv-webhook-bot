@@ -1109,3 +1109,95 @@ class VolumizedRadarSnapshot(Base):
             'action': self.action,
             'error_msg': self.error_msg,
         }
+
+
+# ============================================================================
+# Liquidation Map module — estimated liquidation level clusters per symbol
+# ============================================================================
+
+class LiquidationBucket(Base):
+    """One estimated liquidation cluster at a specific (symbol, price, side,
+    leverage). Cumulative — each OI-delta tick adds to existing bucket if one
+    matches, otherwise creates new. Mitigated when price wicks through it.
+    
+    Phase 1 storage layout: one row per (symbol, bucket_price, side, leverage,
+    source). At ~$25 bucket size on BTC ±10% from price, that's ~80 buckets ×
+    2 sides × 3 leverage tiers × 2 sources = ~960 rows per symbol active at
+    once. With ~2 background symbols + a few on-demand it's well under 10K
+    active rows — cheap to index and query.
+    """
+    __tablename__ = f'{TABLE_PREFIX}liquidation_buckets'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False)
+    
+    # Bucket midpoint price. We bucket-quantize the raw liquidation price so
+    # multiple individual position estimates collapse onto the same row.
+    bucket_price = Column(Float, nullable=False)
+    side = Column(String(10), nullable=False)        # 'long' | 'short'
+    leverage = Column(Integer, nullable=False)       # 25 | 50 | 100
+    
+    # Accumulated notional USD attributed to this bucket since first_seen
+    cumulative_usd = Column(Float, nullable=False, default=0.0)
+    # How many distinct OI-delta events fed into this bucket
+    contribution_count = Column(Integer, nullable=False, default=0)
+    
+    first_seen_ts = Column(BigInteger, nullable=False)   # epoch seconds
+    last_updated_ts = Column(BigInteger, nullable=False)
+    
+    # When price wick'd through the bucket and (presumably) liquidated the
+    # positions there. NULL = still active. Mitigated buckets are kept for
+    # post-mortem analysis (UI toggle "show mitigated"); retention job drops
+    # them after 30 days regardless.
+    mitigated_at_ts = Column(BigInteger, nullable=True)
+    
+    # Provenance — lets us trust some buckets more than others in UI:
+    # 'estimation' = derived from aggregated OI deltas + assumed lev weights
+    # 'hyperliquid' = derived from actual on-chain position data (subset of
+    #                 the market but accurate)
+    source = Column(String(20), nullable=False, default='estimation')
+    
+    __table_args__ = (
+        Index('idx_liqmap_active', 'symbol', 'mitigated_at_ts'),
+        Index('idx_liqmap_time', 'symbol', 'last_updated_ts'),
+        # Lookups for "do we already have a bucket at this price?" hot-path
+        Index('idx_liqmap_lookup', 'symbol', 'bucket_price', 'side',
+              'leverage', 'source', 'mitigated_at_ts'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'bucket_price': self.bucket_price,
+            'side': self.side,
+            'leverage': self.leverage,
+            'cumulative_usd': self.cumulative_usd,
+            'contribution_count': self.contribution_count,
+            'first_seen_ts': self.first_seen_ts,
+            'last_updated_ts': self.last_updated_ts,
+            'mitigated_at_ts': self.mitigated_at_ts,
+            'source': self.source,
+        }
+
+
+class LiquidationOISnapshot(Base):
+    """One OI snapshot per (symbol, exchange) per scan tick. Used by the
+    daemon to compute OI deltas between consecutive ticks. Older snapshots
+    are pruned aggressively — we only need t-1 to compute the latest delta.
+    """
+    __tablename__ = f'{TABLE_PREFIX}liquidation_oi_snapshots'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False)
+    exchange = Column(String(20), nullable=False)
+    ts = Column(BigInteger, nullable=False)              # epoch seconds
+    
+    open_interest_usd = Column(Float, nullable=False)
+    mark_price = Column(Float, nullable=False)
+    # Optional — Binance topLongShortPositionRatio when available
+    long_ratio = Column(Float, nullable=True)
+    
+    __table_args__ = (
+        Index('idx_liqoi_latest', 'symbol', 'exchange', 'ts'),
+    )

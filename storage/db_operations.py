@@ -10,7 +10,8 @@ from storage.db_models import (
     SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
     SymbolBlacklist, SMCOBState,
     Top100OBSnapshot, Top100OBHistory,
-    VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot
+    VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
+    LiquidationBucket, LiquidationOISnapshot
 )
 from config import DEFAULT_SETTINGS
 
@@ -1331,6 +1332,145 @@ class DBOperations:
         except Exception as e:
             session.rollback()
             print(f"[DB] volradar_prune_snapshots error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # ========================================================================
+    # === Liquidation Map ====================================================
+    # ========================================================================
+    
+    def liqmap_save_oi_snapshot(self, symbol: str, exchange: str, ts: int,
+                                  oi_usd: float, mark_price: float,
+                                  long_ratio=None) -> None:
+        """Persist one OI snapshot. We keep the LAST 3 snapshots per
+        (symbol, exchange) — enough for delta computation with buffer for
+        a missed tick."""
+        session = get_session()
+        try:
+            row = LiquidationOISnapshot(
+                symbol=symbol, exchange=exchange, ts=ts,
+                open_interest_usd=oi_usd, mark_price=mark_price,
+                long_ratio=long_ratio,
+            )
+            session.add(row)
+            old = session.query(LiquidationOISnapshot).filter_by(
+                symbol=symbol, exchange=exchange
+            ).order_by(LiquidationOISnapshot.ts.desc()).offset(3).all()
+            for r in old:
+                session.delete(r)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_save_oi_snapshot error: {e}")
+        finally:
+            session.close()
+    
+    def liqmap_get_latest_oi(self, symbol: str, exchange: str):
+        """Return most recent (oi_usd, mark_price, long_ratio, ts) dict or None."""
+        session = get_session()
+        try:
+            row = session.query(LiquidationOISnapshot).filter_by(
+                symbol=symbol, exchange=exchange
+            ).order_by(LiquidationOISnapshot.ts.desc()).first()
+            if not row:
+                return None
+            return {
+                'oi_usd': row.open_interest_usd,
+                'mark_price': row.mark_price,
+                'long_ratio': row.long_ratio,
+                'ts': row.ts,
+            }
+        finally:
+            session.close()
+    
+    def liqmap_upsert_bucket(self, symbol: str, bucket_price: float,
+                                side: str, leverage: int, source: str,
+                                added_usd: float, now_ts: int) -> None:
+        """Add `added_usd` to (symbol, bucket_price, side, leverage, source)
+        bucket. Creates row if absent. Skips mitigated buckets — new positions
+        at same price get a fresh bucket."""
+        if added_usd <= 0:
+            return
+        session = get_session()
+        try:
+            existing = session.query(LiquidationBucket).filter_by(
+                symbol=symbol, bucket_price=bucket_price,
+                side=side, leverage=leverage, source=source,
+                mitigated_at_ts=None,
+            ).first()
+            if existing:
+                existing.cumulative_usd += added_usd
+                existing.contribution_count += 1
+                existing.last_updated_ts = now_ts
+            else:
+                row = LiquidationBucket(
+                    symbol=symbol, bucket_price=bucket_price,
+                    side=side, leverage=leverage, source=source,
+                    cumulative_usd=added_usd, contribution_count=1,
+                    first_seen_ts=now_ts, last_updated_ts=now_ts,
+                )
+                session.add(row)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_upsert_bucket error: {e}")
+        finally:
+            session.close()
+    
+    def liqmap_get_active_buckets(self, symbol: str,
+                                     min_price=None, max_price=None,
+                                     include_mitigated: bool = False) -> list:
+        """All active (and optionally mitigated) buckets for symbol, sorted
+        by bucket_price ASC. Filtered to [min_price, max_price] when given."""
+        session = get_session()
+        try:
+            q = session.query(LiquidationBucket).filter_by(symbol=symbol)
+            if not include_mitigated:
+                q = q.filter(LiquidationBucket.mitigated_at_ts.is_(None))
+            if min_price is not None:
+                q = q.filter(LiquidationBucket.bucket_price >= min_price)
+            if max_price is not None:
+                q = q.filter(LiquidationBucket.bucket_price <= max_price)
+            return [b.to_dict() for b in q.order_by(
+                LiquidationBucket.bucket_price.asc()).all()]
+        finally:
+            session.close()
+    
+    def liqmap_mark_mitigated(self, symbol: str, low_price: float,
+                                 high_price: float, now_ts: int) -> int:
+        """Mark active buckets in [low_price, high_price] as mitigated."""
+        session = get_session()
+        try:
+            n = session.query(LiquidationBucket).filter(
+                LiquidationBucket.symbol == symbol,
+                LiquidationBucket.mitigated_at_ts.is_(None),
+                LiquidationBucket.bucket_price >= low_price,
+                LiquidationBucket.bucket_price <= high_price,
+            ).update({'mitigated_at_ts': now_ts}, synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_mark_mitigated error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def liqmap_prune(self, retention_days: int = 30) -> int:
+        """Drop all buckets older than retention_days (by last_updated_ts)."""
+        session = get_session()
+        try:
+            import time as _t
+            cutoff_ts = int(_t.time()) - retention_days * 86400
+            n = session.query(LiquidationBucket).filter(
+                LiquidationBucket.last_updated_ts < cutoff_ts
+            ).delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_prune error: {e}")
             return 0
         finally:
             session.close()

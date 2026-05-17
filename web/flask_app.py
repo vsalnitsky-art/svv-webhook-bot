@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -243,6 +243,29 @@ def create_app():
                 tm.start()
             except Exception as e:
                 print(f"[APP] Failed to start Trade Manager: {e}")
+        
+        # Liquidation Map daemon — tracks estimated liquidation clusters
+        # for BTC + ETH (background) plus any on-demand symbol requested
+        # via the dashboard. Tier 2 architecture: Binance/Bybit aggregated
+        # OI estimation + Hyperliquid real position overlay. Gated by DB
+        # setting (default ON).
+        if not _auto_started['liqmap']:
+            _auto_started['liqmap'] = True
+            try:
+                db = get_db()
+                if db.get_setting('liquidation_map_enabled', '1') == '1':
+                    from detection.liquidation_map import init_liquidation_map
+                    from detection.market_data import get_market_data
+                    lm = init_liquidation_map(
+                        db=db,
+                        market_data=get_market_data(),
+                    )
+                    lm.start()
+                    print("[APP] Liquidation Map auto-started")
+                else:
+                    print("[APP] Liquidation Map disabled in settings")
+            except Exception as e:
+                print(f"[APP] Failed to start Liquidation Map: {e}")
         
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
@@ -3480,6 +3503,102 @@ def register_api_routes(app):
             if stat is None:
                 return jsonify({'ok': True, 'stat': None})
             return jsonify({'ok': True, 'stat': stat})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    # ========================================================================
+    # Liquidation Map endpoints
+    # ========================================================================
+    
+    @app.route('/api/liquidation-map/state')
+    def api_liqmap_state():
+        """Return full liquidation map state for the requested symbol.
+        Query params:
+          symbol (default BTCUSDT)
+          lookback (hours; default 24; allowed 1, 4, 24, 168)
+          include_mitigated (default 0; pass 1 to also see hit-through buckets)
+        """
+        try:
+            from detection.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if lm is None:
+                return jsonify({'ok': False, 'reason': 'Daemon not initialized'})
+            
+            symbol = request.args.get('symbol', 'BTCUSDT').upper()
+            try:
+                lookback = int(request.args.get('lookback', 24))
+            except ValueError:
+                lookback = 24
+            include_mitigated = request.args.get('include_mitigated', '0') == '1'
+            
+            # Auto-register the symbol as on-demand if it's not already
+            # being tracked — so first /state call seeds it.
+            from detection.liquidation_map.liquidation_map import BACKGROUND_SYMBOLS
+            if symbol not in BACKGROUND_SYMBOLS:
+                lm.request_symbol(symbol)
+            
+            state = lm.get_state(symbol=symbol,
+                                   lookback_hours=lookback,
+                                   include_mitigated=include_mitigated)
+            return jsonify({'ok': True, **state})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/liquidation-map/request-symbol', methods=['POST'])
+    def api_liqmap_request_symbol():
+        """UI calls this when user types a new symbol into the input. Adds
+        (or refreshes TTL of) the symbol on the daemon's active list."""
+        try:
+            from detection.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if lm is None:
+                return jsonify({'ok': False, 'reason': 'Daemon not initialized'})
+            data = request.get_json() or {}
+            symbol = data.get('symbol', '')
+            if not symbol:
+                return jsonify({'ok': False, 'reason': 'symbol required'})
+            return jsonify(lm.request_symbol(symbol))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/liquidation-map/active-symbols')
+    def api_liqmap_active_symbols():
+        """List of symbols currently being scanned. Helpful for the UI to
+        decide whether to wait for "building history" or render immediately."""
+        try:
+            from detection.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if lm is None:
+                return jsonify({'ok': False, 'reason': 'Daemon not initialized',
+                                 'symbols': []})
+            return jsonify({'ok': True, 'symbols': lm.get_active_symbols()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e), 'symbols': []})
+    
+    @app.route('/api/liquidation-map/toggle', methods=['POST'])
+    def api_liqmap_toggle():
+        """Enable/disable the daemon globally (persisted in DB setting)."""
+        try:
+            from storage.db_operations import get_db
+            data = request.get_json() or {}
+            enabled = bool(data.get('enabled'))
+            get_db().set_setting('liquidation_map_enabled',
+                                   '1' if enabled else '0')
+            # Start/stop the daemon to honor the new setting immediately
+            from detection.liquidation_map import (
+                get_liquidation_map, init_liquidation_map)
+            from detection.market_data import get_market_data
+            lm = get_liquidation_map()
+            if enabled:
+                if lm is None:
+                    lm = init_liquidation_map(db=get_db(),
+                                                market_data=get_market_data())
+                if not lm.is_running():
+                    lm.start()
+            else:
+                if lm is not None and lm.is_running():
+                    lm.stop()
+            return jsonify({'ok': True, 'enabled': enabled})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
     
