@@ -3575,6 +3575,38 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'symbols': []})
     
+    @app.route('/api/liquidation-map/price-series')
+    def api_liqmap_price_series():
+        """Recent price series for the chart's price-action overlay. Pulls
+        1m klines via market_data so we don't expose a separate kline API.
+        Returns a list of {ts, close} sorted ascending."""
+        try:
+            symbol = request.args.get('symbol', 'BTCUSDT').upper()
+            try:
+                hours = int(request.args.get('hours', 24))
+            except ValueError:
+                hours = 24
+            # 1m bars; cap to ~720 (12h × 60) to keep the response small
+            limit = min(hours * 60, 720)
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            if md is None:
+                return jsonify({'ok': False, 'series': []})
+            klines = md.fetch_klines(symbol, interval='1m', limit=limit)
+            if not klines:
+                return jsonify({'ok': True, 'series': []})
+            series = []
+            for k in klines:
+                ts = k.get('t') or k.get('ts') or k.get('open_time')
+                if ts and ts > 1e12:  # ms → s
+                    ts = int(ts / 1000)
+                close = k.get('c') or k.get('close')
+                if ts and close:
+                    series.append({'ts': int(ts), 'close': float(close)})
+            return jsonify({'ok': True, 'series': series})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e), 'series': []})
+    
     @app.route('/api/liquidation-map/toggle', methods=['POST'])
     def api_liqmap_toggle():
         """Enable/disable the daemon globally (persisted in DB setting)."""

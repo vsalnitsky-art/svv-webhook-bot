@@ -55,13 +55,6 @@
             <div class="liqmap-tooltip" id="liqmap-tooltip" style="display:none"></div>
             <div class="liqmap-overlay-msg" id="liqmap-overlay-msg" style="display:none"></div>
         </div>
-
-        <div class="liqmap-clusters-section">
-            <div class="liqmap-clusters-header">🎯 Top Magnet Zones</div>
-            <div class="liqmap-clusters-list" id="liqmap-clusters-list">
-                <div class="liqmap-empty">Loading clusters…</div>
-            </div>
-        </div>
     </div>
 
     <!-- BTC Volume Flow -->
@@ -2853,19 +2846,16 @@ function liqmapRender(data) {
     if (!data.mark_price) {
         liqmapShowOverlay('Building history… first data within ~3 minutes');
         liqmapDrawEmptyChart();
-        liqmapRenderClusters([]);
         return;
     }
     if (!data.buckets || data.buckets.length === 0) {
         liqmapShowOverlay('Accumulating data… buckets will appear shortly');
         liqmapDrawEmptyChart();
-        liqmapRenderClusters([]);
         return;
     }
 
     liqmapHideOverlay();
     liqmapDrawChart(data);
-    liqmapRenderClusters(data.cluster_zones || []);
 }
 
 function liqmapDrawEmptyChart() {
@@ -2878,7 +2868,7 @@ function liqmapDrawChart(data) {
     container.innerHTML = '';
     const W = container.clientWidth || 1200;
     const H = container.clientHeight || 440;
-    const margin = {top: 18, right: 78, bottom: 24, left: 12};
+    const margin = {top: 22, right: 96, bottom: 38, left: 14};
     const innerW = W - margin.left - margin.right;
     const innerH = H - margin.top - margin.bottom;
 
@@ -2886,6 +2876,19 @@ function liqmapDrawChart(data) {
         .append('svg')
         .attr('viewBox', `0 0 ${W} ${H}`)
         .attr('preserveAspectRatio', 'xMidYMid meet');
+
+    // Chart title at top-left + status flag top-right — matches the reference
+    svg.append('text')
+        .attr('x', margin.left).attr('y', 14)
+        .attr('fill', '#aaa').attr('font-size', '12px')
+        .attr('font-family', 'system-ui, sans-serif')
+        .text(`${liqmapState.symbol} · Liquidation Map · ${liqmapLookbackLabel()}`);
+    svg.append('text')
+        .attr('x', W - margin.right).attr('y', 14)
+        .attr('text-anchor', 'end')
+        .attr('fill', '#666').attr('font-size', '11px')
+        .attr('font-family', 'system-ui, sans-serif')
+        .text('Live · OI based');
 
     const g = svg.append('g')
         .attr('transform', `translate(${margin.left},${margin.top})`);
@@ -2897,177 +2900,316 @@ function liqmapDrawChart(data) {
         .domain([window.min_price, window.max_price])
         .range([innerH, 0]);
 
-    // X axis = time. Use lookback hours back to now
     const nowSec = Math.floor(Date.now() / 1000);
     const xStart = nowSec - liqmapState.lookback * 3600;
     const xScale = d3.scaleLinear()
         .domain([xStart, nowSec])
         .range([0, innerW]);
 
-    // --- Subtle horizontal grid every 0.5% from mark
-    const gridStepPct = 0.005;
-    const gridGroup = g.append('g').attr('class', 'lm-grid');
-    for (let pct = -0.10; pct <= 0.10; pct += gridStepPct) {
-        const price = mark * (1 + pct);
+    // ========================================================================
+    // LAYER 1 — Heatmap density bands behind everything
+    // For each price level, sum cumulative_usd across all sides/leverages.
+    // Top-N heaviest get thick gradient bands. Drives the "magnet zone" feel.
+    // ========================================================================
+    const priceLevelSums = new Map();  // bucket_price → total_usd
+    for (const b of data.buckets) {
+        if (b.mitigated_at_ts) continue;
+        const key = b.bucket_price;
+        priceLevelSums.set(key, (priceLevelSums.get(key) || 0) + b.cumulative_usd);
+    }
+    const sortedLevels = [...priceLevelSums.entries()].sort((a,b) => b[1] - a[1]);
+    const maxLevelUsd = sortedLevels.length ? sortedLevels[0][1] : 1;
+
+    const heatG = g.append('g').attr('class', 'lm-heatmap');
+    // Render bands for top 8 heaviest levels, weakest first so brightest end on top
+    const heatBands = sortedLevels.slice(0, 8).reverse();
+    for (const [price, totalUsd] of heatBands) {
         const y = yScale(price);
-        if (y < 0 || y > innerH) continue;
-        gridGroup.append('line')
-            .attr('x1', 0).attr('x2', innerW)
-            .attr('y1', y).attr('y2', y)
-            .attr('stroke', '#1a1d28')
-            .attr('stroke-width', 0.5);
+        if (y < -7 || y > innerH + 7) continue;
+        const intensity = totalUsd / maxLevelUsd;  // 0..1
+        const height = 10 + 6 * intensity;          // thicker for heavier
+        // Side: derive from price-vs-mark for color hint
+        const isShort = price > mark;
+        const fill = isShort
+            ? `rgba(232,192,32,${(0.18 + 0.55 * intensity).toFixed(3)})`
+            : `rgba(91,140,255,${(0.16 + 0.45 * intensity).toFixed(3)})`;
+        heatG.append('rect')
+            .attr('x', 0).attr('width', innerW)
+            .attr('y', y - height/2).attr('height', height)
+            .attr('fill', fill);
     }
 
-    // --- Buckets render: each bucket is a horizontal segment from
-    // first_seen_ts to last_updated_ts at its bucket_price.
-    // Compute max cumulative_usd for opacity normalization.
+    // ========================================================================
+    // LAYER 2 — Cluster magnet zones (thicker outlined bands across full width)
+    // Only for clusters with magnet_score >= 0.5 — the real "magnets"
+    // ========================================================================
+    const clustersG = g.append('g').attr('class', 'lm-clusters');
+    for (const c of (data.cluster_zones || [])) {
+        if (c.magnet_score < 0.5) continue;
+        const yHigh = yScale(c.price_high);
+        const yLow = yScale(c.price_low);
+        const yTop = Math.min(yHigh, yLow) - 4;
+        const yBot = Math.max(yHigh, yLow) + 4;
+        const baseColor = c.side === 'long' ? '#3a6ad6' : '#c9a318';
+        // Outer halo band
+        clustersG.append('rect')
+            .attr('x', 0).attr('width', innerW)
+            .attr('y', yTop).attr('height', yBot - yTop)
+            .attr('fill', baseColor)
+            .attr('opacity', 0.18 + 0.20 * c.magnet_score);
+        // Center bright stripe — gives the "cluster magnet zone" thick line
+        const midY = (yTop + yBot) / 2;
+        clustersG.append('rect')
+            .attr('x', 0).attr('width', innerW)
+            .attr('y', midY - 2).attr('height', 4)
+            .attr('fill', baseColor)
+            .attr('opacity', 0.55 + 0.40 * c.magnet_score);
+        // Label at right edge inside chart area
+        clustersG.append('text')
+            .attr('x', innerW - 6).attr('y', midY - 6)
+            .attr('text-anchor', 'end')
+            .attr('fill', baseColor)
+            .attr('font-size', '9.5px')
+            .attr('font-family', 'monospace')
+            .attr('opacity', 0.9)
+            .text(liqmapFormatUsd(c.total_usd) + ' · ' + (c.magnet_score*100).toFixed(0) + '%');
+    }
+
+    // ========================================================================
+    // LAYER 3 — Individual buckets as SEGMENTED DASHES across time.
+    // For each bucket [first_seen, last_updated] split into N short dashes.
+    // This is the Hyblock-style "many short individual levels" look.
+    // ========================================================================
     const maxUsd = d3.max(data.buckets, b => b.cumulative_usd) || 1;
-
     const bucketsG = g.append('g').attr('class', 'lm-buckets');
-
-    // Group identical-y buckets visually by leverage tier (small vertical offset
-    // so 25x/50x/100x at same bucket_price are visible side-by-side).
     const levOffsets = {25: -2.5, 50: 0, 100: 2.5};
+
+    // Compute dash chunk size: aim for ~30 visual segments across the entire
+    // lookback window so density looks right at any timeframe.
+    const totalSpanSec = nowSec - xStart;
+    const chunkSec = Math.max(60, Math.floor(totalSpanSec / 30));   // dash period
+    const dashOnPct = 0.65;  // each chunk: 65% "on" dash, 35% gap → broken texture
 
     for (const b of data.buckets) {
         const y = yScale(b.bucket_price);
         if (y < -3 || y > innerH + 3) continue;
         const yAdj = y + (levOffsets[b.leverage] ?? 0);
 
-        const x1 = Math.max(0, xScale(b.first_seen_ts));
-        const xEndTs = b.mitigated_at_ts || b.last_updated_ts;
-        const x2 = Math.min(innerW, xScale(xEndTs));
-        if (x2 <= x1) continue;
+        const startTs = Math.max(xStart, b.first_seen_ts);
+        const endTs = Math.min(nowSec, b.mitigated_at_ts || b.last_updated_ts);
+        if (endTs <= startTs) continue;
 
         const isMitigated = !!b.mitigated_at_ts;
         const usdRatio = b.cumulative_usd / maxUsd;
-        // Opacity: heavier bucket = more opaque
-        const baseOpacity = isMitigated ? 0.22
-                          : (0.35 + 0.55 * Math.sqrt(usdRatio));
-        // Color: long=blue, short=yellow. Cluster (heavy) uses cluster shade.
+        const baseOpacity = isMitigated ? 0.20
+                          : (0.45 + 0.50 * Math.sqrt(usdRatio));
+        // Color picked by side, with cluster shade for top-volume buckets
         const color = b.side === 'long'
-            ? (usdRatio > 0.5 ? LIQMAP_COLOR_LONG_CLUSTER : LIQMAP_COLOR_LONG)
-            : (usdRatio > 0.5 ? LIQMAP_COLOR_SHORT_CLUSTER : LIQMAP_COLOR_SHORT);
+            ? (usdRatio > 0.5 ? '#3a6ad6' : '#5b8cff')
+            : (usdRatio > 0.5 ? '#d4a818' : '#e8c020');
+        // Stroke width by leverage tier
+        const sw = b.leverage === 100 ? 2.6
+                 : b.leverage === 50 ? 2.0
+                 : 1.4;
 
-        // Stroke width by leverage: 25x thin, 100x thick
-        const sw = b.leverage === 100 ? 2.4
-                 : b.leverage === 50 ? 1.8
-                 : 1.3;
+        // Snap dash boundaries to global chunks → adjacent buckets share
+        // grid → dashes line up nicely instead of looking random.
+        const firstChunkStart = Math.floor(startTs / chunkSec) * chunkSec;
+        for (let chunkStart = firstChunkStart;
+             chunkStart < endTs;
+             chunkStart += chunkSec) {
+            const chunkEnd = chunkStart + chunkSec;
+            const overlapStart = Math.max(startTs, chunkStart);
+            const overlapEnd   = Math.min(endTs, chunkEnd);
+            if (overlapEnd <= overlapStart) continue;
+            // Apply on/off pattern within chunk
+            const onLen = (overlapEnd - overlapStart) * dashOnPct;
+            const dashEnd = overlapStart + onLen;
+            const x1 = xScale(overlapStart);
+            const x2 = xScale(dashEnd);
+            if (x2 - x1 < 1.0) continue;  // too tiny to render
 
-        bucketsG.append('line')
-            .attr('class', 'lm-bucket')
-            .attr('x1', x1).attr('x2', x2)
-            .attr('y1', yAdj).attr('y2', yAdj)
-            .attr('stroke', color)
-            .attr('stroke-width', sw)
-            .attr('stroke-linecap', 'butt')
-            .attr('opacity', baseOpacity)
-            .datum(b)
-            .on('mouseover', liqmapBucketHover)
-            .on('mouseout', liqmapBucketUnhover);
+            bucketsG.append('line')
+                .attr('class', 'lm-bucket')
+                .attr('x1', x1).attr('x2', x2)
+                .attr('y1', yAdj).attr('y2', yAdj)
+                .attr('stroke', color)
+                .attr('stroke-width', sw)
+                .attr('stroke-linecap', 'butt')
+                .attr('opacity', baseOpacity)
+                .datum(b)
+                .on('mouseover', liqmapBucketHover)
+                .on('mouseout', liqmapBucketUnhover);
+        }
 
-        // Hyperliquid source = small white dot at right edge to mark provenance
+        // Hyperliquid provenance dot at right edge of bucket
         if (b.source === 'hyperliquid' && !isMitigated) {
-            bucketsG.append('circle')
-                .attr('cx', x2 - 1.5)
-                .attr('cy', yAdj)
-                .attr('r', 1.5)
-                .attr('fill', '#ffffff')
-                .attr('opacity', 0.75);
+            const rightX = Math.min(innerW, xScale(endTs)) - 1.5;
+            if (rightX > 0) {
+                bucketsG.append('circle')
+                    .attr('cx', rightX).attr('cy', yAdj).attr('r', 1.6)
+                    .attr('fill', '#ffffff').attr('opacity', 0.8);
+            }
         }
     }
 
-    // --- Cluster zone annotations: highlight bands behind dashes for top
-    // magnet zones with magnet_score >= 0.5
-    const clustersG = g.append('g').attr('class', 'lm-clusters');
-    for (const c of (data.cluster_zones || [])) {
-        if (c.magnet_score < 0.5) continue;
-        const yHigh = yScale(c.price_high);
-        const yLow = yScale(c.price_low);
-        const yTop = Math.min(yHigh, yLow) - 1;
-        const yBot = Math.max(yHigh, yLow) + 1;
-        const bandColor = c.side === 'long' ? LIQMAP_COLOR_LONG : LIQMAP_COLOR_SHORT;
+    // ========================================================================
+    // LAYER 4 — Price action overlay (small zigzag line in center)
+    // Fetched async; rendered when ready (so first frame isn't blocked).
+    // ========================================================================
+    g.append('g').attr('class', 'lm-price-action');
+    liqmapDrawPriceAction(svg, xScale, yScale, margin, innerW, innerH);
 
-        clustersG.append('rect')
-            .attr('x', 0).attr('width', innerW)
-            .attr('y', yTop).attr('height', yBot - yTop)
-            .attr('fill', bandColor)
-            .attr('opacity', 0.06 + 0.10 * c.magnet_score);
-
-        // Magnet-score label at right edge
-        const midY = (yTop + yBot) / 2;
-        clustersG.append('text')
-            .attr('x', innerW - 4)
-            .attr('y', midY + 3)
-            .attr('text-anchor', 'end')
-            .attr('fill', bandColor)
-            .attr('font-size', '9px')
-            .attr('font-family', 'monospace')
-            .attr('opacity', 0.85)
-            .text(liqmapFormatUsd(c.total_usd) + ' · ' + (c.magnet_score*100).toFixed(0) + '%');
-    }
-
-    // --- Mark price line (red, on top of everything)
+    // ========================================================================
+    // LAYER 5 — Mark price line on top
+    // ========================================================================
     const yMark = yScale(mark);
     g.append('line')
         .attr('x1', 0).attr('x2', innerW)
         .attr('y1', yMark).attr('y2', yMark)
-        .attr('stroke', '#dc2626')
-        .attr('stroke-width', 1.1)
+        .attr('stroke', '#dc2626').attr('stroke-width', 1.2)
         .attr('opacity', 0.9);
 
-    // --- Y axis labels (right side)
+    // ========================================================================
+    // Y-axis labels on the right (price scale)
+    // ========================================================================
     const yAxisG = svg.append('g')
-        .attr('transform', `translate(${margin.left + innerW + 4},${margin.top})`);
-    // Mark price highlighted as red pill
+        .attr('transform', `translate(${margin.left + innerW + 6},${margin.top})`);
+    // Mark price as red pill
     yAxisG.append('rect')
         .attr('x', 0).attr('y', yMark - 9)
-        .attr('width', 66).attr('height', 18)
+        .attr('width', 80).attr('height', 18)
         .attr('rx', 2).attr('fill', '#dc2626');
     yAxisG.append('text')
-        .attr('x', 33).attr('y', yMark + 4)
-        .attr('text-anchor', 'middle')
-        .attr('fill', 'white')
-        .attr('font-size', '11px')
-        .attr('font-family', 'monospace')
+        .attr('x', 40).attr('y', yMark + 4)
+        .attr('text-anchor', 'middle').attr('fill', 'white')
+        .attr('font-size', '11px').attr('font-family', 'monospace')
         .attr('font-weight', 600)
         .text(liqmapFormatPrice(mark));
 
-    // Reference prices: mark±2%, mark±5%, mark±10% if they fit
-    const refs = [-0.10, -0.05, -0.02, 0.02, 0.05, 0.10];
-    for (const pct of refs) {
-        const price = mark * (1 + pct);
-        const y = yScale(price);
+    // Reference labels at top cluster, bottom cluster, edges
+    const refPrices = liqmapPickRefPrices(mark, data.cluster_zones || [], window);
+    for (const rp of refPrices) {
+        const y = yScale(rp);
         if (y < 6 || y > innerH - 6) continue;
         if (Math.abs(y - yMark) < 14) continue;
         yAxisG.append('text')
             .attr('x', 4).attr('y', y + 3)
-            .attr('fill', '#666')
-            .attr('font-size', '10px')
+            .attr('fill', '#888').attr('font-size', '10.5px')
             .attr('font-family', 'monospace')
-            .text(liqmapFormatPrice(price));
+            .text(liqmapFormatPrice(rp));
     }
 
-    // --- X axis labels (time)
+    // ========================================================================
+    // X-axis labels (time)
+    // ========================================================================
     const xAxisG = svg.append('g')
         .attr('transform', `translate(${margin.left},${margin.top + innerH + 4})`);
-    const xTicks = liqmapState.lookback >= 24 ? 6 : 4;
+    const xTicks = liqmapState.lookback >= 24 ? 6 : 5;
     for (let i = 0; i <= xTicks; i++) {
         const ts = xStart + (nowSec - xStart) * (i / xTicks);
         const x = xScale(ts);
         const hoursAgo = (nowSec - ts) / 3600;
         const label = hoursAgo < 0.1 ? 'now'
-                    : hoursAgo < 1 ? Math.round(hoursAgo*60) + 'm'
+                    : hoursAgo < 1 ? Math.round(hoursAgo * 60) + 'm'
                     : hoursAgo < 48 ? hoursAgo.toFixed(0) + 'h ago'
                     : (hoursAgo/24).toFixed(0) + 'd ago';
         xAxisG.append('text')
             .attr('x', x).attr('y', 12)
             .attr('text-anchor', i === 0 ? 'start' : i === xTicks ? 'end' : 'middle')
-            .attr('fill', '#555')
-            .attr('font-size', '10px')
+            .attr('fill', '#555').attr('font-size', '10px')
             .attr('font-family', 'monospace')
             .text(label);
     }
+
+    // ========================================================================
+    // Legend at the very bottom
+    // ========================================================================
+    const legendY = H - 10;
+    const legendG = svg.append('g').attr('transform', `translate(${margin.left},${legendY})`);
+    let lx = 0;
+    function legendItem(swatch, label) {
+        legendG.append('g').call(swatch, lx).attr('transform', `translate(${lx},-7)`);
+        legendG.append('text').attr('x', lx + 22).attr('y', 0)
+            .attr('fill', '#888').attr('font-size', '10px')
+            .attr('font-family', 'system-ui, sans-serif')
+            .text(label);
+        lx += 22 + label.length * 5.8 + 18;
+    }
+    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 6).attr('y', 1).attr('fill', '#c9a318').attr('opacity', 0.7), 'Heatmap density');
+    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 4).attr('y', 2).attr('fill', '#a85e2a').attr('opacity', 0.7), 'cumulative liq');
+    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#5b8cff').attr('stroke-width', 2.5), 'individual level (single position)');
+    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#e8c020').attr('stroke-width', 3), 'cluster — magnet zone');
+}
+
+function liqmapLookbackLabel() {
+    return liqmapState.lookback === 168 ? '7d'
+         : liqmapState.lookback === 1 ? '1h'
+         : liqmapState.lookback === 4 ? '4h'
+         : '24h';
+}
+
+function liqmapPickRefPrices(mark, clusters, window) {
+    // Pick ~4 reference prices to label on the right axis:
+    // top of window, top cluster centroid, bottom cluster centroid, bottom of window
+    const out = new Set();
+    out.add(window.max_price * 0.998);
+    out.add(window.min_price * 1.002);
+    // Roundish nearby prices to anchor (78000, 80000 etc) — pick steps of 1% of mark
+    const step = mark * 0.025;
+    out.add(Math.round((mark + step) / step) * step);
+    out.add(Math.round((mark - step) / step) * step);
+    // Cluster centroids
+    for (const c of clusters.slice(0, 2)) {
+        out.add((c.price_low + c.price_high) / 2);
+    }
+    return [...out];
+}
+
+async function liqmapDrawPriceAction(svg, xScale, yScale, margin, innerW, innerH) {
+    // Best-effort price action overlay. Failure to fetch is silent — the
+    // chart still renders the liquidation layers without it.
+    try {
+        const r = await fetch(`/api/liquidation-map/price-series?symbol=${encodeURIComponent(liqmapState.symbol)}&hours=${liqmapState.lookback}`);
+        const data = await r.json();
+        if (!data.ok || !data.series || data.series.length < 2) return;
+
+        // Build a path string. Clip to chart area.
+        const points = data.series
+            .filter(p => p.ts >= xScale.domain()[0] && p.ts <= xScale.domain()[1])
+            .map(p => ({x: xScale(p.ts), y: yScale(p.close), close: p.close}));
+        if (points.length < 2) return;
+
+        // Color line green if last close > first close, red otherwise
+        const isUp = points[points.length-1].close >= points[0].close;
+        const color = isUp ? '#22c55e' : '#dc2626';
+
+        const line = d3.line().x(d => d.x).y(d => d.y).curve(d3.curveMonotoneX);
+        const path = line(points);
+
+        svg.select('.lm-price-action').remove();
+        const paG = svg.append('g')
+            .attr('class', 'lm-price-action')
+            .attr('transform', `translate(${margin.left},${margin.top})`);
+
+        paG.append('path')
+            .attr('d', path)
+            .attr('stroke', color)
+            .attr('stroke-width', 1.4)
+            .attr('fill', 'none')
+            .attr('opacity', 0.9);
+
+        // Small dot marks every few points for that "candle-like" texture
+        const dotStep = Math.max(1, Math.floor(points.length / 20));
+        for (let i = 0; i < points.length; i += dotStep) {
+            const p = points[i];
+            const c = i > 0 && p.close < points[i-1].close ? '#dc2626' : '#22c55e';
+            paG.append('rect')
+                .attr('x', p.x - 1).attr('y', p.y - 3)
+                .attr('width', 2).attr('height', 6)
+                .attr('fill', c).attr('opacity', 0.85);
+        }
+    } catch {}
 }
 
 function liqmapBucketHover(event, d) {
@@ -3083,14 +3225,13 @@ function liqmapBucketHover(event, d) {
     tt.innerHTML =
         `<div class="tt-title ${sideClass}">${sideLabel} @ $${liqmapFormatPrice(b.bucket_price)}</div>` +
         `<div class="tt-row"><span>Leverage</span><span>${b.leverage}x</span></div>` +
-        `<div class="tt-row"><span>Volume</span><span>${liqmapFormatUsd(b.cumulative_usd)}</span></div>` +
+        `<div class="tt-row"><span>Cumulative liq</span><span>${liqmapFormatUsd(b.cumulative_usd)}</span></div>` +
         `<div class="tt-row"><span>Contributions</span><span>${b.contribution_count}</span></div>` +
         `<div class="tt-row"><span>Source</span><span>${sourceLabel}</span></div>` +
         `<div class="tt-row"><span>First seen</span><span>${liqmapTimeAgo(b.first_seen_ts)}</span></div>` +
         mitigatedRow;
     tt.style.display = 'block';
 
-    // Position near cursor, clamped to chart wrapper
     const wrap = document.querySelector('.liqmap-chart-wrap');
     const rect = wrap.getBoundingClientRect();
     const x = Math.min(event.clientX - rect.left + 12, rect.width - 200);
@@ -3101,50 +3242,6 @@ function liqmapBucketHover(event, d) {
 
 function liqmapBucketUnhover() {
     document.getElementById('liqmap-tooltip').style.display = 'none';
-}
-
-function liqmapRenderClusters(clusters) {
-    const el = document.getElementById('liqmap-clusters-list');
-    if (!clusters || clusters.length === 0) {
-        el.innerHTML = '<div class="liqmap-empty">No significant clusters detected yet</div>';
-        return;
-    }
-    // Show top 6
-    const top = clusters.slice(0, 6);
-    el.innerHTML = top.map(c => {
-        const mid = (c.price_low + c.price_high) / 2;
-        const sideClass = c.side;
-        const sideLabel = c.side === 'long' ? '🔻 Long liqs' : '🔺 Short liqs';
-        const mix = c.leverage_mix || {};
-        const mixStr = [25, 50, 100]
-            .filter(l => (mix[l] || 0) > 0)
-            .map(l => `${l}x:${((mix[l]/c.total_usd)*100).toFixed(0)}%`)
-            .join(' / ') || '—';
-        return `
-            <div class="liqmap-cluster-card ${sideClass}">
-                <div class="cc-row">
-                    <span>${sideLabel}</span>
-                    <span>$${liqmapFormatPrice(mid)}</span>
-                </div>
-                <div class="cc-row">
-                    <span>Volume</span>
-                    <span>${liqmapFormatUsd(c.total_usd)}</span>
-                </div>
-                <div class="cc-row">
-                    <span>Range</span>
-                    <span>$${liqmapFormatPrice(c.price_low)}–$${liqmapFormatPrice(c.price_high)}</span>
-                </div>
-                <div class="cc-row">
-                    <span>Leverage</span>
-                    <span>${mixStr}</span>
-                </div>
-                <div class="cc-row">
-                    <span>Magnet</span>
-                    <span>${(c.magnet_score*100).toFixed(0)}%</span>
-                </div>
-                <div class="cc-magnet-bar"><div class="cc-magnet-fill" style="width:${(c.magnet_score*100).toFixed(0)}%"></div></div>
-            </div>`;
-    }).join('');
 }
 
 function liqmapChangeSymbol() {
