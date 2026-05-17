@@ -11,6 +11,59 @@
         </div>
     </div>
 
+    <!-- Liquidation Map — estimated liq clusters across exchanges -->
+    <div class="section liqmap-section">
+        <div class="section-header">
+            <h2>💧 Liquidation Map</h2>
+            <div class="liqmap-controls">
+                <div class="liqmap-symbol-wrap">
+                    <input type="text" id="liqmap-symbol-input" value="BTCUSDT"
+                           autocomplete="off" maxlength="20"
+                           placeholder="Symbol (e.g. SOLUSDT)"
+                           onkeydown="if(event.key==='Enter'){liqmapChangeSymbol();}"
+                           onblur="liqmapChangeSymbol()" />
+                </div>
+                <div class="liqmap-lookback-toggle" id="liqmap-lookback-toggle">
+                    <button data-lb="1" onclick="liqmapSetLookback(1)">1h</button>
+                    <button data-lb="4" onclick="liqmapSetLookback(4)">4h</button>
+                    <button data-lb="24" class="active" onclick="liqmapSetLookback(24)">24h</button>
+                    <button data-lb="168" onclick="liqmapSetLookback(168)">7d</button>
+                </div>
+                <label class="liqmap-mitigated-toggle" title="Show mitigated (hit-through) levels too">
+                    <input type="checkbox" id="liqmap-show-mitigated"
+                           onchange="liqmapToggleMitigated(this.checked)" />
+                    <span>Show mitigated</span>
+                </label>
+                <label class="fr-toggle" title="Enable/disable module">
+                    <input type="checkbox" id="liqmap-toggle"
+                           onchange="liqmapToggleModule(this.checked)" />
+                    <span class="fr-toggle-slider"></span>
+                </label>
+                <span class="liqmap-status" id="liqmap-status">⏳</span>
+            </div>
+        </div>
+
+        <div class="liqmap-status-bar" id="liqmap-status-bar">
+            <span class="liqmap-mark">Mark: <strong id="liqmap-mark-price">—</strong></span>
+            <span class="liqmap-confidence" id="liqmap-confidence">Confidence: —</span>
+            <span class="liqmap-providers" id="liqmap-providers">Sources: —</span>
+            <span class="liqmap-last-update" id="liqmap-last-update">Last: —</span>
+        </div>
+
+        <div class="liqmap-chart-wrap">
+            <div id="liqmap-chart"></div>
+            <div class="liqmap-tooltip" id="liqmap-tooltip" style="display:none"></div>
+            <div class="liqmap-overlay-msg" id="liqmap-overlay-msg" style="display:none"></div>
+        </div>
+
+        <div class="liqmap-clusters-section">
+            <div class="liqmap-clusters-header">🎯 Top Magnet Zones</div>
+            <div class="liqmap-clusters-list" id="liqmap-clusters-list">
+                <div class="liqmap-empty">Loading clusters…</div>
+            </div>
+        </div>
+    </div>
+
     <!-- BTC Volume Flow -->
     <div class="section vf-section">
         <div class="section-header">
@@ -1095,6 +1148,210 @@
     display: flex;
     align-items: center;
     gap: 4px;
+}
+
+/* ===== Liquidation Map ===== */
+.liqmap-section {
+    background: linear-gradient(135deg, rgba(20,20,30,0.6) 0%, rgba(15,18,28,0.4) 100%);
+    border: 1px solid rgba(100,120,200,0.15);
+}
+.liqmap-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+#liqmap-symbol-input {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #e8e8e8;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 0.82rem;
+    font-weight: 500;
+    width: 105px;
+    text-transform: uppercase;
+    outline: none;
+}
+#liqmap-symbol-input:focus {
+    border-color: rgba(100,150,255,0.5);
+    background: rgba(0,0,0,0.6);
+}
+.liqmap-lookback-toggle {
+    display: flex;
+    gap: 2px;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 5px;
+    padding: 2px;
+}
+.liqmap-lookback-toggle button {
+    background: transparent;
+    border: none;
+    color: #999;
+    padding: 4px 9px;
+    font-size: 0.72rem;
+    cursor: pointer;
+    border-radius: 3px;
+    font-weight: 500;
+    transition: all 0.15s;
+}
+.liqmap-lookback-toggle button:hover {
+    color: #ddd;
+    background: rgba(255,255,255,0.05);
+}
+.liqmap-lookback-toggle button.active {
+    background: rgba(100,150,255,0.18);
+    color: #6ea8ff;
+}
+.liqmap-mitigated-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.72rem;
+    color: #888;
+    cursor: pointer;
+    user-select: none;
+}
+.liqmap-mitigated-toggle input {
+    margin: 0;
+    cursor: pointer;
+    accent-color: #6ea8ff;
+}
+.liqmap-status-bar {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    background: rgba(0,0,0,0.25);
+    border-radius: 4px;
+    margin-bottom: 12px;
+    font-size: 0.78rem;
+    color: #aaa;
+}
+.liqmap-status-bar strong {
+    color: #ff6b6b;
+    font-family: 'SF Mono', Consolas, monospace;
+    font-weight: 600;
+}
+.liqmap-confidence.high { color: #22c55e; }
+.liqmap-confidence.medium { color: #eab308; }
+.liqmap-confidence.low { color: #ff8c42; }
+
+.liqmap-chart-wrap {
+    position: relative;
+    background: #0a0b10;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.05);
+    padding: 8px 0;
+    margin-bottom: 14px;
+}
+#liqmap-chart {
+    width: 100%;
+    height: 440px;
+}
+#liqmap-chart svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+.liqmap-overlay-msg {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10,11,16,0.85);
+    color: #aaa;
+    font-size: 0.85rem;
+    border-radius: 6px;
+    pointer-events: none;
+    z-index: 5;
+}
+.liqmap-tooltip {
+    position: absolute;
+    background: rgba(0,0,0,0.92);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #e8e8e8;
+    font-size: 0.74rem;
+    padding: 8px 11px;
+    border-radius: 5px;
+    pointer-events: none;
+    z-index: 10;
+    font-family: 'SF Mono', Consolas, monospace;
+    min-width: 175px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+.liqmap-tooltip .tt-title {
+    color: #6ea8ff;
+    font-weight: 600;
+    margin-bottom: 4px;
+    font-size: 0.8rem;
+}
+.liqmap-tooltip .tt-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 1px 0;
+}
+.liqmap-tooltip .tt-row span:first-child { color: #888; }
+.liqmap-tooltip .tt-row span:last-child { color: #ddd; }
+.liqmap-tooltip .tt-side-long { color: #5b8cff; }
+.liqmap-tooltip .tt-side-short { color: #e8c020; }
+
+.liqmap-clusters-section {
+    padding-top: 6px;
+}
+.liqmap-clusters-header {
+    color: #ddd;
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+.liqmap-clusters-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+    gap: 8px;
+}
+.liqmap-cluster-card {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 5px;
+    padding: 9px 11px;
+    font-size: 0.76rem;
+    cursor: default;
+    transition: border-color 0.15s;
+}
+.liqmap-cluster-card:hover {
+    border-color: rgba(110,168,255,0.3);
+}
+.liqmap-cluster-card.long { border-left: 3px solid #5b8cff; }
+.liqmap-cluster-card.short { border-left: 3px solid #e8c020; }
+.liqmap-cluster-card .cc-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+}
+.liqmap-cluster-card .cc-row span:first-child { color: #888; }
+.liqmap-cluster-card .cc-row span:last-child { color: #ddd; font-family: 'SF Mono', Consolas, monospace; }
+.liqmap-cluster-card .cc-magnet-bar {
+    margin-top: 5px;
+    height: 4px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.liqmap-cluster-card .cc-magnet-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6ea8ff, #e8c020);
+}
+.liqmap-empty {
+    color: #666;
+    text-align: center;
+    padding: 18px;
+    font-size: 0.82rem;
+    grid-column: 1 / -1;
 }
 </style>
 
@@ -2494,6 +2751,494 @@ async function closeAllTrades() {
     } catch (err) {
         alert('Error: ' + err.message);
     }
+}
+
+// ============================================================================
+// === Liquidation Map ========================================================
+// ============================================================================
+
+const liqmapState = {
+    symbol: 'BTCUSDT',
+    lookback: 24,             // hours
+    includeMitigated: false,
+    enabled: true,
+    refreshTimer: null,
+    lastData: null,
+    isLoading: false,
+};
+
+const LIQMAP_REFRESH_MS = 60 * 1000;
+// Color palette — matches the SVG mockup we approved earlier.
+const LIQMAP_COLOR_LONG = '#5b8cff';
+const LIQMAP_COLOR_SHORT = '#e8c020';
+const LIQMAP_COLOR_LONG_DIM = 'rgba(91,140,255,0.35)';
+const LIQMAP_COLOR_SHORT_DIM = 'rgba(232,192,32,0.35)';
+const LIQMAP_COLOR_LONG_CLUSTER = '#3a6ad6';
+const LIQMAP_COLOR_SHORT_CLUSTER = '#d4a818';
+
+function liqmapFormatUsd(v) {
+    if (!v || !isFinite(v)) return '$0';
+    if (v >= 1e9) return '$' + (v/1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return '$' + (v/1e6).toFixed(2) + 'M';
+    if (v >= 1e3) return '$' + (v/1e3).toFixed(1) + 'K';
+    return '$' + v.toFixed(0);
+}
+
+function liqmapFormatPrice(v) {
+    if (!v || !isFinite(v)) return '—';
+    return v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
+function liqmapTimeAgo(ts) {
+    if (!ts) return '—';
+    const sec = Math.floor((Date.now() / 1000) - ts);
+    if (sec < 60) return sec + 's ago';
+    if (sec < 3600) return Math.floor(sec/60) + 'm ago';
+    return Math.floor(sec/3600) + 'h ago';
+}
+
+async function loadLiqmap() {
+    if (liqmapState.isLoading) return;
+    liqmapState.isLoading = true;
+    try {
+        const url = `/api/liquidation-map/state?symbol=${encodeURIComponent(liqmapState.symbol)}` +
+                    `&lookback=${liqmapState.lookback}` +
+                    `&include_mitigated=${liqmapState.includeMitigated ? 1 : 0}`;
+        const r = await fetch(url);
+        const data = await r.json();
+        if (!data.ok) {
+            liqmapShowOverlay('Error: ' + (data.reason || 'unknown'));
+            return;
+        }
+        liqmapState.lastData = data;
+        liqmapRender(data);
+    } catch (err) {
+        liqmapShowOverlay('Network error: ' + err.message);
+    } finally {
+        liqmapState.isLoading = false;
+    }
+}
+
+function liqmapShowOverlay(msg) {
+    const el = document.getElementById('liqmap-overlay-msg');
+    el.textContent = msg;
+    el.style.display = 'flex';
+}
+
+function liqmapHideOverlay() {
+    document.getElementById('liqmap-overlay-msg').style.display = 'none';
+}
+
+function liqmapRender(data) {
+    // --- Header info bar
+    document.getElementById('liqmap-mark-price').textContent =
+        data.mark_price ? '$' + liqmapFormatPrice(data.mark_price) : '—';
+
+    const dq = data.data_quality || {};
+    const confEl = document.getElementById('liqmap-confidence');
+    confEl.textContent = 'Confidence: ' + (dq.confidence || '—').toUpperCase();
+    confEl.className = 'liqmap-confidence ' + (dq.confidence || '');
+
+    const sources = [];
+    if (dq.estimation_healthy) sources.push('Binance/Bybit ✓');
+    else sources.push('Binance/Bybit ✗');
+    if (dq.hyperliquid_healthy) sources.push('Hyperliquid ✓');
+    else sources.push('Hyperliquid ✗');
+    document.getElementById('liqmap-providers').textContent = 'Sources: ' + sources.join(' · ');
+
+    document.getElementById('liqmap-last-update').textContent =
+        'Last: ' + liqmapTimeAgo(data.mark_price_ts) + ' · ' + (dq.history_hours || 0).toFixed(1) + 'h history';
+
+    // --- No data state
+    if (!data.mark_price) {
+        liqmapShowOverlay('Building history… first data within ~3 minutes');
+        liqmapDrawEmptyChart();
+        liqmapRenderClusters([]);
+        return;
+    }
+    if (!data.buckets || data.buckets.length === 0) {
+        liqmapShowOverlay('Accumulating data… buckets will appear shortly');
+        liqmapDrawEmptyChart();
+        liqmapRenderClusters([]);
+        return;
+    }
+
+    liqmapHideOverlay();
+    liqmapDrawChart(data);
+    liqmapRenderClusters(data.cluster_zones || []);
+}
+
+function liqmapDrawEmptyChart() {
+    const container = document.getElementById('liqmap-chart');
+    container.innerHTML = '';
+}
+
+function liqmapDrawChart(data) {
+    const container = document.getElementById('liqmap-chart');
+    container.innerHTML = '';
+    const W = container.clientWidth || 1200;
+    const H = container.clientHeight || 440;
+    const margin = {top: 18, right: 78, bottom: 24, left: 12};
+    const innerW = W - margin.left - margin.right;
+    const innerH = H - margin.top - margin.bottom;
+
+    const svg = d3.select(container)
+        .append('svg')
+        .attr('viewBox', `0 0 ${W} ${H}`)
+        .attr('preserveAspectRatio', 'xMidYMid meet');
+
+    const g = svg.append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // --- Scales
+    const mark = data.mark_price;
+    const window = data.window || {min_price: mark * 0.9, max_price: mark * 1.1};
+    const yScale = d3.scaleLinear()
+        .domain([window.min_price, window.max_price])
+        .range([innerH, 0]);
+
+    // X axis = time. Use lookback hours back to now
+    const nowSec = Math.floor(Date.now() / 1000);
+    const xStart = nowSec - liqmapState.lookback * 3600;
+    const xScale = d3.scaleLinear()
+        .domain([xStart, nowSec])
+        .range([0, innerW]);
+
+    // --- Subtle horizontal grid every 0.5% from mark
+    const gridStepPct = 0.005;
+    const gridGroup = g.append('g').attr('class', 'lm-grid');
+    for (let pct = -0.10; pct <= 0.10; pct += gridStepPct) {
+        const price = mark * (1 + pct);
+        const y = yScale(price);
+        if (y < 0 || y > innerH) continue;
+        gridGroup.append('line')
+            .attr('x1', 0).attr('x2', innerW)
+            .attr('y1', y).attr('y2', y)
+            .attr('stroke', '#1a1d28')
+            .attr('stroke-width', 0.5);
+    }
+
+    // --- Buckets render: each bucket is a horizontal segment from
+    // first_seen_ts to last_updated_ts at its bucket_price.
+    // Compute max cumulative_usd for opacity normalization.
+    const maxUsd = d3.max(data.buckets, b => b.cumulative_usd) || 1;
+
+    const bucketsG = g.append('g').attr('class', 'lm-buckets');
+
+    // Group identical-y buckets visually by leverage tier (small vertical offset
+    // so 25x/50x/100x at same bucket_price are visible side-by-side).
+    const levOffsets = {25: -2.5, 50: 0, 100: 2.5};
+
+    for (const b of data.buckets) {
+        const y = yScale(b.bucket_price);
+        if (y < -3 || y > innerH + 3) continue;
+        const yAdj = y + (levOffsets[b.leverage] ?? 0);
+
+        const x1 = Math.max(0, xScale(b.first_seen_ts));
+        const xEndTs = b.mitigated_at_ts || b.last_updated_ts;
+        const x2 = Math.min(innerW, xScale(xEndTs));
+        if (x2 <= x1) continue;
+
+        const isMitigated = !!b.mitigated_at_ts;
+        const usdRatio = b.cumulative_usd / maxUsd;
+        // Opacity: heavier bucket = more opaque
+        const baseOpacity = isMitigated ? 0.22
+                          : (0.35 + 0.55 * Math.sqrt(usdRatio));
+        // Color: long=blue, short=yellow. Cluster (heavy) uses cluster shade.
+        const color = b.side === 'long'
+            ? (usdRatio > 0.5 ? LIQMAP_COLOR_LONG_CLUSTER : LIQMAP_COLOR_LONG)
+            : (usdRatio > 0.5 ? LIQMAP_COLOR_SHORT_CLUSTER : LIQMAP_COLOR_SHORT);
+
+        // Stroke width by leverage: 25x thin, 100x thick
+        const sw = b.leverage === 100 ? 2.4
+                 : b.leverage === 50 ? 1.8
+                 : 1.3;
+
+        bucketsG.append('line')
+            .attr('class', 'lm-bucket')
+            .attr('x1', x1).attr('x2', x2)
+            .attr('y1', yAdj).attr('y2', yAdj)
+            .attr('stroke', color)
+            .attr('stroke-width', sw)
+            .attr('stroke-linecap', 'butt')
+            .attr('opacity', baseOpacity)
+            .datum(b)
+            .on('mouseover', liqmapBucketHover)
+            .on('mouseout', liqmapBucketUnhover);
+
+        // Hyperliquid source = small white dot at right edge to mark provenance
+        if (b.source === 'hyperliquid' && !isMitigated) {
+            bucketsG.append('circle')
+                .attr('cx', x2 - 1.5)
+                .attr('cy', yAdj)
+                .attr('r', 1.5)
+                .attr('fill', '#ffffff')
+                .attr('opacity', 0.75);
+        }
+    }
+
+    // --- Cluster zone annotations: highlight bands behind dashes for top
+    // magnet zones with magnet_score >= 0.5
+    const clustersG = g.append('g').attr('class', 'lm-clusters');
+    for (const c of (data.cluster_zones || [])) {
+        if (c.magnet_score < 0.5) continue;
+        const yHigh = yScale(c.price_high);
+        const yLow = yScale(c.price_low);
+        const yTop = Math.min(yHigh, yLow) - 1;
+        const yBot = Math.max(yHigh, yLow) + 1;
+        const bandColor = c.side === 'long' ? LIQMAP_COLOR_LONG : LIQMAP_COLOR_SHORT;
+
+        clustersG.append('rect')
+            .attr('x', 0).attr('width', innerW)
+            .attr('y', yTop).attr('height', yBot - yTop)
+            .attr('fill', bandColor)
+            .attr('opacity', 0.06 + 0.10 * c.magnet_score);
+
+        // Magnet-score label at right edge
+        const midY = (yTop + yBot) / 2;
+        clustersG.append('text')
+            .attr('x', innerW - 4)
+            .attr('y', midY + 3)
+            .attr('text-anchor', 'end')
+            .attr('fill', bandColor)
+            .attr('font-size', '9px')
+            .attr('font-family', 'monospace')
+            .attr('opacity', 0.85)
+            .text(liqmapFormatUsd(c.total_usd) + ' · ' + (c.magnet_score*100).toFixed(0) + '%');
+    }
+
+    // --- Mark price line (red, on top of everything)
+    const yMark = yScale(mark);
+    g.append('line')
+        .attr('x1', 0).attr('x2', innerW)
+        .attr('y1', yMark).attr('y2', yMark)
+        .attr('stroke', '#dc2626')
+        .attr('stroke-width', 1.1)
+        .attr('opacity', 0.9);
+
+    // --- Y axis labels (right side)
+    const yAxisG = svg.append('g')
+        .attr('transform', `translate(${margin.left + innerW + 4},${margin.top})`);
+    // Mark price highlighted as red pill
+    yAxisG.append('rect')
+        .attr('x', 0).attr('y', yMark - 9)
+        .attr('width', 66).attr('height', 18)
+        .attr('rx', 2).attr('fill', '#dc2626');
+    yAxisG.append('text')
+        .attr('x', 33).attr('y', yMark + 4)
+        .attr('text-anchor', 'middle')
+        .attr('fill', 'white')
+        .attr('font-size', '11px')
+        .attr('font-family', 'monospace')
+        .attr('font-weight', 600)
+        .text(liqmapFormatPrice(mark));
+
+    // Reference prices: mark±2%, mark±5%, mark±10% if they fit
+    const refs = [-0.10, -0.05, -0.02, 0.02, 0.05, 0.10];
+    for (const pct of refs) {
+        const price = mark * (1 + pct);
+        const y = yScale(price);
+        if (y < 6 || y > innerH - 6) continue;
+        if (Math.abs(y - yMark) < 14) continue;
+        yAxisG.append('text')
+            .attr('x', 4).attr('y', y + 3)
+            .attr('fill', '#666')
+            .attr('font-size', '10px')
+            .attr('font-family', 'monospace')
+            .text(liqmapFormatPrice(price));
+    }
+
+    // --- X axis labels (time)
+    const xAxisG = svg.append('g')
+        .attr('transform', `translate(${margin.left},${margin.top + innerH + 4})`);
+    const xTicks = liqmapState.lookback >= 24 ? 6 : 4;
+    for (let i = 0; i <= xTicks; i++) {
+        const ts = xStart + (nowSec - xStart) * (i / xTicks);
+        const x = xScale(ts);
+        const hoursAgo = (nowSec - ts) / 3600;
+        const label = hoursAgo < 0.1 ? 'now'
+                    : hoursAgo < 1 ? Math.round(hoursAgo*60) + 'm'
+                    : hoursAgo < 48 ? hoursAgo.toFixed(0) + 'h ago'
+                    : (hoursAgo/24).toFixed(0) + 'd ago';
+        xAxisG.append('text')
+            .attr('x', x).attr('y', 12)
+            .attr('text-anchor', i === 0 ? 'start' : i === xTicks ? 'end' : 'middle')
+            .attr('fill', '#555')
+            .attr('font-size', '10px')
+            .attr('font-family', 'monospace')
+            .text(label);
+    }
+}
+
+function liqmapBucketHover(event, d) {
+    const b = d || d3.select(this).datum();
+    if (!b) return;
+    const tt = document.getElementById('liqmap-tooltip');
+    const sideClass = b.side === 'long' ? 'tt-side-long' : 'tt-side-short';
+    const sideLabel = b.side === 'long' ? 'LONG liq' : 'SHORT liq';
+    const sourceLabel = b.source === 'hyperliquid' ? 'Hyperliquid (real)' : 'OI estimation';
+    const mitigatedRow = b.mitigated_at_ts
+        ? `<div class="tt-row"><span>Status</span><span style="color:#888">mitigated</span></div>`
+        : '';
+    tt.innerHTML =
+        `<div class="tt-title ${sideClass}">${sideLabel} @ $${liqmapFormatPrice(b.bucket_price)}</div>` +
+        `<div class="tt-row"><span>Leverage</span><span>${b.leverage}x</span></div>` +
+        `<div class="tt-row"><span>Volume</span><span>${liqmapFormatUsd(b.cumulative_usd)}</span></div>` +
+        `<div class="tt-row"><span>Contributions</span><span>${b.contribution_count}</span></div>` +
+        `<div class="tt-row"><span>Source</span><span>${sourceLabel}</span></div>` +
+        `<div class="tt-row"><span>First seen</span><span>${liqmapTimeAgo(b.first_seen_ts)}</span></div>` +
+        mitigatedRow;
+    tt.style.display = 'block';
+
+    // Position near cursor, clamped to chart wrapper
+    const wrap = document.querySelector('.liqmap-chart-wrap');
+    const rect = wrap.getBoundingClientRect();
+    const x = Math.min(event.clientX - rect.left + 12, rect.width - 200);
+    const y = Math.min(event.clientY - rect.top + 12, rect.height - 175);
+    tt.style.left = x + 'px';
+    tt.style.top = y + 'px';
+}
+
+function liqmapBucketUnhover() {
+    document.getElementById('liqmap-tooltip').style.display = 'none';
+}
+
+function liqmapRenderClusters(clusters) {
+    const el = document.getElementById('liqmap-clusters-list');
+    if (!clusters || clusters.length === 0) {
+        el.innerHTML = '<div class="liqmap-empty">No significant clusters detected yet</div>';
+        return;
+    }
+    // Show top 6
+    const top = clusters.slice(0, 6);
+    el.innerHTML = top.map(c => {
+        const mid = (c.price_low + c.price_high) / 2;
+        const sideClass = c.side;
+        const sideLabel = c.side === 'long' ? '🔻 Long liqs' : '🔺 Short liqs';
+        const mix = c.leverage_mix || {};
+        const mixStr = [25, 50, 100]
+            .filter(l => (mix[l] || 0) > 0)
+            .map(l => `${l}x:${((mix[l]/c.total_usd)*100).toFixed(0)}%`)
+            .join(' / ') || '—';
+        return `
+            <div class="liqmap-cluster-card ${sideClass}">
+                <div class="cc-row">
+                    <span>${sideLabel}</span>
+                    <span>$${liqmapFormatPrice(mid)}</span>
+                </div>
+                <div class="cc-row">
+                    <span>Volume</span>
+                    <span>${liqmapFormatUsd(c.total_usd)}</span>
+                </div>
+                <div class="cc-row">
+                    <span>Range</span>
+                    <span>$${liqmapFormatPrice(c.price_low)}–$${liqmapFormatPrice(c.price_high)}</span>
+                </div>
+                <div class="cc-row">
+                    <span>Leverage</span>
+                    <span>${mixStr}</span>
+                </div>
+                <div class="cc-row">
+                    <span>Magnet</span>
+                    <span>${(c.magnet_score*100).toFixed(0)}%</span>
+                </div>
+                <div class="cc-magnet-bar"><div class="cc-magnet-fill" style="width:${(c.magnet_score*100).toFixed(0)}%"></div></div>
+            </div>`;
+    }).join('');
+}
+
+function liqmapChangeSymbol() {
+    const inp = document.getElementById('liqmap-symbol-input');
+    let s = (inp.value || '').toUpperCase().trim();
+    if (!s) return;
+    if (!s.endsWith('USDT')) s = s + 'USDT';
+    inp.value = s;
+    if (s === liqmapState.symbol) return;
+    liqmapState.symbol = s;
+    // Tell the daemon to scan this symbol (no-op for BTC/ETH)
+    fetch('/api/liquidation-map/request-symbol', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol: s}),
+    }).catch(() => {});
+    loadLiqmap();
+}
+
+function liqmapSetLookback(hours) {
+    liqmapState.lookback = hours;
+    document.querySelectorAll('#liqmap-lookback-toggle button').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.lb) === hours);
+    });
+    if (liqmapState.lastData) liqmapRender(liqmapState.lastData);
+    loadLiqmap();
+}
+
+function liqmapToggleMitigated(checked) {
+    liqmapState.includeMitigated = checked;
+    loadLiqmap();
+}
+
+async function liqmapToggleModule(enabled) {
+    liqmapState.enabled = enabled;
+    document.getElementById('liqmap-status').textContent = enabled ? '🟢' : '⚪';
+    try {
+        await fetch('/api/liquidation-map/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled}),
+        });
+    } catch {}
+    if (enabled) {
+        liqmapStartRefresh();
+        loadLiqmap();
+    } else {
+        liqmapStopRefresh();
+        liqmapShowOverlay('Module disabled');
+    }
+}
+
+function liqmapStartRefresh() {
+    liqmapStopRefresh();
+    liqmapState.refreshTimer = setInterval(() => {
+        if (document.hidden) return;  // pause when tab hidden
+        loadLiqmap();
+    }, LIQMAP_REFRESH_MS);
+}
+
+function liqmapStopRefresh() {
+    if (liqmapState.refreshTimer) {
+        clearInterval(liqmapState.refreshTimer);
+        liqmapState.refreshTimer = null;
+    }
+}
+
+async function liqmapInit() {
+    // Read persisted enabled state from server
+    try {
+        const r = await fetch('/api/liquidation-map/active-symbols');
+        const data = await r.json();
+        const ok = data.ok && Array.isArray(data.symbols);
+        liqmapState.enabled = ok;
+        const cb = document.getElementById('liqmap-toggle');
+        if (cb) cb.checked = ok;
+        document.getElementById('liqmap-status').textContent = ok ? '🟢' : '⚪';
+    } catch {}
+    loadLiqmap();
+    liqmapStartRefresh();
+    // Re-render on resize (without refetching)
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+            if (liqmapState.lastData) liqmapRender(liqmapState.lastData);
+        }, 220);
+    });
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', liqmapInit);
+} else {
+    liqmapInit();
 }
 </script>
 {% endblock %}
