@@ -1201,3 +1201,69 @@ class LiquidationOISnapshot(Base):
     __table_args__ = (
         Index('idx_liqoi_latest', 'symbol', 'exchange', 'ts'),
     )
+
+
+# ============================================================================
+# Event-based Liquidation Map storage (new in Phase 3)
+# ============================================================================
+# Replaces the cumulative-bucket flow of LiquidationBucket with per-event
+# rows: every OI tick that adds new positions writes a separate row with
+# its own timestamp. This is what gives the Hyblock-style "many short
+# dashes scattered across time" rendering — each dash = one event.
+#
+# Each event represents one (price, side, leverage, source) contribution
+# in time. Frontend renders each as a short horizontal dash at (event.ts,
+# event.bucket_price). Aggregation back to clusters/heatmap density is
+# done on-read.
+#
+# Volume math: at ~60s tick × 2 providers × ~6 contributions per tick =
+# ~720 events/hour/symbol → ~17K/day → ~500K/month/symbol. With 2 BG
+# symbols + ad-hoc that's ~1.5M rows after 30d. Indexed by (symbol, ts)
+# this scales fine; queries are bounded by lookback + LIMIT.
+class LiquidationEvent(Base):
+    __tablename__ = f'{TABLE_PREFIX}liquidation_events'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False)
+    
+    # When the event happened (epoch seconds). Events are immutable —
+    # once written, never updated except for mitigated_at_ts.
+    ts = Column(BigInteger, nullable=False)
+    
+    bucket_price = Column(Float, nullable=False)
+    side = Column(String(10), nullable=False)        # 'long' | 'short'
+    leverage = Column(Integer, nullable=False)        # 25 | 50 | 100
+    
+    # USD value of THIS individual contribution. The cumulative volume
+    # at a price level is the SUM of usd_added across all events with
+    # the same (symbol, bucket_price, side, leverage) — computed on-read.
+    usd_added = Column(Float, nullable=False)
+    
+    # 'estimation' = derived from aggregated OI deltas
+    # 'hyperliquid' = derived from on-chain position data
+    source = Column(String(20), nullable=False, default='estimation')
+    
+    # When price wick'd through this event's bucket_price.
+    # NULL = still active.
+    mitigated_at_ts = Column(BigInteger, nullable=True)
+    
+    __table_args__ = (
+        # Time-bound queries (the hot path — fetching last N hours)
+        Index('idx_liqev_time', 'symbol', 'ts'),
+        # Mitigation pass — find unmitigated events in a price band
+        Index('idx_liqev_mitigation', 'symbol', 'mitigated_at_ts', 'bucket_price'),
+        # Active-only time queries (UI default — exclude mitigated)
+        Index('idx_liqev_active', 'symbol', 'mitigated_at_ts', 'ts'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'ts': self.ts,
+            'bucket_price': self.bucket_price,
+            'side': self.side,
+            'leverage': self.leverage,
+            'usd_added': self.usd_added,
+            'source': self.source,
+            'mitigated_at_ts': self.mitigated_at_ts,
+        }

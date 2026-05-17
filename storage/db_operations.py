@@ -11,7 +11,7 @@ from storage.db_models import (
     SymbolBlacklist, SMCOBState,
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
-    LiquidationBucket, LiquidationOISnapshot
+    LiquidationBucket, LiquidationOISnapshot, LiquidationEvent
 )
 from config import DEFAULT_SETTINGS
 
@@ -1471,6 +1471,129 @@ class DBOperations:
         except Exception as e:
             session.rollback()
             print(f"[DB] liqmap_prune error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # === Event-based storage (new) ==========================================
+    
+    def liqmap_save_event(self, symbol: str, ts: int, bucket_price: float,
+                            side: str, leverage: int, usd_added: float,
+                            source: str = 'estimation') -> None:
+        """Append one liquidation event row. Immutable — never updated.
+        Multiple events at the same (price, side, lev) accumulate as
+        separate rows so the chart shows time-distributed dashes."""
+        if usd_added <= 0:
+            return
+        session = get_session()
+        try:
+            row = LiquidationEvent(
+                symbol=symbol, ts=ts, bucket_price=bucket_price,
+                side=side, leverage=leverage, usd_added=usd_added,
+                source=source,
+            )
+            session.add(row)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_save_event error: {e}")
+        finally:
+            session.close()
+    
+    def liqmap_save_events_batch(self, events: list) -> int:
+        """Bulk-insert a list of event dicts in one transaction. Each
+        dict needs: symbol, ts, bucket_price, side, leverage, usd_added,
+        source. Returns the count inserted. Used by the daemon to write
+        all contributions from one OI tick atomically."""
+        if not events:
+            return 0
+        session = get_session()
+        try:
+            objs = [LiquidationEvent(
+                symbol=e['symbol'], ts=e['ts'],
+                bucket_price=e['bucket_price'],
+                side=e['side'], leverage=e['leverage'],
+                usd_added=e['usd_added'],
+                source=e.get('source', 'estimation'),
+            ) for e in events if e.get('usd_added', 0) > 0]
+            if not objs:
+                return 0
+            session.bulk_save_objects(objs)
+            session.commit()
+            return len(objs)
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_save_events_batch error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def liqmap_get_events(self, symbol: str,
+                            lookback_seconds: int = 86400,
+                            min_price=None, max_price=None,
+                            include_mitigated: bool = False,
+                            limit: int = 3000) -> list:
+        """Fetch events in lookback window, filtered to price band.
+        Sorted by ts DESC, limited to `limit` rows so the frontend never
+        chokes on huge result sets.
+        
+        We pick MOST RECENT events when truncating — that's what the user
+        cares about visually (recent texture > old texture)."""
+        import time as _t
+        cutoff = int(_t.time()) - lookback_seconds
+        session = get_session()
+        try:
+            q = session.query(LiquidationEvent).filter(
+                LiquidationEvent.symbol == symbol,
+                LiquidationEvent.ts >= cutoff,
+            )
+            if not include_mitigated:
+                q = q.filter(LiquidationEvent.mitigated_at_ts.is_(None))
+            if min_price is not None:
+                q = q.filter(LiquidationEvent.bucket_price >= min_price)
+            if max_price is not None:
+                q = q.filter(LiquidationEvent.bucket_price <= max_price)
+            return [e.to_dict() for e in q.order_by(
+                LiquidationEvent.ts.desc()).limit(limit).all()]
+        finally:
+            session.close()
+    
+    def liqmap_mark_events_mitigated(self, symbol: str,
+                                        low_price: float, high_price: float,
+                                        now_ts: int) -> int:
+        """Mark all active events in [low_price, high_price] as mitigated.
+        Called by daemon when recent klines wick through a price band."""
+        session = get_session()
+        try:
+            n = session.query(LiquidationEvent).filter(
+                LiquidationEvent.symbol == symbol,
+                LiquidationEvent.mitigated_at_ts.is_(None),
+                LiquidationEvent.bucket_price >= low_price,
+                LiquidationEvent.bucket_price <= high_price,
+            ).update({'mitigated_at_ts': now_ts}, synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_mark_events_mitigated error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def liqmap_prune_events(self, retention_days: int = 30) -> int:
+        """Daily cleanup — delete events older than retention_days by ts."""
+        import time as _t
+        cutoff_ts = int(_t.time()) - retention_days * 86400
+        session = get_session()
+        try:
+            n = session.query(LiquidationEvent).filter(
+                LiquidationEvent.ts < cutoff_ts
+            ).delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_prune_events error: {e}")
             return 0
         finally:
             session.close()

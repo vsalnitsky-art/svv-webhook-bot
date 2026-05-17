@@ -134,9 +134,17 @@ class LiquidationMapDaemon:
     
     def get_state(self, symbol: str, lookback_hours: int = 24,
                     include_mitigated: bool = False) -> Dict:
-        """Build the response for /api/liquidation-map/state. Returns a
-        dict with mark_price, all active buckets in ±10% band, computed
-        clusters, and provenance/health metadata."""
+        """Build the response for /api/liquidation-map/state.
+        
+        Returns:
+          - mark_price + ts
+          - events: list of individual liquidation events in the lookback
+                    window (each rendered as one short dash on the chart)
+          - cluster_zones: aggregated magnet zones, computed on-read by
+                           summing events per (price, side) and clustering
+          - data_quality: provenance + history info
+          - window: the price band we filtered to
+        """
         symbol = symbol.upper().strip()
         
         # Pull the latest known mark price from the last OI snapshot of any
@@ -150,7 +158,7 @@ class LiquidationMapDaemon:
             return {
                 'symbol': symbol,
                 'mark_price': None,
-                'buckets': [],
+                'events': [],
                 'cluster_zones': [],
                 'data_quality': self._data_quality(symbol),
                 'last_update': None,
@@ -158,30 +166,45 @@ class LiquidationMapDaemon:
         
         mark_price = latest_oi['mark_price']
         # Filter to ±PRICE_WINDOW_PCT around mark price — UI doesn't need
-        # buckets 50% away, just the active band
+        # events 50% away, just the active band
         min_price = mark_price * (1 - PRICE_WINDOW_PCT)
         max_price = mark_price * (1 + PRICE_WINDOW_PCT)
         
-        buckets = self.db.liqmap_get_active_buckets(
-            symbol, min_price=min_price, max_price=max_price,
+        events = self.db.liqmap_get_events(
+            symbol,
+            lookback_seconds=lookback_hours * 3600,
+            min_price=min_price, max_price=max_price,
             include_mitigated=include_mitigated,
+            limit=3000,
         )
         
-        # Apply lookback filter — drop buckets where first_seen older than
-        # lookback_hours (helps user limit UI to last 24h vs 7d view)
-        cutoff_ts = int(time.time()) - lookback_hours * 3600
-        buckets = [b for b in buckets if b['first_seen_ts'] >= cutoff_ts]
-        
-        # Compute cluster zones for the summary stats panel. We only cluster
-        # ACTIVE (non-mitigated) buckets — mitigated are historical.
-        active = [b for b in buckets if not b['mitigated_at_ts']]
-        clusters = find_clusters(active, mark_price)
+        # Aggregate events into pseudo-buckets per (price, side, leverage)
+        # so cluster detection (which expects that shape) can run.
+        agg: Dict[tuple, Dict] = {}
+        for e in events:
+            if e['mitigated_at_ts']:
+                continue
+            key = (e['bucket_price'], e['side'], e['leverage'])
+            if key not in agg:
+                agg[key] = {
+                    'bucket_price': e['bucket_price'],
+                    'side': e['side'],
+                    'leverage': e['leverage'],
+                    'cumulative_usd': 0.0,
+                    'first_seen_ts': e['ts'],
+                    'mitigated_at_ts': None,
+                }
+            agg[key]['cumulative_usd'] += e['usd_added']
+            if e['ts'] < agg[key]['first_seen_ts']:
+                agg[key]['first_seen_ts'] = e['ts']
+        agg_list = sorted(agg.values(), key=lambda b: b['bucket_price'])
+        clusters = find_clusters(agg_list, mark_price)
         
         return {
             'symbol': symbol,
             'mark_price': mark_price,
             'mark_price_ts': latest_oi['ts'],
-            'buckets': buckets,
+            'events': events,
             'cluster_zones': clusters,
             'data_quality': self._data_quality(symbol),
             'last_update': datetime.fromtimestamp(
@@ -228,9 +251,9 @@ class LiquidationMapDaemon:
             # Periodic pruning (separate from tick error budget)
             if time.time() - self._last_prune_at > PRUNE_INTERVAL_SEC:
                 try:
-                    n = self.db.liqmap_prune(RETENTION_DAYS)
+                    n = self.db.liqmap_prune_events(RETENTION_DAYS)
                     if n:
-                        print(f'[LIQMAP] Pruned {n} stale buckets')
+                        print(f'[LIQMAP] Pruned {n} stale events')
                 except Exception as e:
                     print(f'[LIQMAP] Prune error: {e}')
                 self._last_prune_at = time.time()
@@ -329,12 +352,19 @@ class LiquidationMapDaemon:
             prev_snap, snap, symbol=symbol, source=provider.name,
         ))
         
-        for c in contributions:
-            self.db.liqmap_upsert_bucket(
-                symbol=symbol, bucket_price=c.bucket_price,
-                side=c.side, leverage=c.leverage, source=c.source,
-                added_usd=c.usd_added, now_ts=snap.ts,
-            )
+        # Event-based write: each contribution is a new immutable event row.
+        # Batched insert to keep per-tick DB load minimal.
+        events_batch = [{
+            'symbol': symbol,
+            'ts': snap.ts,
+            'bucket_price': c.bucket_price,
+            'side': c.side,
+            'leverage': c.leverage,
+            'usd_added': c.usd_added,
+            'source': c.source,
+        } for c in contributions if c.usd_added > 0]
+        if events_batch:
+            self.db.liqmap_save_events_batch(events_batch)
     
     def _mitigate_symbol(self, symbol: str) -> None:
         """Check the latest klines for the symbol; mark any active bucket
@@ -364,9 +394,9 @@ class LiquidationMapDaemon:
         high = max(highs)
         
         now_ts = int(time.time())
-        n = self.db.liqmap_mark_mitigated(symbol, low, high, now_ts)
+        n = self.db.liqmap_mark_events_mitigated(symbol, low, high, now_ts)
         if n:
-            print(f'[LIQMAP] {symbol}: mitigated {n} buckets in '
+            print(f'[LIQMAP] {symbol}: mitigated {n} events in '
                   f'[{low:.2f}, {high:.2f}]')
 
 
