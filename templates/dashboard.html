@@ -39,13 +39,16 @@
                            onchange="liqmapToggleModule(this.checked)" />
                     <span class="fr-toggle-slider"></span>
                 </label>
-                <span class="liqmap-status" id="liqmap-status">⏳</span>
+                <button class="liqmap-refresh-btn" onclick="liqmapForceRefresh()"
+                        title="Force refresh now">🔄</button>
+                <span class="liqmap-status" id="liqmap-status">⚪</span>
             </div>
         </div>
 
         <div class="liqmap-status-bar" id="liqmap-status-bar">
             <span class="liqmap-mark">Mark: <strong id="liqmap-mark-price">—</strong></span>
             <span class="liqmap-confidence" id="liqmap-confidence">Confidence: —</span>
+            <span class="liqmap-events-count" id="liqmap-events-count">Events: —</span>
             <span class="liqmap-providers" id="liqmap-providers">Sources: —</span>
             <span class="liqmap-last-update" id="liqmap-last-update">Last: —</span>
         </div>
@@ -1235,6 +1238,27 @@
 .liqmap-confidence.medium { color: #eab308; }
 .liqmap-confidence.low { color: #ff8c42; }
 .liqmap-providers, .liqmap-last-update { color: #888; }
+.liqmap-events-count {
+    color: #c4c4c4;
+    font-family: 'SF Mono', Consolas, monospace;
+    font-weight: 500;
+}
+.liqmap-refresh-btn {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #c4c4c4;
+    padding: 4px 9px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.15s;
+}
+.liqmap-refresh-btn:hover {
+    background: rgba(100,150,255,0.18);
+    border-color: rgba(100,150,255,0.5);
+    color: #6ea8ff;
+}
+.liqmap-refresh-btn:active { transform: scale(0.95); }
 
 .liqmap-chart-wrap {
     position: relative;
@@ -1259,12 +1283,28 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(10,11,16,0.85);
-    color: #aaa;
-    font-size: 0.85rem;
+    background: rgba(10,11,16,0.92);
+    color: #d4d4d4;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    text-align: center;
     border-radius: 6px;
     pointer-events: none;
     z-index: 5;
+    padding: 40px;
+    font-family: system-ui, -apple-system, sans-serif;
+}
+.liqmap-overlay-msg .ovl-title {
+    font-size: 1.35rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #ffd342;
+}
+.liqmap-overlay-msg .ovl-sub {
+    font-size: 0.9rem;
+    color: #888;
+    margin-top: 8px;
+    max-width: 480px;
 }
 .liqmap-tooltip {
     position: absolute;
@@ -2816,9 +2856,13 @@ async function loadLiqmap() {
     }
 }
 
-function liqmapShowOverlay(msg) {
+function liqmapShowOverlay(msg, subMsg) {
     const el = document.getElementById('liqmap-overlay-msg');
-    el.textContent = msg;
+    if (subMsg) {
+        el.innerHTML = `<div><div class="ovl-title">${msg}</div><div class="ovl-sub">${subMsg}</div></div>`;
+    } else {
+        el.innerHTML = `<div class="ovl-title">${msg}</div>`;
+    }
     el.style.display = 'flex';
 }
 
@@ -2826,39 +2870,131 @@ function liqmapHideOverlay() {
     document.getElementById('liqmap-overlay-msg').style.display = 'none';
 }
 
-function liqmapRender(data) {
-    // --- Header info bar
-    document.getElementById('liqmap-mark-price').textContent =
-        data.mark_price ? '$' + liqmapFormatPrice(data.mark_price) : '—';
+function liqmapSetStatusIcon(state) {
+    // Possible states: 'off', 'starting', 'collecting', 'live', 'error'
+    const icons = {off: '⚪', starting: '🟡', collecting: '🟡',
+                    live: '🟢', error: '🔴'};
+    const el = document.getElementById('liqmap-status');
+    if (el) el.textContent = icons[state] || '⚪';
+}
 
-    const dq = data.data_quality || {};
-    const confEl = document.getElementById('liqmap-confidence');
-    confEl.textContent = 'Confidence: ' + (dq.confidence || '—').toUpperCase();
-    confEl.className = 'liqmap-confidence ' + (dq.confidence || '');
+async function liqmapFetchStatus() {
+    /* Authoritative server-side state for the UI. Returns null on failure. */
+    try {
+        const r = await fetch(`/api/liquidation-map/status?symbol=${encodeURIComponent(liqmapState.symbol)}`);
+        const data = await r.json();
+        return data.ok ? data : null;
+    } catch {
+        return null;
+    }
+}
 
-    const sources = [];
-    if (dq.estimation_healthy) sources.push('Binance/Bybit ✓');
-    else sources.push('Binance/Bybit ✗');
-    if (dq.hyperliquid_healthy) sources.push('Hyperliquid ✓');
-    else sources.push('Hyperliquid ✗');
-    document.getElementById('liqmap-providers').textContent = 'Sources: ' + sources.join(' · ');
-
-    document.getElementById('liqmap-last-update').textContent =
-        'Last: ' + liqmapTimeAgo(data.mark_price_ts) + ' · ' + (dq.history_hours || 0).toFixed(1) + 'h history';
-
-    // --- No data state
-    if (!data.mark_price) {
-        liqmapShowOverlay('Building history… first data within ~3 minutes');
-        liqmapDrawEmptyChart();
+function liqmapApplyStatusToUI(status) {
+    if (!status) {
+        liqmapSetStatusIcon('error');
+        liqmapShowOverlay('⚠️ Cannot reach API',
+            'Перевір логи Render або /api/liquidation-map/status напряму.');
         return;
     }
-    if (!data.events || data.events.length === 0) {
-        liqmapShowOverlay('Accumulating data… events will appear shortly');
-        liqmapDrawEmptyChart();
+    const cb = document.getElementById('liqmap-toggle');
+    if (cb) cb.checked = !!status.enabled_setting;
+    liqmapState.enabled = !!status.enabled_setting;
+
+    document.getElementById('liqmap-events-count').textContent =
+        `Events: ${status.events_count || 0}`;
+
+    if (!status.enabled_setting) {
+        liqmapSetStatusIcon('off');
+        liqmapShowOverlay('💤 Модуль вимкнено',
+            'Клацніть toggle справа щоб увімкнути. Перші дані з\'являться приблизно через хвилину після запуску.');
         return;
     }
-
+    if (!status.daemon_running) {
+        liqmapSetStatusIcon('error');
+        liqmapShowOverlay('🔴 Daemon не запущено',
+            'Setting увімкнено, але daemon thread зупинений. Перевір логи Render — можливо була помилка ініціалізації.');
+        return;
+    }
+    if (status.oi_age_sec === null) {
+        liqmapSetStatusIcon('starting');
+        liqmapShowOverlay('🚀 Daemon запускається',
+            `Перший OI snapshot з'явиться через ~${status.scan_interval_sec || 60} секунд. Не закривай вкладку — оновиться автоматично.`);
+        return;
+    }
+    if (status.events_count < 5) {
+        liqmapSetStatusIcon('collecting');
+        liqmapShowOverlay('📊 Накопичення даних',
+            `Зібрано: ${status.events_count} events. Для нормального рендеру потрібно ~50+. Поточний tick: ${status.oi_age_sec}s тому. Чекай 2-5 хвилин.`);
+        return;
+    }
+    // All good — proceed with normal render
+    liqmapSetStatusIcon('live');
     liqmapHideOverlay();
+}
+
+async function loadLiqmap() {
+    if (liqmapState.isLoading) return;
+    liqmapState.isLoading = true;
+    try {
+        // Always check status first — it tells us what overlay to show
+        const status = await liqmapFetchStatus();
+        liqmapApplyStatusToUI(status);
+
+        // Only fetch full state if daemon has data ready
+        if (!status || !status.enabled_setting || !status.daemon_running
+            || status.events_count < 5) {
+            // Status overlay shows what's happening; clear any stale chart
+            liqmapDrawEmptyChart();
+            return;
+        }
+
+        const url = `/api/liquidation-map/state?symbol=${encodeURIComponent(liqmapState.symbol)}` +
+                    `&lookback=${liqmapState.lookback}` +
+                    `&include_mitigated=${liqmapState.includeMitigated ? 1 : 0}`;
+        const r = await fetch(url);
+        const data = await r.json();
+        if (!data.ok) {
+            liqmapShowOverlay('⚠️ Помилка API', data.reason || 'Невідома помилка');
+            liqmapSetStatusIcon('error');
+            return;
+        }
+        liqmapState.lastData = data;
+        // Update header info bar
+        document.getElementById('liqmap-mark-price').textContent =
+            data.mark_price ? '$' + liqmapFormatPrice(data.mark_price) : '—';
+        const dq = data.data_quality || {};
+        const confEl = document.getElementById('liqmap-confidence');
+        confEl.textContent = 'Confidence: ' + (dq.confidence || '—').toUpperCase();
+        confEl.className = 'liqmap-confidence ' + (dq.confidence || '');
+        const sources = [];
+        sources.push('Binance/Bybit ' + (dq.estimation_healthy ? '✓' : '✗'));
+        sources.push('Hyperliquid ' + (dq.hyperliquid_healthy ? '✓' : '✗'));
+        document.getElementById('liqmap-providers').textContent =
+            'Sources: ' + sources.join(' · ');
+        document.getElementById('liqmap-last-update').textContent =
+            'Last: ' + liqmapTimeAgo(data.mark_price_ts) +
+            ' · ' + (dq.history_hours || 0).toFixed(1) + 'h history';
+
+        if (data.mark_price && data.events && data.events.length > 0) {
+            liqmapHideOverlay();
+            liqmapDrawChart(data);
+        }
+    } catch (err) {
+        liqmapShowOverlay('⚠️ Network error', err.message);
+        liqmapSetStatusIcon('error');
+    } finally {
+        liqmapState.isLoading = false;
+    }
+}
+
+function liqmapRender(data) {
+    // Called by resize handler to re-draw without re-fetching. The header
+    // info bar is already populated by loadLiqmap (which is the only place
+    // that fetches /state). Here we just re-run the chart draw.
+    if (!data || !data.mark_price || !data.events || data.events.length === 0) {
+        liqmapDrawEmptyChart();
+        return;
+    }
     liqmapDrawChart(data);
 }
 
@@ -2871,7 +3007,7 @@ function liqmapDrawChart(data) {
     const container = document.getElementById('liqmap-chart');
     container.innerHTML = '';
     const W = container.clientWidth || 1200;
-    const H = container.clientHeight || 440;
+    const H = container.clientHeight || 640;
     const margin = {top: 22, right: 108, bottom: 40, left: 14};
     const innerW = W - margin.left - margin.right;
     const innerH = H - margin.top - margin.bottom;
@@ -3413,27 +3549,45 @@ function liqmapToggleMitigated(checked) {
 
 async function liqmapToggleModule(enabled) {
     liqmapState.enabled = enabled;
-    document.getElementById('liqmap-status').textContent = enabled ? '🟢' : '⚪';
+    liqmapSetStatusIcon(enabled ? 'starting' : 'off');
+    if (enabled) {
+        liqmapShowOverlay('🚀 Daemon запускається',
+            'Перший OI snapshot з\'явиться через ~60 секунд. Дочекайся.');
+    } else {
+        liqmapShowOverlay('💤 Модуль вимкнено',
+            'Клацніть toggle справа щоб увімкнути.');
+    }
     try {
         await fetch('/api/liquidation-map/toggle', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({enabled}),
         });
-    } catch {}
+    } catch (err) {
+        liqmapSetStatusIcon('error');
+        liqmapShowOverlay('⚠️ Помилка', 'Не вдалось переключити: ' + err.message);
+        return;
+    }
     if (enabled) {
         liqmapStartRefresh();
         loadLiqmap();
     } else {
         liqmapStopRefresh();
-        liqmapShowOverlay('Module disabled');
     }
+}
+
+async function liqmapForceRefresh() {
+    /* User-initiated immediate reload. */
+    const btn = document.querySelector('.liqmap-refresh-btn');
+    if (btn) btn.style.opacity = '0.5';
+    await loadLiqmap();
+    if (btn) btn.style.opacity = '1';
 }
 
 function liqmapStartRefresh() {
     liqmapStopRefresh();
     liqmapState.refreshTimer = setInterval(() => {
-        if (document.hidden) return;  // pause when tab hidden
+        if (document.hidden) return;
         loadLiqmap();
     }, LIQMAP_REFRESH_MS);
 }
@@ -3446,19 +3600,13 @@ function liqmapStopRefresh() {
 }
 
 async function liqmapInit() {
-    // Read persisted enabled state from server
-    try {
-        const r = await fetch('/api/liquidation-map/active-symbols');
-        const data = await r.json();
-        const ok = data.ok && Array.isArray(data.symbols);
-        liqmapState.enabled = ok;
-        const cb = document.getElementById('liqmap-toggle');
-        if (cb) cb.checked = ok;
-        document.getElementById('liqmap-status').textContent = ok ? '🟢' : '⚪';
-    } catch {}
-    loadLiqmap();
+    // Always call loadLiqmap — it calls /status internally and updates the
+    // UI to match server's authoritative state. The toggle checkbox + status
+    // icon + overlay are all set based on actual daemon state, not on
+    // assumptions baked into init.
+    await loadLiqmap();
     liqmapStartRefresh();
-    // Re-render on resize (without refetching)
+    // Re-render on resize without refetching
     let resizeTimer;
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);

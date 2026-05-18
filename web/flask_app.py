@@ -3607,6 +3607,49 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'series': []})
     
+    @app.route('/api/liquidation-map/status')
+    def api_liqmap_status():
+        """Authoritative state for the UI:
+          - enabled_setting: what the persisted DB setting says
+          - daemon_running: whether the singleton's thread is alive
+          - oi_age_sec: how long since the last OI snapshot (any provider)
+          - events_count: how many active events exist for the symbol
+        UI uses this on init + on toggle to show the right overlay state."""
+        import time as _t
+        try:
+            symbol = request.args.get('symbol', 'BTCUSDT').upper()
+            from storage.db_operations import get_db
+            db = get_db()
+            enabled = db.get_setting('liquidation_map_enabled', '1') == '1'
+            from detection.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            daemon_running = bool(lm and lm.is_running())
+            # Latest OI snapshot age (across all providers — pick min)
+            oi_age = None
+            if lm:
+                for p in lm.providers:
+                    row = db.liqmap_get_latest_oi(symbol, p.name)
+                    if row and row.get('ts'):
+                        age = int(_t.time()) - row['ts']
+                        if oi_age is None or age < oi_age:
+                            oi_age = age
+            # Count active events for symbol in last 24h
+            ev = db.liqmap_get_events(
+                symbol, lookback_seconds=86400,
+                include_mitigated=False, limit=10000)
+            events_count = len(ev)
+            return jsonify({
+                'ok': True,
+                'symbol': symbol,
+                'enabled_setting': enabled,
+                'daemon_running': daemon_running,
+                'oi_age_sec': oi_age,
+                'events_count': events_count,
+                'scan_interval_sec': 60,
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
     @app.route('/api/liquidation-map/toggle', methods=['POST'])
     def api_liqmap_toggle():
         """Enable/disable the daemon globally (persisted in DB setting)."""
