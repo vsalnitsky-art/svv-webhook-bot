@@ -247,23 +247,27 @@ def create_app():
         # Liquidation Map daemon — tracks estimated liquidation clusters
         # for BTC + ETH (background) plus any on-demand symbol requested
         # via the dashboard. Tier 2 architecture: Binance/Bybit aggregated
-        # OI estimation + Hyperliquid real position overlay. Gated by DB
-        # setting (default ON).
+        # OI estimation + Hyperliquid real position overlay.
+        #
+        # Always auto-starts on boot. User can toggle off at runtime via UI
+        # to STOP the daemon, but next deploy/restart it comes back on. This
+        # is intentional — the module accumulates data continuously and
+        # needs to run unless explicitly disabled in this session.
         if not _auto_started['liqmap']:
             _auto_started['liqmap'] = True
             try:
                 db = get_db()
-                if db.get_setting('liquidation_map_enabled', '1') == '1':
-                    from detection.liquidation_map import init_liquidation_map
-                    from detection.market_data import get_market_data
-                    lm = init_liquidation_map(
-                        db=db,
-                        market_data=get_market_data(),
-                    )
-                    lm.start()
-                    print("[APP] Liquidation Map auto-started")
-                else:
-                    print("[APP] Liquidation Map disabled in settings")
+                # Force setting to '1' so UI reflects enabled state too.
+                # Daemon is always started regardless of previous setting.
+                db.set_setting('liquidation_map_enabled', '1')
+                from detection.liquidation_map import init_liquidation_map
+                from detection.market_data import get_market_data
+                lm = init_liquidation_map(
+                    db=db,
+                    market_data=get_market_data(),
+                )
+                lm.start()
+                print("[APP] Liquidation Map auto-started (default ON)")
             except Exception as e:
                 print(f"[APP] Failed to start Liquidation Map: {e}")
         

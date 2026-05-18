@@ -35,7 +35,7 @@
                     <span>Show mitigated</span>
                 </label>
                 <label class="fr-toggle" title="Enable/disable module">
-                    <input type="checkbox" id="liqmap-toggle"
+                    <input type="checkbox" id="liqmap-toggle" checked
                            onchange="liqmapToggleModule(this.checked)" />
                     <span class="fr-toggle-slider"></span>
                 </label>
@@ -2834,28 +2834,6 @@ function liqmapTimeAgo(ts) {
     return Math.floor(sec/3600) + 'h ago';
 }
 
-async function loadLiqmap() {
-    if (liqmapState.isLoading) return;
-    liqmapState.isLoading = true;
-    try {
-        const url = `/api/liquidation-map/state?symbol=${encodeURIComponent(liqmapState.symbol)}` +
-                    `&lookback=${liqmapState.lookback}` +
-                    `&include_mitigated=${liqmapState.includeMitigated ? 1 : 0}`;
-        const r = await fetch(url);
-        const data = await r.json();
-        if (!data.ok) {
-            liqmapShowOverlay('Error: ' + (data.reason || 'unknown'));
-            return;
-        }
-        liqmapState.lastData = data;
-        liqmapRender(data);
-    } catch (err) {
-        liqmapShowOverlay('Network error: ' + err.message);
-    } finally {
-        liqmapState.isLoading = false;
-    }
-}
-
 function liqmapShowOverlay(msg, subMsg) {
     const el = document.getElementById('liqmap-overlay-msg');
     if (subMsg) {
@@ -2879,9 +2857,12 @@ function liqmapSetStatusIcon(state) {
 }
 
 async function liqmapFetchStatus() {
-    /* Authoritative server-side state for the UI. Returns null on failure. */
+    /* Authoritative server-side state for the UI. Returns null on failure.
+       Cache-bust query bypasses any browser/proxy cache for dynamic data. */
     try {
-        const r = await fetch(`/api/liquidation-map/status?symbol=${encodeURIComponent(liqmapState.symbol)}`);
+        const cb = Date.now();
+        const r = await fetch(`/api/liquidation-map/status?symbol=${encodeURIComponent(liqmapState.symbol)}&_=${cb}`,
+            {cache: 'no-store'});
         const data = await r.json();
         return data.ok ? data : null;
     } catch {
@@ -2948,10 +2929,12 @@ async function loadLiqmap() {
             return;
         }
 
+        const cb = Date.now();
         const url = `/api/liquidation-map/state?symbol=${encodeURIComponent(liqmapState.symbol)}` +
                     `&lookback=${liqmapState.lookback}` +
-                    `&include_mitigated=${liqmapState.includeMitigated ? 1 : 0}`;
-        const r = await fetch(url);
+                    `&include_mitigated=${liqmapState.includeMitigated ? 1 : 0}` +
+                    `&_=${cb}`;
+        const r = await fetch(url, {cache: 'no-store'});
         const data = await r.json();
         if (!data.ok) {
             liqmapShowOverlay('⚠️ Помилка API', data.reason || 'Невідома помилка');
