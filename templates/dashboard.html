@@ -3211,16 +3211,6 @@ function liqmapDrawChart(data) {
 
     // ========================================================================
     // LAYER 3 — Cluster volume + magnet-score labels at right edge of band
-    // (positioned to NOT overlap with mark price tag on the right axis).
-    // ========================================================================
-    const clusterLabelsG = g.append('g').attr('class', 'lm-cluster-labels');
-    for (let i = 0; i < clusterCount; i++) {
-        const c = clusters[i];
-        const mid = (c.priceLow + c.priceHigh) / 2;
-        const yMid = yScale(mid);
-        // Skip label if too close to mark price (would overlap red tag)
-        if (Math.abs(mid - mark) / mark < 0.005) continue;
-        clusterLabelsG.append('text')
     // ========================================================================
     // LAYER 3 — Cluster volume + magnet-score labels.
     // Positioned INSIDE the chart (not on right axis) to avoid overlapping
