@@ -3122,7 +3122,11 @@ function liqmapDrawChart(data) {
     const clusters = detectClustersJS(buckets, mark);
     // Mark cluster bucket prices so we render them differently
     const clusterPrices = new Set();
-    const clusterCount = Math.min(3, clusters.length);
+    // Show top-N cluster magnet zones (was 3, expanded to 6 — left column
+    // has plenty of vertical space and user wants to see secondary magnets
+    // not just the heaviest. Anything beyond 6 is usually noise vs the
+    // individual blue dashes which stay as-is.
+    const clusterCount = Math.min(6, clusters.length);
     for (let i = 0; i < clusterCount; i++) {
         for (const m of clusters[i].members) {
             clusterPrices.add(`${m.price}|${m.side}`);
