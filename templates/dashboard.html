@@ -1214,23 +1214,27 @@
 }
 .liqmap-status-bar {
     display: flex;
-    gap: 18px;
+    gap: 24px;
     flex-wrap: wrap;
-    padding: 8px 12px;
-    background: rgba(0,0,0,0.25);
+    padding: 10px 14px;
+    background: rgba(0,0,0,0.35);
     border-radius: 4px;
     margin-bottom: 12px;
-    font-size: 0.78rem;
-    color: #aaa;
+    font-size: 0.82rem;
+    color: #c4c4c4;
 }
 .liqmap-status-bar strong {
-    color: #ff6b6b;
+    color: #ff5252;
     font-family: 'SF Mono', Consolas, monospace;
-    font-weight: 600;
+    font-weight: 700;
+    font-size: 0.92rem;
+    letter-spacing: 0.3px;
 }
+.liqmap-confidence { font-weight: 600; }
 .liqmap-confidence.high { color: #22c55e; }
 .liqmap-confidence.medium { color: #eab308; }
 .liqmap-confidence.low { color: #ff8c42; }
+.liqmap-providers, .liqmap-last-update { color: #888; }
 
 .liqmap-chart-wrap {
     position: relative;
@@ -1242,7 +1246,7 @@
 }
 #liqmap-chart {
     width: 100%;
-    height: 440px;
+    height: 640px;
 }
 #liqmap-chart svg {
     display: block;
@@ -2868,7 +2872,7 @@ function liqmapDrawChart(data) {
     container.innerHTML = '';
     const W = container.clientWidth || 1200;
     const H = container.clientHeight || 440;
-    const margin = {top: 22, right: 96, bottom: 38, left: 14};
+    const margin = {top: 22, right: 108, bottom: 40, left: 14};
     const innerW = W - margin.left - margin.right;
     const innerH = H - margin.top - margin.bottom;
 
@@ -3007,9 +3011,9 @@ function liqmapDrawChart(data) {
     }
 
     // ========================================================================
-    // LAYER 1 — Heatmap density background bands behind cluster zones.
-    // Wide soft amber/blue rect that gives the "halo around magnet" look
-    // visible in the reference image.
+    // LAYER 1 — Heatmap density background halo behind cluster zones.
+    // Wide soft amber rect that gives the "magnet zone glow" look from the
+    // reference. Kept subtle so cluster bands stay readable on top.
     // ========================================================================
     const heatG = g.append('g').attr('class', 'lm-heatmap');
     for (let i = 0; i < clusterCount; i++) {
@@ -3017,20 +3021,17 @@ function liqmapDrawChart(data) {
         const yHigh = yScale(c.priceHigh);
         const yLow = yScale(c.priceLow);
         const yMid = (yHigh + yLow) / 2;
-        const halfBand = 18;  // halo height in px
-        const fillColor = c.side === 'long'
-            ? `rgba(176,120,40,0.42)`   // amber-brown halo (matches reference)
-            : `rgba(176,120,40,0.42)`;
-        // Outer wider lighter band
+        const halfBand = 22;
+        // Outer wide halo — soft amber
         heatG.append('rect')
             .attr('x', 0).attr('width', innerW)
             .attr('y', yMid - halfBand).attr('height', halfBand * 2)
-            .attr('fill', fillColor);
-        // Inner narrower band darker
+            .attr('fill', 'rgba(176,120,40,0.22)');
+        // Inner narrower halo — slightly darker amber
         heatG.append('rect')
             .attr('x', 0).attr('width', innerW)
-            .attr('y', yMid - 7).attr('height', 14)
-            .attr('fill', 'rgba(140,95,30,0.55)');
+            .attr('y', yMid - 11).attr('height', 22)
+            .attr('fill', 'rgba(140,95,30,0.30)');
     }
 
     // ========================================================================
@@ -3054,9 +3055,9 @@ function liqmapDrawChart(data) {
             linesG.append('line')
                 .attr('x1', 4).attr('x2', innerW - 4)
                 .attr('y1', y).attr('y2', y)
-                .attr('stroke', '#e8c020')
-                .attr('stroke-width', 7)
-                .attr('opacity', 0.92)
+                .attr('stroke', '#ffd342')
+                .attr('stroke-width', 8)
+                .attr('opacity', 0.96)
                 .datum(b)
                 .on('mouseover', liqmapEventHover)
                 .on('mouseout', liqmapEventUnhover);
@@ -3064,22 +3065,24 @@ function liqmapDrawChart(data) {
             linesG.append('line')
                 .attr('x1', 4).attr('x2', innerW - 4)
                 .attr('y1', y).attr('y2', y)
-                .attr('stroke', '#8a6a1a')
-                .attr('stroke-width', 4)
-                .attr('stroke-dasharray', '8 16')
-                .attr('opacity', 0.85);
+                .attr('stroke', '#7a5a14')
+                .attr('stroke-width', 5)
+                .attr('stroke-dasharray', '10 16')
+                .attr('opacity', 0.92);
         } else {
-            // Individual level — single blue dashed line
-            const sw = b.leverages[100] > b.leverages[50] && b.leverages[100] > b.leverages[25] ? 2.6
-                     : b.leverages[50] > b.leverages[25] ? 2.2
-                     : 1.8;
-            const opacity = 0.50 + 0.42 * Math.sqrt(usdRatio);
+            // Individual level — single bright blue dashed line.
+            // Higher opacity + brighter base color so it stands out on
+            // pure-black background.
+            const sw = b.leverages[100] > b.leverages[50] && b.leverages[100] > b.leverages[25] ? 3.0
+                     : b.leverages[50] > b.leverages[25] ? 2.6
+                     : 2.2;
+            const opacity = 0.72 + 0.25 * Math.sqrt(usdRatio);
             linesG.append('line')
                 .attr('x1', 4).attr('x2', innerW - 4)
                 .attr('y1', y).attr('y2', y)
-                .attr('stroke', '#5b8cff')
+                .attr('stroke', '#74a1ff')
                 .attr('stroke-width', sw)
-                .attr('stroke-dasharray', '22 9')
+                .attr('stroke-dasharray', '24 9')
                 .attr('opacity', opacity)
                 .datum(b)
                 .on('mouseover', liqmapEventHover)
@@ -3099,13 +3102,34 @@ function liqmapDrawChart(data) {
         // Skip label if too close to mark price (would overlap red tag)
         if (Math.abs(mid - mark) / mark < 0.005) continue;
         clusterLabelsG.append('text')
-            .attr('x', innerW - 8).attr('y', yMid - 10)
-            .attr('text-anchor', 'end')
-            .attr('fill', '#e8c020')
-            .attr('font-size', '10px')
+    // ========================================================================
+    // LAYER 3 — Cluster volume + magnet-score labels.
+    // Positioned INSIDE the chart (not on right axis) to avoid overlapping
+    // with the price labels. Always on the LEFT side of the cluster band.
+    // ========================================================================
+    const clusterLabelsG = g.append('g').attr('class', 'lm-cluster-labels');
+    for (let i = 0; i < clusterCount; i++) {
+        const c = clusters[i];
+        const mid = (c.priceLow + c.priceHigh) / 2;
+        const yMid = yScale(mid);
+        const labelText = liqmapFormatUsd(c.totalUsd) + ' · ' + Math.round(c.magnetScore*100) + '%';
+        // Background pill for readability over the heatmap halo
+        const labelW = labelText.length * 6.5 + 12;
+        clusterLabelsG.append('rect')
+            .attr('x', 10).attr('y', yMid - 9)
+            .attr('width', labelW).attr('height', 18)
+            .attr('rx', 3)
+            .attr('fill', 'rgba(0,0,0,0.65)')
+            .attr('stroke', '#ffd342')
+            .attr('stroke-width', 0.6)
+            .attr('opacity', 0.85);
+        clusterLabelsG.append('text')
+            .attr('x', 16).attr('y', yMid + 4)
+            .attr('fill', '#ffd342')
+            .attr('font-size', '11px')
             .attr('font-family', 'monospace')
-            .attr('opacity', 0.92)
-            .text(liqmapFormatUsd(c.totalUsd) + ' · ' + Math.round(c.magnetScore*100) + '%');
+            .attr('font-weight', 600)
+            .text(labelText);
     }
 
     // ========================================================================
@@ -3116,43 +3140,83 @@ function liqmapDrawChart(data) {
     liqmapDrawPriceAction(svg, xScale, yScale, margin, innerW, innerH);
 
     // ========================================================================
-    // LAYER 5 — Mark price line on top
+    // LAYER 5 — Mark price line on top (brighter red, slightly thicker)
     // ========================================================================
     const yMark = yScale(mark);
     g.append('line')
         .attr('x1', 0).attr('x2', innerW)
         .attr('y1', yMark).attr('y2', yMark)
-        .attr('stroke', '#dc2626').attr('stroke-width', 1.2)
-        .attr('opacity', 0.9);
+        .attr('stroke', '#ff3838').attr('stroke-width', 1.6)
+        .attr('opacity', 0.95);
 
     // ========================================================================
     // Y-axis labels on the right (price scale)
+    // Mark price as a bigger bright red pill — easy to spot.
+    // Reference prices use bright light-blue (#9ab8e0) for high contrast
+    // on the black background. Anti-overlap logic: track occupied y-ranges
+    // so labels never sit on top of each other.
     // ========================================================================
     const yAxisG = svg.append('g')
         .attr('transform', `translate(${margin.left + innerW + 6},${margin.top})`);
-    // Mark price as red pill
-    yAxisG.append('rect')
-        .attr('x', 0).attr('y', yMark - 9)
-        .attr('width', 80).attr('height', 18)
-        .attr('rx', 2).attr('fill', '#dc2626');
-    yAxisG.append('text')
-        .attr('x', 40).attr('y', yMark + 4)
-        .attr('text-anchor', 'middle').attr('fill', 'white')
-        .attr('font-size', '11px').attr('font-family', 'monospace')
-        .attr('font-weight', 600)
-        .text(liqmapFormatPrice(mark));
 
-    // Reference labels at top cluster, bottom cluster, edges
+    // Track y-zones already occupied so labels don't overlap
+    const occupiedZones = [];
+    function isOccupied(y, height = 16) {
+        return occupiedZones.some(([t, b]) =>
+            (y - height/2 < b) && (y + height/2 > t));
+    }
+    function occupy(y, height = 16) {
+        occupiedZones.push([y - height/2, y + height/2]);
+    }
+
+    // Mark price pill — BIG, can't miss it. Reserved zone first.
+    yAxisG.append('rect')
+        .attr('x', 0).attr('y', yMark - 12)
+        .attr('width', 90).attr('height', 24)
+        .attr('rx', 3).attr('fill', '#ff3838');
+    yAxisG.append('text')
+        .attr('x', 45).attr('y', yMark + 5)
+        .attr('text-anchor', 'middle').attr('fill', 'white')
+        .attr('font-size', '13px').attr('font-family', 'monospace')
+        .attr('font-weight', 700)
+        .text(liqmapFormatPrice(mark));
+    occupy(yMark, 28);
+
+    // Cluster price labels — bright gold, with small pill bg for readability
+    for (let i = 0; i < clusterCount; i++) {
+        const c = clusters[i];
+        const mid = (c.priceLow + c.priceHigh) / 2;
+        const y = yScale(mid);
+        if (y < 8 || y > innerH - 8) continue;
+        if (isOccupied(y, 22)) continue;
+        yAxisG.append('rect')
+            .attr('x', 0).attr('y', y - 10)
+            .attr('width', 90).attr('height', 20)
+            .attr('rx', 3)
+            .attr('fill', 'rgba(80,55,15,0.85)')
+            .attr('stroke', '#ffd342')
+            .attr('stroke-width', 0.6);
+        yAxisG.append('text')
+            .attr('x', 45).attr('y', y + 4)
+            .attr('text-anchor', 'middle')
+            .attr('fill', '#ffd342').attr('font-size', '12px')
+            .attr('font-family', 'monospace').attr('font-weight', 600)
+            .text(liqmapFormatPrice(mid));
+        occupy(y, 24);
+    }
+
+    // Other reference prices — bright light-blue, only fill gaps
     const refPrices = liqmapPickRefPrices(mark, data.cluster_zones || [], window);
     for (const rp of refPrices) {
         const y = yScale(rp);
-        if (y < 6 || y > innerH - 6) continue;
-        if (Math.abs(y - yMark) < 14) continue;
+        if (y < 8 || y > innerH - 8) continue;
+        if (isOccupied(y, 18)) continue;
         yAxisG.append('text')
-            .attr('x', 4).attr('y', y + 3)
-            .attr('fill', '#888').attr('font-size', '10.5px')
-            .attr('font-family', 'monospace')
+            .attr('x', 6).attr('y', y + 4)
+            .attr('fill', '#9ab8e0').attr('font-size', '11.5px')
+            .attr('font-family', 'monospace').attr('font-weight', 500)
             .text(liqmapFormatPrice(rp));
+        occupy(y, 20);
     }
 
     // ========================================================================
