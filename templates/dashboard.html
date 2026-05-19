@@ -3311,6 +3311,16 @@ function liqmapDrawChart(data) {
         .attr('opacity', 0.95);
 
     // ========================================================================
+    // LAYER 6 — POC + Value Area (Volume Profile overlay)
+    // Async fetch — renders into a placeholder group when ready. Failure is
+    // silent (the chart still works without POC).
+    // ========================================================================
+    g.append('g').attr('class', 'lm-poc');
+    svg.append('g').attr('class', 'lm-poc-axis')
+        .attr('transform', `translate(${margin.left + innerW + 6},${margin.top})`);
+    liqmapDrawPOC(svg, yScale, margin, innerW, innerH);
+
+    // ========================================================================
     // Y-axis labels on the right (price scale)
     // Mark price as a bigger bright red pill — easy to spot.
     // Reference prices use bright light-blue (#9ab8e0) for high contrast
@@ -3444,6 +3454,100 @@ function liqmapPickRefPrices(mark, clusters, window) {
         out.add((c.price_low + c.price_high) / 2);
     }
     return [...out];
+}
+
+async function liqmapDrawPOC(svg, yScale, margin, innerW, innerH) {
+    // Volume Profile overlay: POC + Value Area High/Low.
+    //   POC line: solid purple, prominent — the "fair price" anchor
+    //   VAH/VAL lines: dashed purple, dimmer — boundaries of 70% volume area
+    // Labels go on the right Y-axis using the lm-poc-axis group reserved
+    // earlier. Anti-overlap with mark price is handled by check distance.
+    try {
+        const cb = Date.now();
+        const r = await fetch(
+            `/api/liquidation-map/poc?symbol=${encodeURIComponent(liqmapState.symbol)}` +
+            `&hours=${liqmapState.lookback}&_=${cb}`,
+            {cache: 'no-store'});
+        const data = await r.json();
+        if (!data.ok || !data.poc) return;
+
+        const pocG = svg.select('.lm-poc');
+        const pocAxisG = svg.select('.lm-poc-axis');
+        if (pocG.empty() || pocAxisG.empty()) return;
+        // Clear in case of refresh
+        pocG.selectAll('*').remove();
+        pocAxisG.selectAll('*').remove();
+
+        const yPOC = yScale(data.poc);
+        const yVAH = yScale(data.vah);
+        const yVAL = yScale(data.val);
+        const POC_COLOR = '#a855f7';   // bright purple, distinct from red mark + yellow clusters
+
+        // Value Area shaded band (very subtle — just a hint)
+        if (yVAH >= 0 && yVAL <= innerH) {
+            const yTop = Math.min(yVAH, yVAL);
+            const yBot = Math.max(yVAH, yVAL);
+            pocG.append('rect')
+                .attr('x', 0).attr('width', innerW)
+                .attr('y', Math.max(0, yTop)).attr('height', Math.min(innerH, yBot) - Math.max(0, yTop))
+                .attr('fill', POC_COLOR).attr('opacity', 0.05);
+        }
+        // VAL line (lower)
+        if (yVAL >= 0 && yVAL <= innerH) {
+            pocG.append('line')
+                .attr('x1', 0).attr('x2', innerW)
+                .attr('y1', yVAL).attr('y2', yVAL)
+                .attr('stroke', POC_COLOR).attr('stroke-width', 1.0)
+                .attr('stroke-dasharray', '6 4').attr('opacity', 0.55);
+        }
+        // VAH line (upper)
+        if (yVAH >= 0 && yVAH <= innerH) {
+            pocG.append('line')
+                .attr('x1', 0).attr('x2', innerW)
+                .attr('y1', yVAH).attr('y2', yVAH)
+                .attr('stroke', POC_COLOR).attr('stroke-width', 1.0)
+                .attr('stroke-dasharray', '6 4').attr('opacity', 0.55);
+        }
+        // POC line (solid, prominent)
+        if (yPOC >= 0 && yPOC <= innerH) {
+            pocG.append('line')
+                .attr('x1', 0).attr('x2', innerW)
+                .attr('y1', yPOC).attr('y2', yPOC)
+                .attr('stroke', POC_COLOR).attr('stroke-width', 1.4)
+                .attr('opacity', 0.92);
+        }
+
+        // Right-axis labels — POC gets a purple pill, VAH/VAL get plain text
+        if (yPOC >= 6 && yPOC <= innerH - 6) {
+            pocAxisG.append('rect')
+                .attr('x', 0).attr('y', yPOC - 10)
+                .attr('width', 90).attr('height', 20).attr('rx', 3)
+                .attr('fill', 'rgba(60,30,90,0.85)')
+                .attr('stroke', POC_COLOR).attr('stroke-width', 0.8);
+            pocAxisG.append('text')
+                .attr('x', 45).attr('y', yPOC + 4)
+                .attr('text-anchor', 'middle').attr('fill', POC_COLOR)
+                .attr('font-size', '11.5px').attr('font-family', 'monospace')
+                .attr('font-weight', 700)
+                .text('POC ' + liqmapFormatPrice(data.poc));
+        }
+        // VAH label (above POC pill)
+        if (yVAH >= 6 && yVAH <= innerH - 6 && Math.abs(yVAH - yPOC) > 16) {
+            pocAxisG.append('text')
+                .attr('x', 6).attr('y', yVAH + 4)
+                .attr('fill', POC_COLOR).attr('font-size', '10px')
+                .attr('font-family', 'monospace').attr('opacity', 0.75)
+                .text('VAH ' + liqmapFormatPrice(data.vah));
+        }
+        // VAL label (below POC pill)
+        if (yVAL >= 6 && yVAL <= innerH - 6 && Math.abs(yVAL - yPOC) > 16) {
+            pocAxisG.append('text')
+                .attr('x', 6).attr('y', yVAL + 4)
+                .attr('fill', POC_COLOR).attr('font-size', '10px')
+                .attr('font-family', 'monospace').attr('opacity', 0.75)
+                .text('VAL ' + liqmapFormatPrice(data.val));
+        }
+    } catch {}
 }
 
 async function liqmapDrawPriceAction(svg, xScale, yScale, margin, innerW, innerH) {

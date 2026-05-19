@@ -3654,6 +3654,121 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
     
+    @app.route('/api/liquidation-map/poc')
+    def api_liqmap_poc():
+        """Volume Profile: POC (Point of Control), VAH/VAL (Value Area).
+        
+        Standard market-profile algorithm:
+          1. Pull klines for the lookback window with an interval scaled
+             to keep response size reasonable (1m for short, 1h for long).
+          2. For each kline, distribute its volume evenly across the
+             price buckets spanned by [low, high]. This is the textbook
+             "TPO-equivalent" volume profile.
+          3. POC = bucket with max accumulated volume.
+          4. Value Area = expand outward from POC (always picking the side
+             with higher adjacent volume) until 70% of total volume captured.
+             VAH and VAL are the high/low of that expanded range.
+        
+        Returns:
+          {ok, poc, vah, val, total_volume, value_area_pct, bucket_size}
+        """
+        try:
+            symbol = request.args.get('symbol', 'BTCUSDT').upper()
+            try:
+                hours = int(request.args.get('hours', 24))
+            except ValueError:
+                hours = 24
+            
+            # Scale interval to keep response size sane across timeframes
+            if hours <= 4:
+                interval, limit = '1m', min(hours * 60, 240)
+            elif hours <= 24:
+                interval, limit = '5m', min(hours * 12, 300)
+            else:
+                interval, limit = '1h', min(hours, 200)
+            
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            if md is None:
+                return jsonify({'ok': False, 'reason': 'market_data unavailable'})
+            klines = md.fetch_klines(symbol, interval=interval, limit=limit)
+            if not klines:
+                return jsonify({'ok': False, 'reason': 'no klines'})
+            
+            # Bucket size — matches the liquidation_map convention so POC
+            # lines visually align with cluster bands on the same chart
+            sym_upper = symbol.upper()
+            if sym_upper.startswith('BTC'):
+                bucket_size = 25.0
+            elif sym_upper.startswith('ETH'):
+                bucket_size = 1.0
+            else:
+                # Use mid price of first kline as anchor for 0.03% sizing
+                ref_price = float(klines[0].get('c') or klines[0].get('close', 0))
+                bucket_size = max(round(ref_price * 0.0003, 4), 0.0001)
+            
+            # Aggregate volume per price-bucket. Spread each kline's volume
+            # uniformly across the buckets it touched ([low, high]).
+            bucket_vol = {}
+            for k in klines:
+                high = float(k.get('h') or k.get('high', 0))
+                low  = float(k.get('l') or k.get('low', 0))
+                vol  = float(k.get('v') or k.get('volume', 0))
+                if high <= 0 or low <= 0 or vol <= 0:
+                    continue
+                if high < low:
+                    high, low = low, high
+                # Number of buckets the candle range covers (inclusive)
+                n = max(1, int((high - low) / bucket_size) + 1)
+                per_bucket = vol / n
+                for j in range(n):
+                    price = low + j * bucket_size
+                    # Round to bucket midpoint
+                    bk = round(price / bucket_size) * bucket_size + bucket_size / 2
+                    bucket_vol[bk] = bucket_vol.get(bk, 0) + per_bucket
+            
+            if not bucket_vol:
+                return jsonify({'ok': False, 'reason': 'empty profile'})
+            
+            # POC = max-volume bucket
+            sorted_prices = sorted(bucket_vol.keys())
+            poc_price = max(bucket_vol, key=bucket_vol.get)
+            poc_idx = sorted_prices.index(poc_price)
+            
+            total_vol = sum(bucket_vol.values())
+            value_area_target = total_vol * 0.70
+            captured = bucket_vol[poc_price]
+            lo_idx = poc_idx
+            hi_idx = poc_idx
+            # Expand outward, always picking the side with higher volume
+            while captured < value_area_target:
+                upper = bucket_vol[sorted_prices[hi_idx + 1]] if hi_idx + 1 < len(sorted_prices) else -1
+                lower = bucket_vol[sorted_prices[lo_idx - 1]] if lo_idx - 1 >= 0 else -1
+                if upper < 0 and lower < 0:
+                    break
+                if upper >= lower:
+                    hi_idx += 1
+                    captured += upper
+                else:
+                    lo_idx -= 1
+                    captured += lower
+            
+            return jsonify({
+                'ok': True,
+                'symbol': symbol,
+                'poc': round(poc_price, 4),
+                'vah': round(sorted_prices[hi_idx], 4),
+                'val': round(sorted_prices[lo_idx], 4),
+                'total_volume': round(total_vol, 4),
+                'value_area_pct': round(captured / total_vol if total_vol else 0, 4),
+                'bucket_size': bucket_size,
+                'lookback_hours': hours,
+                'interval': interval,
+                'kline_count': len(klines),
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
     @app.route('/api/liquidation-map/toggle', methods=['POST'])
     def api_liqmap_toggle():
         """Enable/disable the daemon globally (persisted in DB setting)."""
