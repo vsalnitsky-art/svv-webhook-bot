@@ -3312,13 +3312,14 @@ function liqmapDrawChart(data) {
 
     // ========================================================================
     // LAYER 6 — POC + Value Area (Volume Profile overlay)
-    // Async fetch — renders into a placeholder group when ready. Failure is
-    // silent (the chart still works without POC).
+    // Reserve groups here so chart layer order is correct (POC lines render
+    // BELOW mark price but ABOVE clusters). The actual fetch + draw happens
+    // AT END of liqmapDrawChart, after occupiedZones is populated by all the
+    // Y-axis labels — so POC pill placement can avoid them.
     // ========================================================================
     g.append('g').attr('class', 'lm-poc');
     svg.append('g').attr('class', 'lm-poc-axis')
         .attr('transform', `translate(${margin.left + innerW + 6},${margin.top})`);
-    liqmapDrawPOC(svg, yScale, margin, innerW, innerH);
 
     // ========================================================================
     // Y-axis labels on the right (price scale)
@@ -3359,7 +3360,10 @@ function liqmapDrawChart(data) {
         const mid = (c.priceLow + c.priceHigh) / 2;
         const y = yScale(mid);
         if (y < 8 || y > innerH - 8) continue;
-        if (isOccupied(y, 22)) continue;
+        // 32px clearance — was 22 (barely fit, pills touched visually for
+        // clusters close to mark). Cluster info is also in left column, so
+        // skipping the right-axis pill is fine.
+        if (isOccupied(y, 32)) continue;
         yAxisG.append('rect')
             .attr('x', 0).attr('y', y - 10)
             .attr('width', 90).attr('height', 20)
@@ -3373,7 +3377,7 @@ function liqmapDrawChart(data) {
             .attr('fill', '#ffd342').attr('font-size', '12px')
             .attr('font-family', 'monospace').attr('font-weight', 600)
             .text(liqmapFormatPrice(mid));
-        occupy(y, 24);
+        occupy(y, 28);   // was 24 — reserve more for next-label safety
     }
 
     // Other reference prices — bright light-blue, only fill gaps
@@ -3389,6 +3393,12 @@ function liqmapDrawChart(data) {
             .text(liqmapFormatPrice(rp));
         occupy(y, 20);
     }
+
+    // POC overlay rendered HERE — occupiedZones is now fully populated with
+    // mark, clusters, refs. Async fetch but uses closure on these vars so
+    // when its callback fires, anti-overlap data is ready.
+    liqmapDrawPOC(svg, yScale, margin, innerW, innerH,
+                  yMark, occupiedZones, isOccupied, occupy);
 
     // ========================================================================
     // X-axis labels (time)
@@ -3456,12 +3466,18 @@ function liqmapPickRefPrices(mark, clusters, window) {
     return [...out];
 }
 
-async function liqmapDrawPOC(svg, yScale, margin, innerW, innerH) {
+async function liqmapDrawPOC(svg, yScale, margin, innerW, innerH,
+                              yMark, occupiedZones, isOccupied, occupy) {
     // Volume Profile overlay: POC + Value Area High/Low.
-    //   POC line: solid purple, prominent — the "fair price" anchor
-    //   VAH/VAL lines: dashed purple, dimmer — boundaries of 70% volume area
-    // Labels go on the right Y-axis using the lm-poc-axis group reserved
-    // earlier. Anti-overlap with mark price is handled by check distance.
+    //
+    // Anti-overlap rules (the main fix from earlier overlap bug):
+    //   1. POC line uses DASHED stroke so where it crosses the solid red
+    //      mark line they remain visually distinct.
+    //   2. POC right-axis pill checks occupiedZones (filled with mark +
+    //      cluster + ref labels). If conflict → falls back to in-chart
+    //      label at left edge of the band.
+    //   3. VAH/VAL labels skip rendering when within 14px of POC OR any
+    //      already-occupied zone.
     try {
         const cb = Date.now();
         const r = await fetch(
@@ -3474,25 +3490,25 @@ async function liqmapDrawPOC(svg, yScale, margin, innerW, innerH) {
         const pocG = svg.select('.lm-poc');
         const pocAxisG = svg.select('.lm-poc-axis');
         if (pocG.empty() || pocAxisG.empty()) return;
-        // Clear in case of refresh
         pocG.selectAll('*').remove();
         pocAxisG.selectAll('*').remove();
 
         const yPOC = yScale(data.poc);
         const yVAH = yScale(data.vah);
         const yVAL = yScale(data.val);
-        const POC_COLOR = '#a855f7';   // bright purple, distinct from red mark + yellow clusters
+        const POC_COLOR = '#a855f7';   // bright purple — distinct from red mark, yellow clusters
 
-        // Value Area shaded band (very subtle — just a hint)
+        // Value Area shaded band (very subtle — just a hint of the 70% zone)
         if (yVAH >= 0 && yVAL <= innerH) {
             const yTop = Math.min(yVAH, yVAL);
             const yBot = Math.max(yVAH, yVAL);
             pocG.append('rect')
                 .attr('x', 0).attr('width', innerW)
-                .attr('y', Math.max(0, yTop)).attr('height', Math.min(innerH, yBot) - Math.max(0, yTop))
+                .attr('y', Math.max(0, yTop))
+                .attr('height', Math.min(innerH, yBot) - Math.max(0, yTop))
                 .attr('fill', POC_COLOR).attr('opacity', 0.05);
         }
-        // VAL line (lower)
+        // VAL line (lower edge of value area)
         if (yVAL >= 0 && yVAL <= innerH) {
             pocG.append('line')
                 .attr('x1', 0).attr('x2', innerW)
@@ -3500,7 +3516,7 @@ async function liqmapDrawPOC(svg, yScale, margin, innerW, innerH) {
                 .attr('stroke', POC_COLOR).attr('stroke-width', 1.0)
                 .attr('stroke-dasharray', '6 4').attr('opacity', 0.55);
         }
-        // VAH line (upper)
+        // VAH line (upper edge)
         if (yVAH >= 0 && yVAH <= innerH) {
             pocG.append('line')
                 .attr('x1', 0).attr('x2', innerW)
@@ -3508,21 +3524,33 @@ async function liqmapDrawPOC(svg, yScale, margin, innerW, innerH) {
                 .attr('stroke', POC_COLOR).attr('stroke-width', 1.0)
                 .attr('stroke-dasharray', '6 4').attr('opacity', 0.55);
         }
-        // POC line (solid, prominent)
+        // POC line — DASHED so it doesn't visually fuse with the solid mark
+        // line where they happen to cross or run close
         if (yPOC >= 0 && yPOC <= innerH) {
             pocG.append('line')
                 .attr('x1', 0).attr('x2', innerW)
                 .attr('y1', yPOC).attr('y2', yPOC)
-                .attr('stroke', POC_COLOR).attr('stroke-width', 1.4)
-                .attr('opacity', 0.92);
+                .attr('stroke', POC_COLOR).attr('stroke-width', 1.6)
+                .attr('stroke-dasharray', '10 4').attr('opacity', 0.92);
         }
 
-        // Right-axis labels — POC gets a purple pill, VAH/VAL get plain text
-        if (yPOC >= 6 && yPOC <= innerH - 6) {
+        // ---- POC right-axis label ----
+        // If POC pill would overlap an existing label (mark pill, cluster
+        // pill, ref text), skip the right-axis pill and instead draw an
+        // in-chart label at the left edge of the POC line. That way info
+        // is preserved without visual stacking.
+        // Clearance: 28 px from mark (was 16 — too tight, pills touched).
+        // Pill size for occupied check: 32 (was 22 — same reasoning).
+        const pocPillHeight = 22;
+        const tooCloseToMark = Math.abs(yPOC - yMark) < 28;
+        const occupied = isOccupied(yPOC, 32);
+
+        if (yPOC >= 6 && yPOC <= innerH - 6 && !tooCloseToMark && !occupied) {
+            // Clean spot on the right axis — draw the pill
             pocAxisG.append('rect')
-                .attr('x', 0).attr('y', yPOC - 10)
-                .attr('width', 90).attr('height', 20).attr('rx', 3)
-                .attr('fill', 'rgba(60,30,90,0.85)')
+                .attr('x', 0).attr('y', yPOC - 11)
+                .attr('width', 90).attr('height', pocPillHeight).attr('rx', 3)
+                .attr('fill', 'rgba(60,30,90,0.92)')
                 .attr('stroke', POC_COLOR).attr('stroke-width', 0.8);
             pocAxisG.append('text')
                 .attr('x', 45).attr('y', yPOC + 4)
@@ -3530,22 +3558,50 @@ async function liqmapDrawPOC(svg, yScale, margin, innerW, innerH) {
                 .attr('font-size', '11.5px').attr('font-family', 'monospace')
                 .attr('font-weight', 700)
                 .text('POC ' + liqmapFormatPrice(data.poc));
+            occupy(yPOC, pocPillHeight + 4);
+        } else if (yPOC >= 6 && yPOC <= innerH - 6) {
+            // Right axis is taken — draw in-chart label at left edge of POC line
+            // This keeps the info on-screen without overlapping anything
+            const inChartG = svg.append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+            const lblText = tooCloseToMark
+                ? 'POC ≈ Mark $' + liqmapFormatPrice(data.poc)
+                : 'POC $' + liqmapFormatPrice(data.poc);
+            const lblW = lblText.length * 6.8 + 14;
+            inChartG.append('rect')
+                .attr('x', 6).attr('y', yPOC - 9)
+                .attr('width', lblW).attr('height', 18).attr('rx', 3)
+                .attr('fill', 'rgba(60,30,90,0.85)')
+                .attr('stroke', POC_COLOR).attr('stroke-width', 0.6);
+            inChartG.append('text')
+                .attr('x', 13).attr('y', yPOC + 4)
+                .attr('fill', POC_COLOR).attr('font-size', '11px')
+                .attr('font-family', 'monospace').attr('font-weight', 600)
+                .text(lblText);
         }
-        // VAH label (above POC pill)
-        if (yVAH >= 6 && yVAH <= innerH - 6 && Math.abs(yVAH - yPOC) > 16) {
+
+        // ---- VAH label ----
+        // Only render if not near POC and not in an occupied zone
+        if (yVAH >= 6 && yVAH <= innerH - 6
+            && Math.abs(yVAH - yPOC) > 16
+            && !isOccupied(yVAH, 16)) {
             pocAxisG.append('text')
                 .attr('x', 6).attr('y', yVAH + 4)
                 .attr('fill', POC_COLOR).attr('font-size', '10px')
                 .attr('font-family', 'monospace').attr('opacity', 0.75)
                 .text('VAH ' + liqmapFormatPrice(data.vah));
+            occupy(yVAH, 16);
         }
-        // VAL label (below POC pill)
-        if (yVAL >= 6 && yVAL <= innerH - 6 && Math.abs(yVAL - yPOC) > 16) {
+        // ---- VAL label ----
+        if (yVAL >= 6 && yVAL <= innerH - 6
+            && Math.abs(yVAL - yPOC) > 16
+            && !isOccupied(yVAL, 16)) {
             pocAxisG.append('text')
                 .attr('x', 6).attr('y', yVAL + 4)
                 .attr('fill', POC_COLOR).attr('font-size', '10px')
                 .attr('font-family', 'monospace').attr('opacity', 0.75)
                 .text('VAL ' + liqmapFormatPrice(data.val));
+            occupy(yVAL, 16);
         }
     } catch {}
 }
