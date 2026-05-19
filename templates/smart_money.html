@@ -660,6 +660,29 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     border-bottom: 1px solid rgba(251, 191, 36, 0.18);
 }
 
+/* EXT badge — for positions adopted from Bybit (not opened by TM itself).
+   Full TM algorithm still applies; the badge is just provenance. */
+.tm-ext-badge {
+    display: inline-block;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.45);
+    color: #60a5fa;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+/* Light blue tint for externally-adopted positions, only when NOT in
+   manual mode (manual style wins — it's a stronger user choice). */
+.tm-table tr.tm-row-external td {
+    background: rgba(59, 130, 246, 0.03);
+    border-top: 1px solid rgba(59, 130, 246, 0.12);
+    border-bottom: 1px solid rgba(59, 130, 246, 0.12);
+}
+
 /* Health Score badge — colored by verdict */
 .tm-health-badge {
     display: inline-block;
@@ -4728,9 +4751,14 @@ async function loadTMState() {
                 const pnlSign = p.pnl_pct >= 0 ? '+' : '';
                 const sideClass = p.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
                 const manualOn = !!p.manual_mode;
-                const rowClass = manualOn ? ' class="tm-row-manual"' : '';
+                const isExternal = !!p.external || p.opened_by === 'external';
+                const rowClass = manualOn ? ' class="tm-row-manual"'
+                                          : (isExternal ? ' class="tm-row-external"' : '');
+                const badges =
+                    (isExternal ? ' <span class="tm-ext-badge" title="Adopted from Bybit — opened outside TM. Full algorithm applies.">EXT</span>' : '') +
+                    (manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this position">MANUAL</span>' : '');
                 return `<tr${rowClass}>
-                    <td><b>${p.symbol}</b>${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this position">MANUAL</span>' : ''}</td>
+                    <td><b>${p.symbol}</b>${badges}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>

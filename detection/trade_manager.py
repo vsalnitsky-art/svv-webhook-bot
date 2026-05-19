@@ -44,6 +44,11 @@ MONITOR_INTERVAL_SECS = 10
 CLOSED_TRADES_LIMIT = 100   # keep this many recent closed trades
 INITIAL_DELAY_SECS = 20      # wait at startup before first tick
 
+# Run Bybit position reconciliation every N monitor ticks. With a 10s tick
+# this puts the reconcile loop at ~30s — fast enough to catch manual opens
+# / closes the user does on Bybit, light enough on the API quota.
+RECONCILE_EVERY_N_TICKS = 3
+
 DEFAULT_SETTINGS = {
     # Master toggle — DEFAULT OFF for safety
     'enabled': False,
@@ -522,6 +527,13 @@ class TradeManager:
         self._monitor_thread.start()
         print(f"[TM] ✅ Started: enabled={self.is_enabled()}, "
               f"open_positions={len(self._positions)}")
+        # Trigger an initial reconcile on a separate thread so start() returns
+        # quickly. The first tick will run reconcile too (via the periodic
+        # counter at startup → _tick_count == 1 % RECONCILE_EVERY_N_TICKS
+        # won't fire on tick 1; but we don't want to wait), so we kick a
+        # one-shot async call here.
+        threading.Thread(target=self._reconcile_with_bybit,
+                          daemon=True, name="TM-InitReconcile").start()
     
     def stop(self):
         self._running = False
@@ -544,6 +556,19 @@ class TradeManager:
     def _tick(self):
         """Monitor each open position for exit conditions."""
         self._tick_count += 1
+        
+        # Periodic reconciliation with Bybit so TM picks up positions opened
+        # outside it (manual trades, leftover positions, etc.) and detects
+        # external closes (manual close, Bybit-side SL/TP fill, liquidation).
+        # Every RECONCILE_EVERY_N_TICKS ticks ≈ 30 seconds with 10s tick.
+        if self._tick_count % RECONCILE_EVERY_N_TICKS == 0:
+            try:
+                self._reconcile_with_bybit()
+            except Exception as e:
+                if self._errors <= 10:
+                    print(f"[TM] Reconcile error: {e}")
+                self._errors += 1
+        
         with self._lock:
             symbols = list(self._positions.keys())
             shadow_symbols = list(self._shadow_positions.keys())
@@ -1776,6 +1801,210 @@ class TradeManager:
         
         self._notify_open(position)
     
+    def _close_externally(self, symbol: str, exit_price: float, reason: str = 'external_close'):
+        """Bookkeeping-only close for positions that vanished from Bybit
+        without TM's involvement (closed manually, hit a Bybit-side SL/TP,
+        or got liquidated). Does NOT call bybit.close_position — the
+        position is already gone on the exchange, calling close would error.
+        
+        Everything else (PnL calc, closed_trades append, persist, notify) is
+        the same shape as _close_position so the closed trade looks identical
+        to a TM-closed one in stats and the UI.
+        """
+        with self._lock:
+            pos = self._positions.get(symbol)
+        if not pos:
+            return
+        
+        qty = pos.get('remaining_qty', pos['qty'])
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG':
+            pnl_pct = (exit_price - entry) / entry * 100
+        else:
+            pnl_pct = (entry - exit_price) / entry * 100
+        pnl_usd = (exit_price - entry) * qty * (1 if pos['side'] == 'LONG' else -1)
+        
+        closed = {
+            'symbol': symbol, 'side': pos['side'],
+            'entry_price': entry, 'exit_price': exit_price,
+            'qty': pos['qty'],
+            'remaining_qty_at_close': qty,
+            'opened_at': pos['opened_at'],
+            'closed_at': time.time(),
+            'pnl_pct': round(pnl_pct, 4),
+            'pnl_usd': round(pnl_usd, 2),
+            'reason': reason,
+            'opened_by': pos.get('opened_by', ''),
+            'partial_closes_done': pos.get('partial_closes_done', []),
+            'entry_score': pos.get('entry_score'),
+        }
+        
+        with self._lock:
+            self._positions.pop(symbol, None)
+            self._pos_state.pop(symbol, None)
+            self._closed_trades.append(closed)
+            if len(self._closed_trades) > CLOSED_TRADES_LIMIT:
+                self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
+        self._persist_positions()
+        self._persist_closed_trades()
+        
+        sign = '+' if pnl_pct >= 0 else ''
+        print(f"[TM] 🔄 External close detected for {symbol}: "
+              f"{sign}{pnl_pct:.2f}% (gone from Bybit, reason={reason})")
+        self._notify(
+            f"🔄 External close: {symbol} {pos['side']}\n"
+            f"Entry: {self._fmt_price(entry)} → Exit: {self._fmt_price(exit_price)}\n"
+            f"PnL: {sign}{pnl_pct:.2f}% ({sign}${pnl_usd:.2f})"
+        )
+    
+    def _adopt_external_position(self, bybit_pos: Dict) -> bool:
+        """Adopt a position that exists on Bybit but not in TM's view.
+        
+        Happens in three scenarios:
+          1. User opened a position MANUALLY on Bybit while TM is running
+          2. Position pre-existed from before TM was activated
+          3. TM was restarted/redeployed; DB lost the position dict but
+             the actual exchange position survived
+        
+        We treat the live exchange state as the source of truth. The
+        adopted position dict mirrors _new_position's shape so all monitor
+        logic (HTF flip, Reverse SMC, BOS partials, trailing, BE, manual
+        SL/TP, force close) works the same.
+        
+        IMPORTANT: we DON'T auto-set strategy SL/TP on Bybit for adopted
+        positions. The user opened it themselves; their SL/TP (if any)
+        is preserved. TM monitors whatever levels Bybit returns. If user
+        wants TM-managed SL/TP, they can flip the position into manual
+        mode and set Manual SL/Manual TP via the UI.
+        
+        Returns True if adopted, False if rejected (validation failure).
+        """
+        symbol = bybit_pos.get('symbol')
+        if not symbol:
+            return False
+        # Bybit returns side as 'Buy'/'Sell'; TM internally uses LONG/SHORT
+        bybit_side = bybit_pos.get('side', '')
+        if bybit_side == 'Buy':
+            side = 'LONG'
+        elif bybit_side == 'Sell':
+            side = 'SHORT'
+        else:
+            print(f"[TM] adopt skipped for {symbol}: unknown side '{bybit_side}'")
+            return False
+        
+        entry_price = float(bybit_pos.get('entry_price') or 0)
+        qty = float(bybit_pos.get('size') or 0)
+        if entry_price <= 0 or qty <= 0:
+            print(f"[TM] adopt skipped for {symbol}: invalid entry/qty "
+                  f"({entry_price}, {qty})")
+            return False
+        
+        sl_price = bybit_pos.get('stop_loss') or None
+        tp_price = bybit_pos.get('take_profit') or None
+        # Bybit returns 0.0 for unset SL/TP — normalize to None
+        if sl_price is not None and float(sl_price) <= 0:
+            sl_price = None
+        if tp_price is not None and float(tp_price) <= 0:
+            tp_price = None
+        
+        # Build position dict with opened_by='external' marker.
+        # opened_at = now: we don't have real open-time from Bybit's
+        # current-positions API. Time-stop will count from adoption, which
+        # is the safest behavior (avoids accidental immediate exit).
+        pos = _new_position(
+            symbol=symbol, side=side,
+            entry_price=entry_price, qty=qty,
+            sl_price=sl_price, tp_price=tp_price,
+            order_id='',                # we don't have the original order id
+            opened_by='external',
+        )
+        # Mark as adopted so UI can show a badge and analytics can
+        # distinguish this trade's outcome from TM-initiated trades.
+        pos['external'] = True
+        
+        with self._lock:
+            self._positions[symbol] = pos
+            self._pos_state[symbol] = self._fresh_pos_state()
+        self._persist_positions()
+        
+        sl_disp = f"SL=${sl_price}" if sl_price else "no SL"
+        tp_disp = f"TP=${tp_price}" if tp_price else "no TP"
+        print(f"[TM] 🔄 Adopted external position {symbol} {side} "
+              f"@ ${entry_price} qty={qty} ({sl_disp}, {tp_disp})")
+        try:
+            self._notify(
+                f"🔄 Adopted external position\n"
+                f"{symbol} {side} @ {self._fmt_price(entry_price)}\n"
+                f"qty: {qty} · {sl_disp} · {tp_disp}\n"
+                f"TM will now manage exits via its algorithm."
+            )
+        except Exception:
+            pass
+        return True
+    
+    def _reconcile_with_bybit(self) -> Dict:
+        """Sync TM's view of open positions with what actually exists on
+        Bybit. Two-way reconciliation:
+        
+          - For each Bybit position not in self._positions → ADOPT it
+            (call _adopt_external_position). TM starts managing it.
+          - For each self._positions entry not on Bybit → it was closed
+            externally; call _close_externally to update bookkeeping.
+        
+        Runs only when TM is enabled — disabled means user wants no
+        automatic management of anything. Runs only if bybit connector
+        is configured with API key (returns no positions otherwise).
+        
+        Returns a summary dict for logging/diagnostics.
+        """
+        if not self.is_enabled() or not self.bybit:
+            return {'skipped': True, 'reason': 'TM disabled or no bybit'}
+        try:
+            live = self.bybit.get_positions() or []
+        except Exception as e:
+            print(f"[TM] Reconcile fetch error: {e}")
+            return {'error': str(e)}
+        
+        live_by_symbol = {p['symbol']: p for p in live if p.get('symbol')}
+        
+        with self._lock:
+            tm_symbols = set(self._positions.keys())
+        live_symbols = set(live_by_symbol.keys())
+        
+        adopted = []
+        closed_externally = []
+        
+        # 1. Adopt positions present on Bybit but not in TM
+        for sym in live_symbols - tm_symbols:
+            if self._adopt_external_position(live_by_symbol[sym]):
+                adopted.append(sym)
+        
+        # 2. Detect external closes: in TM but not on Bybit
+        for sym in tm_symbols - live_symbols:
+            # Use current price as the best-available exit price. Bybit
+            # doesn't expose historical fill price for already-closed
+            # positions via REST in a stable way.
+            exit_price = self._get_current_price(sym)
+            if exit_price is None:
+                # Fall back to the position's entry price so PnL=0 rather
+                # than a wild number. Better to be conservative.
+                with self._lock:
+                    pos = self._positions.get(sym)
+                exit_price = pos['entry_price'] if pos else 0
+            if exit_price > 0:
+                self._close_externally(sym, exit_price, reason='external_close')
+                closed_externally.append(sym)
+        
+        if adopted or closed_externally:
+            print(f"[TM] Reconcile: adopted={adopted}, "
+                  f"closed_externally={closed_externally}")
+        return {
+            'adopted': adopted,
+            'closed_externally': closed_externally,
+            'tm_count': len(tm_symbols),
+            'live_count': len(live_symbols),
+        }
+    
     def _close_position(self, symbol: str, exit_price: float, reason: str):
         with self._lock:
             pos = self._positions.get(symbol)
@@ -2851,6 +3080,7 @@ class TradeManager:
             'manual': '✋ Manual',
             'manual_sl': '✋🛡 Manual SL',
             'manual_tp': '✋🎯 Manual TP',
+            'external_close': '🔄 External Close (off-bot)',
             'bos_2_partial': '✂️ BOS-2 partial',
             'bos_3_partial': '✂️ BOS-3 partial',
             'bos_4_partial': '✂️ BOS-4 partial',
