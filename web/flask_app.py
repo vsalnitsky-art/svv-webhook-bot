@@ -3137,6 +3137,39 @@ def register_api_routes(app):
             is_shadow=bool(data.get('is_shadow')),
         ))
     
+    @app.route('/api/tm/positions/manual-mode', methods=['POST'])
+    def api_tm_manual_mode():
+        """Toggle per-position manual mode.
+        
+        Body: {
+            symbol: 'BTCUSDT',
+            enabled: bool,          # True = manual mode ON, False = OFF
+            is_shadow?: bool        # default False (real position)
+        }
+        
+        When manual mode is ON for a position:
+          - Automatic exits (SL, TP, time stop, HTF flip, Reverse SMC,
+            CHoCH/BOS exits, trailing, BE) are bypassed.
+          - Only Manual SL / Manual TP price levels OR force-close via UI
+            can close the position.
+          - New SMC signals on this symbol are ignored (no auto-reverse).
+        
+        When OFF (default), the full automatic strategy logic runs.
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'symbol required'})
+        return jsonify(tm.update_manual_mode(
+            symbol=symbol,
+            enabled=bool(data.get('enabled')),
+            is_shadow=bool(data.get('is_shadow')),
+        ))
+    
     @app.route('/api/tm/closed/delete', methods=['POST'])
     def api_tm_closed_delete():
         """Permanently delete a real-trade entry from Recent Closed Trades.

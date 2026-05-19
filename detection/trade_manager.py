@@ -598,6 +598,14 @@ class TradeManager:
             self._close_position(symbol, current_price, reason=manual_reason)
             return
         
+        # === Manual mode gate ===
+        # When the user flipped this position into manual mode, ONLY the
+        # manual SL/TP above and force-close from UI can close it. All
+        # automatic exit logic and management actions below are bypassed.
+        # The position lives or dies by the operator's hand.
+        if pos.get('manual_mode'):
+            return
+        
         # 1) Hard exits — Stop Loss / Take Profit
         s = self._settings
         if s.get('use_sl') and pos.get('sl_price'):
@@ -814,6 +822,17 @@ class TradeManager:
             existing_real = self._positions.get(symbol)
             existing_shadow = self._shadow_positions.get(symbol)
         
+        # === Manual mode gate ===
+        # If the user has locked this symbol into manual mode on EITHER
+        # real or shadow track, ignore new signals entirely — no open, no
+        # reverse. The operator wants to manage this trade by hand.
+        if existing_real and existing_real.get('manual_mode'):
+            print(f"[TM] {symbol} in manual mode (real) — signal ignored")
+            return
+        if existing_shadow and existing_shadow.get('manual_mode'):
+            print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
+            return
+        
         if enabled:
             # Real-money mode
             if existing_real:
@@ -876,6 +895,13 @@ class TradeManager:
         # Pick whichever position exists (real takes precedence)
         pos = real or shadow
         if not pos:
+            return
+        
+        # === Manual mode gate ===
+        # CHoCH-driven exits (Reverse SMC, Forecast 1H Confluence) are
+        # AUTOMATIC and therefore bypassed in manual mode. Manual SL/TP
+        # and force-close remain the only ways out.
+        if pos.get('manual_mode'):
             return
         
         # Record this CHoCH in the evaluator state (whether same-dir or opposite).
@@ -1483,7 +1509,13 @@ class TradeManager:
         
         # ----- REAL position path -----
         if real and self.is_enabled():
-            self._process_bos_real(symbol, direction, level, bar_t, real)
+            # Manual mode skips auto partial-closes; evaluator state above
+            # still updated so reverting manual mode works seamlessly.
+            if real.get('manual_mode'):
+                print(f"[TM] BOS {symbol} {direction} for real {symbol}: "
+                      f"partial-close skipped (manual mode)")
+            else:
+                self._process_bos_real(symbol, direction, level, bar_t, real)
         elif real and not self.is_enabled():
             print(f"[TM] BOS {symbol} {direction} for real position ignored: TM disabled")
         
@@ -1491,7 +1523,11 @@ class TradeManager:
         # Always runs when a shadow position exists. test_mode by design
         # operates while TM master toggle is off.
         if shadow:
-            self._process_bos_shadow(symbol, direction, level, bar_t)
+            if shadow.get('manual_mode'):
+                print(f"[TM] BOS {symbol} {direction} for shadow {symbol}: "
+                      f"partial-close skipped (manual mode)")
+            else:
+                self._process_bos_shadow(symbol, direction, level, bar_t)
         elif not real:
             # Neither real nor shadow — nothing to do. Don't log to avoid
             # noise from BOS events on watched symbols without trades.
@@ -2654,6 +2690,52 @@ class TradeManager:
         print(f"[TM] Manual SL/TP updated for {symbol} ({kind}): "
               f"SL={sl_disp} TP={tp_disp}")
         return {'ok': True, 'position': updated}
+    
+    def update_manual_mode(self, symbol: str, enabled: bool,
+                            is_shadow: bool = False) -> Dict:
+        """Toggle per-position MANUAL MODE.
+        
+        When manual_mode=True for a position:
+          - Automatic exits (SL, TP, time stop, HTF flip, Reverse SMC,
+            CHoCH/BOS triggers, trailing updates, BE updates) are
+            BYPASSED. The only things that can close the position are:
+              1. Manual SL / Manual TP per-position price levels
+              2. The user clicking "Close" in the UI (force close)
+          - New SMC signals on this symbol are IGNORED — no new open,
+            no reverse. The user has taken full control of this trade.
+        
+        When manual_mode=False (default), all automatic logic runs as
+        usual — current strategy behavior is unchanged. This is purely
+        an opt-in escape hatch for trades the user wants to manage by
+        hand without disabling TM globally.
+        
+        Works for both real and shadow positions — only `is_shadow`
+        selects which store.
+        """
+        store = self._shadow_positions if is_shadow else self._positions
+        kind = 'shadow' if is_shadow else 'real'
+        
+        with self._lock:
+            pos = store.get(symbol)
+            if not pos:
+                return {'ok': False,
+                        'reason': f'No open {kind} position for {symbol}'}
+            pos['manual_mode'] = bool(enabled)
+            updated = dict(pos)
+        
+        # Persist outside the lock
+        try:
+            if is_shadow:
+                self._persist_shadow_positions()
+            else:
+                self._persist_positions()
+        except Exception as e:
+            print(f"[TM] manual mode persist warn for {symbol}: {e}")
+        
+        state = 'ON' if enabled else 'OFF'
+        print(f"[TM] Manual mode {state} for {symbol} ({kind}): "
+              f"new signals/auto-exits {'ignored' if enabled else 'active'}")
+        return {'ok': True, 'position': updated, 'manual_mode': bool(enabled)}
     
     def delete_closed_trade(self, idx: int) -> Dict:
         """Permanently remove a closed real trade by index. Stats are

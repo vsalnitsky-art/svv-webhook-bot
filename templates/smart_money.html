@@ -598,6 +598,68 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     color: #fca5a5;
 }
 
+/* === Per-position Manual Mode === */
+/* Mini toggle for the per-row Manual Mode column. Same logic as the
+   master tm-toggle-switch but compact. */
+.tm-toggle-mini {
+    position: relative;
+    display: inline-block;
+    width: 32px;
+    height: 18px;
+    vertical-align: middle;
+}
+.tm-toggle-mini input { opacity: 0; width: 0; height: 0; }
+.tm-toggle-mini .slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 18px;
+    transition: 0.18s;
+}
+.tm-toggle-mini .slider:before {
+    content: "";
+    position: absolute;
+    height: 12px;
+    width: 12px;
+    left: 2px;
+    bottom: 2px;
+    background: #888;
+    border-radius: 50%;
+    transition: 0.18s;
+}
+.tm-toggle-mini input:checked + .slider {
+    background: rgba(251, 191, 36, 0.25);
+    border-color: rgba(251, 191, 36, 0.6);
+}
+.tm-toggle-mini input:checked + .slider:before {
+    transform: translateX(14px);
+    background: #fbbf24;
+}
+
+/* MANUAL badge inline next to symbol name in manual-mode rows */
+.tm-manual-badge {
+    display: inline-block;
+    background: rgba(251, 191, 36, 0.15);
+    border: 1px solid rgba(251, 191, 36, 0.45);
+    color: #fbbf24;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+/* Subtle row tint so manual-mode positions are easy to scan at a glance */
+.tm-table tr.tm-row-manual td {
+    background: rgba(251, 191, 36, 0.04);
+    border-top: 1px solid rgba(251, 191, 36, 0.18);
+    border-bottom: 1px solid rgba(251, 191, 36, 0.18);
+}
+
 /* Health Score badge — colored by verdict */
 .tm-health-badge {
     display: inline-block;
@@ -1453,10 +1515,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
+                        <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="10" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="11" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -1509,10 +1572,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
+                        <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th>Status</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="10" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="11" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -4657,20 +4721,23 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="11" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = p.pnl_pct >= 0 ? '+' : '';
                 const sideClass = p.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
-                return `<tr>
-                    <td><b>${p.symbol}</b></td>
+                const manualOn = !!p.manual_mode;
+                const rowClass = manualOn ? ' class="tm-row-manual"' : '';
+                return `<tr${rowClass}>
+                    <td><b>${p.symbol}</b>${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this position">MANUAL</span>' : ''}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
+                    ${manualModeCellHTML(p, false)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -4719,20 +4786,23 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="10" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="11" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
                 const pnlSign = p.pnl_pct >= 0 ? '+' : '';
                 const sideClass = p.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
-                return `<tr>
-                    <td><b>${p.symbol}</b></td>
+                const manualOn = !!p.manual_mode;
+                const rowClass = manualOn ? ' class="tm-row-manual"' : '';
+                return `<tr${rowClass}>
+                    <td><b>${p.symbol}</b>${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this paper position">MANUAL</span>' : ''}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%</td>
                     <td style="color:#888;font-size:0.72rem">${p.opened_by || '—'}</td>
                     ${manualSlTpCellsHTML(p, true)}
+                    ${manualModeCellHTML(p, true)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -4809,7 +4879,51 @@ function manualSlTpCellsHTML(p, isShadow) {
         </td>`;
 }
 
-// POST the new manual SL or TP to the server. Pass `null` for the
+// Render a single <td> with the Manual Mode toggle for a position row.
+// When ON, automatic exits and new signals are bypassed for this position.
+// Backend stores manual_mode on the position dict (defaults to false).
+function manualModeCellHTML(p, isShadow) {
+    const sym = p.symbol;
+    const shFlag = isShadow ? 'true' : 'false';
+    const checked = p.manual_mode ? 'checked' : '';
+    // Inline toggle styled like the master TM toggle but smaller. Click
+    // forwards to submitManualMode which POSTs and refreshes the table.
+    return `
+        <td style="text-align:center">
+            <label class="tm-toggle-mini" title="${p.manual_mode ? 'Manual mode ON — turn off to resume automatic logic' : 'Toggle ON to take manual control of this position'}">
+                <input type="checkbox" ${checked}
+                       onchange="submitManualMode('${sym}', this.checked, ${shFlag})">
+                <span class="slider"></span>
+            </label>
+        </td>`;
+}
+
+// POST manual mode toggle. enabled = bool. Refreshes the table after.
+async function submitManualMode(symbol, enabled, isShadow) {
+    try {
+        const res = await fetch('/api/tm/positions/manual-mode', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                symbol, enabled: !!enabled, is_shadow: !!isShadow,
+            }),
+        });
+        const d = await res.json();
+        if (!d.ok) {
+            console.warn('Manual mode toggle failed:', d.reason || 'unknown');
+            // Reload to revert the visual state if the server rejected
+            setTimeout(loadTMState, 200);
+            return;
+        }
+        // Refresh so the MANUAL badge + row highlight appear/disappear
+        setTimeout(loadTMState, 150);
+    } catch (err) {
+        console.error('Manual mode error:', err);
+        setTimeout(loadTMState, 200);
+    }
+}
+
+
 // field you don't want to change. Pass empty string or 0 to clear.
 async function submitManualSlTp(symbol, manualSl, manualTp, isShadow) {
     // Build payload — only include fields we mean to change. The server
