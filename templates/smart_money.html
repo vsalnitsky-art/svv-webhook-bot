@@ -3263,6 +3263,64 @@ let lastOhlcLength = 0;
 let lastEventsKey = '';
 let userInteractedWithChart = false;
 
+// Compute and apply a focused visible range on the chart timescale so the
+// user opens onto where the action is happening instead of a fully-fit
+// 500-bar overview. Called once per symbol change inside loadChart.
+//
+// Heuristic:
+//   1. Collect timestamps of all events (CHoCH/BOS lines), pivots, and
+//      live signal markers — these are the "action" timestamps the user
+//      cares about.
+//   2. Left edge = min(those timestamps) − 10 bars of padding for context
+//   3. Right edge = last kline time + 5 bars of padding (room on the right)
+//   4. If no events/signals/pivots exist on this symbol → fall back to the
+//      last 100 bars (still focused, just no event anchor).
+//   5. Clamp left edge to first available kline (can't show before data).
+function focusChartOnEvents(ohlc, events, pivots, signals) {
+    if (!ohlc || ohlc.length === 0) return;
+    const lastBar = ohlc[ohlc.length - 1];
+    const firstBar = ohlc[0];
+    // Bar duration in seconds. Lightweight Charts uses unix seconds for time.
+    const barSecs = (ohlc.length >= 2)
+        ? Math.max(60, ohlc[1].time - ohlc[0].time)
+        : 900;  // 15m fallback — matches default chart timeframe
+
+    // Gather all action timestamps. Events have from_time/to_time; we
+    // prefer from_time as the "first appearance" of the structure level.
+    const actionTimes = [];
+    for (const e of (events || [])) {
+        if (typeof e.from_time === 'number') actionTimes.push(e.from_time);
+    }
+    for (const p of (pivots || [])) {
+        if (typeof p.time === 'number') actionTimes.push(p.time);
+    }
+    for (const s of (signals || [])) {
+        if (typeof s.time === 'number') actionTimes.push(s.time);
+    }
+
+    let fromTs;
+    if (actionTimes.length > 0) {
+        const earliest = Math.min(...actionTimes);
+        fromTs = earliest - 10 * barSecs;   // 10-bar context before first event
+    } else {
+        // No events on this symbol — show last 100 bars (still focused)
+        const fallbackBars = Math.min(100, ohlc.length);
+        fromTs = ohlc[ohlc.length - fallbackBars].time;
+    }
+    // Don't try to show before the chart data starts
+    if (fromTs < firstBar.time) fromTs = firstBar.time;
+    // Right padding so the latest candles aren't glued to the right edge
+    const toTs = lastBar.time + 5 * barSecs;
+
+    try {
+        chart.timeScale().setVisibleRange({ from: fromTs, to: toTs });
+    } catch (err) {
+        // Range invalid (e.g. fromTs >= toTs after clamping) — graceful
+        // fallback to fitContent so user still sees the chart
+        try { chart.timeScale().fitContent(); } catch (_) {}
+    }
+}
+
 async function loadChart() {
     if (!currentSymbol) return;
     
@@ -4010,9 +4068,15 @@ async function loadChart() {
         const clearBtn = document.getElementById('sm-clear-signals-btn');
         clearBtn.style.display = sigCount > 0 ? 'inline-block' : 'none';
         
-        // === ONLY fit content on symbol change — preserve user zoom otherwise ===
+        // === Focus the chart on the action range, not the whole history ===
+        // Old behavior was fitContent() which zoomed to ALL ~500 bars, making
+        // recent events tiny and forcing the user to scroll/zoom manually.
+        // New behavior: on symbol change, set visible range so:
+        //   - Left edge ≈ 10 bars before the EARLIEST event/signal/pivot
+        //   - Right edge ≈ 5 bars after the latest candle (small padding)
+        //   - Fallback (no events at all) → last 100 bars
         if (isSymbolChange) {
-            chart.timeScale().fitContent();
+            focusChartOnEvents(ohlc, internalEvents, internalPivots, signalMarkers);
         }
         
         // === Render the unified Decision Center block ===
