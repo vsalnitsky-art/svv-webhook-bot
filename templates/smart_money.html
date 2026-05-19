@@ -1228,6 +1228,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
             </div>
             
+            <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:8px 10px;margin-bottom:10px">
+                <label style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span>🔄 Bybit sync interval:</span>
+                    <input type="number" id="tm-reconcile-interval"
+                           min="5" max="300" step="1"
+                           style="width:70px"
+                           oninput="updateReconcileInfo(this.value)"
+                           onchange="saveTMSettings()">
+                    <span style="color:#888;font-size:0.78rem">seconds</span>
+                    <span class="tm-help" title="Як часто бот синхронізується з Bybit для:&#10;• Прийняття у керування ручно-відкритих позицій (adopt)&#10;• Виявлення ручних закриттів / Bybit-SL/TP / ліквідацій&#10;&#10;Рекомендовано: 10-15s — швидка реакція, низьке навантаження на API.&#10;Min 5s, max 300s. Округлюється до tick 10s.&#10;Bybit ліміт: 5-10 req/sec, ми використовуємо ~0.1 req/sec.">?</span>
+                    <span id="tm-reconcile-info" style="color:#888;font-size:0.74rem;font-style:italic"></span>
+                </label>
+            </div>
+            
             <details>
                 <summary class="sm-settings-summary" style="padding:6px 0">
                     <span>⚙️ Strategy Settings</span>
@@ -4184,6 +4198,11 @@ async function loadTMSettings() {
         document.getElementById('tm-telegram-alerts').checked = (s.telegram_alerts !== false);
         document.getElementById('tm-test-telegram-alerts').checked = (s.test_telegram_alerts !== false);
         
+        // Bybit reconcile interval (sec). Default 10 if not in saved settings.
+        const ri = (typeof s.reconcile_interval_secs === 'number') ? s.reconcile_interval_secs : 10;
+        document.getElementById('tm-reconcile-interval').value = ri;
+        updateReconcileInfo(ri);
+        
         // Test mode (paper trading)
         document.getElementById('tm-test-mode').checked = !!s.test_mode;
         updateTestModeHeader(!!s.test_mode);
@@ -4282,6 +4301,30 @@ function updateTestModeHeader(enabled) {
         label.textContent = 'Disabled';
         label.style.color = '#888';
     }
+}
+
+// Show the effective reconcile interval (rounded up to a 10s monitor-tick
+// multiple) plus an API-load hint. Updates on input change.
+// Monitor tick is fixed at 10s server-side; user-requested 7s becomes 10s,
+// 23s → 20s, 30s → 30s. We mirror the same math here so the user sees what
+// the server will actually do.
+function updateReconcileInfo(val) {
+    const info = document.getElementById('tm-reconcile-info');
+    if (!info) return;
+    let v = parseInt(val, 10);
+    if (!Number.isFinite(v) || v < 5) v = 5;
+    if (v > 300) v = 300;
+    // Round to nearest 10 (>=10)
+    const effective = Math.max(10, Math.round(v / 10) * 10);
+    // Approx API load: 1 req per `effective` seconds
+    const reqPerHour = Math.round(3600 / effective);
+    let label;
+    if (effective <= 10) label = '⚡ Найшвидше';
+    else if (effective <= 15) label = '✓ Sweet spot';
+    else if (effective <= 30) label = '🟢 Безпечно';
+    else if (effective <= 60) label = '🟡 Запізно для ручного';
+    else label = '🟠 Дуже повільно';
+    info.textContent = `Effective: ${effective}s · ~${reqPerHour} req/h · ${label}`;
 }
 
 async function onTestModeToggle() {
@@ -4396,6 +4439,7 @@ async function saveTMSettings() {
             test_mode: document.getElementById('tm-test-mode').checked,
             telegram_alerts: document.getElementById('tm-telegram-alerts').checked,
             test_telegram_alerts: document.getElementById('tm-test-telegram-alerts').checked,
+            reconcile_interval_secs: parseInt(document.getElementById('tm-reconcile-interval').value, 10) || 10,
             use_bos_partials: document.getElementById('tm-use-bos-partials').checked,
             bos_2_close_pct: parseFloat(document.getElementById('tm-bos2-pct').value) || 0,
             bos_3_close_pct: parseFloat(document.getElementById('tm-bos3-pct').value) || 0,

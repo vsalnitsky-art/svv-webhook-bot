@@ -44,10 +44,9 @@ MONITOR_INTERVAL_SECS = 10
 CLOSED_TRADES_LIMIT = 100   # keep this many recent closed trades
 INITIAL_DELAY_SECS = 20      # wait at startup before first tick
 
-# Run Bybit position reconciliation every N monitor ticks. With a 10s tick
-# this puts the reconcile loop at ~30s — fast enough to catch manual opens
-# / closes the user does on Bybit, light enough on the API quota.
-RECONCILE_EVERY_N_TICKS = 3
+# Reconcile interval is now user-tunable via DEFAULT_SETTINGS["reconcile_interval_secs"].
+# At each monitor tick we read the setting and compute N_TICKS dynamically,
+# so users can change it without restart. Min 5s (rounded to 10s), Max 300s.
 
 DEFAULT_SETTINGS = {
     # Master toggle — DEFAULT OFF for safety
@@ -138,6 +137,16 @@ DEFAULT_SETTINGS = {
     # the EXTRA alerts from Trade Manager about position lifecycle.
     'telegram_alerts': True,        # real position open/close/partial
     'test_telegram_alerts': True,   # paper [TEST] open/close
+    
+    # === Bybit Position Reconciliation Interval ===
+    # How often (in seconds) to sync TM's view with actual Bybit positions:
+    #   - Adopt positions opened manually on Bybit / leftover from prior runs
+    #   - Detect external closes (manual close, Bybit-side SL/TP, liquidation)
+    # Rounded internally to the nearest multiple of monitor tick (10s).
+    # Recommended: 10-15s. Min 5s (rounded up to 10s), Max 300s.
+    # Bybit rate limit on get_positions is 5-10 req/s on UID; at 10s interval
+    # we use ~0.1 req/s, very safe.
+    'reconcile_interval_secs': 10,
     
     # === BOS-N partial closes (after CHoCH+BOS opening) ===
     # The opening trade counts the entry-BOS as #1.
@@ -419,6 +428,17 @@ class TradeManager:
             # convention used by the LuxAlgo PRO Engine SL output.
             self._settings['sl_vob_buffer_pct'] = max(0.0, min(5.0,
                 float(self._settings.get('sl_vob_buffer_pct', 0.2))))
+            
+            # Reconcile interval — user-tunable Bybit sync cadence. Allowed
+            # range [5, 300] seconds. Below 5 = wastes API quota for no benefit
+            # (monitor tick is 10s anyway). Above 300 = reaction to manual
+            # trades feels laggy. Default 10s = same as monitor tick = perfect
+            # responsiveness with ~0.1 req/s API load. Coerced to int.
+            try:
+                ri = int(float(self._settings.get('reconcile_interval_secs', 10)))
+            except (TypeError, ValueError):
+                ri = 10
+            self._settings['reconcile_interval_secs'] = max(5, min(300, ri))
             # be_commission_buffer_pct — clamp to a sane band. 0 means no
             # buffer (legacy: SL exactly at entry). 1% is the upper bound;
             # anything bigger isn't "fee compensation" anymore, it's a
@@ -560,8 +580,20 @@ class TradeManager:
         # Periodic reconciliation with Bybit so TM picks up positions opened
         # outside it (manual trades, leftover positions, etc.) and detects
         # external closes (manual close, Bybit-side SL/TP fill, liquidation).
-        # Every RECONCILE_EVERY_N_TICKS ticks ≈ 30 seconds with 10s tick.
-        if self._tick_count % RECONCILE_EVERY_N_TICKS == 0:
+        # Interval is user-tunable via settings. Effective N_TICKS is at
+        # least 1 (one tick = 10s minimum due to monitor cadence).
+        import math
+        interval = self._settings.get('reconcile_interval_secs', 10)
+        try:
+            interval = float(interval)
+            if not math.isfinite(interval):
+                interval = 10
+        except (TypeError, ValueError):
+            interval = 10
+        # Clamp to allowed range [5, 300] then round to nearest tick multiple
+        interval = max(5, min(300, interval))
+        n_ticks = max(1, round(interval / MONITOR_INTERVAL_SECS))
+        if self._tick_count % n_ticks == 0:
             try:
                 self._reconcile_with_bybit()
             except Exception as e:

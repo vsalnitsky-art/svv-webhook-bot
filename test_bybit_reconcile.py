@@ -305,6 +305,109 @@ def test_adopted_position_supports_manual_sl_tp():
     print('✓ Adopted position supports manual SL/TP')
 
 
+# ============================================================================
+# Configurable reconcile interval
+# ============================================================================
+
+def test_default_reconcile_interval_is_10s():
+    """Sane default. Matches monitor tick = adopts/closes within 10s."""
+    tm, _ = _make_tm([])
+    assert tm._settings.get('reconcile_interval_secs') == 10
+    print('✓ Default reconcile interval is 10s')
+
+
+def test_reconcile_interval_can_be_updated():
+    tm, _ = _make_tm([])
+    tm.update_settings({'reconcile_interval_secs': 25})
+    assert tm._settings['reconcile_interval_secs'] == 25
+    print('✓ Reconcile interval setting updateable')
+
+
+def test_reconcile_interval_clamped_below_5():
+    """Below 5s = rejected (wasted API calls, monitor tick is 10s anyway)."""
+    tm, _ = _make_tm([])
+    tm.update_settings({'reconcile_interval_secs': 1})
+    assert tm._settings['reconcile_interval_secs'] == 5
+    tm.update_settings({'reconcile_interval_secs': 0})
+    assert tm._settings['reconcile_interval_secs'] == 5
+    tm.update_settings({'reconcile_interval_secs': -100})
+    assert tm._settings['reconcile_interval_secs'] == 5
+    print('✓ Below-5 reconcile interval clamped to 5')
+
+
+def test_reconcile_interval_clamped_above_300():
+    """Above 5 min = clamped. User shouldn't disable reconcile entirely."""
+    tm, _ = _make_tm([])
+    tm.update_settings({'reconcile_interval_secs': 600})
+    assert tm._settings['reconcile_interval_secs'] == 300
+    tm.update_settings({'reconcile_interval_secs': 99999})
+    assert tm._settings['reconcile_interval_secs'] == 300
+    print('✓ Above-300 reconcile interval clamped to 300')
+
+
+def test_reconcile_interval_invalid_input_defaults():
+    """Garbage input → falls back to default 10s, doesn't crash."""
+    tm, _ = _make_tm([])
+    tm.update_settings({'reconcile_interval_secs': 'abc'})
+    assert tm._settings['reconcile_interval_secs'] == 10
+    tm.update_settings({'reconcile_interval_secs': None})
+    assert tm._settings['reconcile_interval_secs'] == 10
+    print('✓ Invalid reconcile input falls back to default 10s')
+
+
+def test_reconcile_interval_string_coerced():
+    """Form inputs send strings — must be coerced."""
+    tm, _ = _make_tm([])
+    tm.update_settings({'reconcile_interval_secs': '20'})
+    assert tm._settings['reconcile_interval_secs'] == 20
+    tm.update_settings({'reconcile_interval_secs': '15.5'})
+    assert tm._settings['reconcile_interval_secs'] == 15  # int coercion truncates
+    print('✓ String reconcile interval coerced to int')
+
+
+def test_tick_uses_setting_for_reconcile_cadence():
+    """Verify tick logic actually reads reconcile_interval_secs setting and
+    computes the right n_ticks. Mock _reconcile_with_bybit to count calls."""
+    tm, _ = _make_tm([])
+    # Set interval to 30s → with 10s tick → reconcile every 3 ticks
+    tm.update_settings({'reconcile_interval_secs': 30})
+    reconcile_calls = []
+    tm._reconcile_with_bybit = lambda: reconcile_calls.append(tm._tick_count)
+    # Simulate 10 ticks
+    for _ in range(10):
+        tm._tick()
+    # Should reconcile on ticks 3, 6, 9 (every 3rd)
+    assert reconcile_calls == [3, 6, 9], f"got {reconcile_calls}"
+    print('✓ Tick reconciles every N_TICKS based on setting (30s → every 3 ticks)')
+
+
+def test_tick_uses_setting_10s_means_every_tick():
+    """Lowest practical setting — reconcile on every monitor tick."""
+    tm, _ = _make_tm([])
+    tm.update_settings({'reconcile_interval_secs': 10})
+    reconcile_calls = []
+    tm._reconcile_with_bybit = lambda: reconcile_calls.append(tm._tick_count)
+    for _ in range(5):
+        tm._tick()
+    # Every tick — 5 calls
+    assert len(reconcile_calls) == 5
+    print('✓ 10s reconcile interval → fires on every tick')
+
+
+def test_tick_handles_garbage_setting_at_runtime():
+    """If somehow setting becomes invalid at runtime, fall back to default
+    (10s = every tick) rather than crashing the monitor loop."""
+    tm, _ = _make_tm([])
+    tm._settings['reconcile_interval_secs'] = 'NaN'  # bypassed validation
+    reconcile_calls = []
+    tm._reconcile_with_bybit = lambda: reconcile_calls.append(tm._tick_count)
+    for _ in range(3):
+        tm._tick()
+    # Falls back to 10s = every tick
+    assert len(reconcile_calls) == 3
+    print('✓ Garbage runtime setting falls back to default tick interval')
+
+
 if __name__ == '__main__':
     test_adopt_long_position_with_no_sl_tp()
     test_adopt_short_position_with_sl_tp()
@@ -320,5 +423,14 @@ if __name__ == '__main__':
     test_adopted_position_appears_in_get_state()
     test_adopted_position_supports_manual_mode()
     test_adopted_position_supports_manual_sl_tp()
+    test_default_reconcile_interval_is_10s()
+    test_reconcile_interval_can_be_updated()
+    test_reconcile_interval_clamped_below_5()
+    test_reconcile_interval_clamped_above_300()
+    test_reconcile_interval_invalid_input_defaults()
+    test_reconcile_interval_string_coerced()
+    test_tick_uses_setting_for_reconcile_cadence()
+    test_tick_uses_setting_10s_means_every_tick()
+    test_tick_handles_garbage_setting_at_runtime()
     print()
     print('All Bybit Reconciliation tests passed ✓')
