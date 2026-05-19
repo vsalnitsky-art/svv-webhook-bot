@@ -2998,6 +2998,75 @@ class TradeManager:
               f"new signals/auto-exits {'ignored' if enabled else 'active'}")
         return {'ok': True, 'position': updated, 'manual_mode': bool(enabled)}
     
+    def manual_open(self, symbol: str, side: str) -> Dict:
+        """User-initiated position open from the Decision Center panel.
+        
+        Uses Position Sizing settings from TM (sizing_mode, fixed_usd_amount,
+        leverage, use_sl, use_tp, sl_pct, tp_pct etc.) — exactly the same
+        path as auto-opened positions, but triggered by an explicit user
+        click rather than an SMC signal.
+        
+        Validations before placing the order:
+          - TM must be enabled (master toggle ON)
+          - Symbol must not already have an open position (real or shadow)
+            in TM — would cause confusing state
+          - side ∈ {'LONG', 'SHORT'}
+          - Bybit must be configured (API key)
+          - Current price must be available (market_data lookup)
+        
+        Returns:
+          { ok: bool, reason?: str, position?: {...} }
+        """
+        symbol = (symbol or '').upper().strip()
+        if not symbol:
+            return {'ok': False, 'reason': 'symbol required'}
+        side = (side or '').upper().strip()
+        if side not in ('LONG', 'SHORT'):
+            return {'ok': False, 'reason': f"side must be LONG or SHORT, got {side!r}"}
+        
+        if not self.is_enabled():
+            return {'ok': False, 'reason': 'Trade Manager is disabled — '
+                                            'enable it in Settings first'}
+        if not self.bybit or not getattr(self.bybit, 'api_key', None):
+            return {'ok': False, 'reason': 'Bybit not configured (no API key)'}
+        
+        with self._lock:
+            if symbol in self._positions:
+                return {'ok': False, 'reason':
+                        f'Already have an open position for {symbol}. '
+                        f'Close it first or use Manual SL/TP to manage.'}
+            if symbol in self._shadow_positions:
+                return {'ok': False, 'reason':
+                        f'Symbol {symbol} has a paper (shadow) position. '
+                        f'Close it first to avoid mixed real/paper state.'}
+        
+        # Fetch fresh price from market_data — more accurate than a stale
+        # Decision Center value
+        entry_price = self._get_current_price(symbol)
+        if not entry_price or entry_price <= 0:
+            return {'ok': False, 'reason':
+                    f'Could not fetch current price for {symbol}'}
+        
+        # Reuse the existing auto-open code path. opened_by='manual_ui'
+        # distinguishes these from CHoCH-driven opens for analytics.
+        # _open_position handles sizing, SL/TP, leverage, place_order,
+        # entry_score computation, position dict, persistence, notify.
+        try:
+            self._open_position(symbol, side, entry_price, opened_by='manual_ui')
+        except Exception as e:
+            return {'ok': False, 'reason': f'Open error: {e}'}
+        
+        # Confirm position landed (place_order may have silently failed; the
+        # _open_position helper returns nothing on failure and notifies).
+        with self._lock:
+            pos = self._positions.get(symbol)
+        if not pos:
+            return {'ok': False, 'reason':
+                    'Order placement failed — check Telegram/logs for details'}
+        
+        return {'ok': True, 'position': dict(pos),
+                'entry_price': entry_price}
+    
     def delete_closed_trade(self, idx: int) -> Dict:
         """Permanently remove a closed real trade by index. Stats are
         recomputed on the fly inside get_state(), so removing the entry from

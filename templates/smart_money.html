@@ -325,6 +325,56 @@
 .sm-dbl-long  { color: #86efac; font-weight: 600; }
 .sm-dbl-short { color: #fca5a5; font-weight: 600; }
 
+/* Manual entry buttons in the Decision Center panel. Colored by side,
+   same convention as the LONG/SHORT probability bar above. */
+.sm-decision-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+}
+.sm-decision-btn {
+    padding: 6px 16px;
+    border-radius: 4px;
+    border: 1px solid;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    letter-spacing: 0.3px;
+}
+.sm-decision-btn-long {
+    background: rgba(34, 197, 94, 0.12);
+    border-color: rgba(34, 197, 94, 0.45);
+    color: #86efac;
+}
+.sm-decision-btn-long:hover:not(:disabled) {
+    background: rgba(34, 197, 94, 0.22);
+    border-color: rgba(34, 197, 94, 0.70);
+    color: #bbf7d0;
+}
+.sm-decision-btn-short {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.45);
+    color: #fca5a5;
+}
+.sm-decision-btn-short:hover:not(:disabled) {
+    background: rgba(239, 68, 68, 0.22);
+    border-color: rgba(239, 68, 68, 0.70);
+    color: #fecaca;
+}
+.sm-decision-btn:disabled {
+    opacity: 0.40;
+    cursor: not-allowed;
+}
+.sm-decision-btn:active:not(:disabled) {
+    transform: scale(0.97);
+}
+.sm-decision-actions-hint {
+    margin-left: 4px;
+    font-style: italic;
+}
+
 .sm-decision-position {
     margin-top: 4px;
     padding: 6px 10px;
@@ -1168,6 +1218,29 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <span class="sm-dbl-long" id="sm-dbl-long">LONG —</span>
                         <span class="sm-dbl-short" id="sm-dbl-short">SHORT —</span>
                     </div>
+                    
+                    <!-- Manual entry buttons — open a REAL Bybit position
+                         using the parameters from Trade Manager → Position
+                         Sizing. Both buttons disabled until TM is enabled
+                         and the symbol has no existing position. -->
+                    <div class="sm-decision-actions" id="sm-decision-actions">
+                        <button class="sm-decision-btn sm-decision-btn-long"
+                                id="sm-decision-btn-long"
+                                onclick="openManualPosition('LONG')"
+                                title="Open LONG using TM Position Sizing">
+                            ⬆ LONG
+                        </button>
+                        <button class="sm-decision-btn sm-decision-btn-short"
+                                id="sm-decision-btn-short"
+                                onclick="openManualPosition('SHORT')"
+                                title="Open SHORT using TM Position Sizing">
+                            ⬇ SHORT
+                        </button>
+                        <span class="sm-decision-actions-hint"
+                              id="sm-decision-actions-hint"
+                              style="color:#888;font-size:0.7rem"></span>
+                    </div>
+                    
                     <!-- Position info (shown only when a position exists) -->
                     <div class="sm-decision-position" id="sm-decision-position" style="display:none"></div>
                 </div>
@@ -4031,6 +4104,13 @@ function renderDecision(decision) {
         posDiv.style.display = 'none';
     }
     
+    // Update manual entry button state based on TM status + position presence.
+    // Computed from the current decision payload + cached TM state from
+    // last loadTMState. Buttons disabled in these cases:
+    //   - TM not enabled (master toggle)
+    //   - This symbol already has an open position (real or paper)
+    updateManualEntryButtons(decision);
+    
     // Cache for the expandable details panel — populated only when toggled
     // open, so we don't render 18 component rows on every chart refresh.
     window._lastDecision = decision;
@@ -4039,8 +4119,128 @@ function renderDecision(decision) {
     }
 }
 
-function toggleDecisionDetails() {
-    const details = document.getElementById('sm-decision-details');
+// Decide whether LONG/SHORT manual-entry buttons should be enabled
+// based on TM master state + whether this symbol already has an open
+// position. Tooltip + hint text explain why disabled.
+//
+// Sources used:
+//   - window._tmEnabled    set by loadTMState() — master toggle
+//   - decision.position    embedded in the decision payload
+//
+// Buttons render disabled-but-visible (never hidden), so the user always
+// sees the affordance and the explanation of why they can't click.
+function updateManualEntryButtons(decision) {
+    const longBtn = document.getElementById('sm-decision-btn-long');
+    const shortBtn = document.getElementById('sm-decision-btn-short');
+    const hint = document.getElementById('sm-decision-actions-hint');
+    if (!longBtn || !shortBtn) return;
+
+    const tmEnabled = !!window._tmEnabled;
+    const hasPosition = !!(decision && decision.position);
+
+    let disabled = false;
+    let hintText = '';
+    if (!tmEnabled) {
+        disabled = true;
+        hintText = '⚠️ Trade Manager disabled — turn it ON in TM Settings first';
+    } else if (hasPosition) {
+        disabled = true;
+        hintText = `Position already open (${decision.position.side}) — close first`;
+    } else {
+        hintText = 'Uses TM Position Sizing (USD/leverage/SL/TP)';
+    }
+
+    longBtn.disabled = disabled;
+    shortBtn.disabled = disabled;
+    if (hint) hint.textContent = hintText;
+}
+
+// Manual position open from the Decision Center panel. Posts to TM API
+// with the current symbol + chosen side; backend pulls sizing/SL/TP from
+// TM settings and places a real Bybit order.
+//
+// Real money. We confirm with the user, surface errors, and refresh state
+// on success so the new position appears in the TM table.
+async function openManualPosition(side) {
+    if (!['LONG', 'SHORT'].includes(side)) return;
+    const symbol = (typeof currentSymbol !== 'undefined' && currentSymbol)
+                   || document.getElementById('sm-symbol-input')?.value;
+    if (!symbol) {
+        alert('No symbol selected');
+        return;
+    }
+    // Confirmation — real money trade
+    const sizingMode = window._tmSettings?.sizing_mode || 'fixed_usd';
+    let sizingHint = '';
+    if (sizingMode === 'fixed_usd') {
+        const usd = window._tmSettings?.fixed_usd_amount || 100;
+        sizingHint = `\nSize: $${usd} (fixed USD)`;
+    } else if (sizingMode === 'fixed_pct') {
+        const pct = window._tmSettings?.fixed_pct_balance || 1;
+        sizingHint = `\nSize: ${pct}% of balance`;
+    } else if (sizingMode === 'risk_based') {
+        const pct = window._tmSettings?.risk_pct_balance || 1;
+        sizingHint = `\nRisk: ${pct}% of balance`;
+    }
+    const lev = window._tmSettings?.leverage || 10;
+    const useSl = window._tmSettings?.use_sl;
+    const useTp = window._tmSettings?.use_tp;
+    const slLine = useSl ? `\nSL: ${(window._tmSettings?.sl_pct ?? 2).toFixed(2)}%` : '\nSL: none';
+    const tpLine = useTp ? `\nTP: ${(window._tmSettings?.tp_pct ?? 4).toFixed(2)}%` : '\nTP: none';
+    
+    if (!confirm(
+        `Open ${side} on ${symbol}?\n\n` +
+        `This places a REAL order on Bybit.${sizingHint}\n` +
+        `Leverage: ${lev}x${slLine}${tpLine}`
+    )) {
+        return;
+    }
+
+    // Disable buttons during request to avoid double-click
+    const longBtn = document.getElementById('sm-decision-btn-long');
+    const shortBtn = document.getElementById('sm-decision-btn-short');
+    const hint = document.getElementById('sm-decision-actions-hint');
+    const btn = side === 'LONG' ? longBtn : shortBtn;
+    if (longBtn) longBtn.disabled = true;
+    if (shortBtn) shortBtn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = '⏳ Opening...';
+    if (hint) hint.textContent = `Placing ${side} order on Bybit...`;
+
+    try {
+        const r = await fetch('/api/tm/positions/open', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol, side}),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+            alert(`Failed to open ${side} ${symbol}:\n\n${d.reason || 'Unknown error'}`);
+            btn.textContent = originalText;
+            // Restore button state from current decision
+            if (window._lastDecision) updateManualEntryButtons(window._lastDecision);
+            return;
+        }
+        // Success — refresh TM state so the new position appears, and
+        // refresh decision panel so its position-block shows
+        btn.textContent = '✓ Opened';
+        if (hint) {
+            hint.textContent = `${side} opened @ ${d.entry_price?.toFixed(2) ?? '?'}`;
+        }
+        if (typeof loadTMState === 'function') {
+            setTimeout(loadTMState, 300);
+        }
+        // The next decision refresh cycle (driven by the main page tick)
+        // will update the position block automatically — no explicit
+        // refresh needed.
+    } catch (err) {
+        alert(`Network error: ${err.message}`);
+        btn.textContent = originalText;
+        if (window._lastDecision) updateManualEntryButtons(window._lastDecision);
+    }
+}
+
+function toggleDecisionDetails() {    const details = document.getElementById('sm-decision-details');
     const text = document.getElementById('sm-decision-toggle-text');
     if (details.style.display === 'grid') {
         details.style.display = 'none';
@@ -4767,6 +4967,17 @@ async function loadTMState() {
         const res = await fetch('/api/tm/state');
         const d = await res.json();
         if (!d || d.ok === false) return;
+        
+        // Cache TM enabled status + settings on window so the Decision
+        // Center manual-entry buttons can read them without making their
+        // own fetch. Refreshed every time the TM state is loaded.
+        window._tmEnabled = !!(d.settings && d.settings.enabled);
+        window._tmSettings = d.settings || {};
+        // Re-evaluate manual entry buttons if a decision is already loaded
+        // (TM state changed → button enable/disable state may need update)
+        if (window._lastDecision && typeof updateManualEntryButtons === 'function') {
+            updateManualEntryButtons(window._lastDecision);
+        }
         
         // Stats
         const st = d.stats || {};

@@ -3081,6 +3081,31 @@ def register_api_routes(app):
         new_settings = request.get_json() or {}
         return jsonify({'ok': True, 'settings': tm.update_settings(new_settings)})
     
+    @app.route('/api/tm/positions/open', methods=['POST'])
+    def api_tm_open_position():
+        """User-initiated manual position open from the Decision Center
+        panel. Uses Position Sizing + SL/TP settings from TM exactly the
+        same way an auto-opened (signal-driven) position would.
+        
+        Body: { symbol: 'BTCUSDT', side: 'LONG' | 'SHORT' }
+        Returns: { ok: bool, reason?: str, position?: {...}, entry_price?: float }
+        
+        Failure cases (returned as ok=False with reason):
+          - TM not enabled
+          - Bybit not configured (no API key)
+          - Position already exists for this symbol (real or shadow)
+          - Bad inputs / order placement failed
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'TM not initialized'})
+        data = request.get_json() or {}
+        return jsonify(tm.manual_open(
+            symbol=data.get('symbol', ''),
+            side=data.get('side', ''),
+        ))
+    
     @app.route('/api/tm/positions/close', methods=['POST'])
     def api_tm_position_close():
         """Manually close an open position. Body: {symbol: 'BTCUSDT'}"""
