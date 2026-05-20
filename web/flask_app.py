@@ -2390,13 +2390,13 @@ def register_api_routes(app):
         body = request.get_json(silent=True) or {}
         symbol = (body.get('symbol') or '').strip().upper()
         try:
-            if symbol:
-                s._last_signal_dir.pop(symbol, None)
-                msg = f"Dedup reset for {symbol}"
-            else:
-                s._last_signal_dir.clear()
-                msg = "Dedup reset for all symbols"
-            return jsonify({'ok': True, 'message': msg})
+            # Use the scanner's reset_dedup which PERSISTS the change so it
+            # survives restarts and settings reloads (previously this only
+            # mutated in-memory state and reverted on the next _load_all_signals).
+            res = s.reset_dedup(symbol if symbol else None)
+            msg = (f"Dedup reset for {symbol}" if symbol
+                   else "Dedup reset for all symbols")
+            return jsonify({'ok': True, 'message': msg, 'result': res})
         except Exception as e:
             return jsonify({'ok': False, 'error': str(e)}), 500
     

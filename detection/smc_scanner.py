@@ -61,6 +61,7 @@ DB_KEY_TRADEABLE = 'smc_tradeable'   # subset of watchlist that's tradeable
 DB_KEY_SETTINGS = 'smc_settings'
 DB_KEY_STATE = 'smc_last_events'   # tracks last seen event per symbol
 DB_KEY_SIGNALS_PREFIX = 'smc_signals_'   # per-symbol: smc_signals_BTCUSDT, etc.
+DB_KEY_DEDUP_STATE = 'smc_dedup_state_v1'  # authoritative per-symbol dedup gate state
 SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
 DEFAULT_SETTINGS = {
@@ -324,6 +325,12 @@ class SMCScanner:
         self._tradeable = self._load_tradeable()
         # Load signals only for symbols currently in watchlist
         self._load_all_signals()
+        # Restore authoritative dedup gate state. On first run (no blob
+        # yet) seed it from markers so legacy installs behave sensibly,
+        # then persist so it becomes the source of truth going forward.
+        if not self._load_dedup_state():
+            self._seed_dedup_from_markers()
+            self._persist_dedup_state()
     
     # ========================================
     # Persistence
@@ -387,7 +394,14 @@ class SMCScanner:
                 print(f"[SMC] Tradeable persist error: {e}")
     
     def _load_all_signals(self):
-        """Load persisted signal markers for every watchlist symbol."""
+        """Load persisted signal markers for every watchlist symbol.
+        
+        NOTE: This NO LONGER seeds _last_signal_dir (the dedup gate state).
+        Dedup state is now persisted independently (DB_KEY_DEDUP_STATE) and
+        is authoritative — so a manual reset survives restarts and settings
+        reloads instead of being clobbered by re-seeding from old markers.
+        See _load_dedup_state / _seed_dedup_from_markers / _persist_dedup_state.
+        """
         if not self.db:
             return
         loaded = 0
@@ -408,18 +422,60 @@ class SMCScanner:
                     if cleaned:
                         self._signal_markers[symbol] = cleaned
                         loaded += len(cleaned)
-                        # Seed last_signal_dir from the most recent marker
-                        # so dedup state survives restarts
-                        try:
-                            last = max(cleaned, key=lambda m: m['time'])
-                            self._last_signal_dir[symbol] = last['side']
-                        except:
-                            pass
             except Exception as e:
                 print(f"[SMC] Signal load error for {symbol}: {e}")
         if loaded:
             print(f"[SMC] Loaded {loaded} persisted signal markers across "
                   f"{len(self._signal_markers)} symbols")
+    
+    def _seed_dedup_from_markers(self):
+        """Seed _last_signal_dir from the most recent signal marker per
+        symbol. Only used on FIRST run (when no authoritative persisted
+        dedup state exists yet) so legacy installs get a sensible initial
+        dedup gate. After that, _persist_dedup_state owns the truth.
+        """
+        for symbol, markers in self._signal_markers.items():
+            if not markers:
+                continue
+            try:
+                last = max(markers, key=lambda m: m['time'])
+                self._last_signal_dir[symbol] = last['side']
+            except Exception:
+                pass
+    
+    def _persist_dedup_state(self):
+        """Save the dedup gate state (_last_signal_dir) to DB as the
+        authoritative source. Called after every mutation: signal fire,
+        Vol-flip reset, manual reset, clear_signals. A symbol absent from
+        the saved dict = OPEN gate (ready to fire / manually reset).
+        """
+        if not self.db:
+            return
+        try:
+            self.db.set_setting(DB_KEY_DEDUP_STATE, dict(self._last_signal_dir))
+        except Exception as e:
+            print(f"[SMC] dedup state persist error: {e}")
+    
+    def _load_dedup_state(self) -> bool:
+        """Restore _last_signal_dir from the persisted authoritative blob.
+        Returns True if a blob existed (so we should NOT re-seed from
+        markers), False if this is a first run.
+        
+        Symbols present with 'LONG'/'SHORT' → gate locked that direction.
+        Symbols absent → gate OPEN (includes manually-reset symbols, whose
+        absence is exactly what we want to preserve across restarts).
+        """
+        if not self.db:
+            return False
+        stored = self.db.get_setting(DB_KEY_DEDUP_STATE, None)
+        if isinstance(stored, dict):
+            self._last_signal_dir = {
+                k: v for k, v in stored.items() if v in ('LONG', 'SHORT')
+            }
+            print(f"[SMC] Restored authoritative dedup state: "
+                  f"{len(self._last_signal_dir)} symbols locked")
+            return True
+        return False
     
     def _persist_signals(self, symbol: str):
         """Save signal markers for one symbol to DB."""
@@ -442,6 +498,7 @@ class SMCScanner:
                 self._signal_markers.pop(sym, None)
                 self._last_signal_dir.pop(sym, None)
                 self._delete_signals(sym)
+                self._persist_dedup_state()
                 return {'ok': True, 'cleared': sym}
             else:
                 cleared = list(self._signal_markers.keys())
@@ -449,7 +506,30 @@ class SMCScanner:
                 self._last_signal_dir.clear()
                 for s in cleared:
                     self._delete_signals(s)
+                self._persist_dedup_state()
                 return {'ok': True, 'cleared': cleared, 'count': len(cleared)}
+    
+    def reset_dedup(self, symbol: Optional[str] = None) -> Dict:
+        """Manually reset the dedup gate (force OPEN) and PERSIST it.
+        
+        After this, the symbol's gate is open and — crucially — stays open
+        across restarts and settings reloads because the dedup state is now
+        authoritative in DB. The symbol then waits for the NEXT new
+        algorithm action: _seen_events prevents re-firing the same event in
+        the current session, and after a restart the first scan only records
+        existing events (no alert). A genuinely new CHoCH/BOS (or a Vol flip)
+        is what re-engages the gate.
+        """
+        with self._lock:
+            if symbol:
+                sym = self._normalize_symbol(symbol)
+                self._last_signal_dir.pop(sym, None)
+                self._persist_dedup_state()
+                return {'ok': True, 'reset': sym}
+            else:
+                self._last_signal_dir.clear()
+                self._persist_dedup_state()
+                return {'ok': True, 'reset': 'all'}
     
     def _delete_signals(self, symbol: str):
         """Remove persisted signals for a symbol (e.g. on watchlist remove)."""
@@ -532,6 +612,7 @@ class SMCScanner:
                 self._volumized_trend_cache.pop(symbol, None)
                 self._signal_markers.pop(symbol, None)
                 self._last_signal_dir.pop(symbol, None)
+                self._persist_dedup_state()
                 self._cache.pop(symbol, None)
                 # Tradeable cleanup
                 if symbol in self._tradeable:
@@ -1169,6 +1250,7 @@ class SMCScanner:
                                 with self._lock:
                                     prev = self._last_signal_dir.pop(symbol, None)
                                 if prev is not None:
+                                    self._persist_dedup_state()
                                     print(f"[SMC] {symbol} Vol flipped "
                                           f"{old_vol_trend}→{new_vol_trend}, "
                                           f"dedup reset (was locked={prev})")
@@ -1841,6 +1923,7 @@ class SMCScanner:
             # this even when dedup is OFF, so toggling dedup ON later doesn't
             # cause a sudden re-fire of the prior direction.
             self._last_signal_dir[symbol] = side_label
+            self._persist_dedup_state()
             
             print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
             
