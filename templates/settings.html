@@ -226,6 +226,80 @@
                     </button>
                 </div>
             </div>
+
+            <!-- 🦎 CoinGecko API key (single key, used for market-cap universe) -->
+            <div class="settings-section">
+                <h2>🦎 CoinGecko API Credentials</h2>
+                <p class="section-desc">
+                    Single API key used by the Volumized OB Radar's "Market Cap"
+                    universe filter. Encrypted with Fernet and stored in DB
+                    (overrides the <code>COINGECKO_API_KEY</code> env var).
+                    CoinGecko works keyless too, but a Demo key is more stable.
+                </p>
+                <div id="cg-status-block" style="background: rgba(255,255,255,0.04); border: 1px solid #444; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">Current source</div>
+                            <div style="font-size: 1.05rem; font-weight: 600;" id="cg-status-source">Loading…</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">API Key</div>
+                            <div style="font-family: monospace;" id="cg-status-key">…</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="cg-key">CoinGecko API Key</label>
+                    <input type="password" id="cg-key" class="form-control" placeholder="CG-xxxxxxxxxxxxxxxxxxxx">
+                    <small>Demo key from coingecko.com → Developer Dashboard.</small>
+                </div>
+                <button type="button" class="btn btn-primary" onclick="saveCoinGeckoKey()">💾 Encrypt &amp; Save to DB</button>
+                <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #333;">
+                    <button type="button" class="btn btn-secondary" onclick="clearCoinGeckoKey()">
+                        🗑️ Clear DB key (fall back to ENV)
+                    </button>
+                </div>
+                <div id="cg-msg" style="margin-top: 10px; padding: 8px 12px; border-radius: 4px; display: none; font-size: 0.9rem;"></div>
+            </div>
+
+            <!-- 🟡 Binance API keys (key+secret; public API works without them) -->
+            <div class="settings-section">
+                <h2>🟡 Binance API Credentials</h2>
+                <p class="section-desc">
+                    Optional. The bot only uses Binance <strong>public</strong>
+                    endpoints (tickers, klines, OI) which need no auth — keys
+                    just raise rate limits. Encrypted with Fernet and stored in
+                    DB (overrides <code>BINANCE_API_KEY</code>/<code>BINANCE_API_SECRET</code>).
+                    Connector picks up new keys on next restart.
+                </p>
+                <div id="bn-status-block" style="background: rgba(255,255,255,0.04); border: 1px solid #444; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">Current source</div>
+                            <div style="font-size: 1.05rem; font-weight: 600;" id="bn-status-source">Loading…</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">API Key</div>
+                            <div style="font-family: monospace;" id="bn-status-key">…</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bn-key">Binance API Key</label>
+                    <input type="password" id="bn-key" class="form-control" placeholder="64-character key">
+                </div>
+                <div class="form-group">
+                    <label for="bn-secret">Binance API Secret</label>
+                    <input type="password" id="bn-secret" class="form-control" placeholder="64-character secret">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="saveBinanceKeys()">💾 Encrypt &amp; Save to DB</button>
+                <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #333;">
+                    <button type="button" class="btn btn-secondary" onclick="clearBinanceKeys()">
+                        🗑️ Clear DB keys (fall back to ENV)
+                    </button>
+                </div>
+                <div id="bn-msg" style="margin-top: 10px; padding: 8px 12px; border-radius: 4px; display: none; font-size: 0.9rem;"></div>
+            </div>
         </div>
 
         <!-- Trend Context Tab (NEW) -->
@@ -1909,6 +1983,12 @@ document.addEventListener('DOMContentLoaded', function() {
     if (document.getElementById('creds-status-block')) {
         loadCredentialsStatus();
     }
+    if (document.getElementById('cg-status-block')) {
+        loadCoinGeckoStatus();
+    }
+    if (document.getElementById('bn-status-block')) {
+        loadBinanceStatus();
+    }
 });
 
 // ====================================================================
@@ -2065,6 +2145,116 @@ async function clearCredentials() {
     } catch (e) {
         alert('Network error: ' + e);
     }
+}
+
+// ====================================================================
+// 🦎 CoinGecko credentials
+// ====================================================================
+const _srcLabels = {
+    db_encrypted: '🟢 DB encrypted', env_plain: '🟡 ENV plain', none: '⚪ Not set',
+};
+function _showMsg(id, ok, text) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.background = ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+    el.style.color = ok ? '#86efac' : '#fca5a5';
+    el.textContent = text;
+}
+
+async function loadCoinGeckoStatus() {
+    try {
+        const r = await fetch('/api/credentials/coingecko/status');
+        const d = await r.json();
+        if (!d.ok) return;
+        document.getElementById('cg-status-source').textContent =
+            _srcLabels[d.source] || d.source;
+        document.getElementById('cg-status-key').textContent =
+            d.has_key ? d.key_preview : '— none —';
+    } catch (e) { console.error('loadCoinGeckoStatus', e); }
+}
+
+async function saveCoinGeckoKey() {
+    const key = document.getElementById('cg-key').value.trim();
+    if (!key) { _showMsg('cg-msg', false, 'Enter an API key first'); return; }
+    try {
+        const r = await fetch('/api/credentials/coingecko/save', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({api_key: key}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            _showMsg('cg-msg', true, '✅ Saved + encrypted. Applies immediately.');
+            document.getElementById('cg-key').value = '';
+            await loadCoinGeckoStatus();
+        } else {
+            _showMsg('cg-msg', false, 'Save failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) { _showMsg('cg-msg', false, 'Network error: ' + e); }
+}
+
+async function clearCoinGeckoKey() {
+    if (!confirm('Clear DB-stored CoinGecko key? Falls back to COINGECKO_API_KEY env.')) return;
+    try {
+        const r = await fetch('/api/credentials/coingecko/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.ok) {
+            _showMsg('cg-msg', true, '✅ ' + d.message);
+            await loadCoinGeckoStatus();
+        } else {
+            _showMsg('cg-msg', false, 'Clear failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) { _showMsg('cg-msg', false, 'Network error: ' + e); }
+}
+
+// ====================================================================
+// 🟡 Binance credentials
+// ====================================================================
+async function loadBinanceStatus() {
+    try {
+        const r = await fetch('/api/credentials/binance/status');
+        const d = await r.json();
+        if (!d.ok) return;
+        document.getElementById('bn-status-source').textContent =
+            _srcLabels[d.source] || d.source;
+        document.getElementById('bn-status-key').textContent =
+            d.has_keys ? d.key_preview : '— none —';
+    } catch (e) { console.error('loadBinanceStatus', e); }
+}
+
+async function saveBinanceKeys() {
+    const key = document.getElementById('bn-key').value.trim();
+    const secret = document.getElementById('bn-secret').value.trim();
+    if (!key || !secret) { _showMsg('bn-msg', false, 'Enter both key and secret'); return; }
+    try {
+        const r = await fetch('/api/credentials/binance/save', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({api_key: key, api_secret: secret}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            _showMsg('bn-msg', true, '✅ Saved + encrypted. ' + (d.note || ''));
+            document.getElementById('bn-key').value = '';
+            document.getElementById('bn-secret').value = '';
+            await loadBinanceStatus();
+        } else {
+            _showMsg('bn-msg', false, 'Save failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) { _showMsg('bn-msg', false, 'Network error: ' + e); }
+}
+
+async function clearBinanceKeys() {
+    if (!confirm('Clear DB-stored Binance keys? Falls back to BINANCE_API_KEY/SECRET env.')) return;
+    try {
+        const r = await fetch('/api/credentials/binance/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.ok) {
+            _showMsg('bn-msg', true, '✅ ' + d.message);
+            await loadBinanceStatus();
+        } else {
+            _showMsg('bn-msg', false, 'Clear failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) { _showMsg('bn-msg', false, 'Network error: ' + e); }
 }
 
 async function testCredentials() {

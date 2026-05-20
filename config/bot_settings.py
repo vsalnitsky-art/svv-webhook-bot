@@ -215,6 +215,103 @@ def get_bybit_keys():
     """
     return _resolve_bybit_keys()
 
+
+# ============================================================================
+# CoinGecko API key — single key (no secret). Used for market-cap universe
+# filtering in the Volumized OB Radar. Same DB-encrypted > ENV priority as
+# Bybit, but simpler (one value).
+# ============================================================================
+
+def _resolve_coingecko_key_from_db():
+    """Load encrypted CoinGecko key from DB. Returns key string or None."""
+    enc_key = os.environ.get('ENCRYPTION_KEY', '').strip()
+    if not enc_key:
+        return None
+    try:
+        from storage.db_operations import get_db
+        db = get_db()
+        if db is None:
+            return None
+        db_enc = db.get_setting('coingecko_api_key_encrypted', '') or ''
+        if not db_enc:
+            return None
+        k = _decrypt_fernet(db_enc, enc_key)
+        return k or None
+    except Exception:
+        return None
+
+
+def _resolve_coingecko_key():
+    """Resolve CoinGecko key: DB encrypted > ENV plain. Empty if none.
+    CoinGecko works keyless too (heavily rate-limited), so empty is OK."""
+    db_key = _resolve_coingecko_key_from_db()
+    if db_key:
+        print(f"[CONFIG] ✅ CoinGecko key: DB encrypted ({len(db_key)} chars)")
+        return db_key
+    env_key = os.environ.get('COINGECKO_API_KEY', '').strip()
+    if env_key:
+        print(f"[CONFIG] ✅ CoinGecko key: ENV plain ({len(env_key)} chars)")
+        return env_key
+    return ''
+
+
+def get_coingecko_key():
+    """Fresh getter for CoinGecko API key — resolves at call time."""
+    return _resolve_coingecko_key()
+
+
+# ============================================================================
+# Binance API keys — key + secret. NOTE: the bot only uses Binance PUBLIC
+# endpoints (tickers, klines, OI) which don't require auth. Keys here give
+# higher rate limits but aren't functionally required. Same resolver shape
+# as Bybit.
+# ============================================================================
+
+def _resolve_binance_keys_from_db():
+    """Load encrypted Binance key+secret from DB. Returns (key, secret) or None."""
+    enc_key = os.environ.get('ENCRYPTION_KEY', '').strip()
+    if not enc_key:
+        return None
+    try:
+        from storage.db_operations import get_db
+        db = get_db()
+        if db is None:
+            return None
+        k_enc = db.get_setting('binance_api_key_encrypted', '') or ''
+        s_enc = db.get_setting('binance_api_secret_encrypted', '') or ''
+        if not (k_enc and s_enc):
+            return None
+        k = _decrypt_fernet(k_enc, enc_key)
+        s = _decrypt_fernet(s_enc, enc_key)
+        if k and s:
+            return k, s
+        return None
+    except Exception:
+        return None
+
+
+def _resolve_binance_keys():
+    """Resolve Binance keys: DB encrypted > ENV plain. Empty pair if none
+    (public API still works)."""
+    db_result = _resolve_binance_keys_from_db()
+    if db_result:
+        k, s = db_result
+        print(f"[CONFIG] ✅ Binance keys: DB encrypted ({len(k)} chars)")
+        return k, s
+    env_key = os.environ.get('BINANCE_API_KEY', '').strip()
+    env_secret = os.environ.get('BINANCE_API_SECRET', '').strip()
+    if env_key and env_secret:
+        print(f"[CONFIG] ✅ Binance keys: ENV plain ({len(env_key)} chars)")
+        return env_key, env_secret
+    return '', ''
+
+
+def get_binance_keys():
+    """Fresh getter for Binance key+secret — resolves at call time."""
+    return _resolve_binance_keys()
+
+
+
 # Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')

@@ -2929,6 +2929,156 @@ def register_api_routes(app):
                 'error': err[:300],  # avoid huge stack traces in UI
             }), 200
     
+    # ========================================================================
+    # CoinGecko API key (single key) — status / save / clear
+    # ========================================================================
+    @app.route('/api/credentials/coingecko/status')
+    def api_cg_cred_status():
+        from config.bot_settings import get_coingecko_key, _resolve_coingecko_key_from_db
+        from storage.db_operations import get_db
+        key = get_coingecko_key()
+        source = 'none'
+        if key:
+            if _resolve_coingecko_key_from_db() == key:
+                source = 'db_encrypted'
+            elif os.environ.get('COINGECKO_API_KEY', '').strip() == key:
+                source = 'env_plain'
+        db_has = False
+        try:
+            db = get_db()
+            db_has = bool(db.get_setting('coingecko_api_key_encrypted', ''))
+        except Exception:
+            pass
+        return jsonify({
+            'ok': True,
+            'source': source,
+            'has_key': bool(key),
+            'key_preview': _mask(key),
+            'encryption_key_set': bool(os.environ.get('ENCRYPTION_KEY', '').strip()),
+            'db_has_stored': db_has,
+            'env_plain_set': bool(os.environ.get('COINGECKO_API_KEY', '').strip()),
+        })
+
+    @app.route('/api/credentials/coingecko/save', methods=['POST'])
+    def api_cg_cred_save():
+        """Encrypt + store CoinGecko API key in DB. Body: {api_key}."""
+        from config.bot_settings import _encrypt_fernet
+        from storage.db_operations import get_db
+        enc_key = os.environ.get('ENCRYPTION_KEY', '').strip()
+        if not enc_key:
+            return jsonify({'ok': False, 'error': 'ENCRYPTION_KEY env var not set'}), 400
+        data = request.get_json(silent=True) or {}
+        api_key = (data.get('api_key') or '').strip()
+        if not api_key:
+            return jsonify({'ok': False, 'error': 'api_key required'}), 400
+        enc = _encrypt_fernet(api_key, enc_key)
+        if not enc:
+            return jsonify({'ok': False, 'error': 'Encryption failed'}), 500
+        try:
+            get_db().set_setting('coingecko_api_key_encrypted', enc)
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'DB write failed: {e}'}), 500
+        # Hot-reload the CoinGecko client so the new key applies immediately
+        try:
+            from detection.coingecko_client import get_coingecko_client
+            get_coingecko_client().reload_key()
+        except Exception:
+            pass
+        print('[CREDS] ✅ CoinGecko key encrypted + stored in DB')
+        return jsonify({'ok': True, 'key_preview': _mask(api_key)})
+
+    @app.route('/api/credentials/coingecko/clear', methods=['POST'])
+    def api_cg_cred_clear():
+        from storage.db_operations import get_db
+        try:
+            get_db().set_setting('coingecko_api_key_encrypted', '')
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'DB write failed: {e}'}), 500
+        try:
+            from detection.coingecko_client import get_coingecko_client
+            get_coingecko_client().reload_key()
+        except Exception:
+            pass
+        print('[CREDS] ✅ CoinGecko DB key cleared; falling back to ENV')
+        return jsonify({'ok': True, 'message': 'CoinGecko DB key cleared.'})
+
+    # ========================================================================
+    # Binance API keys (key + secret) — status / save / clear
+    # NOTE: bot uses Binance public endpoints only; keys give higher rate
+    # limits but aren't functionally required.
+    # ========================================================================
+    @app.route('/api/credentials/binance/status')
+    def api_bn_cred_status():
+        from config.bot_settings import get_binance_keys, _resolve_binance_keys_from_db
+        from storage.db_operations import get_db
+        api_key, api_secret = get_binance_keys()
+        source = 'none'
+        if api_key and api_secret:
+            db_result = _resolve_binance_keys_from_db()
+            if db_result and db_result[0] == api_key:
+                source = 'db_encrypted'
+            elif os.environ.get('BINANCE_API_KEY', '').strip() == api_key:
+                source = 'env_plain'
+        db_has = False
+        try:
+            db = get_db()
+            db_has = bool(db.get_setting('binance_api_key_encrypted', '')
+                          and db.get_setting('binance_api_secret_encrypted', ''))
+        except Exception:
+            pass
+        return jsonify({
+            'ok': True,
+            'source': source,
+            'has_keys': bool(api_key and api_secret),
+            'key_preview': _mask(api_key),
+            'secret_preview': _mask(api_secret),
+            'encryption_key_set': bool(os.environ.get('ENCRYPTION_KEY', '').strip()),
+            'db_has_stored': db_has,
+            'env_plain_set': bool(os.environ.get('BINANCE_API_KEY', '').strip()
+                                  and os.environ.get('BINANCE_API_SECRET', '').strip()),
+        })
+
+    @app.route('/api/credentials/binance/save', methods=['POST'])
+    def api_bn_cred_save():
+        """Encrypt + store Binance key+secret in DB. Body: {api_key, api_secret}."""
+        from config.bot_settings import _encrypt_fernet
+        from storage.db_operations import get_db
+        enc_key = os.environ.get('ENCRYPTION_KEY', '').strip()
+        if not enc_key:
+            return jsonify({'ok': False, 'error': 'ENCRYPTION_KEY env var not set'}), 400
+        data = request.get_json(silent=True) or {}
+        api_key = (data.get('api_key') or '').strip()
+        api_secret = (data.get('api_secret') or '').strip()
+        if not api_key or not api_secret:
+            return jsonify({'ok': False, 'error': 'Both api_key and api_secret required'}), 400
+        k_enc = _encrypt_fernet(api_key, enc_key)
+        s_enc = _encrypt_fernet(api_secret, enc_key)
+        if not (k_enc and s_enc):
+            return jsonify({'ok': False, 'error': 'Encryption failed'}), 500
+        try:
+            db = get_db()
+            db.set_setting('binance_api_key_encrypted', k_enc)
+            db.set_setting('binance_api_secret_encrypted', s_enc)
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'DB write failed: {e}'}), 500
+        print('[CREDS] ✅ Binance keys encrypted + stored in DB '
+              '(takes effect on next restart for the connector)')
+        return jsonify({'ok': True, 'key_preview': _mask(api_key),
+                        'note': 'Saved. Restart or redeploy to apply to the '
+                                'Binance connector (public API works regardless).'})
+
+    @app.route('/api/credentials/binance/clear', methods=['POST'])
+    def api_bn_cred_clear():
+        from storage.db_operations import get_db
+        try:
+            db = get_db()
+            db.set_setting('binance_api_key_encrypted', '')
+            db.set_setting('binance_api_secret_encrypted', '')
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'DB write failed: {e}'}), 500
+        print('[CREDS] ✅ Binance DB keys cleared; falling back to ENV')
+        return jsonify({'ok': True, 'message': 'Binance DB keys cleared.'})
+
     @app.route('/api/credentials/generate-master', methods=['POST'])
     def api_credentials_generate_master():
         """Generate a new Fernet master key for ENCRYPTION_KEY env var.

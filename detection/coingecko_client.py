@@ -94,8 +94,16 @@ class CoinGeckoClient:
     perp symbols to those rankings."""
 
     def __init__(self, api_key: Optional[str] = None):
-        # Prefer explicit arg, then env. Demo key uses api.coingecko.com.
-        self.api_key = api_key or os.getenv('COINGECKO_API_KEY', '').strip()
+        # Prefer explicit arg, then DB-encrypted/ENV via the central resolver
+        # (so a key saved in the Settings UI takes effect without restart).
+        if api_key:
+            self.api_key = api_key.strip()
+        else:
+            try:
+                from config.bot_settings import get_coingecko_key
+                self.api_key = get_coingecko_key()
+            except Exception:
+                self.api_key = os.getenv('COINGECKO_API_KEY', '').strip()
         self._session = requests.Session()
         # In-memory cache of the latest markets snapshot
         self._markets_cache: List[Dict] = []     # raw coin dicts
@@ -227,6 +235,18 @@ class CoinGeckoClient:
     def is_available(self) -> bool:
         """True if we have (cached or fresh) ranking data to work with."""
         return bool(self._markets_cache) or self.refresh()
+
+    def reload_key(self):
+        """Re-read the API key from the resolver (DB > ENV). Called after a
+        UI save so the new key takes effect without a restart. Also clears
+        the cache so the next refresh uses the new key."""
+        try:
+            from config.bot_settings import get_coingecko_key
+            self.api_key = get_coingecko_key()
+        except Exception:
+            self.api_key = os.getenv('COINGECKO_API_KEY', '').strip()
+        self._cache_at = 0.0  # force next refresh
+        return bool(self.api_key)
 
 
 # Singleton accessor
