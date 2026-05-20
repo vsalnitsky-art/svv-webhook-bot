@@ -228,6 +228,39 @@ class BybitConnector:
             print(f"[BYBIT] get_instrument_info error: {e}")
             return None
     
+    def get_lot_size(self, symbol: str) -> Optional[Dict]:
+        """Return the lot-size constraints for a symbol so order qty can be
+        rounded to a valid value before placing an order. Without this,
+        symbols with coarse qtyStep (e.g. ENAUSDT requires integer qty)
+        reject orders with 'Qty invalid' (ErrCode 10001).
+        
+        Returns dict { qty_step, min_qty, max_qty } as floats, or None.
+        
+        Cached per-symbol — instrument specs don't change intraday, so we
+        avoid an API round-trip on every order.
+        """
+        if not hasattr(self, '_lot_size_cache'):
+            self._lot_size_cache = {}
+        if symbol in self._lot_size_cache:
+            return self._lot_size_cache[symbol]
+        
+        info = self.get_instrument_info(symbol)
+        if not info:
+            return None
+        lsf = info.get('lotSizeFilter') or {}
+        try:
+            lot = {
+                'qty_step': float(lsf.get('qtyStep', 0) or 0),
+                'min_qty': float(lsf.get('minOrderQty', 0) or 0),
+                'max_qty': float(lsf.get('maxOrderQty', 0) or 0),
+            }
+        except (TypeError, ValueError):
+            return None
+        # Only cache valid results
+        if lot['qty_step'] > 0:
+            self._lot_size_cache[symbol] = lot
+        return lot
+    
     def get_funding_rate(self, symbol: str) -> Optional[Dict]:
         """Отримати funding rate"""
         try:

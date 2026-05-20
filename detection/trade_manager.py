@@ -2481,13 +2481,55 @@ class TradeManager:
         else:
             qty = 0
         
-        # Round to reasonable precision (Bybit will reject too-fine qty;
-        # an instrument-info lookup could be added later)
-        if qty < 1:
-            qty = round(qty, 6)
-        else:
-            qty = round(qty, 3)
+        if qty <= 0:
+            return 0
+        
+        # === Round qty to the instrument's lot size ===
+        # Bybit rejects orders whose qty doesn't match the symbol's qtyStep
+        # with "Qty invalid" (ErrCode 10001). E.g. ENAUSDT requires integer
+        # qty, so 188.84 fails — must be 188. We round DOWN to the nearest
+        # step (never risk over-sizing) and enforce minOrderQty.
+        qty = self._round_qty_to_lot(symbol, qty)
         return max(0, qty)
+    
+    def _round_qty_to_lot(self, symbol: str, qty: float) -> float:
+        """Round an order quantity DOWN to the symbol's qtyStep and enforce
+        minOrderQty. Falls back to coarse decimal rounding if instrument
+        info is unavailable (keeps old behavior as a safety net).
+        """
+        import math
+        lot = None
+        try:
+            if self.bybit and hasattr(self.bybit, 'get_lot_size'):
+                lot = self.bybit.get_lot_size(symbol)
+        except Exception as e:
+            print(f"[TM] get_lot_size warn for {symbol}: {e}")
+        
+        if lot and lot.get('qty_step', 0) > 0:
+            step = lot['qty_step']
+            min_qty = lot.get('min_qty', 0)
+            # Floor to step. Add tiny epsilon before floor to avoid float
+            # artifacts (e.g. 188.9999999 from 1889 * 0.1).
+            steps = math.floor((qty + step * 1e-9) / step)
+            rounded = steps * step
+            # Determine decimal places from the step so we don't reintroduce
+            # float noise (e.g. 0.1 * 1888 = 188.8000000002).
+            step_str = ('%.10f' % step).rstrip('0').rstrip('.')
+            decimals = len(step_str.split('.')[1]) if '.' in step_str else 0
+            rounded = round(rounded, decimals)
+            # Enforce minimum order qty — if below min, the trade can't open
+            # at this size. Return 0 so caller treats it as a sizing failure.
+            if min_qty > 0 and rounded < min_qty:
+                print(f"[TM] {symbol} qty {rounded} below minOrderQty "
+                      f"{min_qty} — cannot open at this size")
+                return 0
+            return rounded
+        
+        # Fallback (no instrument info) — old coarse rounding
+        if qty < 1:
+            return round(qty, 6)
+        return round(qty, 3)
+    
     
     def _calc_sl_price(self, side: str, entry: float,
                          symbol: Optional[str] = None) -> float:
