@@ -3263,62 +3263,40 @@ let lastOhlcLength = 0;
 let lastEventsKey = '';
 let userInteractedWithChart = false;
 
-// Compute and apply a focused visible range on the chart timescale so the
-// user opens onto where the action is happening instead of a fully-fit
-// 500-bar overview. Called once per symbol change inside loadChart.
-//
-// Heuristic:
-//   1. Collect timestamps of all events (CHoCH/BOS lines), pivots, and
-//      live signal markers — these are the "action" timestamps the user
-//      cares about.
-//   2. Left edge = min(those timestamps) − 10 bars of padding for context
-//   3. Right edge = last kline time + 5 bars of padding (room on the right)
-//   4. If no events/signals/pivots exist on this symbol → fall back to the
-//      last 100 bars (still focused, just no event anchor).
-//   5. Clamp left edge to first available kline (can't show before data).
+// Focus the chart on RECENT action when a symbol is opened, instead of
+// fitting all ~3000 historical bars (events span the entire history, so
+// event-based heuristics don't help — earliest event is essentially at
+// the start of data). Behavior:
+//   - On symbol change, show the LAST 100 bars + ~5 bars of right padding.
+//   - Preserves user zoom/pan on subsequent refreshes (caller gates this).
+//   - Uses requestAnimationFrame so Lightweight Charts has finished its
+//     internal layout from setData before we call setVisibleLogicalRange.
 function focusChartOnEvents(ohlc, events, pivots, signals) {
     if (!ohlc || ohlc.length === 0) return;
-    const lastBar = ohlc[ohlc.length - 1];
-    const firstBar = ohlc[0];
-    // Bar duration in seconds. Lightweight Charts uses unix seconds for time.
-    const barSecs = (ohlc.length >= 2)
-        ? Math.max(60, ohlc[1].time - ohlc[0].time)
-        : 900;  // 15m fallback — matches default chart timeframe
+    // 100 bars is a sensible universal default across timeframes:
+    //   1m → last ~1.5h, 5m → last 8h, 15m → last 25h (matches user's
+    //   reference screenshot), 1h → last 4 days, 4h → last 16 days.
+    const BARS_TO_SHOW = 100;
+    const totalBars = ohlc.length;
+    const fromIdx = Math.max(0, totalBars - BARS_TO_SHOW);
+    // toIdx extends slightly past the last bar to leave breathing room
+    // on the right edge (5 bars of empty space — standard chart UX).
+    const toIdx = totalBars - 1 + 5;
 
-    // Gather all action timestamps. Events have from_time/to_time; we
-    // prefer from_time as the "first appearance" of the structure level.
-    const actionTimes = [];
-    for (const e of (events || [])) {
-        if (typeof e.from_time === 'number') actionTimes.push(e.from_time);
-    }
-    for (const p of (pivots || [])) {
-        if (typeof p.time === 'number') actionTimes.push(p.time);
-    }
-    for (const s of (signals || [])) {
-        if (typeof s.time === 'number') actionTimes.push(s.time);
-    }
-
-    let fromTs;
-    if (actionTimes.length > 0) {
-        const earliest = Math.min(...actionTimes);
-        fromTs = earliest - 10 * barSecs;   // 10-bar context before first event
-    } else {
-        // No events on this symbol — show last 100 bars (still focused)
-        const fallbackBars = Math.min(100, ohlc.length);
-        fromTs = ohlc[ohlc.length - fallbackBars].time;
-    }
-    // Don't try to show before the chart data starts
-    if (fromTs < firstBar.time) fromTs = firstBar.time;
-    // Right padding so the latest candles aren't glued to the right edge
-    const toTs = lastBar.time + 5 * barSecs;
-
-    try {
-        chart.timeScale().setVisibleRange({ from: fromTs, to: toTs });
-    } catch (err) {
-        // Range invalid (e.g. fromTs >= toTs after clamping) — graceful
-        // fallback to fitContent so user still sees the chart
-        try { chart.timeScale().fitContent(); } catch (_) {}
-    }
+    // setData triggers async internal layout in Lightweight Charts. Calling
+    // setVisibleLogicalRange in the same synchronous frame may race and
+    // silently no-op. requestAnimationFrame guarantees the next paint
+    // sees our zoom.
+    requestAnimationFrame(() => {
+        try {
+            chart.timeScale().setVisibleLogicalRange({
+                from: fromIdx,
+                to: toIdx,
+            });
+        } catch (err) {
+            try { chart.timeScale().fitContent(); } catch (_) {}
+        }
+    });
 }
 
 async function loadChart() {
