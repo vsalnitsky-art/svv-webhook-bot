@@ -35,6 +35,14 @@ from typing import Dict, List, Optional
 # Defaults
 DEFAULT_INTERVAL_SECS = 60
 DEFAULT_ALERT_MODE = 'choch'  # 'choch' or 'choch_bos'
+
+# Signal recency window (minutes). A CHoCH/BOS must be no older than this to
+# fire an alert / forward to TM. Set to 0 = OFF (no age restriction — every
+# new structure event can fire regardless of how old it is). Default OFF per
+# user request: the 30-min hardcoded window was silently dropping valid BOS
+# confirmations on slower pairs / higher timeframes where bars are 15m+.
+DEFAULT_RECENCY_MINUTES = 0   # 0 = off (no recency filter)
+ALLOWED_RECENCY_MINUTES = (0, 30, 60, 120)
 KLINES_LIMIT = 3000           # bars to fetch per scan via paginated API.
                               # 3000 × 15m = ~31 days. Larger lookback gives
                               # the SMC structure detector enough history to
@@ -67,6 +75,7 @@ SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 DEFAULT_SETTINGS = {
     'enabled': True,
     'alert_mode': DEFAULT_ALERT_MODE,
+    'recency_minutes': DEFAULT_RECENCY_MINUTES,   # 0=off, else 30/60/120
     'interval_secs': DEFAULT_INTERVAL_SECS,
     'telegram_alerts': True,
     'swing_size': 50,
@@ -667,7 +676,7 @@ class SMCScanner:
     
     def update_settings(self, new: Dict) -> Dict:
         with self._lock:
-            allowed = ['enabled', 'alert_mode', 'interval_secs', 'telegram_alerts',
+            allowed = ['enabled', 'alert_mode', 'recency_minutes', 'interval_secs', 'telegram_alerts',
                        'swing_size', 'timeframe', 'internal_size',
                        'deduplicate_signals',
                        'htf_enabled', 'htf_timeframe', 'htf_method',
@@ -698,6 +707,18 @@ class SMCScanner:
             # Validate alert_mode
             if self._settings.get('alert_mode') not in ('choch', 'choch_bos'):
                 self._settings['alert_mode'] = DEFAULT_ALERT_MODE
+            
+            # Validate recency_minutes (0=off, or 30/60/120)
+            try:
+                rm = int(self._settings.get('recency_minutes', DEFAULT_RECENCY_MINUTES))
+                if rm not in ALLOWED_RECENCY_MINUTES:
+                    # Snap unknown values: <=0 → off, else nearest allowed
+                    rm = 0 if rm <= 0 else min(
+                        (a for a in ALLOWED_RECENCY_MINUTES if a > 0),
+                        key=lambda a: abs(a - rm))
+                self._settings['recency_minutes'] = rm
+            except (TypeError, ValueError):
+                self._settings['recency_minutes'] = DEFAULT_RECENCY_MINUTES
             
             # Clamp interval
             try:
@@ -1673,7 +1694,12 @@ class SMCScanner:
         #
         # So: always seed pending_choch for CHoCH events in choch_bos mode.
         # Apply recency only when actually firing alerts.
-        recent_threshold_secs = 30 * 60  # 30 minutes
+        # Recency window — configurable. 0 = OFF (no age restriction): every
+        # new structure event is treated as "recent" and can fire. Otherwise
+        # the event's bar must be no older than recency_minutes.
+        recency_min = int(self._settings.get('recency_minutes', DEFAULT_RECENCY_MINUTES))
+        recency_off = recency_min <= 0
+        recent_threshold_secs = recency_min * 60
         now_ms = int(time.time() * 1000)
         
         mode = self._settings.get('alert_mode', DEFAULT_ALERT_MODE)
@@ -1684,7 +1710,7 @@ class SMCScanner:
             # to_t is in ms (kline open time)
             to_age_secs = (now_ms - to_t) / 1000 if to_t > 1e10 else (now_ms / 1000 - to_t)
             
-            is_recent = to_age_secs <= recent_threshold_secs
+            is_recent = recency_off or (to_age_secs <= recent_threshold_secs)
             
             # === Forward BOS events to Trade Manager (always, before mode logic) ===
             # TM uses these to:

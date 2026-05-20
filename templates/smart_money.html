@@ -1114,6 +1114,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <option value="choch_bos">CHoCH + BOS</option>
                         </select>
                     </div>
+                    <div class="sm-control-item">
+                        <label title="Max age of a CHoCH/BOS to still fire an alert. Off = no age limit (recommended if you were missing signals on slower pairs / higher timeframes).">Signal recency:</label>
+                        <select id="sm-recency" onchange="updateRecency()">
+                            <option value="0">Off (no limit)</option>
+                            <option value="30">30 min</option>
+                            <option value="60">60 min</option>
+                            <option value="120">120 min</option>
+                        </select>
+                    </div>
                     <label class="sm-checkbox" title="When ON: only the FIRST signal in each direction fires. Subsequent same-direction signals are suppressed until direction flips.">
                         <input type="checkbox" id="sm-dedup" checked onchange="updateDedup()">
                         Deduplicate Signals (1 per trend)
@@ -2927,6 +2936,8 @@ async function loadSettings() {
         if (d.settings) {
             const s = d.settings;
             document.getElementById('sm-alert-mode').value = s.alert_mode || 'choch';
+            const recEl = document.getElementById('sm-recency');
+            if (recEl) recEl.value = String(s.recency_minutes != null ? s.recency_minutes : 0);
             document.getElementById('sm-timeframe').value = s.timeframe || '5m';
             document.getElementById('sm-internal-size').value = s.internal_size || 5;
             document.getElementById('sm-dedup').checked = s.deduplicate_signals !== false;
@@ -3018,6 +3029,8 @@ function updateSettingsSummary() {
     
     let summary = `${tf} · size ${isize} · ${modeLabel}`;
     if (dedup) summary += ' · dedup';
+    const recEl = document.getElementById('sm-recency');
+    if (recEl && parseInt(recEl.value, 10) > 0) summary += ` · ≤${recEl.value}m`;
     if (htfOn) summary += ` · HTF ${htfTf} (${htfMethod})`;
     if (obOn && obOn.checked && obTf) {
         summary += ` · OB ${obTf.value.toUpperCase()}`;
@@ -3143,6 +3156,18 @@ async function updateAlertMode() {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({alert_mode: mode}),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('Update error: ' + err); }
+}
+
+async function updateRecency() {
+    const mins = parseInt(document.getElementById('sm-recency').value, 10);
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({recency_minutes: mins}),
         });
         updateSettingsSummary();
     } catch (err) { alert('Update error: ' + err); }
