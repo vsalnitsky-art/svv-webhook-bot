@@ -420,6 +420,62 @@ class MarketData:
         rows.sort(key=lambda x: x['quote_volume'], reverse=True)
         return rows[:n]
     
+    def fetch_top_by_marketcap(self, n: int = 150,
+                                min_quote_volume_usd: float = 0.0
+                                ) -> Optional[List[Dict]]:
+        """Fetch USDT-perp symbols filtered/sorted by CoinGecko MARKET CAP
+        rank instead of 24h volume. Returns the perps whose underlying coin
+        is in the top-N by market cap, intersected with what actually trades
+        as a USDT-perp on Binance Futures.
+        
+        Returns list of dicts with the SAME shape as fetch_top_perp_symbols
+        ({'symbol', 'quote_volume', 'last_price', 'price_change_pct'}) PLUS
+        a 'market_cap_rank' field, sorted by market_cap_rank ascending
+        (highest market cap first).
+        
+        Why intersect with Binance perps: a coin can be top-150 by market
+        cap but have no perpetual to trade (or not on our exchange). We can
+        only scan things that actually have a tradeable perp + live price.
+        
+        Falls back to None on CoinGecko unavailability — caller should then
+        use fetch_top_perp_symbols (volume-based) as a safety net.
+        """
+        # 1. Get the full perp universe (with prices/volume) — pull a wide
+        #    net (top 400 by volume) so we don't miss mid-cap coins that
+        #    rank high by market cap but lower by volume.
+        perp_rows = self.fetch_top_perp_symbols(
+            n=400, min_quote_volume_usd=min_quote_volume_usd)
+        if not perp_rows:
+            return None
+        
+        # 2. Resolve market cap ranks via CoinGecko
+        try:
+            from detection.coingecko_client import get_coingecko_client
+            cg = get_coingecko_client()
+            if not cg.is_available():
+                print('[MarketData] CoinGecko unavailable — '
+                      'cannot apply market cap filter')
+                return None
+        except Exception as e:
+            print(f'[MarketData] CoinGecko client error: {e}')
+            return None
+        
+        # 3. Annotate each perp with its market cap rank, keep top-N
+        annotated = []
+        by_symbol = {r['symbol']: r for r in perp_rows}
+        for sym, row in by_symbol.items():
+            rank = cg.get_rank(sym)
+            if rank is not None and rank <= n:
+                enriched = dict(row)
+                enriched['market_cap_rank'] = rank
+                annotated.append(enriched)
+        
+        # 4. Sort by market cap rank ascending (biggest coins first)
+        annotated.sort(key=lambda x: x['market_cap_rank'])
+        print(f'[MarketData] Market-cap universe: {len(annotated)} perps '
+              f'in top-{n} by market cap')
+        return annotated
+    
     # ========================================
     # OPEN INTEREST
     # ========================================

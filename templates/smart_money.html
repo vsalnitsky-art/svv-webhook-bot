@@ -1922,6 +1922,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     </div>
                     <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(170px, 1fr));gap:9px;margin-bottom:14px">
                         <div>
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px"
+                                   title="Volume: top coins by 24h turnover (memcoins/pumped tokens dominate). Market Cap: top coins by CoinGecko market cap rank (more blue-chip).">
+                                Universe Source ⓘ
+                            </label>
+                            <select id="volradar-universe-source" style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                    onchange="onVolradarSourceChange(this.value)">
+                                <option value="volume">24h Volume</option>
+                                <option value="marketcap">Market Cap (CoinGecko)</option>
+                            </select>
+                        </div>
+                        <div id="volradar-mcap-rank-wrap" style="display:none">
+                            <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px"
+                                   title="Only scan coins whose CoinGecko market cap rank is ≤ this value. 150 = top-150 by market cap.">
+                                Max Market Cap Rank ⓘ
+                            </label>
+                            <input type="number" id="volradar-mcap-rank" min="10" max="500" step="10"
+                                   style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
+                                   onchange="updateVolradarSetting('max_market_cap_rank', parseInt(this.value))">
+                        </div>
+                        <div>
                             <label style="display:block;font-size:0.72rem;color:#888;margin-bottom:3px">Scan Timeframe</label>
                             <select id="volradar-tf" style="width:100%;padding:4px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px"
                                     onchange="updateVolradarSetting('timeframe', this.value)">
@@ -2545,6 +2565,18 @@ async function loadVolradarState() {
         const combineEl = document.getElementById('volradar-combine-obs');
         if (combineEl && document.activeElement !== combineEl) combineEl.checked = !!d.settings.combine_obs;
         
+        // Universe source selector + market cap rank input
+        const srcEl = document.getElementById('volradar-universe-source');
+        const src = d.settings.universe_source || 'volume';
+        if (srcEl && document.activeElement !== srcEl) srcEl.value = src;
+        const mcapRankEl = document.getElementById('volradar-mcap-rank');
+        if (mcapRankEl && document.activeElement !== mcapRankEl) {
+            mcapRankEl.value = d.settings.max_market_cap_rank || 150;
+        }
+        // Show the market cap rank input only in marketcap mode
+        const mcapWrap = document.getElementById('volradar-mcap-rank-wrap');
+        if (mcapWrap) mcapWrap.style.display = (src === 'marketcap') ? '' : 'none';
+        
         // Active items table + watchlist-pip map
         const items = d.active_items || [];
         wlVolradarItems = {};
@@ -2726,6 +2758,15 @@ async function updateVolradarSetting(key, value) {
     } catch (e) {
         console.error('updateVolradarSetting error:', e);
     }
+}
+
+// Universe source toggle — shows/hides the Max Market Cap Rank input and
+// persists the choice. Market cap mode requires CoinGecko (COINGECKO_API_KEY
+// env on the server + api.coingecko.com in Render allowed domains).
+function onVolradarSourceChange(value) {
+    const mcapWrap = document.getElementById('volradar-mcap-rank-wrap');
+    if (mcapWrap) mcapWrap.style.display = (value === 'marketcap') ? '' : 'none';
+    updateVolradarSetting('universe_source', value);
 }
 
 async function volradarCopyFromMain() {

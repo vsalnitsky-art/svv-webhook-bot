@@ -68,6 +68,15 @@ DEFAULT_SCAN_TIMEFRAME = '1h'
 ALLOWED_SCAN_TIMEFRAMES = ('15m', '30m', '1h', '2h', '4h')
 DEFAULT_SCAN_INTERVAL_MIN = 10
 
+# Universe selection source:
+#   'volume'    — top-N USDT-perps by 24h quote volume (original behavior;
+#                 memcoins / pumped tokens dominate)
+#   'marketcap' — perps whose underlying coin is top-N by CoinGecko market
+#                 cap rank (more "blue-chip", fewer pumped microcaps)
+DEFAULT_UNIVERSE_SOURCE = 'volume'
+ALLOWED_UNIVERSE_SOURCES = ('volume', 'marketcap')
+DEFAULT_MAX_MARKET_CAP_RANK = 150
+
 # Volumized algorithm params — independent from main SMC settings by design.
 # User can hit "Copy from main settings" button in the UI to mirror.
 DEFAULT_SWING_LENGTH = 10               # Pine default (stricter than main's 5)
@@ -105,6 +114,8 @@ class VolumizedOBRadar:
         self._enabled = False
         self._top_n = DEFAULT_TOP_N
         self._min_quote_volume_usd = DEFAULT_MIN_QUOTE_VOLUME_USD
+        self._universe_source = DEFAULT_UNIVERSE_SOURCE
+        self._max_market_cap_rank = DEFAULT_MAX_MARKET_CAP_RANK
         self._throttle_ms = DEFAULT_THROTTLE_MS
         self._timeframe = DEFAULT_SCAN_TIMEFRAME
         self._scan_interval_min = DEFAULT_SCAN_INTERVAL_MIN
@@ -149,6 +160,10 @@ class VolumizedOBRadar:
             self._enabled = bool(data.get('enabled', self._enabled))
             self._top_n = int(data.get('top_n', self._top_n))
             self._min_quote_volume_usd = float(data.get('min_quote_volume_usd', self._min_quote_volume_usd))
+            us = data.get('universe_source', self._universe_source)
+            if us in ALLOWED_UNIVERSE_SOURCES:
+                self._universe_source = us
+            self._max_market_cap_rank = int(data.get('max_market_cap_rank', self._max_market_cap_rank))
             self._throttle_ms = int(data.get('throttle_ms', self._throttle_ms))
             tf = data.get('timeframe', self._timeframe)
             if tf in ALLOWED_SCAN_TIMEFRAMES:
@@ -182,6 +197,8 @@ class VolumizedOBRadar:
             'enabled': self._enabled,
             'top_n': self._top_n,
             'min_quote_volume_usd': self._min_quote_volume_usd,
+            'universe_source': self._universe_source,
+            'max_market_cap_rank': self._max_market_cap_rank,
             'throttle_ms': self._throttle_ms,
             'timeframe': self._timeframe,
             'scan_interval_min': self._scan_interval_min,
@@ -210,6 +227,14 @@ class VolumizedOBRadar:
                 self._top_n = v
         if 'min_quote_volume_usd' in kwargs:
             self._min_quote_volume_usd = float(kwargs['min_quote_volume_usd'])
+        if 'universe_source' in kwargs:
+            us = kwargs['universe_source']
+            if us in ALLOWED_UNIVERSE_SOURCES:
+                self._universe_source = us
+        if 'max_market_cap_rank' in kwargs:
+            v = int(kwargs['max_market_cap_rank'])
+            if 10 <= v <= 500:
+                self._max_market_cap_rank = v
         if 'throttle_ms' in kwargs:
             v = int(kwargs['throttle_ms'])
             if 100 <= v <= 5000:
@@ -356,12 +381,30 @@ class VolumizedOBRadar:
         expired_removed = self._cleanup_expired_items()
         
         # === 2. Fetch universe ===
+        # Source is user-selectable: 'volume' (top-N by 24h turnover) or
+        # 'marketcap' (top-N by CoinGecko market cap rank). Market cap mode
+        # falls back to volume mode if CoinGecko is unavailable so the radar
+        # never goes dark just because the ranking API hiccuped.
+        universe = None
+        src = self._universe_source
         try:
-            universe = self.md.fetch_top_perp_symbols(
-                n=self._top_n,
-                min_quote_volume_usd=self._min_quote_volume_usd)
+            if src == 'marketcap':
+                universe = self.md.fetch_top_by_marketcap(
+                    n=self._max_market_cap_rank,
+                    min_quote_volume_usd=self._min_quote_volume_usd)
+                if not universe:
+                    print('[VOLRADAR] Market cap universe empty/unavailable — '
+                          'falling back to volume ranking')
+                    universe = self.md.fetch_top_perp_symbols(
+                        n=self._top_n,
+                        min_quote_volume_usd=self._min_quote_volume_usd)
+                    src = 'volume (fallback)'
+            else:
+                universe = self.md.fetch_top_perp_symbols(
+                    n=self._top_n,
+                    min_quote_volume_usd=self._min_quote_volume_usd)
         except Exception as e:
-            print(f'[VOLRADAR] fetch_top_perp_symbols failed: {e}')
+            print(f'[VOLRADAR] universe fetch failed ({src}): {e}')
             universe = None
         
         if not universe:
@@ -376,7 +419,8 @@ class VolumizedOBRadar:
             self._last_scan_at = started_at
             return summary
         
-        print(f'[VOLRADAR] Universe: {len(universe)} symbols, scan_tf={self._timeframe}')
+        print(f'[VOLRADAR] Universe: {len(universe)} symbols, '
+              f'source={src}, scan_tf={self._timeframe}')
         
         # === 3. Snapshot current watchlist for dedup checks ===
         try:
