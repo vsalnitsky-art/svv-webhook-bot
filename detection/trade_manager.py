@@ -890,38 +890,56 @@ class TradeManager:
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
             return
         
+        # === Real-money track ===
+        # Runs whenever TM is enabled. Gated by the tradeable list so only
+        # explicitly-allowed symbols ever hit the exchange.
+        real_opened = False
         if enabled:
-            # Real-money mode
             if existing_real:
                 if existing_real['side'] == side:
-                    # Same direction — already in this trend, no-op
-                    return
-                # OPPOSITE direction — reverse: close + open
-                print(f"[TM] 🔄 Reverse signal for {symbol}: "
-                      f"closing {existing_real['side']} → opening {side}")
-                try:
-                    self._close_position(symbol, entry_price, reason='reverse_signal')
-                except Exception as e:
-                    print(f"[TM] ❌ Reverse-close failed for {symbol}: {e}")
-                    # Bail out — don't leave the user with two positions or
-                    # one stale position if the close call errored. Better
-                    # to skip the new open and let next signal retry.
-                    return
-                if not self._is_tradeable(symbol):
-                    print(f"[TM] {symbol} not in tradeable list — reverse-open skipped")
-                    return
-                self._open_position(symbol, side, entry_price, opened_by)
-                return
-            # No existing real position
-            if not self._is_tradeable(symbol):
-                print(f"[TM] {symbol} not in tradeable list — signal ignored")
-                return
-            self._open_position(symbol, side, entry_price, opened_by)
-        elif test_mode:
-            # Paper mode — track shadow position
+                    # Same direction — already in this trend, no-op for real.
+                    # (Don't return — paper track below may still need to run
+                    #  for symbols where no shadow exists yet.)
+                    real_opened = True
+                else:
+                    # OPPOSITE direction — reverse: close + open
+                    print(f"[TM] 🔄 Reverse signal for {symbol}: "
+                          f"closing {existing_real['side']} → opening {side}")
+                    try:
+                        self._close_position(symbol, entry_price, reason='reverse_signal')
+                    except Exception as e:
+                        print(f"[TM] ❌ Reverse-close failed for {symbol}: {e}")
+                        # Bail out of the REAL track only — don't leave the user
+                        # with two positions or one stale position. Paper track
+                        # is independent and should not be affected by a real
+                        # exchange error, so we don't return here.
+                        real_opened = True  # treat as "real handled it" to avoid paper dup
+                    else:
+                        if self._is_tradeable(symbol):
+                            self._open_position(symbol, side, entry_price, opened_by)
+                            real_opened = True
+                        else:
+                            print(f"[TM] {symbol} not in tradeable list — reverse-open skipped")
+            else:
+                # No existing real position
+                if self._is_tradeable(symbol):
+                    self._open_position(symbol, side, entry_price, opened_by)
+                    real_opened = True
+                else:
+                    print(f"[TM] {symbol} not in tradeable list — signal ignored (real)")
+
+        # === Paper (shadow) track ===
+        # Independent of the real track. Runs on EVERY qualified signal
+        # whenever test_mode is on — there is no tradeable gate here because
+        # paper trades never touch real funds; the whole point is to measure
+        # how the FULL strategy would have performed. The one exception: if
+        # the real track just opened/holds this exact symbol, we skip the
+        # shadow to avoid a redundant duplicate of a position we're already
+        # tracking for real (the real trade is the source of truth for it).
+        if test_mode and not real_opened:
             if existing_shadow:
                 if existing_shadow['side'] == side:
-                    return
+                    return  # already in this trend on paper
                 # OPPOSITE direction — same reverse semantics for paper trades
                 print(f"[TM] 🔄 [TEST] Reverse signal for {symbol}: "
                       f"closing {existing_shadow['side']} → opening {side}")
