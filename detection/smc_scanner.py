@@ -1906,11 +1906,17 @@ class SMCScanner:
             if not self._pd_zone_filter_allows(symbol, side_label):
                 return  # Already logged inside the helper
             
-            # Live entry price — close of the bar where the BOS/CHoCH crossover
-            # occurred. This is the price at the actual moment the signal fired.
-            entry_price = self._get_live_price(symbol)
-            if entry_price is None:
-                entry_price = event.get('level', 0)
+            # Entry price = the structural break LEVEL of the event that fired
+            # the signal: the BOS break level in CHoCH+BOS mode, or the CHoCH
+            # break level in CHoCH mode. This is the exact price `close` crossed
+            # to confirm the structure — i.e. the actual trigger. Pinning the
+            # entry to this level keeps it sitting ON the structure drawn on the
+            # chart, instead of drifting to wherever live price happens to be at
+            # scan time. Live price is only a last-resort fallback if, for some
+            # reason, the event carries no usable level.
+            entry_price = event.get('level', 0)
+            if not entry_price or entry_price <= 0:
+                entry_price = self._get_live_price(symbol) or 0
             
             entry_str = self._fmt_price(entry_price)
             
