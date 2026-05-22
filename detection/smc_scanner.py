@@ -295,6 +295,16 @@ class SMCScanner:
         # {symbol: set_of_event_ids_seen_on_first_scan}
         self._first_scan_done: Dict[str, bool] = {}
         self._seen_events: Dict[str, set] = {}  # {symbol: {ev_id, ...}}
+        # High-water mark: newest crossover bar time (to_t, ms) we've ever
+        # PROCESSED per symbol. The seen-set above is capped at 200 ids, so on
+        # symbols with >200 lifetime events the oldest ids get evicted and would
+        # re-enter "new events" on a later scan — making weeks-old structure
+        # look new and (with recency OFF) fire at a stale level. This guard
+        # ensures we never fire an event whose bar isn't strictly newer than
+        # anything we've already acted on, independent of the recency setting.
+        # Rebuilt on each first scan (incl. after a restart), so no persistence
+        # needed: first scan never fires, it only records + sets the mark.
+        self._event_hwm: Dict[str, int] = {}  # {symbol: newest_to_t_ms}
         
         # HTF Bias cache per symbol: {symbol: {'bias', 'method', ...}}
         self._htf_cache: Dict[str, Dict] = {}
@@ -1653,15 +1663,25 @@ class SMCScanner:
         def ev_id(e):
             return f"{e.get('from_t')}:{e.get('dir')}"
         
+        # Crossover bar time (ms) — when the structure event actually fired.
+        # This is the right notion of "how recent" an event is (from_t is the
+        # OLD pivot being broken; to_t is when close crossed it).
+        def ev_to_t(e):
+            t = e.get('to_t', 0) or 0
+            return int(t)
+        
         seen = self._seen_events.setdefault(symbol, set())
         is_first_scan = not self._first_scan_done.get(symbol, False)
         
-        # Determine truly NEW events (their stable IDs aren't in `seen`)
-        new_events = []
+        # Candidate NEW events (their stable IDs aren't in `seen`). NOTE: due to
+        # the 200-id cap below, this list can also contain RE-SURFACED old events
+        # whose ids were evicted — the high-water-mark guard further down filters
+        # those out before anything fires.
+        candidate_new = []
         for ev in events:
             eid = ev_id(ev)
             if eid not in seen:
-                new_events.append((eid, ev))
+                candidate_new.append((eid, ev))
                 seen.add(eid)
         
         # Bound seen set to avoid unbounded growth
@@ -1673,10 +1693,36 @@ class SMCScanner:
             # First scan: just record existing events. NEVER seed pending_choch
             # from history, because the BOS that "confirms" it would also be
             # historical and is recorded as seen on this same scan.
+            # Set the high-water mark to the newest event so future scans can
+            # never re-fire any of this history (even after seen-set eviction).
+            self._event_hwm[symbol] = max((ev_to_t(e) for e in events), default=0)
             self._first_scan_done[symbol] = True
             print(f"[SMC] {symbol}: first scan recorded {len(events)} historical events "
                   f"(no alerts, no pending CHoCH from history)")
             return
+        
+        # === High-water-mark guard (root fix for re-surfaced old events) ===
+        # Keep only candidates whose crossover bar is strictly newer than the
+        # newest bar we've already processed. A re-surfaced old event (evicted
+        # from `seen` by the 200-cap) has an old to_t <= hwm and is dropped here
+        # — it stays recorded in `seen` but never reaches the firing pipeline.
+        # This makes correctness independent of the recency setting: even with
+        # recency OFF, stale structure from days/weeks ago can no longer fire.
+        hwm = self._event_hwm.get(symbol, 0)
+        dropped_stale = 0
+        new_events = []
+        for eid, ev in candidate_new:
+            if ev_to_t(ev) > hwm:
+                new_events.append((eid, ev))
+            else:
+                dropped_stale += 1
+        if dropped_stale:
+            print(f"[SMC] {symbol}: dropped {dropped_stale} re-surfaced stale "
+                  f"event(s) below high-water mark (seen-set eviction guard)")
+        # Advance the mark to the newest event we're about to process.
+        if new_events:
+            self._event_hwm[symbol] = max(
+                hwm, max(ev_to_t(ev) for _, ev in new_events))
         
         if not new_events:
             return  # nothing changed since last scan
