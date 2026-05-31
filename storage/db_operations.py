@@ -11,7 +11,8 @@ from storage.db_models import (
     SymbolBlacklist, SMCOBState,
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
-    LiquidationBucket, LiquidationOISnapshot, LiquidationEvent
+    LiquidationBucket, LiquidationOISnapshot, LiquidationEvent,
+    LiqHeatmapProfile
 )
 from config import DEFAULT_SETTINGS
 
@@ -1594,6 +1595,81 @@ class DBOperations:
         except Exception as e:
             session.rollback()
             print(f"[DB] liqmap_prune_events error: {e}")
+            return 0
+        finally:
+            session.close()
+
+    # ====================================================================
+    # Liquidity Heatmap profiles — depth snapshots per symbol over time
+    # ====================================================================
+    def add_liq_heatmap_profile(self, symbol: str, ts: datetime, mid_price: float,
+                                  bid_data: str, ask_data: str) -> bool:
+        """Insert one depth-profile row. bid_data/ask_data are pre-serialized
+        JSON strings (callers pre-encode to avoid duplicating json.dumps in DB layer).
+        """
+        session = get_session()
+        try:
+            row = LiqHeatmapProfile(
+                symbol=symbol,
+                ts=ts,
+                mid_price=mid_price,
+                bid_data=bid_data,
+                ask_data=ask_data,
+            )
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] add_liq_heatmap_profile error: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_liq_heatmap_profiles(self, symbol: str, hours: int) -> List[Dict]:
+        """Return all profile rows for a symbol within the last N hours.
+        Returns rows ordered by ts ascending (oldest first).
+        bid_data/ask_data come back as raw JSON strings — caller decodes.
+        """
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            rows = session.query(LiqHeatmapProfile).filter(
+                LiqHeatmapProfile.symbol == symbol,
+                LiqHeatmapProfile.ts >= cutoff
+            ).order_by(LiqHeatmapProfile.ts.asc()).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] get_liq_heatmap_profiles error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def get_liq_heatmap_symbols(self) -> List[str]:
+        """Return distinct symbols that have at least one profile stored."""
+        session = get_session()
+        try:
+            rows = session.query(LiqHeatmapProfile.symbol).distinct().all()
+            return sorted([r[0] for r in rows])
+        except Exception as e:
+            print(f"[DB] get_liq_heatmap_symbols error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def cleanup_liq_heatmap_profiles(self, retention_days: int = 7) -> int:
+        """Delete profiles older than retention_days. Returns rows removed."""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=retention_days)
+            n = session.query(LiqHeatmapProfile).filter(
+                LiqHeatmapProfile.ts < cutoff
+            ).delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] cleanup_liq_heatmap_profiles error: {e}")
             return 0
         finally:
             session.close()

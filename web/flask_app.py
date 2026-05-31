@@ -118,6 +118,18 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Liquidity Map: {e}")
         
+        # Multi-symbol Heatmap Collector (separate from BTC Liquidity Map walls).
+        # Snapshots Binance depth for several symbols → sob_liq_heatmap_profiles table.
+        # Frontend Market Analytics → Heatmap tab renders this as a time × price grid.
+        if not _auto_started.get('heatmap'):
+            _auto_started['heatmap'] = True
+            try:
+                from detection.heatmap_collector import init_heatmap_collector
+                hm = init_heatmap_collector(db=get_db())
+                hm.start()
+            except Exception as e:
+                print(f"[APP] Failed to start Heatmap Collector: {e}")
+        
         # Funding Rate Monitor
         if not _auto_started['funding']:
             _auto_started['funding'] = True
@@ -2078,23 +2090,132 @@ def register_api_routes(app):
     
     @app.route('/api/heatmap/liquidity')
     def api_heatmap_liquidity():
-        """24h Liquidity Heatmap data.
-        
+        """Liquidity Heatmap data — multi-symbol.
+
         Query params:
-          hours: int — time window (default 24, max 168 = 7d)
+          symbol: default BTCUSDT
+          hours:  int — time window (default 24, max 168 = 7d)
         """
-        from detection.liquidity_map import get_liquidity_map
-        lm = get_liquidity_map()
-        if not lm:
-            return jsonify({'error': 'Liquidity Map not initialized', 'rows': []})
-        
+        symbol = request.args.get('symbol', 'BTCUSDT').upper()
+        if not symbol.endswith('USDT'):
+            symbol += 'USDT'
         try:
             hours = int(request.args.get('hours', 24))
             hours = max(1, min(hours, 168))
         except:
             hours = 24
-        
+
+        # Prefer new multi-symbol HeatmapCollector. Fall back to legacy
+        # BTC-only LiquidityMap when the collector hasn't started yet
+        # (mostly for the first request after a cold deploy).
+        from detection.heatmap_collector import get_heatmap_collector
+        hc = get_heatmap_collector()
+        if hc:
+            return jsonify(hc.get_heatmap_data(symbol=symbol, hours=hours))
+
+        from detection.liquidity_map import get_liquidity_map
+        lm = get_liquidity_map()
+        if not lm:
+            return jsonify({'error': 'Heatmap not initialized', 'rows': []})
         return jsonify(lm.get_heatmap_data(hours=hours))
+
+    @app.route('/api/heatmap/symbols')
+    def api_heatmap_symbols():
+        """List symbols currently tracked by HeatmapCollector, plus per-symbol
+        last-seen status and the union of symbols that have any stored data.
+        """
+        from detection.heatmap_collector import get_heatmap_collector
+        hc = get_heatmap_collector()
+        configured = []
+        status = {}
+        if hc:
+            st = hc.get_status()
+            configured = st.get('symbols', [])
+            status = st.get('last_results', {})
+
+        stored = []
+        try:
+            stored = get_db().get_liq_heatmap_symbols()
+        except Exception:
+            pass
+
+        # Union: configured first (preserve order), then any stored not yet listed
+        seen = set(configured)
+        union = list(configured)
+        for s in stored:
+            if s not in seen:
+                seen.add(s)
+                union.append(s)
+
+        return jsonify({
+            'configured': configured,
+            'stored': stored,
+            'all': union,
+            'status': status,
+        })
+
+    @app.route('/api/heatmap/symbols/set', methods=['POST'])
+    def api_heatmap_symbols_set():
+        """Replace the tracked symbol list. Body: {symbols: ["BTCUSDT","ETHUSDT",...]}"""
+        from detection.heatmap_collector import get_heatmap_collector
+        hc = get_heatmap_collector()
+        if not hc:
+            return jsonify({'ok': False, 'reason': 'collector not initialized'})
+        data = request.get_json() or {}
+        items = data.get('symbols', []) or []
+        if not isinstance(items, list):
+            return jsonify({'ok': False, 'reason': 'symbols must be a list'})
+        applied = hc.set_symbols(items)
+        return jsonify({'ok': True, 'symbols': applied})
+
+    @app.route('/api/heatmap/candles')
+    def api_heatmap_candles():
+        """Candles for the heatmap overlay.
+
+        Query params:
+          symbol:   default BTCUSDT
+          interval: 1m|5m|15m|30m|1h|4h  (default 15m)
+          hours:    1..168 (default 24)
+        """
+        symbol = request.args.get('symbol', 'BTCUSDT').upper()
+        if not symbol.endswith('USDT'):
+            symbol += 'USDT'
+        interval = request.args.get('interval', '15m')
+        try:
+            hours = int(request.args.get('hours', 24))
+            hours = max(1, min(hours, 168))
+        except:
+            hours = 24
+
+        # Pick a sensible kline count for the chosen interval+window
+        per_hour = {'1m': 60, '5m': 12, '15m': 4, '30m': 2, '1h': 1, '4h': 0.25}
+        limit = int(min(1000, max(50, hours * per_hour.get(interval, 4))))
+
+        try:
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            if md is None:
+                return jsonify({'ok': False, 'reason': 'market_data unavailable',
+                                 'candles': []})
+            klines = md.fetch_klines(symbol, interval=interval, limit=limit)
+            if not klines:
+                return jsonify({'ok': True, 'candles': [], 'symbol': symbol,
+                                 'interval': interval})
+            # Normalize to {t,o,h,l,c} expected by the renderer
+            candles = []
+            for k in klines:
+                t = k.get('t') or k.get('time') or k.get('open_time') or 0
+                o = float(k.get('o') or k.get('open') or 0)
+                h = float(k.get('h') or k.get('high') or 0)
+                l = float(k.get('l') or k.get('low') or 0)
+                c = float(k.get('c') or k.get('close') or k.get('p') or 0)
+                if c == 0:
+                    continue
+                candles.append({'t': int(t), 'o': o, 'h': h, 'l': l, 'c': c})
+            return jsonify({'ok': True, 'symbol': symbol, 'interval': interval,
+                             'candles': candles})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e), 'candles': []})
     
     @app.route('/api/volume-profile')
     def api_volume_profile():

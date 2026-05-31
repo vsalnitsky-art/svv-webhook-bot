@@ -457,8 +457,28 @@
                 <span style="color:#888">High</span>
             </div>
         </div>
-        <div id="heatmap-wrapper">
+        <div class="hm-controls" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:8px 0 10px;padding:6px 8px;background:rgba(255,255,255,0.02);border-radius:6px">
+            <div style="display:flex;gap:6px;align-items:center">
+                <span style="color:#888;font-size:0.8rem">Symbol:</span>
+                <select id="hm-symbol" style="background:#1a1a1a;color:#ddd;border:1px solid #333;border-radius:4px;padding:4px 8px;font-size:0.85rem">
+                    <option value="BTCUSDT">BTCUSDT</option>
+                </select>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+                <span style="color:#888;font-size:0.8rem">Candles:</span>
+                <div id="hm-tf-toggle" style="display:flex;gap:2px;background:#111;border-radius:4px;padding:2px">
+                    <button class="hm-tf-btn" data-tf="1m" style="background:transparent;color:#888;border:0;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.8rem">1m</button>
+                    <button class="hm-tf-btn" data-tf="5m" style="background:transparent;color:#888;border:0;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.8rem">5m</button>
+                    <button class="hm-tf-btn active" data-tf="15m" style="background:#2a5d9f;color:#fff;border:0;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.8rem">15m</button>
+                    <button class="hm-tf-btn" data-tf="30m" style="background:transparent;color:#888;border:0;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.8rem">30m</button>
+                    <button class="hm-tf-btn" data-tf="1h" style="background:transparent;color:#888;border:0;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.8rem">1h</button>
+                    <button class="hm-tf-btn" data-tf="4h" style="background:transparent;color:#888;border:0;padding:3px 8px;border-radius:3px;cursor:pointer;font-size:0.8rem">4h</button>
+                </div>
+            </div>
+        </div>
+        <div id="heatmap-wrapper" style="position:relative">
             <div class="hm-loading">⏳ Loading heatmap data...</div>
+            <div id="hm-tooltip" style="display:none;position:absolute;pointer-events:none;background:rgba(255,255,255,0.95);color:#222;padding:8px 12px;border-radius:6px;font-size:0.75rem;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:10;min-width:160px"></div>
         </div>
     </div>
     
@@ -562,181 +582,326 @@ function refreshCurrentTab() {
     else if (currentTab === 'whales') loadWhales();
 }
 
+// ============================================================
+// Liquidity Heatmap — multi-symbol Canvas renderer
+// ============================================================
+// State: tracks currently-selected symbol + candle TF across reloads
+let hmState = {
+    symbol: 'BTCUSDT',
+    candleTF: '15m',
+    symbolsLoaded: false
+};
+
+async function loadHeatmapSymbols() {
+    // Populates the symbol selector from the backend. Runs once on first
+    // panel open; subsequent calls are no-ops because hmState.symbolsLoaded
+    // flips true after the first successful fetch.
+    if (hmState.symbolsLoaded) return;
+    try {
+        const r = await fetch('/api/heatmap/symbols');
+        const d = await r.json();
+        const sel = document.getElementById('hm-symbol');
+        if (!sel || !d.all || d.all.length === 0) return;
+        sel.innerHTML = '';
+        d.all.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s;
+            opt.textContent = s;
+            sel.appendChild(opt);
+        });
+        const saved = (typeof localStorage !== 'undefined') ? localStorage.getItem('hm_symbol') : null;
+        if (saved && d.all.includes(saved)) hmState.symbol = saved;
+        else if (d.all.includes('BTCUSDT')) hmState.symbol = 'BTCUSDT';
+        else hmState.symbol = d.all[0];
+        sel.value = hmState.symbol;
+        hmState.symbolsLoaded = true;
+    } catch (e) {
+        console.warn('[Heatmap] symbols load error:', e);
+    }
+}
+
 async function loadHeatmap() {
     const wrap = document.getElementById('heatmap-wrapper');
     const info = document.getElementById('hm-info');
     const hours = document.getElementById('ma-period').value;
-    
-    wrap.innerHTML = '<div class="hm-loading">⏳ Loading heatmap data...</div>';
+
+    await loadHeatmapSymbols();
+
+    const oldCanvas = wrap.querySelector('canvas');
+    if (oldCanvas) oldCanvas.remove();
+    const oldLoading = wrap.querySelector('.hm-loading, .hm-empty');
+    if (oldLoading) oldLoading.remove();
+    const loading = document.createElement('div');
+    loading.className = 'hm-loading';
+    loading.textContent = '⏳ Loading heatmap data...';
+    wrap.appendChild(loading);
     info.textContent = 'Loading...';
-    
+
     try {
-        const res = await fetch(`/api/heatmap/liquidity?hours=${hours}`);
-        const d = await res.json();
-        
+        const url = `/api/heatmap/liquidity?symbol=${hmState.symbol}&hours=${hours}`;
+        const candleUrl = `/api/heatmap/candles?symbol=${hmState.symbol}` +
+                            `&interval=${hmState.candleTF}&hours=${hours}`;
+        const [hmRes, cdRes] = await Promise.all([
+            fetch(url),
+            fetch(candleUrl)
+        ]);
+        const d = await hmRes.json();
+        const cd = await cdRes.json();
+        const candles = (cd && cd.ok && Array.isArray(cd.candles)) ? cd.candles : [];
+
+        loading.remove();
+
         if (!d.rows || d.rows.length === 0) {
-            wrap.innerHTML = `<div class="hm-empty">
-                <div style="font-size:1.2rem;margin-bottom:10px">📭 No heatmap data yet</div>
+            const empty = document.createElement('div');
+            empty.className = 'hm-empty';
+            empty.innerHTML = `
+                <div style="font-size:1.2rem;margin-bottom:10px">📭 No heatmap data for ${hmState.symbol}</div>
                 <div style="font-size:0.85rem">The Heatmap collects data every minute.</div>
                 <div style="font-size:0.85rem;margin-top:4px">Come back in 5-10 minutes to see initial data.</div>
-                <div style="color:#555;font-size:0.75rem;margin-top:12px">Snapshots: ${d.snapshots || 0}</div>
-            </div>`;
-            info.textContent = 'No data';
+                <div style="color:#555;font-size:0.75rem;margin-top:12px">Snapshots: ${d.snapshots || 0}</div>`;
+            wrap.appendChild(empty);
+            info.textContent = `No data for ${hmState.symbol}`;
             return;
         }
-        
-        renderHeatmap(d);
-        
-        info.innerHTML = `<b style="color:#ddd">${d.symbol}</b> · ${d.snapshots} snapshots · ${d.time_buckets.length} time buckets · ${d.rows.length} price levels · Current: <b style="color:#4caf50">$${Number(d.current_price).toLocaleString()}</b>`;
+
+        renderHeatmapCanvas(d, candles);
+
+        const priceTxt = d.current_price ? Number(d.current_price).toLocaleString(undefined, {maximumFractionDigits: 6}) : '?';
+        info.innerHTML = `<b style="color:#ddd">${d.symbol}</b> · ${d.snapshots} snapshots · ${d.time_buckets.length} buckets · ${d.rows.length} levels · Candles ${hmState.candleTF} (${candles.length}) · Current: <b style="color:#4caf50">$${priceTxt}</b>`;
     } catch (err) {
-        wrap.innerHTML = `<div class="hm-empty" style="color:#ff5252">❌ Error loading heatmap: ${err.message}</div>`;
+        loading.remove();
+        const errEl = document.createElement('div');
+        errEl.className = 'hm-empty';
+        errEl.style.color = '#ff5252';
+        errEl.textContent = `❌ Error loading heatmap: ${err.message}`;
+        wrap.appendChild(errEl);
         info.textContent = 'Error';
     }
 }
 
-function renderHeatmap(d) {
+// ============================================================
+// Canvas renderer — heatmap cells + candle overlay
+// ============================================================
+
+function renderHeatmapCanvas(d, candles) {
     const wrap = document.getElementById('heatmap-wrapper');
-    wrap.innerHTML = '';
-    
+
+    const containerW = wrap.clientWidth || 1100;
+    const W = Math.max(700, containerW);
+    const H = 540;
+    const PAD = { top: 14, right: 70, bottom: 28, left: 12 };
+    const plotW = W - PAD.left - PAD.right;
+    const plotH = H - PAD.top - PAD.bottom;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W * window.devicePixelRatio;
+    canvas.height = H * window.devicePixelRatio;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    canvas.style.display = 'block';
+    wrap.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    ctx.imageSmoothingEnabled = false;
+
+    const rows = d.rows;
     const cols = d.time_buckets.length;
-    const priceRows = d.rows;
-    const maxV = d.max_volume || 1;
-    
-    // Build a scrollable HTML grid instead of canvas for accessibility and labels
-    const CELL_W = Math.max(4, Math.min(18, Math.floor(900 / cols)));  // auto-fit width
-    const CELL_H = Math.max(4, Math.min(14, Math.floor(500 / priceRows.length)));
-    
-    // Container with two parts: left = price labels, right = grid
-    const container = document.createElement('div');
-    container.style.cssText = 'display:flex;flex-direction:column;position:relative';
-    
-    // Grid rows
-    const grid = document.createElement('div');
-    grid.style.cssText = `display:flex;flex-direction:column;font-family:Consolas,monospace;font-size:0.7rem`;
-    
-    // Label every Nth price
-    const labelStep = Math.max(1, Math.floor(priceRows.length / 20));
-    
-    priceRows.forEach((row, ri) => {
-        const rowEl = document.createElement('div');
-        rowEl.style.cssText = `display:flex;align-items:center;height:${CELL_H}px`;
-        
-        // Price label
-        const label = document.createElement('div');
-        label.className = 'hm-price-axis';
-        label.style.cssText += `width:70px;height:${CELL_H}px;line-height:${CELL_H}px`;
-        if (ri % labelStep === 0 || ri === priceRows.length - 1) {
-            label.textContent = '$' + Number(row.price).toLocaleString();
-        }
-        rowEl.appendChild(label);
-        
-        // Cells
-        const cellsDiv = document.createElement('div');
-        cellsDiv.style.cssText = 'display:flex';
-        
-        row.cells.forEach((v, ci) => {
-            const cell = document.createElement('div');
-            const intensity = v / maxV;
-            cell.style.cssText = `width:${CELL_W}px;height:${CELL_H}px;background:${colorForIntensity(intensity)}`;
-            cell.title = `$${Number(row.price).toLocaleString()} @ ${d.time_buckets[ci]}: $${(v*1000).toLocaleString()} liquidity`;
-            cellsDiv.appendChild(cell);
-        });
-        
-        rowEl.appendChild(cellsDiv);
-        grid.appendChild(rowEl);
-    });
-    
-    // Time axis (bottom)
-    const timeRow = document.createElement('div');
-    timeRow.style.cssText = `display:flex;align-items:center;margin-top:4px;font-family:Consolas,monospace;font-size:0.65rem`;
-    const spacer = document.createElement('div');
-    spacer.style.cssText = 'width:70px';
-    timeRow.appendChild(spacer);
-    
-    const timeLabels = document.createElement('div');
-    timeLabels.style.cssText = 'display:flex';
-    const timeStep = Math.max(1, Math.floor(cols / 12));
-    d.time_buckets.forEach((t, ci) => {
-        const el = document.createElement('div');
-        el.className = 'hm-time-axis';
-        el.style.cssText = `width:${CELL_W}px;overflow:visible;white-space:nowrap`;
-        if (ci % timeStep === 0) {
-            el.textContent = t;
-            el.style.cssText += ';position:relative;transform:translateX(-15px)';
-        }
-        timeLabels.appendChild(el);
-    });
-    timeRow.appendChild(timeLabels);
-    
-    container.appendChild(grid);
-    container.appendChild(timeRow);
-    wrap.appendChild(container);
-    
-    // Overlay price line on top of grid (SVG)
-    drawPriceLine(grid, d, CELL_W, CELL_H);
-}
+    if (rows.length === 0 || cols === 0) return;
 
-function drawPriceLine(gridEl, d, CELL_W, CELL_H) {
-    // Find max/min price in rows
-    const prices = d.rows.map(r => r.price);
-    const pMax = Math.max(...prices);
-    const pMin = Math.min(...prices);
-    const pRange = pMax - pMin;
-    if (pRange <= 0) return;
-    
-    const w = d.time_buckets.length * CELL_W;
-    const h = d.rows.length * CELL_H;
-    
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', w);
-    svg.setAttribute('height', h);
-    svg.style.cssText = `position:absolute;left:70px;top:0;pointer-events:none`;
-    
-    let path = '';
-    d.price_line.forEach((price, i) => {
-        if (!price) return;
-        const x = i * CELL_W + CELL_W / 2;
-        const y = ((pMax - price) / pRange) * h;
-        path += (i === 0 ? 'M' : 'L') + `${x},${y}`;
-    });
-    
-    const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    pathEl.setAttribute('d', path);
-    pathEl.setAttribute('stroke', '#ffffff');
-    pathEl.setAttribute('stroke-width', '1.5');
-    pathEl.setAttribute('fill', 'none');
-    pathEl.setAttribute('opacity', '0.85');
-    svg.appendChild(pathEl);
-    
-    gridEl.style.position = 'relative';
-    gridEl.appendChild(svg);
-}
-
-function colorForIntensity(i) {
-    // 0 → dark navy, 0.25 → blue, 0.5 → cyan, 0.75 → yellow, 1 → red
-    if (i <= 0.001) return '#0a1228';  // near-black for no liquidity
-    const clamp = Math.min(1, Math.max(0, i));
-    // Use log scale for better visibility of small values
-    const logI = Math.log10(1 + clamp * 9) / Math.log10(10);
-    
-    let r, g, b;
-    if (logI < 0.25) {
-        const t = logI / 0.25;
-        r = Math.round(10 + (30-10)*t);  g = Math.round(18 + (58-18)*t);  b = Math.round(40 + (138-40)*t);
-    } else if (logI < 0.5) {
-        const t = (logI - 0.25) / 0.25;
-        r = Math.round(30 + (8-30)*t);   g = Math.round(58 + (145-58)*t); b = Math.round(138 + (178-138)*t);
-    } else if (logI < 0.75) {
-        const t = (logI - 0.5) / 0.25;
-        r = Math.round(8 + (234-8)*t);   g = Math.round(145 + (179-145)*t); b = Math.round(178 + (8-178)*t);
-    } else {
-        const t = (logI - 0.75) / 0.25;
-        r = Math.round(234 + (239-234)*t); g = Math.round(179 + (68-179)*t); b = Math.round(8 + (68-8)*t);
+    const pHigh = rows[0].price;
+    const pLow = rows[rows.length - 1].price;
+    const padPct = 0.005;
+    let yHigh = pHigh * (1 + padPct);
+    let yLow = pLow * (1 - padPct);
+    if (candles.length > 0) {
+        for (const c of candles) {
+            if (c.h > yHigh) yHigh = c.h;
+            if (c.l < yLow) yLow = c.l;
+        }
+        yHigh *= (1 + 0.002);
+        yLow *= (1 - 0.002);
     }
-    return `rgb(${r},${g},${b})`;
+    const yRange = yHigh - yLow;
+    if (yRange <= 0) return;
+
+    const priceToY = (p) => PAD.top + ((yHigh - p) / yRange) * plotH;
+    const colToX = (i) => PAD.left + (i / cols) * plotW;
+    const cellW = plotW / cols;
+
+    const maxV = d.max_volume || 1;
+
+    // Heatmap background — one band per price row, each band spans all time cols
+    for (let ri = 0; ri < rows.length; ri++) {
+        const row = rows[ri];
+        const p = row.price;
+        const pAbove = ri > 0 ? rows[ri - 1].price : (p + (p - rows[Math.min(ri + 1, rows.length - 1)].price));
+        const pBelow = ri < rows.length - 1 ? rows[ri + 1].price : (p - (rows[Math.max(ri - 1, 0)].price - p));
+        const yTop = priceToY((p + pAbove) / 2);
+        const yBot = priceToY((p + pBelow) / 2);
+        const bandH = Math.max(1, yBot - yTop);
+
+        for (let ci = 0; ci < cols; ci++) {
+            const v = row.cells[ci] || 0;
+            if (v <= 0) continue;
+            const intensity = Math.min(1, v / maxV);
+            const t = Math.log10(1 + intensity * 9);
+            const col = colorViridis(t);
+            ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+            ctx.fillRect(colToX(ci), yTop, cellW + 0.5, bandH + 0.5);
+        }
+    }
+
+    // Candles on top
+    if (candles.length > 0) {
+        const tStart = candles[0].t;
+        const tEnd = candles[candles.length - 1].t;
+        const tSpan = Math.max(1, tEnd - tStart);
+        const cw = Math.max(1, plotW / candles.length * 0.7);
+
+        for (const c of candles) {
+            const x = PAD.left + ((c.t - tStart) / tSpan) * plotW;
+            const yO = priceToY(c.o);
+            const yC = priceToY(c.c);
+            const yH = priceToY(c.h);
+            const yL = priceToY(c.l);
+            const isUp = c.c >= c.o;
+            const colCandle = isUp ? '#26a69a' : '#ef5350';
+            ctx.strokeStyle = colCandle;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x + cw / 2, yH);
+            ctx.lineTo(x + cw / 2, yL);
+            ctx.stroke();
+            ctx.fillStyle = colCandle;
+            const bodyTop = Math.min(yO, yC);
+            const bodyH = Math.max(1, Math.abs(yC - yO));
+            ctx.fillRect(x, bodyTop, cw, bodyH);
+        }
+    }
+
+    // Price axis (right)
+    ctx.fillStyle = '#999';
+    ctx.font = '11px Consolas, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const priceTickCount = 8;
+    for (let i = 0; i <= priceTickCount; i++) {
+        const p = yLow + (yRange * i / priceTickCount);
+        const y = priceToY(p);
+        ctx.fillText('$' + Math.round(p).toLocaleString(), PAD.left + plotW + 4, y);
+    }
+
+    // Time axis (bottom)
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const timeTickStep = Math.max(1, Math.floor(cols / 10));
+    for (let ci = 0; ci < cols; ci += timeTickStep) {
+        const x = colToX(ci) + cellW / 2;
+        ctx.fillText(d.time_buckets[ci], x, PAD.top + plotH + 6);
+    }
+
+    // Tooltip
+    const tooltip = document.getElementById('hm-tooltip');
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        if (x < PAD.left || x > PAD.left + plotW || y < PAD.top || y > PAD.top + plotH) {
+            tooltip.style.display = 'none';
+            return;
+        }
+        const price = yHigh - ((y - PAD.top) / plotH) * yRange;
+        const ci = Math.min(cols - 1, Math.max(0, Math.floor((x - PAD.left) / cellW)));
+        let nearestRi = 0;
+        let nearestDiff = Infinity;
+        for (let ri = 0; ri < rows.length; ri++) {
+            const dd = Math.abs(rows[ri].price - price);
+            if (dd < nearestDiff) {
+                nearestDiff = dd;
+                nearestRi = ri;
+            }
+        }
+        const v = rows[nearestRi].cells[ci] || 0;
+        const usd = v * 1000;
+        tooltip.style.display = 'block';
+        tooltip.style.left = Math.min(W - 200, x + 14) + 'px';
+        tooltip.style.top = Math.max(0, y - 10) + 'px';
+        tooltip.innerHTML = `
+            <div style="font-weight:600;margin-bottom:4px;color:#888;font-size:0.7rem">${d.time_buckets[ci]}</div>
+            <div>💰 <span style="color:#444">Price</span> <b style="float:right">$${Number(rows[nearestRi].price).toLocaleString(undefined, {maximumFractionDigits: 6})}</b></div>
+            <div>📊 <span style="color:#444">Liquidity</span> <b style="float:right">$${(usd >= 1e6 ? (usd/1e6).toFixed(2) + 'M' : (usd/1e3).toFixed(0) + 'K')}</b></div>`;
+    });
+    canvas.addEventListener('mouseleave', () => {
+        tooltip.style.display = 'none';
+    });
 }
 
-document.addEventListener('DOMContentLoaded', loadHeatmap);
+// Viridis colormap. t ∈ [0,1] → [r,g,b]
+function colorViridis(t) {
+    if (t <= 0) return [10, 14, 35];
+    const stops = [
+        [0.00, [68, 1, 84]],
+        [0.25, [59, 82, 139]],
+        [0.50, [33, 145, 140]],
+        [0.75, [94, 201, 98]],
+        [1.00, [253, 231, 37]]
+    ];
+    t = Math.min(1, Math.max(0, t));
+    for (let i = 1; i < stops.length; i++) {
+        if (t <= stops[i][0]) {
+            const t0 = stops[i-1][0], c0 = stops[i-1][1];
+            const t1 = stops[i][0],   c1 = stops[i][1];
+            const f = (t - t0) / (t1 - t0);
+            return [
+                Math.round(c0[0] + (c1[0] - c0[0]) * f),
+                Math.round(c0[1] + (c1[1] - c0[1]) * f),
+                Math.round(c0[2] + (c1[2] - c0[2]) * f)
+            ];
+        }
+    }
+    return stops[stops.length - 1][1];
+}
+
+// Symbol / TF UI wiring
+document.addEventListener('DOMContentLoaded', () => {
+    const sel = document.getElementById('hm-symbol');
+    if (sel) {
+        sel.addEventListener('change', () => {
+            hmState.symbol = sel.value;
+            if (typeof localStorage !== 'undefined') localStorage.setItem('hm_symbol', hmState.symbol);
+            if (currentTab === 'heatmap') loadHeatmap();
+        });
+    }
+    document.querySelectorAll('.hm-tf-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tf = btn.getAttribute('data-tf');
+            if (!tf || tf === hmState.candleTF) return;
+            hmState.candleTF = tf;
+            if (typeof localStorage !== 'undefined') localStorage.setItem('hm_tf', tf);
+            document.querySelectorAll('.hm-tf-btn').forEach(b => {
+                if (b.getAttribute('data-tf') === tf) {
+                    b.classList.add('active');
+                    b.style.background = '#2a5d9f';
+                    b.style.color = '#fff';
+                } else {
+                    b.classList.remove('active');
+                    b.style.background = 'transparent';
+                    b.style.color = '#888';
+                }
+            });
+            if (currentTab === 'heatmap') loadHeatmap();
+        });
+    });
+    if (typeof localStorage !== 'undefined') {
+        const savedTF = localStorage.getItem('hm_tf');
+        if (savedTF && savedTF !== hmState.candleTF) {
+            const btn = document.querySelector(`.hm-tf-btn[data-tf="${savedTF}"]`);
+            if (btn) btn.click();
+        }
+    }
+    loadHeatmap();
+});
 // Auto-refresh every 60 seconds
 setInterval(() => {
     if (currentTab === 'heatmap') loadHeatmap();

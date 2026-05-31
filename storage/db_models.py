@@ -1267,3 +1267,42 @@ class LiquidationEvent(Base):
             'source': self.source,
             'mitigated_at_ts': self.mitigated_at_ts,
         }
+
+
+# ============================================================================
+# Liquidity Heatmap profiles — depth snapshots over time per symbol
+# ============================================================================
+# Stores full depth profile (bid + ask clusters within ±3% of mid-price)
+# every ~60s per tracked symbol. The frontend Heatmap tab aggregates
+# these into a time × price grid for the CoinGlass-style visualization.
+#
+# Replaces the previous setting-blob storage (db.set_setting('liq_heatmap_profiles', list))
+# which rewrote the full JSON on every snapshot — unworkable at scale.
+#
+# Sizing: 3 symbols × 60s × 24h × 7d = 30240 rows. Each row ~1-2 KB of JSON
+# in bid/ask. Total ~50 MB worst case, bounded by cleanup_liq_heatmap_profiles.
+class LiqHeatmapProfile(Base):
+    __tablename__ = f'{TABLE_PREFIX}liq_heatmap_profiles'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), nullable=False)
+    ts = Column(DateTime, nullable=False, default=datetime.utcnow)
+    mid_price = Column(Float, nullable=False)
+    # Compact JSON arrays: [[price_int, volume_thousands_int], ...]
+    bid_data = Column(Text, nullable=False, default='[]')
+    ask_data = Column(Text, nullable=False, default='[]')
+
+    __table_args__ = (
+        # Hot path: fetch last N hours for a symbol
+        Index('idx_liqhm_symbol_ts', 'symbol', 'ts'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'ts': self.ts.isoformat() if self.ts else None,
+            'mid_price': self.mid_price,
+            'bid_data': self.bid_data,
+            'ask_data': self.ask_data,
+        }
