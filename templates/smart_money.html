@@ -1192,6 +1192,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          below replaces all of them. -->
                     <span class="sm-status-badge" id="sm-htf-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-forecast-badge" style="display:none !important"></span>
+                    <span class="sm-status-badge" id="sm-forecast4h-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-ctr-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-bias-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-health-badge" style="display:none !important"></span>
@@ -3309,6 +3310,8 @@ function clearChart() {
     document.getElementById('sm-htf-badge').style.display = 'none';
     const fcBadge = document.getElementById('sm-forecast-badge');
     if (fcBadge) fcBadge.style.display = 'none';
+    const fc4hBadge = document.getElementById('sm-forecast4h-badge');
+    if (fc4hBadge) fc4hBadge.style.display = 'none';
     const ctrBadge = document.getElementById('sm-ctr-badge');
     if (ctrBadge) ctrBadge.style.display = 'none';
     const biasBadge = document.getElementById('sm-bias-badge');
@@ -3914,6 +3917,30 @@ async function loadChart() {
             forecastBadge.title = `Прогноз 1H: ${fc.reason}`;
         } else {
             forecastBadge.style.display = 'none';
+        }
+        
+        // === Forecast 4H badge (same algorithm as 1H, applied to 4H bars) ===
+        const forecastBadge4h = document.getElementById('sm-forecast4h-badge');
+        const fc4h = d.forecast_4h;
+        if (fc4h && fc4h.side !== undefined && fc4h.side !== 0) {
+            const arrow = fc4h.side === 1 ? '🟢' : '🔴';
+            const dir = fc4h.side === 1 ? 'LONG' : 'SHORT';
+            const sign = fc4h.pct > 0 ? '+' : '';
+            forecastBadge4h.textContent = `🔮 4H: ${arrow} ${dir} ${sign}${fc4h.pct}% · ${fc4h.confidence}%`;
+            forecastBadge4h.className = 'sm-status-badge';
+            forecastBadge4h.style.background = fc4h.side === 1 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+            forecastBadge4h.style.color = fc4h.side === 1 ? '#4ade80' : '#fca5a5';
+            forecastBadge4h.style.display = 'inline-block';
+            forecastBadge4h.title = `Прогноз 4H: 6 Fibonacci horizons (5,8,13,21,34,55) on 4H bars\nSum: ${fc4h.sum}/12, confidence ${fc4h.confidence}%`;
+        } else if (fc4h && fc4h.reason) {
+            forecastBadge4h.textContent = `🔮 4H: —`;
+            forecastBadge4h.className = 'sm-status-badge';
+            forecastBadge4h.style.background = 'rgba(100,100,100,0.15)';
+            forecastBadge4h.style.color = '#888';
+            forecastBadge4h.style.display = 'inline-block';
+            forecastBadge4h.title = `Прогноз 4H: ${fc4h.reason}`;
+        } else {
+            forecastBadge4h.style.display = 'none';
         }
         
         // === CTR badge (informational) ===

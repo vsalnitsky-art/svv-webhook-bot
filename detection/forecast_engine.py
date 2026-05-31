@@ -244,6 +244,27 @@ def _empty_forecast(reason: str = '') -> Dict:
 
 
 # ============================================================
+# Forecast 4H — same algorithm, applied to 4H klines
+# Horizons (5,8,13,21,34,55) measured in 4H bars now cover 4× more
+# wall-clock time than the 1H counterpart (20h .. 220h ≈ 9 days).
+# ============================================================
+
+def calc_forecast_4h(klines_4h: List[Dict]) -> Dict:
+    """Compute Прогноз 4H — Fibonacci horizons evaluated on 4H bars.
+
+    Identical scoring to calc_forecast_1h (trend ±1, momentum ±0.5,
+    volatility +0.5 → sum -12..+12 → ±100%). The pre-check uses a 4H
+    bar-count message; once it passes we delegate to the 1H core so
+    the math stays defined in one place.
+    """
+    if not klines_4h:
+        return _empty_forecast('no klines')
+    if len(klines_4h) < 80:
+        return _empty_forecast(f'need 80+ 4H bars, got {len(klines_4h)}')
+    return calc_forecast_1h(klines_4h)
+
+
+# ============================================================
 # CTR — Cyclic Trend Reversal (Schaff Trend Cycle)
 # Pine reference lines 1622-1668
 # ============================================================
@@ -416,6 +437,7 @@ def _ema_skip_none(values: List, period: int) -> List:
 # ============================================================
 
 FETCH_LIMIT_1H = 300  # ~12.5 days at 1H — plenty for horizon 55 + ATR(28) avg(20)
+FETCH_LIMIT_4H = 300  # ~50 days at 4H — same horizon coverage as 1H, 4× wall-clock
 
 
 class ForecastEngine:
@@ -433,6 +455,7 @@ class ForecastEngine:
             'symbol': symbol,
             'computed_at': time.time(),
             'forecast_1h': _empty_forecast('not computed yet'),
+            'forecast_4h': _empty_forecast('not computed yet'),
             'ctr': {'stc': None, 'last_dir': None, 'reason': 'not computed yet'},
         }
         
@@ -450,6 +473,21 @@ class ForecastEngine:
                 result['forecast_1h'] = _empty_forecast(f'insufficient 1H data ({got})')
         except Exception as e:
             result['forecast_1h'] = _empty_forecast(f'fetch error: {e}')
+        
+        # ---- Forecast 4H ----
+        try:
+            md = get_market_data()
+            klines_4h = None
+            if md and hasattr(md, 'fetch_klines'):
+                if 'interval' in md.fetch_klines.__code__.co_varnames:
+                    klines_4h = md.fetch_klines(symbol, limit=FETCH_LIMIT_4H, interval='4h')
+            if klines_4h and len(klines_4h) >= 80:
+                result['forecast_4h'] = calc_forecast_4h(klines_4h)
+            else:
+                got = len(klines_4h) if klines_4h else 0
+                result['forecast_4h'] = _empty_forecast(f'insufficient 4H data ({got})')
+        except Exception as e:
+            result['forecast_4h'] = _empty_forecast(f'fetch error: {e}')
         
         # ---- CTR — uses LTF klines from scanner ----
         # We feed momStrengthRaw from the multi-TF momentum module so that

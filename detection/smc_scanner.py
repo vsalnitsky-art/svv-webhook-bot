@@ -2231,8 +2231,9 @@ class SMCScanner:
                 if strong_high and weak_low:
                     break
         
-        # === Forecast 1H + CTR (from forecast_engine cache) ===
+        # === Forecast 1H + 4H + CTR (from forecast_engine cache) ===
         forecast_1h = None
+        forecast_4h = None
         ctr = None
         try:
             from detection.forecast_engine import get_forecast_engine
@@ -2241,6 +2242,7 @@ class SMCScanner:
                 cached_fc = fe.get(symbol)
                 if cached_fc:
                     forecast_1h = cached_fc.get('forecast_1h')
+                    forecast_4h = cached_fc.get('forecast_4h')
                     ctr = cached_fc.get('ctr')
         except Exception:
             pass
@@ -2334,9 +2336,10 @@ class SMCScanner:
             'htf_bias': htf_bias,
             'htf_method': htf_data.get('method', ''),
             'htf_timeframe': htf_settings.get('timeframe', ''),
-            # Forecast 1H + CTR (Pine PRO indicators) — kept for legacy
+            # Forecast 1H + 4H + CTR (Pine PRO indicators) — kept for legacy
             # consumers and the chart's auxiliary debug tooltip
             'forecast_1h': forecast_1h,
+            'forecast_4h': forecast_4h,
             'ctr': ctr,
             # Unified Decision Center verdict — primary advisory output
             'decision': decision,
