@@ -2286,30 +2286,26 @@ function renderWatchlist(list) {
             ? '✅ Tradeable: позиції на цій монеті будуть відкриватися. Click щоб вимкнути.'
             : '❌ Not tradeable: сигнали ігноруються. Click щоб дозволити торгівлю.';
         
-        // OB marker — only shown when OB Filter is enabled. Three states:
-        //   ★ green   = BULLISH OB matches — LONG signals will pass gate
-        //   ★ red     = BEARISH OB matches — SHORT signals will pass gate
+        // OB marker — only shown when OB Filter is enabled. Two states:
+        //   ★ green  = BULLISH OB on filter TF — LONG signals will pass gate
+        //   ★ red    = BEARISH OB on filter TF — SHORT signals will pass gate
         //   (nothing) = no valid OB OR filter off
-        // The strict CHoCH-only gate means BOS-created OBs would block
-        // signals, so we render those as a dimmer grey star with a different
-        // tooltip — visible but clearly "not tradeable" by the strict gate.
+        // CHoCH vs BOS creation tag is no longer relevant to the gate —
+        // both are valid OB sources. We still surface the tag in the
+        // tooltip for transparency, but color is purely by direction.
         let obStarHtml = '';
         if (wlObFilterEnabled) {
             const ob = wlObStates[sym];
             if (ob && ob.bias) {
                 const tag = (ob.created_by_tag || '').toUpperCase();
                 const isBull = ob.bias === 'BULLISH';
-                const isChoCH = tag === 'CHOCH';
-                let starColor, starTitle;
-                if (isChoCH) {
-                    // Tradeable by strict gate
-                    starColor = isBull ? '#22c55e' : '#ef4444';
-                    starTitle = `OB ${isBull ? 'Long' : 'Short'} ${wlObFilterTimeframe.toUpperCase()} — ★ fresh CHoCH (signals will pass gate)`;
-                } else {
-                    // BOS continuation — strict gate blocks. Dim grey.
-                    starColor = '#666';
-                    starTitle = `OB ${isBull ? 'Long' : 'Short'} ${wlObFilterTimeframe.toUpperCase()} — → BOS continuation (signals BLOCKED by strict gate)`;
-                }
+                const starColor = isBull ? '#22c55e' : '#ef4444';
+                const tagLabel = tag === 'CHOCH' ? '★ CHoCH (fresh reversal)'
+                               : tag === 'BOS'   ? '→ BOS (continuation)'
+                               : 'unknown source';
+                const starTitle = `OB ${isBull ? 'Long' : 'Short'} ${wlObFilterTimeframe.toUpperCase()}\n`
+                                + `Source: ${tagLabel}\n`
+                                + `Signal of matching direction will pass gate.`;
                 obStarHtml = `<span class="wl-ob-star" title="${escapeHtml(starTitle)}" style="color:${starColor};margin-right:4px;font-size:0.85rem">★</span>`;
             }
         }

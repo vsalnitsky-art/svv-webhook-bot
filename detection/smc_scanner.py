@@ -1462,17 +1462,16 @@ class SMCScanner:
         storeOrdeBlock on BOTH BOS and CHoCH events. CHoCH-created OBs
         mark fresh trend reversals — the entry pivot of a new trend.
         BOS-created OBs are continuation OBs, fired when an already-going
-        trend pushes through another swing point. Trading the BOS-created
-        OB means entering after the trend is already in motion, which is
-        a worse setup with worse R:R. The user explicitly asked to trade
-        only fresh CHoCH-pivot OBs.
+        trend pushes through another swing point. Both CHoCH-created and
+        BOS-created OBs are valid filter sources — the gate cares only that
+        an OB exists at this TF with a matching direction. The signal
+        itself (CHoCH or BOS on the main TF) is what triggers entry; the
+        OB filter just confirms we're not entering against an established
+        institutional zone on the higher TF.
         
         Note that since obs[] is ordered newest-first in the detector and
         any new event (BOS or CHoCH) creates a fresh OB on top, checking
-        only the latest OB is sufficient. If a BOS fires after a CHoCH,
-        the BOS-created OB becomes the new top → blocked. To trade again
-        we wait for a fresh CHoCH (which puts CHoCH-created OB back on
-        top).
+        only the latest OB is sufficient.
         
         We err on the side of blocking: any uncertainty = block.
         """
@@ -1496,17 +1495,13 @@ class SMCScanner:
             # Computed, but no valid OB exists at this timeframe right now.
             return False
         
-        # Direction match check
+        # Direction match — the only thing that matters now.
+        # CHoCH-vs-BOS distinction was removed: both are valid OB sources,
+        # the main-TF signal (CHoCH or BOS in candles) does the triggering,
+        # the OB filter just confirms HTF direction is aligned.
         if side == 'LONG' and bias != 'BULLISH':
             return False
         if side == 'SHORT' and bias != 'BEARISH':
-            return False
-        
-        # Strict-mode: require CHoCH-created OB (no BOS continuation)
-        created_by = (row.get('created_by_tag') or '').upper()
-        if created_by != 'CHOCH':
-            print(f"[SMC] 🚫 OB Filter blocked {symbol} {side}: "
-                  f"OB created by {created_by or 'unknown'}, requires CHoCH")
             return False
         
         return True
