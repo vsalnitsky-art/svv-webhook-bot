@@ -29,6 +29,14 @@
                     <button data-lb="24" class="active" onclick="liqmapSetLookback(24)">24h</button>
                     <button data-lb="168" onclick="liqmapSetLookback(168)">7d</button>
                 </div>
+                <div class="liqmap-candle-toggle" id="liqmap-candle-toggle" title="Свічковий таймфрейм для графіка ціни">
+                    <button data-tf="1m" onclick="liqmapSetCandleTF('1m')">1m</button>
+                    <button data-tf="5m" onclick="liqmapSetCandleTF('5m')">5m</button>
+                    <button data-tf="15m" class="active" onclick="liqmapSetCandleTF('15m')">15m</button>
+                    <button data-tf="30m" onclick="liqmapSetCandleTF('30m')">30m</button>
+                    <button data-tf="1h" onclick="liqmapSetCandleTF('1h')">1h</button>
+                    <button data-tf="4h" onclick="liqmapSetCandleTF('4h')">4h</button>
+                </div>
                 <label class="liqmap-mitigated-toggle" title="Show mitigated (hit-through) levels too">
                     <input type="checkbox" id="liqmap-show-mitigated"
                            onchange="liqmapToggleMitigated(this.checked)" />
@@ -1200,6 +1208,33 @@
 .liqmap-lookback-toggle button.active {
     background: rgba(100,150,255,0.18);
     color: #6ea8ff;
+}
+.liqmap-candle-toggle {
+    display: flex;
+    gap: 2px;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 5px;
+    padding: 2px;
+}
+.liqmap-candle-toggle button {
+    background: transparent;
+    border: none;
+    color: #999;
+    padding: 4px 8px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    border-radius: 3px;
+    font-weight: 500;
+    transition: all 0.15s;
+}
+.liqmap-candle-toggle button:hover {
+    color: #ddd;
+    background: rgba(255,255,255,0.05);
+}
+.liqmap-candle-toggle button.active {
+    background: rgba(253,231,37,0.18);
+    color: #fde725;
 }
 .liqmap-mitigated-toggle {
     display: flex;
@@ -2797,6 +2832,7 @@ async function closeAllTrades() {
 const liqmapState = {
     symbol: 'BTCUSDT',
     lookback: 24,             // hours
+    candleTF: '15m',          // 1m | 5m | 15m | 30m | 1h | 4h — interval for price candles
     includeMitigated: false,
     enabled: true,
     refreshTimer: null,
@@ -3134,9 +3170,9 @@ function liqmapDrawChart(data) {
     }
 
     // ========================================================================
-    // LAYER 1 — Heatmap density background halo behind cluster zones.
-    // Wide soft amber rect that gives the "magnet zone glow" look from the
-    // reference. Kept subtle so cluster bands stay readable on top.
+    // LAYER 1 — Soft glow behind cluster bands. Viridis-yellow halo for
+    // visual emphasis of the "magnet zones" — fades into surrounding
+    // viridis bands without amber contrast.
     // ========================================================================
     const heatG = g.append('g').attr('class', 'lm-heatmap');
     for (let i = 0; i < clusterCount; i++) {
@@ -3145,16 +3181,16 @@ function liqmapDrawChart(data) {
         const yLow = yScale(c.priceLow);
         const yMid = (yHigh + yLow) / 2;
         const halfBand = 22;
-        // Outer wide halo — soft amber
+        // Outer wide halo — soft viridis-yellow
         heatG.append('rect')
             .attr('x', 0).attr('width', innerW)
             .attr('y', yMid - halfBand).attr('height', halfBand * 2)
-            .attr('fill', 'rgba(176,120,40,0.22)');
-        // Inner narrower halo — slightly darker amber
+            .attr('fill', 'rgba(253,231,37,0.10)');
+        // Inner narrower halo — slightly more saturated
         heatG.append('rect')
             .attr('x', 0).attr('width', innerW)
             .attr('y', yMid - 11).attr('height', 22)
-            .attr('fill', 'rgba(140,95,30,0.30)');
+            .attr('fill', 'rgba(253,231,37,0.18)');
     }
 
     // ========================================================================
@@ -3171,41 +3207,37 @@ function liqmapDrawChart(data) {
         if (y < -3 || y > innerH + 3) continue;
         const isCluster = clusterPrices.has(`${b.price}|${b.side}`);
         const usdRatio = b.totalUsd / maxUsd;
+        // Viridis intensity — log curve so small bands still get visible
+        // teal/blue color instead of pure purple. Bright magnet bands
+        // (top-volume) hit the yellow end of the palette.
+        const tIntensity = Math.log10(1 + 9 * Math.min(1, usdRatio));
+        const viridisColor = liqmapViridis(tIntensity);
 
         if (isCluster) {
-            // CLUSTER row — thick bright yellow line + darker dash overlay
-            // for that "filled magnet zone" look in the reference
+            // CLUSTER row — solid viridis-yellow band, thicker for emphasis.
+            // No more dark dash overlay — the screenshot reference shows
+            // clean horizontal bands without internal texture.
             linesG.append('line')
                 .attr('x1', 4).attr('x2', innerW - 4)
                 .attr('y1', y).attr('y2', y)
-                .attr('stroke', '#ffd342')
-                .attr('stroke-width', 8)
-                .attr('opacity', 0.96)
+                .attr('stroke', viridisColor)
+                .attr('stroke-width', 7)
+                .attr('opacity', 0.95)
                 .datum(b)
                 .on('mouseover', liqmapEventHover)
                 .on('mouseout', liqmapEventUnhover);
-            // Darker dashed overlay creates internal texture
-            linesG.append('line')
-                .attr('x1', 4).attr('x2', innerW - 4)
-                .attr('y1', y).attr('y2', y)
-                .attr('stroke', '#7a5a14')
-                .attr('stroke-width', 5)
-                .attr('stroke-dasharray', '10 16')
-                .attr('opacity', 0.92);
         } else {
-            // Individual level — single bright blue dashed line.
-            // Higher opacity + brighter base color so it stands out on
-            // pure-black background.
+            // Individual level — thinner viridis band, opacity scales with
+            // volume so small contributions fade into the background.
             const sw = b.leverages[100] > b.leverages[50] && b.leverages[100] > b.leverages[25] ? 3.0
                      : b.leverages[50] > b.leverages[25] ? 2.6
                      : 2.2;
-            const opacity = 0.72 + 0.25 * Math.sqrt(usdRatio);
+            const opacity = 0.55 + 0.4 * Math.sqrt(usdRatio);
             linesG.append('line')
                 .attr('x1', 4).attr('x2', innerW - 4)
                 .attr('y1', y).attr('y2', y)
-                .attr('stroke', '#74a1ff')
+                .attr('stroke', viridisColor)
                 .attr('stroke-width', sw)
-                .attr('stroke-dasharray', '24 9')
                 .attr('opacity', opacity)
                 .datum(b)
                 .on('mouseover', liqmapEventHover)
@@ -3607,49 +3639,94 @@ async function liqmapDrawPOC(svg, yScale, margin, innerW, innerH,
 }
 
 async function liqmapDrawPriceAction(svg, xScale, yScale, margin, innerW, innerH) {
-    // Best-effort price action overlay. Failure to fetch is silent — the
-    // chart still renders the liquidation layers without it.
+    // Candle overlay. Uses the OHLC endpoint with the user-selected TF so
+    // the chart reads like a normal price chart instead of a thin zigzag line.
+    // Failure to fetch is silent — the chart still renders the liquidation
+    // layers without it.
     try {
-        const r = await fetch(`/api/liquidation-map/price-series?symbol=${encodeURIComponent(liqmapState.symbol)}&hours=${liqmapState.lookback}`);
+        const interval = liqmapState.candleTF || '15m';
+        const r = await fetch(`/api/liquidation-map/price-series` +
+            `?symbol=${encodeURIComponent(liqmapState.symbol)}` +
+            `&hours=${liqmapState.lookback}` +
+            `&interval=${interval}`);
         const data = await r.json();
-        if (!data.ok || !data.series || data.series.length < 2) return;
+        if (!data.ok || !data.series || data.series.length < 1) return;
 
-        // Build a path string. Clip to chart area.
-        const points = data.series
-            .filter(p => p.ts >= xScale.domain()[0] && p.ts <= xScale.domain()[1])
-            .map(p => ({x: xScale(p.ts), y: yScale(p.close), close: p.close}));
-        if (points.length < 2) return;
+        // Filter candles to the visible time domain
+        const [t0, t1] = xScale.domain();
+        const candles = data.series.filter(p => p.ts >= t0 && p.ts <= t1);
+        if (candles.length === 0) return;
 
-        // Color line green if last close > first close, red otherwise
-        const isUp = points[points.length-1].close >= points[0].close;
-        const color = isUp ? '#22c55e' : '#dc2626';
-
-        const line = d3.line().x(d => d.x).y(d => d.y).curve(d3.curveMonotoneX);
-        const path = line(points);
+        // Candle body width: split available width across candles, leave a gap
+        const totalSpan = Math.max(1, t1 - t0);
+        const intervalSec = {'1m': 60, '5m': 300, '15m': 900, '30m': 1800,
+                              '1h': 3600, '4h': 14400}[interval] || 900;
+        const pxPerSec = innerW / totalSpan;
+        const bodyW = Math.max(1.5, intervalSec * pxPerSec * 0.7);
 
         svg.select('.lm-price-action').remove();
         const paG = svg.append('g')
             .attr('class', 'lm-price-action')
             .attr('transform', `translate(${margin.left},${margin.top})`);
 
-        paG.append('path')
-            .attr('d', path)
-            .attr('stroke', color)
-            .attr('stroke-width', 1.4)
-            .attr('fill', 'none')
-            .attr('opacity', 0.9);
+        // Use crypto-standard colors that contrast well against the viridis bands
+        const colUp = '#26a69a';
+        const colDn = '#ef5350';
 
-        // Small dot marks every few points for that "candle-like" texture
-        const dotStep = Math.max(1, Math.floor(points.length / 20));
-        for (let i = 0; i < points.length; i += dotStep) {
-            const p = points[i];
-            const c = i > 0 && p.close < points[i-1].close ? '#dc2626' : '#22c55e';
+        for (const c of candles) {
+            const x = xScale(c.ts);
+            const yO = yScale(c.o);
+            const yC = yScale(c.c);
+            const yH = yScale(c.h);
+            const yL = yScale(c.l);
+            const isUp = c.c >= c.o;
+            const colCandle = isUp ? colUp : colDn;
+
+            // Wick (high → low)
+            paG.append('line')
+                .attr('x1', x).attr('x2', x)
+                .attr('y1', yH).attr('y2', yL)
+                .attr('stroke', colCandle)
+                .attr('stroke-width', 1)
+                .attr('opacity', 0.95);
+
+            // Body (open → close)
+            const bodyTop = Math.min(yO, yC);
+            const bodyH = Math.max(1, Math.abs(yC - yO));
             paG.append('rect')
-                .attr('x', p.x - 1).attr('y', p.y - 3)
-                .attr('width', 2).attr('height', 6)
-                .attr('fill', c).attr('opacity', 0.85);
+                .attr('x', x - bodyW / 2)
+                .attr('y', bodyTop)
+                .attr('width', bodyW)
+                .attr('height', bodyH)
+                .attr('fill', colCandle)
+                .attr('opacity', 0.96);
         }
     } catch {}
+}
+
+// Viridis colormap helper — t ∈ [0,1] → CSS rgb(...). Used to color
+// individual liquidation bands by intensity (relative volume) so the
+// brightest "magnet" rows pop in yellow while the smaller ones fade into
+// purple, matching the CoinGlass-style heatmap look.
+function liqmapViridis(t) {
+    if (t <= 0) return 'rgb(60,15,90)';   // dim purple — empty band shouldn't be invisible
+    const stops = [
+        [0.00, [68, 1, 84]],
+        [0.25, [59, 82, 139]],
+        [0.50, [33, 145, 140]],
+        [0.75, [94, 201, 98]],
+        [1.00, [253, 231, 37]]
+    ];
+    t = Math.min(1, Math.max(0, t));
+    for (let i = 1; i < stops.length; i++) {
+        if (t <= stops[i][0]) {
+            const t0 = stops[i-1][0], c0 = stops[i-1][1];
+            const t1 = stops[i][0],   c1 = stops[i][1];
+            const f = (t - t0) / (t1 - t0);
+            return `rgb(${Math.round(c0[0] + (c1[0]-c0[0])*f)},${Math.round(c0[1] + (c1[1]-c0[1])*f)},${Math.round(c0[2] + (c1[2]-c0[2])*f)})`;
+        }
+    }
+    return `rgb(${stops[stops.length-1][1].join(',')})`;
 }
 
 function liqmapEventHover(event, d) {
@@ -3727,6 +3804,19 @@ function liqmapSetLookback(hours) {
     loadLiqmap();
 }
 
+function liqmapSetCandleTF(tf) {
+    // Re-render with new candle interval. We DON'T re-fetch liquidation
+    // event data — only the price-action overlay changes — so this is
+    // cheaper than liqmapSetLookback. Persist to localStorage so the
+    // user's choice survives page reloads.
+    liqmapState.candleTF = tf;
+    document.querySelectorAll('#liqmap-candle-toggle button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tf === tf);
+    });
+    try { localStorage.setItem('liqmap_candle_tf', tf); } catch {}
+    if (liqmapState.lastData) liqmapRender(liqmapState.lastData);
+}
+
 function liqmapToggleMitigated(checked) {
     liqmapState.includeMitigated = checked;
     loadLiqmap();
@@ -3785,6 +3875,17 @@ function liqmapStopRefresh() {
 }
 
 async function liqmapInit() {
+    // Restore the user's candle-TF choice (if any) before first render so
+    // the toggle UI and the chart agree on first paint.
+    try {
+        const savedTF = localStorage.getItem('liqmap_candle_tf');
+        if (savedTF && ['1m','5m','15m','30m','1h','4h'].includes(savedTF)) {
+            liqmapState.candleTF = savedTF;
+            document.querySelectorAll('#liqmap-candle-toggle button').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tf === savedTF);
+            });
+        }
+    } catch {}
     // Always call loadLiqmap — it calls /status internally and updates the
     // UI to match server's authoritative state. The toggle checkbox + status
     // icon + overlay are all set based on actual daemon state, not on

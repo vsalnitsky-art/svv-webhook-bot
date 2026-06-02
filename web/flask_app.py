@@ -3910,33 +3910,67 @@ def register_api_routes(app):
     
     @app.route('/api/liquidation-map/price-series')
     def api_liqmap_price_series():
-        """Recent price series for the chart's price-action overlay. Pulls
-        1m klines via market_data so we don't expose a separate kline API.
-        Returns a list of {ts, close} sorted ascending."""
+        """Recent price series for the chart's price-action overlay. Returns
+        OHLC candles for the requested interval, sorted ascending by ts.
+
+        Query params:
+          symbol:   default BTCUSDT
+          hours:    lookback window in hours (default 24)
+          interval: 1m | 5m | 15m | 30m | 1h | 4h (default 15m)
+
+        Response shape:
+          {ok, interval, series: [{ts, o, h, l, c}]}
+
+        The 'close' field is also included for backward-compatibility with
+        old chart code that may still expect a thin line; new candle renderer
+        uses o/h/l/c.
+        """
         try:
             symbol = request.args.get('symbol', 'BTCUSDT').upper()
             try:
                 hours = int(request.args.get('hours', 24))
             except ValueError:
                 hours = 24
-            # 1m bars; cap to ~720 (12h × 60) to keep the response small
-            limit = min(hours * 60, 720)
+            interval = request.args.get('interval', '15m')
+            if interval not in ('1m', '5m', '15m', '30m', '1h', '4h'):
+                interval = '15m'
+
+            # Cap kline count per interval to keep response small while
+            # covering the chosen window
+            bars_per_hour = {'1m': 60, '5m': 12, '15m': 4, '30m': 2,
+                              '1h': 1, '4h': 0.25}
+            limit = int(min(1000, max(20, hours * bars_per_hour[interval])))
+
             from detection.market_data import get_market_data
             md = get_market_data()
             if md is None:
-                return jsonify({'ok': False, 'series': []})
-            klines = md.fetch_klines(symbol, interval='1m', limit=limit)
+                return jsonify({'ok': False, 'interval': interval, 'series': []})
+            klines = md.fetch_klines(symbol, interval=interval, limit=limit)
             if not klines:
-                return jsonify({'ok': True, 'series': []})
+                return jsonify({'ok': True, 'interval': interval, 'series': []})
             series = []
             for k in klines:
                 ts = k.get('t') or k.get('ts') or k.get('open_time')
                 if ts and ts > 1e12:  # ms → s
                     ts = int(ts / 1000)
-                close = k.get('c') or k.get('close')
-                if ts and close:
-                    series.append({'ts': int(ts), 'close': float(close)})
-            return jsonify({'ok': True, 'series': series})
+                o = k.get('o') or k.get('open')
+                h = k.get('h') or k.get('high')
+                l = k.get('l') or k.get('low')
+                c = k.get('c') or k.get('close')
+                if ts and c:
+                    try:
+                        series.append({
+                            'ts': int(ts),
+                            'o': float(o if o is not None else c),
+                            'h': float(h if h is not None else c),
+                            'l': float(l if l is not None else c),
+                            'c': float(c),
+                            # legacy alias
+                            'close': float(c),
+                        })
+                    except (TypeError, ValueError):
+                        continue
+            return jsonify({'ok': True, 'interval': interval, 'series': series})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'series': []})
     
