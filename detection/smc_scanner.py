@@ -142,6 +142,29 @@ DEFAULT_SETTINGS = {
     'pd_long_max_pct': 75.0,       # block LONG  if pos_pct >= this (0-100)
     'pd_short_min_pct': 25.0,      # block SHORT if pos_pct <= this (0-100)
     
+    # === Forecast Filter (Pine 1H/4H multi-horizon prediction) ===
+    # Independent of OB / PD / HTF filters. Reads `forecast_1h` and
+    # `forecast_4h` from the ForecastEngine cache (computed by 6 Fibonacci
+    # horizons on the respective TF — trend + momentum + volatility scoring).
+    #
+    # Gate behaviour:
+    #   - Filter enabled flag controls per-TF whether that forecast acts as
+    #     a gate. When OFF, the forecast is ignored entirely.
+    #   - `side` from each forecast: +1 = LONG, -1 = SHORT, 0 = neutral.
+    #   - `side == 0` always blocks when the filter is ON ("no clear
+    #     direction = no entry") regardless of combine mode.
+    #   - When both filters ON, `forecast_combine_mode` decides logic:
+    #       AND — signal passes only if BOTH 1H and 4H sides match
+    #       OR  — signal passes if at LEAST ONE matches AND the other is
+    #             not actively contradicting (side != opposite)
+    #
+    # If the forecast cache is empty (engine hasn't computed yet, or fetch
+    # error) → block. Same "err on the side of blocking" semantics as the
+    # other filters.
+    'forecast_1h_filter_enabled': False,
+    'forecast_4h_filter_enabled': False,
+    'forecast_combine_mode': 'AND',  # 'AND' or 'OR' — only used when BOTH enabled
+    
     # === Volumized Order Blocks (port of TradingView "Volumized OBs" indicator) ===
     # Informational trend detector: finds the latest formed OB (Bull/Bear)
     # on the configured timeframe, and exposes its direction as a "trend"
@@ -697,6 +720,9 @@ class SMCScanner:
                        # PD Zone filter (threshold-based)
                        'use_pd_zone_filter', 'pd_zone_timeframe',
                        'pd_long_max_pct', 'pd_short_min_pct',
+                       # Forecast filter (1H/4H multi-horizon prediction)
+                       'forecast_1h_filter_enabled', 'forecast_4h_filter_enabled',
+                       'forecast_combine_mode',
                        # Volumized OB Trend (Pine port)
                        'use_volumized_ob', 'volumized_timeframe',
                        'volumized_swing_length', 'volumized_ob_end_method',
@@ -1631,6 +1657,110 @@ class SMCScanner:
         
         return True
     
+    def _forecast_filter_allows(self, symbol: str, side: str) -> bool:
+        """Forecast 1H / 4H gate.
+        
+        Settings consulted:
+          forecast_1h_filter_enabled (bool)
+          forecast_4h_filter_enabled (bool)
+          forecast_combine_mode      ('AND' or 'OR')
+        
+        Forecast `side` values: +1 = LONG, -1 = SHORT, 0 = neutral.
+        
+        Decision matrix when only ONE filter is ON:
+          - matches signal direction → allow
+          - opposite                 → block
+          - neutral (side == 0)      → block
+          - cache miss / no data     → block (err on the side of caution,
+            matches other filters' "no data → block" semantics)
+        
+        When BOTH filters are ON:
+          AND — both 1H and 4H must individually allow the signal
+          OR  — at least one must explicitly match the signal direction,
+                AND the other must NOT be actively contradicting.
+                Specifically, in OR mode:
+                  - one filter allows + other allows  → pass
+                  - one filter allows + other neutral → pass (no contradiction)
+                  - one filter allows + other opposite → block
+                  - both neutral                       → block
+                  - any cache miss with the other not matching → block
+        
+        We block on cache miss because the ForecastEngine runs on its own
+        cadence; if a symbol hasn't been processed yet, the safest answer
+        is "wait". The next scan tick will revisit.
+        """
+        want_1h = bool(self._settings.get('forecast_1h_filter_enabled', False))
+        want_4h = bool(self._settings.get('forecast_4h_filter_enabled', False))
+        if not want_1h and not want_4h:
+            return True  # No filter active
+        
+        # Map signal side label → forecast side value
+        target = 1 if side == 'LONG' else -1
+        
+        # Pull cached forecast for this symbol
+        forecast_1h = None
+        forecast_4h = None
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe is not None:
+                cached = fe.get(symbol)
+                if cached:
+                    forecast_1h = cached.get('forecast_1h')
+                    forecast_4h = cached.get('forecast_4h')
+        except Exception:
+            pass
+        
+        def evaluate(fc, label):
+            """Return one of: 'match', 'opposite', 'neutral', 'nodata'."""
+            if not fc or not isinstance(fc, dict):
+                return 'nodata'
+            s = fc.get('side', None)
+            if s is None:
+                return 'nodata'
+            if s == 0:
+                return 'neutral'
+            return 'match' if s == target else 'opposite'
+        
+        r1 = evaluate(forecast_1h, '1H') if want_1h else None
+        r4 = evaluate(forecast_4h, '4H') if want_4h else None
+        
+        # Single-filter mode — simple match check
+        if want_1h and not want_4h:
+            if r1 == 'match':
+                return True
+            print(f"[SMC] 🚫 Forecast 1H blocked {symbol} {side}: {r1}")
+            return False
+        if want_4h and not want_1h:
+            if r4 == 'match':
+                return True
+            print(f"[SMC] 🚫 Forecast 4H blocked {symbol} {side}: {r4}")
+            return False
+        
+        # Both ON — combine
+        mode = str(self._settings.get('forecast_combine_mode', 'AND')).upper()
+        if mode not in ('AND', 'OR'):
+            mode = 'AND'
+        
+        if mode == 'AND':
+            if r1 == 'match' and r4 == 'match':
+                return True
+            print(f"[SMC] 🚫 Forecast AND blocked {symbol} {side}: "
+                  f"1H={r1}, 4H={r4}")
+            return False
+        else:  # OR
+            # At least one explicit match, the other must not contradict
+            if r1 == 'match' and r4 != 'opposite' and r4 != 'nodata':
+                return True
+            if r4 == 'match' and r1 != 'opposite' and r1 != 'nodata':
+                return True
+            # Edge: one match + other nodata — still block (we treat nodata
+            # as caution; if user wants more permissive, they can disable
+            # the unused TF entirely)
+            print(f"[SMC] 🚫 Forecast OR blocked {symbol} {side}: "
+                  f"1H={r1}, 4H={r4}")
+            return False
+    
     # ========================================
     # Alerts logic
     # ========================================
@@ -1946,6 +2076,17 @@ class SMCScanner:
             # default permissiveness.
             if not self._pd_zone_filter_allows(symbol, side_label):
                 return  # Already logged inside the helper
+            
+            # === Forecast Filter (1H / 4H multi-horizon prediction) ===
+            # Per-TF enable, combine mode (AND/OR) when both ON. Reads the
+            # cached forecast computed by ForecastEngine on a separate
+            # schedule (so this gate is cheap — DB cache lookup only).
+            # Same hard-block semantics: blocked signal leaves no marker
+            # and never reaches TM.
+            if (self._settings.get('forecast_1h_filter_enabled', False)
+                    or self._settings.get('forecast_4h_filter_enabled', False)):
+                if not self._forecast_filter_allows(symbol, side_label):
+                    return  # Already logged inside the helper
             
             # Entry price = the structural break LEVEL of the event that fired
             # the signal: the BOS break level in CHoCH+BOS mode, or the CHoCH

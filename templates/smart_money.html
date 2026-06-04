@@ -990,6 +990,37 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <div class="sm-settings-section">
+                <h3>🔮 Forecast Filter</h3>
+                <div class="sm-controls">
+                    <!-- Forecast Filter — gates signals against the 1H/4H
+                         multi-horizon prediction badges already shown in
+                         the chart header. Per-TF enable. When both ON,
+                         the combine-mode selector decides AND/OR. Hard
+                         block on `side === 0` (neutral) per design. -->
+                    <label class="sm-checkbox"
+                           title="When ON: signal only fires if the 1H forecast badge direction matches the signal direction. Neutral forecast (side=0) blocks. No data yet → also blocks.">
+                        <input type="checkbox" id="sm-forecast-1h-enabled"
+                               onchange="updateForecastFilter()">
+                        Require Forecast 1H match
+                    </label>
+                    <label class="sm-checkbox"
+                           title="When ON: signal only fires if the 4H forecast badge direction matches the signal direction. Same semantics as 1H — neutral / no data → block.">
+                        <input type="checkbox" id="sm-forecast-4h-enabled"
+                               onchange="updateForecastFilter()">
+                        Require Forecast 4H match
+                    </label>
+                    <div class="sm-control-item" id="sm-forecast-combine-wrap" style="display:none">
+                        <label>Combine:</label>
+                        <select id="sm-forecast-combine-mode" onchange="updateForecastFilter()"
+                                title="AND — strict: both 1H AND 4H must individually match the signal direction. Default and recommended for high-conviction entries.&#10;OR — lenient: at least one matches and the other does NOT actively oppose (neutral on the other side still passes; opposite blocks).">
+                            <option value="AND" selected>AND (strict)</option>
+                            <option value="OR">OR (lenient)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sm-settings-section">
                 <h3>📦 Volumized OB Trend</h3>
                 <div class="sm-controls">
                     <!-- Volumized OB Trend — Pine port of "Volumized Order
@@ -2961,6 +2992,19 @@ async function loadSettings() {
             if (pdLongMax) pdLongMax.value = (typeof s.pd_long_max_pct === 'number') ? s.pd_long_max_pct : 75;
             const pdShortMin = document.getElementById('sm-pd-short-min');
             if (pdShortMin) pdShortMin.value = (typeof s.pd_short_min_pct === 'number') ? s.pd_short_min_pct : 25;
+            // Forecast Filter — three keys. Defaults FALSE for both flags
+            // when missing (older deploys without the setting). Combine
+            // mode defaults to AND. We also restore the combine-wrap
+            // visibility based on whether both flags are ON.
+            const fc1h = document.getElementById('sm-forecast-1h-enabled');
+            if (fc1h) fc1h.checked = !!s.forecast_1h_filter_enabled;
+            const fc4h = document.getElementById('sm-forecast-4h-enabled');
+            if (fc4h) fc4h.checked = !!s.forecast_4h_filter_enabled;
+            const fcMode = document.getElementById('sm-forecast-combine-mode');
+            if (fcMode) fcMode.value = (s.forecast_combine_mode === 'OR') ? 'OR' : 'AND';
+            const fcWrap = document.getElementById('sm-forecast-combine-wrap');
+            if (fcWrap) fcWrap.style.display =
+                (s.forecast_1h_filter_enabled && s.forecast_4h_filter_enabled) ? '' : 'none';
             // === Volumized OB Trend — 7 inputs ===
             // Defaults from DEFAULT_SETTINGS — fallback to those values
             // when the field is missing from the response (older deploys).
@@ -3082,6 +3126,31 @@ async function updateOBFilter() {
         // user toggles the filter and sees no visible feedback for 10s.
         loadWatchlist();
     } catch (err) { alert('OB Filter update error: ' + err); }
+}
+
+// Forecast Filter — toggleable per TF (1H, 4H). Combine selector is only
+// meaningful when both are ON, so we show/hide it accordingly. Server
+// persists all three keys on every change to keep them in sync.
+async function updateForecastFilter() {
+    const en1h = document.getElementById('sm-forecast-1h-enabled').checked;
+    const en4h = document.getElementById('sm-forecast-4h-enabled').checked;
+    const mode = document.getElementById('sm-forecast-combine-mode').value || 'AND';
+    // Show combine selector only when both TFs are ON — otherwise it's
+    // a no-op setting and just adds visual noise.
+    const wrap = document.getElementById('sm-forecast-combine-wrap');
+    if (wrap) wrap.style.display = (en1h && en4h) ? '' : 'none';
+    try {
+        await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                forecast_1h_filter_enabled: en1h,
+                forecast_4h_filter_enabled: en4h,
+                forecast_combine_mode: mode,
+            }),
+        });
+        updateSettingsSummary();
+    } catch (err) { alert('Forecast Filter update error: ' + err); }
 }
 
 // PD Zone Filter — threshold-based signal gate. Lives alongside the
