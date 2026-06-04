@@ -131,6 +131,17 @@ DEFAULT_SETTINGS = {
     # Real positions (when TM enabled=True) take precedence over shadow.
     'test_mode': True,
     
+    # === Global directional gates ===
+    # Master toggles that gate ALL position opens — real and shadow alike —
+    # regardless of signal source (SMC, manual UI, future webhooks).
+    # Closures/exits/reverses still run normally; only the OPEN step is
+    # blocked. Both default ON so behavior is unchanged after upgrade.
+    # The UI exposes these as two prominent buttons at the top of Smart
+    # Money so the operator can flip them quickly without scrolling
+    # through settings.
+    'allow_long_entries': True,
+    'allow_short_entries': True,
+    
     # === Telegram notification toggles ===
     # Independently control Telegram alerts for real positions vs paper trades.
     # SMC scanner always sends its own signal alerts — these toggles control
@@ -450,6 +461,7 @@ class TradeManager:
                       'use_time_stop', 'use_trailing', 'use_be',
                       'use_forecast_1h_close', 'use_opposite_ob_exit',
                       'test_mode',
+                      'allow_long_entries', 'allow_short_entries',
                       'telegram_alerts', 'test_telegram_alerts',
                       'use_bos_partials', 'trailing_after_bos_2',
                       'health_score_enabled',
@@ -534,6 +546,20 @@ class TradeManager:
     
     def is_enabled(self) -> bool:
         return self._settings.get('enabled', False)
+    
+    def _side_allowed(self, side: str) -> bool:
+        """Global directional gate. Returns False when the configured
+        master toggle for that direction is OFF. Used by both _open_position
+        (real) and _open_shadow (paper) to enforce the same rule everywhere.
+        Defaults to True for both sides so old deploys without the keys keep
+        their current behavior.
+        """
+        s = self._settings
+        if side == 'LONG':
+            return bool(s.get('allow_long_entries', True))
+        if side == 'SHORT':
+            return bool(s.get('allow_short_entries', True))
+        return True
     
     # ============================================================
     # Lifecycle
@@ -1782,6 +1808,16 @@ class TradeManager:
     def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str):
         s = self._settings
         
+        # === Global directional gate ===
+        # Master toggle ON by default for both sides. When the user flips
+        # off LONG (or SHORT), NO real opens go through for that side —
+        # regardless of who called us (SMC signal, manual UI, future
+        # webhook). Closures and reverses still close existing positions
+        # normally; only the open step is blocked.
+        if not self._side_allowed(side):
+            print(f"[TM] 🚫 REAL {side} entries disabled — {symbol} not opened")
+            return
+        
         # Calculate size
         try:
             qty = self._calculate_qty(symbol, entry_price)
@@ -2211,6 +2247,14 @@ class TradeManager:
     
     def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str):
         """Open a paper-trading position. No Bybit calls."""
+        # === Global directional gate (same toggle as real) ===
+        # Test mode shadows respect the same LONG/SHORT master gate so the
+        # paper-trading view stays consistent with what a real deployment
+        # would have done. Closures/exits run normally; only opens blocked.
+        if not self._side_allowed(side):
+            print(f"[TM] 🚫 SHADOW {side} entries disabled — {symbol} not opened")
+            return
+        
         # Compute unified Decision Center verdict — same shape as real open
         decision = None
         try:

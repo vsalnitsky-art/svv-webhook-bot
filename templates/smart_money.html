@@ -849,6 +849,93 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     color: #aaa;
     border-color: rgba(150, 150, 150, 0.4);
 }
+
+/* === Global LONG/SHORT direction gates — top of page ===
+   Designed to be impossible to miss: a horizontal bar above settings
+   with two big colored buttons. Active = saturated color, inactive =
+   greyed out with crossed-out look. Clicking flips state instantly. */
+.sm-side-gates {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+}
+.sm-side-gates-label {
+    color: #888;
+    font-size: 0.82rem;
+    font-weight: 500;
+    margin-right: 4px;
+}
+.sm-side-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: 1.5px solid;
+    border-radius: 5px;
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+.sm-side-toggle:hover {
+    transform: translateY(-1px);
+}
+/* LONG button */
+.sm-side-long {
+    color: #4ade80;
+    border-color: rgba(74, 222, 128, 0.35);
+}
+.sm-side-long.active {
+    background: rgba(74, 222, 128, 0.15);
+    border-color: rgba(74, 222, 128, 0.7);
+    box-shadow: 0 0 12px rgba(74, 222, 128, 0.18);
+}
+.sm-side-long:not(.active) {
+    color: #555;
+    border-color: rgba(120, 120, 120, 0.25);
+    background: rgba(255, 255, 255, 0.015);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+}
+/* SHORT button */
+.sm-side-short {
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.35);
+}
+.sm-side-short.active {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.7);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.18);
+}
+.sm-side-short:not(.active) {
+    color: #555;
+    border-color: rgba(120, 120, 120, 0.25);
+    background: rgba(255, 255, 255, 0.015);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+}
+.sm-side-icon { font-size: 1.05rem; }
+.sm-side-state {
+    margin-left: 4px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    background: rgba(0, 0, 0, 0.3);
+}
+.sm-side-toggle:not(.active) .sm-side-state {
+    background: rgba(120, 120, 120, 0.2);
+    color: #777;
+}
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -863,6 +950,33 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span class="sm-pulse"></span>
             <span>—</span>
         </div>
+    </div>
+    
+    <!--
+        Global directional gates — apply to ALL position opens, real and
+        shadow, regardless of who triggered them (SMC signal, manual UI,
+        future webhooks). Closures and reverses still run normally. Both
+        ON by default. Placed at the very top of the page for one-click
+        flip without scrolling through settings.
+    -->
+    <div class="sm-side-gates">
+        <div class="sm-side-gates-label">Trade Direction (real + test):</div>
+        <button type="button" id="sm-allow-long-btn"
+                class="sm-side-toggle sm-side-long active"
+                onclick="toggleSideGate('LONG')"
+                title="ЗА УВІМКНЕННЯ: бот відкриває нові LONG позиції (реальні і тестові).&#10;ВИМКНУТИ: будь-який LONG-сигнал (включно з ручним відкриттям) — блокується.&#10;Закриття існуючих LONG-позицій працює як зазвичай.">
+            <span class="sm-side-icon">📈</span>
+            <span class="sm-side-text">LONG</span>
+            <span class="sm-side-state" id="sm-allow-long-state">ON</span>
+        </button>
+        <button type="button" id="sm-allow-short-btn"
+                class="sm-side-toggle sm-side-short active"
+                onclick="toggleSideGate('SHORT')"
+                title="ЗА УВІМКНЕННЯ: бот відкриває нові SHORT позиції (реальні і тестові).&#10;ВИМКНУТИ: будь-який SHORT-сигнал (включно з ручним відкриттям) — блокується.&#10;Закриття існуючих SHORT-позицій працює як зазвичай.">
+            <span class="sm-side-icon">📉</span>
+            <span class="sm-side-text">SHORT</span>
+            <span class="sm-side-state" id="sm-allow-short-state">ON</span>
+        </button>
     </div>
     
     <details class="sm-settings-bar" id="sm-settings-accordion">
@@ -4607,6 +4721,27 @@ async function loadTMSettings() {
         document.getElementById('tm-test-mode').checked = !!s.test_mode;
         updateTestModeHeader(!!s.test_mode);
         
+        // === Global direction gates (LONG / SHORT) — apply to ALL opens ===
+        // Default both ON when keys are missing (older deploys). We use
+        // explicit `=== false` check to distinguish "not yet saved" from
+        // "explicitly off". The visual state (active class) reflects the
+        // saved server state; tooltips on each button are already wired
+        // statically in the HTML.
+        const longOn = s.allow_long_entries !== false;
+        const shortOn = s.allow_short_entries !== false;
+        const longBtn = document.getElementById('sm-allow-long-btn');
+        const shortBtn = document.getElementById('sm-allow-short-btn');
+        if (longBtn) {
+            longBtn.classList.toggle('active', longOn);
+            const st = document.getElementById('sm-allow-long-state');
+            if (st) st.textContent = longOn ? 'ON' : 'OFF';
+        }
+        if (shortBtn) {
+            shortBtn.classList.toggle('active', shortOn);
+            const st = document.getElementById('sm-allow-short-state');
+            if (st) st.textContent = shortOn ? 'ON' : 'OFF';
+        }
+        
         // BOS-N
         document.getElementById('tm-use-bos-partials').checked = !!s.use_bos_partials;
         document.getElementById('tm-bos2-pct').value = s.bos_2_close_pct;
@@ -4803,6 +4938,61 @@ async function onTMToggle() {
     updateTMHeader(enabled);
     await saveTMSettings();
     setTimeout(loadTMState, 500);
+}
+
+// Global directional gate toggle — flips LONG or SHORT master allowance
+// on the server. Called from the two top-of-page buttons. Affects both
+// real and shadow opens. We update the UI optimistically then POST; if
+// the POST fails we revert the visual state and alert the user so they
+// don't think the toggle stuck when it didn't.
+async function toggleSideGate(side) {
+    const btnId = side === 'LONG' ? 'sm-allow-long-btn' : 'sm-allow-short-btn';
+    const stateId = side === 'LONG' ? 'sm-allow-long-state' : 'sm-allow-short-state';
+    const btn = document.getElementById(btnId);
+    const stateEl = document.getElementById(stateId);
+    if (!btn) return;
+    const wasActive = btn.classList.contains('active');
+    const newActive = !wasActive;
+    
+    // If user is turning off both directions, warn — equivalent to pausing
+    // the bot entirely (no new opens, real or shadow). Confirm so it's
+    // not an accidental click.
+    const otherBtnId = side === 'LONG' ? 'sm-allow-short-btn' : 'sm-allow-long-btn';
+    const otherActive = document.getElementById(otherBtnId)
+                         && document.getElementById(otherBtnId).classList.contains('active');
+    if (!newActive && !otherActive) {
+        const ok = confirm(
+            `⚠️ Обидва напрямки вимкнено.\n\n` +
+            `Бот НЕ відкриватиме НІЯКИХ нових позицій — ` +
+            `ні реальних, ні тестових — поки хоча б один напрямок не буде увімкнено.\n\n` +
+            `Існуючі позиції продовжать управлятися як зазвичай.\n\n` +
+            `Підтвердити?`
+        );
+        if (!ok) return;
+    }
+    
+    // Optimistic UI flip
+    btn.classList.toggle('active', newActive);
+    if (stateEl) stateEl.textContent = newActive ? 'ON' : 'OFF';
+    
+    // Persist — only the two keys to keep the POST minimal
+    const payload = {};
+    if (side === 'LONG') payload.allow_long_entries = newActive;
+    else payload.allow_short_entries = newActive;
+    
+    try {
+        const r = await fetch('/api/tm/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+    } catch (err) {
+        // Revert visual state on failure
+        btn.classList.toggle('active', wasActive);
+        if (stateEl) stateEl.textContent = wasActive ? 'ON' : 'OFF';
+        alert('Не вдалось зберегти налаштування: ' + err);
+    }
 }
 
 let _tmSaveTimer = null;
