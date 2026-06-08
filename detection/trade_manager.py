@@ -3000,6 +3000,27 @@ class TradeManager:
           - 0 / '' → CLEAR the field (no manual stop on that side)
           - >0  → set to that absolute price level
         
+        VALIDATION (added 2026-06-08, fix for XAGUSDT premature close):
+        For 'set' operations, the level must be on the correct side of
+        the CURRENT market price for the position's direction. Otherwise
+        the next monitor tick would trigger an instant exit because the
+        "trigger condition" is already true.
+        
+            LONG  · manual_sl must be < current_price (stop fires on drop)
+            LONG  · manual_tp must be > current_price (take fires on rise)
+            SHORT · manual_sl must be > current_price (stop fires on rise)
+            SHORT · manual_tp must be < current_price (take fires on drop)
+        
+        We validate against CURRENT price, not entry, because the user may
+        want to lock in profit after the position has moved favorably (e.g.
+        SHORT opened at 75, price now at 67 — SL=70 is valid: it's above
+        current 67, below entry 75, locking partial profit if price rises).
+        
+        On validation failure, returns {ok: false, reason: '...',
+        validation: true}, and NOTHING is mutated. The frontend uses
+        `validation: true` to alert the user (vs the benign "position
+        already closed" reason which is silent).
+        
         Returns ok plus the updated position dict (with normalized fields).
         Persists immediately so a server restart preserves the override.
         """
@@ -3024,6 +3045,66 @@ class TradeManager:
         with self._lock:
             pos = store.get(symbol)
             if not pos:
+                return {'ok': False,
+                        'reason': f'No open {kind} position for {symbol}'}
+            
+            # === Directional validation ===
+            # Only kicks in when at least one operation is 'set'. Skip and
+            # clear operations are always safe. We snapshot the side and
+            # entry price under the lock, then release the lock before
+            # the price lookup (which may hit the network in the worst
+            # case — we don't want to block other position monitors).
+            side = pos.get('side')
+            entry_price = pos.get('entry_price') or 0.0
+        
+        need_validation = (sl_op[0] == 'set') or (tp_op[0] == 'set')
+        if need_validation:
+            # Use the live monitor's price source; fall back to entry if
+            # market data isn't available right this instant. Falling back
+            # to entry is a reasonable degraded mode — the user's level
+            # will still be sane vs entry even if not vs current.
+            current_price = self._get_current_price(symbol) or entry_price
+            if current_price <= 0:
+                return {'ok': False,
+                        'reason': f'Cannot validate: no price available for {symbol}',
+                        'validation': True}
+            
+            errors = []
+            if sl_op[0] == 'set':
+                level = sl_op[1]
+                if side == 'LONG' and not (level < current_price):
+                    errors.append(
+                        f"SL ${level} must be BELOW current price ${current_price:.6g} "
+                        f"for LONG (stop fires when price drops)")
+                elif side == 'SHORT' and not (level > current_price):
+                    errors.append(
+                        f"SL ${level} must be ABOVE current price ${current_price:.6g} "
+                        f"for SHORT (stop fires when price rises)")
+            if tp_op[0] == 'set':
+                level = tp_op[1]
+                if side == 'LONG' and not (level > current_price):
+                    errors.append(
+                        f"TP ${level} must be ABOVE current price ${current_price:.6g} "
+                        f"for LONG (take fires when price rises)")
+                elif side == 'SHORT' and not (level < current_price):
+                    errors.append(
+                        f"TP ${level} must be BELOW current price ${current_price:.6g} "
+                        f"for SHORT (take fires when price drops)")
+            
+            if errors:
+                # Reject atomically — nothing gets applied. User must
+                # correct the input. This is the fix that prevents the
+                # XAGUSDT-style premature close.
+                msg = 'Invalid SL/TP for ' + side + ' ' + symbol + ': ' + '; '.join(errors)
+                print(f"[TM] 🚫 Manual SL/TP rejected for {symbol} ({kind}): {msg}")
+                return {'ok': False, 'reason': msg, 'validation': True}
+        
+        # All validations passed (or none were needed) — apply now.
+        with self._lock:
+            pos = store.get(symbol)
+            if not pos:
+                # Position closed between our checks and now. Edge race
+                # but possible. Bail out with benign reason.
                 return {'ok': False,
                         'reason': f'No open {kind} position for {symbol}'}
             

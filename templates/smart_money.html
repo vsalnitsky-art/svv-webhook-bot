@@ -5613,11 +5613,20 @@ async function submitManualSlTp(symbol, manualSl, manualTp, isShadow) {
         });
         const d = await res.json();
         if (!d.ok) {
-            // Soft warning — don't alert() on every keystroke, just log.
-            // The most common cause is the position was just closed by
-            // another exit rule, in which case the row will vanish on the
-            // next refresh anyway.
-            console.warn('Manual SL/TP update failed:', d.reason || 'unknown');
+            // Two failure classes:
+            //   d.validation === true → geometric invalid (SL on wrong side
+            //     of current price, etc). MUST alert the user — otherwise
+            //     they think it saved when it didn't, and they'll be
+            //     confused when the level doesn't trigger. This is the
+            //     XAGUSDT-bug guard.
+            //   no `validation` flag → benign (e.g. position just closed
+            //     by another exit rule). Silent log, the row will vanish
+            //     on next refresh anyway.
+            if (d.validation) {
+                alert('❌ ' + (d.reason || 'Invalid SL/TP'));
+            } else {
+                console.warn('Manual SL/TP update failed:', d.reason || 'unknown');
+            }
         }
         // Refresh table so the persisted value is reflected (and any
         // immediate close fires if the entered level was already breached).
