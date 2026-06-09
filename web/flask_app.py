@@ -4100,6 +4100,62 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
     
+    # Squeeze cache: (symbol, interval) -> {'ts': float, 'result': dict}.
+    # Klines fetch costs one Bybit call; 60s TTL matches how fast a 15m
+    # squeeze can meaningfully change.
+    _squeeze_cache = {}
+    
+    @app.route('/api/squeeze')
+    def api_squeeze():
+        """TTM Squeeze (BB-inside-Keltner compression) for one symbol+TF.
+        Feeds the SQUEEZE gauge on the dashboard Liquidity Map.
+        
+        Query: symbol (default BTCUSDT), interval (default 15m)
+        Response: {ok, symbol, interval, squeeze_on, probability,
+                   bars_in_squeeze, momentum_rising, momentum_side}
+        """
+        try:
+            import time as _sqt
+            symbol = request.args.get('symbol', 'BTCUSDT').upper().strip()
+            if symbol.endswith('.P'):
+                symbol = symbol[:-2]
+            interval = request.args.get('interval', '15m')
+            if interval not in ('1m', '5m', '15m', '30m', '1h', '4h'):
+                interval = '15m'
+            
+            key = (symbol, interval)
+            now = _sqt.time()
+            cached = _squeeze_cache.get(key)
+            if cached and (now - cached['ts']) < 60:
+                return jsonify(cached['result'])
+            
+            from detection.market_data import get_market_data
+            from detection.squeeze import calc_squeeze
+            md = get_market_data()
+            if md is None:
+                return jsonify({'ok': False, 'reason': 'market data unavailable'})
+            klines = md.fetch_klines(symbol, interval=interval, limit=120)
+            sq = calc_squeeze(klines or [])
+            result = {
+                'ok': sq['ok'],
+                'symbol': symbol,
+                'interval': interval,
+                'squeeze_on': sq['squeeze_on'],
+                'probability': sq['probability'],
+                'bars_in_squeeze': sq['bars_in_squeeze'],
+                'momentum_rising': sq['momentum_rising'],
+                'momentum_side': 1 if sq['momentum'] > 0 else (-1 if sq['momentum'] < 0 else 0),
+                'reason': sq.get('reason', ''),
+            }
+            _squeeze_cache[key] = {'ts': now, 'result': result}
+            # Bound cache
+            if len(_squeeze_cache) > 100:
+                oldest = min(_squeeze_cache, key=lambda k: _squeeze_cache[k]['ts'])
+                _squeeze_cache.pop(oldest, None)
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
     # Throttle map for on-demand forecast computes: symbol -> last compute ts.
     # The dashboard polls every 2s; a fresh compute fetches 1H+4H klines, so
     # we only allow one per symbol per 120s. Watchlist symbols are already
