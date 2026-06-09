@@ -3018,8 +3018,13 @@ async function loadLiqmap() {
                           imbSign + imb.toFixed(1) + '%</span>';
         const totalBid = liqmapFormatUsd(w.total_bid_usd || 0);
         const totalAsk = liqmapFormatUsd(w.total_ask_usd || 0);
+        // Show which venues contributed to the aggregated book — e.g.
+        // "bybit+okx+hl". Falls back to plain totals for single-source.
+        const srcs = (w.sources && w.sources.length)
+            ? w.sources.map(s => s === 'hyperliquid' ? 'hl' : s).join('+')
+            : null;
         document.getElementById('liqmap-providers').textContent =
-            'Status: bid ' + totalBid + ' · ask ' + totalAsk;
+            (srcs ? srcs + ' · ' : '') + 'bid ' + totalBid + ' · ask ' + totalAsk;
         document.getElementById('liqmap-last-update').textContent =
             'Last: ' + (w.snapshot_age_secs != null
                 ? w.snapshot_age_secs.toFixed(1) + 's ago' : '—');
@@ -3307,7 +3312,10 @@ function liqmapDrawChart(data) {
 
     for (const e of labelEntries) {
         const color = e.side === 'bid' ? '#22c55e' : '#ef4444';
-        const labelText = liqmapFormatUsd(e.w.usd);
+        // Multi-venue badge: a wall standing on 2-3 exchanges at once is
+        // a stronger signal — flag it as ×2 / ×3 right in the pill.
+        const exMark = (e.w.ex_count && e.w.ex_count > 1) ? ` ×${e.w.ex_count}` : '';
+        const labelText = liqmapFormatUsd(e.w.usd) + exMark;
         const labelG = svg.append('g')
             .attr('transform', `translate(${margin.left + innerW - 2}, ${margin.top + e.y})`);
         const txtLen = labelText.length * 6.6 + 12;

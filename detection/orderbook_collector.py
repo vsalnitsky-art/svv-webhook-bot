@@ -628,3 +628,278 @@ def compute_walls_buckets(snapshot: Dict,
         'snapshot_ts': snapshot.get('ts'),
         'snapshot_age_secs': (time.time() - snapshot['ts']) if snapshot.get('ts') else None,
     }
+
+
+# ============================================================
+# Multi-exchange aggregated order book (2026-06-09, step 1)
+# ============================================================
+# Bybit 500 + OKX 400 + Hyperliquid full book, merged into one snapshot.
+# A wall that exists on 2-3 venues simultaneously is a much stronger
+# signal than a single-venue one, so each level carries an exchange tag
+# and compute_walls_buckets_v3 reports per-wall exchange breakdown.
+#
+# All three sources work from Render datacenter IPs (verified: the bot
+# already talks to Bybit and Hyperliquid in production; OKX is the
+# standing fallback in market_data and has never 418'd us).
+
+_OKX_OB_URL = 'https://www.okx.com/api/v5/market/books'
+_HL_INFO_URL = 'https://api.hyperliquid.xyz/info'
+_AGG_CACHE_TTL = 2.5
+_agg_ob_cache: Dict[str, Dict] = {}
+_agg_ob_lock = threading.Lock()
+
+
+def _symbol_to_okx_inst(symbol: str) -> Optional[str]:
+    """BTCUSDT → BTC-USDT-SWAP. Returns None for non-USDT symbols."""
+    s = (symbol or '').upper().strip()
+    if s.endswith('.P'):
+        s = s[:-2]
+    if not s.endswith('USDT'):
+        return None
+    base = s[:-4]
+    if not base:
+        return None
+    return f"{base}-USDT-SWAP"
+
+
+def _symbol_to_hl_coin(symbol: str) -> Optional[str]:
+    """BTCUSDT → BTC (Hyperliquid uses bare coin names for perps)."""
+    s = (symbol or '').upper().strip()
+    if s.endswith('.P'):
+        s = s[:-2]
+    if s.endswith('USDT'):
+        s = s[:-4]
+    return s or None
+
+
+def fetch_okx_orderbook(symbol: str) -> Optional[Dict]:
+    """OKX swap book, up to 400 levels/side. Same snapshot shape."""
+    inst = _symbol_to_okx_inst(symbol)
+    if not inst:
+        return None
+    try:
+        r = _requests.get(_OKX_OB_URL, params={'instId': inst, 'sz': '400'},
+                          timeout=6)
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        if d.get('code') != '0':
+            return None
+        data = (d.get('data') or [{}])[0]
+        # OKX rows: [price, qty, deprecated, num_orders]
+        bids, asks = [], []
+        for row in (data.get('bids') or []):
+            try:
+                p = float(row[0]); q = float(row[1])
+                if q > 0:
+                    bids.append((p, q))
+            except (TypeError, ValueError, IndexError):
+                continue
+        for row in (data.get('asks') or []):
+            try:
+                p = float(row[0]); q = float(row[1])
+                if q > 0:
+                    asks.append((p, q))
+            except (TypeError, ValueError, IndexError):
+                continue
+        if not bids or not asks:
+            return None
+        return {'bids': bids, 'asks': asks, 'ts': time.time()}
+    except Exception as e:
+        print(f"[OBC] OKX orderbook {symbol} error: {e}")
+        return None
+
+
+def fetch_hyperliquid_orderbook(symbol: str) -> Optional[Dict]:
+    """Hyperliquid l2Book — full depth, no auth. Same snapshot shape.
+    Note: HL sizes are in coin units like the others, prices in USD."""
+    coin = _symbol_to_hl_coin(symbol)
+    if not coin:
+        return None
+    try:
+        r = _requests.post(_HL_INFO_URL,
+                           json={'type': 'l2Book', 'coin': coin},
+                           timeout=6)
+        if r.status_code != 200:
+            return None
+        d = r.json()
+        levels = d.get('levels')
+        if not levels or len(levels) != 2:
+            return None
+        bids, asks = [], []
+        for row in levels[0]:  # bids
+            try:
+                p = float(row['px']); q = float(row['sz'])
+                if q > 0:
+                    bids.append((p, q))
+            except (TypeError, ValueError, KeyError):
+                continue
+        for row in levels[1]:  # asks
+            try:
+                p = float(row['px']); q = float(row['sz'])
+                if q > 0:
+                    asks.append((p, q))
+            except (TypeError, ValueError, KeyError):
+                continue
+        if not bids or not asks:
+            return None
+        return {'bids': bids, 'asks': asks, 'ts': time.time()}
+    except Exception as e:
+        print(f"[OBC] Hyperliquid orderbook {symbol} error: {e}")
+        return None
+
+
+def fetch_aggregated_orderbook(symbol: str) -> Optional[Dict]:
+    """Fetch Bybit + OKX + Hyperliquid in parallel and merge.
+    
+    Returns:
+      {'bids': [(price, qty, exch), ...], 'asks': [...],
+       'ts': float, 'sources': ['bybit', 'okx', ...]}
+    
+    Levels carry a 3rd element (exchange tag) consumed by
+    compute_walls_buckets_v3 for per-wall venue attribution.
+    None only when ALL three sources fail.
+    """
+    sym = (symbol or '').upper().strip()
+    if sym.endswith('.P'):
+        sym = sym[:-2]
+    if not sym:
+        return None
+    
+    now = time.time()
+    with _agg_ob_lock:
+        cached = _agg_ob_cache.get(sym)
+        if cached and (now - cached['ts']) < _AGG_CACHE_TTL:
+            return cached['snapshot']
+    
+    results: Dict[str, Optional[Dict]] = {}
+    
+    def _run(name, fn):
+        results[name] = fn(sym)
+    
+    threads = [
+        threading.Thread(target=_run, args=('bybit', fetch_bybit_orderbook), daemon=True),
+        threading.Thread(target=_run, args=('okx', fetch_okx_orderbook), daemon=True),
+        threading.Thread(target=_run, args=('hyperliquid', fetch_hyperliquid_orderbook), daemon=True),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=8)
+    
+    bids, asks, sources = [], [], []
+    for name in ('bybit', 'okx', 'hyperliquid'):
+        snap = results.get(name)
+        if not snap:
+            continue
+        sources.append(name)
+        for p, q in snap['bids']:
+            bids.append((p, q, name))
+        for p, q in snap['asks']:
+            asks.append((p, q, name))
+    
+    if not bids or not asks:
+        return None
+    
+    snapshot = {'bids': bids, 'asks': asks, 'ts': now, 'sources': sources}
+    with _agg_ob_lock:
+        _agg_ob_cache[sym] = {'ts': now, 'snapshot': snapshot}
+        if len(_agg_ob_cache) > 50:
+            oldest = min(_agg_ob_cache, key=lambda k: _agg_ob_cache[k]['ts'])
+            _agg_ob_cache.pop(oldest, None)
+    return snapshot
+
+
+def compute_walls_buckets_v3(snapshot: Dict,
+                              top_n: int = 8,
+                              bucket_pct: float = 0.001,
+                              exclude_near_pct: float = 0.001,
+                              min_sep_pct: float = 0.002) -> Optional[Dict]:
+    """v2 bucket detection + per-wall exchange attribution.
+    
+    Accepts levels as (price, qty) or (price, qty, exchange) tuples.
+    Each wall gains:
+      'exchanges': {'bybit': usd, 'okx': usd, ...}
+      'ex_count':  number of venues contributing to the wall
+    Top-level gains 'sources': list of venues that responded.
+    Everything else matches the v2 response shape.
+    """
+    if not snapshot:
+        return None
+    bids = snapshot.get('bids') or []
+    asks = snapshot.get('asks') or []
+    if not bids or not asks:
+        return None
+    
+    best_bid = max(b[0] for b in bids)
+    best_ask = min(a[0] for a in asks)
+    mid = (best_bid + best_ask) / 2.0
+    if mid <= 0:
+        return None
+    spread = best_ask - best_bid
+    spread_pct = spread / mid * 100
+    
+    bucket_w = mid * bucket_pct
+    
+    def bucketize(levels, side):
+        buckets: Dict[int, Dict] = {}
+        for row in levels:
+            p, q = row[0], row[1]
+            exch = row[2] if len(row) > 2 else 'unknown'
+            if abs(p - mid) / mid < exclude_near_pct:
+                continue
+            idx = int(p // bucket_w)
+            b = buckets.setdefault(idx, {'qty': 0.0, 'usd': 0.0, 'ex': {}})
+            usd = p * q
+            b['qty'] += q
+            b['usd'] += usd
+            b['ex'][exch] = b['ex'].get(exch, 0.0) + usd
+        out = []
+        for idx, b in buckets.items():
+            out.append({
+                'side': side,
+                'price': (idx + 0.5) * bucket_w,
+                'price_lo': idx * bucket_w,
+                'price_hi': (idx + 1) * bucket_w,
+                'qty': b['qty'],
+                'usd': b['usd'],
+                'exchanges': {k: round(v, 2) for k, v in b['ex'].items()},
+                'ex_count': len(b['ex']),
+            })
+        out.sort(key=lambda w: w['usd'], reverse=True)
+        return out
+    
+    def select_diverse(cands):
+        chosen = []
+        for c in cands:
+            if all(abs(c['price'] - x['price']) / mid >= min_sep_pct
+                   for x in chosen):
+                chosen.append(c)
+                if len(chosen) >= top_n:
+                    break
+        return chosen
+    
+    bid_walls = select_diverse(bucketize(bids, 'bid'))
+    ask_walls = select_diverse(bucketize(asks, 'ask'))
+    
+    total_bid_usd = sum(r[0] * r[1] for r in bids)
+    total_ask_usd = sum(r[0] * r[1] for r in asks)
+    total_usd = total_bid_usd + total_ask_usd
+    imbalance_pct = ((total_bid_usd - total_ask_usd) / total_usd * 100
+                     if total_usd > 0 else 0)
+    
+    return {
+        'mid_price': mid,
+        'best_bid': best_bid,
+        'best_ask': best_ask,
+        'spread': spread,
+        'spread_pct': spread_pct,
+        'bid_walls': bid_walls,
+        'ask_walls': ask_walls,
+        'total_bid_usd': total_bid_usd,
+        'total_ask_usd': total_ask_usd,
+        'imbalance_pct': imbalance_pct,
+        'sources': snapshot.get('sources') or [],
+        'snapshot_ts': snapshot.get('ts'),
+        'snapshot_age_secs': (time.time() - snapshot['ts']) if snapshot.get('ts') else None,
+    }

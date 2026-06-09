@@ -4031,14 +4031,28 @@ def register_api_routes(app):
             
             from detection.orderbook_collector import (
                 get_orderbook_collector, fetch_bybit_orderbook,
-                compute_walls_buckets)
+                fetch_aggregated_orderbook, compute_walls_buckets,
+                compute_walls_buckets_v3)
             obc = get_orderbook_collector()
             
-            # === Primary: Bybit deep book + bucket-based wall detection ===
-            # v2 detection: fixed 0.1% buckets, ±0.1% near-mid zone excluded
-            # (that's MM depth, not walls), 0.2% min separation between
-            # displayed walls. Fixes the degenerate case where chain
-            # clustering merged the whole dense BTC book into one wall.
+            # === Primary: aggregated Bybit+OKX+Hyperliquid deep book ===
+            # Walls get per-exchange USD attribution; a wall standing on
+            # 2-3 venues simultaneously is a stronger signal than a
+            # single-venue one. Bucket params identical to v2.
+            snapshot = fetch_aggregated_orderbook(symbol)
+            if snapshot is not None:
+                walls = compute_walls_buckets_v3(snapshot, top_n=top_n)
+                if walls:
+                    return jsonify({
+                        'ok': True,
+                        'symbol': symbol,
+                        'walls': walls,
+                        'pending': False,
+                        'source': 'aggregated:' + '+'.join(walls.get('sources') or []),
+                    })
+            
+            # === Secondary: Bybit alone (if parallel fetch all failed
+            # but a cached Bybit snapshot can still be had) ===
             snapshot = fetch_bybit_orderbook(symbol)
             if snapshot is not None:
                 walls = compute_walls_buckets(snapshot, top_n=top_n)
