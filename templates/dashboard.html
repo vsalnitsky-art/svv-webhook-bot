@@ -89,6 +89,19 @@
             <div class="liqmap-pressure-track">
                 <div class="liqmap-squeeze-fill" id="liqmap-squeeze-fill"></div>
             </div>
+            <!-- MANIPULATION gauge — share of large walls that were pulled
+                 (spoofed) vs walls that persisted, rolling 10-min window.
+                 Fed from the 2s walls poll; needs ~2 min warmup. -->
+            <div class="liqmap-pressure-head" style="margin-top:12px">
+                <span class="liqmap-pressure-title">🎭 MANIPULATION</span>
+                <span class="liqmap-pressure-badges">
+                    <span id="liqmap-manip-info">—</span>
+                </span>
+                <span class="liqmap-pressure-big" id="liqmap-manip-big" style="font-size:1.25rem">—</span>
+            </div>
+            <div class="liqmap-pressure-track">
+                <div class="liqmap-manip-fill" id="liqmap-manip-fill"></div>
+            </div>
         </div>
     </div>
 
@@ -1387,6 +1400,15 @@
     left: 0;
     border-radius: 5px;
     background: linear-gradient(90deg, #7c2d12, #dc2626, #f87171);
+    transition: width 0.4s ease;
+    width: 0%;
+}
+.liqmap-manip-fill {
+    position: absolute;
+    top: 0; bottom: 0;
+    left: 0;
+    border-radius: 5px;
+    background: linear-gradient(90deg, #4c1d95, #7c3aed, #c084fc);
     transition: width 0.4s ease;
     width: 0%;
 }
@@ -3143,6 +3165,30 @@ async function loadLiqmap() {
         liqmapSetStatusIcon('healthy');
         liqmapHideOverlay();
         liqmapDrawChart(liqmapState.lastData);
+        
+        // === MANIPULATION gauge (rides the 2s walls payload) ===
+        const manip = w.manipulation;
+        const mBig = document.getElementById('liqmap-manip-big');
+        const mFill = document.getElementById('liqmap-manip-fill');
+        const mInfo = document.getElementById('liqmap-manip-info');
+        if (manip && mBig) {
+            if (manip.warming_up) {
+                mBig.textContent = '…';
+                mBig.style.color = '#666';
+                mFill.style.width = '0%';
+                mInfo.textContent = `warming up (${Math.round(manip.observed_sec)}s / 120s)`;
+            } else {
+                const p = manip.pct || 0;
+                mFill.style.width = p + '%';
+                mBig.textContent = p.toFixed(0) + '%';
+                mBig.style.color = p >= 60 ? '#c084fc' : (p >= 30 ? '#a78bfa' : '#888');
+                mInfo.textContent =
+                    `${manip.spoof_count} spoofed / ${manip.persistent_count} stable` +
+                    ` · ${manip.window_min}m` +
+                    (manip.spoofed_usd > 0
+                        ? ` · pulled ${liqmapFormatUsd(manip.spoofed_usd)}` : '');
+            }
+        }
     } catch (err) {
         liqmapShowOverlay('⚠️ Network error', err.message);
         liqmapSetStatusIcon('error');

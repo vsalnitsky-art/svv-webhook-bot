@@ -4043,6 +4043,15 @@ def register_api_routes(app):
             if snapshot is not None:
                 walls = compute_walls_buckets_v3(snapshot, top_n=top_n)
                 if walls:
+                    # Feed the spoof tracker on every poll and ship its
+                    # rolling stats in the same response (no extra request).
+                    try:
+                        from detection.manipulation_tracker import get_manipulation_tracker
+                        mt = get_manipulation_tracker()
+                        mt.update(symbol, walls)
+                        walls['manipulation'] = mt.get_state(symbol)
+                    except Exception as _me:
+                        print(f"[OBC] manipulation tracker error: {_me}")
                     return jsonify({
                         'ok': True,
                         'symbol': symbol,
