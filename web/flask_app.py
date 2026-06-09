@@ -4100,6 +4100,62 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
     
+    # Throttle map for on-demand forecast computes: symbol -> last compute ts.
+    # The dashboard polls every 2s; a fresh compute fetches 1H+4H klines, so
+    # we only allow one per symbol per 120s. Watchlist symbols are already
+    # refreshed by the SMC scanner on its own cadence and hit the cache path.
+    _forecast_ondemand_ts = {}
+    
+    @app.route('/api/forecast')
+    def api_forecast():
+        """Forecast 1H/4H for one symbol — feeds the AI Market Pressure bar
+        on the dashboard Liquidity Map.
+        
+        Cache-first (SMC scanner keeps watchlist symbols fresh). For symbols
+        outside the watchlist, computes on-demand at most once per 120s.
+        
+        Response: {ok, symbol, forecast_1h: {side,pct,confidence},
+                   forecast_4h: {...}, computed_at}
+        """
+        try:
+            symbol = request.args.get('symbol', 'BTCUSDT').upper().strip()
+            if symbol.endswith('.P'):
+                symbol = symbol[:-2]
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if fe is None:
+                return jsonify({'ok': False, 'reason': 'ForecastEngine not initialized'})
+            
+            import time as _ftime
+            cached = fe.get(symbol)
+            now = _ftime.time()
+            # Refresh if: nothing cached, or cache older than 10 min — but
+            # never more often than once per 120s per symbol from this path.
+            stale = (cached is None
+                     or (now - cached.get('computed_at', 0)) > 600)
+            if stale:
+                last = _forecast_ondemand_ts.get(symbol, 0)
+                if now - last >= 120:
+                    _forecast_ondemand_ts[symbol] = now
+                    try:
+                        cached = fe.update(symbol)
+                    except Exception as e:
+                        print(f"[Forecast API] on-demand compute {symbol} failed: {e}")
+            
+            if not cached:
+                return jsonify({'ok': True, 'symbol': symbol,
+                                 'forecast_1h': None, 'forecast_4h': None,
+                                 'pending': True})
+            return jsonify({
+                'ok': True,
+                'symbol': symbol,
+                'forecast_1h': cached.get('forecast_1h'),
+                'forecast_4h': cached.get('forecast_4h'),
+                'computed_at': cached.get('computed_at'),
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
     @app.route('/api/liquidation-map/status')
     def api_liqmap_status():
         """Authoritative state for the UI:

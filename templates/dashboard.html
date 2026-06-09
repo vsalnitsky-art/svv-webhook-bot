@@ -59,6 +59,24 @@
             <div class="liqmap-tooltip" id="liqmap-tooltip" style="display:none"></div>
             <div class="liqmap-overlay-msg" id="liqmap-overlay-msg" style="display:none"></div>
         </div>
+
+        <!-- AI Market Pressure — Forecast 1H/4H multi-horizon prediction
+             rendered as a prominent directional bar (reference-style).
+             Pressure score = weighted blend of both TFs' side×confidence. -->
+        <div class="liqmap-pressure" id="liqmap-pressure" style="display:none">
+            <div class="liqmap-pressure-head">
+                <span class="liqmap-pressure-title">🤖 AI MARKET PRESSURE</span>
+                <span class="liqmap-pressure-badges">
+                    <span id="liqmap-fc1h-badge">1H: —</span>
+                    <span id="liqmap-fc4h-badge">4H: —</span>
+                </span>
+                <span class="liqmap-pressure-big" id="liqmap-pressure-big">—</span>
+            </div>
+            <div class="liqmap-pressure-track">
+                <div class="liqmap-pressure-fill" id="liqmap-pressure-fill"></div>
+                <div class="liqmap-pressure-center"></div>
+            </div>
+        </div>
     </div>
 
     <!-- BTC Volume Flow -->
@@ -1295,6 +1313,60 @@
     border: 1px solid rgba(255,255,255,0.05);
     padding: 8px 0;
     margin-bottom: 14px;
+}
+/* === AI Market Pressure bar (Forecast 1H/4H blend) === */
+.liqmap-pressure {
+    background: #0a0b10;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+}
+.liqmap-pressure-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.liqmap-pressure-title {
+    color: #889;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+.liqmap-pressure-badges {
+    display: flex;
+    gap: 10px;
+    font-size: 0.8rem;
+    color: #aaa;
+    font-family: monospace;
+}
+.liqmap-pressure-big {
+    margin-left: auto;
+    font-size: 1.6rem;
+    font-weight: 800;
+    font-family: monospace;
+}
+.liqmap-pressure-track {
+    position: relative;
+    height: 10px;
+    border-radius: 5px;
+    background: rgba(255,255,255,0.06);
+    overflow: hidden;
+}
+.liqmap-pressure-fill {
+    position: absolute;
+    top: 0; bottom: 0;
+    border-radius: 5px;
+    transition: left 0.4s ease, width 0.4s ease, background 0.4s ease;
+}
+.liqmap-pressure-center {
+    position: absolute;
+    left: 50%;
+    top: -2px; bottom: -2px;
+    width: 1.5px;
+    background: rgba(255,255,255,0.35);
 }
 #liqmap-chart {
     width: 100%;
@@ -3117,9 +3189,17 @@ function liqmapDrawChart(data) {
     // simply render partially clipped, which is fine.
     const allWalls = (walls.bid_walls || []).concat(walls.ask_walls || []);
     // Liquidation clusters (OI-estimation layer) — these are the far
-    // "magnet" levels (-5%, -10%) that the order book can't show. They
-    // participate in the Y domain so they're always visible.
-    const liqClusters = (data.liq && data.liq.clusters) ? data.liq.clusters : [];
+    // "magnet" levels (-5%, -10%) that the order book can't show.
+    // === Noise filter applied HERE (before Y domain) ===
+    // Keep top 10 by USD and only zones ≥ 2% of the largest. Dust zones
+    // would otherwise both clutter labels AND stretch the Y domain.
+    const liqClustersRaw = (data.liq && data.liq.clusters) ? data.liq.clusters : [];
+    let liqClusters = [];
+    if (liqClustersRaw.length > 0) {
+        const sortedLiq = liqClustersRaw.slice().sort((a, b) => (b.total_usd||0) - (a.total_usd||0));
+        const maxLiqUsd = sortedLiq[0].total_usd || 0;
+        liqClusters = sortedLiq.filter(z => (z.total_usd || 0) >= maxLiqUsd * 0.02).slice(0, 10);
+    }
     let minP = mid, maxP = mid;
     for (const w of allWalls) {
         if (w.price < minP) minP = w.price;
@@ -3287,11 +3367,25 @@ function liqmapDrawChart(data) {
             });
         }
     }
-    // Left-edge label pills with the same greedy de-overlap as walls
+    // Left-edge label pills with the same greedy de-overlap as walls.
+    // After pushing labels down, the bottom of the stack can overflow the
+    // plot — shift the whole stack back up so everything stays inside.
     liqLabelEntries.sort((a, b) => a.y - b.y);
     for (let i = 1; i < liqLabelEntries.length; i++) {
         if (liqLabelEntries[i].y - liqLabelEntries[i-1].y < 16) {
             liqLabelEntries[i].y = liqLabelEntries[i-1].y + 16;
+        }
+    }
+    if (liqLabelEntries.length > 0) {
+        const overflow = liqLabelEntries[liqLabelEntries.length - 1].y - (innerH - 8);
+        if (overflow > 0) {
+            for (const e of liqLabelEntries) e.y = Math.max(8, e.y - overflow);
+            // Re-resolve collisions from the top after the shift
+            for (let i = 1; i < liqLabelEntries.length; i++) {
+                if (liqLabelEntries[i].y - liqLabelEntries[i-1].y < 16) {
+                    liqLabelEntries[i].y = liqLabelEntries[i-1].y + 16;
+                }
+            }
         }
     }
     for (const e of liqLabelEntries) {
@@ -3831,6 +3925,7 @@ function liqmapChangeSymbol() {
         body: JSON.stringify({symbol: s}),
     }).catch(() => {});
     loadLiqmap();
+    liqmapLoadPressure();
 }
 
 function liqmapSetLookback(hours) {
@@ -3903,6 +3998,72 @@ function liqmapStartRefresh() {
         if (document.hidden) return;
         loadLiqmap();
     }, LIQMAP_REFRESH_MS);
+    // Forecast changes on a slow cadence (engine recomputes ~10min, plus
+    // our on-demand path is throttled to 120s) — poll it separately at 30s
+    // instead of riding the 2s walls loop.
+    if (liqmapState.pressureTimer) clearInterval(liqmapState.pressureTimer);
+    liqmapLoadPressure();
+    liqmapState.pressureTimer = setInterval(() => {
+        if (document.hidden) return;
+        liqmapLoadPressure();
+    }, 30 * 1000);
+}
+
+async function liqmapLoadPressure() {
+    /* AI Market Pressure — blend of Forecast 1H (40%) and 4H (60%).
+       score ∈ [-100, +100]; negative = SHORT pressure, positive = LONG.
+       Bar fills from center outward; big % = |score|, direction label. */
+    try {
+        const sym = liqmapState.symbol;
+        const r = await fetch(`/api/forecast?symbol=${encodeURIComponent(sym)}&_=${Date.now()}`,
+                              {cache: 'no-store'});
+        const d = await r.json();
+        const box = document.getElementById('liqmap-pressure');
+        if (!box) return;
+        if (!d.ok || (!d.forecast_1h && !d.forecast_4h)) {
+            box.style.display = 'none';
+            return;
+        }
+        box.style.display = '';
+        const f1 = d.forecast_1h || {};
+        const f4 = d.forecast_4h || {};
+        const fmtBadge = (f, label) => {
+            const s = f.side || 0;
+            if (!s) return `${label}: ⚪ —`;
+            const dir = s > 0 ? '🟢 LONG' : '🔴 SHORT';
+            const pct = (typeof f.pct === 'number') ? ` ${f.pct > 0 ? '+' : ''}${f.pct}%` : '';
+            const conf = (typeof f.confidence === 'number') ? ` · ${f.confidence}%` : '';
+            return `${label}: ${dir}${pct}${conf}`;
+        };
+        document.getElementById('liqmap-fc1h-badge').textContent = fmtBadge(f1, '1H');
+        document.getElementById('liqmap-fc4h-badge').textContent = fmtBadge(f4, '4H');
+        // Blended pressure score: side × confidence, 4H weighted heavier
+        const s1 = (f1.side || 0) * (f1.confidence || 0);
+        const s4 = (f4.side || 0) * (f4.confidence || 0);
+        const score = Math.max(-100, Math.min(100, s1 * 0.4 + s4 * 0.6));
+        const big = document.getElementById('liqmap-pressure-big');
+        const fill = document.getElementById('liqmap-pressure-fill');
+        if (Math.abs(score) < 5) {
+            big.textContent = 'NEUTRAL';
+            big.style.color = '#888';
+            fill.style.left = '50%'; fill.style.width = '0%';
+        } else {
+            const isLong = score > 0;
+            big.textContent = `${Math.abs(score).toFixed(0)}% ${isLong ? '↑LONG' : '↓SHORT'}`;
+            big.style.color = isLong ? '#4ade80' : '#ef4444';
+            fill.style.background = isLong ? '#22c55e' : '#ef4444';
+            const half = Math.abs(score) / 2;  // % of track width
+            if (isLong) {
+                fill.style.left = '50%';
+                fill.style.width = half + '%';
+            } else {
+                fill.style.left = (50 - half) + '%';
+                fill.style.width = half + '%';
+            }
+        }
+    } catch (err) {
+        console.warn('pressure load error', err);
+    }
 }
 
 function liqmapStopRefresh() {
