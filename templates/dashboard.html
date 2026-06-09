@@ -3074,46 +3074,57 @@ function liqmapDrawChart(data) {
     }
 
     // ===========================
-    // Compute price domain
+    // Compute price domain (ADAPTIVE)
     // ===========================
-    // Take the union of: candle high/lows, wall prices, and mid ± 1%.
-    // This ensures all walls are visible even if they're at the edges
-    // of the depth20 range (typically ±0.5–2% from mid).
-    let minP = mid * 0.99;
-    let maxP = mid * 1.01;
+    // Pre-2026-06-09 the domain was fixed to mid±1%, which made BTC walls
+    // (typically ±0.05–0.2% from mid) collapse onto a single pixel near
+    // the mid-price line. Now: zoom to the actual wall spread, then
+    // expand to fit candles. Padding ensures top/bottom labels aren't
+    // clipped. Min span guards against the "all walls at exactly mid"
+    // edge case which would give a zero-height plot.
+    const allWalls = (walls.bid_walls || []).concat(walls.ask_walls || []);
+    let minP = mid;
+    let maxP = mid;
+    for (const w of allWalls) {
+        if (w.price < minP) minP = w.price;
+        if (w.price > maxP) maxP = w.price;
+    }
     for (const c of candles) {
         if (c.l < minP) minP = c.l;
         if (c.h > maxP) maxP = c.h;
     }
-    const allWalls = (walls.bid_walls || []).concat(walls.ask_walls || []);
-    for (const w of allWalls) {
-        if (w.price < minP) minP = w.price * 0.999;
-        if (w.price > maxP) maxP = w.price * 1.001;
+    // If span is degenerate (<0.1% of mid), force a default 0.5% window
+    if ((maxP - minP) / mid < 0.001) {
+        minP = mid * 0.9975;
+        maxP = mid * 1.0025;
     }
-    // Small padding (3%) so labels at the very top/bottom aren't clipped
-    const pad = (maxP - minP) * 0.04;
+    // 15% vertical padding so wall labels aren't clipped at extreme Y
+    const pad = (maxP - minP) * 0.15;
     minP -= pad; maxP += pad;
 
     // ===========================
-    // X domain — time
+    // X domain — time (TF-AWARE fallback)
     // ===========================
+    // If candles array is empty (price-series endpoint returned nothing for
+    // this TF), the chart used to default to a 2-hour window, which makes
+    // no sense for 4h candles. Pick a sane window per TF instead.
+    const TF_HOURS_BACK = {
+        '1m': 2, '5m': 8, '15m': 24, '30m': 48, '1h': 96, '4h': 240,
+    };
     const nowSec = Math.floor(Date.now() / 1000);
-    // Show last ~hours of candles based on candle TF; if no candles, default to 2h.
+    const fallbackHours = TF_HOURS_BACK[liqmapState.candleTF] || 12;
     let xStart;
     if (candles.length > 0) {
         xStart = candles[0].ts;
     } else {
-        xStart = nowSec - 2 * 3600;
+        xStart = nowSec - fallbackHours * 3600;
     }
-    // Reserve ~10% of width at the right for "live" empty space where the
+    // Reserve ~5% of width at the right for "live" empty space where the
     // wall labels will sit — visually cleaner.
+    const xSpan = nowSec - xStart;
     const xScale = d3.scaleLinear()
-        .domain([xScale_extendBuffer(xStart, nowSec)[0], xScale_extendBuffer(xStart, nowSec)[1]])
+        .domain([xStart, nowSec + xSpan * 0.05])
         .range([0, innerW]);
-    function xScale_extendBuffer(a, b) {
-        const span = b - a;
-        return [a, b + span * 0.05];
-    }
     const yScale = d3.scaleLinear()
         .domain([minP, maxP])
         .range([innerH, 0]);
@@ -3312,13 +3323,21 @@ function liqmapDrawChart(data) {
     // ===========================
     // X-axis ticks (bottom, time)
     // ===========================
+    // For ranges > 24h, include month/day in the label so the user knows
+    // which day they're looking at. Pure HH:MM repeats across days and
+    // is confusing for multi-day views (e.g. 4h candles over 10 days).
     const xAxisG = svg.append('g')
         .attr('transform', `translate(${margin.left}, ${margin.top + innerH + 14})`);
-    const xTicks = 6;
+    const xRangeSec = xScale.domain()[1] - xScale.domain()[0];
+    const showDate = xRangeSec > 24 * 3600;
+    const xTicks = showDate ? 5 : 6;
     for (let i = 0; i <= xTicks; i++) {
         const tsec = xScale.invert((innerW / xTicks) * i);
         const d = new Date(tsec * 1000);
-        const label = d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+        const label = showDate
+            ? d.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit',
+                                     minute: '2-digit', hour12: false})
+            : d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
         const x = (innerW / xTicks) * i;
         xAxisG.append('text')
             .attr('x', x).attr('y', 12)
@@ -3331,16 +3350,19 @@ function liqmapDrawChart(data) {
     // ===========================
     // Bottom legend
     // ===========================
+    // Per-item width is `swatch + text + gap`. Text width estimate uses
+    // 7.2px/char which is generous for system-ui at 10px; previous 5.8px
+    // was too tight and items overlapped each other on narrow viewports.
     const legendY = H - 8;
     const legendG = svg.append('g').attr('transform', `translate(${margin.left}, ${legendY})`);
     let lx = 0;
     function legendItem(swatch, label) {
         legendG.append('g').call(swatch, lx).attr('transform', `translate(${lx},-7)`);
-        legendG.append('text').attr('x', lx + 22).attr('y', 0)
+        legendG.append('text').attr('x', lx + 24).attr('y', 0)
             .attr('fill', '#888').attr('font-size', '10px')
             .attr('font-family', 'system-ui, sans-serif')
             .text(label);
-        lx += 22 + label.length * 5.8 + 18;
+        lx += 24 + label.length * 7.2 + 28;
     }
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#22c55e').attr('stroke-width', 4), 'bid wall (support)');
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#ef4444').attr('stroke-width', 4), 'ask wall (resistance)');
