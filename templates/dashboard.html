@@ -17,9 +17,9 @@
          applies; the data layer underneath is completely different now. -->
     <div class="section liqmap-section">
         <div class="section-header">
-            <h2>💧 Order Book Walls
+            <h2>💧 Liquidity Map
                 <span style="color:#666;font-size:0.72rem;font-weight:normal;margin-left:6px">
-                    real-time limit orders · Binance Futures
+                    order book walls (Bybit+OKX+HL) + liquidation zones (OI estimation)
                 </span>
             </h2>
             <div class="liqmap-controls">
@@ -2963,16 +2963,26 @@ async function loadLiqmap() {
                                  '1h': 96, '4h': 240};
         const hours = TF_FETCH_HOURS[tf] || 24;
         const cb = Date.now();
-        // Fetch both in parallel — neither depends on the other.
-        const [wallsRes, candlesRes] = await Promise.all([
+        // Fetch all three in parallel — walls (order book), candles (price),
+        // and liquidation clusters (OI-estimation engine). The liq layer is
+        // best-effort: if the daemon is still warming up for this symbol we
+        // render without it and it appears on a later poll.
+        const [wallsRes, candlesRes, liqRes] = await Promise.all([
             fetch(`/api/orderbook/walls?symbol=${encodeURIComponent(sym)}&top_n=8&_=${cb}`,
                   {cache: 'no-store'}),
             fetch(`/api/liquidation-map/price-series?symbol=${encodeURIComponent(sym)}` +
                   `&interval=${encodeURIComponent(tf)}&hours=${hours}&_=${cb}`,
                   {cache: 'no-store'}),
+            fetch(`/api/liquidation-map/state?symbol=${encodeURIComponent(sym)}` +
+                  `&lookback=24&_=${cb}`,
+                  {cache: 'no-store'}).catch(() => null),
         ]);
         const wallsData = await wallsRes.json();
         const candleData = await candlesRes.json();
+        let liqData = null;
+        try {
+            if (liqRes) liqData = await liqRes.json();
+        } catch {}
 
         if (!wallsData.ok) {
             liqmapShowOverlay('⚠️ Order book error', wallsData.reason || 'API error');
@@ -2995,11 +3005,18 @@ async function loadLiqmap() {
             return;
         }
 
-        // Combine walls + candles into a single state dict consumed by render
+        // Combine walls + candles + liquidation clusters into a single
+        // state dict consumed by render. Liq layer is optional (null when
+        // daemon warming up — UI renders without it).
         liqmapState.lastData = {
             symbol: sym,
             walls: wallsData.walls,
             candles: (candleData && candleData.ok) ? (candleData.series || []) : [],
+            liq: (liqData && liqData.ok) ? {
+                clusters: liqData.cluster_zones || [],
+                mark_price: liqData.mark_price,
+                quality: liqData.data_quality || {},
+            } : null,
         };
 
         // Status bar updates
@@ -3099,10 +3116,19 @@ function liqmapDrawChart(data) {
     // the walls back into a stripe. Older candles outside the domain
     // simply render partially clipped, which is fine.
     const allWalls = (walls.bid_walls || []).concat(walls.ask_walls || []);
+    // Liquidation clusters (OI-estimation layer) — these are the far
+    // "magnet" levels (-5%, -10%) that the order book can't show. They
+    // participate in the Y domain so they're always visible.
+    const liqClusters = (data.liq && data.liq.clusters) ? data.liq.clusters : [];
     let minP = mid, maxP = mid;
     for (const w of allWalls) {
         if (w.price < minP) minP = w.price;
         if (w.price > maxP) maxP = w.price;
+    }
+    for (const z of liqClusters) {
+        const zc = (z.price_low + z.price_high) / 2;
+        if (zc < minP) minP = zc;
+        if (zc > maxP) maxP = zc;
     }
     // Recent candles: last 40% of the array (most relevant price action)
     if (candles.length > 0) {
@@ -3155,13 +3181,13 @@ function liqmapDrawChart(data) {
         .attr('x', margin.left).attr('y', 14)
         .attr('fill', '#aaa').attr('font-size', '12px')
         .attr('font-family', 'system-ui, sans-serif')
-        .text(`${liqmapState.symbol} · ${liqmapState.candleTF || '15m'} candles + order book walls`);
+        .text(`${liqmapState.symbol} · ${liqmapState.candleTF || '15m'} · walls + liq zones`);
     svg.append('text')
         .attr('x', W - margin.right).attr('y', 14)
         .attr('text-anchor', 'end')
         .attr('fill', '#666').attr('font-size', '11px')
         .attr('font-family', 'system-ui, sans-serif')
-        .text('Live · Binance WS · depth20');
+        .text('Live · 3-exchange book · OI liq engine');
 
     const g = svg.append('g')
         .attr('transform', `translate(${margin.left},${margin.top})`);
@@ -3218,6 +3244,75 @@ function liqmapDrawChart(data) {
         .attr('x1', imbalanceX - 2).attr('x2', imbalanceX + imbalanceW + 2)
         .attr('y1', redH).attr('y2', redH)
         .attr('stroke', '#fff').attr('stroke-width', 1);
+
+    // ===========================
+    // Liquidation cluster zones (OI-estimation layer)
+    // ===========================
+    // Rendered BELOW candles so price action stays readable. Semantics:
+    //   side='long'  → cluster of long-position liquidation prices, sits
+    //                  BELOW current price, red (price falling there
+    //                  triggers forced selling → acceleration magnet)
+    //   side='short' → above price, green (squeeze fuel)
+    // Band opacity ∝ magnet_score (cluster size × proximity × leverage).
+    // $-labels on the LEFT edge (walls own the right edge — no collisions).
+    const liqLabelEntries = [];
+    if (liqClusters.length > 0) {
+        const liqG = g.append('g').attr('class', 'liqmap-liq-zones');
+        for (const z of liqClusters) {
+            const yTop = yScale(z.price_high);
+            const yBot = yScale(z.price_low);
+            if (yBot < 0 || yTop > innerH) continue;
+            const score = Math.max(0.05, Math.min(1, z.magnet_score || 0.3));
+            const isLong = (z.side || '').toLowerCase() === 'long';
+            const color = isLong ? '#ef4444' : '#22c55e';
+            const h = Math.max(3, yBot - yTop);
+            liqG.append('rect')
+                .attr('x', 0).attr('y', yTop)
+                .attr('width', innerW - 4).attr('height', h)
+                .attr('fill', color)
+                .attr('opacity', 0.10 + score * 0.25);
+            // Center line for crisp level reading
+            const yC = (yTop + yBot) / 2;
+            liqG.append('line')
+                .attr('x1', 0).attr('x2', innerW - 4)
+                .attr('y1', yC).attr('y2', yC)
+                .attr('stroke', color).attr('stroke-width', 1 + score * 2)
+                .attr('stroke-dasharray', '6,3')
+                .attr('opacity', 0.5 + score * 0.4);
+            liqLabelEntries.push({
+                y: Math.max(0, Math.min(innerH, yC)),
+                color,
+                usd: z.total_usd || 0,
+                isLong,
+            });
+        }
+    }
+    // Left-edge label pills with the same greedy de-overlap as walls
+    liqLabelEntries.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < liqLabelEntries.length; i++) {
+        if (liqLabelEntries[i].y - liqLabelEntries[i-1].y < 16) {
+            liqLabelEntries[i].y = liqLabelEntries[i-1].y + 16;
+        }
+    }
+    for (const e of liqLabelEntries) {
+        const labelText = '⚡' + liqmapFormatUsd(e.usd);
+        const txtLen = labelText.length * 6.6 + 12;
+        const labelG = svg.append('g')
+            .attr('transform', `translate(${margin.left + 4}, ${margin.top + e.y})`);
+        labelG.append('rect')
+            .attr('x', 0).attr('y', -8)
+            .attr('width', txtLen).attr('height', 16)
+            .attr('rx', 2).attr('ry', 2)
+            .attr('fill', '#0a0d12')
+            .attr('stroke', e.color).attr('stroke-width', 1)
+            .attr('opacity', 0.9);
+        labelG.append('text')
+            .attr('x', 6).attr('y', 4)
+            .attr('fill', e.color).attr('font-size', '10.5px')
+            .attr('font-weight', 700)
+            .attr('font-family', 'monospace')
+            .text(labelText);
+    }
 
     // ===========================
     // Candlesticks — always rendered when data is present
@@ -3412,11 +3507,9 @@ function liqmapDrawChart(data) {
     }
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#22c55e').attr('stroke-width', 4), 'bid wall (support)');
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#ef4444').attr('stroke-width', 4), 'ask wall (resistance)');
+    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#ef4444').attr('opacity', 0.3), '⚡ long liq zone (below)');
+    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#22c55e').attr('opacity', 0.3), '⚡ short liq zone (above)');
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#fff').attr('stroke-dasharray', '3,2').attr('stroke-width', 1), 'mid price');
-    legendItem(sel => {
-        sel.append('rect').attr('width', 6).attr('height', 6).attr('y', 1).attr('fill', '#22c55e').attr('opacity', 0.6);
-        sel.append('rect').attr('x', 8).attr('width', 6).attr('height', 6).attr('y', 1).attr('fill', '#ef4444').attr('opacity', 0.6);
-    }, 'imbalance (bid:ask USD)');
 }
 
 function liqmapLookbackLabel() {
