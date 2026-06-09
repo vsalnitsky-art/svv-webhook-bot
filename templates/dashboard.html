@@ -11,10 +11,17 @@
         </div>
     </div>
 
-    <!-- Liquidation Map — estimated liq clusters across exchanges -->
+    <!-- Order Book Walls — real-time limit-order clusters from Binance Futures.
+         Replaces the old OI-based "Liquidation Map" that was hard to read.
+         Same section ID (liqmap-section) is reused so existing CSS still
+         applies; the data layer underneath is completely different now. -->
     <div class="section liqmap-section">
         <div class="section-header">
-            <h2>💧 Liquidation Map</h2>
+            <h2>💧 Order Book Walls
+                <span style="color:#666;font-size:0.72rem;font-weight:normal;margin-left:6px">
+                    real-time limit orders · Binance Futures
+                </span>
+            </h2>
             <div class="liqmap-controls">
                 <div class="liqmap-symbol-wrap">
                     <input type="text" id="liqmap-symbol-input" value="BTCUSDT"
@@ -22,12 +29,6 @@
                            placeholder="Symbol (e.g. SOLUSDT)"
                            onkeydown="if(event.key==='Enter'){liqmapChangeSymbol();}"
                            onblur="liqmapChangeSymbol()" />
-                </div>
-                <div class="liqmap-lookback-toggle" id="liqmap-lookback-toggle">
-                    <button data-lb="1" onclick="liqmapSetLookback(1)">1h</button>
-                    <button data-lb="4" onclick="liqmapSetLookback(4)">4h</button>
-                    <button data-lb="24" class="active" onclick="liqmapSetLookback(24)">24h</button>
-                    <button data-lb="168" onclick="liqmapSetLookback(168)">7d</button>
                 </div>
                 <div class="liqmap-candle-toggle" id="liqmap-candle-toggle" title="Свічковий таймфрейм для графіка ціни">
                     <button data-tf="1m" onclick="liqmapSetCandleTF('1m')">1m</button>
@@ -37,27 +38,19 @@
                     <button data-tf="1h" onclick="liqmapSetCandleTF('1h')">1h</button>
                     <button data-tf="4h" onclick="liqmapSetCandleTF('4h')">4h</button>
                 </div>
-                <label class="liqmap-mitigated-toggle" title="Show mitigated (hit-through) levels too">
-                    <input type="checkbox" id="liqmap-show-mitigated"
-                           onchange="liqmapToggleMitigated(this.checked)" />
-                    <span>Show mitigated</span>
-                </label>
-                <label class="fr-toggle" title="Enable/disable module">
-                    <input type="checkbox" id="liqmap-toggle" checked
-                           onchange="liqmapToggleModule(this.checked)" />
-                    <span class="fr-toggle-slider"></span>
-                </label>
                 <button class="liqmap-refresh-btn" onclick="liqmapForceRefresh()"
                         title="Force refresh now">🔄</button>
                 <span class="liqmap-status" id="liqmap-status">⚪</span>
             </div>
         </div>
 
+        <!-- Status bar — new fields for order-book view:
+               Mid · Spread · Imbalance (bid vs ask USD ratio) · Connected -->
         <div class="liqmap-status-bar" id="liqmap-status-bar">
-            <span class="liqmap-mark">Mark: <strong id="liqmap-mark-price">—</strong></span>
-            <span class="liqmap-confidence" id="liqmap-confidence">Confidence: —</span>
-            <span class="liqmap-events-count" id="liqmap-events-count">Events: —</span>
-            <span class="liqmap-providers" id="liqmap-providers">Sources: —</span>
+            <span class="liqmap-mark">Mid: <strong id="liqmap-mark-price">—</strong></span>
+            <span class="liqmap-spread" id="liqmap-spread">Spread: —</span>
+            <span class="liqmap-imbalance" id="liqmap-imbalance">Imbalance: —</span>
+            <span class="liqmap-providers" id="liqmap-providers">Status: —</span>
             <span class="liqmap-last-update" id="liqmap-last-update">Last: —</span>
         </div>
 
@@ -2840,7 +2833,9 @@ const liqmapState = {
     isLoading: false,
 };
 
-const LIQMAP_REFRESH_MS = 60 * 1000;
+const LIQMAP_REFRESH_MS = 2 * 1000;  // 2s — order book walls update in real-time via WS,
+                                       // backend has fresh snapshot every 500ms; polling at
+                                       // 2s gives smooth UI without hammering the API.
 // Color palette — matches the SVG mockup we approved earlier.
 const LIQMAP_COLOR_LONG = '#5b8cff';
 const LIQMAP_COLOR_SHORT = '#e8c020';
@@ -2950,54 +2945,82 @@ function liqmapApplyStatusToUI(status) {
 }
 
 async function loadLiqmap() {
+    // New data layer: order-book walls from Binance WS via our collector,
+    // candles from the existing price-series endpoint. Both are fetched
+    // in parallel; render only when both resolve. The old OI/event-based
+    // flow is gone — that view was confusing and not actionable. Walls
+    // show where real limit orders are sitting RIGHT NOW, which is what
+    // actually matters for short-term magnets/walls.
     if (liqmapState.isLoading) return;
     liqmapState.isLoading = true;
     try {
-        // Always check status first — it tells us what overlay to show
-        const status = await liqmapFetchStatus();
-        liqmapApplyStatusToUI(status);
-
-        // Only fetch full state if daemon has data ready
-        if (!status || !status.enabled_setting || !status.daemon_running
-            || status.events_count < 5) {
-            // Status overlay shows what's happening; clear any stale chart
-            liqmapDrawEmptyChart();
-            return;
-        }
-
+        const sym = liqmapState.symbol;
+        const tf = liqmapState.candleTF || '15m';
         const cb = Date.now();
-        const url = `/api/liquidation-map/state?symbol=${encodeURIComponent(liqmapState.symbol)}` +
-                    `&lookback=${liqmapState.lookback}` +
-                    `&include_mitigated=${liqmapState.includeMitigated ? 1 : 0}` +
-                    `&_=${cb}`;
-        const r = await fetch(url, {cache: 'no-store'});
-        const data = await r.json();
-        if (!data.ok) {
-            liqmapShowOverlay('⚠️ Помилка API', data.reason || 'Невідома помилка');
+        // Fetch both in parallel — neither depends on the other.
+        const [wallsRes, candlesRes] = await Promise.all([
+            fetch(`/api/orderbook/walls?symbol=${encodeURIComponent(sym)}&top_n=8&_=${cb}`,
+                  {cache: 'no-store'}),
+            fetch(`/api/liquidation-map/price-series?symbol=${encodeURIComponent(sym)}` +
+                  `&interval=${encodeURIComponent(tf)}&_=${cb}`,
+                  {cache: 'no-store'}),
+        ]);
+        const wallsData = await wallsRes.json();
+        const candleData = await candlesRes.json();
+
+        if (!wallsData.ok) {
+            liqmapShowOverlay('⚠️ Order book error', wallsData.reason || 'API error');
             liqmapSetStatusIcon('error');
             return;
         }
-        liqmapState.lastData = data;
-        // Update header info bar
-        document.getElementById('liqmap-mark-price').textContent =
-            data.mark_price ? '$' + liqmapFormatPrice(data.mark_price) : '—';
-        const dq = data.data_quality || {};
-        const confEl = document.getElementById('liqmap-confidence');
-        confEl.textContent = 'Confidence: ' + (dq.confidence || '—').toUpperCase();
-        confEl.className = 'liqmap-confidence ' + (dq.confidence || '');
-        const sources = [];
-        sources.push('Binance/Bybit ' + (dq.estimation_healthy ? '✓' : '✗'));
-        sources.push('Hyperliquid ' + (dq.hyperliquid_healthy ? '✓' : '✗'));
-        document.getElementById('liqmap-providers').textContent =
-            'Sources: ' + sources.join(' · ');
-        document.getElementById('liqmap-last-update').textContent =
-            'Last: ' + liqmapTimeAgo(data.mark_price_ts) +
-            ' · ' + (dq.history_hours || 0).toFixed(1) + 'h history';
 
-        if (data.mark_price && data.events && data.events.length > 0) {
-            liqmapHideOverlay();
-            liqmapDrawChart(data);
+        // First request for a symbol → WS just opened, no snapshot yet.
+        // Show a friendly "warming up" message; next poll (2s) will have data.
+        if (wallsData.pending || !wallsData.walls) {
+            liqmapShowOverlay('🔄 Subscribing to ' + sym,
+                'WebSocket opening · awaiting first snapshot (~500ms)');
+            liqmapSetStatusIcon('warming');
+            // Reset status bar so stale numbers from previous symbol don't linger
+            document.getElementById('liqmap-mark-price').textContent = '—';
+            document.getElementById('liqmap-spread').textContent = 'Spread: —';
+            document.getElementById('liqmap-imbalance').textContent = 'Imbalance: —';
+            document.getElementById('liqmap-providers').textContent = 'Status: connecting…';
+            document.getElementById('liqmap-last-update').textContent = 'Last: —';
+            return;
         }
+
+        // Combine walls + candles into a single state dict consumed by render
+        liqmapState.lastData = {
+            symbol: sym,
+            walls: wallsData.walls,
+            candles: (candleData && candleData.ok) ? (candleData.series || []) : [],
+        };
+
+        // Status bar updates
+        const w = wallsData.walls;
+        document.getElementById('liqmap-mark-price').textContent =
+            w.mid_price ? '$' + liqmapFormatPrice(w.mid_price) : '—';
+        document.getElementById('liqmap-spread').textContent =
+            'Spread: ' + (typeof w.spread_pct === 'number'
+                ? w.spread_pct.toFixed(3) + '%' : '—');
+        // Imbalance: -100% = all asks, 0 = balanced, +100% = all bids
+        const imb = w.imbalance_pct || 0;
+        const imbSign = imb > 0 ? '+' : '';
+        const imbColor = imb > 5 ? '#4ade80' : (imb < -5 ? '#ef4444' : '#aaa');
+        const imbEl = document.getElementById('liqmap-imbalance');
+        imbEl.innerHTML = 'Imbalance: <span style="color:' + imbColor + ';font-weight:600">' +
+                          imbSign + imb.toFixed(1) + '%</span>';
+        const totalBid = liqmapFormatUsd(w.total_bid_usd || 0);
+        const totalAsk = liqmapFormatUsd(w.total_ask_usd || 0);
+        document.getElementById('liqmap-providers').textContent =
+            'Status: bid ' + totalBid + ' · ask ' + totalAsk;
+        document.getElementById('liqmap-last-update').textContent =
+            'Last: ' + (w.snapshot_age_secs != null
+                ? w.snapshot_age_secs.toFixed(1) + 's ago' : '—');
+
+        liqmapSetStatusIcon('healthy');
+        liqmapHideOverlay();
+        liqmapDrawChart(liqmapState.lastData);
     } catch (err) {
         liqmapShowOverlay('⚠️ Network error', err.message);
         liqmapSetStatusIcon('error');
@@ -3008,9 +3031,9 @@ async function loadLiqmap() {
 
 function liqmapRender(data) {
     // Called by resize handler to re-draw without re-fetching. The header
-    // info bar is already populated by loadLiqmap (which is the only place
-    // that fetches /state). Here we just re-run the chart draw.
-    if (!data || !data.mark_price || !data.events || data.events.length === 0) {
+    // info bar is already populated by loadLiqmap. Here we just re-run
+    // the chart draw with the cached data.
+    if (!data || !data.walls || !data.walls.mid_price) {
         liqmapDrawEmptyChart();
         return;
     }
@@ -3023,429 +3046,280 @@ function liqmapDrawEmptyChart() {
 }
 
 function liqmapDrawChart(data) {
+    // === New walls-based renderer ===
+    // Inputs: data.walls (from /api/orderbook/walls) + data.candles (OHLC array).
+    // Layout: candlestick chart in main area. Horizontal lines for each wall
+    // with USD label on the right side, color-coded green (bid/support) and
+    // red (ask/resistance). Wall thickness ∝ relative size.
     const container = document.getElementById('liqmap-chart');
     container.innerHTML = '';
     const W = container.clientWidth || 1200;
     const H = container.clientHeight || 640;
-    const margin = {top: 22, right: 108, bottom: 40, left: 158};
+    // Smaller right margin (no more left-column score grid). Left has a
+    // small vertical "imbalance bar" instead.
+    const margin = {top: 22, right: 92, bottom: 36, left: 50};
     const innerW = W - margin.left - margin.right;
     const innerH = H - margin.top - margin.bottom;
 
-    const svg = d3.select(container)
-        .append('svg')
+    const svg = d3.select(container).append('svg')
         .attr('viewBox', `0 0 ${W} ${H}`)
         .attr('preserveAspectRatio', 'xMidYMid meet');
 
-    // Chart title at top-left + status flag top-right — matches the reference
+    const walls = data.walls || {};
+    const candles = data.candles || [];
+    const mid = walls.mid_price;
+    if (!mid || mid <= 0) {
+        liqmapShowOverlay('⚠️ No mid price yet', 'Waiting for first WS snapshot');
+        return;
+    }
+
+    // ===========================
+    // Compute price domain
+    // ===========================
+    // Take the union of: candle high/lows, wall prices, and mid ± 1%.
+    // This ensures all walls are visible even if they're at the edges
+    // of the depth20 range (typically ±0.5–2% from mid).
+    let minP = mid * 0.99;
+    let maxP = mid * 1.01;
+    for (const c of candles) {
+        if (c.l < minP) minP = c.l;
+        if (c.h > maxP) maxP = c.h;
+    }
+    const allWalls = (walls.bid_walls || []).concat(walls.ask_walls || []);
+    for (const w of allWalls) {
+        if (w.price < minP) minP = w.price * 0.999;
+        if (w.price > maxP) maxP = w.price * 1.001;
+    }
+    // Small padding (3%) so labels at the very top/bottom aren't clipped
+    const pad = (maxP - minP) * 0.04;
+    minP -= pad; maxP += pad;
+
+    // ===========================
+    // X domain — time
+    // ===========================
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Show last ~hours of candles based on candle TF; if no candles, default to 2h.
+    let xStart;
+    if (candles.length > 0) {
+        xStart = candles[0].ts;
+    } else {
+        xStart = nowSec - 2 * 3600;
+    }
+    // Reserve ~10% of width at the right for "live" empty space where the
+    // wall labels will sit — visually cleaner.
+    const xScale = d3.scaleLinear()
+        .domain([xScale_extendBuffer(xStart, nowSec)[0], xScale_extendBuffer(xStart, nowSec)[1]])
+        .range([0, innerW]);
+    function xScale_extendBuffer(a, b) {
+        const span = b - a;
+        return [a, b + span * 0.05];
+    }
+    const yScale = d3.scaleLinear()
+        .domain([minP, maxP])
+        .range([innerH, 0]);
+
+    // ===========================
+    // Title bar
+    // ===========================
     svg.append('text')
         .attr('x', margin.left).attr('y', 14)
         .attr('fill', '#aaa').attr('font-size', '12px')
         .attr('font-family', 'system-ui, sans-serif')
-        .text(`${liqmapState.symbol} · Liquidation Map · ${liqmapLookbackLabel()}`);
+        .text(`${liqmapState.symbol} · Order Book Walls · top 8 each side`);
     svg.append('text')
         .attr('x', W - margin.right).attr('y', 14)
         .attr('text-anchor', 'end')
         .attr('fill', '#666').attr('font-size', '11px')
         .attr('font-family', 'system-ui, sans-serif')
-        .text('Live · OI based');
+        .text('Live · Binance WS · ' + (liqmapState.candleTF || '15m'));
 
     const g = svg.append('g')
         .attr('transform', `translate(${margin.left},${margin.top})`);
 
-    // --- Scales
-    const mark = data.mark_price;
-    const window = data.window || {min_price: mark * 0.9, max_price: mark * 1.1};
-    const yScale = d3.scaleLinear()
-        .domain([window.min_price, window.max_price])
-        .range([innerH, 0]);
+    // ===========================
+    // Background grid + frame
+    // ===========================
+    g.append('rect')
+        .attr('width', innerW).attr('height', innerH)
+        .attr('fill', '#0a0d12')
+        .attr('stroke', 'rgba(255,255,255,0.05)').attr('stroke-width', 1);
 
-    const nowSec = Math.floor(Date.now() / 1000);
-    const xStart = nowSec - liqmapState.lookback * 3600;
-    const xScale = d3.scaleLinear()
-        .domain([xStart, nowSec])
-        .range([0, innerW]);
-
-    // ========================================================================
-    // Aggregate events → buckets in memory.
-    //
-    // This is the KEY insight: the reference renders each price-level as
-    // ONE horizontal dashed line spanning the full chart width, not as
-    // many scattered short dashes. Visual texture comes from SVG
-    // stroke-dasharray, not from per-event positioning.
-    //
-    // Group key: (price, side). Leverage is summed for visualization but
-    // retained per-bucket for tooltips.
-    // ========================================================================
-    const events = data.events || [];
-    const bucketMap = new Map();   // "price|side" → bucket
-    for (const e of events) {
-        if (e.mitigated_at_ts) continue;
-        const key = `${e.bucket_price}|${e.side}`;
-        let b = bucketMap.get(key);
-        if (!b) {
-            b = {
-                price: e.bucket_price,
-                side: e.side,
-                totalUsd: 0,
-                count: 0,
-                leverages: {25: 0, 50: 0, 100: 0},
-                sources: {estimation: 0, hyperliquid: 0},
-                firstTs: e.ts,
-                lastTs: e.ts,
-            };
-            bucketMap.set(key, b);
-        }
-        b.totalUsd += e.usd_added;
-        b.count += 1;
-        b.leverages[e.leverage] = (b.leverages[e.leverage] || 0) + e.usd_added;
-        b.sources[e.source] = (b.sources[e.source] || 0) + e.usd_added;
-        if (e.ts < b.firstTs) b.firstTs = e.ts;
-        if (e.ts > b.lastTs) b.lastTs = e.ts;
-    }
-    let buckets = [...bucketMap.values()].sort((a, b) => b.totalUsd - a.totalUsd);
-
-    // Drop noise — keep top-25 by volume, ignore the rest. Most of the
-    // "tail" is sub-percent contributions that just clutter the chart.
-    buckets = buckets.slice(0, 25);
-    const maxUsd = buckets[0]?.totalUsd || 1;
-
-    // ========================================================================
-    // Detect clusters: adjacent same-side buckets within 0.5% of each other.
-    // We do this in JS instead of trusting backend's find_clusters because
-    // the threshold there ($1M minimum) is too strict for early data.
-    // Top 2 clusters by volume = magnet zones.
-    // ========================================================================
-    function detectClustersJS(bs, markPrice) {
-        const sorted = [...bs].sort((a, b) => a.price - b.price);
-        const groups = [];
-        let current = null;
-        for (const b of sorted) {
-            if (!current || b.side !== current.side
-                || (b.price - current.priceHigh) / markPrice > 0.005) {
-                if (current && current.priceLow !== current.priceHigh) {
-                    groups.push(current);
-                }
-                current = {
-                    side: b.side, priceLow: b.price, priceHigh: b.price,
-                    totalUsd: b.totalUsd, members: [b],
-                    leverages: {...b.leverages},
-                };
-            } else {
-                current.priceHigh = b.price;
-                current.totalUsd += b.totalUsd;
-                current.members.push(b);
-                for (const lev of [25, 50, 100]) {
-                    current.leverages[lev] = (current.leverages[lev] || 0) + (b.leverages[lev] || 0);
-                }
-            }
-        }
-        if (current && current.priceLow !== current.priceHigh) {
-            groups.push(current);
-        }
-        // Compute magnet score (volume 70% + proximity 30%)
-        const maxGroupUsd = Math.max(...groups.map(g => g.totalUsd), 1);
-        for (const g of groups) {
-            const mid = (g.priceLow + g.priceHigh) / 2;
-            const distPct = Math.abs(mid - markPrice) / markPrice;
-            const proxScore = Math.max(0, 1 - distPct / 0.10);
-            const volScore = g.totalUsd / maxGroupUsd;
-            g.magnetScore = 0.7 * volScore + 0.3 * proxScore;
-        }
-        groups.sort((a, b) => b.totalUsd - a.totalUsd);
-        return groups;
+    // Horizontal gridlines at 4 equal Y-divisions
+    for (let i = 1; i <= 3; i++) {
+        const y = (innerH / 4) * i;
+        g.append('line')
+            .attr('x1', 0).attr('x2', innerW)
+            .attr('y1', y).attr('y2', y)
+            .attr('stroke', 'rgba(255,255,255,0.04)').attr('stroke-width', 1);
     }
 
-    const clusters = detectClustersJS(buckets, mark);
-    // Mark cluster bucket prices so we render them differently
-    const clusterPrices = new Set();
-    // Show top-N cluster magnet zones (was 3, expanded to 6 — left column
-    // has plenty of vertical space and user wants to see secondary magnets
-    // not just the heaviest. Anything beyond 6 is usually noise vs the
-    // individual blue dashes which stay as-is.
-    const clusterCount = Math.min(6, clusters.length);
-    for (let i = 0; i < clusterCount; i++) {
-        for (const m of clusters[i].members) {
-            clusterPrices.add(`${m.price}|${m.side}`);
-        }
-    }
-
-    // ========================================================================
-    // LAYER 1 — Soft glow behind cluster bands. Viridis-yellow halo for
-    // visual emphasis of the "magnet zones" — fades into surrounding
-    // viridis bands without amber contrast.
-    // ========================================================================
-    const heatG = g.append('g').attr('class', 'lm-heatmap');
-    for (let i = 0; i < clusterCount; i++) {
-        const c = clusters[i];
-        const yHigh = yScale(c.priceHigh);
-        const yLow = yScale(c.priceLow);
-        const yMid = (yHigh + yLow) / 2;
-        const halfBand = 22;
-        // Outer wide halo — soft viridis-yellow
-        heatG.append('rect')
-            .attr('x', 0).attr('width', innerW)
-            .attr('y', yMid - halfBand).attr('height', halfBand * 2)
-            .attr('fill', 'rgba(253,231,37,0.10)');
-        // Inner narrower halo — slightly more saturated
-        heatG.append('rect')
-            .attr('x', 0).attr('width', innerW)
-            .attr('y', yMid - 11).attr('height', 22)
-            .attr('fill', 'rgba(253,231,37,0.18)');
-    }
-
-    // ========================================================================
-    // LAYER 2 — Individual price-level lines as horizontal dashed strokes.
-    //
-    // Each bucket = ONE <line> spanning innerW with stroke-dasharray
-    // creating the "broken line" texture. Color: blue for non-cluster,
-    // bright yellow for cluster prices.
-    // ========================================================================
-    const linesG = g.append('g').attr('class', 'lm-lines');
-
-    for (const b of buckets) {
-        const y = yScale(b.price);
-        if (y < -3 || y > innerH + 3) continue;
-        const isCluster = clusterPrices.has(`${b.price}|${b.side}`);
-        const usdRatio = b.totalUsd / maxUsd;
-        // Viridis intensity — log curve so small bands still get visible
-        // teal/blue color instead of pure purple. Bright magnet bands
-        // (top-volume) hit the yellow end of the palette.
-        const tIntensity = Math.log10(1 + 9 * Math.min(1, usdRatio));
-        const viridisColor = liqmapViridis(tIntensity);
-
-        if (isCluster) {
-            // CLUSTER row — solid viridis-yellow band, thicker for emphasis.
-            // No more dark dash overlay — the screenshot reference shows
-            // clean horizontal bands without internal texture.
-            linesG.append('line')
-                .attr('x1', 4).attr('x2', innerW - 4)
-                .attr('y1', y).attr('y2', y)
-                .attr('stroke', viridisColor)
-                .attr('stroke-width', 7)
-                .attr('opacity', 0.95)
-                .datum(b)
-                .on('mouseover', liqmapEventHover)
-                .on('mouseout', liqmapEventUnhover);
-        } else {
-            // Individual level — thinner viridis band, opacity scales with
-            // volume so small contributions fade into the background.
-            const sw = b.leverages[100] > b.leverages[50] && b.leverages[100] > b.leverages[25] ? 3.0
-                     : b.leverages[50] > b.leverages[25] ? 2.6
-                     : 2.2;
-            const opacity = 0.55 + 0.4 * Math.sqrt(usdRatio);
-            linesG.append('line')
-                .attr('x1', 4).attr('x2', innerW - 4)
-                .attr('y1', y).attr('y2', y)
-                .attr('stroke', viridisColor)
-                .attr('stroke-width', sw)
-                .attr('opacity', opacity)
-                .datum(b)
-                .on('mouseover', liqmapEventHover)
-                .on('mouseout', liqmapEventUnhover);
-        }
-    }
-
-    // ========================================================================
-    // LAYER 3 — Cluster volume + magnet-score labels at right edge of band
-    // ========================================================================
-    // LAYER 3 — Cluster labels in dedicated LEFT COLUMN (outside chart area).
-    //
-    // Previously labels sat ON TOP of the yellow cluster bands and were hard
-    // to read despite the dark pill. Now they live in the reserved left
-    // margin (x: 0..148 SVG coords, before chart starts at margin.left).
-    // 
-    // Three columns, monospace, aligned vertically with each cluster's price:
-    //   $Vol      Magnet%   ±Dist%
-    //
-    // Color matches the chart's side coding:
-    //   LONG liqs (below mark) → blue  #74a1ff
-    //   SHORT liqs (above mark) → yellow #e8c020
-    // ========================================================================
-    
-    // Header row at top of left column for context
-    const leftColG = svg.append('g').attr('class', 'lm-cluster-left-labels');
-    const headerY = 12;
-    leftColG.append('text')
-        .attr('x', 8).attr('y', headerY)
-        .attr('fill', '#666').attr('font-size', '10px')
-        .attr('font-family', 'system-ui, sans-serif').attr('font-weight', 600)
-        .text('Volume');
-    leftColG.append('text')
-        .attr('x', 80).attr('y', headerY)
-        .attr('fill', '#666').attr('font-size', '10px')
-        .attr('font-family', 'system-ui, sans-serif').attr('font-weight', 600)
-        .text('Magnet');
-    leftColG.append('text')
-        .attr('x', 118).attr('y', headerY)
-        .attr('fill', '#666').attr('font-size', '10px')
-        .attr('font-family', 'system-ui, sans-serif').attr('font-weight', 600)
-        .text('Δ%');
-    leftColG.append('line')
-        .attr('x1', 6).attr('x2', 150)
-        .attr('y1', headerY + 4).attr('y2', headerY + 4)
-        .attr('stroke', '#2a2a35').attr('stroke-width', 0.5);
-    
-    // One row per cluster, aligned to the y-coordinate of the cluster's
-    // mid-price so visually you can trace the row → the yellow band on chart
-    for (let i = 0; i < clusterCount; i++) {
-        const c = clusters[i];
-        const mid = (c.priceLow + c.priceHigh) / 2;
-        const yMid = margin.top + yScale(mid);  // SVG-space y (not inner g)
-        // Clamp to visible chart area
-        if (yMid < margin.top + 6 || yMid > margin.top + innerH - 6) continue;
-        
-        const distPct = ((mid - mark) / mark) * 100;
-        const distStr = (distPct >= 0 ? '+' : '') + distPct.toFixed(2) + '%';
-        const color = c.side === 'long' ? '#74a1ff' : '#e8c020';
-        
-        // Subtle connector line from text to chart edge
-        leftColG.append('line')
-            .attr('x1', 150).attr('x2', margin.left)
-            .attr('y1', yMid).attr('y2', yMid)
-            .attr('stroke', color).attr('stroke-width', 0.4)
-            .attr('opacity', 0.4);
-        
-        // Volume (col 1, ~6-72px)
-        leftColG.append('text')
-            .attr('x', 8).attr('y', yMid + 4)
-            .attr('fill', color).attr('font-size', '11.5px')
-            .attr('font-family', 'monospace').attr('font-weight', 700)
-            .text(liqmapFormatUsd(c.totalUsd));
-        // Magnet (col 2, 80px)
-        leftColG.append('text')
-            .attr('x', 80).attr('y', yMid + 4)
-            .attr('fill', color).attr('font-size', '11.5px')
-            .attr('font-family', 'monospace').attr('font-weight', 600)
-            .text(Math.round(c.magnetScore * 100) + '%');
-        // Distance % (col 3, 118px)
-        leftColG.append('text')
-            .attr('x', 118).attr('y', yMid + 4)
-            .attr('fill', color).attr('font-size', '11.5px')
-            .attr('font-family', 'monospace').attr('font-weight', 600)
-            .text(distStr);
-    }
-
-    // ========================================================================
-    // LAYER 4 — Price action overlay (small zigzag in center)
-    // Fetched async; rendered when ready (so first frame isn't blocked).
-    // ========================================================================
-    g.append('g').attr('class', 'lm-price-action');
-    liqmapDrawPriceAction(svg, xScale, yScale, margin, innerW, innerH);
-
-    // ========================================================================
-    // LAYER 5 — Mark price line on top (brighter red, slightly thicker)
-    // ========================================================================
-    const yMark = yScale(mark);
+    // ===========================
+    // Imbalance bar — vertical strip on the left edge of plot area
+    // ===========================
+    // Green for bids (support), red for asks (resistance). The split point
+    // shows the bid/ask USD ratio — visual at-a-glance directional pressure.
+    const imbalanceX = -22;
+    const imbalanceW = 8;
+    const totalUsd = (walls.total_bid_usd || 0) + (walls.total_ask_usd || 0);
+    const bidFrac = totalUsd > 0 ? (walls.total_bid_usd / totalUsd) : 0.5;
+    // Green takes bottom (support below), red takes top
+    const greenH = innerH * bidFrac;
+    const redH = innerH - greenH;
+    g.append('rect')
+        .attr('x', imbalanceX).attr('y', 0)
+        .attr('width', imbalanceW).attr('height', redH)
+        .attr('fill', '#ef4444').attr('opacity', 0.55);
+    g.append('rect')
+        .attr('x', imbalanceX).attr('y', redH)
+        .attr('width', imbalanceW).attr('height', greenH)
+        .attr('fill', '#22c55e').attr('opacity', 0.55);
+    // Mid-line marker on imbalance bar
     g.append('line')
-        .attr('x1', 0).attr('x2', innerW)
-        .attr('y1', yMark).attr('y2', yMark)
-        .attr('stroke', '#ff3838').attr('stroke-width', 1.6)
-        .attr('opacity', 0.95);
+        .attr('x1', imbalanceX - 2).attr('x2', imbalanceX + imbalanceW + 2)
+        .attr('y1', redH).attr('y2', redH)
+        .attr('stroke', '#fff').attr('stroke-width', 1);
 
-    // ========================================================================
-    // LAYER 6 — POC + Value Area (Volume Profile overlay)
-    // Reserve groups here so chart layer order is correct (POC lines render
-    // BELOW mark price but ABOVE clusters). The actual fetch + draw happens
-    // AT END of liqmapDrawChart, after occupiedZones is populated by all the
-    // Y-axis labels — so POC pill placement can avoid them.
-    // ========================================================================
-    g.append('g').attr('class', 'lm-poc');
-    svg.append('g').attr('class', 'lm-poc-axis')
-        .attr('transform', `translate(${margin.left + innerW + 6},${margin.top})`);
-
-    // ========================================================================
-    // Y-axis labels on the right (price scale)
-    // Mark price as a bigger bright red pill — easy to spot.
-    // Reference prices use bright light-blue (#9ab8e0) for high contrast
-    // on the black background. Anti-overlap logic: track occupied y-ranges
-    // so labels never sit on top of each other.
-    // ========================================================================
-    const yAxisG = svg.append('g')
-        .attr('transform', `translate(${margin.left + innerW + 6},${margin.top})`);
-
-    // Track y-zones already occupied so labels don't overlap
-    const occupiedZones = [];
-    function isOccupied(y, height = 16) {
-        return occupiedZones.some(([t, b]) =>
-            (y - height/2 < b) && (y + height/2 > t));
+    // ===========================
+    // Candlesticks — reuse existing renderer
+    // ===========================
+    // The function expects (svg, xScale, yScale, margin, innerW, innerH)
+    // and reads data from /api/liquidation-map/price-series internally —
+    // but here we have candles already in data.candles. Simpler to inline
+    // the candle drawing rather than re-fetch.
+    if (candles.length > 0) {
+        const bodyW = Math.max(2, Math.min(10, innerW / candles.length * 0.6));
+        const candleG = g.append('g').attr('class', 'liqmap-candles');
+        for (const c of candles) {
+            const x = xScale(c.ts);
+            const yO = yScale(c.o);
+            const yC = yScale(c.c);
+            const yH = yScale(c.h);
+            const yL = yScale(c.l);
+            const bull = c.c >= c.o;
+            const color = bull ? '#22c55e' : '#ef4444';
+            // Wick
+            candleG.append('line')
+                .attr('x1', x).attr('x2', x)
+                .attr('y1', yH).attr('y2', yL)
+                .attr('stroke', color).attr('stroke-width', 1);
+            // Body
+            const bodyTop = Math.min(yO, yC);
+            const bodyH = Math.max(1, Math.abs(yC - yO));
+            candleG.append('rect')
+                .attr('x', x - bodyW/2).attr('y', bodyTop)
+                .attr('width', bodyW).attr('height', bodyH)
+                .attr('fill', color).attr('opacity', 0.9);
+        }
     }
-    function occupy(y, height = 16) {
-        occupiedZones.push([y - height/2, y + height/2]);
+
+    // ===========================
+    // Wall lines + USD labels
+    // ===========================
+    // Compute max wall USD across both sides for thickness/opacity scaling.
+    let maxWallUsd = 0;
+    for (const w of allWalls) {
+        if (w.usd > maxWallUsd) maxWallUsd = w.usd;
+    }
+    if (maxWallUsd === 0) maxWallUsd = 1; // avoid div/0
+
+    function drawWall(w, side) {
+        const y = yScale(w.price);
+        if (y < 0 || y > innerH) return; // outside visible domain
+        const rel = w.usd / maxWallUsd;
+        const thickness = 2 + rel * 4;       // 2px..6px
+        const opacity = 0.55 + rel * 0.4;    // 0.55..0.95
+        const color = side === 'bid' ? '#22c55e' : '#ef4444';
+        // Horizontal line across the plot area
+        g.append('line')
+            .attr('x1', 0).attr('x2', innerW - 4)
+            .attr('y1', y).attr('y2', y)
+            .attr('stroke', color).attr('stroke-width', thickness)
+            .attr('opacity', opacity);
+        // Soft glow rect behind the line — boosts visual weight for big walls
+        if (rel > 0.5) {
+            g.append('rect')
+                .attr('x', 0).attr('y', y - thickness)
+                .attr('width', innerW - 4)
+                .attr('height', thickness * 2)
+                .attr('fill', color).attr('opacity', rel * 0.08);
+        }
+        // USD label pill at right edge — matches the reference screenshot
+        const labelText = liqmapFormatUsd(w.usd);
+        const labelG = svg.append('g')
+            .attr('transform', `translate(${margin.left + innerW - 2}, ${margin.top + y})`);
+        const textNode = labelG.append('text')
+            .attr('x', 8).attr('y', 4)
+            .attr('fill', color).attr('font-size', '11px')
+            .attr('font-weight', 700)
+            .attr('font-family', 'monospace')
+            .text(labelText);
+        // Background pill — sized to text. Pre-measure using a hidden element.
+        const txtLen = labelText.length * 6.6 + 12;
+        labelG.insert('rect', 'text')
+            .attr('x', 4).attr('y', -7)
+            .attr('width', txtLen).attr('height', 16)
+            .attr('rx', 2).attr('ry', 2)
+            .attr('fill', '#0a0d12')
+            .attr('stroke', color).attr('stroke-width', 1)
+            .attr('opacity', 0.85);
+        // Re-add the text on top (since we did `insert before text`,
+        // it's now below — d3 doesn't auto reorder). Easier to remove
+        // & re-append:
+        textNode.remove();
+        labelG.append('text')
+            .attr('x', 10).attr('y', 4)
+            .attr('fill', color).attr('font-size', '11px')
+            .attr('font-weight', 700)
+            .attr('font-family', 'monospace')
+            .text(labelText);
     }
 
-    // Mark price pill — BIG, can't miss it. Reserved zone first.
-    yAxisG.append('rect')
-        .attr('x', 0).attr('y', yMark - 12)
-        .attr('width', 90).attr('height', 24)
-        .attr('rx', 3).attr('fill', '#ff3838');
-    yAxisG.append('text')
-        .attr('x', 45).attr('y', yMark + 5)
-        .attr('text-anchor', 'middle').attr('fill', 'white')
-        .attr('font-size', '13px').attr('font-family', 'monospace')
-        .attr('font-weight', 700)
-        .text(liqmapFormatPrice(mark));
-    occupy(yMark, 28);
+    for (const w of (walls.bid_walls || [])) drawWall(w, 'bid');
+    for (const w of (walls.ask_walls || [])) drawWall(w, 'ask');
 
-    // Cluster price labels — bright gold, with small pill bg for readability
-    for (let i = 0; i < clusterCount; i++) {
-        const c = clusters[i];
-        const mid = (c.priceLow + c.priceHigh) / 2;
-        const y = yScale(mid);
-        if (y < 8 || y > innerH - 8) continue;
-        // 32px clearance — was 22 (barely fit, pills touched visually for
-        // clusters close to mark). Cluster info is also in left column, so
-        // skipping the right-axis pill is fine.
-        if (isOccupied(y, 32)) continue;
-        yAxisG.append('rect')
-            .attr('x', 0).attr('y', y - 10)
-            .attr('width', 90).attr('height', 20)
-            .attr('rx', 3)
-            .attr('fill', 'rgba(80,55,15,0.85)')
-            .attr('stroke', '#ffd342')
-            .attr('stroke-width', 0.6);
-        yAxisG.append('text')
-            .attr('x', 45).attr('y', y + 4)
-            .attr('text-anchor', 'middle')
-            .attr('fill', '#ffd342').attr('font-size', '12px')
-            .attr('font-family', 'monospace').attr('font-weight', 600)
+    // ===========================
+    // Mid-price line (dashed white)
+    // ===========================
+    const midY = yScale(mid);
+    if (midY >= 0 && midY <= innerH) {
+        g.append('line')
+            .attr('x1', 0).attr('x2', innerW)
+            .attr('y1', midY).attr('y2', midY)
+            .attr('stroke', '#fff').attr('stroke-width', 1)
+            .attr('stroke-dasharray', '4,3').attr('opacity', 0.5);
+        // Mid price label on right axis
+        svg.append('text')
+            .attr('x', margin.left + innerW + 4).attr('y', margin.top + midY + 4)
+            .attr('fill', '#fff').attr('font-size', '10.5px')
+            .attr('font-weight', 600)
+            .attr('font-family', 'monospace')
             .text(liqmapFormatPrice(mid));
-        occupy(y, 28);   // was 24 — reserve more for next-label safety
     }
 
-    // Other reference prices — bright light-blue, only fill gaps
-    const refPrices = liqmapPickRefPrices(mark, data.cluster_zones || [], window);
-    for (const rp of refPrices) {
-        const y = yScale(rp);
-        if (y < 8 || y > innerH - 8) continue;
-        if (isOccupied(y, 18)) continue;
-        yAxisG.append('text')
-            .attr('x', 6).attr('y', y + 4)
-            .attr('fill', '#9ab8e0').attr('font-size', '11.5px')
-            .attr('font-family', 'monospace').attr('font-weight', 500)
-            .text(liqmapFormatPrice(rp));
-        occupy(y, 20);
+    // ===========================
+    // Y-axis ticks (right side, price)
+    // ===========================
+    const yTicks = yScale.ticks(8);
+    for (const t of yTicks) {
+        const y = yScale(t);
+        svg.append('text')
+            .attr('x', margin.left + innerW + 4).attr('y', margin.top + y + 4)
+            .attr('fill', '#555').attr('font-size', '10px')
+            .attr('font-family', 'monospace')
+            .text(liqmapFormatPrice(t));
     }
 
-    // POC overlay rendered HERE — occupiedZones is now fully populated with
-    // mark, clusters, refs. Async fetch but uses closure on these vars so
-    // when its callback fires, anti-overlap data is ready.
-    liqmapDrawPOC(svg, yScale, margin, innerW, innerH,
-                  yMark, occupiedZones, isOccupied, occupy);
-
-    // ========================================================================
-    // X-axis labels (time)
-    // ========================================================================
+    // ===========================
+    // X-axis ticks (bottom, time)
+    // ===========================
     const xAxisG = svg.append('g')
-        .attr('transform', `translate(${margin.left},${margin.top + innerH + 4})`);
-    const xTicks = liqmapState.lookback >= 24 ? 6 : 5;
+        .attr('transform', `translate(${margin.left}, ${margin.top + innerH + 14})`);
+    const xTicks = 6;
     for (let i = 0; i <= xTicks; i++) {
-        const ts = xStart + (nowSec - xStart) * (i / xTicks);
-        const x = xScale(ts);
-        const hoursAgo = (nowSec - ts) / 3600;
-        const label = hoursAgo < 0.1 ? 'now'
-                    : hoursAgo < 1 ? Math.round(hoursAgo * 60) + 'm'
-                    : hoursAgo < 48 ? hoursAgo.toFixed(0) + 'h ago'
-                    : (hoursAgo/24).toFixed(0) + 'd ago';
+        const tsec = xScale.invert((innerW / xTicks) * i);
+        const d = new Date(tsec * 1000);
+        const label = d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+        const x = (innerW / xTicks) * i;
         xAxisG.append('text')
             .attr('x', x).attr('y', 12)
             .attr('text-anchor', i === 0 ? 'start' : i === xTicks ? 'end' : 'middle')
@@ -3454,11 +3328,11 @@ function liqmapDrawChart(data) {
             .text(label);
     }
 
-    // ========================================================================
-    // Legend at the very bottom
-    // ========================================================================
-    const legendY = H - 10;
-    const legendG = svg.append('g').attr('transform', `translate(${margin.left},${legendY})`);
+    // ===========================
+    // Bottom legend
+    // ===========================
+    const legendY = H - 8;
+    const legendG = svg.append('g').attr('transform', `translate(${margin.left}, ${legendY})`);
     let lx = 0;
     function legendItem(swatch, label) {
         legendG.append('g').call(swatch, lx).attr('transform', `translate(${lx},-7)`);
@@ -3468,10 +3342,13 @@ function liqmapDrawChart(data) {
             .text(label);
         lx += 22 + label.length * 5.8 + 18;
     }
-    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 6).attr('y', 1).attr('fill', '#c9a318').attr('opacity', 0.7), 'Heatmap density');
-    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 4).attr('y', 2).attr('fill', '#a85e2a').attr('opacity', 0.7), 'cumulative liq');
-    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#5b8cff').attr('stroke-width', 2.5), 'individual level (single position)');
-    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#e8c020').attr('stroke-width', 3), 'cluster — magnet zone');
+    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#22c55e').attr('stroke-width', 4), 'bid wall (support)');
+    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#ef4444').attr('stroke-width', 4), 'ask wall (resistance)');
+    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#fff').attr('stroke-dasharray', '3,2').attr('stroke-width', 1), 'mid price');
+    legendItem(sel => {
+        sel.append('rect').attr('width', 6).attr('height', 6).attr('y', 1).attr('fill', '#22c55e').attr('opacity', 0.6);
+        sel.append('rect').attr('x', 8).attr('width', 6).attr('height', 6).attr('y', 1).attr('fill', '#ef4444').attr('opacity', 0.6);
+    }, 'imbalance (bid:ask USD)');
 }
 
 function liqmapLookbackLabel() {

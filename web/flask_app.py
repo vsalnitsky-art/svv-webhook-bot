@@ -118,17 +118,35 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Liquidity Map: {e}")
         
-        # Multi-symbol Heatmap Collector (separate from BTC Liquidity Map walls).
-        # Snapshots Binance depth for several symbols → sob_liq_heatmap_profiles table.
-        # Frontend Market Analytics → Heatmap tab renders this as a time × price grid.
-        if not _auto_started.get('heatmap'):
-            _auto_started['heatmap'] = True
+        # === DEPRECATED — REST-based HeatmapCollector ===
+        # Replaced by WebSocket-based OrderBookCollector below. The REST
+        # collector was hitting Binance HTTP 418 (datacenter IP blocked)
+        # constantly — see logs like "[HEATMAP] BTCUSDT: HTTP 418" — so
+        # it was useless. We leave the DB table and its endpoints alone
+        # for now (no code depends on them); the worker just stays off.
+        # Re-enable here only if Binance unblocks Render IPs OR a proxy
+        # is introduced.
+        # if not _auto_started.get('heatmap'):
+        #     _auto_started['heatmap'] = True
+        #     try:
+        #         from detection.heatmap_collector import init_heatmap_collector
+        #         hm = init_heatmap_collector(db=get_db())
+        #         hm.start()
+        #     except Exception as e:
+        #         print(f"[APP] Failed to start Heatmap Collector: {e}")
+        
+        # OrderBook Collector — WebSocket-based per-symbol depth20 stream.
+        # Lazy: only opens WS connections when the UI requests a symbol.
+        # We start the manager itself at boot so the cleanup thread runs;
+        # actual subscriptions are demand-driven.
+        if not _auto_started.get('orderbook'):
+            _auto_started['orderbook'] = True
             try:
-                from detection.heatmap_collector import init_heatmap_collector
-                hm = init_heatmap_collector(db=get_db())
-                hm.start()
+                from detection.orderbook_collector import get_orderbook_collector
+                obc = get_orderbook_collector()
+                obc.start()
             except Exception as e:
-                print(f"[APP] Failed to start Heatmap Collector: {e}")
+                print(f"[APP] Failed to start OrderBook Collector: {e}")
         
         # Funding Rate Monitor
         if not _auto_started['funding']:
@@ -3973,6 +3991,69 @@ def register_api_routes(app):
             return jsonify({'ok': True, 'interval': interval, 'series': series})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'series': []})
+    
+    @app.route('/api/orderbook/walls')
+    def api_orderbook_walls():
+        """Live order-book walls for a single symbol, WS-sourced from
+        Binance Futures depth20 stream.
+        
+        First call for a symbol subscribes lazily (returns empty walls
+        but ok=True). The frontend should retry on its polling loop;
+        snapshot arrives within ~500ms.
+        
+        Query params:
+          symbol  (required, default BTCUSDT)
+          top_n   (optional, default 8 — strongest walls per side)
+        
+        Response:
+          {ok, symbol, walls: {bid_walls, ask_walls, mid_price, imbalance_pct, ...}}
+        """
+        try:
+            symbol = request.args.get('symbol', 'BTCUSDT').upper().strip()
+            if not symbol or len(symbol) > 20:
+                return jsonify({'ok': False, 'reason': 'Invalid symbol'})
+            try:
+                top_n = int(request.args.get('top_n', 8))
+            except ValueError:
+                top_n = 8
+            top_n = max(1, min(top_n, 20))
+            
+            from detection.orderbook_collector import get_orderbook_collector
+            obc = get_orderbook_collector()
+            snapshot = obc.request(symbol)
+            if snapshot is None:
+                # Either WS not yet connected or no data received. Tell
+                # the UI to retry — this is normal on first request.
+                return jsonify({
+                    'ok': True,
+                    'symbol': symbol,
+                    'walls': None,
+                    'pending': True,
+                    'hint': 'Subscribed to WS, awaiting first snapshot (~500ms)',
+                })
+            walls = obc.compute_walls(snapshot, top_n=top_n)
+            return jsonify({
+                'ok': True,
+                'symbol': symbol,
+                'walls': walls,
+                'pending': False,
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e), 'walls': None})
+    
+    @app.route('/api/orderbook/status')
+    def api_orderbook_status():
+        """Debug endpoint — which symbols are currently subscribed and
+        whether their WS is healthy. Useful for spotting stuck connections."""
+        try:
+            from detection.orderbook_collector import get_orderbook_collector
+            obc = get_orderbook_collector()
+            return jsonify({
+                'ok': True,
+                'active': obc.active_symbols(),
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
     
     @app.route('/api/liquidation-map/status')
     def api_liqmap_status():
