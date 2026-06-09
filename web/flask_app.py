@@ -3974,7 +3974,13 @@ def register_api_routes(app):
                 o = k.get('o') or k.get('open')
                 h = k.get('h') or k.get('high')
                 l = k.get('l') or k.get('low')
-                c = k.get('c') or k.get('close')
+                # CRITICAL: market_data.fetch_klines returns bars with the
+                # close price under key 'p' (see its docstring: bars are
+                # {p, v, b, s, h, l, o, t}). The previous mapping only
+                # checked 'c'/'close', so EVERY bar was skipped and the
+                # endpoint always returned an empty series — that's why
+                # the dashboard chart never showed any candles.
+                c = k.get('c') or k.get('close') or k.get('p')
                 if ts and c:
                     try:
                         series.append({

@@ -2956,13 +2956,19 @@ async function loadLiqmap() {
     try {
         const sym = liqmapState.symbol;
         const tf = liqmapState.candleTF || '15m';
+        // Hours of history per TF — targets ~60-100 visible candles.
+        // Without this the endpoint defaults to 24h which gives only 6
+        // bars for 4h TF (then clamped to a 20-bar floor = 3.3 days).
+        const TF_FETCH_HOURS = {'1m': 4, '5m': 12, '15m': 24, '30m': 48,
+                                 '1h': 96, '4h': 240};
+        const hours = TF_FETCH_HOURS[tf] || 24;
         const cb = Date.now();
         // Fetch both in parallel — neither depends on the other.
         const [wallsRes, candlesRes] = await Promise.all([
             fetch(`/api/orderbook/walls?symbol=${encodeURIComponent(sym)}&top_n=8&_=${cb}`,
                   {cache: 'no-store'}),
             fetch(`/api/liquidation-map/price-series?symbol=${encodeURIComponent(sym)}` +
-                  `&interval=${encodeURIComponent(tf)}&_=${cb}`,
+                  `&interval=${encodeURIComponent(tf)}&hours=${hours}&_=${cb}`,
                   {cache: 'no-store'}),
         ]);
         const wallsData = await wallsRes.json();
@@ -3056,8 +3062,10 @@ function liqmapDrawChart(data) {
     const W = container.clientWidth || 1200;
     const H = container.clientHeight || 640;
     // Smaller right margin (no more left-column score grid). Left has a
-    // small vertical "imbalance bar" instead.
-    const margin = {top: 22, right: 92, bottom: 36, left: 50};
+    // small vertical "imbalance bar" instead. Bottom margin enlarged to
+    // 64px to give X-axis and legend vertical breathing room — the
+    // 36px setting overlapped them on standard viewport heights.
+    const margin = {top: 22, right: 92, bottom: 64, left: 50};
     const innerW = W - margin.left - margin.right;
     const innerH = H - margin.top - margin.bottom;
 
@@ -3074,33 +3082,51 @@ function liqmapDrawChart(data) {
     }
 
     // ===========================
-    // Compute price domain (ADAPTIVE)
+    // Compute price domain (CANDLES-FIRST)
     // ===========================
-    // Pre-2026-06-09 the domain was fixed to mid±1%, which made BTC walls
-    // (typically ±0.05–0.2% from mid) collapse onto a single pixel near
-    // the mid-price line. Now: zoom to the actual wall spread, then
-    // expand to fit candles. Padding ensures top/bottom labels aren't
-    // clipped. Min span guards against the "all walls at exactly mid"
-    // edge case which would give a zero-height plot.
+    // Design: the candlestick chart IS the chart — the user reads price
+    // action first, walls are an overlay on top of it (matching the
+    // toriblackcrypto reference layout). Y domain is driven by the
+    // candle range, expanded to include any walls that sit slightly
+    // outside it. Only when there are NO candles at all do we fall back
+    // to a walls-driven tight zoom.
     const allWalls = (walls.bid_walls || []).concat(walls.ask_walls || []);
-    let minP = mid;
-    let maxP = mid;
-    for (const w of allWalls) {
-        if (w.price < minP) minP = w.price;
-        if (w.price > maxP) maxP = w.price;
+    let minP, maxP;
+    if (candles.length > 0) {
+        minP = Infinity; maxP = -Infinity;
+        for (const c of candles) {
+            if (c.l < minP) minP = c.l;
+            if (c.h > maxP) maxP = c.h;
+        }
+        // Include walls — depth20 walls sit within ~±0.1% of mid, which
+        // is inside the candle range 99% of the time, so this rarely
+        // expands anything. Mid too (it's between best bid/ask).
+        for (const w of allWalls) {
+            if (w.price < minP) minP = w.price;
+            if (w.price > maxP) maxP = w.price;
+        }
+        if (mid < minP) minP = mid;
+        if (mid > maxP) maxP = mid;
+        // 5% vertical padding for label headroom
+        const pad = (maxP - minP) * 0.05 || mid * 0.001;
+        minP -= pad; maxP += pad;
+    } else if (allWalls.length > 0) {
+        // No candles — fall back to tight zoom on walls so at least the
+        // order book structure is readable.
+        let maxDist = 0;
+        for (const w of allWalls) {
+            const d = Math.abs(w.price - mid);
+            if (d > maxDist) maxDist = d;
+        }
+        maxDist = Math.max(maxDist, mid * 0.00005);
+        const half = maxDist * 1.4;
+        minP = mid - half;
+        maxP = mid + half;
+    } else {
+        minP = mid * 0.9995;
+        maxP = mid * 1.0005;
     }
-    for (const c of candles) {
-        if (c.l < minP) minP = c.l;
-        if (c.h > maxP) maxP = c.h;
-    }
-    // If span is degenerate (<0.1% of mid), force a default 0.5% window
-    if ((maxP - minP) / mid < 0.001) {
-        minP = mid * 0.9975;
-        maxP = mid * 1.0025;
-    }
-    // 15% vertical padding so wall labels aren't clipped at extreme Y
-    const pad = (maxP - minP) * 0.15;
-    minP -= pad; maxP += pad;
+    const candlesFit = candles.length > 0;  // always render candles when present
 
     // ===========================
     // X domain — time (TF-AWARE fallback)
@@ -3136,13 +3162,13 @@ function liqmapDrawChart(data) {
         .attr('x', margin.left).attr('y', 14)
         .attr('fill', '#aaa').attr('font-size', '12px')
         .attr('font-family', 'system-ui, sans-serif')
-        .text(`${liqmapState.symbol} · Order Book Walls · top 8 each side`);
+        .text(`${liqmapState.symbol} · ${liqmapState.candleTF || '15m'} candles + order book walls`);
     svg.append('text')
         .attr('x', W - margin.right).attr('y', 14)
         .attr('text-anchor', 'end')
         .attr('fill', '#666').attr('font-size', '11px')
         .attr('font-family', 'system-ui, sans-serif')
-        .text('Live · Binance WS · ' + (liqmapState.candleTF || '15m'));
+        .text('Live · Binance WS · depth20');
 
     const g = svg.append('g')
         .attr('transform', `translate(${margin.left},${margin.top})`);
@@ -3191,12 +3217,8 @@ function liqmapDrawChart(data) {
         .attr('stroke', '#fff').attr('stroke-width', 1);
 
     // ===========================
-    // Candlesticks — reuse existing renderer
+    // Candlesticks — always rendered when data is present
     // ===========================
-    // The function expects (svg, xScale, yScale, margin, innerW, innerH)
-    // and reads data from /api/liquidation-map/price-series internally —
-    // but here we have candles already in data.candles. Simpler to inline
-    // the candle drawing rather than re-fetch.
     if (candles.length > 0) {
         const bodyW = Math.max(2, Math.min(10, innerW / candles.length * 0.6));
         const candleG = g.append('g').attr('class', 'liqmap-candles');
@@ -3221,32 +3243,46 @@ function liqmapDrawChart(data) {
                 .attr('width', bodyW).attr('height', bodyH)
                 .attr('fill', color).attr('opacity', 0.9);
         }
+    } else {
+        svg.append('text')
+            .attr('x', margin.left + innerW / 2)
+            .attr('y', margin.top + innerH - 8)
+            .attr('text-anchor', 'middle')
+            .attr('fill', '#555').attr('font-size', '10.5px')
+            .attr('font-style', 'italic')
+            .attr('font-family', 'system-ui, sans-serif')
+            .text('(no candle data for this TF — price-series endpoint returned empty)');
     }
 
     // ===========================
-    // Wall lines + USD labels
+    // Wall lines + USD labels (with label collision avoidance)
     // ===========================
-    // Compute max wall USD across both sides for thickness/opacity scaling.
+    // With the candles-first Y domain, walls cluster tightly near mid —
+    // their label pills would stack on the same pixels. We collect all
+    // wall label positions first, then greedily push overlapping labels
+    // apart vertically (line stays at the true price; only the pill
+    // shifts, connected visually by proximity).
     let maxWallUsd = 0;
     for (const w of allWalls) {
         if (w.usd > maxWallUsd) maxWallUsd = w.usd;
     }
     if (maxWallUsd === 0) maxWallUsd = 1; // avoid div/0
 
-    function drawWall(w, side) {
+    const LABEL_H = 16;       // pill height
+    const labelEntries = [];  // {y, side, w}
+
+    function drawWallLine(w, side) {
         const y = yScale(w.price);
-        if (y < 0 || y > innerH) return; // outside visible domain
+        if (y < -LABEL_H || y > innerH + LABEL_H) return; // far outside
         const rel = w.usd / maxWallUsd;
         const thickness = 2 + rel * 4;       // 2px..6px
         const opacity = 0.55 + rel * 0.4;    // 0.55..0.95
         const color = side === 'bid' ? '#22c55e' : '#ef4444';
-        // Horizontal line across the plot area
         g.append('line')
             .attr('x1', 0).attr('x2', innerW - 4)
             .attr('y1', y).attr('y2', y)
             .attr('stroke', color).attr('stroke-width', thickness)
             .attr('opacity', opacity);
-        // Soft glow rect behind the line — boosts visual weight for big walls
         if (rel > 0.5) {
             g.append('rect')
                 .attr('x', 0).attr('y', y - thickness)
@@ -3254,29 +3290,36 @@ function liqmapDrawChart(data) {
                 .attr('height', thickness * 2)
                 .attr('fill', color).attr('opacity', rel * 0.08);
         }
-        // USD label pill at right edge — matches the reference screenshot
-        const labelText = liqmapFormatUsd(w.usd);
+        labelEntries.push({y: Math.max(0, Math.min(innerH, y)), side, w});
+    }
+
+    for (const w of (walls.bid_walls || [])) drawWallLine(w, 'bid');
+    for (const w of (walls.ask_walls || [])) drawWallLine(w, 'ask');
+
+    // Greedy de-overlap: sort by y, then push each label down if it
+    // overlaps the previous one. Simple one-pass; good enough for ≤16 labels.
+    labelEntries.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < labelEntries.length; i++) {
+        const prev = labelEntries[i - 1];
+        const cur = labelEntries[i];
+        if (cur.y - prev.y < LABEL_H) {
+            cur.y = prev.y + LABEL_H;
+        }
+    }
+
+    for (const e of labelEntries) {
+        const color = e.side === 'bid' ? '#22c55e' : '#ef4444';
+        const labelText = liqmapFormatUsd(e.w.usd);
         const labelG = svg.append('g')
-            .attr('transform', `translate(${margin.left + innerW - 2}, ${margin.top + y})`);
-        const textNode = labelG.append('text')
-            .attr('x', 8).attr('y', 4)
-            .attr('fill', color).attr('font-size', '11px')
-            .attr('font-weight', 700)
-            .attr('font-family', 'monospace')
-            .text(labelText);
-        // Background pill — sized to text. Pre-measure using a hidden element.
+            .attr('transform', `translate(${margin.left + innerW - 2}, ${margin.top + e.y})`);
         const txtLen = labelText.length * 6.6 + 12;
-        labelG.insert('rect', 'text')
-            .attr('x', 4).attr('y', -7)
-            .attr('width', txtLen).attr('height', 16)
+        labelG.append('rect')
+            .attr('x', 4).attr('y', -8)
+            .attr('width', txtLen).attr('height', LABEL_H)
             .attr('rx', 2).attr('ry', 2)
             .attr('fill', '#0a0d12')
             .attr('stroke', color).attr('stroke-width', 1)
-            .attr('opacity', 0.85);
-        // Re-add the text on top (since we did `insert before text`,
-        // it's now below — d3 doesn't auto reorder). Easier to remove
-        // & re-append:
-        textNode.remove();
+            .attr('opacity', 0.9);
         labelG.append('text')
             .attr('x', 10).attr('y', 4)
             .attr('fill', color).attr('font-size', '11px')
@@ -3284,9 +3327,6 @@ function liqmapDrawChart(data) {
             .attr('font-family', 'monospace')
             .text(labelText);
     }
-
-    for (const w of (walls.bid_walls || [])) drawWall(w, 'bid');
-    for (const w of (walls.ask_walls || [])) drawWall(w, 'ask');
 
     // ===========================
     // Mid-price line (dashed white)
