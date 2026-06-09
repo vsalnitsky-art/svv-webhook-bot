@@ -514,3 +514,117 @@ def fetch_bybit_orderbook(symbol: str) -> Optional[Dict]:
     except Exception as e:
         print(f"[OBC] Bybit orderbook {sym} fetch error: {e}")
         return None
+
+
+# ============================================================
+# Bucket-based wall detection v2 (2026-06-09)
+# ============================================================
+# The chain-clustering in compute_walls() degenerates on dense books:
+# in BTC's book every adjacent level is closer than cluster_pct, so the
+# chain never breaks and THE ENTIRE SIDE merges into one giant "wall"
+# (observed live: single $18.4M bid wall = whole bid side).
+#
+# v2 approach, matching the reference UX:
+#   1. FIXED price buckets (0.1% of mid wide) — no chaining, can't degenerate
+#   2. EXCLUDE the ±0.1% zone around mid — that's routine market-maker
+#      depth, not "walls"; the reference's nearest wall sits at +1.3%
+#   3. SPATIAL DIVERSITY — greedy top-N selection with a minimum 0.2%
+#      separation between displayed walls, so the output is a handful of
+#      distinct levels spread across the book, not 8 labels on one line
+
+def compute_walls_buckets(snapshot: Dict,
+                           top_n: int = 8,
+                           bucket_pct: float = 0.001,
+                           exclude_near_pct: float = 0.001,
+                           min_sep_pct: float = 0.002) -> Optional[Dict]:
+    """Bucket-aggregate the book and return spatially-diverse top walls.
+    
+    Returns the same response shape as OrderBookCollector.compute_walls()
+    so the API endpoint and frontend need no changes.
+    """
+    if not snapshot:
+        return None
+    bids = snapshot.get('bids') or []
+    asks = snapshot.get('asks') or []
+    if not bids or not asks:
+        return None
+    
+    best_bid = max(b[0] for b in bids)
+    best_ask = min(a[0] for a in asks)
+    mid = (best_bid + best_ask) / 2.0
+    if mid <= 0:
+        return None
+    spread = best_ask - best_bid
+    spread_pct = spread / mid * 100
+    
+    bucket_w = mid * bucket_pct
+    
+    def bucketize(levels, side):
+        buckets: Dict[int, list] = {}
+        for p, q in levels:
+            # Skip the market-maker zone right at mid — it's always the
+            # biggest USD concentration and it's NOT a wall, it's just
+            # how order books look. Excluding it lets genuine outlier
+            # clusters farther out win the top-N.
+            if abs(p - mid) / mid < exclude_near_pct:
+                continue
+            idx = int(p // bucket_w)
+            b = buckets.setdefault(idx, [0.0, 0.0])
+            b[0] += q
+            b[1] += p * q
+        out = []
+        for idx, (qty, usd) in buckets.items():
+            center = (idx + 0.5) * bucket_w
+            out.append({
+                'side': side,
+                'price': center,
+                'price_lo': idx * bucket_w,
+                'price_hi': (idx + 1) * bucket_w,
+                'qty': qty,
+                'usd': usd,
+            })
+        out.sort(key=lambda w: w['usd'], reverse=True)
+        return out
+    
+    def select_diverse(cands):
+        """Greedy: walk candidates from biggest USD down, accept each
+        one that's at least min_sep_pct away from everything already
+        accepted. Output: few distinct levels instead of a clump."""
+        chosen = []
+        for c in cands:
+            ok = True
+            for x in chosen:
+                if abs(c['price'] - x['price']) / mid < min_sep_pct:
+                    ok = False
+                    break
+            if ok:
+                chosen.append(c)
+                if len(chosen) >= top_n:
+                    break
+        return chosen
+    
+    bid_walls = select_diverse(bucketize(bids, 'bid'))
+    ask_walls = select_diverse(bucketize(asks, 'ask'))
+    
+    # Totals/imbalance computed over the FULL book (including near-mid
+    # zone) — the directional pressure metric should reflect everything.
+    total_bid_usd = sum(p * q for p, q in bids)
+    total_ask_usd = sum(p * q for p, q in asks)
+    total_usd = total_bid_usd + total_ask_usd
+    imbalance_pct = ((total_bid_usd - total_ask_usd) / total_usd * 100
+                     if total_usd > 0 else 0)
+    
+    return {
+        'mid_price': mid,
+        'best_bid': best_bid,
+        'best_ask': best_ask,
+        'spread': spread,
+        'spread_pct': spread_pct,
+        'bid_walls': bid_walls,
+        'ask_walls': ask_walls,
+        'total_bid_usd': total_bid_usd,
+        'total_ask_usd': total_ask_usd,
+        'imbalance_pct': imbalance_pct,
+        'snapshot_ts': snapshot.get('ts'),
+        'snapshot_age_secs': (time.time() - snapshot['ts']) if snapshot.get('ts') else None,
+    }

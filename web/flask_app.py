@@ -4030,19 +4030,18 @@ def register_api_routes(app):
             top_n = max(1, min(top_n, 20))
             
             from detection.orderbook_collector import (
-                get_orderbook_collector, fetch_bybit_orderbook)
+                get_orderbook_collector, fetch_bybit_orderbook,
+                compute_walls_buckets)
             obc = get_orderbook_collector()
             
-            # === Primary: Bybit deep book ===
-            # Wider clustering (0.25%) than the depth20 default (0.05%):
-            # with 500 levels spanning several percent, fine-grained 0.05%
-            # clusters produce hundreds of tiny "walls" of noise. 0.25%
-            # buckets aggregate them into the meaningful clusters the
-            # reference UI shows.
+            # === Primary: Bybit deep book + bucket-based wall detection ===
+            # v2 detection: fixed 0.1% buckets, ±0.1% near-mid zone excluded
+            # (that's MM depth, not walls), 0.2% min separation between
+            # displayed walls. Fixes the degenerate case where chain
+            # clustering merged the whole dense BTC book into one wall.
             snapshot = fetch_bybit_orderbook(symbol)
             if snapshot is not None:
-                walls = obc.compute_walls(snapshot, top_n=top_n,
-                                           cluster_pct=0.0025)
+                walls = compute_walls_buckets(snapshot, top_n=top_n)
                 if walls:
                     return jsonify({
                         'ok': True,
