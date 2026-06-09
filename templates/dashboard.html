@@ -54,6 +54,25 @@
             <span class="liqmap-last-update" id="liqmap-last-update">Last: —</span>
         </div>
 
+        <!-- Watchlist quick-switch (SMC watchlist symbols) + Telegram
+             signal-scanner controls. Buttons show live LONG/SHORT
+             composite scores from the background scanner when enabled. -->
+        <div class="liqmap-watchlist-bar" id="liqmap-watchlist-bar" style="display:none">
+            <span class="liqmap-watchlist-label">⭐ Watchlist:</span>
+            <span id="liqmap-watchlist-btns"></span>
+            <span class="liqmap-alerts-ctl">
+                <label class="liqmap-alerts-toggle" title="Telegram-сигнали при сприятливих умовах Liquidity Map">
+                    <input type="checkbox" id="liqmap-alerts-enabled"
+                           onchange="liqmapAlertsSave()">
+                    🔔 Alerts
+                </label>
+                <input type="number" id="liqmap-alerts-threshold" min="50" max="95"
+                       step="5" value="75" title="Поріг composite score (50–95)"
+                       onchange="liqmapAlertsSave()">
+                <span style="color:#666;font-size:0.72rem">score</span>
+            </span>
+        </div>
+
         <div class="liqmap-chart-wrap">
             <div id="liqmap-chart"></div>
             <div class="liqmap-tooltip" id="liqmap-tooltip" style="display:none"></div>
@@ -1339,6 +1358,76 @@
     border: 1px solid rgba(255,255,255,0.05);
     padding: 8px 0;
     margin-bottom: 14px;
+}
+/* === Watchlist quick-switch + alerts === */
+.liqmap-watchlist-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: #0a0b10;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 14px;
+}
+.liqmap-watchlist-label {
+    color: #889;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+.liqmap-wl-btn {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #ccc;
+    border-radius: 4px;
+    padding: 4px 10px;
+    margin: 2px 2px;
+    font-size: 0.78rem;
+    font-family: monospace;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.liqmap-wl-btn:hover {
+    background: rgba(59,130,246,0.18);
+    border-color: rgba(59,130,246,0.5);
+}
+.liqmap-wl-btn.active {
+    background: rgba(59,130,246,0.28);
+    border-color: #3b82f6;
+    color: #fff;
+}
+.liqmap-wl-btn .wl-score {
+    font-size: 0.7rem;
+    margin-left: 5px;
+    font-weight: 700;
+}
+.liqmap-alerts-ctl {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.liqmap-alerts-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #aaa;
+    font-size: 0.8rem;
+    cursor: pointer;
+    user-select: none;
+}
+.liqmap-alerts-toggle input { cursor: pointer; }
+#liqmap-alerts-threshold {
+    width: 56px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #ddd;
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 0.78rem;
+    font-family: monospace;
 }
 /* === AI Market Pressure bar (Forecast 1H/4H blend) === */
 .liqmap-pressure {
@@ -2945,6 +3034,8 @@ const liqmapState = {
     includeMitigated: false,
     enabled: true,
     refreshTimer: null,
+    pressureTimer: null,      // 30s — forecast + squeeze gauges
+    watchlistTimer: null,     // 60s — watchlist buttons + scanner scores
     lastData: null,
     isLoading: false,
 };
@@ -4078,6 +4169,108 @@ function liqmapStartRefresh() {
         if (document.hidden) return;
         liqmapLoadPressure();
     }, 30 * 1000);
+    // Watchlist buttons + scanner scores: 60s cadence (scanner cycle is
+    // 120s, so 60s polling halves the worst-case staleness).
+    if (liqmapState.watchlistTimer) clearInterval(liqmapState.watchlistTimer);
+    liqmapLoadWatchlist();
+    liqmapState.watchlistTimer = setInterval(() => {
+        if (document.hidden) return;
+        liqmapLoadWatchlist();
+    }, 60 * 1000);
+}
+
+async function liqmapLoadWatchlist() {
+    /* Render SMC-watchlist quick-switch buttons. When the signal scanner
+       has scores for a symbol, show the dominant side's composite score
+       as a small colored badge so the hottest setups stand out at a
+       glance. Also restores the alerts toggle/threshold from backend. */
+    try {
+        const cb = Date.now();
+        const [wlRes, stRes] = await Promise.all([
+            fetch(`/api/liqmap-signal/watchlist?_=${cb}`, {cache: 'no-store'}),
+            fetch(`/api/liqmap-signal/status?_=${cb}`, {cache: 'no-store'}).catch(() => null),
+        ]);
+        const wl = await wlRes.json();
+        let st = null;
+        try { if (stRes) st = await stRes.json(); } catch {}
+        
+        const bar = document.getElementById('liqmap-watchlist-bar');
+        const btns = document.getElementById('liqmap-watchlist-btns');
+        if (!bar || !btns) return;
+        const symbols = (wl && wl.ok && wl.symbols) ? wl.symbols : [];
+        if (symbols.length === 0) {
+            bar.style.display = 'none';
+            return;
+        }
+        bar.style.display = '';
+        
+        const scores = (st && st.ok && st.scores) ? st.scores : {};
+        let html = '';
+        for (const s of symbols) {
+            const active = (s === liqmapState.symbol) ? ' active' : '';
+            const sc = scores[s];
+            let badge = '';
+            if (sc && (sc.long != null || sc.short != null)) {
+                const L = sc.long || 0, S = sc.short || 0;
+                const isLong = L >= S;
+                const v = Math.round(isLong ? L : S);
+                const col = v >= 75 ? (isLong ? '#4ade80' : '#f87171')
+                          : v >= 55 ? '#fbbf24' : '#777';
+                badge = `<span class="wl-score" style="color:${col}">` +
+                        `${isLong ? '▲' : '▼'}${v}</span>`;
+            }
+            html += `<button class="liqmap-wl-btn${active}" data-sym="${s}" ` +
+                    `onclick="liqmapPickSymbol('${s}')">${s.replace('USDT','')}${badge}</button>`;
+        }
+        btns.innerHTML = html;
+        
+        // Restore alerts controls from scanner status (don't fight the
+        // user mid-edit: skip if the input has focus)
+        if (st && st.ok) {
+            const en = document.getElementById('liqmap-alerts-enabled');
+            const th = document.getElementById('liqmap-alerts-threshold');
+            if (en && document.activeElement !== en) en.checked = !!st.enabled;
+            if (th && document.activeElement !== th && st.threshold != null) {
+                th.value = st.threshold;
+            }
+        }
+    } catch (err) {
+        console.warn('watchlist load error', err);
+    }
+}
+
+function liqmapPickSymbol(sym) {
+    const inp = document.getElementById('liqmap-symbol-input');
+    if (inp) inp.value = sym;
+    liqmapChangeSymbol();
+    // Re-highlight buttons immediately (don't wait for the 60s cycle)
+    document.querySelectorAll('.liqmap-wl-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.sym === sym);
+    });
+}
+
+async function liqmapAlertsSave() {
+    /* Persist alerts enabled/threshold to backend (scanner reads the DB
+       settings each cycle). */
+    try {
+        const en = document.getElementById('liqmap-alerts-enabled');
+        const th = document.getElementById('liqmap-alerts-threshold');
+        let threshold = parseInt(th.value, 10);
+        if (isNaN(threshold)) threshold = 75;
+        threshold = Math.max(50, Math.min(95, threshold));
+        th.value = threshold;
+        const r = await fetch('/api/liqmap-signal/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: en.checked, threshold: threshold}),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+            console.warn('alerts save failed', d.reason);
+        }
+    } catch (err) {
+        console.warn('alerts save error', err);
+    }
 }
 
 async function liqmapLoadPressure() {

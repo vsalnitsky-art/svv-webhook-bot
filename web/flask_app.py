@@ -301,6 +301,22 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Liquidation Map: {e}")
         
+        # Liquidity Map Signal Scanner — watchlist-wide composite scoring
+        # (forecast + imbalance + liq fuel + squeeze + manipulation) with
+        # Telegram alerts. The daemon thread always runs; whether it
+        # actually scans is gated by the liqmap_signal_enabled DB setting
+        # (default OFF — operator opts in from the dashboard).
+        if not _auto_started.get('liqsig'):
+            _auto_started['liqsig'] = True
+            try:
+                from detection.liqmap_signal_scanner import init_liqmap_signal_scanner
+                from alerts.telegram_notifier import get_notifier
+                init_liqmap_signal_scanner(db=get_db(), notifier=get_notifier())
+                print("[APP] Liqmap Signal Scanner thread started "
+                      "(scanning gated by liqmap_signal_enabled)")
+            except Exception as e:
+                print(f"[APP] Failed to start Liqmap Signal Scanner: {e}")
+        
         # CTR Scanner — only if auto-start enabled
         if not _auto_started['ctr']:
             _auto_started['ctr'] = True
@@ -4108,6 +4124,50 @@ def register_api_routes(app):
             })
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/liqmap-signal/status')
+    def api_liqsig_status():
+        """Scanner status + latest scores per watchlist symbol — feeds the
+        watchlist buttons (score badges) and the alerts toggle state."""
+        try:
+            from detection.liqmap_signal_scanner import get_liqmap_signal_scanner
+            sc = get_liqmap_signal_scanner()
+            if sc is None:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify({'ok': True, **sc.get_status()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/liqmap-signal/settings', methods=['POST'])
+    def api_liqsig_settings():
+        """Update alert settings: {enabled?, threshold?, cooldown_min?}"""
+        try:
+            data = request.get_json() or {}
+            db = get_db()
+            if 'enabled' in data:
+                db.set_setting('liqmap_signal_enabled',
+                                'true' if data['enabled'] else 'false')
+            if 'threshold' in data:
+                t = max(50, min(95, int(data['threshold'])))
+                db.set_setting('liqmap_signal_threshold', str(t))
+            if 'cooldown_min' in data:
+                c = max(5, min(720, int(data['cooldown_min'])))
+                db.set_setting('liqmap_signal_cooldown', str(c))
+            return jsonify({'ok': True})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/liqmap-signal/watchlist')
+    def api_liqsig_watchlist():
+        """SMC watchlist symbols — feeds the quick-switch buttons row."""
+        try:
+            import json as _json
+            raw = get_db().get_setting('smc_watchlist', '[]')
+            wl = _json.loads(raw) if isinstance(raw, str) else (raw or [])
+            return jsonify({'ok': True,
+                             'symbols': [str(s).upper() for s in wl if s]})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e), 'symbols': []})
     
     # Squeeze cache: (symbol, interval) -> {'ts': float, 'result': dict}.
     # Klines fetch costs one Bybit call; 60s TTL matches how fast a 15m
