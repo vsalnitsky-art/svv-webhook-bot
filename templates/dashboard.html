@@ -3082,51 +3082,39 @@ function liqmapDrawChart(data) {
     }
 
     // ===========================
-    // Compute price domain (CANDLES-FIRST)
+    // Compute price domain (WALLS + RECENT PRICE ACTION)
     // ===========================
-    // Design: the candlestick chart IS the chart — the user reads price
-    // action first, walls are an overlay on top of it (matching the
-    // toriblackcrypto reference layout). Y domain is driven by the
-    // candle range, expanded to include any walls that sit slightly
-    // outside it. Only when there are NO candles at all do we fall back
-    // to a walls-driven tight zoom.
+    // With the deep Bybit book, walls now sit at meaningful distances
+    // (±0.5–15% depending on symbol). Domain = union of all walls and
+    // the RECENT candles (last ~40% of the window). This mirrors the
+    // reference layout: price action visible in the middle, walls
+    // spread above and below with their USD labels.
+    // We deliberately do NOT include the full candle history range —
+    // on a 4h TF the multi-week range can be 20%+, which would squash
+    // the walls back into a stripe. Older candles outside the domain
+    // simply render partially clipped, which is fine.
     const allWalls = (walls.bid_walls || []).concat(walls.ask_walls || []);
-    let minP, maxP;
+    let minP = mid, maxP = mid;
+    for (const w of allWalls) {
+        if (w.price < minP) minP = w.price;
+        if (w.price > maxP) maxP = w.price;
+    }
+    // Recent candles: last 40% of the array (most relevant price action)
     if (candles.length > 0) {
-        minP = Infinity; maxP = -Infinity;
-        for (const c of candles) {
+        const recent = candles.slice(-Math.max(10, Math.floor(candles.length * 0.4)));
+        for (const c of recent) {
             if (c.l < minP) minP = c.l;
             if (c.h > maxP) maxP = c.h;
         }
-        // Include walls — depth20 walls sit within ~±0.1% of mid, which
-        // is inside the candle range 99% of the time, so this rarely
-        // expands anything. Mid too (it's between best bid/ask).
-        for (const w of allWalls) {
-            if (w.price < minP) minP = w.price;
-            if (w.price > maxP) maxP = w.price;
-        }
-        if (mid < minP) minP = mid;
-        if (mid > maxP) maxP = mid;
-        // 5% vertical padding for label headroom
-        const pad = (maxP - minP) * 0.05 || mid * 0.001;
-        minP -= pad; maxP += pad;
-    } else if (allWalls.length > 0) {
-        // No candles — fall back to tight zoom on walls so at least the
-        // order book structure is readable.
-        let maxDist = 0;
-        for (const w of allWalls) {
-            const d = Math.abs(w.price - mid);
-            if (d > maxDist) maxDist = d;
-        }
-        maxDist = Math.max(maxDist, mid * 0.00005);
-        const half = maxDist * 1.4;
-        minP = mid - half;
-        maxP = mid + half;
-    } else {
-        minP = mid * 0.9995;
-        maxP = mid * 1.0005;
     }
-    const candlesFit = candles.length > 0;  // always render candles when present
+    // Degenerate guard (no walls, no candles)
+    if (!(maxP > minP)) {
+        minP = mid * 0.997;
+        maxP = mid * 1.003;
+    }
+    // 6% padding for label headroom
+    const pad = (maxP - minP) * 0.06;
+    minP -= pad; maxP += pad;
 
     // ===========================
     // X domain — time (TF-AWARE fallback)
@@ -3172,6 +3160,16 @@ function liqmapDrawChart(data) {
 
     const g = svg.append('g')
         .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // Clip path — candles partially outside the walls-driven Y domain
+    // must not paint over the title/axis areas.
+    const clipId = 'liqmap-clip-' + Date.now();
+    svg.append('defs').append('clipPath')
+        .attr('id', clipId)
+        .append('rect')
+        .attr('x', 0).attr('y', 0)
+        .attr('width', innerW).attr('height', innerH);
+    g.attr('clip-path', `url(#${clipId})`);
 
     // ===========================
     // Background grid + frame

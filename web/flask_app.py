@@ -4000,19 +4000,24 @@ def register_api_routes(app):
     
     @app.route('/api/orderbook/walls')
     def api_orderbook_walls():
-        """Live order-book walls for a single symbol, WS-sourced from
-        Binance Futures depth20 stream.
+        """Live order-book walls for a single symbol.
         
-        First call for a symbol subscribes lazily (returns empty walls
-        but ok=True). The frontend should retry on its polling loop;
-        snapshot arrives within ~500ms.
+        PRIMARY source (2026-06-09+): Bybit REST orderbook, 500 levels/side.
+        Depth20 WS gave only ±0.01% coverage on BTC — every wall collapsed
+        onto the mid-price stripe. Bybit deep book spans ±0.5–15% depending
+        on symbol tick density, which makes walls actually spread across
+        the chart like the user's reference.
+        
+        FALLBACK: Binance WS depth20 collector (kept for resilience if
+        Bybit REST ever fails).
         
         Query params:
           symbol  (required, default BTCUSDT)
           top_n   (optional, default 8 — strongest walls per side)
         
         Response:
-          {ok, symbol, walls: {bid_walls, ask_walls, mid_price, imbalance_pct, ...}}
+          {ok, symbol, walls: {bid_walls, ask_walls, mid_price, imbalance_pct, ...},
+           source: 'bybit_rest' | 'binance_ws'}
         """
         try:
             symbol = request.args.get('symbol', 'BTCUSDT').upper().strip()
@@ -4024,18 +4029,38 @@ def register_api_routes(app):
                 top_n = 8
             top_n = max(1, min(top_n, 20))
             
-            from detection.orderbook_collector import get_orderbook_collector
+            from detection.orderbook_collector import (
+                get_orderbook_collector, fetch_bybit_orderbook)
             obc = get_orderbook_collector()
+            
+            # === Primary: Bybit deep book ===
+            # Wider clustering (0.25%) than the depth20 default (0.05%):
+            # with 500 levels spanning several percent, fine-grained 0.05%
+            # clusters produce hundreds of tiny "walls" of noise. 0.25%
+            # buckets aggregate them into the meaningful clusters the
+            # reference UI shows.
+            snapshot = fetch_bybit_orderbook(symbol)
+            if snapshot is not None:
+                walls = obc.compute_walls(snapshot, top_n=top_n,
+                                           cluster_pct=0.0025)
+                if walls:
+                    return jsonify({
+                        'ok': True,
+                        'symbol': symbol,
+                        'walls': walls,
+                        'pending': False,
+                        'source': 'bybit_rest',
+                    })
+            
+            # === Fallback: Binance WS depth20 ===
             snapshot = obc.request(symbol)
             if snapshot is None:
-                # Either WS not yet connected or no data received. Tell
-                # the UI to retry — this is normal on first request.
                 return jsonify({
                     'ok': True,
                     'symbol': symbol,
                     'walls': None,
                     'pending': True,
-                    'hint': 'Subscribed to WS, awaiting first snapshot (~500ms)',
+                    'hint': 'Bybit REST unavailable; subscribed to Binance WS, awaiting snapshot',
                 })
             walls = obc.compute_walls(snapshot, top_n=top_n)
             return jsonify({
@@ -4043,6 +4068,7 @@ def register_api_routes(app):
                 'symbol': symbol,
                 'walls': walls,
                 'pending': False,
+                'source': 'binance_ws',
             })
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e), 'walls': None})

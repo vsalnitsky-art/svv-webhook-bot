@@ -417,3 +417,100 @@ def get_orderbook_collector() -> OrderBookCollector:
     if _collector_instance is None:
         _collector_instance = OrderBookCollector()
     return _collector_instance
+
+
+# ============================================================
+# Bybit REST deep order book (PRIMARY source since 2026-06-09)
+# ============================================================
+# Why this exists: Binance WS depth20 only gives the top-20 levels —
+# for BTC that's ±$5 around mid (0.008%), so every wall collapses
+# onto the mid-price line and the chart shows one stripe. The
+# reference UX (walls at -1%, -5%, -11% from price) requires DEEP
+# book data. Bybit REST /v5/market/orderbook serves up to 500
+# levels per side, unauthenticated, and Bybit REST is NOT blocked
+# from Render (the bot trades through it constantly).
+#
+# 500 levels coverage varies by symbol tick density:
+#   - BTCUSDT (dense): ±0.1–0.5% — still narrow but 25x wider than depth20
+#   - Altcoins (ADA, XRP, XLM...): ±2–15% — matches the reference look
+#
+# Caching: module-level per-symbol cache with TTL. The dashboard polls
+# every 2s; TTL=2.0s means at most one Bybit call per poll cycle per
+# symbol. Bybit public rate limit for this endpoint is 50 req/s — we're
+# orders of magnitude below it.
+
+import requests as _requests
+
+_BYBIT_OB_URL = 'https://api.bybit.com/v5/market/orderbook'
+_BYBIT_OB_LIMIT = 500          # max for linear category
+_BYBIT_CACHE_TTL = 2.0         # seconds
+_bybit_ob_cache: Dict[str, Dict] = {}   # symbol -> {'ts': float, 'snapshot': dict}
+_bybit_ob_lock = threading.Lock()
+
+
+def fetch_bybit_orderbook(symbol: str) -> Optional[Dict]:
+    """Fetch deep order book (500 levels/side) from Bybit REST.
+    
+    Returns snapshot in the SAME shape the WS collector produces:
+      {'bids': [(price, qty), ...], 'asks': [(price, qty), ...], 'ts': float}
+    so compute_walls() can consume it unchanged. None on any failure
+    (caller should fall back to the WS collector).
+    """
+    sym = (symbol or '').upper().strip()
+    if sym.endswith('.P'):
+        sym = sym[:-2]
+    if not sym:
+        return None
+    
+    now = time.time()
+    with _bybit_ob_lock:
+        cached = _bybit_ob_cache.get(sym)
+        if cached and (now - cached['ts']) < _BYBIT_CACHE_TTL:
+            return cached['snapshot']
+    
+    try:
+        r = _requests.get(_BYBIT_OB_URL, params={
+            'category': 'linear',
+            'symbol': sym,
+            'limit': _BYBIT_OB_LIMIT,
+        }, timeout=6)
+        if r.status_code != 200:
+            print(f"[OBC] Bybit orderbook {sym}: HTTP {r.status_code}")
+            return None
+        d = r.json()
+        if d.get('retCode') != 0:
+            print(f"[OBC] Bybit orderbook {sym}: retCode={d.get('retCode')} "
+                  f"{d.get('retMsg')}")
+            return None
+        res = d.get('result') or {}
+        # Bybit shape: result.b = [["price","qty"],...] bids,
+        #              result.a = [["price","qty"],...] asks
+        bids = []
+        for row in (res.get('b') or []):
+            try:
+                p = float(row[0]); q = float(row[1])
+                if q > 0:
+                    bids.append((p, q))
+            except (TypeError, ValueError, IndexError):
+                continue
+        asks = []
+        for row in (res.get('a') or []):
+            try:
+                p = float(row[0]); q = float(row[1])
+                if q > 0:
+                    asks.append((p, q))
+            except (TypeError, ValueError, IndexError):
+                continue
+        if not bids or not asks:
+            return None
+        snapshot = {'bids': bids, 'asks': asks, 'ts': now}
+        with _bybit_ob_lock:
+            _bybit_ob_cache[sym] = {'ts': now, 'snapshot': snapshot}
+            # Bound the cache so symbol-hopping doesn't grow it forever
+            if len(_bybit_ob_cache) > 50:
+                oldest = min(_bybit_ob_cache, key=lambda k: _bybit_ob_cache[k]['ts'])
+                _bybit_ob_cache.pop(oldest, None)
+        return snapshot
+    except Exception as e:
+        print(f"[OBC] Bybit orderbook {sym} fetch error: {e}")
+        return None
