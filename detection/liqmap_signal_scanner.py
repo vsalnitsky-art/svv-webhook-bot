@@ -289,7 +289,36 @@ class LiqmapSignalScanner:
             
             st['last_alert_ts'] = now
             st['armed'] = False
-            self._send_alert(br, side, score, threshold)
+            # Cross-process dedupe: with multiple Gunicorn workers a
+            # scanner thread can run in each — per-process cooldown state
+            # alone would double-send every alert. The DB check is the
+            # shared gate; write-after-send keeps it one small JSON.
+            if self._db_cooldown_passed(key, cooldown_s, now):
+                self._send_alert(br, side, score, threshold)
+                self._db_mark_alert(key, now)
+    
+    def _db_cooldown_passed(self, key, cooldown_s: float, now: float) -> bool:
+        try:
+            import json
+            raw = self.db.get_setting('liqmap_alert_log', '{}')
+            log = json.loads(raw) if raw else {}
+            k = f"{key[0]}|{key[1]}"
+            return (now - log.get(k, 0)) >= cooldown_s
+        except Exception:
+            return True  # fail-open: better a rare duplicate than silence
+    
+    def _db_mark_alert(self, key, now: float):
+        try:
+            import json
+            raw = self.db.get_setting('liqmap_alert_log', '{}')
+            log = json.loads(raw) if raw else {}
+            log[f"{key[0]}|{key[1]}"] = now
+            # Prune entries older than 24h to keep the blob tiny
+            cutoff = now - 86400
+            log = {k: v for k, v in log.items() if v >= cutoff}
+            self.db.set_setting('liqmap_alert_log', json.dumps(log))
+        except Exception as e:
+            print(f"[LIQSIG] alert log write error: {e}")
     
     def _send_alert(self, br: Dict, side: str, score: float, threshold: int):
         sym = br['symbol']
@@ -371,6 +400,13 @@ class LiqmapSignalScanner:
                                 time.sleep(HEARTBEAT_SYMBOL_DELAY)
                         except Exception as e:
                             print(f"[LIQSIG] {sym} tick error: {e}")
+                    if scoring_tick:
+                        # Persist the score snapshot: with multiple Gunicorn
+                        # workers the scanner lives in one process while
+                        # /status requests may hit another; and worker
+                        # restarts wiped scores entirely (watchlist badges
+                        # went blank). DB is the shared source of truth.
+                        self._persist_scores()
                     if scoring_tick and self._cycle_count % 10 == 1:
                         print(f"[LIQSIG] scoring cycle #{self._cycle_count} "
                               f"done ({len(symbols)} symbols)")
@@ -400,18 +436,51 @@ class LiqmapSignalScanner:
         except Exception as e:
             print(f"[LIQSIG] {symbol} heartbeat error: {e}")
     
+    def _persist_scores(self):
+        """Save the latest per-symbol scores to DB (compact JSON). Only
+        the fields the UI badges need — full breakdowns stay in memory."""
+        try:
+            import json
+            with self._lock:
+                compact = {k: {'long': v['long_score'],
+                                'short': v['short_score'],
+                                'ts': v['ts']}
+                           for k, v in self._last_scores.items()}
+            self.db.set_setting('liqmap_signal_scores', json.dumps(compact))
+        except Exception as e:
+            print(f"[LIQSIG] persist scores error: {e}")
+    
+    def _load_persisted_scores(self) -> Dict:
+        """Read the score snapshot from DB. Used when this process's
+        in-memory map is empty (other-worker request or fresh restart).
+        Entries older than 15 min are dropped — stale badges mislead."""
+        try:
+            import json
+            raw = self.db.get_setting('liqmap_signal_scores', '{}')
+            data = json.loads(raw) if raw else {}
+            cutoff = time.time() - 900
+            return {k: v for k, v in data.items()
+                    if isinstance(v, dict) and v.get('ts', 0) >= cutoff}
+        except Exception:
+            return {}
+    
     def get_status(self) -> Dict:
         with self._lock:
             scores = dict(self._last_scores)
         s = self._settings()
+        if scores:
+            scores_out = {k: {'long': v['long_score'], 'short': v['short_score'],
+                               'ts': v['ts']} for k, v in scores.items()}
+        else:
+            # Cross-worker / post-restart fallback: read persisted snapshot
+            scores_out = self._load_persisted_scores()
         return {
             'running': bool(self._thread and self._thread.is_alive()),
             'enabled': s['enabled'],
             'threshold': s['threshold'],
             'cooldown_min': s['cooldown_min'],
             'cycle_count': self._cycle_count,
-            'scores': {k: {'long': v['long_score'], 'short': v['short_score'],
-                            'ts': v['ts']} for k, v in scores.items()},
+            'scores': scores_out,
         }
 
 

@@ -73,55 +73,56 @@
             </span>
         </div>
 
+        <!-- ═══ Indicators strip — AI Pressure · Squeeze · Manipulation ═══
+             Modern glass-card grid placed ABOVE the chart (user request).
+             Element IDs unchanged — all existing JS keeps working. -->
+        <div class="liqmap-indicators" id="liqmap-pressure" style="display:none">
+            <div class="liqmap-ind-card liqmap-ind-pressure">
+                <div class="liqmap-ind-head">
+                    <span class="liqmap-ind-title">🤖 AI PRESSURE</span>
+                    <span class="liqmap-ind-big" id="liqmap-pressure-big">—</span>
+                </div>
+                <div class="liqmap-ind-badges">
+                    <span id="liqmap-fc1h-badge">1H: —</span>
+                    <span id="liqmap-fc4h-badge">4H: —</span>
+                </div>
+                <div class="liqmap-pressure-track">
+                    <div class="liqmap-pressure-fill" id="liqmap-pressure-fill"></div>
+                    <div class="liqmap-pressure-center"></div>
+                </div>
+            </div>
+            <div class="liqmap-ind-card liqmap-ind-squeeze">
+                <div class="liqmap-ind-head">
+                    <span class="liqmap-ind-title">⚡ SQUEEZE</span>
+                    <span class="liqmap-ind-big" id="liqmap-squeeze-big">—</span>
+                </div>
+                <div class="liqmap-ind-badges">
+                    <span id="liqmap-squeeze-info">—</span>
+                </div>
+                <div class="liqmap-pressure-track">
+                    <div class="liqmap-squeeze-fill" id="liqmap-squeeze-fill"></div>
+                </div>
+            </div>
+            <div class="liqmap-ind-card liqmap-ind-manip">
+                <div class="liqmap-ind-head">
+                    <span class="liqmap-ind-title">🎭 MANIPULATION</span>
+                    <span class="liqmap-ind-big" id="liqmap-manip-big">—</span>
+                </div>
+                <div class="liqmap-ind-badges">
+                    <span id="liqmap-manip-info">—</span>
+                </div>
+                <div class="liqmap-pressure-track">
+                    <div class="liqmap-manip-fill" id="liqmap-manip-fill"></div>
+                </div>
+            </div>
+        </div>
+
         <div class="liqmap-chart-wrap">
             <div id="liqmap-chart"></div>
             <div class="liqmap-tooltip" id="liqmap-tooltip" style="display:none"></div>
             <div class="liqmap-overlay-msg" id="liqmap-overlay-msg" style="display:none"></div>
         </div>
 
-        <!-- AI Market Pressure — Forecast 1H/4H multi-horizon prediction
-             rendered as a prominent directional bar (reference-style).
-             Pressure score = weighted blend of both TFs' side×confidence. -->
-        <div class="liqmap-pressure" id="liqmap-pressure" style="display:none">
-            <div class="liqmap-pressure-head">
-                <span class="liqmap-pressure-title">🤖 AI MARKET PRESSURE</span>
-                <span class="liqmap-pressure-badges">
-                    <span id="liqmap-fc1h-badge">1H: —</span>
-                    <span id="liqmap-fc4h-badge">4H: —</span>
-                </span>
-                <span class="liqmap-pressure-big" id="liqmap-pressure-big">—</span>
-            </div>
-            <div class="liqmap-pressure-track">
-                <div class="liqmap-pressure-fill" id="liqmap-pressure-fill"></div>
-                <div class="liqmap-pressure-center"></div>
-            </div>
-            <!-- SQUEEZE gauge — TTM BB-inside-Keltner compression on the
-                 chart's current TF. Direction-neutral; momentum arrow hints
-                 at likely expansion side. -->
-            <div class="liqmap-pressure-head" style="margin-top:12px">
-                <span class="liqmap-pressure-title">⚡ SQUEEZE</span>
-                <span class="liqmap-pressure-badges">
-                    <span id="liqmap-squeeze-info">—</span>
-                </span>
-                <span class="liqmap-pressure-big" id="liqmap-squeeze-big" style="font-size:1.25rem">—</span>
-            </div>
-            <div class="liqmap-pressure-track">
-                <div class="liqmap-squeeze-fill" id="liqmap-squeeze-fill"></div>
-            </div>
-            <!-- MANIPULATION gauge — share of large walls that were pulled
-                 (spoofed) vs walls that persisted, rolling 10-min window.
-                 Fed from the 2s walls poll; needs ~2 min warmup. -->
-            <div class="liqmap-pressure-head" style="margin-top:12px">
-                <span class="liqmap-pressure-title">🎭 MANIPULATION</span>
-                <span class="liqmap-pressure-badges">
-                    <span id="liqmap-manip-info">—</span>
-                </span>
-                <span class="liqmap-pressure-big" id="liqmap-manip-big" style="font-size:1.25rem">—</span>
-            </div>
-            <div class="liqmap-pressure-track">
-                <div class="liqmap-manip-fill" id="liqmap-manip-fill"></div>
-            </div>
-        </div>
     </div>
 
     <!-- BTC Volume Flow -->
@@ -1430,6 +1431,63 @@
     font-family: monospace;
 }
 /* === AI Market Pressure bar (Forecast 1H/4H blend) === */
+/* ═══ Indicators strip (above chart): modern glass cards ═══ */
+.liqmap-indicators {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 14px;
+}
+@media (max-width: 1100px) {
+    .liqmap-indicators { grid-template-columns: 1fr; }
+}
+.liqmap-ind-card {
+    position: relative;
+    background: linear-gradient(150deg, rgba(30,36,50,0.85), rgba(13,16,24,0.95));
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px;
+    padding: 12px 16px 14px;
+    overflow: hidden;
+}
+.liqmap-ind-card::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 1.5px;
+    opacity: 0.85;
+}
+.liqmap-ind-pressure::before { background: linear-gradient(90deg, transparent, #4ade80, transparent); }
+.liqmap-ind-squeeze::before  { background: linear-gradient(90deg, transparent, #f87171, transparent); }
+.liqmap-ind-manip::before    { background: linear-gradient(90deg, transparent, #a78bfa, transparent); }
+.liqmap-ind-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+.liqmap-ind-title {
+    color: #8b93a7;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 1.6px;
+}
+.liqmap-ind-big {
+    font-size: 1.45rem;
+    font-weight: 800;
+    font-family: monospace;
+    line-height: 1.1;
+    text-shadow: 0 0 18px rgba(255,255,255,0.08);
+}
+.liqmap-ind-badges {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 0.72rem;
+    color: #9aa3b5;
+    font-family: monospace;
+    margin: 4px 0 9px;
+    min-height: 1em;
+}
 .liqmap-pressure {
     background: #0a0b10;
     border: 1px solid rgba(255,255,255,0.05);
@@ -3447,11 +3505,22 @@ function liqmapDrawChart(data) {
     // ===========================
     // Title bar
     // ===========================
-    svg.append('text')
-        .attr('x', margin.left).attr('y', 14)
-        .attr('fill', '#aaa').attr('font-size', '12px')
-        .attr('font-family', 'system-ui, sans-serif')
-        .text(`${liqmapState.symbol} · ${liqmapState.candleTF || '15m'} · walls + liq zones`);
+    // Symbol gets a large accent treatment (user request: bigger font,
+    // more visible color); TF + layer info stays small and muted.
+    const titleT = svg.append('text')
+        .attr('x', margin.left).attr('y', 18)
+        .attr('font-family', 'system-ui, sans-serif');
+    titleT.append('tspan')
+        .attr('fill', '#38bdf8')
+        .attr('font-size', '16px')
+        .attr('font-weight', 800)
+        .attr('letter-spacing', '0.5px')
+        .text(liqmapState.symbol);
+    titleT.append('tspan')
+        .attr('fill', '#778')
+        .attr('font-size', '11.5px')
+        .attr('dx', 10)
+        .text(`${liqmapState.candleTF || '15m'} · walls + liq zones`);
     svg.append('text')
         .attr('x', W - margin.right).attr('y', 14)
         .attr('text-anchor', 'end')
