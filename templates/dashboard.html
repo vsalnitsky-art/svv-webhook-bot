@@ -38,6 +38,9 @@
                     <button data-tf="1h" onclick="liqmapSetCandleTF('1h')">1h</button>
                     <button data-tf="4h" onclick="liqmapSetCandleTF('4h')">4h</button>
                 </div>
+                <button class="liqmap-lock-btn" id="liqmap-lock-btn"
+                        onclick="liqmapToggleLock()"
+                        title="Закріпити масштаб: графік не рухається, рухаються лише лінії">🔓</button>
                 <button class="liqmap-refresh-btn" onclick="liqmapForceRefresh()"
                         title="Force refresh now">🔄</button>
                 <span class="liqmap-status" id="liqmap-status">⚪</span>
@@ -1334,6 +1337,21 @@
     color: #c4c4c4;
     font-family: 'SF Mono', Consolas, monospace;
     font-weight: 500;
+}
+.liqmap-lock-btn {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 5px;
+    color: #ccc;
+    padding: 4px 9px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.15s;
+}
+.liqmap-lock-btn:hover { border-color: rgba(59,130,246,0.6); }
+.liqmap-lock-btn.locked {
+    background: rgba(245,158,11,0.18);
+    border-color: #f59e0b;
 }
 .liqmap-refresh-btn {
     background: rgba(0,0,0,0.4);
@@ -3094,6 +3112,7 @@ const liqmapState = {
     refreshTimer: null,
     pressureTimer: null,      // 30s — forecast + squeeze gauges
     watchlistTimer: null,     // 60s — watchlist buttons + scanner scores
+    yLocked: false,           // 🔒 freeze Y scale (lines move, chart doesn't)
     lastData: null,
     isLoading: false,
 };
@@ -3428,13 +3447,23 @@ function liqmapDrawChart(data) {
         const maxLiqUsd = sortedLiq[0].total_usd || 0;
         liqClusters = sortedLiq.filter(z => (z.total_usd || 0) >= maxLiqUsd * 0.02).slice(0, 10);
     }
+    // === Distance cap for the Y domain (2026-06-10) ===
+    // Thin-book altcoins (STRK case): Bybit's 500 levels can include
+    // parked orders at 3-5× the current price. Including those in the
+    // domain crushed the candles into a stripe at the bottom. Levels
+    // farther than ±25% from mid don't drive the scale (and are thus
+    // not rendered — their y falls outside the plot and gets culled).
+    const DOMAIN_RANGE = 0.25;
+    const inRange = p => Math.abs(p - mid) / mid <= DOMAIN_RANGE;
     let minP = mid, maxP = mid;
     for (const w of allWalls) {
+        if (!inRange(w.price)) continue;
         if (w.price < minP) minP = w.price;
         if (w.price > maxP) maxP = w.price;
     }
     for (const z of liqClusters) {
         const zc = (z.price_low + z.price_high) / 2;
+        if (!inRange(zc)) continue;
         if (zc < minP) minP = zc;
         if (zc > maxP) maxP = zc;
     }
@@ -3461,9 +3490,18 @@ function liqmapDrawChart(data) {
     // be visible at once), CONTRACT gradually (15% of the gap per render)
     // so transient wall churn doesn't yank the scale around. Domain is
     // reset on symbol/TF change (liqmapState.yDom = null there).
-    if (liqmapState.yDom &&
+    //
+    // 🔒 LOCK MODE: when the user pins the scale (lock button next to the
+    // TF toggle), the domain freezes entirely at its current value for
+    // this symbol+TF — only the lines move, the chart never re-scales.
+    // Lines outside the frozen window are simply culled.
+    const haveSameViewDom = liqmapState.yDom &&
         liqmapState.yDom.symbol === liqmapState.symbol &&
-        liqmapState.yDom.tf === liqmapState.candleTF) {
+        liqmapState.yDom.tf === liqmapState.candleTF;
+    if (liqmapState.yLocked && haveSameViewDom) {
+        minP = liqmapState.yDom.min;
+        maxP = liqmapState.yDom.max;
+    } else if (haveSameViewDom) {
         const prev = liqmapState.yDom;
         const tgtMin = minP, tgtMax = maxP;
         minP = (tgtMin < prev.min) ? tgtMin : prev.min + (tgtMin - prev.min) * 0.15;
@@ -4403,6 +4441,17 @@ async function liqmapLoadWatchlist() {
     }
 }
 
+function liqmapToggleLock() {
+    liqmapState.yLocked = !liqmapState.yLocked;
+    const btn = document.getElementById('liqmap-lock-btn');
+    if (btn) {
+        btn.textContent = liqmapState.yLocked ? '🔒' : '🔓';
+        btn.classList.toggle('locked', liqmapState.yLocked);
+    }
+    try { localStorage.setItem('liqmap_y_locked', liqmapState.yLocked ? '1' : '0'); } catch {}
+    // Unlocking resumes adaptive scaling on the next render naturally.
+}
+
 function liqmapPickSymbol(sym) {
     const inp = document.getElementById('liqmap-symbol-input');
     if (inp) inp.value = sym;
@@ -4545,6 +4594,12 @@ async function liqmapInit() {
     // the toggle UI and the chart agree on first paint.
     try {
         const savedTF = localStorage.getItem('liqmap_candle_tf');
+        const savedLock = localStorage.getItem('liqmap_y_locked') === '1';
+        if (savedLock) {
+            liqmapState.yLocked = true;
+            const lockBtn = document.getElementById('liqmap-lock-btn');
+            if (lockBtn) { lockBtn.textContent = '🔒'; lockBtn.classList.add('locked'); }
+        }
         if (savedTF && ['1m','5m','15m','30m','1h','4h'].includes(savedTF)) {
             liqmapState.candleTF = savedTF;
             document.querySelectorAll('#liqmap-candle-toggle button').forEach(btn => {
