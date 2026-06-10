@@ -3624,50 +3624,13 @@ function liqmapDrawChart(data) {
                 y: Math.max(0, Math.min(innerH, yC)),
                 color,
                 usd: z.total_usd || 0,
+                price: (z.price_low + z.price_high) / 2,
                 isLong,
             });
         }
     }
-    // Left-edge label pills with the same greedy de-overlap as walls.
-    // After pushing labels down, the bottom of the stack can overflow the
-    // plot — shift the whole stack back up so everything stays inside.
-    liqLabelEntries.sort((a, b) => a.y - b.y);
-    for (let i = 1; i < liqLabelEntries.length; i++) {
-        if (liqLabelEntries[i].y - liqLabelEntries[i-1].y < 16) {
-            liqLabelEntries[i].y = liqLabelEntries[i-1].y + 16;
-        }
-    }
-    if (liqLabelEntries.length > 0) {
-        const overflow = liqLabelEntries[liqLabelEntries.length - 1].y - (innerH - 8);
-        if (overflow > 0) {
-            for (const e of liqLabelEntries) e.y = Math.max(8, e.y - overflow);
-            // Re-resolve collisions from the top after the shift
-            for (let i = 1; i < liqLabelEntries.length; i++) {
-                if (liqLabelEntries[i].y - liqLabelEntries[i-1].y < 16) {
-                    liqLabelEntries[i].y = liqLabelEntries[i-1].y + 16;
-                }
-            }
-        }
-    }
-    for (const e of liqLabelEntries) {
-        const labelText = '⚡' + liqmapFormatUsd(e.usd);
-        const txtLen = labelText.length * 6.6 + 12;
-        const labelG = svg.append('g')
-            .attr('transform', `translate(${margin.left + 4}, ${margin.top + e.y})`);
-        labelG.append('rect')
-            .attr('x', 0).attr('y', -8)
-            .attr('width', txtLen).attr('height', 16)
-            .attr('rx', 2).attr('ry', 2)
-            .attr('fill', '#0a0d12')
-            .attr('stroke', e.color).attr('stroke-width', 1)
-            .attr('opacity', 0.9);
-        labelG.append('text')
-            .attr('x', 6).attr('y', 4)
-            .attr('fill', e.color).attr('font-size', '10.5px')
-            .attr('font-weight', 700)
-            .attr('font-family', 'monospace')
-            .text(labelText);
-    }
+    // (Liq $-labels render in the unified LEFT stack after walls — see
+    // the "Unified LEFT stack + RIGHT price rail" section below.)
 
     // ===========================
     // Candlesticks — always rendered when data is present
@@ -3749,64 +3712,71 @@ function liqmapDrawChart(data) {
     for (const w of (walls.bid_walls || [])) drawWallLine(w, 'bid');
     for (const w of (walls.ask_walls || [])) drawWallLine(w, 'ask');
 
-    // Greedy de-overlap with two extra rules (2026-06-10):
-    //   1. EXCLUSION ZONE ±12px around the mid-price label — that label
-    //      is the most important number on the axis and was getting
-    //      buried under the wall-pill stack near price.
-    //   2. CLAMP: after pushing labels down, shift the stack back up if
-    //      it overflows the plot bottom (same as the liq-label stack).
-    const midYForLabels = yScale(mid);
-    const MID_EXCL = 12;
-    labelEntries.sort((a, b) => a.y - b.y);
-    for (let i = 0; i < labelEntries.length; i++) {
-        const cur = labelEntries[i];
-        // Push out of the mid exclusion zone (downward — pills below mid
-        // stay below, pills just above mid hop over it downward too,
-        // which reads fine since the line itself stays at true price)
-        if (Math.abs(cur.y - midYForLabels) < MID_EXCL) {
-            cur.y = midYForLabels + MID_EXCL;
-        }
-        if (i > 0) {
-            const prev = labelEntries[i - 1];
-            if (cur.y - prev.y < LABEL_H) {
-                cur.y = prev.y + LABEL_H;
-            }
+    // ===========================
+    // Unified LEFT label stack ($-values) + RIGHT price rail
+    // ===========================
+    // Layout (2026-06-10, user request): every line's USD value sits on
+    // the LEFT in one collision-managed stack (walls teal/amber, liq
+    // pink/lime); the RIGHT side carries a small pill with the PRICE each
+    // line sits at, so levels read directly against the axis.
+    const leftEntries = [];
+    for (const e of labelEntries) {
+        const exMark = (e.w.ex_count && e.w.ex_count > 1) ? ` ×${e.w.ex_count}` : '';
+        leftEntries.push({
+            y: e.y,
+            color: e.side === 'bid' ? '#2dd4bf' : '#f59e0b',
+            text: liqmapFormatUsd(e.w.usd) + exMark,
+            price: e.w.price,
+        });
+    }
+    for (const e of liqLabelEntries) {
+        leftEntries.push({
+            y: e.y,
+            color: e.color,
+            text: '⚡' + liqmapFormatUsd(e.usd),
+            price: e.price,
+        });
+    }
+    // Right rail shares the same lines but pins to TRUE y positions
+    // (collision handling happens at render, with mid exclusion).
+    const rightPriceEntries = leftEntries.map(
+        e => ({y: e.y, color: e.color, price: e.price}));
+
+    // De-overlap + clamp the left stack
+    leftEntries.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < leftEntries.length; i++) {
+        if (leftEntries[i].y - leftEntries[i-1].y < LABEL_H) {
+            leftEntries[i].y = leftEntries[i-1].y + LABEL_H;
         }
     }
-    if (labelEntries.length > 0) {
-        const overflow = labelEntries[labelEntries.length - 1].y - (innerH - 4);
+    if (leftEntries.length > 0) {
+        const overflow = leftEntries[leftEntries.length - 1].y - (innerH - 4);
         if (overflow > 0) {
-            for (const e of labelEntries) e.y = Math.max(4, e.y - overflow);
-            for (let i = 1; i < labelEntries.length; i++) {
-                if (labelEntries[i].y - labelEntries[i-1].y < LABEL_H) {
-                    labelEntries[i].y = labelEntries[i-1].y + LABEL_H;
+            for (const e of leftEntries) e.y = Math.max(4, e.y - overflow);
+            for (let i = 1; i < leftEntries.length; i++) {
+                if (leftEntries[i].y - leftEntries[i-1].y < LABEL_H) {
+                    leftEntries[i].y = leftEntries[i-1].y + LABEL_H;
                 }
             }
         }
     }
-
-    for (const e of labelEntries) {
-        const color = e.side === 'bid' ? '#2dd4bf' : '#f59e0b';
-        // Multi-venue badge: a wall standing on 2-3 exchanges at once is
-        // a stronger signal — flag it as ×2 / ×3 right in the pill.
-        const exMark = (e.w.ex_count && e.w.ex_count > 1) ? ` ×${e.w.ex_count}` : '';
-        const labelText = liqmapFormatUsd(e.w.usd) + exMark;
+    for (const e of leftEntries) {
+        const txtLen = e.text.length * 6.6 + 12;
         const labelG = svg.append('g')
-            .attr('transform', `translate(${margin.left + innerW - 2}, ${margin.top + e.y})`);
-        const txtLen = labelText.length * 6.6 + 12;
+            .attr('transform', `translate(${margin.left + 4}, ${margin.top + e.y})`);
         labelG.append('rect')
-            .attr('x', 4).attr('y', -8)
+            .attr('x', 0).attr('y', -8)
             .attr('width', txtLen).attr('height', LABEL_H)
             .attr('rx', 2).attr('ry', 2)
             .attr('fill', '#0a0d12')
-            .attr('stroke', color).attr('stroke-width', 1)
-            .attr('opacity', 0.9);
+            .attr('stroke', e.color).attr('stroke-width', 1)
+            .attr('opacity', 0.92);
         labelG.append('text')
-            .attr('x', 10).attr('y', 4)
-            .attr('fill', color).attr('font-size', '11px')
+            .attr('x', 6).attr('y', 4)
+            .attr('fill', e.color).attr('font-size', '10.5px')
             .attr('font-weight', 700)
             .attr('font-family', 'monospace')
-            .text(labelText);
+            .text(e.text);
     }
 
     // ===========================
@@ -3841,16 +3811,68 @@ function liqmapDrawChart(data) {
     }
 
     // ===========================
-    // Y-axis ticks (right side, price)
+    // Y-axis ticks (right side, price) — brighter & larger (user request)
     // ===========================
     const yTicks = yScale.ticks(8);
     for (const t of yTicks) {
         const y = yScale(t);
+        // Skip ticks that would collide with the prominent mid-price pill
+        if (Math.abs(y - midY) < 11) continue;
         svg.append('text')
             .attr('x', margin.left + innerW + 4).attr('y', margin.top + y + 4)
-            .attr('fill', '#555').attr('font-size', '10px')
+            .attr('fill', '#aab4c4').attr('font-size', '11.5px')
             .attr('font-family', 'monospace')
             .text(liqmapFormatPrice(t));
+    }
+
+    // ===========================
+    // RIGHT price rail — the price of every wall / liq line, pinned at
+    // its true height on the axis (drawn over ticks; mid pill excluded)
+    // ===========================
+    const rail = [];
+    for (const e of rightPriceEntries) {
+        const ty = yScale(e.price);
+        if (ty < 0 || ty > innerH) continue;
+        rail.push({y: ty, color: e.color, text: liqmapFormatPrice(e.price)});
+    }
+    const RAIL_H = 15;
+    rail.sort((a, b) => a.y - b.y);
+    // Single monotonic forward pass: each label sits at max(own y,
+    // below the previous label); the mid-pill zone (±12px) acts as an
+    // obstacle that labels hop OVER (downward). Monotonic = no label can
+    // be pushed back into the zone by a later cascade (the flaw of the
+    // previous two-step approach).
+    let railPrevBottom = -Infinity;
+    for (const e of rail) {
+        let y = Math.max(e.y, railPrevBottom);
+        if (Math.abs(y - midY) < 12) {
+            y = Math.max(midY + 12, railPrevBottom);
+        }
+        e.y = y;
+        railPrevBottom = y + RAIL_H;
+    }
+    // No shift-up clamp here: shifting the stack up to fit the bottom
+    // pushed labels back INTO the mid zone (verified by layout test).
+    // Labels displaced past the plot bottom are dropped instead — their
+    // lines stay visible and their USD values remain in the left stack.
+    const railVisible = rail.filter(e => e.y <= innerH - 6);
+    for (const e of railVisible) {
+        const tw = e.text.length * 6.4 + 10;
+        const rg = svg.append('g')
+            .attr('transform', `translate(${margin.left + innerW + 2}, ${margin.top + e.y})`);
+        rg.append('rect')
+            .attr('x', 0).attr('y', -7)
+            .attr('width', tw).attr('height', RAIL_H - 1)
+            .attr('rx', 2).attr('ry', 2)
+            .attr('fill', '#0a0d12')
+            .attr('stroke', e.color).attr('stroke-width', 0.8)
+            .attr('opacity', 0.95);
+        rg.append('text')
+            .attr('x', 5).attr('y', 4)
+            .attr('fill', e.color).attr('font-size', '10px')
+            .attr('font-weight', 700)
+            .attr('font-family', 'monospace')
+            .text(e.text);
     }
 
     // ===========================
