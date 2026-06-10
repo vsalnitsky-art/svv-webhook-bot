@@ -41,6 +41,11 @@ from typing import Dict, List, Optional
 
 CYCLE_SEC = 120
 PER_SYMBOL_DELAY = 1.2
+# Manipulation heartbeat: light tracker-feed pass between scoring cycles.
+# HEARTBEAT_SEC × SCORE_EVERY_TICKS ≈ CYCLE_SEC keeps the scoring cadence.
+HEARTBEAT_SEC = 30
+SCORE_EVERY_TICKS = 4
+HEARTBEAT_SYMBOL_DELAY = 0.3
 DEFAULT_THRESHOLD = 75
 DEFAULT_COOLDOWN_MIN = 60
 REARM_DROP = 10          # score must dip below (threshold - this) to re-arm
@@ -315,6 +320,8 @@ class LiqmapSignalScanner:
             lines.append(f"🧲 Liq fuel ±5%: {fu(a)} above / {fu(b)} below")
         if br.get('manip_pct') is not None:
             lines.append(f"🎭 Manipulation: {br['manip_pct']:.0f}%")
+        else:
+            lines.append("🎭 Manipulation: — (статистика накопичується)")
         lines.append(f"\n<i>Сигнал карти ліквідності — підтверди тайминг "
                      f"через SMC структуру перед входом.</i>")
         
@@ -331,33 +338,67 @@ class LiqmapSignalScanner:
     # ------------------------------------------------------------
     
     def _loop(self):
+        # Tick architecture (2026-06-10): the manipulation tracker needs
+        # dense sampling to observe wall lifecycles — 120s gaps made
+        # classification meaningless (and a promotion bug made it always
+        # 0%). Now: every HEARTBEAT_SEC=30 we do a light pass over the
+        # watchlist feeding the tracker (book fetch is cached 2.5s, walls
+        # computation is microseconds); every SCORE_EVERY_TICKS-th tick we
+        # additionally compute full scores + alerts. compute_score's own
+        # book fetch hits the aggregator cache from the heartbeat pass, so
+        # the scoring tick costs no extra exchange calls.
+        tick = 0
         while not self._stop:
             try:
                 settings = self._settings()
                 if settings['enabled']:
                     symbols = self._watchlist()
-                    self._cycle_count += 1
+                    scoring_tick = (tick % SCORE_EVERY_TICKS == 0)
+                    if scoring_tick:
+                        self._cycle_count += 1
                     for sym in symbols:
                         if self._stop:
                             break
                         try:
-                            br = self.compute_score(sym)
-                            if br:
-                                self._maybe_alert(br, settings)
+                            if scoring_tick:
+                                br = self.compute_score(sym)
+                                if br:
+                                    self._maybe_alert(br, settings)
+                                time.sleep(PER_SYMBOL_DELAY)
+                            else:
+                                # Heartbeat: feed manipulation tracker only
+                                self._manip_heartbeat(sym)
+                                time.sleep(HEARTBEAT_SYMBOL_DELAY)
                         except Exception as e:
-                            print(f"[LIQSIG] {sym} cycle error: {e}")
-                        time.sleep(PER_SYMBOL_DELAY)
-                    if self._cycle_count % 10 == 1:
-                        print(f"[LIQSIG] cycle #{self._cycle_count} done "
-                              f"({len(symbols)} symbols)")
+                            print(f"[LIQSIG] {sym} tick error: {e}")
+                    if scoring_tick and self._cycle_count % 10 == 1:
+                        print(f"[LIQSIG] scoring cycle #{self._cycle_count} "
+                              f"done ({len(symbols)} symbols)")
             except Exception as e:
                 print(f"[LIQSIG] loop error: {e}")
             
+            tick += 1
             # Sleep in 1s chunks so stop() is responsive
-            for _ in range(CYCLE_SEC):
+            for _ in range(HEARTBEAT_SEC):
                 if self._stop:
                     break
                 time.sleep(1)
+    
+    def _manip_heartbeat(self, symbol: str):
+        """Light pass: fetch aggregated book, compute walls, feed the
+        manipulation tracker. No scoring, no alerts."""
+        try:
+            from detection.orderbook_collector import (
+                fetch_aggregated_orderbook, compute_walls_buckets_v3)
+            from detection.manipulation_tracker import get_manipulation_tracker
+            snap = fetch_aggregated_orderbook(symbol)
+            if snap is None:
+                return
+            walls = compute_walls_buckets_v3(snap, top_n=8)
+            if walls:
+                get_manipulation_tracker().update(symbol, walls)
+        except Exception as e:
+            print(f"[LIQSIG] {symbol} heartbeat error: {e}")
     
     def get_status(self) -> Dict:
         with self._lock:

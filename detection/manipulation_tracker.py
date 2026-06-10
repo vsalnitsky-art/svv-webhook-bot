@@ -81,18 +81,32 @@ class ManipulationTracker:
             st = self._state_for(symbol)
             st['last_update_ts'] = now
             
+            # === STABLE matching grid (bugfix 2026-06-10) ===
+            # Previously grid = mid × MATCH_GRID_PCT recomputed every
+            # update — mid drifts every tick, so int(price/grid) gave
+            # DIFFERENT keys for the same wall, mass-classifying stable
+            # walls as vanished+new ("phantom spoofs", inflated pct).
+            # Now the grid is anchored per symbol at first sight and only
+            # re-anchored when mid drifts >10% (tracked state reset then,
+            # since old keys are meaningless after re-anchor).
+            grid_w = st.get('grid_w')
+            anchor = st.get('grid_anchor_mid')
+            if grid_w is None or anchor is None or abs(mid - anchor) / anchor > 0.10:
+                st['grid_w'] = grid_w = mid * MATCH_GRID_PCT
+                st['grid_anchor_mid'] = mid
+                st['tracked'] = {}
+            
             all_walls = ((walls.get('bid_walls') or [])
                          + (walls.get('ask_walls') or []))
             top_usd = max((w.get('usd', 0) for w in all_walls), default=0)
             min_track = max(MIN_TRACK_USD, top_usd * MIN_TRACK_FRAC)
             
-            grid = mid * MATCH_GRID_PCT
             current = {}
             for w in all_walls:
                 usd = w.get('usd', 0)
                 if usd < min_track:
                     continue
-                key = (w.get('side'), int(w['price'] / grid))
+                key = (w.get('side'), int(w['price'] / grid_w))
                 # Keep the bigger if two walls land on one grid cell
                 if key not in current or usd > current[key]['usd']:
                     current[key] = w
@@ -113,10 +127,21 @@ class ManipulationTracker:
                         'max_usd': w['usd'], 'counted_persist': False,
                     }
             
-            # Promote long-lived walls to "persistent" (once each)
-            for t in tracked.values():
-                if (not t['counted_persist']
-                        and (now - t['first_ts']) >= PERSIST_MIN_LIFE):
+            # Promote long-lived walls to "persistent" (once each).
+            # BUGFIX 2026-06-10: previously the check was
+            # (now - first_ts) >= PERSIST_MIN_LIFE with no liveness
+            # requirement, so under sparse sampling (signal scanner: one
+            # update per ~120s) a wall seen ONCE got promoted at the next
+            # update purely because wall-clock time had passed — and its
+            # vanish was then excluded from spoof counting. Net effect:
+            # spoofs were structurally impossible (always 0%).
+            # Correct rule: persistence = OBSERVED lifetime (last - first),
+            # and the wall must still be alive (seen recently).
+            for key, t in tracked.items():
+                alive = key in current
+                observed_life = t['last_ts'] - t['first_ts']
+                if (not t['counted_persist'] and alive
+                        and observed_life >= PERSIST_MIN_LIFE):
                     t['counted_persist'] = True
                     st['persists'].append((now, t['max_usd']))
             
@@ -128,7 +153,13 @@ class ManipulationTracker:
                 t = tracked.pop(k)
                 lifetime = t['last_ts'] - t['first_ts']
                 price_reached = (abs(mid - t['price']) / mid) < PRICE_REACH_TOL
+                # Sparse-sampling guard: if the gap since we last saw the
+                # wall exceeds SPOOF_MAX_LIFE, we genuinely don't know how
+                # long it lived after our last observation — classifying
+                # it as a spoof would be a guess. Skip (neither bucket).
+                gap = now - t['last_ts']
                 if (lifetime < SPOOF_MAX_LIFE
+                        and gap <= SPOOF_MAX_LIFE
                         and not price_reached
                         and not t['counted_persist']):
                     st['spoofs'].append((now, t['max_usd'], lifetime,

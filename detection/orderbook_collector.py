@@ -663,12 +663,15 @@ def _symbol_to_okx_inst(symbol: str) -> Optional[str]:
 
 
 def _symbol_to_hl_coin(symbol: str) -> Optional[str]:
-    """BTCUSDT → BTC (Hyperliquid uses bare coin names for perps)."""
+    """BTCUSDT → BTC (Hyperliquid uses bare coin names for perps).
+    1000-prefixed Bybit symbols map to HL's k-prefix: 1000PEPEUSDT → kPEPE."""
     s = (symbol or '').upper().strip()
     if s.endswith('.P'):
         s = s[:-2]
     if s.endswith('USDT'):
         s = s[:-4]
+    if s.startswith('1000') and len(s) > 4:
+        s = 'k' + s[4:]
     return s or None
 
 
@@ -723,6 +726,11 @@ def fetch_hyperliquid_orderbook(symbol: str) -> Optional[Dict]:
         if r.status_code != 200:
             return None
         d = r.json()
+        # HL returns null / non-dict for coins it doesn't list (XAUT,
+        # BILL, exotic Bybit-only perps). That's normal — return None
+        # silently so the aggregator just proceeds with Bybit+OKX.
+        if not isinstance(d, dict):
+            return None
         levels = d.get('levels')
         if not levels or len(levels) != 2:
             return None

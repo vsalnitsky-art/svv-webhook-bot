@@ -3170,26 +3170,37 @@ async function loadLiqmap() {
                                  '1h': 96, '4h': 240};
         const hours = TF_FETCH_HOURS[tf] || 24;
         const cb = Date.now();
-        // Fetch all three in parallel — walls (order book), candles (price),
-        // and liquidation clusters (OI-estimation engine). The liq layer is
-        // best-effort: if the daemon is still warming up for this symbol we
-        // render without it and it appears on a later poll.
-        const [wallsRes, candlesRes, liqRes] = await Promise.all([
+        // Walls + candles every poll (2s). Liquidation state is heavy
+        // (~80KB) and its daemon ticks every ~60s — refetch only every
+        // 10s and reuse the cached payload in between. This also reduces
+        // chart churn (liq zones changing = Y domain moves).
+        const liqStale = (!liqmapState.liqCache
+                          || liqmapState.liqCache.symbol !== sym
+                          || (cb - liqmapState.liqCache.ts) > 10000);
+        const fetches = [
             fetch(`/api/orderbook/walls?symbol=${encodeURIComponent(sym)}&top_n=8&_=${cb}`,
                   {cache: 'no-store'}),
             fetch(`/api/liquidation-map/price-series?symbol=${encodeURIComponent(sym)}` +
                   `&interval=${encodeURIComponent(tf)}&hours=${hours}&_=${cb}`,
                   {cache: 'no-store'}),
-            fetch(`/api/liquidation-map/state?symbol=${encodeURIComponent(sym)}` +
-                  `&lookback=24&_=${cb}`,
-                  {cache: 'no-store'}).catch(() => null),
-        ]);
+            liqStale
+                ? fetch(`/api/liquidation-map/state?symbol=${encodeURIComponent(sym)}` +
+                        `&lookback=24&_=${cb}`,
+                        {cache: 'no-store'}).catch(() => null)
+                : Promise.resolve(null),
+        ];
+        const [wallsRes, candlesRes, liqRes] = await Promise.all(fetches);
         const wallsData = await wallsRes.json();
         const candleData = await candlesRes.json();
         let liqData = null;
-        try {
-            if (liqRes) liqData = await liqRes.json();
-        } catch {}
+        if (liqRes) {
+            try {
+                liqData = await liqRes.json();
+                liqmapState.liqCache = {symbol: sym, ts: cb, data: liqData};
+            } catch {}
+        } else if (liqmapState.liqCache && liqmapState.liqCache.symbol === sym) {
+            liqData = liqmapState.liqCache.data;
+        }
 
         if (!wallsData.ok) {
             liqmapShowOverlay('⚠️ Order book error', wallsData.reason || 'API error');
@@ -3386,6 +3397,26 @@ function liqmapDrawChart(data) {
     const pad = (maxP - minP) * 0.06;
     minP -= pad; maxP += pad;
 
+    // === Y-domain smoothing (anti-jitter, 2026-06-10) ===
+    // Full redraw every 2s + walls fluctuating each poll made the axes
+    // jump constantly. Rule: EXPAND instantly (new data outside view must
+    // be visible at once), CONTRACT gradually (15% of the gap per render)
+    // so transient wall churn doesn't yank the scale around. Domain is
+    // reset on symbol/TF change (liqmapState.yDom = null there).
+    if (liqmapState.yDom &&
+        liqmapState.yDom.symbol === liqmapState.symbol &&
+        liqmapState.yDom.tf === liqmapState.candleTF) {
+        const prev = liqmapState.yDom;
+        const tgtMin = minP, tgtMax = maxP;
+        minP = (tgtMin < prev.min) ? tgtMin : prev.min + (tgtMin - prev.min) * 0.15;
+        maxP = (tgtMax > prev.max) ? tgtMax : prev.max + (tgtMax - prev.max) * 0.15;
+        // Snap when close enough to target (avoid endless micro-drift)
+        if (Math.abs(minP - tgtMin) / mid < 0.0005) minP = tgtMin;
+        if (Math.abs(maxP - tgtMax) / mid < 0.0005) maxP = tgtMax;
+    }
+    liqmapState.yDom = {min: minP, max: maxP,
+                        symbol: liqmapState.symbol, tf: liqmapState.candleTF};
+
     // ===========================
     // X domain — time (TF-AWARE fallback)
     // ===========================
@@ -3503,7 +3534,9 @@ function liqmapDrawChart(data) {
             if (yBot < 0 || yTop > innerH) continue;
             const score = Math.max(0.05, Math.min(1, z.magnet_score || 0.3));
             const isLong = (z.side || '').toLowerCase() === 'long';
-            const color = isLong ? '#ef4444' : '#22c55e';
+            // Rose / lime — deliberately offset from candle red/green so
+            // zone center-lines don't blend into the candles (user request).
+            const color = isLong ? '#fb7185' : '#a3e635';
             const h = Math.max(3, yBot - yTop);
             liqG.append('rect')
                 .attr('x', 0).attr('y', yTop)
@@ -3628,7 +3661,7 @@ function liqmapDrawChart(data) {
         const rel = w.usd / maxWallUsd;
         const thickness = 2 + rel * 4;       // 2px..6px
         const opacity = 0.55 + rel * 0.4;    // 0.55..0.95
-        const color = side === 'bid' ? '#22c55e' : '#ef4444';
+        const color = side === 'bid' ? '#2dd4bf' : '#f59e0b';
         g.append('line')
             .attr('x1', 0).attr('x2', innerW - 4)
             .attr('y1', y).attr('y2', y)
@@ -3647,19 +3680,44 @@ function liqmapDrawChart(data) {
     for (const w of (walls.bid_walls || [])) drawWallLine(w, 'bid');
     for (const w of (walls.ask_walls || [])) drawWallLine(w, 'ask');
 
-    // Greedy de-overlap: sort by y, then push each label down if it
-    // overlaps the previous one. Simple one-pass; good enough for ≤16 labels.
+    // Greedy de-overlap with two extra rules (2026-06-10):
+    //   1. EXCLUSION ZONE ±12px around the mid-price label — that label
+    //      is the most important number on the axis and was getting
+    //      buried under the wall-pill stack near price.
+    //   2. CLAMP: after pushing labels down, shift the stack back up if
+    //      it overflows the plot bottom (same as the liq-label stack).
+    const midYForLabels = yScale(mid);
+    const MID_EXCL = 12;
     labelEntries.sort((a, b) => a.y - b.y);
-    for (let i = 1; i < labelEntries.length; i++) {
-        const prev = labelEntries[i - 1];
+    for (let i = 0; i < labelEntries.length; i++) {
         const cur = labelEntries[i];
-        if (cur.y - prev.y < LABEL_H) {
-            cur.y = prev.y + LABEL_H;
+        // Push out of the mid exclusion zone (downward — pills below mid
+        // stay below, pills just above mid hop over it downward too,
+        // which reads fine since the line itself stays at true price)
+        if (Math.abs(cur.y - midYForLabels) < MID_EXCL) {
+            cur.y = midYForLabels + MID_EXCL;
+        }
+        if (i > 0) {
+            const prev = labelEntries[i - 1];
+            if (cur.y - prev.y < LABEL_H) {
+                cur.y = prev.y + LABEL_H;
+            }
+        }
+    }
+    if (labelEntries.length > 0) {
+        const overflow = labelEntries[labelEntries.length - 1].y - (innerH - 4);
+        if (overflow > 0) {
+            for (const e of labelEntries) e.y = Math.max(4, e.y - overflow);
+            for (let i = 1; i < labelEntries.length; i++) {
+                if (labelEntries[i].y - labelEntries[i-1].y < LABEL_H) {
+                    labelEntries[i].y = labelEntries[i-1].y + LABEL_H;
+                }
+            }
         }
     }
 
     for (const e of labelEntries) {
-        const color = e.side === 'bid' ? '#22c55e' : '#ef4444';
+        const color = e.side === 'bid' ? '#2dd4bf' : '#f59e0b';
         // Multi-venue badge: a wall standing on 2-3 exchanges at once is
         // a stronger signal — flag it as ×2 / ×3 right in the pill.
         const exMark = (e.w.ex_count && e.w.ex_count > 1) ? ` ×${e.w.ex_count}` : '';
@@ -3683,22 +3741,34 @@ function liqmapDrawChart(data) {
     }
 
     // ===========================
-    // Mid-price line (dashed white)
+    // Mid-price line (dashed white) + prominent right-axis pill
     // ===========================
+    // Drawn AFTER wall labels so the price pill always sits on top of
+    // the stack — it's the single most important number on the chart.
     const midY = yScale(mid);
     if (midY >= 0 && midY <= innerH) {
         g.append('line')
             .attr('x1', 0).attr('x2', innerW)
             .attr('y1', midY).attr('y2', midY)
             .attr('stroke', '#fff').attr('stroke-width', 1)
-            .attr('stroke-dasharray', '4,3').attr('opacity', 0.5);
-        // Mid price label on right axis
-        svg.append('text')
-            .attr('x', margin.left + innerW + 4).attr('y', margin.top + midY + 4)
-            .attr('fill', '#fff').attr('font-size', '10.5px')
-            .attr('font-weight', 600)
+            .attr('stroke-dasharray', '4,3').attr('opacity', 0.6);
+        const midText = liqmapFormatPrice(mid);
+        const midW = midText.length * 6.8 + 14;
+        const midG = svg.append('g')
+            .attr('transform', `translate(${margin.left + innerW - 2}, ${margin.top + midY})`);
+        midG.append('rect')
+            .attr('x', 4).attr('y', -9)
+            .attr('width', midW).attr('height', 18)
+            .attr('rx', 3).attr('ry', 3)
+            .attr('fill', '#1f2937')
+            .attr('stroke', '#fff').attr('stroke-width', 1.2)
+            .attr('opacity', 0.98);
+        midG.append('text')
+            .attr('x', 11).attr('y', 4)
+            .attr('fill', '#fff').attr('font-size', '11px')
+            .attr('font-weight', 800)
             .attr('font-family', 'monospace')
-            .text(liqmapFormatPrice(mid));
+            .text(midText);
     }
 
     // ===========================
@@ -3758,10 +3828,10 @@ function liqmapDrawChart(data) {
             .text(label);
         lx += 24 + label.length * 7.2 + 28;
     }
-    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#22c55e').attr('stroke-width', 4), 'bid wall (support)');
-    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#ef4444').attr('stroke-width', 4), 'ask wall (resistance)');
-    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#ef4444').attr('opacity', 0.3), '⚡ long liq zone (below)');
-    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#22c55e').attr('opacity', 0.3), '⚡ short liq zone (above)');
+    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#2dd4bf').attr('stroke-width', 4), 'bid wall (support)');
+    legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#f59e0b').attr('stroke-width', 4), 'ask wall (resistance)');
+    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#fb7185').attr('opacity', 0.35), '⚡ long liq zone (below)');
+    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#a3e635').attr('opacity', 0.35), '⚡ short liq zone (above)');
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#fff').attr('stroke-dasharray', '3,2').attr('stroke-width', 1), 'mid price');
 }
 
@@ -4077,6 +4147,8 @@ function liqmapChangeSymbol() {
     inp.value = s;
     if (s === liqmapState.symbol) return;
     liqmapState.symbol = s;
+    liqmapState.yDom = null;       // fresh Y-domain for new symbol
+    liqmapState.liqCache = null;   // force liq-state refetch
     // Tell the daemon to scan this symbol (no-op for BTC/ETH)
     fetch('/api/liquidation-map/request-symbol', {
         method: 'POST',
@@ -4106,6 +4178,7 @@ function liqmapSetCandleTF(tf) {
         btn.classList.toggle('active', btn.dataset.tf === tf);
     });
     try { localStorage.setItem('liqmap_candle_tf', tf); } catch {}
+    liqmapState.yDom = null;  // TF change = new candle range, fresh domain
     if (liqmapState.lastData) liqmapRender(liqmapState.lastData);
     // Candles + squeeze are TF-dependent — refetch both for the new TF
     loadLiqmap();
