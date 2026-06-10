@@ -97,6 +97,7 @@
             <div class="liqmap-ind-card liqmap-ind-squeeze">
                 <div class="liqmap-ind-head">
                     <span class="liqmap-ind-title">⚡ SQUEEZE</span>
+                    <span class="liqmap-sq-dir" id="liqmap-squeeze-dir" style="display:none">—</span>
                     <span class="liqmap-ind-big" id="liqmap-squeeze-big">—</span>
                 </div>
                 <div class="liqmap-ind-badges">
@@ -1505,6 +1506,34 @@
     font-family: monospace;
     margin: 4px 0 9px;
     min-height: 1em;
+}
+/* Squeeze expansion-direction chip (TTM momentum side) */
+.liqmap-sq-dir {
+    margin-left: auto;
+    margin-right: 10px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    font-family: monospace;
+    letter-spacing: 0.5px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+.liqmap-sq-dir.sq-long {
+    color: #4ade80;
+    background: rgba(34,197,94,0.12);
+    border-color: rgba(74,222,128,0.45);
+}
+.liqmap-sq-dir.sq-short {
+    color: #f87171;
+    background: rgba(239,68,68,0.12);
+    border-color: rgba(248,113,113,0.45);
+}
+.liqmap-sq-dir.sq-flat {
+    color: #9aa3b5;
+    background: rgba(255,255,255,0.05);
+    border-color: rgba(255,255,255,0.15);
 }
 .liqmap-pressure {
     background: #0a0b10;
@@ -4553,29 +4582,47 @@ async function liqmapLoadPressure() {
         const sqBig = document.getElementById('liqmap-squeeze-big');
         const sqFill = document.getElementById('liqmap-squeeze-fill');
         const sqInfo = document.getElementById('liqmap-squeeze-info');
+        const sqDir = document.getElementById('liqmap-squeeze-dir');
         if (sq && sq.ok) {
             const p = sq.probability || 0;
             sqFill.style.width = p + '%';
             if (sq.squeeze_on) {
                 sqBig.textContent = p.toFixed(0) + '%';
                 sqBig.style.color = p >= 70 ? '#f87171' : '#fbbf24';
-                const momArrow = sq.momentum_side > 0
-                    ? (sq.momentum_rising ? '↑↑' : '↑')
-                    : sq.momentum_side < 0
-                        ? (sq.momentum_rising ? '↓' : '↓↓')
-                        : '·';
-                sqInfo.textContent =
-                    `ON · ${sq.bars_in_squeeze} bars (${tf}) · mom ${momArrow}`;
+                // Expansion-direction chip (TTM momentum):
+                //   side>0  → LONG bias  (green chip)
+                //   side<0  → SHORT bias (red chip)
+                //   rising for negative momentum = SHORT weakening, etc.
+                if (sqDir) {
+                    sqDir.style.display = '';
+                    if (sq.momentum_side > 0) {
+                        const strong = sq.momentum_rising;
+                        sqDir.textContent = (strong ? '↑↑ LONG' : '↑ LONG') +
+                            (strong ? ' · посилюється' : ' · слабшає');
+                        sqDir.className = 'liqmap-sq-dir sq-long';
+                    } else if (sq.momentum_side < 0) {
+                        const strong = !sq.momentum_rising;
+                        sqDir.textContent = (strong ? '↓↓ SHORT' : '↓ SHORT') +
+                            (strong ? ' · посилюється' : ' · слабшає');
+                        sqDir.className = 'liqmap-sq-dir sq-short';
+                    } else {
+                        sqDir.textContent = '· FLAT';
+                        sqDir.className = 'liqmap-sq-dir sq-flat';
+                    }
+                }
+                sqInfo.textContent = `ON · ${sq.bars_in_squeeze} bars (${tf}) · напрямок виходу за momentum`;
             } else {
                 sqBig.textContent = 'OFF';
                 sqBig.style.color = '#666';
                 sqInfo.textContent = `no compression (${tf})`;
+                if (sqDir) sqDir.style.display = 'none';
             }
         } else if (sqBig) {
             sqBig.textContent = '—';
             sqBig.style.color = '#666';
             if (sqInfo) sqInfo.textContent = (sq && sq.reason) ? sq.reason : '—';
             if (sqFill) sqFill.style.width = '0%';
+            if (sqDir) sqDir.style.display = 'none';
         }
     } catch (err) {
         console.warn('pressure load error', err);
