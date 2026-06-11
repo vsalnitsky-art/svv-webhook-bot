@@ -1550,12 +1550,17 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 10px;
+    /* min-width:0 lets flex children shrink below their content width —
+       without it a long direction chip pushed the big % out of the card
+       (user report: percentage hidden off-screen). */
+    min-width: 0;
 }
 .liqmap-ind-title {
     color: #8b93a7;
     font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 1.6px;
+    flex: none;
 }
 .liqmap-ind-big {
     font-size: 1.45rem;
@@ -1563,6 +1568,7 @@
     font-family: monospace;
     line-height: 1.1;
     text-shadow: 0 0 18px rgba(255,255,255,0.08);
+    flex: none;          /* the number ALWAYS stays visible */
 }
 .liqmap-ind-badges {
     display: flex;
@@ -1586,6 +1592,12 @@
     letter-spacing: 0.5px;
     border: 1px solid transparent;
     white-space: nowrap;
+    /* On narrow cards the chip yields space to the big % :
+       it shrinks and truncates with an ellipsis (full text in tooltip) */
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .liqmap-sq-dir.sq-long {
     color: #4ade80;
@@ -3209,6 +3221,11 @@ const liqmapState = {
     pressureTimer: null,      // 30s — forecast + squeeze gauges
     watchlistTimer: null,     // 60s — watchlist buttons + scanner scores
     yLocked: false,           // 🔒 freeze Y scale (lines move, chart doesn't)
+    loadSeq: 0,               // generation token: bumped on symbol/TF change,
+                              // in-flight loads from older generations are
+                              // discarded on completion (anti-race)
+    pendingReload: false,     // a change happened while a load was in flight
+    emptyCandlePolls: 0,      // consecutive polls with no candle data
     lastData: null,
     isLoading: false,
 };
@@ -3331,11 +3348,17 @@ async function loadLiqmap() {
     // flow is gone — that view was confusing and not actionable. Walls
     // show where real limit orders are sitting RIGHT NOW, which is what
     // actually matters for short-term magnets/walls.
-    if (liqmapState.isLoading) return;
+    if (liqmapState.isLoading) {
+        // A change arrived mid-flight: remember to reload right after the
+        // current (now stale) load completes and gets discarded.
+        liqmapState.pendingReload = true;
+        return;
+    }
     liqmapState.isLoading = true;
     try {
         const sym = liqmapState.symbol;
         const tf = liqmapState.candleTF || '15m';
+        const mySeq = liqmapState.loadSeq;
         // Hours of history per TF — targets ~60-100 visible candles.
         // Without this the endpoint defaults to 24h which gives only 6
         // bars for 4h TF (then clamped to a 20-bar floor = 3.3 days).
@@ -3365,6 +3388,17 @@ async function loadLiqmap() {
         const [wallsRes, candlesRes, liqRes] = await Promise.all(fetches);
         const wallsData = await wallsRes.json();
         const candleData = await candlesRes.json();
+        // === Anti-race guard (2026-06-11) ===
+        // While we awaited, the user may have switched symbol/TF. Drawing
+        // this stale payload would (a) flash the old coin and (b) tag the
+        // Y domain with the NEW symbol inside drawChart — the smoothing
+        // then 'gently contracts' from the old coin's price range to the
+        // new one, which looked like the chart collapsing. Discard.
+        if (mySeq !== liqmapState.loadSeq
+            || sym !== liqmapState.symbol
+            || tf !== (liqmapState.candleTF || '15m')) {
+            return;
+        }
         let liqData = null;
         if (liqRes) {
             try {
@@ -3409,6 +3443,26 @@ async function loadLiqmap() {
                 quality: liqData.data_quality || {},
             } : null,
         };
+
+        // === Candles-first gate (2026-06-11) ===
+        // User-reported squash: on a fresh symbol the walls arrive before
+        // the price series, and a walls-only render established a wide Y
+        // domain that the candles then had to 'fight'. New rule: agree on
+        // the price picture FIRST — no candles, no chart. Walls-only
+        // fallback only after 3 consecutive empty polls (exotic symbols
+        // whose price-series is genuinely unavailable).
+        if (!liqmapState.lastData.candles.length) {
+            liqmapState.emptyCandlePolls++;
+            if (liqmapState.emptyCandlePolls < 3) {
+                liqmapShowOverlay('🕯️ Синхронізація ціни ' + sym,
+                    'завантаження свічок ' + tf + '… (' +
+                    liqmapState.emptyCandlePolls + '/3)');
+                liqmapSetStatusIcon('warming');
+                return;
+            }
+        } else {
+            liqmapState.emptyCandlePolls = 0;
+        }
 
         // Status bar updates
         const w = wallsData.walls;
@@ -3498,6 +3552,12 @@ async function loadLiqmap() {
         liqmapSetStatusIcon('error');
     } finally {
         liqmapState.isLoading = false;
+        if (liqmapState.pendingReload) {
+            // A symbol/TF change arrived while we were loading — run the
+            // fresh load immediately instead of waiting for the 2s timer.
+            liqmapState.pendingReload = false;
+            setTimeout(loadLiqmap, 30);
+        }
     }
 }
 
@@ -3518,6 +3578,10 @@ function liqmapDrawEmptyChart() {
 }
 
 function liqmapDrawChart(data) {
+    // Hard guard: this payload must belong to the CURRENT symbol. Stale
+    // payloads tagging yDom with the new symbol were the root cause of
+    // the "chart collapses on fast switching" bug.
+    if (data && data.symbol && data.symbol !== liqmapState.symbol) return;
     // === New walls-based renderer ===
     // Inputs: data.walls (from /api/orderbook/walls) + data.candles (OHLC array).
     // Layout: candlestick chart in main area. Horizontal lines for each wall
@@ -4401,8 +4465,12 @@ function liqmapChangeSymbol() {
     inp.value = s;
     if (s === liqmapState.symbol) return;
     liqmapState.symbol = s;
+    liqmapState.loadSeq++;         // invalidate any in-flight load (anti-race)
     liqmapState.yDom = null;       // fresh Y-domain for new symbol
     liqmapState.liqCache = null;   // force liq-state refetch
+    liqmapState.emptyCandlePolls = 0;
+    liqmapState.lastData = null;   // old coin's picture must not redraw
+    liqmapShowOverlay('🕯️ Синхронізація ціни ' + s, 'свічки + книга…');
     // Tell the daemon to scan this symbol (no-op for BTC/ETH)
     fetch('/api/liquidation-map/request-symbol', {
         method: 'POST',
@@ -4433,7 +4501,11 @@ function liqmapSetCandleTF(tf) {
     });
     try { localStorage.setItem('liqmap_candle_tf', tf); } catch {}
     liqmapState.yDom = null;  // TF change = new candle range, fresh domain
-    if (liqmapState.lastData) liqmapRender(liqmapState.lastData);
+    liqmapState.loadSeq++;    // invalidate in-flight load (anti-race)
+    liqmapState.emptyCandlePolls = 0;
+    // NOTE: no instant re-render here anymore — lastData still holds the
+    // OLD TF's candles; drawing them then swapping caused a visible jump.
+    // The fresh fetch below repaints within ~1 poll.
     // Candles + squeeze are TF-dependent — refetch both for the new TF
     loadLiqmap();
     liqmapLoadPressure();
@@ -4750,8 +4822,12 @@ async function liqmapLoadPressure() {
                         sqDir.textContent = '· FLAT';
                         sqDir.className = 'liqmap-sq-dir sq-flat';
                     }
+                    sqDir.title = sqDir.textContent;  // full text when truncated
                 }
-                sqInfo.textContent = `ON · ${sq.bars_in_squeeze} bars (${tf}) · напрямок виходу за momentum`;
+                sqInfo.textContent = `ON · ${sq.bars_in_squeeze} bars (${tf})` +
+                    (sq.band && sq.band !== 'off'
+                        ? ` · ${sq.band} compression` : '') +
+                    ` · напрямок за momentum`;
             } else {
                 sqBig.textContent = 'OFF';
                 sqBig.style.color = '#666';

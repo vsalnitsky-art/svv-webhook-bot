@@ -4222,12 +4222,16 @@ def register_api_routes(app):
             if md is None:
                 return jsonify({'ok': False, 'reason': 'market data unavailable'})
             klines = md.fetch_klines(symbol, interval=interval, limit=120)
+            # Multi-band TTM (see squeeze.py): graded compression bands
+            # make higher TFs readable — 'low/mid/high' instead of the
+            # old binary 1.5-cross that never fired on 1h/4h.
             sq = calc_squeeze(klines or [])
             result = {
                 'ok': sq['ok'],
                 'symbol': symbol,
                 'interval': interval,
                 'squeeze_on': sq['squeeze_on'],
+                'band': sq.get('band', 'off'),
                 'probability': sq['probability'],
                 'bars_in_squeeze': sq['bars_in_squeeze'],
                 'momentum_rising': sq['momentum_rising'],

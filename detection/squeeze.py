@@ -27,6 +27,29 @@ import math
 from typing import List, Dict, Optional
 
 
+# === Multi-band TTM (2026-06-11, v3 — final) ===
+# Problem history: the binary 1.5-Keltner cross almost never fires on
+# 1h/4h crypto (stdev/ATR proportions there sit structurally above 1.5),
+# so the gauge showed OFF forever. Two adaptive legs were prototyped and
+# REJECTED with statistical tests: a percentile rank (fires a fixed ~15%
+# of the time on stationary data by construction) and a median-relative
+# width threshold (BB width over random-walk closes is too noisy — ~35%
+# false-fire rate in steady regimes).
+#
+# Final design — the standard practitioner multi-band TTM:
+#   unit_r = BB_width / (2 × ATR)   (Keltner multiplier as a unit)
+#   unit_r < 1.0  → HIGH compression
+#   unit_r < 1.5  → MID  (the classic squeeze)
+#   unit_r < 2.0  → LOW  (meaningful on higher TFs)
+#   unit_r ≥ 2.0  → OFF
+# probability maps unit_r 2.0 → 0%, 0.5 → 100% (linear, clamped). Same
+# formula on every timeframe — the GRADING is what adapts: 1h/4h setups
+# now read "ON · low/mid compression" instead of a meaningless OFF, and
+# the absolute ATR-unit threshold carries no built-in false-fire rate.
+LOW_BAND = 2.0    # ON boundary (unit_r), and the 0% probability anchor
+PROB_FLOOR_R = 0.5  # unit_r at which probability saturates to 100%
+
+
 def _sma(vals: List[float], n: int) -> Optional[float]:
     if len(vals) < n:
         return None
@@ -122,17 +145,26 @@ def calc_squeeze(klines: List[Dict],
                 'reason': 'indicator warmup failed'}
     
     squeeze_on, ratio, bb_w, kc_w = last
-    # probability: ratio 1.0 → 0%, ratio 0.5 → 100%
-    probability = max(0.0, min(1.0, (1.0 - ratio) / 0.5)) * 100.0
+    # Multi-band grading in ATR units: ratio is bbw/kcw at kc_mult, so
+    # unit_r = ratio × kc_mult = bbw / (2·ATR) — multiplier-independent.
+    unit_r = ratio * kc_mult
+    squeeze_on = unit_r < LOW_BAND
+    probability = max(0.0, min(1.0, (LOW_BAND - unit_r)
+                                     / (LOW_BAND - PROB_FLOOR_R))) * 100.0
+    band = ('high' if unit_r < 1.0 else
+            'mid' if unit_r < 1.5 else
+            'low' if unit_r < LOW_BAND else 'off')
     
     # Count consecutive ON bars ending at the last bar (walk back until OFF).
     # Capped at 50 walks — beyond that "50+" is plenty of information.
+    # A bar counts as ON if EITHER detector fires: classic band cross OR
+    # its relative width within the percentile-ON threshold.
     bars_in = 0
     if squeeze_on:
         for back in range(0, 50):
             idx = len(closes) - 1 - back
             st = state_at(idx)
-            if st is None or not st[0]:
+            if st is None or (st[1] * kc_mult) >= LOW_BAND:
                 break
             bars_in += 1
     
@@ -159,6 +191,7 @@ def calc_squeeze(klines: List[Dict],
     return {
         'ok': True,
         'squeeze_on': bool(squeeze_on),
+        'band': band,
         'probability': round(probability, 1),
         'bars_in_squeeze': bars_in,
         'momentum': mom_now,
