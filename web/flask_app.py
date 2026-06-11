@@ -4226,6 +4226,55 @@ def register_api_routes(app):
             # make higher TFs readable — 'low/mid/high' instead of the
             # old binary 1.5-cross that never fired on 1h/4h.
             sq = calc_squeeze(klines or [])
+            
+            # === Directional Squeeze Probability (2026-06-12) ===
+            # Calibrated to the reference semantics ("squeeze probability"
+            # = how likely price gets PULLED INTO the nearer liquidation
+            # fuel), built from data we already have:
+            #   fuel_dir  — decayed liq-levels above vs below mark, each
+            #               level weighted by 1/(1+dist%/2): a $2M pool
+            #               1% away pulls harder than $20M at 12%;
+            #   compression — TTM probability (the timing factor);
+            #   momentum  — agreement bonus when TTM momentum points the
+            #               same way as the fuel.
+            # prob = 100×clamp(0.55·|fuel_dir| + 0.25·comp + 0.20·agree).
+            # No liq data → falls back to compression-only, undirected.
+            sq_dir, sq_prob = 'flat', sq['probability']
+            fuel_above = fuel_below = 0.0
+            try:
+                from detection.liquidation_map.liquidation_map import (
+                    get_liquidation_map)
+                lm = get_liquidation_map()
+                if lm is not None:
+                    lstate = lm.get_state(symbol, lookback_hours=24)
+                    mark = lstate.get('mark_price')
+                    for lev in (lstate.get('levels') or []):
+                        if not mark:
+                            break
+                        dist_pct = abs(lev['price'] - mark) / mark * 100.0
+                        if dist_pct > 15:
+                            continue
+                        wgt = lev['usd'] / (1.0 + dist_pct / 2.0)
+                        if lev['price'] > mark:
+                            fuel_above += wgt
+                        else:
+                            fuel_below += wgt
+                    den = fuel_above + fuel_below
+                    if den > 0:
+                        fuel_dir = (fuel_above - fuel_below) / den
+                        comp = sq['probability'] / 100.0
+                        mom = (1 if sq['momentum'] > 0 else
+                               -1 if sq['momentum'] < 0 else 0)
+                        agree = 1.0 if (mom != 0 and
+                                        mom == (1 if fuel_dir > 0 else -1)
+                                        ) else 0.0
+                        raw = (0.55 * abs(fuel_dir) + 0.25 * comp
+                               + 0.20 * agree)
+                        sq_prob = round(max(0.0, min(1.0, raw)) * 100.0, 1)
+                        sq_dir = ('long' if fuel_dir > 0.1 else
+                                  'short' if fuel_dir < -0.1 else 'flat')
+            except Exception:
+                pass
             result = {
                 'ok': sq['ok'],
                 'symbol': symbol,
@@ -4233,6 +4282,13 @@ def register_api_routes(app):
                 'squeeze_on': sq['squeeze_on'],
                 'band': sq.get('band', 'off'),
                 'probability': sq['probability'],
+                # Directional probability (reference-calibrated). Old
+                # fields above untouched — the signal scanner keeps using
+                # 'probability' (compression energy) unchanged.
+                'squeeze_prob': sq_prob,
+                'squeeze_dir': sq_dir,
+                'fuel_above_usd': round(fuel_above, 0),
+                'fuel_below_usd': round(fuel_below, 0),
                 'bars_in_squeeze': sq['bars_in_squeeze'],
                 'momentum_rising': sq['momentum_rising'],
                 'momentum_side': 1 if sq['momentum'] > 0 else (-1 if sq['momentum'] < 0 else 0),

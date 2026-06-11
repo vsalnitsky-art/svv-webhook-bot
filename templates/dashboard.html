@@ -3453,6 +3453,7 @@ async function loadLiqmap() {
             candles: (candleData && candleData.ok) ? (candleData.series || []) : [],
             liq: (liqData && liqData.ok) ? {
                 clusters: liqData.cluster_zones || [],
+                levels: liqData.levels || [],
                 mark_price: liqData.mark_price,
                 quality: liqData.data_quality || {},
             } : null,
@@ -3522,8 +3523,23 @@ async function loadLiqmap() {
                 mFill.style.width = '0%';
                 mInfo.textContent = `warming up (${Math.round(manip.observed_sec)}s / 120s)`;
                 if (mDir) mDir.style.display = 'none';
+            } else if (manip.low_sample) {
+                // === Small-sample guard (2026-06-12) ===
+                // 5-7 events made the % statistically meaningless (±20
+                // per event). Until MIN_EVENTS accumulate, show the
+                // collection progress; the shrunk % feeds the scanner.
+                const n = manip.events_n || 0;
+                const need = manip.min_events || 10;
+                mBig.textContent = '…';
+                mBig.style.color = '#888';
+                mFill.style.width = (manip.pct || 0) + '%';
+                mInfo.textContent =
+                    `збір статистики (${n}/${need} подій · 30m вікно)` +
+                    (manip.spoofed_usd > 0
+                        ? ` · pulled ${liqmapFormatUsd(manip.spoofed_usd)}` : '');
+                if (mDir) mDir.style.display = 'none';
             } else {
-                const p = manip.pct || 0;
+                const p = manip.pct || 0;   // USD-weighted, sample-shrunk
                 mFill.style.width = p + '%';
                 mBig.textContent = p.toFixed(0) + '%';
                 mBig.style.color = p >= 60 ? '#c084fc' : (p >= 30 ? '#a78bfa' : '#888');
@@ -3533,8 +3549,8 @@ async function loadLiqmap() {
                 mInfo.textContent =
                     `${manip.spoof_count} spoofed${ba} / ${manip.persistent_count} stable` +
                     ` · ${manip.window_min}m` +
-                    (manip.spoofed_usd > 0
-                        ? ` · pulled ${liqmapFormatUsd(manip.spoofed_usd)}` : '');
+                    ` · pulled ${liqmapFormatUsd(manip.spoofed_usd || 0)}` +
+                    ` vs stable ${liqmapFormatUsd(manip.persist_usd || 0)}`;
                 // Direction chip — WHERE the fake liquidity is painted:
                 //   asks spoofed → fake resistance  → ↑ LONG-leaning
                 //   bids spoofed → fake support     → ↓ SHORT-leaning
@@ -3643,7 +3659,18 @@ function liqmapDrawChart(data) {
     // === Noise filter applied HERE (before Y domain) ===
     // Keep top 10 by USD and only zones ≥ 2% of the largest. Dust zones
     // would otherwise both clutter labels AND stretch the Y domain.
-    const liqClustersRaw = (data.liq && data.liq.clusters) ? data.liq.clusters : [];
+    // === Ladder levels (tori-style, 2026-06-12) ===
+    // Primary liq layer is now per-level horizontal bars: fine 0.25%
+    // buckets with 8h-half-life decay computed server-side. The old wide
+    // cluster zones remain only as a fallback for stale backends.
+    const liqLevelsRaw = (data.liq && data.liq.levels) ? data.liq.levels : [];
+    let liqLevels = [];
+    if (liqLevelsRaw.length > 0) {
+        const maxLvl = Math.max(...liqLevelsRaw.map(l => l.usd || 0));
+        liqLevels = liqLevelsRaw.filter(l => (l.usd || 0) >= maxLvl * 0.03);
+    }
+    const liqClustersRaw = (liqLevels.length === 0 && data.liq && data.liq.clusters)
+        ? data.liq.clusters : [];
     let liqClusters = [];
     if (liqClustersRaw.length > 0) {
         const sortedLiq = liqClustersRaw.slice().sort((a, b) => (b.total_usd||0) - (a.total_usd||0));
@@ -3669,6 +3696,11 @@ function liqmapDrawChart(data) {
         if (!inRange(zc)) continue;
         if (zc < minP) minP = zc;
         if (zc > maxP) maxP = zc;
+    }
+    for (const lv of liqLevels) {
+        if (!inRange(lv.price)) continue;
+        if (lv.price < minP) minP = lv.price;
+        if (lv.price > maxP) maxP = lv.price;
     }
     // Recent candles: last 40% of the array (most relevant price action)
     if (candles.length > 0) {
@@ -3877,6 +3909,57 @@ function liqmapDrawChart(data) {
     // the "Unified LEFT stack + RIGHT price rail" section below.)
 
     // ===========================
+    // LIQ LADDER (tori-style, 2026-06-12) — horizontal bars per level
+    // ===========================
+    // One bar per decayed liq level: anchored at the RIGHT edge of the
+    // plot, extending LEFT proportionally to USD, $-label at the bar's
+    // left tip. Teal/green above price (short liqs), rose below (long
+    // liqs) — same semantics as the zone view it replaces. Bars sit
+    // BEHIND candles so price action stays readable.
+    const ladderRail = [];   // level prices for the right rail (merged later)
+    if (liqLevels.length > 0) {
+        const ladderG = g.append('g').attr('class', 'liqmap-ladder');
+        const maxLvlUsd = Math.max(...liqLevels.map(l => l.usd || 0));
+        const BAR_MAX_W = innerW * 0.52;
+        const BAR_MIN_W = innerW * 0.06;
+        const BAR_H = 5;
+        for (const lv of liqLevels) {
+            const y = yScale(lv.price);
+            if (y < 0 || y > innerH) continue;
+            const isShortSide = lv.price > mid;   // above price = short liqs
+            const color = isShortSide ? '#a3e635' : '#fb7185';
+            const len = BAR_MIN_W +
+                (maxLvlUsd > 0 ? (lv.usd / maxLvlUsd) : 0) * (BAR_MAX_W - BAR_MIN_W);
+            ladderG.append('rect')
+                .attr('x', innerW - len).attr('y', y - BAR_H / 2)
+                .attr('width', len).attr('height', BAR_H)
+                .attr('rx', 2).attr('ry', 2)
+                .attr('fill', color)
+                .attr('opacity', 0.42);
+            // $-label at the left tip of the bar
+            const txt = '⚡' + liqmapFormatUsd(lv.usd);
+            const tw = txt.length * 6.2 + 10;
+            const lg = ladderG.append('g')
+                .attr('transform', `translate(${Math.max(2, innerW - len - tw - 4)}, ${y})`);
+            lg.append('rect')
+                .attr('x', 0).attr('y', -8)
+                .attr('width', tw).attr('height', 15)
+                .attr('rx', 3).attr('ry', 3)
+                .attr('fill', '#0a0d12')
+                .attr('stroke', color).attr('stroke-width', 0.9)
+                .attr('opacity', 0.95);
+            lg.append('text')
+                .attr('x', 5).attr('y', 4)
+                .attr('fill', color).attr('font-size', '10px')
+                .attr('font-weight', 700)
+                .attr('font-family', 'monospace')
+                .text(txt);
+            // Price of the level joins the right rail
+            ladderRail.push({price: lv.price, color});
+        }
+    }
+
+    // ===========================
     // Candlesticks — always rendered when data is present
     // ===========================
     if (candles.length > 0) {
@@ -3984,7 +4067,7 @@ function liqmapDrawChart(data) {
     // Right rail shares the same lines but pins to TRUE y positions
     // (collision handling happens at render, with mid exclusion).
     const rightPriceEntries = leftEntries.map(
-        e => ({y: e.y, color: e.color, price: e.price}));
+        e => ({y: e.y, color: e.color, price: e.price})).concat(ladderRail);
 
     // De-overlap + clamp the left stack
     leftEntries.sort((a, b) => a.y - b.y);
@@ -4165,8 +4248,8 @@ function liqmapDrawChart(data) {
     }
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#2dd4bf').attr('stroke-width', 4), 'bid wall (support)');
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#f59e0b').attr('stroke-width', 4), 'ask wall (resistance)');
-    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#fb7185').attr('opacity', 0.35), '⚡ long liq zone (below)');
-    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#a3e635').attr('opacity', 0.35), '⚡ short liq zone (above)');
+    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#fb7185').attr('opacity', 0.35), '⚡ long liq levels (below)');
+    legendItem(sel => sel.append('rect').attr('width', 16).attr('height', 8).attr('fill', '#a3e635').attr('opacity', 0.35), '⚡ short liq levels (above)');
     legendItem(sel => sel.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 4).attr('y2', 4).attr('stroke', '#fff').attr('stroke-dasharray', '3,2').attr('stroke-width', 1), 'mid price');
 }
 
@@ -4814,15 +4897,38 @@ async function liqmapLoadPressure() {
         const sqInfo = document.getElementById('liqmap-squeeze-info');
         const sqDir = document.getElementById('liqmap-squeeze-dir');
         if (sq && sq.ok) {
-            const p = sq.probability || 0;
-            sqFill.style.width = p + '%';
-            if (sq.squeeze_on) {
-                sqBig.textContent = p.toFixed(0) + '%';
+            // === Directional Squeeze Probability (2026-06-12) ===
+            // Main number = reference-calibrated squeeze_prob (how hard
+            // the nearer liq fuel pulls), colored by direction. TTM
+            // compression demoted to the info line as the timing factor.
+            const hasDir = typeof sq.squeeze_prob === 'number'
+                           && sq.squeeze_dir && sq.squeeze_dir !== 'flat'
+                           && (sq.fuel_above_usd > 0 || sq.fuel_below_usd > 0);
+            const p = sq.probability || 0;          // compression (timing)
+            const showP = hasDir ? sq.squeeze_prob : p;
+            sqFill.style.width = showP + '%';
+            sqBig.textContent = showP.toFixed(0) + '%';
+            if (hasDir) {
+                sqBig.style.color = sq.squeeze_dir === 'long' ? '#4ade80' : '#f87171';
+                if (sqDir) {
+                    sqDir.style.display = '';
+                    sqDir.textContent = sq.squeeze_dir === 'long'
+                        ? '↑ squeeze вгору (shorts)' : '↓ squeeze вниз (longs)';
+                    sqDir.className = 'liqmap-sq-dir ' +
+                        (sq.squeeze_dir === 'long' ? 'sq-long' : 'sq-short');
+                    sqDir.title = `Паливо: ↑${liqmapFormatUsd(sq.fuel_above_usd||0)}` +
+                                  ` / ↓${liqmapFormatUsd(sq.fuel_below_usd||0)}` +
+                                  ` (дистанційно зважене) · ` + sqDir.textContent;
+                }
+                const compTxt = sq.squeeze_on
+                    ? `compression ${sq.band} ${p.toFixed(0)}% · ${sq.bars_in_squeeze} bars`
+                    : 'без компресії';
+                sqInfo.textContent = `↑${liqmapFormatUsd(sq.fuel_above_usd||0)}` +
+                    ` / ↓${liqmapFormatUsd(sq.fuel_below_usd||0)}` +
+                    ` · ${compTxt} (${tf})`;
+            } else if (sq.squeeze_on) {
+                // No liq data → compression-only fallback (old view)
                 sqBig.style.color = p >= 70 ? '#f87171' : '#fbbf24';
-                // Expansion-direction chip (TTM momentum):
-                //   side>0  → LONG bias  (green chip)
-                //   side<0  → SHORT bias (red chip)
-                //   rising for negative momentum = SHORT weakening, etc.
                 if (sqDir) {
                     sqDir.style.display = '';
                     if (sq.momentum_side > 0) {
@@ -4839,7 +4945,7 @@ async function liqmapLoadPressure() {
                         sqDir.textContent = '· FLAT';
                         sqDir.className = 'liqmap-sq-dir sq-flat';
                     }
-                    sqDir.title = sqDir.textContent;  // full text when truncated
+                    sqDir.title = sqDir.textContent;
                 }
                 sqInfo.textContent = `ON · ${sq.bars_in_squeeze} bars (${tf})` +
                     (sq.band && sq.band !== 'off'
@@ -4850,6 +4956,7 @@ async function liqmapLoadPressure() {
                 sqBig.style.color = '#666';
                 sqInfo.textContent = `no compression (${tf})`;
                 if (sqDir) sqDir.style.display = 'none';
+                sqFill.style.width = '0%';
             }
         } else if (sqBig) {
             sqBig.textContent = '—';

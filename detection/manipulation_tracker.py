@@ -36,7 +36,10 @@ import threading
 from collections import deque
 from typing import Dict, Optional
 
-WINDOW_SEC = 600          # rolling stats window (10 min)
+WINDOW_SEC = 1800         # rolling stats window (30 min) — 10 min gave
+                          # 5-10 events, the % jumped ±20 per event
+MIN_EVENTS = 10           # below this the % is statistically meaningless
+                          # (UI shows 'collecting N/10', scanner shrinks)
 SPOOF_MAX_LIFE = 60       # wall pulled faster than this → spoof candidate
 PERSIST_MIN_LIFE = 90     # wall alive this long → counted as genuine
 VANISH_GRACE_SEC = 6      # must be absent ~3 polls before declaring gone
@@ -201,6 +204,19 @@ class ManipulationTracker:
             # dir_score in [-1, +1]: +1 = all spoofed USD on asks (LONG),
             # -1 = all on bids (SHORT). USD-weighted, not count-weighted —
             # one $50M fake wall says more than five $100K ones.
+            # === USD-weighted manipulation % (2026-06-12) ===
+            # Count-based % treated a pulled $80M wall the same as a
+            # pulled $50K one and was hostage to tiny denominators.
+            # Main metric now: share of WALL CAPITAL that proved fake.
+            spoofed_usd_total = sum(s[1] for s in spoofs)
+            persist_usd_total = sum(p[1] for p in persists)
+            usd_den = spoofed_usd_total + persist_usd_total
+            pct_usd = (spoofed_usd_total / usd_den * 100) if usd_den > 0 else 0.0
+            # Bayesian shrinkage toward 0 for small samples: with n events
+            # the value is trusted n/(n+MIN_EVENTS) — 5 events at raw 80%
+            # report 27%, not a screaming purple gauge.
+            shrink = denom / (denom + MIN_EVENTS) if denom > 0 else 0.0
+            pct_shrunk = pct_usd * shrink
             spoof_bid_usd = sum(s[1] for s in spoofs if s[4] == 'bid')
             spoof_ask_usd = sum(s[1] for s in spoofs if s[4] == 'ask')
             spoof_bid_n = sum(1 for s in spoofs if s[4] == 'bid')
@@ -213,7 +229,14 @@ class ManipulationTracker:
                       for (_, u, lt, p, sd) in spoofs[-5:]]
             return {
                 'ok': True,
-                'pct': round(pct, 1),
+                # primary gauge value: USD-weighted, sample-shrunk
+                'pct': round(pct_shrunk, 1),
+                'pct_count': round(pct, 1),       # legacy count-based
+                'pct_usd_raw': round(pct_usd, 1), # USD-based, unshrunk
+                'low_sample': denom < MIN_EVENTS,
+                'events_n': denom,
+                'min_events': MIN_EVENTS,
+                'persist_usd': round(persist_usd_total, 0),
                 'spoof_count': n_s,
                 'persistent_count': n_p,
                 'spoofed_usd': round(sum(s[1] for s in spoofs), 0),

@@ -200,12 +200,58 @@ class LiquidationMapDaemon:
         agg_list = sorted(agg.values(), key=lambda b: b['bucket_price'])
         clusters = find_clusters(agg_list, mark_price)
         
+        # === Ladder levels (2026-06-12, tori-style calibration) ===
+        # Per-LEVEL aggregation with TIME DECAY — the visual unit of the
+        # new chart. Two deliberate differences from cluster_zones:
+        #   1) fine price buckets (LEVEL_GRID_PCT of mark) instead of wide
+        #      multi-percent zones — a zone summing a whole band into one
+        #      $480M number inflated the scale ~100× vs per-level reality;
+        #   2) exponential decay (half-life LEVEL_HALFLIFE_H): an OI build
+        #      from 20 hours ago is mostly stale — positions close, stops
+        #      move. Decay makes the ladder show the LIVE pool estimate.
+        # Mitigated events are already excluded above.
+        LEVEL_GRID_PCT = 0.0025      # 0.25% buckets
+        LEVEL_HALFLIFE_H = 8.0
+        LEVEL_TOP_N_PER_SIDE = 9
+        now_ts = latest_oi['ts']
+        grid = max(mark_price * LEVEL_GRID_PCT, 1e-12)
+        lvl: Dict[tuple, Dict] = {}
+        for e in events:
+            if e['mitigated_at_ts']:
+                continue
+            age_h = max(0.0, (now_ts - e['ts']) / 3600.0)
+            w = 0.5 ** (age_h / LEVEL_HALFLIFE_H)
+            lp = (int(e['bucket_price'] / grid) + 0.5) * grid
+            key = (round(lp, 12), e['side'])
+            rec = lvl.get(key)
+            if rec is None:
+                rec = {'price': lp, 'side': e['side'],
+                       'usd': 0.0, 'raw_usd': 0.0, 'newest_ts': e['ts']}
+                lvl[key] = rec
+            rec['usd'] += e['usd_added'] * w
+            rec['raw_usd'] += e['usd_added']
+            if e['ts'] > rec['newest_ts']:
+                rec['newest_ts'] = e['ts']
+        # Top-N per side by decayed USD; tiny residue levels are noise
+        longs = sorted((r for r in lvl.values() if r['side'] == 'long'),
+                       key=lambda r: -r['usd'])[:LEVEL_TOP_N_PER_SIDE]
+        shorts = sorted((r for r in lvl.values() if r['side'] == 'short'),
+                        key=lambda r: -r['usd'])[:LEVEL_TOP_N_PER_SIDE]
+        levels = sorted(longs + shorts, key=lambda r: r['price'])
+        levels = [{'price': round(r['price'], 10),
+                   'usd': round(r['usd'], 0),
+                   'raw_usd': round(r['raw_usd'], 0),
+                   'side': r['side'],
+                   'age_min': round((now_ts - r['newest_ts']) / 60.0, 0)}
+                  for r in levels if r['usd'] >= 1000]
+        
         return {
             'symbol': symbol,
             'mark_price': mark_price,
             'mark_price_ts': latest_oi['ts'],
             'events': events,
             'cluster_zones': clusters,
+            'levels': levels,
             'data_quality': self._data_quality(symbol),
             'last_update': datetime.fromtimestamp(
                 latest_oi['ts'], tz=timezone.utc).isoformat(),
