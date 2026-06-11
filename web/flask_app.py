@@ -88,7 +88,7 @@ def create_app():
             print(f"[APP] Failed to start scheduler: {e}")
     
     # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False, 'apihealth': False}
     
     @app.before_request
     def _maybe_auto_start():
@@ -107,6 +107,15 @@ def create_app():
                 vf.start()
             except Exception as e:
                 print(f"[APP] Failed to start Volume Flow: {e}")
+        
+        # API Health monitor — always start (lightweight, 6 checks / 2 min)
+        if not _auto_started['apihealth']:
+            _auto_started['apihealth'] = True
+            try:
+                from detection.api_health import init_api_health_monitor
+                init_api_health_monitor().start()
+            except Exception as e:
+                print(f"[APP] Failed to start API Health monitor: {e}")
         
         # Liquidity Map
         if not _auto_started['liq']:
@@ -4124,6 +4133,15 @@ def register_api_routes(app):
             })
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/health/apis')
+    def api_health_apis():
+        """Current status of every external API the bot depends on."""
+        from detection.api_health import get_api_health_monitor
+        mon = get_api_health_monitor()
+        if mon is None:
+            return jsonify({'running': False, 'services': []})
+        return jsonify(mon.get_status())
     
     @app.route('/api/liqmap-signal/status')
     def api_liqsig_status():
