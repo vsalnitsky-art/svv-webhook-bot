@@ -3251,7 +3251,21 @@ function liqmapFormatUsd(v) {
 
 function liqmapFormatPrice(v) {
     if (!v || !isFinite(v)) return '—';
-    return v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    // Adaptive precision (2026-06-11): fixed 2 decimals turned every
+    // sub-dollar coin into noise — STRK at 0.03516 rendered as "0.04"
+    // on the whole price rail and the mid pill. Scale decimals with
+    // magnitude so ~4-5 significant digits always survive.
+    const a = Math.abs(v);
+    let dec;
+    if (a >= 1000) dec = 2;          // 61,202.65
+    else if (a >= 10) dec = 2;       // 84.13
+    else if (a >= 1) dec = 3;        // 2.417
+    else if (a >= 0.1) dec = 4;      // 0.4136
+    else if (a >= 0.01) dec = 5;     // 0.03516
+    else if (a >= 0.001) dec = 6;    // 0.002871
+    else dec = 8;                    // 1000PEPE-style micro prices
+    return v.toLocaleString('en-US',
+        {minimumFractionDigits: dec, maximumFractionDigits: dec});
 }
 
 function liqmapTimeAgo(ts) {
@@ -3732,21 +3746,24 @@ function liqmapDrawChart(data) {
     // ===========================
     // Title bar
     // ===========================
-    // Symbol gets a large accent treatment (user request: bigger font,
-    // more visible color); TF + layer info stays small and muted.
-    const titleT = svg.append('text')
+    // Symbol and TF-info are SEPARATE <text> nodes (2026-06-11): with
+    // tspans inside one node, selecting/copying the symbol grabbed the
+    // suffix too ("STRKUSDT1h"). Independent nodes select independently.
+    svg.append('text')
         .attr('x', margin.left).attr('y', 18)
-        .attr('font-family', 'system-ui, sans-serif');
-    titleT.append('tspan')
+        .attr('font-family', 'system-ui, sans-serif')
         .attr('fill', '#38bdf8')
         .attr('font-size', '16px')
         .attr('font-weight', 800)
         .attr('letter-spacing', '0.5px')
         .text(liqmapState.symbol);
-    titleT.append('tspan')
+    // Offset estimated from symbol length (16px bold ≈ 9.5px/char)
+    svg.append('text')
+        .attr('x', margin.left + liqmapState.symbol.length * 9.5 + 14)
+        .attr('y', 18)
+        .attr('font-family', 'system-ui, sans-serif')
         .attr('fill', '#778')
         .attr('font-size', '11.5px')
-        .attr('dx', 10)
         .text(`${liqmapState.candleTF || '15m'} · walls + liq zones`);
     svg.append('text')
         .attr('x', W - margin.right).attr('y', 14)
