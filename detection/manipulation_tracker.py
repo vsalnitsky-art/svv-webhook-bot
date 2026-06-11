@@ -191,6 +191,23 @@ class ManipulationTracker:
             n_p = len(persists)
             denom = n_s + n_p
             pct = (n_s / denom * 100) if denom > 0 else 0
+            # === Side breakdown (2026-06-11) ===
+            # Spoof tuple: (ts, usd, lifetime, price, side). Where the fake
+            # liquidity is painted carries direction:
+            #   spoofed ASKS = fake resistance (suppress the look of price
+            #                  while accumulating)        → LONG-leaning
+            #   spoofed BIDS = fake support (lure longs /
+            #                  prop price before pulling) → SHORT-leaning
+            # dir_score in [-1, +1]: +1 = all spoofed USD on asks (LONG),
+            # -1 = all on bids (SHORT). USD-weighted, not count-weighted —
+            # one $50M fake wall says more than five $100K ones.
+            spoof_bid_usd = sum(s[1] for s in spoofs if s[4] == 'bid')
+            spoof_ask_usd = sum(s[1] for s in spoofs if s[4] == 'ask')
+            spoof_bid_n = sum(1 for s in spoofs if s[4] == 'bid')
+            spoof_ask_n = sum(1 for s in spoofs if s[4] == 'ask')
+            side_den = spoof_bid_usd + spoof_ask_usd
+            dir_score = ((spoof_ask_usd - spoof_bid_usd) / side_den
+                         if side_den > 0 else 0.0)
             recent = [{'price': p, 'usd': round(u, 0),
                        'lifetime_s': round(lt, 1), 'side': sd}
                       for (_, u, lt, p, sd) in spoofs[-5:]]
@@ -200,6 +217,11 @@ class ManipulationTracker:
                 'spoof_count': n_s,
                 'persistent_count': n_p,
                 'spoofed_usd': round(sum(s[1] for s in spoofs), 0),
+                'spoof_bid_usd': round(spoof_bid_usd, 0),
+                'spoof_ask_usd': round(spoof_ask_usd, 0),
+                'spoof_bid_count': spoof_bid_n,
+                'spoof_ask_count': spoof_ask_n,
+                'dir_score': round(dir_score, 3),
                 'window_min': WINDOW_SEC // 60,
                 'warming_up': observed < 120,
                 'observed_sec': round(observed, 0),

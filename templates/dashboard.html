@@ -121,6 +121,7 @@
             <div class="liqmap-ind-card liqmap-ind-manip">
                 <div class="liqmap-ind-head">
                     <span class="liqmap-ind-title">🎭 MANIPULATION</span>
+                    <span class="liqmap-sq-dir" id="liqmap-manip-dir" style="display:none">—</span>
                     <span class="liqmap-ind-big" id="liqmap-manip-big">—</span>
                 </div>
                 <div class="liqmap-ind-badges">
@@ -3445,22 +3446,51 @@ async function loadLiqmap() {
         const mBig = document.getElementById('liqmap-manip-big');
         const mFill = document.getElementById('liqmap-manip-fill');
         const mInfo = document.getElementById('liqmap-manip-info');
+        const mDir = document.getElementById('liqmap-manip-dir');
         if (manip && mBig) {
             if (manip.warming_up) {
                 mBig.textContent = '…';
                 mBig.style.color = '#666';
                 mFill.style.width = '0%';
                 mInfo.textContent = `warming up (${Math.round(manip.observed_sec)}s / 120s)`;
+                if (mDir) mDir.style.display = 'none';
             } else {
                 const p = manip.pct || 0;
                 mFill.style.width = p + '%';
                 mBig.textContent = p.toFixed(0) + '%';
                 mBig.style.color = p >= 60 ? '#c084fc' : (p >= 30 ? '#a78bfa' : '#888');
+                const ba = (manip.spoof_bid_count || manip.spoof_ask_count)
+                    ? ` (B${manip.spoof_bid_count || 0}/A${manip.spoof_ask_count || 0})`
+                    : '';
                 mInfo.textContent =
-                    `${manip.spoof_count} spoofed / ${manip.persistent_count} stable` +
+                    `${manip.spoof_count} spoofed${ba} / ${manip.persistent_count} stable` +
                     ` · ${manip.window_min}m` +
                     (manip.spoofed_usd > 0
                         ? ` · pulled ${liqmapFormatUsd(manip.spoofed_usd)}` : '');
+                // Direction chip — WHERE the fake liquidity is painted:
+                //   asks spoofed → fake resistance  → ↑ LONG-leaning
+                //   bids spoofed → fake support     → ↓ SHORT-leaning
+                // dir_score is USD-weighted in [-1,+1]; |x|<=0.25 → MIXED.
+                if (mDir) {
+                    const ds = manip.dir_score || 0;
+                    if (!manip.spoof_count) {
+                        mDir.style.display = 'none';
+                    } else {
+                        mDir.style.display = '';
+                        if (ds > 0.25) {
+                            mDir.textContent = '↑ LONG · фальш-опір (asks)';
+                            mDir.className = 'liqmap-sq-dir sq-long';
+                        } else if (ds < -0.25) {
+                            mDir.textContent = '↓ SHORT · фальш-підтримка (bids)';
+                            mDir.className = 'liqmap-sq-dir sq-short';
+                        } else {
+                            mDir.textContent = '· MIXED';
+                            mDir.className = 'liqmap-sq-dir sq-flat';
+                        }
+                        mDir.title = `Зняті фальшиві стіни: bids ${liqmapFormatUsd(manip.spoof_bid_usd || 0)}` +
+                                     ` · asks ${liqmapFormatUsd(manip.spoof_ask_usd || 0)}`;
+                    }
+                }
             }
         }
     } catch (err) {
