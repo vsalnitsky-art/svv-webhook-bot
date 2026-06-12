@@ -3519,9 +3519,12 @@ def register_api_routes(app):
         if not tm:
             return jsonify({'ok': False, 'reason': 'Not initialized'})
         data = request.get_json() or {}
+        match = data.get('match')
+        if match:
+            return jsonify(tm.delete_closed_trade(match=match))
         idx = data.get('index')
         if idx is None:
-            return jsonify({'ok': False, 'reason': 'index required'})
+            return jsonify({'ok': False, 'reason': 'index or match required'})
         return jsonify(tm.delete_closed_trade(idx))
     
     @app.route('/api/tm/shadow_closed/delete', methods=['POST'])
@@ -3534,10 +3537,22 @@ def register_api_routes(app):
         if not tm:
             return jsonify({'ok': False, 'reason': 'Not initialized'})
         data = request.get_json() or {}
+        match = data.get('match')
+        if match:
+            return jsonify(tm.delete_shadow_closed_trade(match=match))
         idx = data.get('index')
         if idx is None:
-            return jsonify({'ok': False, 'reason': 'index required'})
+            return jsonify({'ok': False, 'reason': 'index or match required'})
         return jsonify(tm.delete_shadow_closed_trade(idx))
+    
+    @app.route('/api/tm/shadow_closed/clear', methods=['POST'])
+    def api_tm_shadow_closed_clear():
+        """Wipe the entire Recent Paper Closes list (user-confirmed)."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        return jsonify(tm.clear_shadow_closed())
     
     @app.route('/api/validator/toggle', methods=['GET', 'POST'])
     def api_validator_toggle():

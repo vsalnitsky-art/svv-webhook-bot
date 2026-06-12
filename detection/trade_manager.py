@@ -3252,35 +3252,79 @@ class TradeManager:
         return {'ok': True, 'position': dict(pos),
                 'entry_price': entry_price}
     
-    def delete_closed_trade(self, idx: int) -> Dict:
-        """Permanently remove a closed real trade by index. Stats are
-        recomputed on the fly inside get_state(), so removing the entry from
-        the list is enough — the next state poll will show updated PnL/win
-        rate as if the trade never happened.
+    @staticmethod
+    def _pop_closed_match(lst: list, match: Dict):
+        """Remove ONE record matching (symbol, closed_at, exit_price),
+        searching from the end (newest first). Returns the record or None.
+        
+        Why match-based (2026-06-12): get_state() ships only the LAST 50
+        closes to the UI, while index-based deletion popped from the FULL
+        list — with >50 records the indexes diverged and deletes hit the
+        wrong (hidden, old) entry, so visible rows "refused to delete".
+        A (symbol, closed_at, exit_price) triple identifies a close
+        unambiguously regardless of list length or slicing.
+        """
+        sym = match.get('symbol')
+        cat = match.get('closed_at')
+        xp = match.get('exit_price')
+        for i in range(len(lst) - 1, -1, -1):
+            c = lst[i]
+            if (c.get('symbol') == sym
+                    and c.get('closed_at') == cat
+                    and (xp is None or c.get('exit_price') == xp)):
+                return lst.pop(i)
+        return None
+    
+    def delete_closed_trade(self, idx=None, match: Dict = None) -> Dict:
+        """Permanently remove a closed real trade — by match (preferred,
+        see _pop_closed_match) or legacy index. Stats are recomputed on
+        the fly inside get_state(), so removing the entry from the list
+        is enough — the next state poll will show updated PnL/win rate
+        as if the trade never happened.
         """
         with self._lock:
-            try:
-                idx = int(idx)
-            except Exception:
-                return {'ok': False, 'reason': 'invalid index'}
-            if idx < 0 or idx >= len(self._closed_trades):
-                return {'ok': False, 'reason': 'index out of range'}
-            removed = self._closed_trades.pop(idx)
+            if match:
+                removed = self._pop_closed_match(self._closed_trades, match)
+                if removed is None:
+                    return {'ok': False, 'reason': 'record not found'}
+            else:
+                try:
+                    idx = int(idx)
+                except Exception:
+                    return {'ok': False, 'reason': 'invalid index'}
+                if idx < 0 or idx >= len(self._closed_trades):
+                    return {'ok': False, 'reason': 'index out of range'}
+                removed = self._closed_trades.pop(idx)
         self._persist_closed_trades()
         return {'ok': True, 'removed': removed.get('symbol', '')}
     
-    def delete_shadow_closed_trade(self, idx: int) -> Dict:
-        """Permanently remove a closed paper trade by index."""
+    def delete_shadow_closed_trade(self, idx=None, match: Dict = None) -> Dict:
+        """Permanently remove a closed paper trade — by match (preferred)
+        or legacy index (see _pop_closed_match for the why)."""
         with self._lock:
-            try:
-                idx = int(idx)
-            except Exception:
-                return {'ok': False, 'reason': 'invalid index'}
-            if idx < 0 or idx >= len(self._shadow_closed):
-                return {'ok': False, 'reason': 'index out of range'}
-            removed = self._shadow_closed.pop(idx)
+            if match:
+                removed = self._pop_closed_match(self._shadow_closed, match)
+                if removed is None:
+                    return {'ok': False, 'reason': 'record not found'}
+            else:
+                try:
+                    idx = int(idx)
+                except Exception:
+                    return {'ok': False, 'reason': 'invalid index'}
+                if idx < 0 or idx >= len(self._shadow_closed):
+                    return {'ok': False, 'reason': 'index out of range'}
+                removed = self._shadow_closed.pop(idx)
         self._persist_shadow_closed()
         return {'ok': True, 'removed': removed.get('symbol', '')}
+    
+    def clear_shadow_closed(self) -> Dict:
+        """Wipe the entire Recent Paper Closes history. Stats recompute
+        from the (now empty) list on the next state poll."""
+        with self._lock:
+            n = len(self._shadow_closed)
+            self._shadow_closed = []
+        self._persist_shadow_closed()
+        return {'ok': True, 'cleared': n}
     
     # ============================================================
     # Notifications
