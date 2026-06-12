@@ -37,6 +37,16 @@ from detection.liquidation_map.bucket_aggregator import (
 
 
 BACKGROUND_SYMBOLS = ['BTCUSDT', 'ETHUSDT']
+
+# Decay profiles for ladder levels: name → (half-life hours, window hours).
+# 'tori' is the default — calibrated against the reference map the user
+# trades with (most aggressive suppression of stale OI builds).
+DECAY_PROFILES = {
+    'full':    (8.0, 24.0),
+    'fresh4h': (4.0, 24.0),
+    'win12h':  (8.0, 12.0),
+    'tori':    (4.0, 12.0),
+}
 SCAN_INTERVAL_SEC = 60
 ON_DEMAND_TTL_SEC = 1800           # 30 min
 PARALLEL_PROVIDERS = 4              # workers in fetch pool
@@ -133,7 +143,8 @@ class LiquidationMapDaemon:
                                           if s not in BACKGROUND_SYMBOLS]
     
     def get_state(self, symbol: str, lookback_hours: int = 24,
-                    include_mitigated: bool = False) -> Dict:
+                    include_mitigated: bool = False,
+                    profile: str = 'tori') -> Dict:
         """Build the response for /api/liquidation-map/state.
         
         Returns:
@@ -206,18 +217,30 @@ class LiquidationMapDaemon:
         #   1) fine price buckets (LEVEL_GRID_PCT of mark) instead of wide
         #      multi-percent zones — a zone summing a whole band into one
         #      $480M number inflated the scale ~100× vs per-level reality;
-        #   2) exponential decay (half-life LEVEL_HALFLIFE_H): an OI build
-        #      from 20 hours ago is mostly stale — positions close, stops
-        #      move. Decay makes the ladder show the LIVE pool estimate.
+        #   2) exponential decay (profile half-life): an OI build from 20
+        #      hours ago is mostly stale — positions close, stops move.
         # Mitigated events are already excluded above.
+        #
+        # Decay PROFILES (2026-06-12 v2, user-selectable; quantitative
+        # comparison on a uniform 24h event stream — retained share of
+        # raw USD mass:  full 42% · fresh4h 24% · win12h 31% · tori 17%):
+        #   full    8h half-life / 24h window — the complete map
+        #   fresh4h 4h / 24h — old builds fade fast, window stays wide
+        #   win12h  8h / 12h — hard cutoff, gentle fading inside
+        #   tori    4h / 12h — both knobs; closest to the reference map
+        prof = DECAY_PROFILES.get(profile or 'tori', DECAY_PROFILES['tori'])
         LEVEL_GRID_PCT = 0.0025      # 0.25% buckets
-        LEVEL_HALFLIFE_H = 8.0
+        LEVEL_HALFLIFE_H = prof[0]
+        LEVEL_WINDOW_H = prof[1]
         LEVEL_TOP_N_PER_SIDE = 9
         now_ts = latest_oi['ts']
         grid = max(mark_price * LEVEL_GRID_PCT, 1e-12)
+        window_cut = now_ts - LEVEL_WINDOW_H * 3600.0
         lvl: Dict[tuple, Dict] = {}
         for e in events:
             if e['mitigated_at_ts']:
+                continue
+            if e['ts'] < window_cut:
                 continue
             age_h = max(0.0, (now_ts - e['ts']) / 3600.0)
             w = 0.5 ** (age_h / LEVEL_HALFLIFE_H)
@@ -252,6 +275,7 @@ class LiquidationMapDaemon:
             'events': events,
             'cluster_zones': clusters,
             'levels': levels,
+            'decay_profile': profile if profile in DECAY_PROFILES else 'tori',
             'data_quality': self._data_quality(symbol),
             'last_update': datetime.fromtimestamp(
                 latest_oi['ts'], tz=timezone.utc).isoformat(),

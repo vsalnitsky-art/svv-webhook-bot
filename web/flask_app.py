@@ -3913,12 +3913,44 @@ def register_api_routes(app):
             if symbol not in BACKGROUND_SYMBOLS:
                 lm.request_symbol(symbol)
             
+            # Decay profile: explicit query param wins, otherwise the
+            # user's persisted choice (default 'tori' — reference-style)
+            profile = request.args.get('profile')
+            if not profile:
+                try:
+                    profile = get_db().get_setting(
+                        'liqmap_decay_profile', 'tori')
+                except Exception:
+                    profile = 'tori'
             state = lm.get_state(symbol=symbol,
                                    lookback_hours=lookback,
-                                   include_mitigated=include_mitigated)
+                                   include_mitigated=include_mitigated,
+                                   profile=profile)
             return jsonify({'ok': True, **state})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
+    
+    @app.route('/api/liquidation-map/decay-profile', methods=['GET', 'POST'])
+    def api_liqmap_decay_profile():
+        """Get/set the ladder decay profile (full | fresh4h | win12h |
+        tori). Persisted in DB so every consumer (state endpoint, squeeze
+        probability) reads the same physics."""
+        from detection.liquidation_map.liquidation_map import DECAY_PROFILES
+        db = get_db()
+        if request.method == 'POST':
+            body = request.get_json(silent=True) or {}
+            prof = str(body.get('profile', '')).strip()
+            if prof not in DECAY_PROFILES:
+                return jsonify({'ok': False,
+                                'reason': f'unknown profile {prof}'}), 400
+            db.set_setting('liqmap_decay_profile', prof)
+            return jsonify({'ok': True, 'profile': prof})
+        cur = db.get_setting('liqmap_decay_profile', 'tori')
+        if cur not in DECAY_PROFILES:
+            cur = 'tori'
+        return jsonify({'ok': True, 'profile': cur,
+                        'profiles': {k: {'halflife_h': v[0], 'window_h': v[1]}
+                                     for k, v in DECAY_PROFILES.items()}})
     
     @app.route('/api/liquidation-map/request-symbol', methods=['POST'])
     def api_liqmap_request_symbol():
@@ -4246,7 +4278,13 @@ def register_api_routes(app):
                     get_liquidation_map)
                 lm = get_liquidation_map()
                 if lm is not None:
-                    lstate = lm.get_state(symbol, lookback_hours=24)
+                    try:
+                        _prof = get_db().get_setting(
+                            'liqmap_decay_profile', 'tori')
+                    except Exception:
+                        _prof = 'tori'
+                    lstate = lm.get_state(symbol, lookback_hours=24,
+                                           profile=_prof)
                     mark = lstate.get('mark_price')
                     for lev in (lstate.get('levels') or []):
                         if not mark:
@@ -4271,8 +4309,13 @@ def register_api_routes(app):
                         raw = (0.55 * abs(fuel_dir) + 0.25 * comp
                                + 0.20 * agree)
                         sq_prob = round(max(0.0, min(1.0, raw)) * 100.0, 1)
+                        # 'balanced' = fuel data PRESENT but neither side
+                        # dominates (|dir| ≤ 0.1) — distinct from 'flat'
+                        # which means no liq data at all. The UI renders
+                        # balanced as an explicit neutral state instead of
+                        # silently falling back to the compression view.
                         sq_dir = ('long' if fuel_dir > 0.1 else
-                                  'short' if fuel_dir < -0.1 else 'flat')
+                                  'short' if fuel_dir < -0.1 else 'balanced')
             except Exception:
                 pass
             result = {

@@ -49,6 +49,14 @@
                     <button data-tf="1h" onclick="liqmapSetCandleTF('1h')">1h</button>
                     <button data-tf="4h" onclick="liqmapSetCandleTF('4h')">4h</button>
                 </div>
+                <select class="liqmap-decay-select" id="liqmap-decay-select"
+                        onchange="liqmapSetDecayProfile(this.value)"
+                        title="Профіль старіння liq-рівнів: півжиття / вікно">
+                    <option value="tori">Tori 4h/12h</option>
+                    <option value="fresh4h">Свіжий 4h/24h</option>
+                    <option value="win12h">Вікно 8h/12h</option>
+                    <option value="full">Повний 8h/24h</option>
+                </select>
                 <button class="liqmap-lock-btn" id="liqmap-lock-btn"
                         onclick="liqmapToggleLock()"
                         title="Закріпити масштаб: графік не рухається, рухаються лише лінії">🔓</button>
@@ -1351,6 +1359,18 @@
     font-family: 'SF Mono', Consolas, monospace;
     font-weight: 500;
 }
+.liqmap-decay-select {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 5px;
+    color: #ccc;
+    padding: 4px 6px;
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-family: monospace;
+}
+.liqmap-decay-select:hover { border-color: rgba(59,130,246,0.6); }
+.liqmap-decay-select option { background: #14181f; }
 .liqmap-lock-btn {
     background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.12);
@@ -4783,6 +4803,31 @@ async function liqmapLoadWatchlist() {
     }
 }
 
+async function liqmapSetDecayProfile(profile) {
+    // Persist server-side (DB) so the state endpoint, the squeeze
+    // probability and any other consumer all use the SAME decay physics.
+    try {
+        await fetch('/api/liquidation-map/decay-profile', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({profile}),
+        });
+    } catch {}
+    liqmapState.liqCache = null;   // force fresh levels with new profile
+    liqmapState.yDom = null;       // scale may legitimately change
+    loadLiqmap();
+    liqmapLoadPressure();          // squeeze prob uses the same profile
+}
+
+async function liqmapRestoreDecayProfile() {
+    try {
+        const r = await fetch('/api/liquidation-map/decay-profile');
+        const d = await r.json();
+        const sel = document.getElementById('liqmap-decay-select');
+        if (sel && d.ok && d.profile) sel.value = d.profile;
+    } catch {}
+}
+
 function liqmapToggleLock() {
     liqmapState.yLocked = !liqmapState.yLocked;
     const btn = document.getElementById('liqmap-lock-btn');
@@ -4902,30 +4947,43 @@ async function liqmapLoadPressure() {
             // the nearer liq fuel pulls), colored by direction. TTM
             // compression demoted to the info line as the timing factor.
             const hasDir = typeof sq.squeeze_prob === 'number'
-                           && sq.squeeze_dir && sq.squeeze_dir !== 'flat'
+                           && sq.squeeze_dir
+                           && ['long', 'short', 'balanced'].includes(sq.squeeze_dir)
                            && (sq.fuel_above_usd > 0 || sq.fuel_below_usd > 0);
             const p = sq.probability || 0;          // compression (timing)
             const showP = hasDir ? sq.squeeze_prob : p;
             sqFill.style.width = showP + '%';
             sqBig.textContent = showP.toFixed(0) + '%';
             if (hasDir) {
-                sqBig.style.color = sq.squeeze_dir === 'long' ? '#4ade80' : '#f87171';
-                if (sqDir) {
-                    sqDir.style.display = '';
-                    sqDir.textContent = sq.squeeze_dir === 'long'
-                        ? '↑ squeeze вгору (shorts)' : '↓ squeeze вниз (longs)';
-                    sqDir.className = 'liqmap-sq-dir ' +
-                        (sq.squeeze_dir === 'long' ? 'sq-long' : 'sq-short');
-                    sqDir.title = `Паливо: ↑${liqmapFormatUsd(sq.fuel_above_usd||0)}` +
-                                  ` / ↓${liqmapFormatUsd(sq.fuel_below_usd||0)}` +
-                                  ` (дистанційно зважене) · ` + sqDir.textContent;
+                const fuelTxt = `↑${liqmapFormatUsd(sq.fuel_above_usd||0)}` +
+                                ` / ↓${liqmapFormatUsd(sq.fuel_below_usd||0)}`;
+                if (sq.squeeze_dir === 'balanced') {
+                    // Fuel present on both sides, neither dominates —
+                    // explicit neutral verdict (was: silent fallback)
+                    sqBig.style.color = '#9aa3b5';
+                    if (sqDir) {
+                        sqDir.style.display = '';
+                        sqDir.textContent = '⇄ FUEL BALANCED';
+                        sqDir.className = 'liqmap-sq-dir sq-flat';
+                        sqDir.title = `Паливо збалансоване: ${fuelTxt} ` +
+                                      `(дистанційно зважене) — вердикту немає`;
+                    }
+                } else {
+                    sqBig.style.color = sq.squeeze_dir === 'long' ? '#4ade80' : '#f87171';
+                    if (sqDir) {
+                        sqDir.style.display = '';
+                        sqDir.textContent = sq.squeeze_dir === 'long'
+                            ? '↑ squeeze вгору (shorts)' : '↓ squeeze вниз (longs)';
+                        sqDir.className = 'liqmap-sq-dir ' +
+                            (sq.squeeze_dir === 'long' ? 'sq-long' : 'sq-short');
+                        sqDir.title = `Паливо: ${fuelTxt}` +
+                                      ` (дистанційно зважене) · ` + sqDir.textContent;
+                    }
                 }
                 const compTxt = sq.squeeze_on
                     ? `compression ${sq.band} ${p.toFixed(0)}% · ${sq.bars_in_squeeze} bars`
                     : 'без компресії';
-                sqInfo.textContent = `↑${liqmapFormatUsd(sq.fuel_above_usd||0)}` +
-                    ` / ↓${liqmapFormatUsd(sq.fuel_below_usd||0)}` +
-                    ` · ${compTxt} (${tf})`;
+                sqInfo.textContent = `${fuelTxt} · ${compTxt} (${tf})`;
             } else if (sq.squeeze_on) {
                 // No liq data → compression-only fallback (old view)
                 sqBig.style.color = p >= 70 ? '#f87171' : '#fbbf24';
@@ -4982,6 +5040,7 @@ async function liqmapInit() {
     // the toggle UI and the chart agree on first paint.
     try {
         const savedTF = localStorage.getItem('liqmap_candle_tf');
+        liqmapRestoreDecayProfile();
         const savedLock = localStorage.getItem('liqmap_y_locked') === '1';
         if (savedLock) {
             liqmapState.yLocked = true;
