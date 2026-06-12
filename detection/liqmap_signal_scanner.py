@@ -49,7 +49,10 @@ HEARTBEAT_SYMBOL_DELAY = 0.3
 DEFAULT_THRESHOLD = 75
 DEFAULT_COOLDOWN_MIN = 60
 REARM_DROP = 10          # score must dip below (threshold - this) to re-arm
-LIQ_BAND_PCT = 0.05      # liq fuel counted within ±5% of price
+FUEL_BAND_PCT = 0.15     # liq fuel counted within ±15% (distance-weighted)
+FORECAST_STALE_MIN = 30  # forecast cache older than this = component absent
+SQUEEZE_TFS = ('15m', '1h')
+SQUEEZE_TF_WEIGHTS = {'15m': 0.45, '1h': 0.55}  # higher TF carries more
 
 
 class LiqmapSignalScanner:
@@ -139,52 +142,83 @@ class LiqmapSignalScanner:
             pass
         
         # --- Forecast (cache-first; SMC keeps watchlist fresh) ---
+        # Staleness gate (2026-06-12): a forecast computed hours ago is
+        # not a signal. If the cache is older than FORECAST_STALE_MIN the
+        # component is treated as ABSENT and its weight is redistributed —
+        # previously a stale/empty forecast silently zeroed 30 points and
+        # systematically depressed every score (asymmetry vs liq).
         f1 = f4 = None
+        forecast_fresh = False
         try:
             from detection.forecast_engine import get_forecast_engine
             fe = get_forecast_engine()
             if fe is not None:
                 cached = fe.get(symbol)
                 if cached:
-                    f1 = cached.get('forecast_1h')
-                    f4 = cached.get('forecast_4h')
+                    age_min = (time.time()
+                               - (cached.get('computed_at') or 0)) / 60.0
+                    if age_min <= FORECAST_STALE_MIN:
+                        f1 = cached.get('forecast_1h')
+                        f4 = cached.get('forecast_4h')
+                        forecast_fresh = True
         except Exception:
             pass
         
-        # --- Squeeze (15m — the dashboard's default lens) ---
-        squeeze = None
+        # --- Squeeze: MULTI-TIMEFRAME (2026-06-12) ---
+        # 15m (entry lens) + 1h (structure lens). The 1h carries more
+        # weight: higher-TF compression precedes the larger expansions.
+        # Per-TF momentum sides are kept for directional modulation in
+        # the composite (an aligned squeeze is worth more than one
+        # coiling against you).
+        sq_by_tf = {}
         try:
             from detection.market_data import get_market_data
             from detection.squeeze import calc_squeeze
             md = get_market_data()
             if md is not None:
-                kl = md.fetch_klines(symbol, interval='15m', limit=120)
-                if kl:
-                    squeeze = calc_squeeze(kl)
+                for tf in SQUEEZE_TFS:
+                    kl = md.fetch_klines(symbol, interval=tf, limit=120)
+                    if kl:
+                        s = calc_squeeze(kl)
+                        if s.get('ok'):
+                            sq_by_tf[tf] = s
         except Exception:
             pass
         
-        # --- Liquidation zones (only if daemon has data) ---
-        liq_above_usd = liq_below_usd = None
+        # --- Liquidation fuel: decayed LEVELS, profile-consistent ---
+        # (2026-06-12) Reads the same decay profile the dashboard ladder
+        # and the squeeze-probability endpoint use (DB setting), works on
+        # per-level decayed USD, and weights each level by proximity:
+        # 1/(1+dist%/2). Replaces the old cluster-zone ±5% raw sums —
+        # those mixed day-old builds with live pools at equal weight.
+        liq_above_w = liq_below_w = None
+        liq_profile = 'tori'
         try:
             from detection.liquidation_map import get_liquidation_map
             lm = get_liquidation_map()
             if lm is not None:
-                state = lm.get_state(symbol=symbol, lookback_hours=24)
+                try:
+                    liq_profile = self.db.get_setting(
+                        'liqmap_decay_profile', 'tori') or 'tori'
+                except Exception:
+                    liq_profile = 'tori'
+                state = lm.get_state(symbol=symbol, lookback_hours=24,
+                                      profile=liq_profile)
                 mark = state.get('mark_price')
-                zones = state.get('cluster_zones') or []
-                if mark and zones:
+                levels = state.get('levels') or []
+                if mark and levels:
                     above = below = 0.0
-                    for z in zones:
-                        zc = (z['price_low'] + z['price_high']) / 2
-                        if abs(zc - mark) / mark > LIQ_BAND_PCT:
+                    for lev in levels:
+                        dist_pct = abs(lev['price'] - mark) / mark * 100.0
+                        if dist_pct > FUEL_BAND_PCT * 100:
                             continue
-                        if zc > mark:
-                            above += z.get('total_usd', 0)
+                        wgt = lev['usd'] / (1.0 + dist_pct / 2.0)
+                        if lev['price'] > mark:
+                            above += wgt
                         else:
-                            below += z.get('total_usd', 0)
+                            below += wgt
                     if above + below > 0:
-                        liq_above_usd, liq_below_usd = above, below
+                        liq_above_w, liq_below_w = above, below
         except Exception:
             pass
         
@@ -192,72 +226,130 @@ class LiqmapSignalScanner:
         # Component sub-scores in [-1, +1] (positive favors LONG)
         # =========================================================
         # Forecast: blended side×confidence as on the dashboard
-        s1 = ((f1 or {}).get('side') or 0) * ((f1 or {}).get('confidence') or 0)
-        s4 = ((f4 or {}).get('side') or 0) * ((f4 or {}).get('confidence') or 0)
-        forecast_sub = max(-1.0, min(1.0, (s1 * 0.4 + s4 * 0.6) / 100.0))
+        forecast_sub = None
+        if forecast_fresh:
+            s1 = ((f1 or {}).get('side') or 0) * ((f1 or {}).get('confidence') or 0)
+            s4 = ((f4 or {}).get('side') or 0) * ((f4 or {}).get('confidence') or 0)
+            forecast_sub = max(-1.0, min(1.0, (s1 * 0.4 + s4 * 0.6) / 100.0))
         
         # Imbalance: ±30% book imbalance saturates the sub-score
         imb = walls.get('imbalance_pct') or 0
         imbalance_sub = max(-1.0, min(1.0, imb / 30.0))
         
-        # Liq fuel: log-ish ratio of fuel above vs below; 3× ratio saturates
+        # Liq fuel: distance-weighted directional asymmetry, ×1.3 to
+        # saturate (proximity weighting already shapes the magnitude)
         liq_sub = None
-        if liq_above_usd is not None:
-            num = liq_above_usd - liq_below_usd
-            den = liq_above_usd + liq_below_usd
-            liq_sub = max(-1.0, min(1.0, (num / den) * 1.5)) if den > 0 else 0.0
+        if liq_above_w is not None:
+            den = liq_above_w + liq_below_w
+            liq_sub = (max(-1.0, min(1.0,
+                       (liq_above_w - liq_below_w) / den * 1.3))
+                       if den > 0 else 0.0)
         
-        # Squeeze: direction-neutral energy in [0, 1]
+        # Squeeze: multi-TF compression energy + per-side momentum
+        # alignment. Energy E = Σ tf_weight × compression(tf) over TFs
+        # currently ON. Alignment A(side) = Σ tf_weight over ON TFs whose
+        # momentum points to `side`, normalized by total ON weight.
+        # The composite later credits side s with E × (0.5 + 0.5·A(s)) —
+        # a squeeze coiling WITH you is worth double one coiling against.
         squeeze_energy = 0.0
-        if squeeze and squeeze.get('ok') and squeeze.get('squeeze_on'):
-            squeeze_energy = (squeeze.get('probability') or 0) / 100.0
+        sq_align = {1: 0.0, -1: 0.0}
+        sq_on_any = False
+        _on_w = 0.0
+        for tf, tfw in SQUEEZE_TF_WEIGHTS.items():
+            s = sq_by_tf.get(tf)
+            if not (s and s.get('squeeze_on')):
+                continue
+            sq_on_any = True
+            _on_w += tfw
+            squeeze_energy += tfw * (s.get('probability') or 0) / 100.0
+            mside = (1 if s.get('momentum', 0) > 0 else
+                     -1 if s.get('momentum', 0) < 0 else 0)
+            if mside:
+                sq_align[mside] += tfw
+        if _on_w > 0:
+            sq_align = {k: v / _on_w for k, v in sq_align.items()}
         
-        # Manipulation trust in [0, 1]: 0% spoofs → 1.0, ≥80% → 0
+        # Manipulation trust in [0, 1]: 0% spoofs → 1.0, ≥80% → 0.
+        # pct is already USD-weighted + sample-shrunk by the tracker.
         trust = 1.0
         if manip and not manip.get('warming_up'):
             trust = max(0.0, 1.0 - (manip.get('pct', 0) / 80.0))
         
         # =========================================================
-        # Directional composites
+        # Directional composites — generalized weight redistribution
         # =========================================================
-        # Weights; liq weight redistributed when zone data is absent
-        w_forecast, w_imb, w_liq, w_squeeze, w_manip = 30, 20, 20, 20, 10
-        if liq_sub is None:
-            # Redistribute the 20 liq points proportionally across the
-            # remaining directional components (30:20:20 → 37.5:25:25)
-            w_forecast, w_imb, w_squeeze = 37.5, 25.0, 25.0
-            w_liq = 0.0
+        # Base weights sum to 90 directional + 10 manip. ANY absent
+        # component (stale forecast, no liq data, no squeeze) gives its
+        # weight back proportionally to the present ones — no component's
+        # absence silently depresses the score anymore.
+        # REDISTRIBUTION CAP (×1.5 of base): without it a lone surviving
+        # component inherited the full 90 and book imbalance alone could
+        # fire an alert. With the cap, undistributed weight simply
+        # vanishes — data poverty honestly lowers the score ceiling:
+        #   4 components → 90 max · 3 → 90 · 2 → 60+10 (< поріг 75, тобто
+        #   книга+squeeze без forecast і без liq алерт дати НЕ можуть).
+        BASE_W = {'forecast': 30.0, 'imb': 20.0, 'liq': 20.0, 'squeeze': 20.0}
+        present = {
+            'forecast': forecast_sub is not None,
+            'imb': True,
+            'liq': liq_sub is not None,
+            'squeeze': sq_on_any,
+        }
+        active_sum = sum(w for k, w in BASE_W.items() if present[k])
+        W = {k: (min(w * 90.0 / active_sum, w * 1.5) if present[k] else 0.0)
+             for k, w in BASE_W.items()}
+        w_manip = 10.0
         
         def directional(sign: int) -> float:
-            d_forecast = max(0.0, forecast_sub * sign)        # 0..1
+            d_forecast = max(0.0, (forecast_sub or 0.0) * sign)
             d_imb = max(0.0, imbalance_sub * sign)
             d_liq = max(0.0, (liq_sub or 0.0) * sign)
-            score = (w_forecast * d_forecast
-                     + w_imb * d_imb
-                     + w_liq * d_liq
-                     + w_squeeze * squeeze_energy)
-            # Manipulation scales the whole conviction, and its weight is
-            # granted only at full trust
+            d_squeeze = squeeze_energy * (0.5 + 0.5 * sq_align.get(sign, 0.0))
+            score = (W['forecast'] * d_forecast
+                     + W['imb'] * d_imb
+                     + W['liq'] * d_liq
+                     + W['squeeze'] * d_squeeze)
+            # Manipulation scales the whole conviction; its own weight is
+            # granted only at full trust + at least one directional vote
             score = score * (0.5 + 0.5 * trust) + w_manip * trust * (
-                1 if (d_forecast > 0 or d_imb > 0) else 0)
+                1 if (d_forecast > 0 or d_imb > 0 or d_liq > 0) else 0)
             return max(0.0, min(100.0, score))
         
+        sq15 = sq_by_tf.get('15m') or {}
+        sq1h = sq_by_tf.get('1h') or {}
         breakdown = {
             'symbol': symbol,
             'ts': time.time(),
             'mid_price': walls.get('mid_price'),
             'long_score': round(directional(+1), 1),
             'short_score': round(directional(-1), 1),
-            'forecast_sub': round(forecast_sub, 3),
+            'forecast_sub': (round(forecast_sub, 3)
+                             if forecast_sub is not None else None),
+            'forecast_fresh': forecast_fresh,
             'imbalance_pct': round(imb, 2),
-            'liq_above_usd': liq_above_usd,
-            'liq_below_usd': liq_below_usd,
-            'squeeze_on': bool(squeeze and squeeze.get('squeeze_on')),
-            'squeeze_prob': (squeeze or {}).get('probability', 0),
-            'squeeze_bars': (squeeze or {}).get('bars_in_squeeze', 0),
+            'liq_above_usd': liq_above_w,     # distance-weighted, decayed
+            'liq_below_usd': liq_below_w,
+            'liq_profile': liq_profile,
+            'liq_sub': (round(liq_sub, 3) if liq_sub is not None else None),
+            'squeeze_on': sq_on_any,
+            'squeeze_energy': round(squeeze_energy, 3),
+            'squeeze_tfs': {tf: {'on': bool(s.get('squeeze_on')),
+                                  'prob': s.get('probability', 0),
+                                  'band': s.get('band', 'off'),
+                                  'bars': s.get('bars_in_squeeze', 0),
+                                  'mom': (1 if s.get('momentum', 0) > 0
+                                          else -1 if s.get('momentum', 0) < 0
+                                          else 0)}
+                            for tf, s in sq_by_tf.items()},
+            'trust': round(trust, 2),
+            'weights': {k: round(v, 1) for k, v in W.items()},
             'manip_pct': (manip or {}).get('pct') if manip and not manip.get('warming_up') else None,
+            'manip_low_sample': bool((manip or {}).get('low_sample')),
             'sources': walls.get('sources') or [],
             'f1': f1, 'f4': f4,
+            # legacy fields some consumers may still read
+            'squeeze_prob': sq15.get('probability', 0) or sq1h.get('probability', 0),
+            'squeeze_bars': sq15.get('bars_in_squeeze', 0),
         }
         with self._lock:
             self._last_scores[symbol] = breakdown
@@ -326,46 +418,69 @@ class LiqmapSignalScanner:
         price = br.get('mid_price')
         price_s = f"${price:,.6g}" if price else '—'
         
+        def fu(v):
+            if v is None:
+                return '—'
+            return f"${v/1e6:.1f}M" if v >= 1e6 else f"${v/1e3:.0f}K"
+        
+        W = br.get('weights') or {}
         lines = [
             f"💧 <b>LIQUIDITY MAP SIGNAL</b>",
             f"{emoji} <b>{side} {sym}</b> @ {price_s} · score <b>{score:.0f}</b>/100 (поріг {threshold})",
+            "",
         ]
+        # Component table — each line: value + its weight in this score
+        # (weights vary per symbol because absent components redistribute)
         f1, f4 = br.get('f1') or {}, br.get('f4') or {}
         def fdesc(f):
             s = f.get('side') or 0
             if not s:
                 return '—'
             return f"{'LONG' if s > 0 else 'SHORT'} {f.get('confidence', 0)}%"
-        lines.append(f"🔮 Forecast: 1H {fdesc(f1)} · 4H {fdesc(f4)}")
-        if br.get('squeeze_on'):
-            lines.append(f"⚡ Squeeze: ON {br['squeeze_prob']:.0f}% "
-                         f"({br['squeeze_bars']} bars 15m)")
-        lines.append(f"⚖️ Imbalance: {br['imbalance_pct']:+.1f}% "
+        if br.get('forecast_fresh'):
+            lines.append(f"🔮 Forecast (w{W.get('forecast', 0):.0f}): "
+                         f"1H {fdesc(f1)} · 4H {fdesc(f4)}")
+        else:
+            lines.append("🔮 Forecast: застарілий — вага перерозподілена")
+        lines.append(f"⚖️ Imbalance (w{W.get('imb', 0):.0f}): "
+                     f"{br['imbalance_pct']:+.1f}% "
                      f"({'+'.join(br.get('sources') or []) or 'book'})")
         if br.get('liq_above_usd') is not None:
-            a, b = br['liq_above_usd'], br['liq_below_usd']
-            def fu(v):
-                return f"${v/1e6:.1f}M" if v >= 1e6 else f"${v/1e3:.0f}K"
-            lines.append(f"🧲 Liq fuel ±5%: {fu(a)} above / {fu(b)} below")
-        if br.get('manip_pct') is not None:
-            lines.append(f"🎭 Manipulation: {br['manip_pct']:.0f}%")
+            lines.append(
+                f"🧲 Liq fuel (w{W.get('liq', 0):.0f}, "
+                f"профіль {br.get('liq_profile', 'tori')}): "
+                f"↑{fu(br['liq_above_usd'])} / ↓{fu(br['liq_below_usd'])} "
+                f"(±15%, дистанційно зважено)")
         else:
-            lines.append("🎭 Manipulation: — (статистика накопичується)")
-        lines.append(f"\n<i>Сигнал карти ліквідності — підтверди тайминг "
-                     f"через SMC структуру перед входом.</i>")
+            lines.append("🧲 Liq fuel: нема даних — вага перерозподілена")
+        sq_tfs = br.get('squeeze_tfs') or {}
+        on_tfs = [(tf, s) for tf, s in sq_tfs.items() if s.get('on')]
+        if on_tfs:
+            parts = [f"{tf} {s.get('band', '?')} {s.get('prob', 0):.0f}%"
+                     f" mom{'↑' if s.get('mom', 0) > 0 else '↓' if s.get('mom', 0) < 0 else '·'}"
+                     for tf, s in sorted(on_tfs)]
+            lines.append(f"⚡ Squeeze (w{W.get('squeeze', 0):.0f}): "
+                         + ' · '.join(parts))
+        else:
+            lines.append("⚡ Squeeze: OFF на 15m і 1h")
+        if br.get('manip_pct') is not None and not br.get('manip_low_sample'):
+            lines.append(f"🎭 Manipulation: {br['manip_pct']:.0f}% "
+                         f"(USD-зважено) · trust {br.get('trust', 1):.2f}")
+        else:
+            lines.append(f"🎭 Manipulation: статистика накопичується "
+                         f"· trust {br.get('trust', 1):.2f}")
+        lines.append("")
+        lines.append("⏱ Підтверди тайминг входу через SMC-структуру (CHoCH/BOS)")
         
-        msg = '\n'.join(lines)
-        print(f"[LIQSIG] 🔔 {side} {sym} score={score:.0f}")
-        if self.notifier:
-            try:
-                self.notifier.send_message(msg)
-            except Exception as e:
-                print(f"[LIQSIG] telegram error: {e}")
-    
-    # ------------------------------------------------------------
-    # Main loop
-    # ------------------------------------------------------------
-    
+        try:
+            from alerts.telegram_notifier import get_notifier
+            tg = get_notifier()
+            if tg and tg.enabled:
+                tg.send_message('\n'.join(lines))
+                print(f"[LIQSIG] Alert sent: {side} {sym} score={score:.0f}")
+        except Exception as e:
+            print(f"[LIQSIG] Telegram send error: {e}")
+
     def _loop(self):
         # Tick architecture (2026-06-10): the manipulation tracker needs
         # dense sampling to observe wall lifecycles — 120s gaps made
@@ -442,10 +557,26 @@ class LiqmapSignalScanner:
         try:
             import json
             with self._lock:
-                compact = {k: {'long': v['long_score'],
-                                'short': v['short_score'],
-                                'ts': v['ts']}
-                           for k, v in self._last_scores.items()}
+                compact = {}
+                for k, v in self._last_scores.items():
+                    sq_tfs = v.get('squeeze_tfs') or {}
+                    compact[k] = {
+                        'long': v['long_score'],
+                        'short': v['short_score'],
+                        'ts': v['ts'],
+                        # brief breakdown — feeds watchlist button tooltips
+                        'brk': {
+                            'fc': v.get('forecast_sub'),
+                            'im': v.get('imbalance_pct'),
+                            'lq': v.get('liq_sub'),
+                            'pf': v.get('liq_profile'),
+                            'sq': v.get('squeeze_energy'),
+                            'sqtf': {tf: s.get('prob', 0)
+                                     for tf, s in sq_tfs.items()
+                                     if s.get('on')},
+                            'tr': v.get('trust'),
+                        },
+                    }
             self.db.set_setting('liqmap_signal_scores', json.dumps(compact))
         except Exception as e:
             print(f"[LIQSIG] persist scores error: {e}")
@@ -469,8 +600,23 @@ class LiqmapSignalScanner:
             scores = dict(self._last_scores)
         s = self._settings()
         if scores:
-            scores_out = {k: {'long': v['long_score'], 'short': v['short_score'],
-                               'ts': v['ts']} for k, v in scores.items()}
+            scores_out = {}
+            for k, v in scores.items():
+                sq_tfs = v.get('squeeze_tfs') or {}
+                scores_out[k] = {
+                    'long': v['long_score'], 'short': v['short_score'],
+                    'ts': v['ts'],
+                    'brk': {
+                        'fc': v.get('forecast_sub'),
+                        'im': v.get('imbalance_pct'),
+                        'lq': v.get('liq_sub'),
+                        'pf': v.get('liq_profile'),
+                        'sq': v.get('squeeze_energy'),
+                        'sqtf': {tf: s.get('prob', 0)
+                                 for tf, s in sq_tfs.items() if s.get('on')},
+                        'tr': v.get('trust'),
+                    },
+                }
         else:
             # Cross-worker / post-restart fallback: read persisted snapshot
             scores_out = self._load_persisted_scores()

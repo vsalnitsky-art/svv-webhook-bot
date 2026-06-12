@@ -4773,7 +4773,7 @@ async function liqmapLoadWatchlist() {
         for (const s of symbols) {
             const active = (s === liqmapState.symbol) ? ' active' : '';
             const sc = scores[s];
-            let badge = '';
+            let badge = '', tip = '';
             if (sc && (sc.long != null || sc.short != null)) {
                 const L = sc.long || 0, S = sc.short || 0;
                 const isLong = L >= S;
@@ -4782,8 +4782,28 @@ async function liqmapLoadWatchlist() {
                           : v >= 55 ? '#fbbf24' : '#777';
                 badge = `<span class="wl-score" style="color:${col}">` +
                         `${isLong ? '▲' : '▼'}${v}</span>`;
+                // Tooltip mirrors the scanner's professional breakdown —
+                // the badge and the Telegram alert read the SAME math
+                const b = sc.brk || {};
+                const parts = [`LONG ${Math.round(L)} / SHORT ${Math.round(S)}`];
+                parts.push(b.fc != null
+                    ? `Forecast: ${b.fc >= 0 ? '+' : ''}${(b.fc).toFixed(2)}`
+                    : 'Forecast: застарілий (вага перерозподілена)');
+                if (b.im != null) parts.push(`Imbalance: ${b.im >= 0 ? '+' : ''}${b.im.toFixed(1)}%`);
+                parts.push(b.lq != null
+                    ? `Liq fuel: ${b.lq >= 0 ? '↑' : '↓'}${Math.abs(b.lq * 100).toFixed(0)}% (${b.pf || 'tori'})`
+                    : 'Liq fuel: нема даних');
+                const sqtf = b.sqtf || {};
+                const sqKeys = Object.keys(sqtf);
+                parts.push(sqKeys.length
+                    ? `Squeeze: ${sqKeys.map(tf => tf + ' ' + Math.round(sqtf[tf]) + '%').join(' · ')}`
+                    : 'Squeeze: OFF');
+                if (b.tr != null) parts.push(`Trust: ${b.tr.toFixed(2)}`);
+                const ageMin = sc.ts ? Math.round((Date.now()/1000 - sc.ts) / 60) : null;
+                if (ageMin != null) parts.push(`оновлено ${ageMin}хв тому`);
+                tip = ` title="${parts.join('&#10;').replace(/"/g, '&quot;')}"`;
             }
-            html += `<button class="liqmap-wl-btn${active}" data-sym="${s}" ` +
+            html += `<button class="liqmap-wl-btn${active}" data-sym="${s}"${tip} ` +
                     `onclick="liqmapPickSymbol('${s}')">${s.replace('USDT','')}${badge}</button>`;
         }
         btns.innerHTML = html;
