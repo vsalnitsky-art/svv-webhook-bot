@@ -108,6 +108,43 @@
     <div style="margin-top:8px"><button class="tk-btn" onclick="tkCopyTV()">Копіювати</button></div>
 </div>
 
+<!-- Top Active -->
+<div class="tk-section">
+    <h3 style="font-size:0.85rem;color:#fbbf24;margin:0 0 8px">🔥 Top Active — найбільша активність трейдерів</h3>
+    <div class="tk-row" style="margin-bottom:8px">
+        <div class="tk-field">
+            <label>СОРТУВАТИ ЗА</label>
+            <select id="tk-sort">
+                <option value="vol_usd">Обсяг 24h ($)</option>
+                <option value="spike">Сплеск обсягу (×базовий)</option>
+                <option value="change_abs">Зміна 24h (|%|)</option>
+                <option value="trades">К-сть угод</option>
+                <option value="oi_usd">Open Interest (swap)</option>
+                <option value="funding_abs">Funding (|%|, swap)</option>
+            </select>
+        </div>
+        <div class="tk-field">
+            <label>ТОП-N</label>
+            <select id="tk-topn">
+                <option>10</option><option selected>20</option><option>50</option>
+            </select>
+        </div>
+        <button class="tk-btn warm" id="tk-top-btn" onclick="tkTopActive()">Показати</button>
+        <button class="tk-btn alt" onclick="tkSaveActBaseline()" title="Зберегти поточні обсяги як базу для сплеску">📌 База для сплеску</button>
+    </div>
+    <div class="tk-stat" id="tk-top-stat">Спершу оберіть біржу/категорії вгорі, потім «Показати».</div>
+    <div class="tk-scroll">
+        <table class="tk-table">
+            <thead><tr>
+                <th>#</th><th>Symbol</th><th>Type</th><th>Vol 24h</th>
+                <th>Зміна%</th><th>Угоди</th><th>OI</th><th>Funding</th><th>Спл.</th>
+            </tr></thead>
+            <tbody id="tk-top-tbody"><tr><td colspan="9" style="color:#667;padding:16px">— ще не завантажено —</td></tr></tbody>
+        </table>
+    </div>
+    <div style="margin-top:8px"><button class="tk-btn" onclick="tkTopToTV()">📋 Top → TradingView watchlist</button></div>
+</div>
+
 <!-- Watch monitor (manual fetch+diff against stored snapshot) -->
 <div class="tk-section">
     <h3 style="font-size:0.85rem;color:#93c5fd;margin:0 0 4px">📡 Монітор нових лістингів</h3>
@@ -124,8 +161,104 @@
 </div>
 
 <script>
-let tkLast = null;       // last fetch envelope
-let tkLastDiff = null;   // last diff result
+let tkTopRows = null;
+
+function tkFmtUsd(v) {
+    v = v || 0;
+    if (v >= 1e9) return '$' + (v/1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return '$' + (v/1e6).toFixed(2) + 'M';
+    if (v >= 1e3) return '$' + (v/1e3).toFixed(1) + 'K';
+    return '$' + v.toFixed(0);
+}
+
+async function tkTopActive() {
+    const btn = document.getElementById('tk-top-btn');
+    const stat = document.getElementById('tk-top-stat');
+    const cats = tkSelectedCats();
+    if (cats.length === 0) { stat.textContent = 'Оберіть категорії вгорі.'; return; }
+    btn.disabled = true; stat.textContent = 'Підрахунок активності…';
+    try {
+        const res = await fetch('/api/tickr/top-active', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                exchange: document.getElementById('tk-exchange').value,
+                categories: cats,
+                sort_by: document.getElementById('tk-sort').value,
+                top_n: parseInt(document.getElementById('tk-topn').value),
+                active_only: document.getElementById('tk-active').checked,
+            }),
+        });
+        const d = await res.json();
+        if (!d.ok) { stat.textContent = '❌ ' + (d.reason || 'failed'); return; }
+        tkTopRows = d.symbols;
+        tkRenderTop(d.symbols, d.sort_by);
+        let warn = (d.warnings && d.warnings.length) ? ' ⚠ ' + d.warnings.join('; ') : '';
+        stat.textContent = `🔥 ${d.exchange.toUpperCase()} · топ-${d.symbols.length} за ${d.sort_by}` + warn;
+    } catch (e) {
+        stat.textContent = '❌ ' + e;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function tkRenderTop(rows, sortBy) {
+    const tb = document.getElementById('tk-top-tbody');
+    if (!rows || !rows.length) {
+        tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— порожньо —</td></tr>';
+        return;
+    }
+    tb.innerHTML = rows.map((s, i) => {
+        const typeCls = s.is_swap ? 'tk-swap' : 'tk-spot';
+        const chCls = s.change_pct >= 0 ? 'tk-added' : 'tk-removed';
+        const chSign = s.change_pct >= 0 ? '+' : '';
+        const fund = s.is_swap ? (s.funding*100).toFixed(4) + '%' : '—';
+        const fundCls = s.funding >= 0 ? 'tk-added' : 'tk-removed';
+        const oi = s.oi_usd ? tkFmtUsd(s.oi_usd) : '—';
+        const spike = s.spike ? '×' + s.spike.toFixed(1) : '—';
+        return `<tr>
+            <td>${i+1}</td>
+            <td><b>${s.symbol}</b></td>
+            <td><span class="tk-pill ${typeCls}">${s.market_type}</span></td>
+            <td>${tkFmtUsd(s.vol_usd)}</td>
+            <td class="${chCls}">${chSign}${(s.change_pct||0).toFixed(2)}%</td>
+            <td>${s.trades ? s.trades.toLocaleString() : '—'}</td>
+            <td>${oi}</td>
+            <td class="${s.is_swap ? fundCls : ''}">${fund}</td>
+            <td style="color:#fbbf24">${spike}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function tkSaveActBaseline() {
+    const stat = document.getElementById('tk-top-stat');
+    const cats = tkSelectedCats();
+    if (cats.length === 0) { stat.textContent = 'Оберіть категорії.'; return; }
+    stat.textContent = 'Збереження бази…';
+    const res = await fetch('/api/tickr/save-activity-baseline', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            exchange: document.getElementById('tk-exchange').value,
+            categories: cats,
+        }),
+    });
+    const d = await res.json();
+    stat.textContent = d.ok
+        ? `📌 База збережена (${d.saved} символів). Тепер сортуй за «Сплеск обсягу» пізніше.`
+        : '❌ ' + (d.reason || 'failed');
+}
+
+async function tkTopToTV() {
+    if (!tkTopRows || !tkTopRows.length) return;
+    const res = await fetch('/api/tickr/tv', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbols: tkTopRows, separator: 'newline'}),
+    });
+    const d = await res.json();
+    document.getElementById('tk-tv-out').value = d.text || '';
+    document.getElementById('tk-tv-section').style.display = '';
+    document.getElementById('tk-tv-section').scrollIntoView({behavior:'smooth'});
+}
+
 
 function tkSelectedCats() {
     return Array.from(document.querySelectorAll('.tk-cat:checked')).map(c => c.value);

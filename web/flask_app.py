@@ -2590,6 +2590,58 @@ def register_api_routes(app):
         return jsonify({'ok': True, **tickr_core.diff(
             data.get('old_symbols', []), data.get('new_symbols', []))})
     
+    @app.route('/api/tickr/top-active', methods=['POST'])
+    def api_tickr_top_active():
+        """Rank instruments by live activity (volume / spike / change /
+        trades / OI / funding). For 'spike', merges the stored snapshot's
+        per-symbol volume as the baseline."""
+        from detection import tickr_core
+        import json as _json
+        data = request.get_json() or {}
+        exchange = data.get('exchange', '')
+        cats = data.get('categories', [])
+        sort_by = data.get('sort_by', 'vol_usd')
+        # For spike: load baseline volumes from the stored snapshot, if any
+        baseline = {}
+        if sort_by == 'spike':
+            cats_key = ','.join(sorted(c.lower() for c in cats))
+            raw = get_db().get_setting(f'tickr_act_snap::{exchange}|{cats_key}', '')
+            if raw:
+                try:
+                    baseline = _json.loads(raw)
+                except Exception:
+                    baseline = {}
+        res = tickr_core.top_active(
+            exchange=exchange, categories=cats, sort_by=sort_by,
+            top_n=int(data.get('top_n', 20)),
+            active_only=bool(data.get('active_only', True)))
+        # merge baseline + re-sort if spike requested and baseline exists
+        if sort_by == 'spike' and baseline and res.get('ok'):
+            for r in res['symbols']:
+                bv = baseline.get(r['symbol'], 0)
+                r['baseline_vol'] = bv
+                r['spike'] = (r['vol_usd'] / bv) if bv else 0.0
+            res['symbols'].sort(key=lambda r: r.get('spike', 0), reverse=True)
+        return jsonify(res)
+    
+    @app.route('/api/tickr/save-activity-baseline', methods=['POST'])
+    def api_tickr_save_activity_baseline():
+        """Store current per-symbol volumes as the spike baseline."""
+        from detection import tickr_core
+        import json as _json
+        data = request.get_json() or {}
+        exchange = data.get('exchange', '')
+        cats = data.get('categories', [])
+        res = tickr_core.top_active(exchange, cats, sort_by='vol_usd',
+                                    top_n=100, active_only=True)
+        if not res.get('ok'):
+            return jsonify(res)
+        vols = {r['symbol']: r['vol_usd'] for r in res['symbols']}
+        cats_key = ','.join(sorted(c.lower() for c in cats))
+        get_db().set_setting(f'tickr_act_snap::{exchange}|{cats_key}',
+                             _json.dumps(vols))
+        return jsonify({'ok': True, 'saved': len(vols)})
+    
     @app.route('/api/tickr/tv', methods=['POST'])
     def api_tickr_tv():
         """Build a TradingView watchlist text from symbols."""
