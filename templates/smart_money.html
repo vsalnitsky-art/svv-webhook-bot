@@ -1008,7 +1008,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-WAIT { color:#9aa3b5; }
     .sm-bias-conf { font-family:monospace; font-size:0.85rem; color:#8b93a7; }
     .sm-bias-confbar { flex:1; min-width:120px; height:8px; border-radius:4px;
-        background:rgba(255,255,255,0.07); overflow:hidden; }
+        background:rgba(255,255,255,0.07); overflow:hidden; margin-left:auto; }
     .sm-bias-conffill { height:100%; transition:width .4s; }
     .sm-bias-sym { font-family:monospace; font-size:0.8rem; color:#93c5fd; }
     .sm-bias-reasons { display:flex; flex-direction:column; gap:3px; margin-top:12px; }
@@ -1016,9 +1016,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         font-family:monospace; }
     .sm-bias-reason.ok { color:#86efac; } .sm-bias-reason.warn { color:#fbbf24; }
     .sm-bias-reason.wait { color:#8b93a7; }
-    .sm-bias-refresh { margin-left:auto; background:rgba(59,130,246,0.16);
+    .sm-bias-refresh { background:rgba(59,130,246,0.16);
         border:1px solid rgba(59,130,246,0.4); color:#93c5fd; border-radius:6px;
         padding:5px 12px; cursor:pointer; font-size:0.78rem; }
+    .sm-bias-auto { display:flex; align-items:center; gap:6px; cursor:pointer;
+        user-select:none; }
+    .sm-bias-auto input { display:none; }
+    .sm-bias-auto-slider { width:34px; height:18px; border-radius:9px;
+        background:rgba(255,255,255,0.15); position:relative; transition:background .2s; }
+    .sm-bias-auto-slider::after { content:''; position:absolute; top:2px; left:2px;
+        width:14px; height:14px; border-radius:50%; background:#fff; transition:transform .2s; }
+    .sm-bias-auto input:checked + .sm-bias-auto-slider { background:#a855f7; }
+    .sm-bias-auto input:checked + .sm-bias-auto-slider::after { transform:translateX(16px); }
+    .sm-bias-auto-label { font-size:0.76rem; color:#c084fc; font-weight:600; }
+    .sm-bias-updated { font-size:0.7rem; color:#667; font-family:monospace; margin-top:8px; }
+    .sm-bias-autonote { font-size:0.74rem; color:#c084fc; margin-top:6px;
+        display:none; font-family:monospace; }
     </style>
     
     <div class="sm-bias" id="sm-bias">
@@ -1027,9 +1040,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span class="sm-bias-sym" id="sm-bias-sym">BTCUSDT</span>
             <div class="sm-bias-confbar"><div class="sm-bias-conffill" id="sm-bias-conffill" style="width:0%"></div></div>
             <span class="sm-bias-conf" id="sm-bias-conf">—</span>
+            <label class="sm-bias-auto" id="sm-bias-auto-wrap"
+                   title="Авто-керування: коли увімкнено, вердикт табло сам вмикає/вимикає кнопки LONG/SHORT.&#10;LONG-вердикт → лишає тільки LONG. SHORT → тільки SHORT. WAIT не чіпає кнопки.">
+                <input type="checkbox" id="sm-bias-auto" onchange="toggleAutoGate(this.checked)">
+                <span class="sm-bias-auto-slider"></span>
+                <span class="sm-bias-auto-label">Auto-gate</span>
+            </label>
             <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
         </div>
         <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
+        <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
+        <div class="sm-bias-updated" id="sm-bias-updated"></div>
     </div>
     
     <details class="sm-settings-bar" id="sm-settings-accordion">
@@ -5407,6 +5428,67 @@ function renderEntryScoreBreakdown(breakdown) {
     host.style.display = anyData ? 'flex' : 'none';
 }
 
+let autoGateEnabled = false;
+
+// Programmatically set a side gate ON/OFF via the same persisted path as
+// the manual buttons. Returns true if a change was applied.
+async function setSideGate(side, on) {
+    const btnId = side === 'LONG' ? 'sm-allow-long-btn' : 'sm-allow-short-btn';
+    const stateId = side === 'LONG' ? 'sm-allow-long-state' : 'sm-allow-short-state';
+    const btn = document.getElementById(btnId);
+    const stateEl = document.getElementById(stateId);
+    if (!btn) return false;
+    const isActive = btn.classList.contains('active');
+    if (isActive === on) return false;   // already in desired state
+    btn.classList.toggle('active', on);
+    if (stateEl) stateEl.textContent = on ? 'ON' : 'OFF';
+    const payload = {};
+    if (side === 'LONG') payload.allow_long_entries = on;
+    else payload.allow_short_entries = on;
+    try {
+        await fetch('/api/tm/settings', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        return true;
+    } catch (e) {
+        btn.classList.toggle('active', isActive);   // revert
+        if (stateEl) stateEl.textContent = isActive ? 'ON' : 'OFF';
+        return false;
+    }
+}
+
+function toggleAutoGate(on) {
+    autoGateEnabled = on;
+    try { localStorage.setItem('sm_auto_gate', on ? '1' : '0'); } catch {}
+    const note = document.getElementById('sm-bias-autonote');
+    if (note) {
+        note.style.display = on ? '' : 'none';
+        if (on) note.textContent = '🤖 Auto-gate увімкнено — вердикт керує кнопками LONG/SHORT';
+    }
+    if (on) loadBias();   // apply immediately
+}
+
+// Apply the verdict to the side gates (only when auto-gate is on).
+//   LONG  → enable LONG, disable SHORT
+//   SHORT → enable SHORT, disable LONG
+//   WAIT  → leave gates untouched (don't fight the user / existing state)
+async function applyAutoGate(verdict) {
+    if (!autoGateEnabled) return;
+    let changed = false;
+    if (verdict === 'LONG') {
+        changed = await setSideGate('LONG', true) | await setSideGate('SHORT', false);
+    } else if (verdict === 'SHORT') {
+        changed = await setSideGate('SHORT', true) | await setSideGate('LONG', false);
+    } else {
+        return;  // WAIT — no change
+    }
+    const note = document.getElementById('sm-bias-autonote');
+    if (note && changed) {
+        note.textContent = `🤖 Auto-gate: застосовано ${verdict} о ${new Date().toLocaleTimeString()}`;
+    }
+}
+
 async function loadBias() {
     const sym = (typeof currentSymbol !== 'undefined' && currentSymbol) ? currentSymbol : 'BTCUSDT';
     const vEl = document.getElementById('sm-bias-verdict');
@@ -5430,6 +5512,9 @@ async function loadBias() {
             const [kind, text] = r;
             return `<div class="sm-bias-reason ${kind}">${icons[kind] || '•'} ${text}</div>`;
         }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
+        const upd = document.getElementById('sm-bias-updated');
+        if (upd) upd.textContent = 'оновлено ' + new Date().toLocaleTimeString() + ' · авто кожні 60с';
+        await applyAutoGate(d.verdict);
     } catch (e) {
         vEl.innerHTML = '⏳ <span>—</span>';
     }
@@ -5902,6 +5987,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadSentiment();
     setInterval(loadSentiment, 120000);
     // Trade-bias board (LONG/SHORT/WAIT verdict) — 60s
+    try {
+        autoGateEnabled = localStorage.getItem('sm_auto_gate') === '1';
+        const ag = document.getElementById('sm-bias-auto');
+        if (ag) ag.checked = autoGateEnabled;
+        const note = document.getElementById('sm-bias-autonote');
+        if (note && autoGateEnabled) {
+            note.style.display = '';
+            note.textContent = '🤖 Auto-gate увімкнено — вердикт керує кнопками LONG/SHORT';
+        }
+    } catch {}
     loadBias();
     setInterval(loadBias, 60000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
