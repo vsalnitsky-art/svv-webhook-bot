@@ -2542,6 +2542,77 @@ def register_api_routes(app):
     def smart_money_page():
         return render_template('smart_money.html')
     
+    @app.route('/tickr')
+    def tickr_page():
+        return render_template('tickr.html')
+    
+    @app.route('/api/tickr/fetch', methods=['POST'])
+    def api_tickr_fetch():
+        """Fetch+filter instruments for an exchange + categories.
+        Body: {exchange, categories[], active_only, reverse}."""
+        from detection import tickr_core
+        data = request.get_json() or {}
+        return jsonify(tickr_core.fetch(
+            exchange=data.get('exchange', ''),
+            categories=data.get('categories', []),
+            active_only=bool(data.get('active_only', True)),
+            reverse=bool(data.get('reverse', False))))
+    
+    @app.route('/api/tickr/snapshot', methods=['GET', 'POST'])
+    def api_tickr_snapshot():
+        """Per (exchange|categories) stored snapshot used for diff/watch.
+        GET ?key=  → stored envelope. POST {key, envelope} → save."""
+        import json as _json
+        db = get_db()
+        if request.method == 'POST':
+            body = request.get_json() or {}
+            key = body.get('key', '')
+            env = body.get('envelope')
+            if not key or env is None:
+                return jsonify({'ok': False, 'reason': 'key+envelope required'})
+            db.set_setting(f'tickr_snap::{key}', _json.dumps(env))
+            return jsonify({'ok': True})
+        key = request.args.get('key', '')
+        raw = db.get_setting(f'tickr_snap::{key}', '')
+        if not raw:
+            return jsonify({'ok': True, 'envelope': None})
+        try:
+            return jsonify({'ok': True, 'envelope': _json.loads(raw)})
+        except Exception:
+            return jsonify({'ok': True, 'envelope': None})
+    
+    @app.route('/api/tickr/diff', methods=['POST'])
+    def api_tickr_diff():
+        """Diff a fresh symbol list against the stored snapshot for a key.
+        Body: {old_symbols[], new_symbols[]}."""
+        from detection import tickr_core
+        data = request.get_json() or {}
+        return jsonify({'ok': True, **tickr_core.diff(
+            data.get('old_symbols', []), data.get('new_symbols', []))})
+    
+    @app.route('/api/tickr/tv', methods=['POST'])
+    def api_tickr_tv():
+        """Build a TradingView watchlist text from symbols."""
+        from detection import tickr_core
+        data = request.get_json() or {}
+        txt = tickr_core.to_tv_list(data.get('symbols', []),
+                                    data.get('separator', 'newline'))
+        return jsonify({'ok': True, 'text': txt})
+    
+    @app.route('/api/tickr/alert', methods=['POST'])
+    def api_tickr_alert():
+        """Send a Telegram alert about new/changed listings via the bot's
+        own notifier. Body: {message}."""
+        try:
+            from alerts.telegram_notifier import get_notifier
+            n = get_notifier()
+            if not n or not getattr(n, 'enabled', False):
+                return jsonify({'ok': False, 'reason': 'Telegram not configured'})
+            ok = n.send_message(request.get_json().get('message', ''))
+            return jsonify({'ok': bool(ok)})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+    
     @app.route('/api/smc/state')
     def api_smc_state():
         from detection.smc_scanner import get_smc_scanner

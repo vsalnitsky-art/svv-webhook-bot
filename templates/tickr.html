@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}Tickr — SVV Bot{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📡 Tickr</h1>
+    <div class="header-actions">
+        <span style="color:#778;font-size:0.8rem">
+            Інструменти бірж · нові лістинги · TradingView watchlist
+        </span>
+    </div>
+</div>
+
+<style>
+.tk-section { background: rgba(20,24,33,0.6); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+.tk-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.tk-field { display: flex; flex-direction: column; gap: 4px; }
+.tk-field label { color: #8b93a7; font-size: 0.7rem; font-weight: 700; letter-spacing: 1px; }
+.tk-field select, .tk-field input { background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; color: #ddd;
+    padding: 6px 10px; font-size: 0.85rem; font-family: monospace; }
+.tk-cats { display: flex; gap: 14px; align-items: center; }
+.tk-cats label { color: #c6cbd8; font-size: 0.82rem; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.tk-btn { background: rgba(59,130,246,0.18); border: 1px solid rgba(59,130,246,0.5);
+    color: #93c5fd; border-radius: 6px; padding: 7px 16px; cursor: pointer;
+    font-size: 0.85rem; font-weight: 600; }
+.tk-btn:hover { background: rgba(59,130,246,0.3); }
+.tk-btn.alt { background: rgba(168,85,247,0.16); border-color: rgba(168,85,247,0.45); color: #c084fc; }
+.tk-btn.warm { background: rgba(76,175,80,0.16); border-color: rgba(76,175,80,0.45); color: #86efac; }
+.tk-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tk-stat { color: #8b93a7; font-size: 0.8rem; margin: 8px 0; font-family: monospace; }
+.tk-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.tk-table th { text-align: left; color: #8b93a7; font-weight: 600; padding: 6px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.1); position: sticky; top: 0; background: #14181f; }
+.tk-table td { padding: 5px 10px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-family: monospace; color: #c6cbd8; }
+.tk-table tr:hover td { background: rgba(255,255,255,0.03); }
+.tk-scroll { max-height: 460px; overflow-y: auto; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.06); }
+.tk-pill { padding: 1px 7px; border-radius: 999px; font-size: 0.7rem; }
+.tk-spot { background: rgba(59,130,246,0.18); color: #93c5fd; }
+.tk-swap { background: rgba(245,158,11,0.18); color: #fbbf24; }
+.tk-added { color: #4ade80; } .tk-removed { color: #f87171; } .tk-changed { color: #fbbf24; }
+.tk-tv-out { width: 100%; min-height: 120px; background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: #a3e635;
+    font-family: monospace; font-size: 0.78rem; padding: 10px; resize: vertical; }
+.tk-diff-box { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-top: 10px; }
+.tk-diff-col { background: rgba(0,0,0,0.25); border-radius: 8px; padding: 10px;
+    max-height: 280px; overflow-y: auto; }
+.tk-diff-col h4 { margin: 0 0 8px; font-size: 0.78rem; }
+.tk-diff-col .row { font-family: monospace; font-size: 0.76rem; color: #c6cbd8; padding: 2px 0; }
+@media (max-width: 900px) { .tk-diff-box { grid-template-columns: 1fr; } }
+</style>
+
+<!-- Fetch -->
+<div class="tk-section">
+    <div class="tk-row">
+        <div class="tk-field">
+            <label>БІРЖА</label>
+            <select id="tk-exchange">
+                <option value="binance">Binance</option>
+                <option value="bybit">Bybit</option>
+                <option value="mexc">MEXC</option>
+                <option value="bingx">BingX</option>
+            </select>
+        </div>
+        <div class="tk-field">
+            <label>КАТЕГОРІЇ</label>
+            <div class="tk-cats">
+                <label><input type="checkbox" class="tk-cat" value="spot" checked> spot</label>
+                <label><input type="checkbox" class="tk-cat" value="swap"> swap</label>
+                <label><input type="checkbox" class="tk-cat" value="usdt" checked> USDT</label>
+                <label><input type="checkbox" class="tk-cat" value="usdc"> USDC</label>
+            </div>
+        </div>
+        <div class="tk-field">
+            <label>ОПЦІЇ</label>
+            <div class="tk-cats">
+                <label><input type="checkbox" id="tk-active" checked> active only</label>
+                <label><input type="checkbox" id="tk-reverse"> newest first</label>
+            </div>
+        </div>
+        <button class="tk-btn" id="tk-fetch-btn" onclick="tkFetch()">Fetch</button>
+    </div>
+    <div class="tk-stat" id="tk-stat">Оберіть біржу й категорії, потім Fetch.</div>
+</div>
+
+<!-- Results + actions -->
+<div class="tk-section">
+    <div class="tk-row" style="margin-bottom:10px">
+        <button class="tk-btn alt" onclick="tkBuildTV()">📋 TradingView watchlist</button>
+        <button class="tk-btn warm" id="tk-save-snap" onclick="tkSaveSnapshot()" disabled>💾 Зберегти знімок</button>
+        <button class="tk-btn" id="tk-diff-btn" onclick="tkRunDiff()" disabled>🔍 Diff проти знімка</button>
+    </div>
+    <div class="tk-scroll">
+        <table class="tk-table">
+            <thead><tr><th>Symbol</th><th>Base/Quote</th><th>Type</th><th>Status</th><th>TV</th></tr></thead>
+            <tbody id="tk-tbody"><tr><td colspan="5" style="color:#667;padding:16px">— ще не завантажено —</td></tr></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- TV output -->
+<div class="tk-section" id="tk-tv-section" style="display:none">
+    <h3 style="font-size:0.85rem;color:#c084fc;margin:0 0 8px">TradingView Watchlist</h3>
+    <textarea class="tk-tv-out" id="tk-tv-out" readonly></textarea>
+    <div style="margin-top:8px"><button class="tk-btn" onclick="tkCopyTV()">Копіювати</button></div>
+</div>
+
+<!-- Watch monitor (manual fetch+diff against stored snapshot) -->
+<div class="tk-section">
+    <h3 style="font-size:0.85rem;color:#93c5fd;margin:0 0 4px">📡 Монітор нових лістингів</h3>
+    <div class="tk-stat">
+        Зберіть знімок зараз → пізніше натисніть Diff: побачите нові / зниклі / змінені пари.
+        «Алерт у Telegram» надсилає нові лістинги через нотифаєр бота.
+    </div>
+    <div class="tk-diff-box" id="tk-diff-box" style="display:none">
+        <div class="tk-diff-col"><h4 class="tk-added">➕ Нові</h4><div id="tk-diff-added"></div></div>
+        <div class="tk-diff-col"><h4 class="tk-removed">➖ Зникли</h4><div id="tk-diff-removed"></div></div>
+        <div class="tk-diff-col"><h4 class="tk-changed">✎ Змінились</h4><div id="tk-diff-changed"></div></div>
+    </div>
+    <div style="margin-top:10px"><button class="tk-btn warm" id="tk-alert-btn" onclick="tkAlert()" disabled>📨 Алерт у Telegram (нові)</button></div>
+</div>
+
+<script>
+let tkLast = null;       // last fetch envelope
+let tkLastDiff = null;   // last diff result
+
+function tkSelectedCats() {
+    return Array.from(document.querySelectorAll('.tk-cat:checked')).map(c => c.value);
+}
+function tkKey() {
+    const ex = document.getElementById('tk-exchange').value;
+    const cats = tkSelectedCats().slice().sort().join(',');
+    return `${ex}|${cats}`;
+}
+
+async function tkFetch() {
+    const btn = document.getElementById('tk-fetch-btn');
+    const stat = document.getElementById('tk-stat');
+    const cats = tkSelectedCats();
+    if (cats.length === 0) { stat.textContent = 'Оберіть хоча б одну категорію.'; return; }
+    btn.disabled = true; stat.textContent = 'Завантаження…';
+    try {
+        const res = await fetch('/api/tickr/fetch', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                exchange: document.getElementById('tk-exchange').value,
+                categories: cats,
+                active_only: document.getElementById('tk-active').checked,
+                reverse: document.getElementById('tk-reverse').checked,
+            }),
+        });
+        const d = await res.json();
+        if (!d.ok) { stat.textContent = '❌ ' + (d.reason || 'fetch failed'); return; }
+        tkLast = d;
+        tkRenderTable(d.symbols);
+        stat.textContent = `✅ ${d.exchange.toUpperCase()} · ${d.count} інструментів · ${new Date(d.fetched_at*1000).toLocaleTimeString()}`;
+        document.getElementById('tk-save-snap').disabled = false;
+        document.getElementById('tk-diff-btn').disabled = false;
+    } catch (e) {
+        stat.textContent = '❌ ' + e;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function tkRenderTable(syms) {
+    const tb = document.getElementById('tk-tbody');
+    if (!syms || !syms.length) {
+        tb.innerHTML = '<tr><td colspan="5" style="color:#667;padding:16px">— порожньо —</td></tr>';
+        return;
+    }
+    tb.innerHTML = syms.slice(0, 2000).map(s => {
+        const typeCls = s.is_swap ? 'tk-swap' : 'tk-spot';
+        return `<tr>
+            <td><b>${s.symbol}</b></td>
+            <td>${s.base_asset}/${s.quote_asset}</td>
+            <td><span class="tk-pill ${typeCls}">${s.market_type}</span></td>
+            <td>${s.status || '—'}</td>
+            <td style="color:#a3e635">${s.tradingview_symbol}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function tkBuildTV() {
+    if (!tkLast) return;
+    const res = await fetch('/api/tickr/tv', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbols: tkLast.symbols, separator: 'newline'}),
+    });
+    const d = await res.json();
+    document.getElementById('tk-tv-out').value = d.text || '';
+    document.getElementById('tk-tv-section').style.display = '';
+}
+function tkCopyTV() {
+    const ta = document.getElementById('tk-tv-out');
+    ta.select(); document.execCommand('copy');
+}
+
+async function tkSaveSnapshot() {
+    if (!tkLast) return;
+    await fetch('/api/tickr/snapshot', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: tkKey(), envelope: tkLast}),
+    });
+    document.getElementById('tk-stat').textContent =
+        `💾 Знімок збережено для ${tkKey()} (${tkLast.count} символів)`;
+}
+
+async function tkRunDiff() {
+    if (!tkLast) return;
+    const snapRes = await fetch('/api/tickr/snapshot?key=' + encodeURIComponent(tkKey()));
+    const snap = await snapRes.json();
+    if (!snap.envelope) {
+        document.getElementById('tk-stat').textContent =
+            '⚠ Немає збереженого знімка для цього набору — спершу «Зберегти знімок».';
+        return;
+    }
+    const res = await fetch('/api/tickr/diff', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({old_symbols: snap.envelope.symbols, new_symbols: tkLast.symbols}),
+    });
+    const d = await res.json();
+    tkLastDiff = d;
+    tkRenderDiff(d);
+    document.getElementById('tk-alert-btn').disabled = (d.added || []).length === 0;
+}
+
+function tkRenderDiff(d) {
+    document.getElementById('tk-diff-box').style.display = '';
+    const fmt = arr => (arr && arr.length)
+        ? arr.map(s => `<div class="row">${s.symbol || s.key} <span style="color:#667">${s.market_type||''}</span></div>`).join('')
+        : '<div class="row" style="color:#667">—</div>';
+    document.getElementById('tk-diff-added').innerHTML = fmt(d.added);
+    document.getElementById('tk-diff-removed').innerHTML = fmt(d.removed);
+    document.getElementById('tk-diff-changed').innerHTML = (d.changed && d.changed.length)
+        ? d.changed.map(c => `<div class="row">${c.symbol}: ${c.changes.map(ch=>ch.field).join(', ')}</div>`).join('')
+        : '<div class="row" style="color:#667">—</div>';
+}
+
+async function tkAlert() {
+    if (!tkLastDiff || !tkLastDiff.added || !tkLastDiff.added.length) return;
+    const ex = document.getElementById('tk-exchange').value.toUpperCase();
+    const lines = tkLastDiff.added.map(s => s.tradingview_symbol).join('\n');
+    const msg = `📡 Нові лістинги на ${ex} (${tkLastDiff.added.length}):\n\n${lines}`;
+    const res = await fetch('/api/tickr/alert', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({message: msg}),
+    });
+    const d = await res.json();
+    document.getElementById('tk-stat').textContent = d.ok
+        ? '📨 Алерт надіслано в Telegram.'
+        : '❌ ' + (d.reason || 'alert failed');
+}
+</script>
+{% endblock %}
