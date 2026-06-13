@@ -2546,6 +2546,13 @@ def register_api_routes(app):
     def tickr_page():
         return render_template('tickr.html')
     
+    @app.route('/api/sentiment')
+    def api_sentiment():
+        """Exchange-wide LONG vs SHORT mood (%). Default Bybit."""
+        from detection.market_sentiment import get_sentiment
+        exch = request.args.get('exchange', 'bybit')
+        return jsonify(get_sentiment(exch))
+    
     @app.route('/api/tickr/fetch', methods=['POST'])
     def api_tickr_fetch():
         """Fetch+filter instruments for an exchange + categories.
