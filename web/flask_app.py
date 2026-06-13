@@ -2546,6 +2546,175 @@ def register_api_routes(app):
     def tickr_page():
         return render_template('tickr.html')
     
+    @app.route('/api/sm/bias')
+    def api_sm_bias():
+        """Trade-bias verdict (LONG / SHORT / WAIT) for one symbol, by
+        combining the signals the bot already computes:
+
+          DIRECTION (where):
+            • forecast 1H + 4H  — must AGREE on a side
+            • squeeze fuel dir  — liq pool magnet (long/short/balanced)
+            • book imbalance    — bid vs ask weight
+          TRUST (whether now):
+            • manipulation      — MIXED / high % ⇒ don't trust the book
+            • sentiment         — contrarian damp at crowd extremes
+
+        Verdict logic: direction needs forecast TF-agreement AND fuel not
+        balanced, both pointing the same way. Trust gates can downgrade a
+        directional setup to WAIT. Returns components + 'reasons' so the
+        UI board can show what matched / what's missing.
+        """
+        import time as _t
+        symbol = request.args.get('symbol', 'BTCUSDT').upper().strip()
+        if symbol.endswith('.P'):
+            symbol = symbol[:-2]
+        comp = {}
+        reasons = []
+
+        # --- Forecast 1H/4H agreement ---
+        fc_side = 0  # +1 long, -1 short, 0 none/disagree
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            cached = fe.get(symbol) if fe else None
+            if cached:
+                f1 = cached.get('forecast_1h') or {}
+                f4 = cached.get('forecast_4h') or {}
+                s1, s4 = f1.get('side', 0), f4.get('side', 0)
+                comp['forecast'] = {
+                    'f1_side': s1, 'f1_conf': f1.get('confidence', 0),
+                    'f4_side': s4, 'f4_conf': f4.get('confidence', 0)}
+                if s1 and s1 == s4:
+                    fc_side = 1 if s1 > 0 else -1
+                    reasons.append(('ok', f"Forecast 1H+4H узгоджені "
+                                    f"{'LONG' if fc_side > 0 else 'SHORT'}"))
+                elif s1 or s4:
+                    reasons.append(('wait', "Forecast 1H/4H не узгоджені"))
+                else:
+                    reasons.append(('wait', "Forecast нейтральний"))
+            else:
+                comp['forecast'] = None
+                reasons.append(('wait', "Forecast немає даних"))
+        except Exception as e:
+            comp['forecast'] = None
+            reasons.append(('wait', "Forecast недоступний"))
+
+        # --- Squeeze fuel direction (reference-calibrated) ---
+        fuel_side = 0
+        try:
+            from detection.market_data import get_market_data
+            from detection.squeeze import calc_squeeze
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            md = get_market_data()
+            kl = md.fetch_klines(symbol, interval='1h', limit=120) if md else None
+            sq = calc_squeeze(kl or [])
+            lm = get_liquidation_map()
+            fa = fb = 0.0
+            if lm is not None:
+                try:
+                    prof = get_db().get_setting('liqmap_decay_profile', 'tori')
+                except Exception:
+                    prof = 'tori'
+                lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
+                mark = lst.get('mark_price')
+                for lev in (lst.get('levels') or []):
+                    if not mark:
+                        break
+                    dist = abs(lev['price'] - mark) / mark * 100.0
+                    if dist > 15:
+                        continue
+                    w = lev['usd'] / (1.0 + dist / 2.0)
+                    if lev['price'] > mark:
+                        fa += w
+                    else:
+                        fb += w
+            den = fa + fb
+            fuel_dir = (fa - fb) / den if den > 0 else 0.0
+            comp['fuel'] = {'above_usd': round(fa, 0), 'below_usd': round(fb, 0),
+                            'dir': round(fuel_dir, 3),
+                            'squeeze_on': sq.get('squeeze_on', False),
+                            'band': sq.get('band', 'off')}
+            if den <= 0:
+                reasons.append(('wait', "Liq-палива немає даних"))
+            elif fuel_dir > 0.1:
+                fuel_side = 1
+                reasons.append(('ok', "Паливо зверху (тягне в LONG)"))
+            elif fuel_dir < -0.1:
+                fuel_side = -1
+                reasons.append(('ok', "Паливо знизу (тягне в SHORT)"))
+            else:
+                reasons.append(('wait', "Паливо збалансоване — напрямку немає"))
+        except Exception:
+            comp['fuel'] = None
+            reasons.append(('wait', "Squeeze/fuel недоступний"))
+
+        # --- Book imbalance + manipulation trust ---
+        trust_ok = True
+        try:
+            from detection.orderbook_collector import (
+                fetch_aggregated_orderbook, compute_walls_buckets_v3)
+            snap = fetch_aggregated_orderbook(symbol)
+            walls = compute_walls_buckets_v3(snap) if snap else {}
+            imb = walls.get('imbalance_pct', 0) or 0
+            comp['imbalance_pct'] = round(imb, 1)
+            manip = walls.get('manipulation') or {}
+            mpct = manip.get('pct', 0)
+            comp['manipulation'] = {'pct': mpct,
+                                    'low_sample': manip.get('low_sample', False)}
+            if not manip.get('low_sample') and mpct >= 50:
+                trust_ok = False
+                reasons.append(('warn', f"Маніпуляція {mpct:.0f}% — книзі не вірити"))
+            elif manip.get('low_sample'):
+                reasons.append(('wait', "Маніпуляція: збір статистики"))
+        except Exception:
+            comp['imbalance_pct'] = None
+            comp['manipulation'] = None
+
+        # --- Sentiment (contrarian damp at extremes) ---
+        senti_warn = False
+        try:
+            from detection.market_sentiment import get_sentiment
+            s = get_sentiment('bybit')
+            if s.get('ok'):
+                comp['sentiment'] = {'long_pct': s['long_pct'],
+                                     'bias': s['bias']}
+                if s['long_pct'] >= 65:
+                    senti_warn = 'long'
+                    reasons.append(('warn', f"Натовп {s['long_pct']:.0f}% LONG "
+                                    "(ейфорія — обережно з LONG)"))
+                elif s['long_pct'] <= 35:
+                    senti_warn = 'short'
+                    reasons.append(('warn', f"Натовп {100-s['long_pct']:.0f}% SHORT "
+                                    "(паніка — обережно з SHORT)"))
+        except Exception:
+            comp['sentiment'] = None
+
+        # --- Verdict ---
+        verdict, confidence = 'WAIT', 0
+        dir_votes = [v for v in (fc_side, fuel_side) if v != 0]
+        agree = dir_votes and all(v == dir_votes[0] for v in dir_votes)
+        if agree and len(dir_votes) >= 1:
+            side = dir_votes[0]
+            # base confidence: both direction signals agreeing is strongest
+            confidence = 50 + 25 * len(dir_votes)
+            # imbalance nudge in the same direction
+            imb = comp.get('imbalance_pct') or 0
+            if (side > 0 and imb > 0) or (side < 0 and imb < 0):
+                confidence += 10
+            if not trust_ok:
+                confidence -= 30
+            # contrarian sentiment damp when entering with an over-crowded side
+            if (senti_warn == 'long' and side > 0) or (senti_warn == 'short' and side < 0):
+                confidence -= 15
+            confidence = max(0, min(100, confidence))
+            if confidence >= 60 and trust_ok:
+                verdict = 'LONG' if side > 0 else 'SHORT'
+            else:
+                verdict = 'WAIT'
+        return jsonify({'ok': True, 'symbol': symbol, 'verdict': verdict,
+                        'confidence': confidence, 'components': comp,
+                        'reasons': reasons, 'ts': _t.time()})
+    
     @app.route('/api/sentiment')
     def api_sentiment():
         """Exchange-wide LONG vs SHORT mood (%). Default Bybit."""

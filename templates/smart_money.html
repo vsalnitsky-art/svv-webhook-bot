@@ -998,7 +998,39 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-sentiment-short { background:linear-gradient(90deg,#f87171,#dc2626); height:100%; transition:width .4s; }
     .sm-sentiment-val { font-family:monospace; font-size:0.78rem; font-weight:700;
         white-space:nowrap; color:#c6cbd8; }
+    /* Bias board */
+    .sm-bias { background:rgba(13,16,24,0.7); border:1px solid rgba(255,255,255,0.08);
+        border-radius:14px; padding:16px 18px; margin:0 0 16px; }
+    .sm-bias-top { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    .sm-bias-verdict { font-size:1.8rem; font-weight:800; letter-spacing:1px;
+        display:flex; align-items:center; gap:10px; }
+    .sm-bias-LONG { color:#4ade80; } .sm-bias-SHORT { color:#f87171; }
+    .sm-bias-WAIT { color:#9aa3b5; }
+    .sm-bias-conf { font-family:monospace; font-size:0.85rem; color:#8b93a7; }
+    .sm-bias-confbar { flex:1; min-width:120px; height:8px; border-radius:4px;
+        background:rgba(255,255,255,0.07); overflow:hidden; }
+    .sm-bias-conffill { height:100%; transition:width .4s; }
+    .sm-bias-sym { font-family:monospace; font-size:0.8rem; color:#93c5fd; }
+    .sm-bias-reasons { display:flex; flex-direction:column; gap:3px; margin-top:12px; }
+    .sm-bias-reason { font-size:0.78rem; display:flex; align-items:center; gap:7px;
+        font-family:monospace; }
+    .sm-bias-reason.ok { color:#86efac; } .sm-bias-reason.warn { color:#fbbf24; }
+    .sm-bias-reason.wait { color:#8b93a7; }
+    .sm-bias-refresh { margin-left:auto; background:rgba(59,130,246,0.16);
+        border:1px solid rgba(59,130,246,0.4); color:#93c5fd; border-radius:6px;
+        padding:5px 12px; cursor:pointer; font-size:0.78rem; }
     </style>
+    
+    <div class="sm-bias" id="sm-bias">
+        <div class="sm-bias-top">
+            <div class="sm-bias-verdict sm-bias-WAIT" id="sm-bias-verdict">⏳ <span>—</span></div>
+            <span class="sm-bias-sym" id="sm-bias-sym">BTCUSDT</span>
+            <div class="sm-bias-confbar"><div class="sm-bias-conffill" id="sm-bias-conffill" style="width:0%"></div></div>
+            <span class="sm-bias-conf" id="sm-bias-conf">—</span>
+            <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
+        </div>
+        <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
+    </div>
     
     <details class="sm-settings-bar" id="sm-settings-accordion">
         <summary class="sm-settings-summary">
@@ -5375,6 +5407,34 @@ function renderEntryScoreBreakdown(breakdown) {
     host.style.display = anyData ? 'flex' : 'none';
 }
 
+async function loadBias() {
+    const sym = (typeof currentSymbol !== 'undefined' && currentSymbol) ? currentSymbol : 'BTCUSDT';
+    const vEl = document.getElementById('sm-bias-verdict');
+    const reasonsEl = document.getElementById('sm-bias-reasons');
+    if (!vEl) return;
+    document.getElementById('sm-bias-sym').textContent = sym;
+    try {
+        const res = await fetch('/api/sm/bias?symbol=' + encodeURIComponent(sym));
+        const d = await res.json();
+        if (!d.ok) { vEl.innerHTML = '⏳ <span>—</span>'; return; }
+        const icon = d.verdict === 'LONG' ? '📈' : d.verdict === 'SHORT' ? '📉' : '⏸';
+        vEl.className = 'sm-bias-verdict sm-bias-' + d.verdict;
+        vEl.innerHTML = `${icon} <span>${d.verdict}</span>`;
+        document.getElementById('sm-bias-conf').textContent = 'впевненість ' + d.confidence + '%';
+        const fill = document.getElementById('sm-bias-conffill');
+        fill.style.width = d.confidence + '%';
+        fill.style.background = d.verdict === 'LONG' ? '#4ade80'
+            : d.verdict === 'SHORT' ? '#f87171' : '#6b7280';
+        const icons = {ok: '✓', warn: '⚠', wait: '•'};
+        reasonsEl.innerHTML = (d.reasons || []).map(r => {
+            const [kind, text] = r;
+            return `<div class="sm-bias-reason ${kind}">${icons[kind] || '•'} ${text}</div>`;
+        }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
+    } catch (e) {
+        vEl.innerHTML = '⏳ <span>—</span>';
+    }
+}
+
 async function loadSentiment() {
     // Exchange-wide LONG/SHORT mood from account-ratio (default Bybit).
     const val = document.getElementById('sm-sentiment-val');
@@ -5841,6 +5901,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Exchange sentiment (LONG vs SHORT account ratio) — slow-moving, 120s
     loadSentiment();
     setInterval(loadSentiment, 120000);
+    // Trade-bias board (LONG/SHORT/WAIT verdict) — 60s
+    loadBias();
+    setInterval(loadBias, 60000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
     // a scan we want fast updates so user sees rows appear progressively.
     // Snapshot endpoint is cheap (single DB query), no real cost.
