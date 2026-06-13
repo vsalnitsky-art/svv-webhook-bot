@@ -34,6 +34,12 @@
                 </span>
             </h2>
             <div class="liqmap-controls">
+                <label class="fr-toggle" title="Повністю увімкнути/вимкнути модуль Liquidity Map"
+                       style="margin-right:4px">
+                    <input type="checkbox" id="liqmap-power-toggle" checked
+                           onchange="liqmapTogglePower(this.checked)">
+                    <span class="fr-toggle-slider"></span>
+                </label>
                 <div class="liqmap-symbol-wrap">
                     <input type="text" id="liqmap-symbol-input" value="BTCUSDT"
                            autocomplete="off" maxlength="20"
@@ -141,6 +147,9 @@
             </div>
         </div>
 
+        <div class="liqmap-off-msg" id="liqmap-off-msg" style="display:none">
+            💧 Liquidity Map вимкнено. Увімкніть тумблер у заголовку, щоб відновити моніторинг.
+        </div>
         <div class="liqmap-chart-wrap">
             <div id="liqmap-chart"></div>
             <div class="liqmap-tooltip" id="liqmap-tooltip" style="display:none"></div>
@@ -1538,6 +1547,16 @@
     font-family: monospace;
 }
 /* ═══ Indicators strip (above chart): modern glass cards ═══ */
+.liqmap-off-msg {
+    text-align: center;
+    padding: 40px 20px;
+    color: #8b93a7;
+    font-size: 0.9rem;
+    background: rgba(13,16,24,0.4);
+    border: 1px dashed rgba(255,255,255,0.1);
+    border-radius: 12px;
+    margin: 8px 0;
+}
 .liqmap-indicators {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -3238,6 +3257,8 @@ const liqmapState = {
     includeMitigated: false,
     enabled: true,
     refreshTimer: null,
+    apiHealthTimer: null,     // 60s — API health strip
+    powerOff: false,          // module fully disabled (power toggle)
     pressureTimer: null,      // 30s — forecast + squeeze gauges
     watchlistTimer: null,     // 60s — watchlist buttons + scanner scores
     yLocked: false,           // 🔒 freeze Y scale (lines move, chart doesn't)
@@ -3376,6 +3397,7 @@ function liqmapApplyStatusToUI(status) {
 }
 
 async function loadLiqmap() {
+    if (liqmapState.powerOff) return;   // module disabled — no polling
     // New data layer: order-book walls from Binance WS via our collector,
     // candles from the existing price-series endpoint. Both are fetched
     // in parallel; render only when both resolve. The old OI/event-based
@@ -4699,7 +4721,7 @@ function liqmapStartRefresh() {
     // API Health strip: backend sweeps every 2 min, we poll the cache
     // every 60s (halves worst-case staleness, costs nothing).
     apiHealthLoad();
-    setInterval(() => {
+    liqmapState.apiHealthTimer = setInterval(() => {
         if (document.hidden) return;
         apiHealthLoad();
     }, 60 * 1000);
@@ -5049,9 +5071,53 @@ async function liqmapLoadPressure() {
 }
 
 function liqmapStopRefresh() {
-    if (liqmapState.refreshTimer) {
-        clearInterval(liqmapState.refreshTimer);
-        liqmapState.refreshTimer = null;
+    // Stop EVERY liqmap loop (used by power-off too, not just refresh).
+    for (const t of ['refreshTimer', 'pressureTimer', 'watchlistTimer',
+                     'apiHealthTimer']) {
+        if (liqmapState[t]) {
+            clearInterval(liqmapState[t]);
+            liqmapState[t] = null;
+        }
+    }
+}
+
+async function liqmapTogglePower(enabled) {
+    // Full module on/off. OFF stops all polling and hides the panel body;
+    // ON restores everything. Persisted server-side so it survives reload.
+    try {
+        await fetch('/api/liqmap/power', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled}),
+        });
+    } catch {}
+    liqmapApplyPower(enabled);
+}
+
+function liqmapApplyPower(enabled) {
+    liqmapState.powerOff = !enabled;
+    // Body elements to hide when the module is off (header/controls stay)
+    const bodyIds = ['liqmap-status-bar', 'liqmap-watchlist-bar',
+                     'liqmap-pressure', 'liqmap-chart-disabled'];
+    const chartWrap = document.querySelector('.liqmap-chart-wrap');
+    const offMsg = document.getElementById('liqmap-off-msg');
+    const cb = document.getElementById('liqmap-power-toggle');
+    if (cb) cb.checked = enabled;
+    if (enabled) {
+        if (chartWrap) chartWrap.style.display = '';
+        if (offMsg) offMsg.style.display = 'none';
+        // status-bar / watchlist / indicators manage their own display
+        // (they're shown by their data loaders), so just resume loops.
+        liqmapStartRefresh();
+    } else {
+        liqmapStopRefresh();
+        if (chartWrap) chartWrap.style.display = 'none';
+        for (const id of ['liqmap-status-bar', 'liqmap-watchlist-bar',
+                          'liqmap-pressure']) {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        }
+        if (offMsg) offMsg.style.display = '';
     }
 }
 
@@ -5072,6 +5138,16 @@ async function liqmapInit() {
             document.querySelectorAll('#liqmap-candle-toggle button').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.tf === savedTF);
             });
+        }
+    } catch {}
+    // Power state first: if the module was switched off, don't start any
+    // loops — just reflect the off state and bail.
+    try {
+        const pr = await fetch('/api/liqmap/power');
+        const pd = await pr.json();
+        if (pd.ok && pd.enabled === false) {
+            liqmapApplyPower(false);
+            return;
         }
     } catch {}
     // Always call loadLiqmap — it calls /status internally and updates the

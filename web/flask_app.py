@@ -2491,6 +2491,21 @@ def register_api_routes(app):
         fm.set_enabled(enabled)
         return jsonify({'ok': True, 'enabled': fm.is_enabled(), 'running': fm._running})
     
+    @app.route('/api/liqmap/power', methods=['GET', 'POST'])
+    def api_liqmap_power():
+        """Full on/off switch for the 💧 Liquidity Map module. Persisted
+        in DB. When OFF: the frontend panel stops all its polling loops
+        and hides its content, and the data endpoints below short-circuit
+        so the background daemons aren't queried for a hidden panel."""
+        db = get_db()
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            enabled = bool(data.get('enabled', True))
+            db.set_setting('liqmap_module_enabled', 'true' if enabled else 'false')
+            return jsonify({'ok': True, 'enabled': enabled})
+        cur = str(db.get_setting('liqmap_module_enabled', 'true')).lower()
+        return jsonify({'ok': True, 'enabled': cur in ('true', '1')})
+    
     @app.route('/api/liquidity/toggle', methods=['GET', 'POST'])
     def api_liquidity_toggle():
         """Get or set Liquidity Map enabled state."""
