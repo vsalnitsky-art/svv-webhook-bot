@@ -986,8 +986,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span class="sm-sentiment-val" id="sm-sentiment-val">⏳</span>
         </div>
     </div>
+    <div class="sm-sentiment-note" id="sm-sentiment-note"></div>
     
     <style>
+    .sm-sentiment-note { font-size:0.76rem; margin-top:6px; font-family:monospace;
+        display:none; padding:4px 8px; border-radius:5px; }
+    .sm-sentiment-note.euphoria { color:#fbbf24; background:rgba(251,191,36,0.08); display:block; }
+    .sm-sentiment-note.panic { color:#fbbf24; background:rgba(251,191,36,0.08); display:block; }
+    .sm-sentiment-note.neutral { color:#8b93a7; display:block; }
     .sm-sentiment { display:flex; align-items:center; gap:8px; margin-left:auto;
         min-width:240px; }
     .sm-sentiment-label { color:#8b93a7; font-size:0.72rem; font-weight:600;
@@ -5591,17 +5597,10 @@ async function loadBias() {
             return `<div class="sm-bias-reason ${kind}">${icons[kind] || '•'} ${text}</div>`;
         }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
 
-        // Sentiment + watchlist consensus rows (refreshed every cycle)
+        // Watchlist consensus row (sentiment lives on the Trade-Direction
+        // panel now, not here — it's informational, not part of the verdict)
         const c = d.components || {};
         let extra = '';
-        if (c.sentiment) {
-            const lp = c.sentiment.long_pct, sp = c.sentiment.short_pct;
-            extra += `<div class="sm-bias-mini">
-                <span class="sm-bias-mini-label">Настрій біржі (Bybit account ratio)</span>
-                <div class="sm-bias-mini-bar"><div class="sm-bias-mini-l" style="width:${lp}%"></div><div class="sm-bias-mini-s" style="width:${sp}%"></div></div>
-                <span class="sm-bias-mini-val">L ${lp}% / S ${sp}% — ${c.sentiment.bias}</span>
-            </div>`;
-        }
         if (c.watchlist) {
             const w = c.watchlist;
             const srcLbl = w.source === 'ob' ? '★ OB-фільтр'
@@ -5646,6 +5645,22 @@ async function loadSentiment() {
         val.title = `${d.exchange.toUpperCase()} account ratio (1h) по ${d.sampled} монетах · `
             + `перевага ${d.bias}\n` + (d.per_symbol || [])
                 .map(p => `${p.symbol}: L ${p.long_pct}%`).join('\n');
+        // Crowd-extreme caption (informational — does NOT affect the verdict).
+        // Account ratio is contrarian at extremes: a heavily one-sided crowd
+        // often precedes a move AGAINST it.
+        const note = document.getElementById('sm-sentiment-note');
+        if (note) {
+            if (d.long_pct >= 65) {
+                note.className = 'sm-sentiment-note euphoria';
+                note.textContent = `⚠ Натовп ${d.long_pct}% LONG (ейфорія — обережно з LONG)`;
+            } else if (d.long_pct <= 35) {
+                note.className = 'sm-sentiment-note panic';
+                note.textContent = `⚠ Натовп ${d.short_pct}% SHORT (паніка — обережно з SHORT)`;
+            } else {
+                note.className = 'sm-sentiment-note neutral';
+                note.textContent = `Настрій збалансований (${d.long_pct}% / ${d.short_pct}%) — без екстремумів`;
+            }
+        }
     } catch (e) {
         val.textContent = '—';
         val.title = String(e);

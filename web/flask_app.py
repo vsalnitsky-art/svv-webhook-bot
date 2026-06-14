@@ -2670,24 +2670,11 @@ def register_api_routes(app):
             comp['imbalance_pct'] = None
             comp['manipulation'] = None
 
-        # --- Sentiment (contrarian damp at extremes) ---
-        senti_warn = False
-        try:
-            from detection.market_sentiment import get_sentiment
-            s = get_sentiment('bybit')
-            if s.get('ok'):
-                comp['sentiment'] = {'long_pct': s['long_pct'],
-                                     'bias': s['bias']}
-                if s['long_pct'] >= 65:
-                    senti_warn = 'long'
-                    reasons.append(('warn', f"Натовп {s['long_pct']:.0f}% LONG "
-                                    "(ейфорія — обережно з LONG)"))
-                elif s['long_pct'] <= 35:
-                    senti_warn = 'short'
-                    reasons.append(('warn', f"Натовп {100-s['long_pct']:.0f}% SHORT "
-                                    "(паніка — обережно з SHORT)"))
-        except Exception:
-            comp['sentiment'] = None
+        # NOTE: Exchange sentiment was removed from the verdict calculation
+        # (2026-06-14, user request). It no longer affects confidence or the
+        # reasons list — it's purely informational and rendered separately on
+        # the Trade-Direction panel with its own crowd-extreme caption. The
+        # snapshot is still attached to the response below for the UI.
 
         # --- Watchlist consensus (how many watchlist coins lean which way) ---
         # PREFERRED source: the active watchlist FILTER passed from the UI
@@ -2794,9 +2781,6 @@ def register_api_routes(app):
                 confidence += 10
             if not trust_ok:
                 confidence -= 30
-            # contrarian sentiment damp when entering with an over-crowded side
-            if (senti_warn == 'long' and side > 0) or (senti_warn == 'short' and side < 0):
-                confidence -= 15
             confidence = max(0, min(100, confidence))
             if confidence >= 60 and trust_ok:
                 verdict = 'LONG' if side > 0 else 'SHORT'
