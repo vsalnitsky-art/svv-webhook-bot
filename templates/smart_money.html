@@ -1032,12 +1032,29 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-updated { font-size:0.7rem; color:#667; font-family:monospace; margin-top:8px; }
     .sm-bias-autonote { font-size:0.74rem; color:#c084fc; margin-top:6px;
         display:none; font-family:monospace; }
+    .sm-bias-sym-input { background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.15);
+        border-radius:6px; color:#93c5fd; padding:5px 10px; font-family:monospace;
+        font-size:0.82rem; width:110px; text-transform:uppercase; }
+    .sm-bias-sym-input:focus { outline:none; border-color:rgba(59,130,246,0.6); }
+    .sm-bias-extra { display:flex; flex-wrap:wrap; gap:18px; margin-top:12px;
+        padding-top:10px; border-top:1px solid rgba(255,255,255,0.06); }
+    .sm-bias-mini { display:flex; flex-direction:column; gap:4px; min-width:200px; }
+    .sm-bias-mini-label { font-size:0.7rem; color:#8b93a7; font-weight:600; letter-spacing:0.5px; }
+    .sm-bias-mini-bar { height:13px; border-radius:7px; overflow:hidden; display:flex;
+        background:rgba(255,255,255,0.06); }
+    .sm-bias-mini-l { background:linear-gradient(90deg,#16a34a,#4ade80); height:100%; transition:width .4s; }
+    .sm-bias-mini-s { background:linear-gradient(90deg,#f87171,#dc2626); height:100%; transition:width .4s; }
+    .sm-bias-mini-val { font-family:monospace; font-size:0.74rem; color:#c6cbd8; }
     </style>
     
     <div class="sm-bias" id="sm-bias">
         <div class="sm-bias-top">
             <div class="sm-bias-verdict sm-bias-WAIT" id="sm-bias-verdict">⏳ <span>—</span></div>
-            <span class="sm-bias-sym" id="sm-bias-sym">BTCUSDT</span>
+            <input type="text" id="sm-bias-sym-input" class="sm-bias-sym-input"
+                   placeholder="BTCUSDT" value="BTCUSDT"
+                   onkeydown="if(event.key==='Enter'){applyBiasSymbol();}"
+                   title="Монета для розрахунку табло. За замовчуванням BTCUSDT. Enter — застосувати.">
+            <button class="sm-bias-refresh" onclick="applyBiasSymbol()">▶</button>
             <div class="sm-bias-confbar"><div class="sm-bias-conffill" id="sm-bias-conffill" style="width:0%"></div></div>
             <span class="sm-bias-conf" id="sm-bias-conf">—</span>
             <label class="sm-bias-auto" id="sm-bias-auto-wrap"
@@ -1049,6 +1066,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
         </div>
         <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
+        <div class="sm-bias-extra" id="sm-bias-extra"></div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
         <div class="sm-bias-updated" id="sm-bias-updated"></div>
     </div>
@@ -5429,6 +5447,21 @@ function renderEntryScoreBreakdown(breakdown) {
 }
 
 let autoGateEnabled = false;
+let biasSymbol = 'BTCUSDT';
+
+function applyBiasSymbol() {
+    const inp = document.getElementById('sm-bias-sym-input');
+    if (!inp) return;
+    let v = (inp.value || '').trim().toUpperCase();
+    if (!v) {
+        // empty → fall back to the active watchlist symbol, else BTCUSDT
+        v = (typeof currentSymbol !== 'undefined' && currentSymbol) ? currentSymbol : 'BTCUSDT';
+        inp.value = v;
+    }
+    biasSymbol = v;
+    try { localStorage.setItem('sm_bias_symbol', v); } catch {}
+    loadBias();
+}
 
 // Programmatically set a side gate ON/OFF via the same persisted path as
 // the manual buttons. Returns true if a change was applied.
@@ -5439,7 +5472,7 @@ async function setSideGate(side, on) {
     const stateEl = document.getElementById(stateId);
     if (!btn) return false;
     const isActive = btn.classList.contains('active');
-    if (isActive === on) return false;   // already in desired state
+    if (isActive === on) return false;
     btn.classList.toggle('active', on);
     if (stateEl) stateEl.textContent = on ? 'ON' : 'OFF';
     const payload = {};
@@ -5452,7 +5485,7 @@ async function setSideGate(side, on) {
         });
         return true;
     } catch (e) {
-        btn.classList.toggle('active', isActive);   // revert
+        btn.classList.toggle('active', isActive);
         if (stateEl) stateEl.textContent = isActive ? 'ON' : 'OFF';
         return false;
     }
@@ -5466,37 +5499,45 @@ function toggleAutoGate(on) {
         note.style.display = on ? '' : 'none';
         if (on) note.textContent = '🤖 Auto-gate увімкнено — вердикт керує кнопками LONG/SHORT';
     }
-    if (on) loadBias();   // apply immediately
+    if (on) loadBias();
 }
 
 // Apply the verdict to the side gates (only when auto-gate is on).
 //   LONG  → enable LONG, disable SHORT
 //   SHORT → enable SHORT, disable LONG
-//   WAIT  → leave gates untouched (don't fight the user / existing state)
+//   WAIT  → disable BOTH (no new entries while direction is unclear)
 async function applyAutoGate(verdict) {
     if (!autoGateEnabled) return;
     let changed = false;
     if (verdict === 'LONG') {
-        changed = await setSideGate('LONG', true) | await setSideGate('SHORT', false);
+        const a = await setSideGate('LONG', true);
+        const b = await setSideGate('SHORT', false);
+        changed = a || b;
     } else if (verdict === 'SHORT') {
-        changed = await setSideGate('SHORT', true) | await setSideGate('LONG', false);
-    } else {
-        return;  // WAIT — no change
+        const a = await setSideGate('SHORT', true);
+        const b = await setSideGate('LONG', false);
+        changed = a || b;
+    } else {  // WAIT → both off
+        const a = await setSideGate('LONG', false);
+        const b = await setSideGate('SHORT', false);
+        changed = a || b;
     }
     const note = document.getElementById('sm-bias-autonote');
     if (note && changed) {
-        note.textContent = `🤖 Auto-gate: застосовано ${verdict} о ${new Date().toLocaleTimeString()}`;
+        const txt = verdict === 'WAIT'
+            ? 'обидва напрямки вимкнено (WAIT)'
+            : `застосовано ${verdict}`;
+        note.textContent = `🤖 Auto-gate: ${txt} о ${new Date().toLocaleTimeString()}`;
     }
 }
 
 async function loadBias() {
-    const sym = (typeof currentSymbol !== 'undefined' && currentSymbol) ? currentSymbol : 'BTCUSDT';
     const vEl = document.getElementById('sm-bias-verdict');
     const reasonsEl = document.getElementById('sm-bias-reasons');
+    const extraEl = document.getElementById('sm-bias-extra');
     if (!vEl) return;
-    document.getElementById('sm-bias-sym').textContent = sym;
     try {
-        const res = await fetch('/api/sm/bias?symbol=' + encodeURIComponent(sym));
+        const res = await fetch('/api/sm/bias?symbol=' + encodeURIComponent(biasSymbol));
         const d = await res.json();
         if (!d.ok) { vEl.innerHTML = '⏳ <span>—</span>'; return; }
         const icon = d.verdict === 'LONG' ? '📈' : d.verdict === 'SHORT' ? '📉' : '⏸';
@@ -5512,8 +5553,30 @@ async function loadBias() {
             const [kind, text] = r;
             return `<div class="sm-bias-reason ${kind}">${icons[kind] || '•'} ${text}</div>`;
         }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
+
+        // Sentiment + watchlist consensus rows (refreshed every cycle)
+        const c = d.components || {};
+        let extra = '';
+        if (c.sentiment) {
+            const lp = c.sentiment.long_pct, sp = c.sentiment.short_pct;
+            extra += `<div class="sm-bias-mini">
+                <span class="sm-bias-mini-label">Настрій біржі (Bybit account ratio)</span>
+                <div class="sm-bias-mini-bar"><div class="sm-bias-mini-l" style="width:${lp}%"></div><div class="sm-bias-mini-s" style="width:${sp}%"></div></div>
+                <span class="sm-bias-mini-val">L ${lp}% / S ${sp}% — ${c.sentiment.bias}</span>
+            </div>`;
+        }
+        if (c.watchlist) {
+            const w = c.watchlist;
+            extra += `<div class="sm-bias-mini">
+                <span class="sm-bias-mini-label">Watchlist консенсус (${w.total} монет)</span>
+                <div class="sm-bias-mini-bar"><div class="sm-bias-mini-l" style="width:${w.long_pct}%"></div><div class="sm-bias-mini-s" style="width:${w.short_pct}%"></div></div>
+                <span class="sm-bias-mini-val">${w.n_long}↑ LONG / ${w.n_short}↓ SHORT / ${w.n_flat}• flat</span>
+            </div>`;
+        }
+        extraEl.innerHTML = extra;
+
         const upd = document.getElementById('sm-bias-updated');
-        if (upd) upd.textContent = 'оновлено ' + new Date().toLocaleTimeString() + ' · авто кожні 60с';
+        if (upd) upd.textContent = `${d.symbol} · оновлено ${new Date().toLocaleTimeString()} · авто кожні 60с`;
         await applyAutoGate(d.verdict);
     } catch (e) {
         vEl.innerHTML = '⏳ <span>—</span>';
@@ -5983,10 +6046,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, 30000);
     // Refresh TM state every 5s when there are open positions, every 15s otherwise
     setInterval(loadTMState, 5000);
-    // Exchange sentiment (LONG vs SHORT account ratio) — slow-moving, 120s
-    loadSentiment();
-    setInterval(loadSentiment, 120000);
-    // Trade-bias board (LONG/SHORT/WAIT verdict) — 60s
+    // Trade-bias board + exchange sentiment + watchlist consensus — all
+    // refresh TOGETHER on one 60s cycle (sentiment row lives inside the
+    // board now; the Trade-Direction strip indicator is refreshed here too).
     try {
         autoGateEnabled = localStorage.getItem('sm_auto_gate') === '1';
         const ag = document.getElementById('sm-bias-auto');
@@ -5996,9 +6058,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             note.style.display = '';
             note.textContent = '🤖 Auto-gate увімкнено — вердикт керує кнопками LONG/SHORT';
         }
+        // Restore chosen bias symbol (default BTCUSDT)
+        const savedSym = localStorage.getItem('sm_bias_symbol');
+        if (savedSym) {
+            biasSymbol = savedSym;
+            const si = document.getElementById('sm-bias-sym-input');
+            if (si) si.value = savedSym;
+        }
     } catch {}
-    loadBias();
-    setInterval(loadBias, 60000);
+    const refreshAll = () => { loadBias(); loadSentiment(); };
+    refreshAll();
+    setInterval(refreshAll, 60000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
     // a scan we want fast updates so user sees rows appear progressively.
     // Snapshot endpoint is cheap (single DB query), no real cost.

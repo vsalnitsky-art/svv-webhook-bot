@@ -2689,14 +2689,62 @@ def register_api_routes(app):
         except Exception:
             comp['sentiment'] = None
 
+        # --- Watchlist consensus (how many watchlist coins lean which way) ---
+        # Uses the signal scanner's persisted per-symbol long/short scores
+        # (computed every ~120s). A broad lean of the watchlist is itself a
+        # strong directional signal — one coin can be noise, the basket isn't.
+        wl_side = 0
+        try:
+            import json as _json
+            scores_raw = get_db().get_setting('liqmap_signal_scores', '{}')
+            scores = _json.loads(scores_raw) if scores_raw else {}
+            n_long = n_short = n_flat = 0
+            for sym, v in scores.items():
+                ls = v.get('long', 0) or 0
+                ss = v.get('short', 0) or 0
+                if max(ls, ss) < 40:        # too weak to count as a lean
+                    n_flat += 1
+                elif ls > ss:
+                    n_long += 1
+                else:
+                    n_short += 1
+            total = n_long + n_short + n_flat
+            if total > 0:
+                long_share = round(n_long / total * 100, 0)
+                short_share = round(n_short / total * 100, 0)
+                comp['watchlist'] = {
+                    'total': total, 'n_long': n_long, 'n_short': n_short,
+                    'n_flat': n_flat, 'long_pct': long_share,
+                    'short_pct': short_share}
+                # A clear basket majority (>55% of decisive coins) votes
+                decisive = n_long + n_short
+                if decisive > 0:
+                    maj = n_long / decisive
+                    if maj >= 0.60 and n_long >= 2:
+                        wl_side = 1
+                        reasons.append(('ok', f"Watchlist: {n_long}/{total} монет LONG "
+                                        f"({long_share:.0f}%)"))
+                    elif maj <= 0.40 and n_short >= 2:
+                        wl_side = -1
+                        reasons.append(('ok', f"Watchlist: {n_short}/{total} монет SHORT "
+                                        f"({short_share:.0f}%)"))
+                    else:
+                        reasons.append(('wait', f"Watchlist розділений "
+                                        f"({n_long}↑ / {n_short}↓ / {n_flat}•)"))
+            else:
+                comp['watchlist'] = None
+        except Exception:
+            comp['watchlist'] = None
+
         # --- Verdict ---
         verdict, confidence = 'WAIT', 0
-        dir_votes = [v for v in (fc_side, fuel_side) if v != 0]
+        # Three directional votes: forecast, liq-fuel, watchlist consensus.
+        dir_votes = [v for v in (fc_side, fuel_side, wl_side) if v != 0]
         agree = dir_votes and all(v == dir_votes[0] for v in dir_votes)
         if agree and len(dir_votes) >= 1:
             side = dir_votes[0]
-            # base confidence: both direction signals agreeing is strongest
-            confidence = 50 + 25 * len(dir_votes)
+            # base confidence scales with how many independent signals agree
+            confidence = 40 + 20 * len(dir_votes)
             # imbalance nudge in the same direction
             imb = comp.get('imbalance_pct') or 0
             if (side > 0 and imb > 0) or (side < 0 and imb < 0):
@@ -2711,6 +2759,16 @@ def register_api_routes(app):
                 verdict = 'LONG' if side > 0 else 'SHORT'
             else:
                 verdict = 'WAIT'
+        # sentiment snapshot always included so the board can render it
+        try:
+            from detection.market_sentiment import get_sentiment as _gs
+            _s = _gs('bybit')
+            if _s.get('ok'):
+                comp['sentiment'] = {'long_pct': _s['long_pct'],
+                                     'short_pct': _s['short_pct'],
+                                     'bias': _s['bias']}
+        except Exception:
+            pass
         return jsonify({'ok': True, 'symbol': symbol, 'verdict': verdict,
                         'confidence': confidence, 'components': comp,
                         'reasons': reasons, 'ts': _t.time()})
