@@ -145,6 +145,41 @@
     <div style="margin-top:8px"><button class="tk-btn" onclick="tkTopToTV()">📋 Top → TradingView watchlist</button></div>
 </div>
 
+<!-- Opportunity Scanner -->
+<div class="tk-section" style="border:1px solid rgba(168,85,247,0.3)">
+    <h3 style="font-size:0.9rem;color:#c084fc;margin:0 0 4px">🎯 Opportunity Scanner — відбір у Watchlist</h3>
+    <div class="tk-stat">
+        Bybit swap·USDT → гейти (ліквідність, OI, не-екстремальний funding, не-перегрітий рух)
+        → score «пружина перед рухом» (накопичення OI + стиснення + помірний приплив).
+        Передає топ у watchlist бота.
+    </div>
+    <div class="tk-row" style="margin-bottom:8px;margin-top:8px">
+        <div class="tk-field">
+            <label>ТОП-N У WATCHLIST</label>
+            <select id="opp-topn"><option>10</option><option selected>20</option><option>30</option></select>
+        </div>
+        <button class="tk-btn warm" id="opp-scan-btn" onclick="oppScan()">🎯 Сканувати</button>
+        <button class="tk-btn alt" onclick="oppCaptureBaseline()" title="Зберегти поточний OI як базу для прискорення (запусти раз, через годину-добу score OI запрацює)">📌 База OI</button>
+    </div>
+    <div class="tk-stat" id="opp-stat">Натисни «Сканувати». Для повноцінного OI-score спершу збережи базу OI і повернись пізніше.</div>
+    <div class="tk-scroll">
+        <table class="tk-table">
+            <thead><tr>
+                <th>#</th><th>Symbol</th><th>Opportunity</th><th>OI накоп.</th>
+                <th>Стиснення</th><th>Приплив</th><th>Funding</th><th>Vol 24h</th><th>OI</th>
+            </tr></thead>
+            <tbody id="opp-tbody"><tr><td colspan="9" style="color:#667;padding:16px">— ще не скановано —</td></tr></tbody>
+        </table>
+    </div>
+    <div class="tk-row" style="margin-top:10px">
+        <button class="tk-btn warm" id="opp-push-add" onclick="oppPush(false)" disabled>➕ Додати топ у Watchlist</button>
+        <button class="tk-btn" id="opp-push-replace" onclick="oppPush(true)" disabled title="Очистити watchlist і замінити топом (повна ротація)">🔄 Замінити Watchlist топом</button>
+        <span style="flex:1"></span>
+        <label class="tk-cats"><input type="checkbox" id="opp-auto" onchange="oppToggleAuto(this.checked)"> Авто-ротація раз на день</label>
+    </div>
+    <div class="tk-stat" id="opp-auto-stat"></div>
+</div>
+
 <!-- Watch monitor (manual fetch+diff against stored snapshot) -->
 <div class="tk-section">
     <h3 style="font-size:0.85rem;color:#93c5fd;margin:0 0 4px">📡 Монітор нових лістингів</h3>
@@ -387,5 +422,115 @@ async function tkAlert() {
         ? '📨 Алерт надіслано в Telegram.'
         : '❌ ' + (d.reason || 'alert failed');
 }
+let oppRows = null;
+
+async function oppScan() {
+    const btn = document.getElementById('opp-scan-btn');
+    const stat = document.getElementById('opp-stat');
+    btn.disabled = true; stat.textContent = 'Сканування Bybit swap·USDT…';
+    try {
+        const res = await fetch('/api/tickr/opportunity', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({params: {top_n: parseInt(document.getElementById('opp-topn').value)}}),
+        });
+        const d = await res.json();
+        if (!d.ok) { stat.textContent = '❌ ' + (d.reason || 'fail'); return; }
+        oppRows = d.symbols;
+        oppRender(d.symbols);
+        const hasBase = d.symbols.some(r => r.has_baseline);
+        stat.textContent = `🎯 ${d.count_in} монет → ${d.count_passed} пройшли гейти → топ-${d.count_out}`
+            + (hasBase ? '' : ' · ⚠ OI-база не збережена (OI-score нейтральний 0.5)');
+        document.getElementById('opp-push-add').disabled = !d.symbols.length;
+        document.getElementById('opp-push-replace').disabled = !d.symbols.length;
+    } catch (e) { stat.textContent = '❌ ' + e; }
+    finally { btn.disabled = false; }
+}
+
+function oppBar(v) {
+    const pct = Math.round((v || 0) * 100);
+    const col = v >= 0.66 ? '#4ade80' : v >= 0.33 ? '#fbbf24' : '#f87171';
+    return `<div style="display:inline-block;width:46px;height:7px;border-radius:4px;background:rgba(255,255,255,0.08);vertical-align:middle">
+        <div style="width:${pct}%;height:100%;border-radius:4px;background:${col}"></div></div>`;
+}
+
+function oppRender(rows) {
+    const tb = document.getElementById('opp-tbody');
+    if (!rows || !rows.length) {
+        tb.innerHTML = '<tr><td colspan="9" style="color:#667;padding:16px">— нічого не пройшло гейти —</td></tr>';
+        return;
+    }
+    tb.innerHTML = rows.map((r, i) => {
+        const sc = r.opportunity;
+        const scCol = sc >= 66 ? '#4ade80' : sc >= 45 ? '#fbbf24' : '#f87171';
+        const fundCol = r.funding >= 0 ? '#4ade80' : '#f87171';
+        return `<tr>
+            <td>${i+1}</td>
+            <td><b>${r.symbol}</b></td>
+            <td style="color:${scCol};font-weight:700">${sc}</td>
+            <td>${oppBar(r.oi_accel)}${r.has_baseline ? '' : '<span style="color:#667;font-size:0.7rem"> n/a</span>'}</td>
+            <td>${oppBar(r.compression)}</td>
+            <td>${oppBar(r.vol_spike)}</td>
+            <td style="color:${fundCol}">${(r.funding*100).toFixed(3)}%</td>
+            <td>${tkFmtUsd(r.vol_usd)}</td>
+            <td>${tkFmtUsd(r.oi_usd)}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function oppCaptureBaseline() {
+    const stat = document.getElementById('opp-stat');
+    stat.textContent = 'Збереження бази OI…';
+    const res = await fetch('/api/tickr/opportunity/oi-baseline', {method: 'POST'});
+    const d = await res.json();
+    stat.textContent = d.ok
+        ? `📌 База OI збережена (${d.captured} монет). OI-прискорення запрацює при наступному скані (краще через годину+).`
+        : '❌ ' + (d.reason || 'fail');
+}
+
+async function oppPush(replace) {
+    if (!oppRows || !oppRows.length) return;
+    const symbols = oppRows.map(r => r.symbol);
+    const verb = replace ? 'замінити весь watchlist' : 'додати у watchlist';
+    if (!confirm(`${symbols.length} монет — ${verb}?`)) return;
+    const res = await fetch('/api/tickr/opportunity/to-watchlist', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbols, replace}),
+    });
+    const d = await res.json();
+    const stat = document.getElementById('opp-stat');
+    stat.textContent = d.ok
+        ? `✅ Watchlist: +${(d.added||[]).length} додано${replace ? `, −${(d.removed||[]).length} прибрано` : ''} (всього ${(d.watchlist||[]).length})`
+        : '❌ ' + (d.reason || 'fail');
+}
+
+async function oppToggleAuto(on) {
+    const res = await fetch('/api/tickr/opportunity/auto', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: on, top_n: parseInt(document.getElementById('opp-topn').value)}),
+    });
+    const d = await res.json();
+    oppRenderAutoStat(d);
+}
+function oppRenderAutoStat(d) {
+    const el = document.getElementById('opp-auto-stat');
+    if (!el || !d.ok) return;
+    if (d.enabled) {
+        const last = d.last_run_ts ? new Date(d.last_run_ts*1000).toLocaleString() : 'ще не запускалось';
+        el.textContent = `🤖 Авто-ротація УВІМКНЕНА (топ-${d.top_n}, раз на день) · останній запуск: ${last}`;
+    } else {
+        el.textContent = '';
+    }
+}
+async function oppLoadAuto() {
+    try {
+        const d = await (await fetch('/api/tickr/opportunity/auto')).json();
+        if (d.ok) {
+            const cb = document.getElementById('opp-auto');
+            if (cb) cb.checked = !!d.enabled;
+            oppRenderAutoStat(d);
+        }
+    } catch {}
+}
+document.addEventListener('DOMContentLoaded', oppLoadAuto);
 </script>
 {% endblock %}

@@ -297,6 +297,23 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Auto-gate: {e}")
         
+        if not _auto_started.get('tickr_opp'):
+            _auto_started['tickr_opp'] = True
+            try:
+                from detection.tickr_opportunity_daemon import init_opp_daemon
+                from detection import tickr_core
+                from detection.smc_scanner import get_smc_scanner
+                raw_base = get_db().get_setting('tickr_opp_oi_baseline', '')
+                init_opp_daemon(
+                    db=get_db(),
+                    scan_fn=lambda params, oi: tickr_core.opportunity_scan(
+                        'bybit', params=params, oi_baseline=oi),
+                    oi_snapshot_fn=lambda: tickr_core.opportunity_oi_snapshot('bybit'),
+                    get_scanner=get_smc_scanner,
+                )
+            except Exception as e:
+                print(f"[APP] Failed to start Opportunity daemon: {e}")
+        
         # Liquidation Map daemon — tracks estimated liquidation clusters
         # for BTC + ETH (background) plus any on-demand symbol requested
         # via the dashboard. Tier 2 architecture: Binance/Bybit aggregated
@@ -2728,6 +2745,89 @@ def register_api_routes(app):
         get_db().set_setting(f'tickr_act_snap::{exchange}|{cats_key}',
                              _json.dumps(vols))
         return jsonify({'ok': True, 'saved': len(vols)})
+    
+    @app.route('/api/tickr/opportunity', methods=['POST'])
+    def api_tickr_opportunity():
+        """Coiled-spring opportunity scan (Bybit swap-USDT). Body may
+        override gates/weights via 'params'. Uses the stored OI baseline
+        for the OI-acceleration component."""
+        from detection import tickr_core
+        import json as _json
+        data = request.get_json() or {}
+        raw = get_db().get_setting('tickr_opp_oi_baseline', '')
+        oi_baseline = {}
+        if raw:
+            try:
+                snap = _json.loads(raw)
+                oi_baseline = snap.get('oi', {})
+            except Exception:
+                oi_baseline = {}
+        res = tickr_core.opportunity_scan(
+            exchange='bybit', params=data.get('params'),
+            oi_baseline=oi_baseline)
+        return jsonify(res)
+    
+    @app.route('/api/tickr/opportunity/oi-baseline', methods=['POST'])
+    def api_tickr_opp_oi_baseline():
+        """Capture current OI per symbol as the acceleration baseline."""
+        from detection import tickr_core
+        import json as _json, time as _t
+        oi = tickr_core.opportunity_oi_snapshot('bybit')
+        get_db().set_setting('tickr_opp_oi_baseline',
+                             _json.dumps({'oi': oi, 'ts': _t.time()}))
+        return jsonify({'ok': True, 'captured': len(oi)})
+    
+    @app.route('/api/tickr/opportunity/to-watchlist', methods=['POST'])
+    def api_tickr_opp_to_watchlist():
+        """Push selected opportunity symbols into the SMC watchlist.
+        Body: {symbols:[...], replace:bool}. replace=True clears the
+        current watchlist first (full rotation); else additive."""
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'SMC scanner not initialized'})
+        data = request.get_json() or {}
+        symbols = data.get('symbols', []) or []
+        replace = bool(data.get('replace', False))
+        added, removed = [], []
+        if replace:
+            try:
+                for cur in list(s.get_watchlist()):
+                    if cur not in symbols:
+                        s.remove_symbol(cur)
+                        removed.append(cur)
+            except Exception as e:
+                print(f"[Tickr→WL] clear error: {e}")
+        for sym in symbols:
+            try:
+                r = s.add_symbol(sym)
+                if r.get('ok'):
+                    added.append(sym)
+            except Exception as e:
+                print(f"[Tickr→WL] add {sym} error: {e}")
+        return jsonify({'ok': True, 'added': added, 'removed': removed,
+                        'watchlist': s.get_watchlist()})
+    
+    @app.route('/api/tickr/opportunity/auto', methods=['GET', 'POST'])
+    def api_tickr_opp_auto():
+        """Get/set daily auto-rotation of the watchlist from the
+        opportunity scan. Persisted; a background loop runs it daily."""
+        from detection.tickr_opportunity_daemon import get_opp_daemon
+        d = get_opp_daemon()
+        if d is None:
+            return jsonify({'ok': False, 'reason': 'daemon not initialized'})
+        if request.method == 'POST':
+            body = request.get_json() or {}
+            if 'enabled' in body:
+                d.set_enabled(bool(body['enabled']))
+            if 'top_n' in body:
+                try:
+                    get_db().set_setting('tickr_opp_auto_topn',
+                                         str(int(body['top_n'])))
+                except Exception:
+                    pass
+            return jsonify({'ok': True, **d.status()})
+        return jsonify({'ok': True, **d.status()})
     
     @app.route('/api/tickr/tv', methods=['POST'])
     def api_tickr_tv():

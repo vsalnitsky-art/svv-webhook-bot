@@ -264,10 +264,15 @@ def _activity_bybit(market: str) -> Dict[str, Dict]:
     data = _get_json('https://api.bybit.com/v5/market/tickers', {'category': cat})
     for t in (data.get('result', {}) or {}).get('list', []) or []:
         k = _canon(t.get('symbol', ''))
+        last = float(t.get('lastPrice', 0) or 0)
+        hi = float(t.get('highPrice24h', 0) or 0)
+        lo = float(t.get('lowPrice24h', 0) or 0)
         rec = {
             'vol_usd': float(t.get('turnover24h', 0) or 0),  # turnover = quote vol
             'change_pct': float(t.get('price24hPcnt', 0) or 0) * 100.0,
-            'last': float(t.get('lastPrice', 0) or 0),
+            'last': last,
+            # 24h range as % of price — small range = compressed (coiling)
+            'range_pct': ((hi - lo) / last * 100.0) if last > 0 else 0.0,
         }
         if market == MARKET_SWAP:
             oi_contracts = float(t.get('openInterest', 0) or 0)
@@ -498,3 +503,151 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
             'sort_by': sort_by, 'count': len(enriched),
             'symbols': enriched[:max(1, min(top_n, 100))],
             'warnings': warnings, 'fetched_at': time.time()}
+
+
+# ----------------------------------------------------------------------
+# Opportunity Scanner — "coiled spring" pre-move selection for watchlist
+# ----------------------------------------------------------------------
+# Philosophy (user choice): pick coins where a move is BUILDING, not one
+# already spent. A good watchlist candidate for the SMC bot has:
+#   • liquidity        — enough volume + OI to enter/exit (HARD GATE)
+#   • OI accumulation  — open interest rising vs a stored baseline
+#                        (fresh positions = fuel for the coming move)
+#   • compression      — tight 24h range (coiled, not already exploded)
+#   • mild volume spike — money arriving, but the move hasn't run yet
+#   • funding not extreme — extreme funding = crowded/late (PENALTY)
+#
+# This is a STATISTICAL front-filter: it narrows ~600 coins to a short
+# list of high-potential names, which are then handed to the SMC bot.
+# It does NOT see structure (OB/CHoCH) — that's the bot's job. It raises
+# the odds by focusing the bot on promising coins, not random ones.
+
+# Default gates / weights — all overridable from the API/UI.
+OPP_DEFAULTS = {
+    'min_vol_usd': 5_000_000,     # 24h turnover floor (liquidity)
+    'min_oi_usd': 2_000_000,      # open-interest floor (swap depth)
+    'max_funding_abs': 0.001,     # |funding| above this = crowded → drop
+    'max_change_abs': 25.0,       # already moved >25% in 24h = likely late
+    'w_oi_accel': 35,             # OI rising vs baseline
+    'w_compression': 30,          # tight range = coiled
+    'w_vol_spike': 20,            # mild volume pickup
+    'w_funding_room': 15,         # neutral funding = room to move
+    'top_n': 20,
+}
+
+
+def opportunity_scan(exchange: str = 'bybit', params: dict = None,
+                     oi_baseline: dict = None) -> dict:
+    """Rank Bybit swap-USDT coins by 'coiled-spring' opportunity score.
+
+    params      — overrides for OPP_DEFAULTS (gates + weights)
+    oi_baseline — {symbol: oi_usd} captured earlier, for OI acceleration.
+                  When absent, the OI-accel component is neutral (50).
+    Returns {ok, count_in, count_out, symbols:[...], params, fetched_at}.
+    """
+    p = dict(OPP_DEFAULTS)
+    if params:
+        for k, v in params.items():
+            if k in p and v is not None:
+                p[k] = v
+    exchange = (exchange or 'bybit').lower()
+    if exchange not in _ACTIVITY:
+        return {'ok': False, 'reason': f'unknown exchange {exchange}'}
+
+    # Bybit swap + USDT universe (the bot trades these)
+    base = fetch(exchange, ['swap', 'usdt'], active_only=True)
+    if not base.get('ok'):
+        return base
+    syms = [s for s in base['symbols'] if s['is_swap'] and s['is_usdt']]
+    try:
+        metrics = _ACTIVITY[exchange](MARKET_SWAP)
+    except Exception as e:
+        return {'ok': False, 'reason': f'{exchange} activity error: {e}'}
+
+    oi_baseline = oi_baseline or {}
+    count_in = len(syms)
+    scored = []
+    for s in syms:
+        m = metrics.get(_canon(s['symbol']))
+        if not m:
+            continue
+        vol = m.get('vol_usd', 0)
+        oi = m.get('oi_usd', 0)
+        funding = m.get('funding', 0)
+        change_abs = abs(m.get('change_pct', 0))
+        range_pct = m.get('range_pct', 0)
+
+        # --- HARD GATES (the spent / illiquid / crowded are dropped) ---
+        if vol < p['min_vol_usd']:
+            continue
+        if oi < p['min_oi_usd']:
+            continue
+        if abs(funding) > p['max_funding_abs']:
+            continue
+        if change_abs > p['max_change_abs']:
+            continue
+
+        # --- COMPONENT SCORES (0..1 each) ---
+        # OI acceleration: now vs baseline. >0 means positions building.
+        base_oi = oi_baseline.get(s['symbol'], 0)
+        if base_oi > 0:
+            oi_growth = (oi - base_oi) / base_oi
+            # map -10%..+30% growth → 0..1, clamp
+            oi_accel = max(0.0, min(1.0, (oi_growth + 0.10) / 0.40))
+        else:
+            oi_accel = 0.5            # neutral when no baseline yet
+
+        # Compression: tighter 24h range = higher score. 2% range → ~1.0,
+        # 20%+ range → ~0. Coiled springs sit at the low end.
+        compression = max(0.0, min(1.0, 1.0 - (range_pct - 2.0) / 18.0))
+
+        # Mild volume spike: reward elevated-but-not-blown-out volume.
+        # We don't have a per-coin vol baseline here, so use OI-relative
+        # turnover as a proxy: high turnover vs OI = active churn building.
+        turn_ratio = (vol / oi) if oi > 0 else 0
+        vol_spike = max(0.0, min(1.0, turn_ratio / 5.0))
+
+        # Funding room: closer to neutral = more room before crowding.
+        funding_room = max(0.0, 1.0 - abs(funding) / p['max_funding_abs'])
+
+        score = (p['w_oi_accel'] * oi_accel
+                 + p['w_compression'] * compression
+                 + p['w_vol_spike'] * vol_spike
+                 + p['w_funding_room'] * funding_room)
+        max_score = (p['w_oi_accel'] + p['w_compression']
+                     + p['w_vol_spike'] + p['w_funding_room'])
+        score_100 = round(score / max_score * 100, 1) if max_score else 0
+
+        scored.append({
+            'symbol': s['symbol'],
+            'tradingview_symbol': s['tradingview_symbol'],
+            'opportunity': score_100,
+            'vol_usd': round(vol, 0), 'oi_usd': round(oi, 0),
+            'funding': funding, 'change_pct': round(m.get('change_pct', 0), 2),
+            'range_pct': round(range_pct, 2),
+            'oi_accel': round(oi_accel, 2),
+            'compression': round(compression, 2),
+            'vol_spike': round(vol_spike, 2),
+            'funding_room': round(funding_room, 2),
+            'has_baseline': base_oi > 0,
+        })
+
+    scored.sort(key=lambda r: r['opportunity'], reverse=True)
+    top = scored[:max(1, min(p['top_n'], 100))]
+    return {'ok': True, 'exchange': exchange,
+            'count_in': count_in, 'count_passed': len(scored),
+            'count_out': len(top), 'symbols': top,
+            'params': p, 'fetched_at': time.time()}
+
+
+def opportunity_oi_snapshot(exchange: str = 'bybit') -> dict:
+    """Capture {symbol: oi_usd} now, to use later as OI-accel baseline."""
+    exchange = (exchange or 'bybit').lower()
+    if exchange not in _ACTIVITY:
+        return {}
+    try:
+        m = _ACTIVITY[exchange](MARKET_SWAP)
+    except Exception:
+        return {}
+    return {sym: rec.get('oi_usd', 0) for sym, rec in m.items()
+            if rec.get('oi_usd', 0) > 0}
