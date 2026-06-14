@@ -2488,6 +2488,7 @@ async function loadWatchlist() {
 
 // Watchlist OB-marker state — module-scoped so renderWatchlist can use them
 // without an extra round-trip. Updated on every loadWatchlist call.
+let wlSymbols = [];   // current watchlist symbols (for filter-consensus)
 let wlObFilterEnabled = false;
 let wlObFilterTimeframe = '1h';
 let wlObStates = {};
@@ -2507,6 +2508,7 @@ let wlDedupEnabled = true;
 let wlDedupState = {};
 
 function renderWatchlist(list) {
+    wlSymbols = list.slice();   // stash for filter-consensus (bias board)
     const el = document.getElementById('sm-wl-list');
     document.getElementById('sm-wl-count').textContent = `${list.length} / 50`;
     
@@ -5531,13 +5533,48 @@ async function applyAutoGate(verdict) {
     }
 }
 
+// Compute watchlist consensus from the ACTIVE filter marker (★ OB or
+// ▲ Volumized). Counts only coins that carry the active marker; coins
+// without it are out of the tally. Returns query params for the bias
+// call, or '' when no filter is active (backend then uses scanner score).
+function biasWatchlistParams() {
+    let src = '', dirOf = null;
+    // OB-filter takes precedence if enabled; else Volumized; else none.
+    if (wlObFilterEnabled) {
+        src = 'ob';
+        dirOf = (sym) => {
+            const ob = wlObStates[sym];
+            if (!ob || !ob.bias) return null;
+            return ob.bias === 'BULLISH' ? 'LONG'
+                 : ob.bias === 'BEARISH' ? 'SHORT' : null;
+        };
+    } else if (wlVolumizedEnabled) {
+        src = 'vol';
+        dirOf = (sym) => {
+            const vt = wlVolumizedTrends[sym];
+            return (vt === 'LONG' || vt === 'SHORT') ? vt : null;
+        };
+    } else {
+        return '';   // no filter → backend falls back to scanner scores
+    }
+    let nLong = 0, nShort = 0, nFlat = 0;
+    for (const sym of wlSymbols) {
+        const d = dirOf(sym);
+        if (d === 'LONG') nLong++;
+        else if (d === 'SHORT') nShort++;
+        // coins without the active marker are NOT counted (out of tally)
+    }
+    return `&wl_src=${src}&wl_long=${nLong}&wl_short=${nShort}&wl_flat=${nFlat}`;
+}
+
 async function loadBias() {
     const vEl = document.getElementById('sm-bias-verdict');
     const reasonsEl = document.getElementById('sm-bias-reasons');
     const extraEl = document.getElementById('sm-bias-extra');
     if (!vEl) return;
     try {
-        const res = await fetch('/api/sm/bias?symbol=' + encodeURIComponent(biasSymbol));
+        const wlp = biasWatchlistParams();
+        const res = await fetch('/api/sm/bias?symbol=' + encodeURIComponent(biasSymbol) + wlp);
         const d = await res.json();
         if (!d.ok) { vEl.innerHTML = '⏳ <span>—</span>'; return; }
         const icon = d.verdict === 'LONG' ? '📈' : d.verdict === 'SHORT' ? '📉' : '⏸';
@@ -5567,8 +5604,11 @@ async function loadBias() {
         }
         if (c.watchlist) {
             const w = c.watchlist;
+            const srcLbl = w.source === 'ob' ? '★ OB-фільтр'
+                : w.source === 'vol' ? '▲ Volumized'
+                : 'score сканера';
             extra += `<div class="sm-bias-mini">
-                <span class="sm-bias-mini-label">Watchlist консенсус (${w.total} монет)</span>
+                <span class="sm-bias-mini-label">Watchlist консенсус · ${srcLbl} (${w.total} монет)</span>
                 <div class="sm-bias-mini-bar"><div class="sm-bias-mini-l" style="width:${w.long_pct}%"></div><div class="sm-bias-mini-s" style="width:${w.short_pct}%"></div></div>
                 <span class="sm-bias-mini-val">${w.n_long}↑ LONG / ${w.n_short}↓ SHORT / ${w.n_flat}• flat</span>
             </div>`;

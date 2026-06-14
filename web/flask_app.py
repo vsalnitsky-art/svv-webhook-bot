@@ -2690,51 +2690,94 @@ def register_api_routes(app):
             comp['sentiment'] = None
 
         # --- Watchlist consensus (how many watchlist coins lean which way) ---
-        # Uses the signal scanner's persisted per-symbol long/short scores
-        # (computed every ~120s). A broad lean of the watchlist is itself a
-        # strong directional signal — one coin can be noise, the basket isn't.
+        # PREFERRED source: the active watchlist FILTER passed from the UI
+        # (★ OB-filter direction, or ▲ Volumized-trend), counting ONLY coins
+        # that carry that marker. The frontend computes it because the
+        # markers live there (wlObStates / wlVolumizedTrends), and passes
+        # counts via query params wl_long / wl_short / wl_total / wl_src.
+        # FALLBACK (no filter active): the signal scanner's persisted
+        # per-symbol long/short scores, same as before.
         wl_side = 0
-        try:
-            import json as _json
-            scores_raw = get_db().get_setting('liqmap_signal_scores', '{}')
-            scores = _json.loads(scores_raw) if scores_raw else {}
-            n_long = n_short = n_flat = 0
-            for sym, v in scores.items():
-                ls = v.get('long', 0) or 0
-                ss = v.get('short', 0) or 0
-                if max(ls, ss) < 40:        # too weak to count as a lean
-                    n_flat += 1
-                elif ls > ss:
-                    n_long += 1
-                else:
-                    n_short += 1
-            total = n_long + n_short + n_flat
-            if total > 0:
-                long_share = round(n_long / total * 100, 0)
-                short_share = round(n_short / total * 100, 0)
-                comp['watchlist'] = {
-                    'total': total, 'n_long': n_long, 'n_short': n_short,
-                    'n_flat': n_flat, 'long_pct': long_share,
-                    'short_pct': short_share}
-                # A clear basket majority (>55% of decisive coins) votes
-                decisive = n_long + n_short
-                if decisive > 0:
-                    maj = n_long / decisive
-                    if maj >= 0.60 and n_long >= 2:
-                        wl_side = 1
-                        reasons.append(('ok', f"Watchlist: {n_long}/{total} монет LONG "
-                                        f"({long_share:.0f}%)"))
-                    elif maj <= 0.40 and n_short >= 2:
-                        wl_side = -1
-                        reasons.append(('ok', f"Watchlist: {n_short}/{total} монет SHORT "
-                                        f"({short_share:.0f}%)"))
+        wl_src = (request.args.get('wl_src') or '').strip()  # 'ob' | 'vol' | ''
+        wl_long_q = request.args.get('wl_long')
+        if wl_src and wl_long_q is not None:
+            # Frontend-provided, filter-based consensus
+            try:
+                n_long = int(wl_long_q)
+                n_short = int(request.args.get('wl_short', 0))
+                n_flat = int(request.args.get('wl_flat', 0))
+                total = n_long + n_short + n_flat
+                src_label = {'ob': '★ OB-фільтр',
+                             'vol': '▲ Volumized'}.get(wl_src, wl_src)
+                if total > 0:
+                    long_share = round(n_long / total * 100, 0)
+                    short_share = round(n_short / total * 100, 0)
+                    comp['watchlist'] = {
+                        'total': total, 'n_long': n_long, 'n_short': n_short,
+                        'n_flat': n_flat, 'long_pct': long_share,
+                        'short_pct': short_share, 'source': wl_src}
+                    decisive = n_long + n_short
+                    if decisive > 0:
+                        maj = n_long / decisive
+                        if maj >= 0.60 and n_long >= 2:
+                            wl_side = 1
+                            reasons.append(('ok', f"{src_label}: {n_long}/{total} монет "
+                                            f"LONG ({long_share:.0f}%)"))
+                        elif maj <= 0.40 and n_short >= 2:
+                            wl_side = -1
+                            reasons.append(('ok', f"{src_label}: {n_short}/{total} монет "
+                                            f"SHORT ({short_share:.0f}%)"))
+                        else:
+                            reasons.append(('wait', f"{src_label} розділений "
+                                            f"({n_long}↑ / {n_short}↓)"))
                     else:
-                        reasons.append(('wait', f"Watchlist розділений "
-                                        f"({n_long}↑ / {n_short}↓ / {n_flat}•)"))
-            else:
+                        reasons.append(('wait', f"{src_label}: немає напрямлених монет"))
+                else:
+                    comp['watchlist'] = None
+            except Exception:
                 comp['watchlist'] = None
-        except Exception:
-            comp['watchlist'] = None
+        else:
+            # Fallback: scanner scores across the whole watchlist
+            try:
+                import json as _json
+                scores_raw = get_db().get_setting('liqmap_signal_scores', '{}')
+                scores = _json.loads(scores_raw) if scores_raw else {}
+                n_long = n_short = n_flat = 0
+                for sym, v in scores.items():
+                    ls = v.get('long', 0) or 0
+                    ss = v.get('short', 0) or 0
+                    if max(ls, ss) < 40:
+                        n_flat += 1
+                    elif ls > ss:
+                        n_long += 1
+                    else:
+                        n_short += 1
+                total = n_long + n_short + n_flat
+                if total > 0:
+                    long_share = round(n_long / total * 100, 0)
+                    short_share = round(n_short / total * 100, 0)
+                    comp['watchlist'] = {
+                        'total': total, 'n_long': n_long, 'n_short': n_short,
+                        'n_flat': n_flat, 'long_pct': long_share,
+                        'short_pct': short_share, 'source': 'scanner'}
+                    decisive = n_long + n_short
+                    if decisive > 0:
+                        maj = n_long / decisive
+                        if maj >= 0.60 and n_long >= 2:
+                            wl_side = 1
+                            reasons.append(('ok', f"Watchlist (score): {n_long}/{total} "
+                                            f"LONG ({long_share:.0f}%)"))
+                        elif maj <= 0.40 and n_short >= 2:
+                            wl_side = -1
+                            reasons.append(('ok', f"Watchlist (score): {n_short}/{total} "
+                                            f"SHORT ({short_share:.0f}%)"))
+                        else:
+                            reasons.append(('wait', f"Watchlist розділений "
+                                            f"({n_long}↑ / {n_short}↓ / {n_flat}•)"))
+                else:
+                    comp['watchlist'] = None
+            except Exception:
+                comp['watchlist'] = None
 
         # --- Verdict ---
         verdict, confidence = 'WAIT', 0
