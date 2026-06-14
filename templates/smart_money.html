@@ -857,7 +857,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .sm-side-gates {
     display: flex;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    gap: 18px;
     flex-wrap: wrap;
     margin: 0 0 12px;
     padding: 10px 14px;
@@ -960,41 +961,54 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         flip without scrolling through settings.
     -->
     <div class="sm-side-gates">
-        <div class="sm-side-gates-label">Trade Direction (real + test):</div>
-        <button type="button" id="sm-allow-long-btn"
-                class="sm-side-toggle sm-side-long active"
-                onclick="toggleSideGate('LONG')"
-                title="ЗА УВІМКНЕННЯ: бот відкриває нові LONG позиції (реальні і тестові).&#10;ВИМКНУТИ: будь-який LONG-сигнал (включно з ручним відкриттям) — блокується.&#10;Закриття існуючих LONG-позицій працює як зазвичай.">
-            <span class="sm-side-icon">📈</span>
-            <span class="sm-side-text">LONG</span>
-            <span class="sm-side-state" id="sm-allow-long-state">ON</span>
-        </button>
-        <button type="button" id="sm-allow-short-btn"
-                class="sm-side-toggle sm-side-short active"
-                onclick="toggleSideGate('SHORT')"
-                title="ЗА УВІМКНЕННЯ: бот відкриває нові SHORT позиції (реальні і тестові).&#10;ВИМКНУТИ: будь-який SHORT-сигнал (включно з ручним відкриттям) — блокується.&#10;Закриття існуючих SHORT-позицій працює як зазвичай.">
-            <span class="sm-side-icon">📉</span>
-            <span class="sm-side-text">SHORT</span>
-            <span class="sm-side-state" id="sm-allow-short-state">ON</span>
-        </button>
-        <div class="sm-sentiment" id="sm-sentiment" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (Bybit account ratio, 1h)">
-            <span class="sm-sentiment-label">Настрій біржі</span>
-            <div class="sm-sentiment-bar">
-                <div class="sm-sentiment-long" id="sm-sentiment-long" style="width:50%"></div>
-                <div class="sm-sentiment-short" id="sm-sentiment-short" style="width:50%"></div>
+        <div class="sm-side-gates-left">
+            <div class="sm-side-gates-label">Trade Direction (real + test):</div>
+            <button type="button" id="sm-allow-long-btn"
+                    class="sm-side-toggle sm-side-long active"
+                    onclick="toggleSideGate('LONG')"
+                    title="ЗА УВІМКНЕННЯ: бот відкриває нові LONG позиції (реальні і тестові).&#10;ВИМКНУТИ: будь-який LONG-сигнал (включно з ручним відкриттям) — блокується.&#10;Закриття існуючих LONG-позицій працює як зазвичай.">
+                <span class="sm-side-icon">📈</span>
+                <span class="sm-side-text">LONG</span>
+                <span class="sm-side-state" id="sm-allow-long-state">ON</span>
+            </button>
+            <button type="button" id="sm-allow-short-btn"
+                    class="sm-side-toggle sm-side-short active"
+                    onclick="toggleSideGate('SHORT')"
+                    title="ЗА УВІМКНЕННЯ: бот відкриває нові SHORT позиції (реальні і тестові).&#10;ВИМКНУТИ: будь-який SHORT-сигнал (включно з ручним відкриттям) — блокується.&#10;Закриття існуючих SHORT-позицій працює як зазвичай.">
+                <span class="sm-side-icon">📉</span>
+                <span class="sm-side-text">SHORT</span>
+                <span class="sm-side-state" id="sm-allow-short-state">ON</span>
+            </button>
+        </div>
+        <div class="sm-side-gates-right">
+            <div class="sm-sentiment" id="sm-sentiment" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (Bybit account ratio, 1h)">
+                <span class="sm-sentiment-label">Настрій біржі</span>
+                <div class="sm-sentiment-bar">
+                    <div class="sm-sentiment-long" id="sm-sentiment-long" style="width:50%"></div>
+                    <div class="sm-sentiment-short" id="sm-sentiment-short" style="width:50%"></div>
+                </div>
+                <span class="sm-sentiment-val" id="sm-sentiment-val">⏳</span>
             </div>
-            <span class="sm-sentiment-val" id="sm-sentiment-val">⏳</span>
+            <div class="sm-sentiment-note" id="sm-sentiment-note"></div>
         </div>
     </div>
-    <div class="sm-sentiment-note" id="sm-sentiment-note"></div>
     
     <style>
+    .sm-side-gates-left { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .sm-side-gates-right { display:flex; flex-direction:column; gap:0;
+        padding-left:18px; border-left:1px solid rgba(255,255,255,0.08);
+        min-width:280px; }
+    @media (max-width:760px) {
+        .sm-side-gates-right { padding-left:0; border-left:none;
+            padding-top:12px; border-top:1px solid rgba(255,255,255,0.08);
+            margin-top:10px; width:100%; }
+    }
     .sm-sentiment-note { font-size:0.76rem; margin-top:6px; font-family:monospace;
         display:none; padding:4px 8px; border-radius:5px; }
     .sm-sentiment-note.euphoria { color:#fbbf24; background:rgba(251,191,36,0.08); display:block; }
     .sm-sentiment-note.panic { color:#fbbf24; background:rgba(251,191,36,0.08); display:block; }
     .sm-sentiment-note.neutral { color:#8b93a7; display:block; }
-    .sm-sentiment { display:flex; align-items:center; gap:8px; margin-left:auto;
+    .sm-sentiment { display:flex; align-items:center; gap:8px;
         min-width:240px; }
     .sm-sentiment-label { color:#8b93a7; font-size:0.72rem; font-weight:600;
         white-space:nowrap; }
@@ -5602,13 +5616,21 @@ async function loadBias() {
         fill.style.background = d.verdict === 'LONG' ? '#4ade80'
             : d.verdict === 'SHORT' ? '#f87171' : '#6b7280';
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
-        reasonsEl.innerHTML = (d.reasons || []).map(r => {
-            const [kind, text] = r;
-            return `<div class="sm-bias-reason ${kind}">${icons[kind] || '•'} ${text}</div>`;
-        }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
+        // The watchlist-consensus reason line is rendered under the
+        // consensus bar in the RIGHT column (not in the left reasons list),
+        // so filter it out here. We tag it by the source label the backend
+        // uses in that specific reason.
+        const wlSrcWords = ['OB-фільтр', 'Volumized', 'Watchlist'];
+        const isWlReason = (text) => wlSrcWords.some(w => text.includes(w));
+        reasonsEl.innerHTML = (d.reasons || [])
+            .filter(r => !isWlReason(r[1]))
+            .map(r => {
+                const [kind, text] = r;
+                return `<div class="sm-bias-reason ${kind}">${icons[kind] || '•'} ${text}</div>`;
+            }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
 
-        // Watchlist consensus row (sentiment lives on the Trade-Direction
-        // panel now, not here — it's informational, not part of the verdict)
+        // Watchlist consensus (right column): the moved reason line shows
+        // UNDER the bar as a verdict note.
         const c = d.components || {};
         let extra = '';
         if (c.watchlist) {
@@ -5616,10 +5638,16 @@ async function loadBias() {
             const srcLbl = w.source === 'ob' ? '★ OB-фільтр'
                 : w.source === 'vol' ? '▲ Volumized'
                 : 'score сканера';
+            // recover the consensus verdict line from reasons (the one we filtered)
+            const wlReason = (d.reasons || []).find(r => isWlReason(r[1]));
+            const wlNote = wlReason
+                ? `<span class="sm-bias-reason ${wlReason[0]}" style="margin-top:4px">${icons[wlReason[0]]||'•'} ${wlReason[1]}</span>`
+                : '';
             extra += `<div class="sm-bias-mini">
                 <span class="sm-bias-mini-label">Watchlist консенсус · ${srcLbl} (${w.total} монет)</span>
                 <div class="sm-bias-mini-bar"><div class="sm-bias-mini-l" style="width:${w.long_pct}%"></div><div class="sm-bias-mini-s" style="width:${w.short_pct}%"></div></div>
                 <span class="sm-bias-mini-val">${w.n_long}↑ LONG / ${w.n_short}↓ SHORT / ${w.n_flat}• flat</span>
+                ${wlNote}
             </div>`;
         }
         extraEl.innerHTML = extra;
