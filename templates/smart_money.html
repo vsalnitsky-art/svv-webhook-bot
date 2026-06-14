@@ -1017,7 +1017,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         background:rgba(255,255,255,0.07); overflow:hidden; margin-left:auto; }
     .sm-bias-conffill { height:100%; transition:width .4s; }
     .sm-bias-sym { font-family:monospace; font-size:0.8rem; color:#93c5fd; }
-    .sm-bias-reasons { display:flex; flex-direction:column; gap:3px; margin-top:12px; }
+    .sm-bias-body { display:grid; grid-template-columns:1fr 1fr; gap:18px;
+        margin-top:12px; align-items:start; }
+    .sm-bias-reasons { display:flex; flex-direction:column; gap:3px; }
     .sm-bias-reason { font-size:0.78rem; display:flex; align-items:center; gap:7px;
         font-family:monospace; }
     .sm-bias-reason.ok { color:#86efac; } .sm-bias-reason.warn { color:#fbbf24; }
@@ -1042,8 +1044,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         border-radius:6px; color:#93c5fd; padding:5px 10px; font-family:monospace;
         font-size:0.82rem; width:110px; text-transform:uppercase; }
     .sm-bias-sym-input:focus { outline:none; border-color:rgba(59,130,246,0.6); }
-    .sm-bias-extra { display:flex; flex-wrap:wrap; gap:18px; margin-top:12px;
-        padding-top:10px; border-top:1px solid rgba(255,255,255,0.06); }
+    .sm-bias-extra { display:flex; flex-direction:column; gap:14px;
+        padding-left:18px; border-left:1px solid rgba(255,255,255,0.06); }
+    @media (max-width:760px) {
+        .sm-bias-body { grid-template-columns:1fr; }
+        .sm-bias-extra { padding-left:0; border-left:none;
+            padding-top:12px; border-top:1px solid rgba(255,255,255,0.06); }
+    }
     .sm-bias-mini { display:flex; flex-direction:column; gap:4px; min-width:200px; }
     .sm-bias-mini-label { font-size:0.7rem; color:#8b93a7; font-weight:600; letter-spacing:0.5px; }
     .sm-bias-mini-bar { height:13px; border-radius:7px; overflow:hidden; display:flex;
@@ -1071,8 +1078,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </label>
             <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
         </div>
-        <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
-        <div class="sm-bias-extra" id="sm-bias-extra"></div>
+        <div class="sm-bias-body">
+            <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
+            <div class="sm-bias-extra" id="sm-bias-extra"></div>
+        </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
         <div class="sm-bias-updated" id="sm-bias-updated"></div>
     </div>
@@ -1355,6 +1364,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <select id="sm-alert-mode" onchange="updateAlertMode()">
                             <option value="choch">CHoCH only</option>
                             <option value="choch_bos">CHoCH + BOS</option>
+                            <option value="choch_or_bos">CHoCH або CHoCH+BOS</option>
                         </select>
                     </div>
                     <div class="sm-control-item">

@@ -18,6 +18,9 @@ Why two passes?
 Alert modes:
   'choch'       — Alert on every new CHoCH
   'choch_bos'   — Alert only when CHoCH is followed by a BOS in the same direction
+  'choch_or_bos'— Alert on EITHER: the fresh CHoCH itself, OR its later
+                  BOS confirmation (union of the two modes above; never a
+                  standalone BOS without a preceding CHoCH)
 
 Settings persisted in DB:
   smc_watchlist:    list of symbols
@@ -741,7 +744,7 @@ class SMCScanner:
                     self._settings[k] = new[k]
             
             # Validate alert_mode
-            if self._settings.get('alert_mode') not in ('choch', 'choch_bos'):
+            if self._settings.get('alert_mode') not in ('choch', 'choch_bos', 'choch_or_bos'):
                 self._settings['alert_mode'] = DEFAULT_ALERT_MODE
             
             # Validate recency_minutes (0=off, or 30/60/120)
@@ -1942,6 +1945,50 @@ class SMCScanner:
                     else:
                         self._send_alert(symbol, ev, mode='choch')
             
+            elif mode == 'choch_or_bos':
+                # "Either" mode (2026-06-14): fire if EITHER condition holds —
+                #   (a) a fresh CHoCH (the 'choch' rule), OR
+                #   (b) that CHoCH later confirmed by a BOS (the 'choch_bos'
+                #       rule).
+                # This is the UNION of the two existing modes, NOT a
+                # standalone-BOS trigger: a BOS with no prior CHoCH never
+                # alerts here. In practice (a) already fires on the CHoCH;
+                # (b) adds a second alert when the same move is confirmed.
+                if tag == 'CHoCH':
+                    # (a) alert on the fresh CHoCH itself
+                    if is_recent:
+                        if not self._htf_allows(symbol, ev['dir']):
+                            print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
+                        elif not self._dedup_allows(symbol, ev['dir']):
+                            print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by dedup")
+                        else:
+                            self._send_alert(symbol, ev, mode='choch')
+                    # ...and seed pending so a later BOS can confirm (b)
+                    prev = self._pending_choch.get(symbol)
+                    if not (prev and prev.get('to_t', 0) > to_t):
+                        self._pending_choch[symbol] = {
+                            'from_t': ev['from_t'], 'to_t': ev['to_t'],
+                            'level': ev['level'], 'dir': ev['dir'],
+                            'choch_event': ev,
+                        }
+                elif tag == 'BOS' and is_recent:
+                    # (b) only fires when it confirms a pending CHoCH —
+                    # never on its own.
+                    pending = self._pending_choch.get(symbol)
+                    if pending and pending['dir'] == ev['dir']:
+                        if ev.get('to_t', 0) > pending.get('to_t', 0):
+                            if not self._htf_allows(symbol, ev['dir']):
+                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
+                            elif not self._dedup_allows(symbol, ev['dir']):
+                                print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by dedup")
+                                self._pending_choch.pop(symbol, None)
+                            else:
+                                self._send_alert(symbol, ev, mode='choch_bos',
+                                                  choch_event=pending['choch_event'])
+                                self._pending_choch.pop(symbol, None)
+                    elif pending and pending['dir'] != ev['dir']:
+                        self._pending_choch.pop(symbol, None)
+
             elif mode == 'choch_bos':
                 if tag == 'CHoCH':
                     # Always seed pending — even if old. The BOS confirmation
