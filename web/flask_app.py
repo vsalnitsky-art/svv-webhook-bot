@@ -283,6 +283,20 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Trade Manager: {e}")
         
+        if not _auto_started.get('autogate'):
+            _auto_started['autogate'] = True
+            try:
+                from detection.auto_gate import init_auto_gate
+                from detection.trade_manager import get_trade_manager
+                # compute_bias is a module-level fn in this file; bind db at call
+                init_auto_gate(
+                    db=get_db(),
+                    compute_bias=lambda sym, wl: compute_bias(get_db(), sym, wl),
+                    get_trade_manager=get_trade_manager,
+                )
+            except Exception as e:
+                print(f"[APP] Failed to start Auto-gate: {e}")
+        
         # Liquidation Map daemon — tracks estimated liquidation clusters
         # for BTC + ETH (background) plus any on-demand symbol requested
         # via the dashboard. Tier 2 architecture: Binance/Bybit aggregated
@@ -2568,237 +2582,49 @@ def register_api_routes(app):
         symbol = request.args.get('symbol', 'BTCUSDT').upper().strip()
         if symbol.endswith('.P'):
             symbol = symbol[:-2]
-        comp = {}
-        reasons = []
-
-        # --- Forecast 1H/4H agreement ---
-        fc_side = 0  # +1 long, -1 short, 0 none/disagree
-        try:
-            from detection.forecast_engine import get_forecast_engine
-            fe = get_forecast_engine()
-            cached = fe.get(symbol) if fe else None
-            if cached:
-                f1 = cached.get('forecast_1h') or {}
-                f4 = cached.get('forecast_4h') or {}
-                s1, s4 = f1.get('side', 0), f4.get('side', 0)
-                comp['forecast'] = {
-                    'f1_side': s1, 'f1_conf': f1.get('confidence', 0),
-                    'f4_side': s4, 'f4_conf': f4.get('confidence', 0)}
-                if s1 and s1 == s4:
-                    fc_side = 1 if s1 > 0 else -1
-                    reasons.append(('ok', f"Forecast 1H+4H узгоджені "
-                                    f"{'LONG' if fc_side > 0 else 'SHORT'}"))
-                elif s1 or s4:
-                    reasons.append(('wait', "Forecast 1H/4H не узгоджені"))
-                else:
-                    reasons.append(('wait', "Forecast нейтральний"))
-            else:
-                comp['forecast'] = None
-                reasons.append(('wait', "Forecast немає даних"))
-        except Exception as e:
-            comp['forecast'] = None
-            reasons.append(('wait', "Forecast недоступний"))
-
-        # --- Squeeze fuel direction (reference-calibrated) ---
-        fuel_side = 0
-        try:
-            from detection.market_data import get_market_data
-            from detection.squeeze import calc_squeeze
-            from detection.liquidation_map.liquidation_map import get_liquidation_map
-            md = get_market_data()
-            kl = md.fetch_klines(symbol, interval='1h', limit=120) if md else None
-            sq = calc_squeeze(kl or [])
-            lm = get_liquidation_map()
-            fa = fb = 0.0
-            if lm is not None:
-                try:
-                    prof = get_db().get_setting('liqmap_decay_profile', 'tori')
-                except Exception:
-                    prof = 'tori'
-                lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
-                mark = lst.get('mark_price')
-                for lev in (lst.get('levels') or []):
-                    if not mark:
-                        break
-                    dist = abs(lev['price'] - mark) / mark * 100.0
-                    if dist > 15:
-                        continue
-                    w = lev['usd'] / (1.0 + dist / 2.0)
-                    if lev['price'] > mark:
-                        fa += w
-                    else:
-                        fb += w
-            den = fa + fb
-            fuel_dir = (fa - fb) / den if den > 0 else 0.0
-            comp['fuel'] = {'above_usd': round(fa, 0), 'below_usd': round(fb, 0),
-                            'dir': round(fuel_dir, 3),
-                            'squeeze_on': sq.get('squeeze_on', False),
-                            'band': sq.get('band', 'off')}
-            if den <= 0:
-                reasons.append(('wait', "Liq-палива немає даних"))
-            elif fuel_dir > 0.1:
-                fuel_side = 1
-                reasons.append(('ok', "Паливо зверху (тягне в LONG)"))
-            elif fuel_dir < -0.1:
-                fuel_side = -1
-                reasons.append(('ok', "Паливо знизу (тягне в SHORT)"))
-            else:
-                reasons.append(('wait', "Паливо збалансоване — напрямку немає"))
-        except Exception:
-            comp['fuel'] = None
-            reasons.append(('wait', "Squeeze/fuel недоступний"))
-
-        # --- Book imbalance + manipulation trust ---
-        trust_ok = True
-        try:
-            from detection.orderbook_collector import (
-                fetch_aggregated_orderbook, compute_walls_buckets_v3)
-            snap = fetch_aggregated_orderbook(symbol)
-            walls = compute_walls_buckets_v3(snap) if snap else {}
-            imb = walls.get('imbalance_pct', 0) or 0
-            comp['imbalance_pct'] = round(imb, 1)
-            manip = walls.get('manipulation') or {}
-            mpct = manip.get('pct', 0)
-            comp['manipulation'] = {'pct': mpct,
-                                    'low_sample': manip.get('low_sample', False)}
-            if not manip.get('low_sample') and mpct >= 50:
-                trust_ok = False
-                reasons.append(('warn', f"Маніпуляція {mpct:.0f}% — книзі не вірити"))
-            elif manip.get('low_sample'):
-                reasons.append(('wait', "Маніпуляція: збір статистики"))
-        except Exception:
-            comp['imbalance_pct'] = None
-            comp['manipulation'] = None
-
-        # NOTE: Exchange sentiment was removed from the verdict calculation
-        # (2026-06-14, user request). It no longer affects confidence or the
-        # reasons list — it's purely informational and rendered separately on
-        # the Trade-Direction panel with its own crowd-extreme caption. The
-        # snapshot is still attached to the response below for the UI.
-
-        # --- Watchlist consensus (how many watchlist coins lean which way) ---
-        # PREFERRED source: the active watchlist FILTER passed from the UI
-        # (★ OB-filter direction, or ▲ Volumized-trend), counting ONLY coins
-        # that carry that marker. The frontend computes it because the
-        # markers live there (wlObStates / wlVolumizedTrends), and passes
-        # counts via query params wl_long / wl_short / wl_total / wl_src.
-        # FALLBACK (no filter active): the signal scanner's persisted
-        # per-symbol long/short scores, same as before.
-        wl_side = 0
-        wl_src = (request.args.get('wl_src') or '').strip()  # 'ob' | 'vol' | ''
-        wl_long_q = request.args.get('wl_long')
-        if wl_src and wl_long_q is not None:
-            # Frontend-provided, filter-based consensus
+        # Watchlist consensus comes from the frontend (markers live there).
+        # Package the query params into a dict the shared computer accepts.
+        wl = None
+        wl_src = (request.args.get('wl_src') or '').strip()
+        if wl_src and request.args.get('wl_long') is not None:
             try:
-                n_long = int(wl_long_q)
-                n_short = int(request.args.get('wl_short', 0))
-                n_flat = int(request.args.get('wl_flat', 0))
-                total = n_long + n_short + n_flat
-                src_label = {'ob': '★ OB-фільтр',
-                             'vol': '▲ Volumized'}.get(wl_src, wl_src)
-                if total > 0:
-                    long_share = round(n_long / total * 100, 0)
-                    short_share = round(n_short / total * 100, 0)
-                    comp['watchlist'] = {
-                        'total': total, 'n_long': n_long, 'n_short': n_short,
-                        'n_flat': n_flat, 'long_pct': long_share,
-                        'short_pct': short_share, 'source': wl_src}
-                    decisive = n_long + n_short
-                    if decisive > 0:
-                        maj = n_long / decisive
-                        if maj >= 0.60 and n_long >= 2:
-                            wl_side = 1
-                            reasons.append(('ok', f"{src_label}: {n_long}/{total} монет "
-                                            f"LONG ({long_share:.0f}%)"))
-                        elif maj <= 0.40 and n_short >= 2:
-                            wl_side = -1
-                            reasons.append(('ok', f"{src_label}: {n_short}/{total} монет "
-                                            f"SHORT ({short_share:.0f}%)"))
-                        else:
-                            reasons.append(('wait', f"{src_label} розділений "
-                                            f"({n_long}↑ / {n_short}↓)"))
-                    else:
-                        reasons.append(('wait', f"{src_label}: немає напрямлених монет"))
-                else:
-                    comp['watchlist'] = None
+                wl = {'src': wl_src,
+                      'n_long': int(request.args.get('wl_long', 0)),
+                      'n_short': int(request.args.get('wl_short', 0)),
+                      'n_flat': int(request.args.get('wl_flat', 0))}
             except Exception:
-                comp['watchlist'] = None
-        else:
-            # Fallback: scanner scores across the whole watchlist
+                wl = None
+        # Cache the consensus so the server-side Auto-gate loop can use it
+        # when the browser is closed (with its own staleness guard).
+        if wl is not None:
             try:
-                import json as _json
-                scores_raw = get_db().get_setting('liqmap_signal_scores', '{}')
-                scores = _json.loads(scores_raw) if scores_raw else {}
-                n_long = n_short = n_flat = 0
-                for sym, v in scores.items():
-                    ls = v.get('long', 0) or 0
-                    ss = v.get('short', 0) or 0
-                    if max(ls, ss) < 40:
-                        n_flat += 1
-                    elif ls > ss:
-                        n_long += 1
-                    else:
-                        n_short += 1
-                total = n_long + n_short + n_flat
-                if total > 0:
-                    long_share = round(n_long / total * 100, 0)
-                    short_share = round(n_short / total * 100, 0)
-                    comp['watchlist'] = {
-                        'total': total, 'n_long': n_long, 'n_short': n_short,
-                        'n_flat': n_flat, 'long_pct': long_share,
-                        'short_pct': short_share, 'source': 'scanner'}
-                    decisive = n_long + n_short
-                    if decisive > 0:
-                        maj = n_long / decisive
-                        if maj >= 0.60 and n_long >= 2:
-                            wl_side = 1
-                            reasons.append(('ok', f"Watchlist (score): {n_long}/{total} "
-                                            f"LONG ({long_share:.0f}%)"))
-                        elif maj <= 0.40 and n_short >= 2:
-                            wl_side = -1
-                            reasons.append(('ok', f"Watchlist (score): {n_short}/{total} "
-                                            f"SHORT ({short_share:.0f}%)"))
-                        else:
-                            reasons.append(('wait', f"Watchlist розділений "
-                                            f"({n_long}↑ / {n_short}↓ / {n_flat}•)"))
-                else:
-                    comp['watchlist'] = None
+                import json as _wlj
+                get_db().set_setting('sm_wl_consensus_cache', _wlj.dumps(
+                    {**wl, 'ts': _t.time()}))
             except Exception:
-                comp['watchlist'] = None
-
-        # --- Verdict ---
-        verdict, confidence = 'WAIT', 0
-        # Three directional votes: forecast, liq-fuel, watchlist consensus.
-        dir_votes = [v for v in (fc_side, fuel_side, wl_side) if v != 0]
-        agree = dir_votes and all(v == dir_votes[0] for v in dir_votes)
-        if agree and len(dir_votes) >= 1:
-            side = dir_votes[0]
-            # base confidence scales with how many independent signals agree
-            confidence = 40 + 20 * len(dir_votes)
-            # imbalance nudge in the same direction
-            imb = comp.get('imbalance_pct') or 0
-            if (side > 0 and imb > 0) or (side < 0 and imb < 0):
-                confidence += 10
-            if not trust_ok:
-                confidence -= 30
-            confidence = max(0, min(100, confidence))
-            if confidence >= 60 and trust_ok:
-                verdict = 'LONG' if side > 0 else 'SHORT'
-            else:
-                verdict = 'WAIT'
-        # sentiment snapshot always included so the board can render it
-        try:
-            from detection.market_sentiment import get_sentiment as _gs
-            _s = _gs('bybit')
-            if _s.get('ok'):
-                comp['sentiment'] = {'long_pct': _s['long_pct'],
-                                     'short_pct': _s['short_pct'],
-                                     'bias': _s['bias']}
-        except Exception:
-            pass
-        return jsonify({'ok': True, 'symbol': symbol, 'verdict': verdict,
-                        'confidence': confidence, 'components': comp,
-                        'reasons': reasons, 'ts': _t.time()})
+                pass
+        return jsonify(compute_bias(get_db(), symbol, wl))
+    
+    @app.route('/api/sm/auto-gate', methods=['GET', 'POST'])
+    def api_sm_auto_gate():
+        """Get/set the server-side Auto-gate state. Persisted in DB and
+        restored on boot; a background loop applies the verdict to the
+        side gates 24/7 (even with no browser open)."""
+        from detection.auto_gate import get_auto_gate
+        ag = get_auto_gate()
+        if ag is None:
+            return jsonify({'ok': False, 'reason': 'auto-gate not initialized'})
+        if request.method == 'POST':
+            body = request.get_json() or {}
+            if 'enabled' in body:
+                ag.set_enabled(bool(body['enabled']))
+            if 'symbol' in body and body['symbol']:
+                sym = str(body['symbol']).upper().strip()
+                if sym.endswith('.P'):
+                    sym = sym[:-2]
+                get_db().set_setting('sm_bias_symbol', sym)
+            return jsonify({'ok': True, **ag.status()})
+        return jsonify({'ok': True, **ag.status()})
     
     @app.route('/api/sentiment')
     def api_sentiment():
@@ -5019,3 +4845,247 @@ app = get_app()
 # For direct run
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+
+def compute_bias(db, symbol, wl=None):
+    """Shared trade-bias computation (LONG / SHORT / WAIT) used by both the
+    /api/sm/bias endpoint and the server-side Auto-gate loop.
+
+    db  — database handle
+    symbol — already normalized (no .P)
+    wl  — optional watchlist-consensus dict {src, n_long, n_short, n_flat}
+          from the frontend; when None, falls back to scanner scores.
+    Returns a plain dict (endpoint wraps it in jsonify).
+    """
+    import time as _t
+    symbol = (symbol or 'BTCUSDT').upper().strip()
+    if symbol.endswith('.P'):
+        symbol = symbol[:-2]
+    comp = {}
+    reasons = []
+    fc_side = 0  # +1 long, -1 short, 0 none/disagree
+    try:
+        from detection.forecast_engine import get_forecast_engine
+        fe = get_forecast_engine()
+        cached = fe.get(symbol) if fe else None
+        if cached:
+            f1 = cached.get('forecast_1h') or {}
+            f4 = cached.get('forecast_4h') or {}
+            s1, s4 = f1.get('side', 0), f4.get('side', 0)
+            comp['forecast'] = {
+                'f1_side': s1, 'f1_conf': f1.get('confidence', 0),
+                'f4_side': s4, 'f4_conf': f4.get('confidence', 0)}
+            if s1 and s1 == s4:
+                fc_side = 1 if s1 > 0 else -1
+                reasons.append(('ok', f"Forecast 1H+4H узгоджені "
+                                f"{'LONG' if fc_side > 0 else 'SHORT'}"))
+            elif s1 or s4:
+                reasons.append(('wait', "Forecast 1H/4H не узгоджені"))
+            else:
+                reasons.append(('wait', "Forecast нейтральний"))
+        else:
+            comp['forecast'] = None
+            reasons.append(('wait', "Forecast немає даних"))
+    except Exception as e:
+        comp['forecast'] = None
+        reasons.append(('wait', "Forecast недоступний"))
+
+    # --- Squeeze fuel direction (reference-calibrated) ---
+    fuel_side = 0
+    try:
+        from detection.market_data import get_market_data
+        from detection.squeeze import calc_squeeze
+        from detection.liquidation_map.liquidation_map import get_liquidation_map
+        md = get_market_data()
+        kl = md.fetch_klines(symbol, interval='1h', limit=120) if md else None
+        sq = calc_squeeze(kl or [])
+        lm = get_liquidation_map()
+        fa = fb = 0.0
+        if lm is not None:
+            try:
+                prof = db.get_setting('liqmap_decay_profile', 'tori')
+            except Exception:
+                prof = 'tori'
+            lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
+            mark = lst.get('mark_price')
+            for lev in (lst.get('levels') or []):
+                if not mark:
+                    break
+                dist = abs(lev['price'] - mark) / mark * 100.0
+                if dist > 15:
+                    continue
+                w = lev['usd'] / (1.0 + dist / 2.0)
+                if lev['price'] > mark:
+                    fa += w
+                else:
+                    fb += w
+        den = fa + fb
+        fuel_dir = (fa - fb) / den if den > 0 else 0.0
+        comp['fuel'] = {'above_usd': round(fa, 0), 'below_usd': round(fb, 0),
+                        'dir': round(fuel_dir, 3),
+                        'squeeze_on': sq.get('squeeze_on', False),
+                        'band': sq.get('band', 'off')}
+        if den <= 0:
+            reasons.append(('wait', "Liq-палива немає даних"))
+        elif fuel_dir > 0.1:
+            fuel_side = 1
+            reasons.append(('ok', "Паливо зверху (тягне в LONG)"))
+        elif fuel_dir < -0.1:
+            fuel_side = -1
+            reasons.append(('ok', "Паливо знизу (тягне в SHORT)"))
+        else:
+            reasons.append(('wait', "Паливо збалансоване — напрямку немає"))
+    except Exception:
+        comp['fuel'] = None
+        reasons.append(('wait', "Squeeze/fuel недоступний"))
+
+    # --- Book imbalance + manipulation trust ---
+    trust_ok = True
+    try:
+        from detection.orderbook_collector import (
+            fetch_aggregated_orderbook, compute_walls_buckets_v3)
+        snap = fetch_aggregated_orderbook(symbol)
+        walls = compute_walls_buckets_v3(snap) if snap else {}
+        imb = walls.get('imbalance_pct', 0) or 0
+        comp['imbalance_pct'] = round(imb, 1)
+        manip = walls.get('manipulation') or {}
+        mpct = manip.get('pct', 0)
+        comp['manipulation'] = {'pct': mpct,
+                                'low_sample': manip.get('low_sample', False)}
+        if not manip.get('low_sample') and mpct >= 50:
+            trust_ok = False
+            reasons.append(('warn', f"Маніпуляція {mpct:.0f}% — книзі не вірити"))
+        elif manip.get('low_sample'):
+            reasons.append(('wait', "Маніпуляція: збір статистики"))
+    except Exception:
+        comp['imbalance_pct'] = None
+        comp['manipulation'] = None
+
+    # NOTE: Exchange sentiment was removed from the verdict calculation
+    # (2026-06-14, user request). It no longer affects confidence or the
+    # reasons list — it's purely informational and rendered separately on
+    # the Trade-Direction panel with its own crowd-extreme caption. The
+    # snapshot is still attached to the response below for the UI.
+
+    # --- Watchlist consensus (how many watchlist coins lean which way) ---
+    # PREFERRED source: the active watchlist FILTER passed from the UI
+    # (★ OB-filter direction, or ▲ Volumized-trend), counting ONLY coins
+    # that carry that marker. The frontend computes it because the
+    # markers live there (wlObStates / wlVolumizedTrends), and passes
+    # counts via query params wl_long / wl_short / wl_total / wl_src.
+    # FALLBACK (no filter active): the signal scanner's persisted
+    # per-symbol long/short scores, same as before.
+    wl_side = 0
+    wl_src = (wl or {}).get('src', '') if wl else ''
+    if wl and wl_src:
+        # Frontend-provided, filter-based consensus (passed in)
+        try:
+            n_long = int(wl.get('n_long', 0))
+            n_short = int(wl.get('n_short', 0))
+            n_flat = int(wl.get('n_flat', 0))
+            total = n_long + n_short + n_flat
+            src_label = {'ob': '★ OB-фільтр',
+                         'vol': '▲ Volumized'}.get(wl_src, wl_src)
+            if total > 0:
+                long_share = round(n_long / total * 100, 0)
+                short_share = round(n_short / total * 100, 0)
+                comp['watchlist'] = {
+                    'total': total, 'n_long': n_long, 'n_short': n_short,
+                    'n_flat': n_flat, 'long_pct': long_share,
+                    'short_pct': short_share, 'source': wl_src}
+                decisive = n_long + n_short
+                if decisive > 0:
+                    maj = n_long / decisive
+                    if maj >= 0.60 and n_long >= 2:
+                        wl_side = 1
+                        reasons.append(('ok', f"{src_label}: {n_long}/{total} монет "
+                                        f"LONG ({long_share:.0f}%)"))
+                    elif maj <= 0.40 and n_short >= 2:
+                        wl_side = -1
+                        reasons.append(('ok', f"{src_label}: {n_short}/{total} монет "
+                                        f"SHORT ({short_share:.0f}%)"))
+                    else:
+                        reasons.append(('wait', f"{src_label} розділений "
+                                        f"({n_long}↑ / {n_short}↓)"))
+                else:
+                    reasons.append(('wait', f"{src_label}: немає напрямлених монет"))
+            else:
+                comp['watchlist'] = None
+        except Exception:
+            comp['watchlist'] = None
+    else:
+        # Fallback: scanner scores across the whole watchlist
+        try:
+            import json as _json
+            scores_raw = db.get_setting('liqmap_signal_scores', '{}')
+            scores = _json.loads(scores_raw) if scores_raw else {}
+            n_long = n_short = n_flat = 0
+            for sym, v in scores.items():
+                ls = v.get('long', 0) or 0
+                ss = v.get('short', 0) or 0
+                if max(ls, ss) < 40:
+                    n_flat += 1
+                elif ls > ss:
+                    n_long += 1
+                else:
+                    n_short += 1
+            total = n_long + n_short + n_flat
+            if total > 0:
+                long_share = round(n_long / total * 100, 0)
+                short_share = round(n_short / total * 100, 0)
+                comp['watchlist'] = {
+                    'total': total, 'n_long': n_long, 'n_short': n_short,
+                    'n_flat': n_flat, 'long_pct': long_share,
+                    'short_pct': short_share, 'source': 'scanner'}
+                decisive = n_long + n_short
+                if decisive > 0:
+                    maj = n_long / decisive
+                    if maj >= 0.60 and n_long >= 2:
+                        wl_side = 1
+                        reasons.append(('ok', f"Watchlist (score): {n_long}/{total} "
+                                        f"LONG ({long_share:.0f}%)"))
+                    elif maj <= 0.40 and n_short >= 2:
+                        wl_side = -1
+                        reasons.append(('ok', f"Watchlist (score): {n_short}/{total} "
+                                        f"SHORT ({short_share:.0f}%)"))
+                    else:
+                        reasons.append(('wait', f"Watchlist розділений "
+                                        f"({n_long}↑ / {n_short}↓ / {n_flat}•)"))
+            else:
+                comp['watchlist'] = None
+        except Exception:
+            comp['watchlist'] = None
+
+    # --- Verdict ---
+    verdict, confidence = 'WAIT', 0
+    # Three directional votes: forecast, liq-fuel, watchlist consensus.
+    dir_votes = [v for v in (fc_side, fuel_side, wl_side) if v != 0]
+    agree = dir_votes and all(v == dir_votes[0] for v in dir_votes)
+    if agree and len(dir_votes) >= 1:
+        side = dir_votes[0]
+        # base confidence scales with how many independent signals agree
+        confidence = 40 + 20 * len(dir_votes)
+        # imbalance nudge in the same direction
+        imb = comp.get('imbalance_pct') or 0
+        if (side > 0 and imb > 0) or (side < 0 and imb < 0):
+            confidence += 10
+        if not trust_ok:
+            confidence -= 30
+        confidence = max(0, min(100, confidence))
+        if confidence >= 60 and trust_ok:
+            verdict = 'LONG' if side > 0 else 'SHORT'
+        else:
+            verdict = 'WAIT'
+    # sentiment snapshot always included so the board can render it
+    try:
+        from detection.market_sentiment import get_sentiment as _gs
+        _s = _gs('bybit')
+        if _s.get('ok'):
+            comp['sentiment'] = {'long_pct': _s['long_pct'],
+                                 'short_pct': _s['short_pct'],
+                                 'bias': _s['bias']}
+    except Exception:
+        pass
+    return {'ok': True, 'symbol': symbol, 'verdict': verdict,
+            'confidence': confidence, 'components': comp,
+            'reasons': reasons, 'ts': _t.time()}

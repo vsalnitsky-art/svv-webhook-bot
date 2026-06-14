@@ -5492,6 +5492,11 @@ function applyBiasSymbol() {
     }
     biasSymbol = v;
     try { localStorage.setItem('sm_bias_symbol', v); } catch {}
+    // Persist symbol server-side so the Auto-gate loop uses the same one.
+    fetch('/api/sm/auto-gate', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol: v}),
+    }).catch(() => {});
     loadBias();
 }
 
@@ -5526,10 +5531,16 @@ async function setSideGate(side, on) {
 function toggleAutoGate(on) {
     autoGateEnabled = on;
     try { localStorage.setItem('sm_auto_gate', on ? '1' : '0'); } catch {}
+    // Persist server-side so the bot drives gates 24/7 even with no browser
+    // open, and the state survives restarts.
+    fetch('/api/sm/auto-gate', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: on, symbol: biasSymbol}),
+    }).catch(() => {});
     const note = document.getElementById('sm-bias-autonote');
     if (note) {
         note.style.display = on ? '' : 'none';
-        if (on) note.textContent = '🤖 Auto-gate увімкнено — вердикт керує кнопками LONG/SHORT';
+        if (on) note.textContent = '🤖 Auto-gate увімкнено — бот керує кнопками 24/7 (працює і без браузера)';
     }
     if (on) loadBias();
 }
@@ -6142,23 +6153,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Trade-bias board + exchange sentiment + watchlist consensus — all
     // refresh TOGETHER on one 60s cycle (sentiment row lives inside the
     // board now; the Trade-Direction strip indicator is refreshed here too).
+    // Restore Auto-gate state + symbol from the SERVER (authoritative —
+    // survives restarts and is shared across browsers). localStorage is
+    // only a fast first paint before the server answers.
     try {
         autoGateEnabled = localStorage.getItem('sm_auto_gate') === '1';
-        const ag = document.getElementById('sm-bias-auto');
-        if (ag) ag.checked = autoGateEnabled;
-        const note = document.getElementById('sm-bias-autonote');
-        if (note && autoGateEnabled) {
-            note.style.display = '';
-            note.textContent = '🤖 Auto-gate увімкнено — вердикт керує кнопками LONG/SHORT';
-        }
-        // Restore chosen bias symbol (default BTCUSDT)
         const savedSym = localStorage.getItem('sm_bias_symbol');
         if (savedSym) {
             biasSymbol = savedSym;
             const si = document.getElementById('sm-bias-sym-input');
             if (si) si.value = savedSym;
         }
+        const ag = document.getElementById('sm-bias-auto');
+        if (ag) ag.checked = autoGateEnabled;
     } catch {}
+    // Authoritative sync from server
+    fetch('/api/sm/auto-gate').then(r => r.json()).then(d => {
+        if (!d || !d.ok) return;
+        autoGateEnabled = !!d.enabled;
+        const ag = document.getElementById('sm-bias-auto');
+        if (ag) ag.checked = autoGateEnabled;
+        if (d.symbol) {
+            biasSymbol = d.symbol;
+            const si = document.getElementById('sm-bias-sym-input');
+            if (si) si.value = d.symbol;
+        }
+        try {
+            localStorage.setItem('sm_auto_gate', autoGateEnabled ? '1' : '0');
+            localStorage.setItem('sm_bias_symbol', biasSymbol);
+        } catch {}
+        const note = document.getElementById('sm-bias-autonote');
+        if (note) {
+            note.style.display = autoGateEnabled ? '' : 'none';
+            if (autoGateEnabled)
+                note.textContent = '🤖 Auto-gate увімкнено — бот керує кнопками 24/7 (працює і без браузера)';
+        }
+        loadBias();
+    }).catch(() => {});
     const refreshAll = () => { loadBias(); loadSentiment(); };
     refreshAll();
     setInterval(refreshAll, 60000);
