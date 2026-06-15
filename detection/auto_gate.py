@@ -35,6 +35,7 @@ WL_CACHE_TTL = 300       # frontend consensus older than 5 min is ignored
 _DB_ENABLED = 'sm_auto_gate_enabled'
 _DB_SYMBOL = 'sm_bias_symbol'
 _DB_WL_CACHE = 'sm_wl_consensus_cache'
+_DB_CLOSE_ON_WAIT = 'sm_auto_gate_close_on_wait'
 
 
 class AutoGateDaemon:
@@ -55,11 +56,16 @@ class AutoGateDaemon:
         self._db.set_setting(_DB_ENABLED, 'true' if on else 'false')
         if on:
             self.start()
-            # apply immediately so the user doesn't wait a full cycle
             try:
                 self._tick()
             except Exception as e:
                 print(f"[AutoGate] immediate apply error: {e}")
+
+    def is_close_on_wait(self) -> bool:
+        return str(self._db.get_setting(_DB_CLOSE_ON_WAIT, 'false')).lower() in ('true', '1')
+
+    def set_close_on_wait(self, on: bool):
+        self._db.set_setting(_DB_CLOSE_ON_WAIT, 'true' if on else 'false')
 
     def get_symbol(self) -> str:
         return (self._db.get_setting(_DB_SYMBOL, 'BTCUSDT') or 'BTCUSDT').upper()
@@ -106,10 +112,25 @@ class AutoGateDaemon:
         verdict_data = self._compute_bias(symbol, wl)
         verdict = verdict_data.get('verdict', 'WAIT')
         with self._lock:
+            prev_verdict = self._last.get('verdict')
             self._last = {'verdict': verdict, 'ts': time.time(),
                           'applied_at': time.time(), 'symbol': symbol,
                           'confidence': verdict_data.get('confidence', 0)}
         self._apply(verdict)
+        # Close-on-WAIT: only on the TRANSITION into WAIT (not every tick
+        # while already waiting), and only when the toggle is on. Closing
+        # uses the throttled queue so the exchange isn't overwhelmed.
+        if (verdict == 'WAIT' and prev_verdict not in (None, 'WAIT')
+                and self.is_close_on_wait()):
+            try:
+                tm = self._get_tm()
+                if tm and hasattr(tm, 'close_all_with_queue'):
+                    res = tm.close_all_with_queue(reason='auto_gate_wait')
+                    print(f"[AutoGate] WAIT transition → closed "
+                          f"real={len(res.get('closed_real', []))} "
+                          f"shadow={len(res.get('closed_shadow', []))}")
+            except Exception as e:
+                print(f"[AutoGate] close-on-WAIT error: {e}")
 
     def _run(self):
         # small initial delay so other singletons finish booting
@@ -134,6 +155,7 @@ class AutoGateDaemon:
         with self._lock:
             last = dict(self._last)
         return {'enabled': self.is_enabled(), 'symbol': self.get_symbol(),
+                'close_on_wait': self.is_close_on_wait(),
                 'running': bool(self._thread and self._thread.is_alive()),
                 'last': last}
 

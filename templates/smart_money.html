@@ -1049,6 +1049,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-auto-slider::after { content:''; position:absolute; top:2px; left:2px;
         width:14px; height:14px; border-radius:50%; background:#fff; transition:transform .2s; }
     .sm-bias-auto input:checked + .sm-bias-auto-slider { background:#a855f7; }
+    .sm-bias-auto input:checked + .sm-bias-auto-slider[style*="--ag-on"] { background:#f87171; }
+    .sm-bias-help { width:22px; height:22px; border-radius:50%;
+        border:1px solid rgba(255,255,255,0.2); background:rgba(255,255,255,0.05);
+        color:#9aa3b5; cursor:pointer; font-size:0.78rem; font-weight:700;
+        line-height:1; padding:0; }
+    .sm-bias-help:hover { border-color:#f87171; color:#f87171; }
     .sm-bias-auto input:checked + .sm-bias-auto-slider::after { transform:translateX(16px); }
     .sm-bias-auto-label { font-size:0.76rem; color:#c084fc; font-weight:600; }
     .sm-bias-updated { font-size:0.7rem; color:#667; font-family:monospace; margin-top:8px; }
@@ -1090,6 +1096,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="sm-bias-auto-slider"></span>
                 <span class="sm-bias-auto-label">Auto-gate</span>
             </label>
+            <label class="sm-bias-auto" id="sm-bias-cow-wrap"
+                   title="Закривати всі відкриті угоди при переході в WAIT (потрібен увімкнений Auto-gate).">
+                <input type="checkbox" id="sm-bias-cow" onchange="toggleCloseOnWait(this.checked)">
+                <span class="sm-bias-auto-slider" style="--ag-on:#f87171"></span>
+                <span class="sm-bias-auto-label" style="color:#f87171">Close on WAIT</span>
+            </label>
+            <button class="sm-bias-help" onclick="showCloseOnWaitHelp()" title="Що це?">?</button>
             <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
         </div>
         <div class="sm-bias-body">
@@ -5528,6 +5541,47 @@ async function setSideGate(side, on) {
     }
 }
 
+function toggleCloseOnWait(on) {
+    // Guard: only meaningful with Auto-gate enabled.
+    if (on && !autoGateEnabled) {
+        alert('Спершу увімкніть Auto-gate — Close on WAIT діє лише разом з ним.');
+        const cb = document.getElementById('sm-bias-cow');
+        if (cb) cb.checked = false;
+        return;
+    }
+    if (on) {
+        if (!confirm('УВАГА: при кожному переході вердикту в WAIT бот АВТОМАТИЧНО закриє ' +
+                     'ВСІ відкриті угоди — реальні (💼 Trade Manager) і тестові (🧪 Test Mode). ' +
+                     'Закриття йде чергою, щоб біржа не відхилила ордери. Увімкнути?')) {
+            const cb = document.getElementById('sm-bias-cow');
+            if (cb) cb.checked = false;
+            return;
+        }
+    }
+    fetch('/api/sm/auto-gate', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({close_on_wait: on}),
+    }).catch(() => {});
+}
+
+function showCloseOnWaitHelp() {
+    alert(
+        '🔴 Close on WAIT\n\n' +
+        'Коли увімкнено (і працює Auto-gate), щойно вердикт табло переходить ' +
+        'у стан WAIT, бот АВТОМАТИЧНО закриває ВСІ відкриті угоди:\n' +
+        '  • реальні — у 💼 Trade Manager (через біржу Bybit)\n' +
+        '  • тестові — у 🧪 Test Mode (paper)\n\n' +
+        'Закриття виконується ЧЕРГОЮ — по одній угоді з невеликою паузою, ' +
+        'щоб біржа не відхилила ордери через ліміт і кожна угода закрилась ' +
+        'повністю (без напіввідкритих позицій).\n\n' +
+        'Спрацьовує лише на ПЕРЕХОДІ в WAIT (один раз), а не щоразу поки ' +
+        'триває WAIT. LONG/SHORT-вердикти угоди не чіпають.\n\n' +
+        'Стан зберігається в БД і відновлюється при перезапуску бота. ' +
+        'За замовчуванням вимкнено.\n\n' +
+        '⚠ Це реально закриває позиції на біржі. Вмикайте свідомо.'
+    );
+}
+
 function toggleAutoGate(on) {
     autoGateEnabled = on;
     try { localStorage.setItem('sm_auto_gate', on ? '1' : '0'); } catch {}
@@ -6173,6 +6227,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         autoGateEnabled = !!d.enabled;
         const ag = document.getElementById('sm-bias-auto');
         if (ag) ag.checked = autoGateEnabled;
+        const cow = document.getElementById('sm-bias-cow');
+        if (cow) cow.checked = !!d.close_on_wait;
         if (d.symbol) {
             biasSymbol = d.symbol;
             const si = document.getElementById('sm-bias-sym-input');

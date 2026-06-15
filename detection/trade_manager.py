@@ -2990,6 +2990,61 @@ class TradeManager:
         self._close_shadow(symbol, current, reason='manual')
         return {'ok': True}
     
+    def close_all_with_queue(self, reason: str = 'auto_gate_wait',
+                              throttle_secs: float = 0.4) -> Dict:
+        """Close EVERY open position — real (💼 Trade Manager) and paper
+        (🧪 Test Mode) — one at a time through a throttled queue.
+
+        Why a queue (2026-06-14): firing N close orders at the exchange
+        simultaneously risks rate-limit rejections and partially-filled
+        closes, which can leave a position half-open on Bybit. Closing
+        sequentially with a small gap lets each reduce-only order confirm
+        before the next, so the exchange isn't overwhelmed and every
+        position fully closes. Paper positions don't hit the exchange but
+        go through the same queue for consistent ordering/logging.
+
+        Returns {ok, closed_real, closed_shadow, failed}.
+        """
+        import time as _t
+        # Snapshot the symbol lists under lock, then release so each close
+        # (which re-acquires the lock) doesn't deadlock.
+        with self._lock:
+            real_syms = list(self._positions.keys())
+            shadow_syms = list(self._shadow_positions.keys())
+        closed_real, closed_shadow, failed = [], [], []
+
+        for sym in real_syms:
+            try:
+                r = self.manual_close(sym)
+                if r.get('ok'):
+                    closed_real.append(sym)
+                else:
+                    failed.append({'symbol': sym, 'kind': 'real',
+                                   'reason': r.get('reason', 'unknown')})
+            except Exception as e:
+                failed.append({'symbol': sym, 'kind': 'real', 'reason': str(e)})
+            _t.sleep(throttle_secs)     # let the exchange confirm before next
+
+        for sym in shadow_syms:
+            try:
+                r = self.manual_close_shadow(sym)
+                if r.get('ok'):
+                    closed_shadow.append(sym)
+                else:
+                    failed.append({'symbol': sym, 'kind': 'shadow',
+                                   'reason': r.get('reason', 'unknown')})
+            except Exception as e:
+                failed.append({'symbol': sym, 'kind': 'shadow', 'reason': str(e)})
+            _t.sleep(throttle_secs)
+
+        if closed_real or closed_shadow:
+            print(f"[TM] close_all_with_queue ({reason}): "
+                  f"real={len(closed_real)} shadow={len(closed_shadow)} "
+                  f"failed={len(failed)}")
+        return {'ok': True, 'closed_real': closed_real,
+                'closed_shadow': closed_shadow, 'failed': failed,
+                'reason': reason}
+    
     def update_manual_sl_tp(self, symbol: str, manual_sl=None,
                               manual_tp=None, is_shadow: bool = False) -> Dict:
         """Set or clear the per-position manual SL/TP override.
