@@ -4980,7 +4980,7 @@ def compute_bias(db, symbol, wl=None):
             if s1 and s1 == s4:
                 fc_side = 1 if s1 > 0 else -1
                 reasons.append(('ok', f"Forecast 1H+4H узгоджені "
-                                f"{'LONG' if fc_side > 0 else 'SHORT'}"))
+                                f"{'LONG' if fc_side > 0 else 'SHORT'}", 'long' if fc_side > 0 else 'short'))
             elif s1 or s4:
                 reasons.append(('wait', "Forecast 1H/4H не узгоджені"))
             else:
@@ -5031,10 +5031,10 @@ def compute_bias(db, symbol, wl=None):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "Паливо зверху (тягне в LONG)"))
+            reasons.append(('ok', "Паливо зверху (тягне в LONG)", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "Паливо знизу (тягне в SHORT)"))
+            reasons.append(('ok', "Паливо знизу (тягне в SHORT)", 'short'))
         else:
             reasons.append(('wait', "Паливо збалансоване — напрямку немає"))
     except Exception:
@@ -5101,11 +5101,11 @@ def compute_bias(db, symbol, wl=None):
                     if maj >= 0.60 and n_long >= 2:
                         wl_side = 1
                         reasons.append(('ok', f"{src_label}: {n_long}/{total} монет "
-                                        f"LONG ({long_share:.0f}%)"))
+                                        f"LONG ({long_share:.0f}%)", 'long'))
                     elif maj <= 0.40 and n_short >= 2:
                         wl_side = -1
                         reasons.append(('ok', f"{src_label}: {n_short}/{total} монет "
-                                        f"SHORT ({short_share:.0f}%)"))
+                                        f"SHORT ({short_share:.0f}%)", 'short'))
                     else:
                         reasons.append(('wait', f"{src_label} розділений "
                                         f"({n_long}↑ / {n_short}↓)"))
@@ -5145,11 +5145,11 @@ def compute_bias(db, symbol, wl=None):
                     if maj >= 0.60 and n_long >= 2:
                         wl_side = 1
                         reasons.append(('ok', f"Watchlist (score): {n_long}/{total} "
-                                        f"LONG ({long_share:.0f}%)"))
+                                        f"LONG ({long_share:.0f}%)", 'long'))
                     elif maj <= 0.40 and n_short >= 2:
                         wl_side = -1
                         reasons.append(('ok', f"Watchlist (score): {n_short}/{total} "
-                                        f"SHORT ({short_share:.0f}%)"))
+                                        f"SHORT ({short_share:.0f}%)", 'short'))
                     else:
                         reasons.append(('wait', f"Watchlist розділений "
                                         f"({n_long}↑ / {n_short}↓ / {n_flat}•)"))

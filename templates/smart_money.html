@@ -5687,11 +5687,16 @@ async function loadBias() {
         // uses in that specific reason.
         const wlSrcWords = ['OB-фільтр', 'Volumized', 'Watchlist'];
         const isWlReason = (text) => wlSrcWords.some(w => text.includes(w));
+        // Color directional reasons by their side (3rd element): LONG green,
+        // SHORT red — so "тягне в SHORT" isn't drawn in the OK-green that
+        // blends with a LONG verdict. Non-directional reasons keep kind color.
+        const dirStyle = (dir) => dir === 'long' ? ' style="color:#4ade80"'
+            : dir === 'short' ? ' style="color:#f87171"' : '';
         reasonsEl.innerHTML = (d.reasons || [])
             .filter(r => !isWlReason(r[1]))
             .map(r => {
-                const [kind, text] = r;
-                return `<div class="sm-bias-reason ${kind}">${icons[kind] || '•'} ${text}</div>`;
+                const [kind, text, dir] = r;
+                return `<div class="sm-bias-reason ${kind}"${dirStyle(dir)}>${icons[kind] || '•'} ${text}</div>`;
             }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
 
         // Watchlist consensus (right column): the moved reason line shows
@@ -5706,7 +5711,7 @@ async function loadBias() {
             // recover the consensus verdict line from reasons (the one we filtered)
             const wlReason = (d.reasons || []).find(r => isWlReason(r[1]));
             const wlNote = wlReason
-                ? `<span class="sm-bias-reason ${wlReason[0]}" style="margin-top:4px">${icons[wlReason[0]]||'•'} ${wlReason[1]}</span>`
+                ? `<span class="sm-bias-reason ${wlReason[0]}" style="margin-top:4px${wlReason[2] === 'long' ? ';color:#4ade80' : wlReason[2] === 'short' ? ';color:#f87171' : ''}">${icons[wlReason[0]]||'•'} ${wlReason[1]}</span>`
                 : '';
             extra += `<div class="sm-bias-mini">
                 <span class="sm-bias-mini-label">Watchlist консенсус · ${srcLbl} (${w.total} монет)</span>
