@@ -3716,6 +3716,30 @@ async function loadChart() {
         const internalPivots = d.pivots || [];
         const signalMarkers = d.signals || [];
         
+        // === Adaptive price precision (2026-06-15) ===
+        // Lightweight Charts defaults to precision:2 / minMove:0.01, which
+        // collapsed sub-dollar coins like ASTERUSDT (~0.637) onto a 0.01
+        // grid — the axis showed "0.64" and the Manual-TP line snapped to
+        // the same grid, making it look like price had reached TP when it
+        // hadn't. Derive precision from the actual price so every level is
+        // distinct. (The TP logic itself was always correct; this is the
+        // chart misreporting.)
+        if (candleSeries && ohlc && ohlc.length) {
+            const ref = ohlc[ohlc.length - 1].close || ohlc[ohlc.length - 1].open || 0;
+            let prec, move;
+            const a = Math.abs(ref);
+            if (a >= 1000) { prec = 2; move = 0.01; }
+            else if (a >= 100) { prec = 2; move = 0.01; }
+            else if (a >= 1) { prec = 4; move = 0.0001; }
+            else if (a >= 0.1) { prec = 5; move = 0.00001; }
+            else if (a >= 0.01) { prec = 6; move = 0.000001; }
+            else if (a >= 0.001) { prec = 7; move = 0.0000001; }
+            else { prec = 8; move = 0.00000001; }
+            candleSeries.applyOptions({
+                priceFormat: {type: 'price', precision: prec, minMove: move},
+            });
+        }
+        
         // === Candles ===
         if (isSymbolChange) {
             // New symbol — full reset and fit
