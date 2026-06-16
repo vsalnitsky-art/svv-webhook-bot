@@ -2637,6 +2637,8 @@ def register_api_routes(app):
                 ag.set_enabled(bool(body['enabled']))
             if 'close_on_wait' in body:
                 ag.set_close_on_wait(bool(body['close_on_wait']))
+            if 'wait_hysteresis' in body:
+                ag.set_wait_hysteresis(body['wait_hysteresis'])
             if 'symbol' in body and body['symbol']:
                 sym = str(body['symbol']).upper().strip()
                 if sym.endswith('.P'):

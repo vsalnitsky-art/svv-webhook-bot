@@ -30,12 +30,14 @@ import threading
 from typing import Optional, Callable
 
 CYCLE_SECS = 60          # match the UI refresh cadence
+WAIT_HYSTERESIS_DEFAULT = 3   # consecutive WAIT ticks before close-on-WAIT fires
 WL_CACHE_TTL = 300       # frontend consensus older than 5 min is ignored
 
 _DB_ENABLED = 'sm_auto_gate_enabled'
 _DB_SYMBOL = 'sm_bias_symbol'
 _DB_WL_CACHE = 'sm_wl_consensus_cache'
 _DB_CLOSE_ON_WAIT = 'sm_auto_gate_close_on_wait'
+_DB_WAIT_HYSTERESIS = 'sm_auto_gate_wait_hysteresis'
 
 
 class AutoGateDaemon:
@@ -47,6 +49,10 @@ class AutoGateDaemon:
         self._stop = threading.Event()
         self._last = {'verdict': None, 'applied_at': 0, 'ts': 0}
         self._lock = threading.Lock()
+        # Hysteresis state for close-on-WAIT: count consecutive WAIT ticks so
+        # a brief LONG→WAIT→LONG flicker doesn't liquidate the whole book.
+        self._wait_streak = 0
+        self._wait_closed_this_streak = False
 
     # --- persisted state ---
     def is_enabled(self) -> bool:
@@ -66,6 +72,23 @@ class AutoGateDaemon:
 
     def set_close_on_wait(self, on: bool):
         self._db.set_setting(_DB_CLOSE_ON_WAIT, 'true' if on else 'false')
+
+    def wait_hysteresis(self) -> int:
+        """How many consecutive WAIT ticks must occur before close-on-WAIT
+        fires. 1 = close on the first WAIT (old behaviour); higher values
+        ride out brief WAIT flickers."""
+        try:
+            v = int(self._db.get_setting(_DB_WAIT_HYSTERESIS,
+                                         str(WAIT_HYSTERESIS_DEFAULT)))
+            return max(1, min(20, v))
+        except Exception:
+            return WAIT_HYSTERESIS_DEFAULT
+
+    def set_wait_hysteresis(self, n: int):
+        try:
+            self._db.set_setting(_DB_WAIT_HYSTERESIS, str(max(1, min(20, int(n)))))
+        except Exception:
+            pass
 
     def get_symbol(self) -> str:
         return (self._db.get_setting(_DB_SYMBOL, 'BTCUSDT') or 'BTCUSDT').upper()
@@ -112,25 +135,40 @@ class AutoGateDaemon:
         verdict_data = self._compute_bias(symbol, wl)
         verdict = verdict_data.get('verdict', 'WAIT')
         with self._lock:
-            prev_verdict = self._last.get('verdict')
             self._last = {'verdict': verdict, 'ts': time.time(),
                           'applied_at': time.time(), 'symbol': symbol,
                           'confidence': verdict_data.get('confidence', 0)}
         self._apply(verdict)
-        # Close-on-WAIT: only on the TRANSITION into WAIT (not every tick
-        # while already waiting), and only when the toggle is on. Closing
-        # uses the throttled queue so the exchange isn't overwhelmed.
-        if (verdict == 'WAIT' and prev_verdict not in (None, 'WAIT')
-                and self.is_close_on_wait()):
-            try:
-                tm = self._get_tm()
-                if tm and hasattr(tm, 'close_all_with_queue'):
-                    res = tm.close_all_with_queue(reason='auto_gate_wait')
-                    print(f"[AutoGate] WAIT transition → closed "
-                          f"real={len(res.get('closed_real', []))} "
-                          f"shadow={len(res.get('closed_shadow', []))}")
-            except Exception as e:
-                print(f"[AutoGate] close-on-WAIT error: {e}")
+        # Close-on-WAIT with HYSTERESIS: a single WAIT tick no longer
+        # liquidates the book — the verdict flickers LONG↔WAIT every few
+        # minutes when liq-fuel is balanced, and closing on the first WAIT
+        # was zeroing out live, profitable positions. Instead we require N
+        # consecutive WAIT ticks, and close only ONCE per sustained streak.
+        if verdict == 'WAIT':
+            self._wait_streak += 1
+            need = self.wait_hysteresis()
+            if (self._wait_streak >= need
+                    and not self._wait_closed_this_streak
+                    and self.is_close_on_wait()):
+                try:
+                    tm = self._get_tm()
+                    if tm and hasattr(tm, 'close_all_with_queue'):
+                        res = tm.close_all_with_queue(reason='auto_gate_wait')
+                        print(f"[AutoGate] WAIT sustained {self._wait_streak}× "
+                              f"(≥{need}) → closed "
+                              f"real={len(res.get('closed_real', []))} "
+                              f"shadow={len(res.get('closed_shadow', []))}")
+                        self._wait_closed_this_streak = True
+                except Exception as e:
+                    print(f"[AutoGate] close-on-WAIT error: {e}")
+        else:
+            # Any decisive verdict ends the WAIT streak and re-arms the
+            # close trigger for the next sustained WAIT.
+            if self._wait_streak:
+                print(f"[AutoGate] WAIT streak reset by {verdict} "
+                      f"(was {self._wait_streak})")
+            self._wait_streak = 0
+            self._wait_closed_this_streak = False
 
     def _run(self):
         # small initial delay so other singletons finish booting
@@ -156,6 +194,8 @@ class AutoGateDaemon:
             last = dict(self._last)
         return {'enabled': self.is_enabled(), 'symbol': self.get_symbol(),
                 'close_on_wait': self.is_close_on_wait(),
+                'wait_hysteresis': self.wait_hysteresis(),
+                'wait_streak': self._wait_streak,
                 'running': bool(self._thread and self._thread.is_alive()),
                 'last': last}
 

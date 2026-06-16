@@ -1055,6 +1055,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         color:#9aa3b5; cursor:pointer; font-size:0.78rem; font-weight:700;
         line-height:1; padding:0; }
     .sm-bias-help:hover { border-color:#f87171; color:#f87171; }
+    .sm-bias-hyst { display:flex; align-items:center; gap:4px; font-size:0.74rem;
+        color:#f8a; font-family:monospace; }
+    .sm-bias-hyst input { width:42px; background:rgba(0,0,0,0.3);
+        border:1px solid rgba(248,113,113,0.3); border-radius:5px; color:#f87171;
+        padding:3px 5px; font-family:monospace; font-size:0.76rem; text-align:center; }
+    .sm-bias-hyst input:focus { outline:none; border-color:rgba(248,113,113,0.6); }
     .sm-bias-auto input:checked + .sm-bias-auto-slider::after { transform:translateX(16px); }
     .sm-bias-auto-label { font-size:0.76rem; color:#c084fc; font-weight:600; }
     .sm-bias-updated { font-size:0.7rem; color:#667; font-family:monospace; margin-top:8px; }
@@ -1103,6 +1109,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="sm-bias-auto-label" style="color:#f87171">Close on WAIT</span>
             </label>
             <button class="sm-bias-help" onclick="showCloseOnWaitHelp()" title="Що це?">?</button>
+            <label class="sm-bias-hyst" id="sm-bias-hyst-wrap"
+                   title="Гістерезис: скільки циклів (хвилин) поспіль вердикт має бути WAIT, перш ніж Close on WAIT спрацює. Захищає від коротких провалів LONG→WAIT→LONG. 1 = закривати одразу.">
+                <span>WAIT ×</span>
+                <input type="number" id="sm-bias-hyst" min="1" max="20" value="3"
+                       onchange="setWaitHysteresis(this.value)">
+            </label>
             <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
         </div>
         <div class="sm-bias-body">
@@ -5588,6 +5600,15 @@ function toggleCloseOnWait(on) {
     }).catch(() => {});
 }
 
+function setWaitHysteresis(n) {
+    const v = Math.max(1, Math.min(20, parseInt(n) || 3));
+    document.getElementById('sm-bias-hyst').value = v;
+    fetch('/api/sm/auto-gate', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({wait_hysteresis: v}),
+    }).catch(() => {});
+}
+
 function showCloseOnWaitHelp() {
     alert(
         '🔴 Close on WAIT\n\n' +
@@ -5600,6 +5621,10 @@ function showCloseOnWaitHelp() {
         'повністю (без напіввідкритих позицій).\n\n' +
         'Спрацьовує лише на ПЕРЕХОДІ в WAIT (один раз), а не щоразу поки ' +
         'триває WAIT. LONG/SHORT-вердикти угоди не чіпають.\n\n' +
+        '🛡 Гістерезис «WAIT ×N»: закриває лише якщо вердикт тримається ' +
+        'WAIT N циклів (хвилин) поспіль. Захищає від коротких провалів ' +
+        'LONG→WAIT→LONG, які інакше зрізали б живі угоди. 1 = закривати ' +
+        'на першому ж WAIT.\n\n' +
         'Стан зберігається в БД і відновлюється при перезапуску бота. ' +
         'За замовчуванням вимкнено.\n\n' +
         '⚠ Це реально закриває позиції на біржі. Вмикайте свідомо.'
@@ -6258,6 +6283,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (ag) ag.checked = autoGateEnabled;
         const cow = document.getElementById('sm-bias-cow');
         if (cow) cow.checked = !!d.close_on_wait;
+        const hyst = document.getElementById('sm-bias-hyst');
+        if (hyst && d.wait_hysteresis) hyst.value = d.wait_hysteresis;
         if (d.symbol) {
             biasSymbol = d.symbol;
             const si = document.getElementById('sm-bias-sym-input');
