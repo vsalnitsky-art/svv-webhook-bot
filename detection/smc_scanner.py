@@ -55,7 +55,7 @@ KLINES_LIMIT = 3000           # bars to fetch per scan via paginated API.
                               # because of insufficient warmup; 3000+ converges.
 DEFAULT_TIMEFRAME = '5m'      # default timeframe
 DEFAULT_INTERNAL_SIZE = 5     # default Pine Internal Structure size
-MAX_WATCHLIST = 50
+MAX_WATCHLIST = 100
 
 # Allowed timeframes (Binance format)
 ALLOWED_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h']
@@ -68,6 +68,7 @@ TIMEFRAME_LABELS = {
 }
 
 DB_KEY_WATCHLIST = 'smc_watchlist'
+DB_KEY_WATCHLIST_SOURCES = 'smc_watchlist_sources'
 DB_KEY_TRADEABLE = 'smc_tradeable'   # subset of watchlist that's tradeable
 DB_KEY_SETTINGS = 'smc_settings'
 DB_KEY_STATE = 'smc_last_events'   # tracks last seen event per symbol
@@ -418,6 +419,42 @@ class SMCScanner:
                 self.db.set_setting(DB_KEY_WATCHLIST, self._watchlist)
             except Exception as e:
                 print(f"[SMC] Watchlist persist error: {e}")
+
+    def _get_sources(self) -> dict:
+        """{symbol: 'manual'|'tickr'} — how each watchlist coin was added."""
+        if not self.db:
+            return {}
+        try:
+            s = self.db.get_setting(DB_KEY_WATCHLIST_SOURCES, {})
+            return s if isinstance(s, dict) else {}
+        except Exception:
+            return {}
+
+    def _set_symbol_source(self, symbol: str, source: str):
+        src = self._get_sources()
+        src[symbol] = source if source in ('manual', 'tickr') else 'manual'
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_WATCHLIST_SOURCES, src)
+            except Exception as e:
+                print(f"[SMC] Watchlist sources persist error: {e}")
+
+    def _clear_symbol_source(self, symbol: str):
+        src = self._get_sources()
+        if symbol in src:
+            del src[symbol]
+            if self.db:
+                try:
+                    self.db.set_setting(DB_KEY_WATCHLIST_SOURCES, src)
+                except Exception:
+                    pass
+
+    def get_watchlist_sources(self) -> dict:
+        """Public: {symbol: source} for coins currently in the watchlist.
+        Symbols with no recorded source default to 'manual' (legacy adds)."""
+        with self._lock:
+            src = self._get_sources()
+            return {s: src.get(s, 'manual') for s in self._watchlist}
     
     def _load_tradeable(self) -> List[str]:
         """List of symbols flagged as tradeable for Trade Manager."""
@@ -617,7 +654,7 @@ class SMCScanner:
             return {'ok': True, 'symbol': symbol,
                     'tradeable': symbol in self._tradeable}
     
-    def add_symbol(self, symbol: str) -> Dict:
+    def add_symbol(self, symbol: str, source: str = 'manual') -> Dict:
         symbol = self._normalize_symbol(symbol)
         if not symbol:
             return {'ok': False, 'reason': 'Invalid symbol'}
@@ -639,14 +676,17 @@ class SMCScanner:
                 return {'ok': False, 'reason': f'Validation error: {e}'}
             
             self._watchlist.append(symbol)
+            self._set_symbol_source(symbol, source)
             self._persist_watchlist()
-            return {'ok': True, 'symbol': symbol, 'watchlist': list(self._watchlist)}
+            return {'ok': True, 'symbol': symbol, 'source': source,
+                    'watchlist': list(self._watchlist)}
     
     def remove_symbol(self, symbol: str) -> Dict:
         symbol = self._normalize_symbol(symbol)
         with self._lock:
             if symbol in self._watchlist:
                 self._watchlist.remove(symbol)
+                self._clear_symbol_source(symbol)
                 self._persist_watchlist()
                 # Clean up state
                 self._pending_choch.pop(symbol, None)
@@ -2642,6 +2682,8 @@ class SMCScanner:
                 'running': self._running,
                 'enabled': self._settings.get('enabled', True),
                 'watchlist': list(self._watchlist),
+                'watchlist_sources': {s: self._get_sources().get(s, 'manual')
+                                      for s in self._watchlist},
                 'tradeable': list(self._tradeable),
                 'settings': dict(self._settings),
                 'scan_count': self._scan_count,

@@ -2804,7 +2804,7 @@ def register_api_routes(app):
                 print(f"[Tickr→WL] clear error: {e}")
         for sym in symbols:
             try:
-                r = s.add_symbol(sym)
+                r = s.add_symbol(sym, source='tickr')
                 if r.get('ok'):
                     added.append(sym)
             except Exception as e:
@@ -2899,7 +2899,8 @@ def register_api_routes(app):
         s = get_smc_scanner()
         if not s:
             return jsonify({'watchlist': []})
-        return jsonify({'watchlist': s.get_watchlist()})
+        return jsonify({'watchlist': s.get_watchlist(),
+                        'sources': s.get_watchlist_sources()})
     
     @app.route('/api/smc/watchlist/add', methods=['POST'])
     def api_smc_watchlist_add():
@@ -2909,7 +2910,9 @@ def register_api_routes(app):
             return jsonify({'ok': False, 'reason': 'Not initialized'})
         data = request.get_json() or {}
         sym = data.get('symbol', '')
-        return jsonify(s.add_symbol(sym))
+        # Manual UI adds default to 'manual'; the Tickr bulk push passes 'tickr'.
+        source = data.get('source', 'manual')
+        return jsonify(s.add_symbol(sym, source=source))
     
     @app.route('/api/smc/watchlist/remove', methods=['POST'])
     def api_smc_watchlist_remove():
@@ -5190,6 +5193,23 @@ def compute_bias(db, symbol, wl=None):
                                  'bias': _s['bias']}
     except Exception:
         pass
+    # Live price for the board (scanner cache first — no extra API hit —
+    # then Bybit fallback for symbols outside the watchlist).
+    price = None
+    try:
+        from detection.smc_scanner import get_smc_scanner
+        sc = get_smc_scanner()
+        if sc:
+            price = sc._get_live_price(symbol)
+        if not price:
+            from core.bybit_connector import get_connector
+            bc = get_connector()
+            if bc:
+                p = bc.get_price(symbol)
+                if p and p > 0:
+                    price = p
+    except Exception:
+        price = None
     return {'ok': True, 'symbol': symbol, 'verdict': verdict,
             'confidence': confidence, 'components': comp,
-            'reasons': reasons, 'ts': _t.time()}
+            'reasons': reasons, 'price': price, 'ts': _t.time()}

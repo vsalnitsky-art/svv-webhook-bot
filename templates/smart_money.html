@@ -1034,6 +1034,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-body { display:grid; grid-template-columns:1fr 1fr; gap:18px;
         margin-top:12px; align-items:start; }
     .sm-bias-reasons { display:flex; flex-direction:column; gap:3px; }
+    .sm-bias-price { display:flex; align-items:center; gap:8px; margin-bottom:10px;
+        padding:8px 12px; border-radius:8px;
+        background:rgba(59,130,246,0.10); border:1px solid rgba(59,130,246,0.25); }
+    .sm-bias-price-icon { color:#3b82f6; font-size:0.7rem; animation:smBiasPulse 2s infinite; }
+    @keyframes smBiasPulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    .sm-bias-price-label { font-size:0.74rem; color:#93c5fd; font-weight:600; }
+    .sm-bias-price-val { margin-left:auto; font-family:monospace; font-size:0.95rem;
+        font-weight:700; color:#dbeafe; }
     .sm-bias-reason { font-size:0.78rem; display:flex; align-items:center; gap:7px;
         font-family:monospace; }
     .sm-bias-reason.ok { color:#86efac; } .sm-bias-reason.warn { color:#fbbf24; }
@@ -1118,7 +1126,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <button class="sm-bias-refresh" onclick="loadBias()">🔄 Оновити</button>
         </div>
         <div class="sm-bias-body">
-            <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
+            <div class="sm-bias-left-col">
+                <div class="sm-bias-price" id="sm-bias-price" style="display:none">
+                    <span class="sm-bias-price-icon">●</span>
+                    <span class="sm-bias-price-label">Ціна <span id="sm-bias-price-sym">—</span> (ф'ючерс)</span>
+                    <span class="sm-bias-price-val" id="sm-bias-price-val">—</span>
+                </div>
+                <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
+            </div>
             <div class="sm-bias-extra" id="sm-bias-extra"></div>
         </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
@@ -1430,7 +1445,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div class="sm-watchlist">
             <div class="sm-wl-header">
                 <span>WATCHLIST</span>
-                <span id="sm-wl-count" style="color:#666;font-size:0.7rem;font-weight:normal">0 / 50</span>
+                <span id="sm-wl-count" style="color:#666;font-size:0.7rem;font-weight:normal">0 / 100</span>
             </div>
             <div class="sm-add-form">
                 <input type="text" id="sm-add-input" placeholder="BTC, ETH..." onkeypress="if(event.key==='Enter')addSymbol()">
@@ -2523,6 +2538,7 @@ async function loadWatchlist() {
         wlObFilterEnabled = !!d.ob_filter_enabled;
         wlObFilterTimeframe = d.ob_filter_timeframe || '1h';
         wlObStates = d.ob_states || {};
+        wlSources = d.watchlist_sources || {};
         // Stash Volumized OB Trend state — small dict, populated only
         // for symbols in the watchlist that the scanner has processed.
         // Symbols not yet scanned (just added) will be absent and render
@@ -2544,6 +2560,7 @@ async function loadWatchlist() {
 // Watchlist OB-marker state — module-scoped so renderWatchlist can use them
 // without an extra round-trip. Updated on every loadWatchlist call.
 let wlSymbols = [];   // current watchlist symbols (for filter-consensus)
+let wlSources = {};   // {symbol: 'manual'|'tickr'} — how each was added
 let wlObFilterEnabled = false;
 let wlObFilterTimeframe = '1h';
 let wlObStates = {};
@@ -2565,7 +2582,7 @@ let wlDedupState = {};
 function renderWatchlist(list) {
     wlSymbols = list.slice();   // stash for filter-consensus (bias board)
     const el = document.getElementById('sm-wl-list');
-    document.getElementById('sm-wl-count').textContent = `${list.length} / 50`;
+    document.getElementById('sm-wl-count').textContent = `${list.length} / 100`;
     
     if (list.length === 0) {
         el.innerHTML = '<div style="text-align:center;color:#555;font-size:0.75rem;padding:20px">No symbols yet</div>';
@@ -2734,8 +2751,21 @@ function renderWatchlist(list) {
                 + `📦 <span class="sm-radar-ttl">${remaining.short}</span></span>`;
         }
         
+        // Source marker — how this coin entered the watchlist.
+        //   📡 (blue) = added in bulk from Tickr Opportunity scanner
+        //   ✋ (grey)  = added manually (default for legacy entries)
+        // Lets the upcoming "bulk-add list from Tickr" flow stay
+        // distinguishable from hand-picked coins.
+        const srcKind = wlSources[sym] || 'manual';
+        let srcHtml = '';
+        if (srcKind === 'tickr') {
+            srcHtml = `<span title="Додано списком із 📡 Tickr" style="margin-left:5px;font-size:0.72rem;opacity:0.85">📡</span>`;
+        } else {
+            srcHtml = `<span title="Додано вручну" style="margin-left:5px;font-size:0.68rem;opacity:0.55">✋</span>`;
+        }
+        
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}${srcHtml}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -5751,6 +5781,17 @@ async function loadBias() {
         // Watchlist consensus (right column): the moved reason line shows
         // UNDER the bar as a verdict note.
         const c = d.components || {};
+        // Live futures price banner
+        const priceEl = document.getElementById('sm-bias-price');
+        if (priceEl) {
+            if (d.price && d.price > 0) {
+                document.getElementById('sm-bias-price-sym').textContent = d.symbol;
+                document.getElementById('sm-bias-price-val').textContent = fmtPriceJS(d.price);
+                priceEl.style.display = '';
+            } else {
+                priceEl.style.display = 'none';
+            }
+        }
         let extra = '';
         if (c.watchlist) {
             const w = c.watchlist;
