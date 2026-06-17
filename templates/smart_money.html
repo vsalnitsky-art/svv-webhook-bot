@@ -832,6 +832,29 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     border: 1px solid transparent;
     transition: all 0.15s;
 }
+.wl-src {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    border-radius: 4px;
+    user-select: none;
+    border: 1px solid transparent;
+    flex-shrink: 0;
+}
+.wl-src-tickr {
+    background: rgba(59, 130, 246, 0.16);
+    color: #60a5fa;
+    border-color: rgba(59, 130, 246, 0.4);
+}
+.wl-src-manual {
+    background: rgba(148, 163, 184, 0.10);
+    color: #94a3b8;
+    border-color: rgba(148, 163, 184, 0.28);
+}
 .wl-trade-flag.active {
     background: rgba(34, 197, 94, 0.18);
     color: #4ade80;
@@ -1040,7 +1063,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-price-icon { color:#3b82f6; font-size:0.7rem; animation:smBiasPulse 2s infinite; }
     @keyframes smBiasPulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
     .sm-bias-price-label { font-size:0.74rem; color:#93c5fd; font-weight:600; }
-    .sm-bias-price-val { margin-left:auto; font-family:monospace; font-size:0.95rem;
+    .sm-bias-price-val { margin-left:auto; font-family:monospace; font-size:1.3rem;
         font-weight:700; color:#dbeafe; }
     .sm-bias-reason { font-size:0.78rem; display:flex; align-items:center; gap:7px;
         font-family:monospace; }
@@ -2752,23 +2775,25 @@ function renderWatchlist(list) {
         }
         
         // Source marker — how this coin entered the watchlist.
-        //   📡 (blue) = added in bulk from Tickr Opportunity scanner
-        //   ✋ (grey)  = added manually (default for legacy entries)
-        // Lets the upcoming "bulk-add list from Tickr" flow stay
-        // distinguishable from hand-picked coins.
+        //   T (blue badge) = added in bulk from Tickr Opportunity scanner
+        //   M (grey badge) = added manually (default for legacy entries)
+        // Rendered to the RIGHT of the TRD button. Lets the upcoming
+        // "bulk-add list from Tickr" flow stay distinguishable from
+        // hand-picked coins.
         const srcKind = wlSources[sym] || 'manual';
         let srcHtml = '';
         if (srcKind === 'tickr') {
-            srcHtml = `<span title="Додано списком із 📡 Tickr" style="margin-left:5px;font-size:0.72rem;opacity:0.85">📡</span>`;
+            srcHtml = `<span class="wl-src wl-src-tickr" title="Додано списком із 📡 Tickr">T</span>`;
         } else {
-            srcHtml = `<span title="Додано вручну" style="margin-left:5px;font-size:0.68rem;opacity:0.55">✋</span>`;
+            srcHtml = `<span class="wl-src wl-src-manual" title="Додано вручну">M</span>`;
         }
         
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}${srcHtml}</span>
+            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
+                ${srcHtml}
                 <span class="sm-wl-remove" onclick="event.stopPropagation();removeSymbol('${sym}')">✕</span>
             </span>
         </div>`;
@@ -5786,7 +5811,12 @@ async function loadBias() {
         if (priceEl) {
             if (d.price && d.price > 0) {
                 document.getElementById('sm-bias-price-sym').textContent = d.symbol;
-                document.getElementById('sm-bias-price-val').textContent = fmtPriceJS(d.price);
+                const pv = document.getElementById('sm-bias-price-val');
+                pv.textContent = fmtPriceJS(d.price);
+                // Color the price by verdict direction: LONG green, SHORT red,
+                // WAIT/other neutral.
+                pv.style.color = d.verdict === 'LONG' ? '#4ade80'
+                    : d.verdict === 'SHORT' ? '#f87171' : '#dbeafe';
                 priceEl.style.display = '';
             } else {
                 priceEl.style.display = 'none';
