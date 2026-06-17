@@ -69,6 +69,11 @@ TIMEFRAME_LABELS = {
 
 DB_KEY_WATCHLIST = 'smc_watchlist'
 DB_KEY_WATCHLIST_SOURCES = 'smc_watchlist_sources'
+# Per-coin metadata for the Tickr auto-pipeline: {symbol: {ts, score}}.
+# Only tickr-sourced coins carry meta (added_ts for the 24h TTL, plus the
+# opportunity score at add-time, used for lowest-score eviction). Manual
+# coins have no meta — they never expire.
+DB_KEY_WATCHLIST_META = 'smc_watchlist_meta'
 DB_KEY_TRADEABLE = 'smc_tradeable'   # subset of watchlist that's tradeable
 DB_KEY_SETTINGS = 'smc_settings'
 DB_KEY_STATE = 'smc_last_events'   # tracks last seen event per symbol
@@ -455,6 +460,105 @@ class SMCScanner:
         with self._lock:
             src = self._get_sources()
             return {s: src.get(s, 'manual') for s in self._watchlist}
+
+    # ---- Tickr auto-pipeline metadata (added_ts + opportunity score) ----
+
+    def _get_meta(self) -> dict:
+        """{symbol: {'ts': float, 'score': float}} for tickr coins."""
+        if not self.db:
+            return {}
+        try:
+            m = self.db.get_setting(DB_KEY_WATCHLIST_META, {})
+            return m if isinstance(m, dict) else {}
+        except Exception:
+            return {}
+
+    def _set_meta(self, symbol: str, ts: float, score: float):
+        m = self._get_meta()
+        m[symbol] = {'ts': float(ts), 'score': float(score)}
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_WATCHLIST_META, m)
+            except Exception as e:
+                print(f"[SMC] Watchlist meta persist error: {e}")
+
+    def _clear_meta(self, symbol: str):
+        m = self._get_meta()
+        if symbol in m:
+            del m[symbol]
+            if self.db:
+                try:
+                    self.db.set_setting(DB_KEY_WATCHLIST_META, m)
+                except Exception:
+                    pass
+
+    def get_watchlist_meta(self) -> dict:
+        """Public: meta for tickr coins currently in the watchlist.
+        {symbol: {ts, score}}. Manual coins are absent (no TTL)."""
+        with self._lock:
+            m = self._get_meta()
+            return {s: m[s] for s in self._watchlist if s in m}
+
+    def touch_tickr_symbol(self, symbol: str, score: float) -> Dict:
+        """A tickr coin already in the watchlist fired again → refresh its
+        added_ts (extend the 24h TTL) and update its score. No-op for coins
+        that aren't tickr-sourced (e.g. manual)."""
+        symbol = self._normalize_symbol(symbol)
+        with self._lock:
+            if symbol not in self._watchlist:
+                return {'ok': False, 'reason': 'not in watchlist'}
+            src = self._get_sources().get(symbol, 'manual')
+            if src != 'tickr':
+                return {'ok': False, 'reason': 'not tickr-sourced'}
+            self._set_meta(symbol, time.time(), score)
+        return {'ok': True, 'symbol': symbol}
+
+    def expire_tickr_symbols(self, ttl_secs: int) -> list:
+        """Remove tickr coins whose added_ts is older than ttl_secs.
+        Manual coins are never touched (no meta → skipped). Returns the
+        list of removed symbols."""
+        now = time.time()
+        with self._lock:
+            meta = self._get_meta()
+            src = self._get_sources()
+            expired = [
+                sym for sym in list(self._watchlist)
+                if src.get(sym) == 'tickr'
+                and sym in meta
+                and (now - float(meta[sym].get('ts', now))) >= ttl_secs
+            ]
+        removed = []
+        for sym in expired:
+            r = self.remove_symbol(sym)
+            if r.get('ok'):
+                removed.append(sym)
+        if removed:
+            print(f"[SMC] Tickr TTL expired → removed {removed}")
+        return removed
+
+    def evict_lowest_tickr(self, below_score: float) -> Optional[str]:
+        """Make room near MAX_WATCHLIST by removing the tickr coin with the
+        LOWEST stored score, but only if that score is below `below_score`
+        (the incoming candidate). Manual coins are never evicted. Returns
+        the evicted symbol, or None if nothing was evicted."""
+        with self._lock:
+            meta = self._get_meta()
+            src = self._get_sources()
+            tickr = [(sym, float(meta.get(sym, {}).get('score', 0)))
+                     for sym in self._watchlist if src.get(sym) == 'tickr']
+        if not tickr:
+            return None
+        tickr.sort(key=lambda t: t[1])  # lowest score first
+        weakest_sym, weakest_score = tickr[0]
+        if weakest_score >= below_score:
+            return None  # incoming isn't stronger than our weakest → no evict
+        r = self.remove_symbol(weakest_sym)
+        if r.get('ok'):
+            print(f"[SMC] Evicted weakest tickr {weakest_sym} "
+                  f"(score {weakest_score}) for stronger candidate "
+                  f"(score {below_score})")
+            return weakest_sym
+        return None
     
     def _load_tradeable(self) -> List[str]:
         """List of symbols flagged as tradeable for Trade Manager."""
@@ -654,7 +758,8 @@ class SMCScanner:
             return {'ok': True, 'symbol': symbol,
                     'tradeable': symbol in self._tradeable}
     
-    def add_symbol(self, symbol: str, source: str = 'manual') -> Dict:
+    def add_symbol(self, symbol: str, source: str = 'manual',
+                   score: float = 0.0) -> Dict:
         symbol = self._normalize_symbol(symbol)
         if not symbol:
             return {'ok': False, 'reason': 'Invalid symbol'}
@@ -677,6 +782,10 @@ class SMCScanner:
             
             self._watchlist.append(symbol)
             self._set_symbol_source(symbol, source)
+            # Tickr coins carry meta (added_ts for TTL + score for eviction).
+            # Manual coins get none — they never expire.
+            if source == 'tickr':
+                self._set_meta(symbol, time.time(), score)
             self._persist_watchlist()
             return {'ok': True, 'symbol': symbol, 'source': source,
                     'watchlist': list(self._watchlist)}
@@ -687,6 +796,7 @@ class SMCScanner:
             if symbol in self._watchlist:
                 self._watchlist.remove(symbol)
                 self._clear_symbol_source(symbol)
+                self._clear_meta(symbol)
                 self._persist_watchlist()
                 # Clean up state
                 self._pending_choch.pop(symbol, None)

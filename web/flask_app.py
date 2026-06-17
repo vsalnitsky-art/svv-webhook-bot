@@ -2814,8 +2814,15 @@ def register_api_routes(app):
     
     @app.route('/api/tickr/opportunity/auto', methods=['GET', 'POST'])
     def api_tickr_opp_auto():
-        """Get/set daily auto-rotation of the watchlist from the
-        opportunity scan. Persisted; a background loop runs it daily."""
+        """Get/set the continuous Tickr→Watchlist auto-pipeline.
+
+        POST body (any subset):
+          enabled       bool   — turn the daemon on/off
+          interval_min  int    — scan cadence in minutes (5..120)
+          min_score     float  — opportunity threshold to fire (50..95)
+          run_now       bool   — trigger one scan immediately
+        GET → current status (settings + active tickr coins with TTL).
+        """
         from detection.tickr_opportunity_daemon import get_opp_daemon
         d = get_opp_daemon()
         if d is None:
@@ -2824,12 +2831,21 @@ def register_api_routes(app):
             body = request.get_json() or {}
             if 'enabled' in body:
                 d.set_enabled(bool(body['enabled']))
-            if 'top_n' in body:
+            if 'interval_min' in body:
                 try:
-                    get_db().set_setting('tickr_opp_auto_topn',
-                                         str(int(body['top_n'])))
+                    d.set_interval_min(int(body['interval_min']))
                 except Exception:
                     pass
+            if 'min_score' in body:
+                try:
+                    d.set_min_score(float(body['min_score']))
+                except Exception:
+                    pass
+            if body.get('run_now'):
+                try:
+                    d.run_now()
+                except Exception as e:
+                    print(f"[Tickr auto] run_now error: {e}")
             return jsonify({'ok': True, **d.status()})
         return jsonify({'ok': True, **d.status()})
     
