@@ -325,40 +325,70 @@ class BybitConnector:
             return 0.0
     
     def get_positions(self, symbol: str = None) -> List[Dict]:
-        """Отримати відкриті позиції"""
-        if not self.api_key:
-            return []
-        
+        """Безпечний варіант: повертає список або [] при будь-якій помилці.
+        Зберігає старий контракт для всіх існуючих викликачів."""
         try:
-            params = {"category": "linear", "settleCoin": "USDT"}
+            positions, _ok = self.get_positions_checked(symbol)
+            return positions
+        except Exception:
+            return []
+
+    def get_positions_checked(self, symbol: str = None):
+        """Отримати ВСІ відкриті позиції (з пагінацією) + прапор успіху.
+
+        Повертає (positions, ok). ok=False означає, що відповідь біржі
+        була помилковою/частковою — у цьому випадку reconcile НЕ має
+        нічого закривати (інакше фантомні external_close).
+
+        Bybit V5 /position/list з settleCoin=USDT повертає максимум ~20
+        позицій на сторінку без явного limit, і до 200 з limit=200; якщо
+        позицій більше — їх треба добирати по nextPageCursor. Без
+        пагінації reconcile бачив лише першу сторінку і вважав решту
+        живих позицій "закритими ззовні".
+        """
+        if not self.api_key:
+            return [], True  # порожньо, але це не помилка
+
+        all_positions = []
+        cursor = None
+        pages = 0
+        MAX_PAGES = 10  # 10 × 200 = 2000 позицій — з величезним запасом
+        while pages < MAX_PAGES:
+            params = {"category": "linear", "settleCoin": "USDT",
+                      "limit": 200}
             if symbol:
                 params["symbol"] = symbol
-            
+            if cursor:
+                params["cursor"] = cursor
+
             response = self.session.get_positions(**params)
             result = self._handle_response(response)
-            if result and result.get('list'):
-                positions = []
-                for pos in result['list']:
-                    size = self._safe_float(pos.get('size'))
-                    if size > 0:
-                        positions.append({
-                            'symbol': pos.get('symbol'),
-                            'side': pos.get('side'),
-                            'size': size,
-                            'entry_price': self._safe_float(pos.get('avgPrice')),
-                            'mark_price': self._safe_float(pos.get('markPrice')),
-                            'unrealized_pnl': self._safe_float(pos.get('unrealisedPnl')),
-                            'leverage': self._safe_float(pos.get('leverage')),
-                            'position_value': self._safe_float(pos.get('positionValue')),
-                            'liq_price': self._safe_float(pos.get('liqPrice')),
-                            'take_profit': self._safe_float(pos.get('takeProfit')),
-                            'stop_loss': self._safe_float(pos.get('stopLoss'))
-                        })
-                return positions
-            return []
-        except Exception as e:
-            print(f"[BYBIT] get_positions error: {e}")
-            return []
+            if result is None:
+                # API error already logged by _handle_response.
+                return all_positions, False
+
+            for pos in (result.get('list') or []):
+                size = self._safe_float(pos.get('size'))
+                if size > 0:
+                    all_positions.append({
+                        'symbol': pos.get('symbol'),
+                        'side': pos.get('side'),
+                        'size': size,
+                        'entry_price': self._safe_float(pos.get('avgPrice')),
+                        'mark_price': self._safe_float(pos.get('markPrice')),
+                        'unrealized_pnl': self._safe_float(pos.get('unrealisedPnl')),
+                        'leverage': self._safe_float(pos.get('leverage')),
+                        'position_value': self._safe_float(pos.get('positionValue')),
+                        'liq_price': self._safe_float(pos.get('liqPrice')),
+                        'take_profit': self._safe_float(pos.get('takeProfit')),
+                        'stop_loss': self._safe_float(pos.get('stopLoss'))
+                    })
+
+            cursor = result.get('nextPageCursor') or ''
+            pages += 1
+            if not cursor:
+                break
+        return all_positions, True
     
     def place_order(
         self,

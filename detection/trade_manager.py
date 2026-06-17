@@ -2046,10 +2046,22 @@ class TradeManager:
         if not self.is_enabled() or not self.bybit:
             return {'skipped': True, 'reason': 'TM disabled or no bybit'}
         try:
-            live = self.bybit.get_positions() or []
+            # Use the checked variant so we can tell a real "no positions"
+            # apart from an API error / partial page. On error we must NOT
+            # treat missing symbols as external closes.
+            if hasattr(self.bybit, 'get_positions_checked'):
+                live, ok = self.bybit.get_positions_checked()
+            else:
+                live, ok = (self.bybit.get_positions() or []), True
         except Exception as e:
             print(f"[TM] Reconcile fetch error: {e}")
             return {'error': str(e)}
+
+        if not ok:
+            # Exchange returned an error/partial response. Adopting is safe
+            # (only adds), but closing on a bad fetch is what caused the
+            # phantom external_close storm. Skip the close pass entirely.
+            print("[TM] Reconcile: skipped close pass (Bybit fetch not ok)")
         
         live_by_symbol = {p['symbol']: p for p in live if p.get('symbol')}
         
@@ -2065,21 +2077,36 @@ class TradeManager:
             if self._adopt_external_position(live_by_symbol[sym]):
                 adopted.append(sym)
         
-        # 2. Detect external closes: in TM but not on Bybit
-        for sym in tm_symbols - live_symbols:
-            # Use current price as the best-available exit price. Bybit
-            # doesn't expose historical fill price for already-closed
-            # positions via REST in a stable way.
-            exit_price = self._get_current_price(sym)
-            if exit_price is None:
-                # Fall back to the position's entry price so PnL=0 rather
-                # than a wild number. Better to be conservative.
-                with self._lock:
-                    pos = self._positions.get(sym)
-                exit_price = pos['entry_price'] if pos else 0
-            if exit_price > 0:
-                self._close_externally(sym, exit_price, reason='external_close')
-                closed_externally.append(sym)
+        # 2. Detect external closes: in TM but not on Bybit.
+        #    ONLY when the fetch was clean — a partial/error page must never
+        #    trigger closes (root cause of the phantom-close storm).
+        to_close = tm_symbols - live_symbols
+        # Sanity guard: if a single reconcile wants to close a large share of
+        # all tracked positions at once, that's almost certainly a bad/partial
+        # fetch rather than the user manually flattening everything. Skip and
+        # let the next clean tick handle it.
+        if ok and to_close and tm_symbols:
+            share = len(to_close) / len(tm_symbols)
+            if len(to_close) >= 5 and share >= 0.5:
+                print(f"[TM] Reconcile: SKIPPED close of {len(to_close)}/"
+                      f"{len(tm_symbols)} positions ({share:.0%}) — looks like "
+                      f"a bad fetch, not real closes. Symbols: {sorted(to_close)}")
+                ok = False  # suppress the close pass this tick
+        if ok:
+            for sym in to_close:
+                # Use current price as the best-available exit price. Bybit
+                # doesn't expose historical fill price for already-closed
+                # positions via REST in a stable way.
+                exit_price = self._get_current_price(sym)
+                if exit_price is None:
+                    # Fall back to the position's entry price so PnL=0 rather
+                    # than a wild number. Better to be conservative.
+                    with self._lock:
+                        pos = self._positions.get(sym)
+                    exit_price = pos['entry_price'] if pos else 0
+                if exit_price > 0:
+                    self._close_externally(sym, exit_price, reason='external_close')
+                    closed_externally.append(sym)
         
         if adopted or closed_externally:
             print(f"[TM] Reconcile: adopted={adopted}, "
