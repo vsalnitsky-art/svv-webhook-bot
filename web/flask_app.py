@@ -3901,6 +3901,15 @@ def register_api_routes(app):
         if not tm:
             return jsonify({'ok': False, 'reason': 'Not initialized'})
         return jsonify(tm.clear_shadow_closed())
+
+    @app.route('/api/tm/closed/clear', methods=['POST'])
+    def api_tm_closed_clear():
+        """Wipe the entire Recent Closed Trades (real) list (user-confirmed)."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        return jsonify(tm.clear_closed())
     
     @app.route('/api/validator/toggle', methods=['GET', 'POST'])
     def api_validator_toggle():

@@ -1983,7 +1983,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </table>
             
             <!-- Recent Closed -->
-            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📜 Recent Closed Trades</h3>
+            <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0;display:flex;align-items:center;gap:10px">📜 Recent Closed Trades
+                <button class="tm-delete-btn" style="font-size:0.7rem;padding:2px 10px" title="Очистити весь список"
+                        onclick="clearTMClosed()">🗑 Clear All</button></h3>
             <table class="tm-table" id="tm-closed-table">
                 <thead>
                     <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th><th></th></tr>
@@ -6283,6 +6285,21 @@ async function deleteTMShadowClosed(symbol, closedAt, exitPrice) {
         }
     } catch (err) {
         alert('Delete error: ' + err);
+    }
+}
+
+async function clearTMClosed() {
+    if (!confirm('Очистити ВЕСЬ список Recent Closed Trades? Це незворотньо, статистика обнулиться.')) return;
+    try {
+        const res = await fetch('/api/tm/closed/clear', {method: 'POST'});
+        const d = await res.json();
+        if (d.ok) {
+            setTimeout(loadTMState, 200);
+        } else {
+            alert('Clear failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (err) {
+        alert('Clear error: ' + err);
     }
 }
 

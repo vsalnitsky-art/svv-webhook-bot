@@ -3407,6 +3407,15 @@ class TradeManager:
             self._shadow_closed = []
         self._persist_shadow_closed()
         return {'ok': True, 'cleared': n}
+
+    def clear_closed(self) -> Dict:
+        """Wipe the entire Recent Closed Trades (real) history. Stats
+        recompute from the (now empty) list on the next state poll."""
+        with self._lock:
+            n = len(self._closed_trades)
+            self._closed_trades = []
+        self._persist_closed_trades()
+        return {'ok': True, 'cleared': n}
     
     # ============================================================
     # Notifications
