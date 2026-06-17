@@ -174,10 +174,47 @@
     <div class="tk-row" style="margin-top:10px">
         <button class="tk-btn warm" id="opp-push-add" onclick="oppPush(false)" disabled>➕ Додати топ у Watchlist</button>
         <button class="tk-btn" id="opp-push-replace" onclick="oppPush(true)" disabled title="Очистити watchlist і замінити топом (повна ротація)">🔄 Замінити Watchlist топом</button>
-        <span style="flex:1"></span>
-        <label class="tk-cats"><input type="checkbox" id="opp-auto" onchange="oppToggleAuto(this.checked)"> Авто-ротація раз на день</label>
     </div>
-    <div class="tk-stat" id="opp-auto-stat"></div>
+</div>
+
+<!-- Continuous Tickr→Watchlist auto-pipeline -->
+<div class="tk-section">
+    <h3 style="font-size:0.9rem;color:#86efac;margin:0 0 4px">
+        🤖 Авто-пайплайн Tickr → Watchlist
+        <label class="tk-cats" style="display:inline-flex;margin-left:10px;font-size:0.78rem">
+            <input type="checkbox" id="opp-pipe-enabled" onchange="oppPipeSet({enabled:this.checked})">
+            <span id="opp-pipe-state" style="color:#8b93a7">вимкнено</span>
+        </label>
+    </h3>
+    <div class="tk-stat">
+        Bybit·swap·USDT·active. Кожні N хв сканує ринок; монети зі score ≥ порогу
+        автоматично залітають у Watchlist на <b>24 год</b>, потім самовидаляються.
+        Повторний вистріл продовжує життя ще на 24 год. Ручні монети не чіпаються.
+    </div>
+    <div class="tk-row" style="margin-top:8px">
+        <div class="tk-field" style="flex:1;min-width:220px">
+            <label>ІНТЕРВАЛ СКАНУВАННЯ · <span id="opp-pipe-interval-val">15</span> ХВ</label>
+            <input type="range" id="opp-pipe-interval" min="5" max="120" step="5" value="15"
+                   oninput="document.getElementById('opp-pipe-interval-val').textContent=this.value"
+                   onchange="oppPipeSet({interval_min:parseInt(this.value)})">
+        </div>
+        <div class="tk-field" style="flex:1;min-width:220px">
+            <label>ПОРІГ SCORE · <span id="opp-pipe-score-val">75</span></label>
+            <input type="range" id="opp-pipe-score" min="50" max="95" step="1" value="75"
+                   oninput="document.getElementById('opp-pipe-score-val').textContent=this.value"
+                   onchange="oppPipeSet({min_score:parseFloat(this.value)})">
+        </div>
+        <button class="tk-btn warm" id="opp-pipe-run" onclick="oppPipeSet({run_now:true})" title="Запустити один скан негайно">⚡ Сканувати зараз</button>
+    </div>
+    <div class="tk-stat" id="opp-pipe-stat">Статус завантажується…</div>
+    <div class="tk-scroll" style="max-height:320px">
+        <table class="tk-table">
+            <thead><tr>
+                <th>#</th><th>Symbol</th><th>Score</th><th>Додано</th><th>Залишок TTL</th>
+            </tr></thead>
+            <tbody id="opp-pipe-tbody"><tr><td colspan="5" style="color:#667;padding:16px">— немає активних tickr-монет —</td></tr></tbody>
+        </table>
+    </div>
 </div>
 
 <!-- Watch monitor (manual fetch+diff against stored snapshot) -->
@@ -503,34 +540,91 @@ async function oppPush(replace) {
         : '❌ ' + (d.reason || 'fail');
 }
 
-async function oppToggleAuto(on) {
-    const res = await fetch('/api/tickr/opportunity/auto', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({enabled: on, top_n: parseInt(document.getElementById('opp-topn').value)}),
-    });
-    const d = await res.json();
-    oppRenderAutoStat(d);
-}
-function oppRenderAutoStat(d) {
-    const el = document.getElementById('opp-auto-stat');
-    if (!el || !d.ok) return;
-    if (d.enabled) {
-        const last = d.last_run_ts ? new Date(d.last_run_ts*1000).toLocaleString() : 'ще не запускалось';
-        el.textContent = `🤖 Авто-ротація УВІМКНЕНА (топ-${d.top_n}, раз на день) · останній запуск: ${last}`;
-    } else {
-        el.textContent = '';
+// ---- Continuous Tickr→Watchlist auto-pipeline ----
+
+async function oppPipeSet(patch) {
+    try {
+        const d = await (await fetch('/api/tickr/opportunity/auto', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(patch),
+        })).json();
+        oppPipeRender(d);
+    } catch (e) {
+        const el = document.getElementById('opp-pipe-stat');
+        if (el) el.textContent = 'Помилка: ' + e;
     }
 }
-async function oppLoadAuto() {
+
+function fmtTTL(secs) {
+    if (secs <= 0) return '—';
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return h > 0 ? `${h}г ${m}хв` : `${m}хв`;
+}
+
+function oppPipeRender(d) {
+    if (!d || !d.ok) return;
+    const cb = document.getElementById('opp-pipe-enabled');
+    const stateEl = document.getElementById('opp-pipe-state');
+    if (cb) cb.checked = !!d.enabled;
+    if (stateEl) {
+        stateEl.textContent = d.enabled ? 'увімкнено' : 'вимкнено';
+        stateEl.style.color = d.enabled ? '#86efac' : '#8b93a7';
+    }
+    // Sliders (only set if value changed, to avoid fighting active drag)
+    const iv = document.getElementById('opp-pipe-interval');
+    const ivVal = document.getElementById('opp-pipe-interval-val');
+    if (iv && document.activeElement !== iv) { iv.value = d.interval_min; ivVal.textContent = d.interval_min; }
+    const sc = document.getElementById('opp-pipe-score');
+    const scVal = document.getElementById('opp-pipe-score-val');
+    if (sc && document.activeElement !== sc) { sc.value = d.min_score; scVal.textContent = d.min_score; }
+
+    // Status line
+    const stat = document.getElementById('opp-pipe-stat');
+    if (stat) {
+        const last = d.last_run_ts ? new Date(d.last_run_ts*1000).toLocaleTimeString() : 'ще не запускалось';
+        const lr = d.last_result || {};
+        const parts = [`активних: ${d.active_count || 0}/100`, `TTL ${d.ttl_hours}год`,
+                       `останній скан: ${last}`];
+        if (lr.fired !== undefined) {
+            parts.push(`(вистрілило ${lr.fired}, +${(lr.added||[]).length} нових, `
+                + `${(lr.refreshed||[]).length} продовжено, ${(lr.evicted||[]).length} витіснено)`);
+        }
+        stat.textContent = (d.enabled ? '🤖 ' : '⏸ ') + parts.join(' · ');
+    }
+
+    // Active tickr coins table
+    const tb = document.getElementById('opp-pipe-tbody');
+    if (tb) {
+        const active = d.active || [];
+        if (!active.length) {
+            tb.innerHTML = '<tr><td colspan="5" style="color:#667;padding:16px">— немає активних tickr-монет —</td></tr>';
+        } else {
+            tb.innerHTML = active.map((a, i) => {
+                const added = a.added_ts ? new Date(a.added_ts*1000).toLocaleString() : '—';
+                const ttlLow = a.ttl_left_secs < 3600;  // <1h left → warn color
+                const scColor = a.score >= 85 ? '#86efac' : a.score >= 75 ? '#a3e635' : '#fbbf24';
+                return `<tr>
+                    <td>${i+1}</td>
+                    <td style="color:#60a5fa;font-weight:700">${a.symbol}</td>
+                    <td style="color:${scColor};font-weight:700">${a.score}</td>
+                    <td style="color:#8b93a7;font-size:0.74rem">${added}</td>
+                    <td style="color:${ttlLow ? '#f87171' : '#c6cbd8'}">${fmtTTL(a.ttl_left_secs)}</td>
+                </tr>`;
+            }).join('');
+        }
+    }
+}
+
+async function oppPipeLoad() {
     try {
         const d = await (await fetch('/api/tickr/opportunity/auto')).json();
-        if (d.ok) {
-            const cb = document.getElementById('opp-auto');
-            if (cb) cb.checked = !!d.enabled;
-            oppRenderAutoStat(d);
-        }
+        oppPipeRender(d);
     } catch {}
 }
-document.addEventListener('DOMContentLoaded', oppLoadAuto);
+
+document.addEventListener('DOMContentLoaded', oppPipeLoad);
+// Refresh status + TTL countdown every 30s while the page is open.
+setInterval(oppPipeLoad, 30000);
 </script>
 {% endblock %}
