@@ -2367,6 +2367,16 @@ class SMCScanner:
         except Exception as e:
             print(f"[SMC] Alert send error: {e}")
     
+    def _get_cached_klines(self, symbol: str) -> Optional[List[Dict]]:
+        """Return the cached LTF klines for a symbol (the TF the bot trades),
+        or None if not scanned yet. Used by the Hold-Confidence analyzer so
+        it reuses scan data instead of refetching."""
+        with self._lock:
+            cached = self._cache.get(symbol)
+        if cached and cached.get('klines'):
+            return cached['klines']
+        return None
+
     def _get_live_price(self, symbol: str) -> Optional[float]:
         """Return the most recent close price for the symbol.
         

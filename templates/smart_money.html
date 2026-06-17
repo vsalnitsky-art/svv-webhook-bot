@@ -1975,10 +1975,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
+                        <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
                         <th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="11" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -2034,10 +2035,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
+                        <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
                         <th>Status</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="11" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -5513,6 +5515,37 @@ function decisionRecap(es) {
 // captured at open time (e.g. "LONG 78%") plus an indicator of live health.
 // Replaces the previous two-column setup (Entry Score badge + Health badge)
 // since users found the split confusing.
+function holdScoreCellHTML(hold) {
+    // SMC Hold-Confidence badge. hold = {score, verdict, color, components, reasons}
+    // Pure analysis — informational only; never triggers actions.
+    if (!hold || hold.score === undefined) {
+        return '<td style="color:#555;font-size:0.7rem">—</td>';
+    }
+    const c = hold.color === 'good' ? '#4ade80'
+            : hold.color === 'bad' ? '#f87171' : '#fbbf24';
+    const bg = hold.color === 'good' ? 'rgba(34,197,94,0.12)'
+             : hold.color === 'bad' ? 'rgba(248,113,113,0.12)' : 'rgba(251,191,36,0.10)';
+    // Build a readable tooltip: verdict + component breakdown + reasons.
+    const comp = hold.components || {};
+    const compLines = [
+        `HTF структура: ${comp.htf_structure ?? '-'} / 35`,
+        `CHoCH/BOS: ${comp.ltf_break ?? '-'} / 25`,
+        `Зона P/D: ${comp.zone ?? '-'} / 15`,
+        `Order Block: ${comp.order_block ?? '-'} / 15`,
+        `Контекст: ${comp.context ?? '-'} / 10`,
+    ].join('\n');
+    const reasonLines = (hold.reasons || [])
+        .map(r => (Array.isArray(r) ? r[0] : r)).join('\n');
+    const tip = `SMC Hold-Confidence: ${hold.score}/100 → ${hold.verdict}\n\n`
+        + compLines + (reasonLines ? '\n\n' + reasonLines : '');
+    return `<td title="${tip.replace(/"/g, '&quot;')}">
+        <span style="display:inline-flex;align-items:center;gap:6px;
+            padding:2px 8px;border-radius:6px;background:${bg};
+            border:1px solid ${c}55;font-weight:700;font-size:0.78rem;color:${c}">
+            ${hold.score}<span style="font-size:0.62rem;opacity:0.85">${hold.verdict}</span>
+        </span></td>`;
+}
+
 function statusBadgeHTML(entryScore, health) {
     // Headline from the entry-side decision (frozen at open time)
     let entryPart = '';
@@ -5965,7 +5998,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="11" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -5987,6 +6020,7 @@ async function loadTMState() {
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
+                    ${holdScoreCellHTML(p.hold)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -6035,7 +6069,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="11" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -6052,6 +6086,7 @@ async function loadTMState() {
                     <td style="color:#888;font-size:0.72rem">${p.opened_by || '—'}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
+                    ${holdScoreCellHTML(p.hold)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;

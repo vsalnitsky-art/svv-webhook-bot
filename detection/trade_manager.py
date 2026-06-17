@@ -278,6 +278,10 @@ class TradeManager:
         # When a position closes, its entry is removed from these dicts.
         self._pos_state: Dict[str, Dict] = {}
         self._shadow_pos_state: Dict[str, Dict] = {}
+        # SMC Hold-Confidence cache: {symbol: (ts, result)}. Recomputed at
+        # most once per HOLD_SCORE_TTL to keep /api/tm/state (polled ~5s)
+        # cheap, since each score runs a full SMC analysis on klines.
+        self._hold_cache: Dict[str, tuple] = {}
         
         self._load_positions()
         self._load_closed_trades()
@@ -2878,6 +2882,47 @@ class TradeManager:
     # State / queries
     # ============================================================
     
+    def _compute_hold_score(self, pos: Dict) -> Optional[Dict]:
+        """SMC Hold-Confidence for one open position. Cached per-symbol for
+        HOLD_SCORE_TTL seconds. Returns the analyzer dict or None on failure
+        (UI then simply shows no badge). Pure analysis — never acts."""
+        HOLD_SCORE_TTL = 45
+        sym = pos.get('symbol')
+        if not sym:
+            return None
+        now = time.time()
+        cached = self._hold_cache.get(sym)
+        if cached and (now - cached[0]) < HOLD_SCORE_TTL:
+            return cached[1]
+        try:
+            from detection.hold_analyzer import analyze_hold
+            # LTF klines from the scanner cache (the TF the bot trades).
+            ltf = None
+            htf = None
+            if self.scanner is not None:
+                getc = getattr(self.scanner, '_get_cached_klines', None)
+                if callable(getc):
+                    ltf = getc(sym)
+                else:
+                    # fall back to raw cache structure used elsewhere
+                    cache = getattr(self.scanner, '_cache', {})
+                    entry = cache.get(sym) or {}
+                    ltf = entry.get('klines')
+                gethtf = getattr(self.scanner, '_get_cached_htf_klines', None)
+                if callable(gethtf):
+                    htf = gethtf(sym)
+            if not ltf:
+                return None
+            result = analyze_hold(pos, ltf, htf)
+            if not result.get('ok'):
+                self._hold_cache[sym] = (now, None)
+                return None
+            self._hold_cache[sym] = (now, result)
+            return result
+        except Exception as e:
+            print(f"[TM] hold-score error for {sym}: {e}")
+            return None
+
     def get_state(self) -> Dict:
         with self._lock:
             positions = []
@@ -2897,6 +2942,10 @@ class TradeManager:
                 health = self._compute_health(pos, is_shadow=False)
                 if health is not None:
                     pos_dict['health'] = health
+                # Attach SMC Hold-Confidence (None on failure → no badge)
+                hold = self._compute_hold_score(pos_dict)
+                if hold is not None:
+                    pos_dict['hold'] = hold
                 positions.append(pos_dict)
             
             closed = list(self._closed_trades[-50:])
@@ -2924,6 +2973,9 @@ class TradeManager:
                 health = self._compute_health(pos, is_shadow=True)
                 if health is not None:
                     pos_dict['health'] = health
+                hold = self._compute_hold_score(pos_dict)
+                if hold is not None:
+                    pos_dict['hold'] = hold
                 shadow_positions.append(pos_dict)
             shadow_closed = list(self._shadow_closed[-50:])
             
