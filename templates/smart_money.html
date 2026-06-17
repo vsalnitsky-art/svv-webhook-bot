@@ -1004,8 +1004,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </button>
         </div>
         <div class="sm-side-gates-right">
+            <div class="sm-sentiment" id="sm-sentiment-binance" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (Binance account ratio, 1h)">
+                <span class="sm-sentiment-label">Binance</span>
+                <div class="sm-sentiment-bar">
+                    <div class="sm-sentiment-long" id="sm-sentiment-binance-long" style="width:50%"></div>
+                    <div class="sm-sentiment-short" id="sm-sentiment-binance-short" style="width:50%"></div>
+                </div>
+                <span class="sm-sentiment-val" id="sm-sentiment-binance-val">⏳</span>
+            </div>
+            <div class="sm-sentiment-note" id="sm-sentiment-binance-note"></div>
             <div class="sm-sentiment" id="sm-sentiment" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (Bybit account ratio, 1h)">
-                <span class="sm-sentiment-label">Настрій біржі</span>
+                <span class="sm-sentiment-label">Bybit</span>
                 <div class="sm-sentiment-bar">
                     <div class="sm-sentiment-long" id="sm-sentiment-long" style="width:50%"></div>
                     <div class="sm-sentiment-short" id="sm-sentiment-short" style="width:50%"></div>
@@ -5850,18 +5859,26 @@ async function loadBias() {
     }
 }
 
-async function loadSentiment() {
-    // Exchange-wide LONG/SHORT mood from account-ratio (default Bybit).
-    const val = document.getElementById('sm-sentiment-val');
-    const longBar = document.getElementById('sm-sentiment-long');
-    const shortBar = document.getElementById('sm-sentiment-short');
+async function loadSentimentFor(exchange, ids) {
+    // Exchange-wide LONG/SHORT mood from account-ratio.
+    const val = document.getElementById(ids.val);
+    const longBar = document.getElementById(ids.long);
+    const shortBar = document.getElementById(ids.short);
     if (!val || !longBar || !shortBar) return;
+    const note = document.getElementById(ids.note);
     try {
-        const res = await fetch('/api/sentiment?exchange=bybit');
+        const res = await fetch('/api/sentiment?exchange=' + exchange);
         const d = await res.json();
         if (!d.ok) {
             val.textContent = '—';
+            val.style.color = '#9aa3b5';
             val.title = d.reason || 'no data';
+            longBar.style.width = '50%';
+            shortBar.style.width = '50%';
+            if (note) {
+                note.className = 'sm-sentiment-note neutral';
+                note.textContent = `Дані недоступні (${d.reason || 'no data'})`;
+            }
             return;
         }
         longBar.style.width = d.long_pct + '%';
@@ -5876,7 +5893,6 @@ async function loadSentiment() {
         // Crowd-extreme caption (informational — does NOT affect the verdict).
         // Account ratio is contrarian at extremes: a heavily one-sided crowd
         // often precedes a move AGAINST it.
-        const note = document.getElementById('sm-sentiment-note');
         if (note) {
             if (d.long_pct >= 65) {
                 note.className = 'sm-sentiment-note euphoria';
@@ -5891,8 +5907,23 @@ async function loadSentiment() {
         }
     } catch (e) {
         val.textContent = '—';
+        val.style.color = '#9aa3b5';
         val.title = String(e);
     }
+}
+
+async function loadSentiment() {
+    // Bybit (the bot trades Bybit) + Binance for reference.
+    await Promise.all([
+        loadSentimentFor('bybit', {
+            val: 'sm-sentiment-val', long: 'sm-sentiment-long',
+            short: 'sm-sentiment-short', note: 'sm-sentiment-note'
+        }),
+        loadSentimentFor('binance', {
+            val: 'sm-sentiment-binance-val', long: 'sm-sentiment-binance-long',
+            short: 'sm-sentiment-binance-short', note: 'sm-sentiment-binance-note'
+        }),
+    ]);
 }
 
 async function loadTMState() {
