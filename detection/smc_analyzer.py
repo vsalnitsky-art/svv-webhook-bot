@@ -239,46 +239,82 @@ class SMCAnalyzer:
         
         return result
     
-    def _find_swing_points(self, 
-                           highs: List[float], 
+    def _find_swing_points(self,
+                           highs: List[float],
                            lows: List[float],
                            window: int,
                            is_high: bool = True) -> List[SwingPoint]:
         """
-        Знаходить pivot points (свінг-точки)
-        
-        Свінг High: точка, яка вища за всі точки в межах window зліва і справа
-        Свінг Low: точка, яка нижча за всі точки в межах window зліва і справа
+        Знаходить swing-точки (pivots) методом фрактала, як у TradingView
+        (ta.pivothigh / ta.pivotlow).
+
+        Pivot High: бар, чий high СТРОГО вищий за всі бари в межах `half`
+        зліва і не нижчий за всі бари справа.
+        Pivot Low: дзеркально (строго нижчий зліва, не вищий справа).
+
+        Асиметрична нерівність (строга зліва, нестрога справа) — це навмисно:
+        вона гарантує, що на плато з кількох однакових екстремумів
+        фіксується РІВНО ОДНА точка (найлівіша), а не дубль на кожному барі.
+        Саме дублі сусідніх pivot-ів раніше ламали класифікацію HH/HL/LH/LL.
+
+        Повертає до 10 останніх pivot-ів у хронологічному порядку; сусідні
+        елементи — завжди РІЗНІ піки (за побудовою без дублікатів).
         """
-        pivots = []
         prices = highs if is_high else lows
-        half_window = window // 2
-        
-        for i in range(half_window, len(prices) - half_window):
+        n = len(prices)
+        half = max(1, window // 2)
+        if n < 2 * half + 1:
+            return []
+
+        pivots: List[SwingPoint] = []
+        for i in range(half, n - half):
+            pivot_val = prices[i]
             is_pivot = True
-            
-            # Перевіряємо, чи це екстремум у вікні
-            for j in range(1, half_window + 1):
+
+            # Ліва сторона: СТРОГА нерівність (єдиний справжній екстремум).
+            for j in range(i - half, i):
                 if is_high:
-                    # Для high: має бути >= всіх сусідів
-                    if prices[i] < prices[i - j] or prices[i] < prices[i + j]:
+                    if prices[j] >= pivot_val:
                         is_pivot = False
                         break
                 else:
-                    # Для low: має бути <= всіх сусідів
-                    if prices[i] > prices[i - j] or prices[i] > prices[i + j]:
+                    if prices[j] <= pivot_val:
                         is_pivot = False
                         break
-            
-            if is_pivot:
-                pivots.append(SwingPoint(
-                    price=prices[i],
-                    index=i,
-                    is_high=is_high
-                ))
-        
-        # Повертаємо останні 10 свінгів
-        return pivots[-10:] if len(pivots) > 10 else pivots
+            if not is_pivot:
+                continue
+
+            # Права сторона: нестрога (плато не плодить дублів, бо ліва строга).
+            for j in range(i + 1, i + half + 1):
+                if is_high:
+                    if prices[j] > pivot_val:
+                        is_pivot = False
+                        break
+                else:
+                    if prices[j] < pivot_val:
+                        is_pivot = False
+                        break
+            if not is_pivot:
+                continue
+
+            pivots.append(SwingPoint(
+                price=pivot_val,
+                index=i,
+                is_high=is_high,
+            ))
+
+        # Захист від виродженого випадку (наприклад, ідеально пилкоподібні
+        # дані): прибираємо будь-які залишкові послідовні pivot-и з однаковою
+        # ціною, лишаючи перший. За коректної фрактал-логіки це рідкість, але
+        # інваріант "сусідні pivot-и різні" має бути гарантованим.
+        deduped: List[SwingPoint] = []
+        for p in pivots:
+            if deduped and deduped[-1].price == p.price and \
+               (p.index - deduped[-1].index) <= half:
+                continue
+            deduped.append(p)
+
+        return deduped[-10:] if len(deduped) > 10 else deduped
     
     def _classify_structure(self, 
                             result: SMCAnalysisResult,
