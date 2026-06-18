@@ -1083,6 +1083,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-move-bar-val { font-family:monospace; font-size:0.82rem; font-weight:700; min-width:38px;
         text-align:right; }
     .sm-move-notes { display:flex; flex-wrap:wrap; gap:4px 16px; }
+    .sm-rev-section { margin-top:12px; padding-top:10px;
+        border-top:1px solid rgba(255,255,255,0.07); }
+    .sm-rev-header { display:flex; align-items:center; justify-content:space-between;
+        margin-bottom:8px; }
+    .sm-rev-title { font-size:0.78rem; font-weight:700; color:#cbd5e1; }
+    .sm-rev-level { font-size:0.72rem; font-weight:700; padding:2px 9px; border-radius:5px; }
+    .sm-rev-level.low { color:#4ade80; background:rgba(34,197,94,0.12); }
+    .sm-rev-level.building { color:#fbbf24; background:rgba(251,191,36,0.12); }
+    .sm-rev-level.high { color:#f87171; background:rgba(248,113,113,0.12); }
+    .sm-rev-src { font-size:0.6rem; color:#6b7280; margin-top:6px; }
     .sm-move-note { font-size:0.68rem; color:#94a3b8; }
     .sm-bias-price { display:flex; align-items:center; gap:8px; margin-bottom:10px;
         padding:8px 12px; border-radius:8px;
@@ -1198,6 +1208,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="sm-move-bar-val" id="sm-move-bar-val">—</span>
             </div>
             <div class="sm-move-notes" id="sm-move-notes"></div>
+            <div class="sm-rev-section" id="sm-rev-section" style="display:none">
+                <div class="sm-rev-header" title="Індекс схильності до розвороту на 4H: зважена сума умов, що історично передують розвороту (RSI-екстремум, дивергенція, розтяг, funding, OI, натовп, тіні). Це НЕ передбачення майбутнього — це ступінь накопичення умов розвороту проти поточного напрямку.">
+                    <span class="sm-rev-title">🔄 Схильність до розвороту (4H)</span>
+                    <span class="sm-rev-level" id="sm-rev-level">—</span>
+                </div>
+                <div class="sm-move-bar-wrap">
+                    <span class="sm-move-bar-label">Тиск розвороту</span>
+                    <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev-bar-fill"></div></div>
+                    <span class="sm-move-bar-val" id="sm-rev-bar-val">—</span>
+                </div>
+                <div class="sm-move-notes" id="sm-rev-notes"></div>
+                <div class="sm-rev-src" id="sm-rev-src"></div>
+            </div>
         </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
         <div class="sm-bias-updated" id="sm-bias-updated"></div>
@@ -5881,6 +5904,33 @@ function biasWatchlistParams() {
     return `&wl_src=${src}&wl_long=${nLong}&wl_short=${nShort}&wl_flat=${nFlat}`;
 }
 
+function renderReversal(rev) {
+    const sec = document.getElementById('sm-rev-section');
+    if (!sec) return;
+    if (!rev || !rev.ok || rev.index === null || rev.index === undefined) {
+        sec.style.display = 'none'; return;
+    }
+    sec.style.display = '';
+    const lvl = document.getElementById('sm-rev-level');
+    const lmap = {
+        LOW: ['low', '🟢 НИЗЬКА'],
+        BUILDING: ['building', '🟡 НАРОСТАЄ'],
+        HIGH: ['high', '🔴 ВИСОКА'],
+    };
+    const li = lmap[rev.level] || ['building', rev.level || '—'];
+    lvl.className = 'sm-rev-level ' + li[0];
+    lvl.textContent = li[1];
+    const bf = document.getElementById('sm-rev-bar-fill');
+    const bv = document.getElementById('sm-rev-bar-val');
+    bf.style.width = rev.index + '%';
+    bf.style.background = rev.index >= 60 ? '#f87171' : rev.index >= 35 ? '#fbbf24' : '#4ade80';
+    bv.textContent = rev.index;
+    document.getElementById('sm-rev-notes').innerHTML = (rev.notes || [])
+        .map(n => `<span class="sm-move-note">• ${n}</span>`).join('');
+    const src = document.getElementById('sm-rev-src');
+    if (src) src.textContent = 'Джерела: ' + (rev.sources_used || []).join(', ');
+}
+
 function renderMovePanel(move) {
     const panel = document.getElementById('sm-move-panel');
     if (!panel) return;
@@ -5957,6 +6007,7 @@ async function loadBias() {
         fill.style.background = d.verdict === 'LONG' ? '#4ade80'
             : d.verdict === 'SHORT' ? '#f87171' : '#6b7280';
         renderMovePanel(d.move);
+        renderReversal(d.reversal);
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
         // The watchlist-consensus reason line is rendered under the
         // consensus bar in the RIGHT column (not in the left reasons list),
