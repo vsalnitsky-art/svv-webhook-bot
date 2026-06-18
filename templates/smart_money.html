@@ -37,6 +37,7 @@
     display: grid;
     grid-template-columns: 240px 1fr;
     gap: 12px;
+    height: 640px;
     min-height: 600px;
 }
 
@@ -2268,7 +2269,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
      Volumized OB algorithm + P/D zone filter. Mode A only: auto-adds
      qualifying symbols to the SMC watchlist (TTL 24h) — Trade Manager
      fires only when SMC actually fires a signal on the symbol. -->
-<div style="margin-top:14px">
     <div class="tm-panel" id="volradar-panel" style="margin-top:14px">
         <div class="tm-header" id="volradar-header">
             <h2><span id="volradar-chevron" onclick="toggleRadarPanel('volradar-body','volradar-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▶</span>📦 Volumized OB Radar
@@ -2517,7 +2517,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </details>
         </div>
     </div>
-</div>
 
 <script>
 let chart = null;
