@@ -5516,8 +5516,8 @@ function decisionRecap(es) {
 // Replaces the previous two-column setup (Entry Score badge + Health badge)
 // since users found the split confusing.
 function holdScoreCellHTML(hold) {
-    // SMC Hold-Confidence badge. hold = {score, verdict, color, components, reasons}
-    // Pure analysis — informational only; never triggers actions.
+    // SMC Hold-Confidence badge. hold = {score, verdict, color, action,
+    // headline, components, reasons}. Pure analysis — informational only.
     if (!hold || hold.score === undefined) {
         return '<td style="color:#555;font-size:0.7rem">—</td>';
     }
@@ -5536,14 +5536,18 @@ function holdScoreCellHTML(hold) {
     ].join('\n');
     const reasonLines = (hold.reasons || [])
         .map(r => (Array.isArray(r) ? r[0] : r)).join('\n');
-    const tip = `SMC Hold-Confidence: ${hold.score}/100 → ${hold.verdict}\n\n`
-        + compLines + (reasonLines ? '\n\n' + reasonLines : '');
+    const tip = `SMC Hold-Confidence: ${hold.score}/100 → ${hold.verdict}\\n`
+        + (hold.action ? `${hold.action}\\n` : '') + '\\n'
+        + compLines + (reasonLines ? '\\n\\n' + reasonLines : '');
     return `<td title="${tip.replace(/"/g, '&quot;')}">
-        <span style="display:inline-flex;align-items:center;gap:6px;
-            padding:2px 8px;border-radius:6px;background:${bg};
-            border:1px solid ${c}55;font-weight:700;font-size:0.78rem;color:${c}">
-            ${hold.score}<span style="font-size:0.62rem;opacity:0.85">${hold.verdict}</span>
-        </span></td>`;
+        <div style="display:flex;flex-direction:column;align-items:flex-start;gap:1px">
+            <span style="display:inline-flex;align-items:center;gap:6px;
+                padding:2px 8px;border-radius:6px;background:${bg};
+                border:1px solid ${c}55;font-weight:700;font-size:0.78rem;color:${c}">
+                ${hold.score}<span style="font-size:0.6rem;opacity:0.9;letter-spacing:0.3px">${hold.verdict}</span>
+            </span>
+            ${hold.headline ? `<span style="font-size:0.6rem;color:#8b93a7;padding-left:2px">${hold.headline}</span>` : ''}
+        </div></td>`;
 }
 
 function statusBadgeHTML(entryScore, health) {
