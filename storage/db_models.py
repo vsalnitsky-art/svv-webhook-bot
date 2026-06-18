@@ -394,6 +394,44 @@ class BotSetting(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class TradeArchive(Base):
+    """Permanent, append-only archive of every closed trade.
+
+    Unlike the rolling `tm_closed_trades` setting (capped for the UI), this
+    table is NEVER auto-trimmed — it is the dataset for backtesting the
+    Trade Quality Gate. Each row carries a full pre-trade snapshot captured
+    at OPEN time (entry decision, move-potential, hold score, ATR/runway/
+    exhaustion) so we can later test which signals actually predicted good
+    vs bad trades. One row per trade; scales to thousands without bloating
+    a single JSON blob.
+    """
+    __tablename__ = f'{TABLE_PREFIX}trade_archive'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    is_paper = Column(Boolean, default=False, index=True)   # real vs Test Mode
+    symbol = Column(String(20), index=True)
+    side = Column(String(8))                                # LONG / SHORT
+    entry_price = Column(Float)
+    exit_price = Column(Float)
+    qty = Column(Float, default=0)
+    pnl_pct = Column(Float, index=True)
+    pnl_usd = Column(Float, default=0)
+    reason = Column(String(40), index=True)                 # close reason code
+    reason_detail = Column(Text)                            # enriched reason
+    opened_by = Column(String(40))
+    opened_at = Column(Float)                               # unix ts
+    closed_at = Column(Float, index=True)                   # unix ts
+    duration_secs = Column(Float, default=0)
+    # Pre-trade snapshot (captured at OPEN) — the backtest feature set.
+    # Stored as JSON text so the schema can evolve without migrations.
+    entry_snapshot = Column(Text)                           # JSON: decision+move+hold at open
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index(f'ix_{TABLE_PREFIX}arch_sym_closed', 'symbol', 'closed_at'),
+    )
+
+
 class EventLog(Base):
     """Event log for dashboard"""
     __tablename__ = f'{TABLE_PREFIX}event_logs'

@@ -12,7 +12,7 @@ from storage.db_models import (
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
     LiquidationBucket, LiquidationOISnapshot, LiquidationEvent,
-    LiqHeatmapProfile
+    LiqHeatmapProfile, TradeArchive
 )
 from config import DEFAULT_SETTINGS
 
@@ -80,7 +80,98 @@ class DBOperations:
             return False
         finally:
             session.close()
-    
+
+    # === TRADE ARCHIVE (permanent, append-only — for backtesting) ===
+
+    def archive_trade(self, trade: Dict, entry_snapshot: Optional[Dict] = None,
+                      is_paper: bool = False) -> bool:
+        """Append one closed trade to the permanent archive. Never trimmed.
+
+        `trade` is the closed-trade dict; `entry_snapshot` is the pre-trade
+        analysis captured at OPEN time (decision/move/hold). Failures here
+        must never break trading, so everything is guarded.
+        """
+        session = get_session()
+        try:
+            opened = trade.get('opened_at') or 0
+            closed = trade.get('closed_at') or 0
+            row = TradeArchive(
+                is_paper=bool(is_paper),
+                symbol=trade.get('symbol'),
+                side=trade.get('side'),
+                entry_price=trade.get('entry_price'),
+                exit_price=trade.get('exit_price'),
+                qty=trade.get('qty', 0) or 0,
+                pnl_pct=trade.get('pnl_pct'),
+                pnl_usd=trade.get('pnl_usd', 0) or 0,
+                reason=(trade.get('reason') or '')[:40],
+                reason_detail=trade.get('reason_detail'),
+                opened_by=(trade.get('opened_by') or '')[:40],
+                opened_at=opened,
+                closed_at=closed,
+                duration_secs=max(0, (closed - opened)) if (opened and closed) else 0,
+                entry_snapshot=json.dumps(entry_snapshot) if entry_snapshot else None,
+            )
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[Archive] trade archive error: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_trade_archive(self, limit: int = 1000, is_paper: Optional[bool] = None,
+                          symbol: Optional[str] = None) -> List[Dict]:
+        """Read archived trades (newest first). `limit` caps the result for
+        memory safety; pass a large value for full backtest pulls."""
+        session = get_session()
+        try:
+            q = session.query(TradeArchive)
+            if is_paper is not None:
+                q = q.filter(TradeArchive.is_paper == is_paper)
+            if symbol:
+                q = q.filter(TradeArchive.symbol == symbol)
+            q = q.order_by(desc(TradeArchive.closed_at)).limit(limit)
+            out = []
+            for r in q.all():
+                snap = None
+                if r.entry_snapshot:
+                    try:
+                        snap = json.loads(r.entry_snapshot)
+                    except Exception:
+                        snap = None
+                out.append({
+                    'id': r.id, 'is_paper': r.is_paper, 'symbol': r.symbol,
+                    'side': r.side, 'entry_price': r.entry_price,
+                    'exit_price': r.exit_price, 'qty': r.qty,
+                    'pnl_pct': r.pnl_pct, 'pnl_usd': r.pnl_usd,
+                    'reason': r.reason, 'reason_detail': r.reason_detail,
+                    'opened_by': r.opened_by, 'opened_at': r.opened_at,
+                    'closed_at': r.closed_at, 'duration_secs': r.duration_secs,
+                    'entry_snapshot': snap,
+                })
+            return out
+        except Exception as e:
+            print(f"[Archive] read error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def count_trade_archive(self, is_paper: Optional[bool] = None) -> int:
+        """Total archived trades (for the UI counter)."""
+        session = get_session()
+        try:
+            q = session.query(TradeArchive)
+            if is_paper is not None:
+                q = q.filter(TradeArchive.is_paper == is_paper)
+            return q.count()
+        except Exception:
+            return 0
+        finally:
+            session.close()
+
     def get_all_settings(self) -> Dict:
         """Get all settings"""
         session = get_session()

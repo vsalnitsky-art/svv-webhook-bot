@@ -41,7 +41,9 @@ DB_KEY_TM_SHADOW = 'tm_shadow_positions'   # paper-trading positions
 DB_KEY_TM_SHADOW_CLOSED = 'tm_shadow_closed'
 
 MONITOR_INTERVAL_SECS = 10
-CLOSED_TRADES_LIMIT = 100   # keep this many recent closed trades
+CLOSED_TRADES_LIMIT = 500   # in-memory cap for the UI list; the permanent
+                            # TradeArchive DB table keeps the FULL history
+                            # (never trimmed) for backtesting.
 INITIAL_DELAY_SECS = 20      # wait at startup before first tick
 
 # Reconcile interval is now user-tunable via DEFAULT_SETTINGS["reconcile_interval_secs"].
@@ -1809,6 +1811,72 @@ class TradeManager:
     # Position open / close / partial
     # ============================================================
     
+    def _archive_closed(self, closed: Dict, pos: Dict, is_paper: bool):
+        """Append a closed trade to the permanent DB archive (never trimmed).
+        Carries the pre-trade snapshot captured at open. Guarded so it can
+        never disrupt the close flow."""
+        if not self.db:
+            return
+        try:
+            snap = pos.get('entry_snapshot')
+            self.db.archive_trade(closed, entry_snapshot=snap, is_paper=is_paper)
+        except Exception as e:
+            print(f"[TM] archive_closed error: {e}")
+
+    def _capture_entry_snapshot(self, symbol: str, side: str,
+                                entry_price: float, decision) -> Dict:
+        """Snapshot the full pre-trade analysis at OPEN time. This is the
+        feature set for backtesting the Trade Quality Gate later. Pure
+        capture — never affects whether the trade opens."""
+        snap = {
+            'ts': time.time(),
+            'side': side,
+            'entry_price': entry_price,
+        }
+        # Entry decision (directional conviction) — compact form
+        if decision:
+            snap['decision'] = {
+                'verdict': decision.get('verdict'),
+                'recommended': decision.get('recommended'),
+                'confidence': decision.get('confidence'),
+                'prob_long': decision.get('prob_long'),
+                'prob_short': decision.get('prob_short'),
+                'headline': decision.get('headline'),
+            }
+        # Move potential (ATR / runway / exhaustion)
+        try:
+            from detection.move_potential import analyze_move_potential
+            klines = None
+            if self.scanner is not None:
+                getc = getattr(self.scanner, '_get_cached_klines', None)
+                if callable(getc):
+                    klines = getc(symbol)
+            if klines and len(klines) >= 20:
+                mv = analyze_move_potential(side=side, klines=klines)
+                if mv.get('ok'):
+                    snap['move'] = {
+                        'atr_pct': mv.get('atr_pct'),
+                        'stretch_atr': mv.get('stretch_atr'),
+                        'runway_pct': mv.get('runway_pct'),
+                        'runway_atr': mv.get('runway_atr'),
+                        'adr_used_pct': mv.get('adr_used_pct'),
+                        'exhaustion': mv.get('exhaustion'),
+                        'verdict': mv.get('verdict'),
+                    }
+        except Exception as e:
+            print(f"[TM] snapshot move error: {e}")
+        # Hold score at open
+        try:
+            hold = self._compute_hold_score({'symbol': symbol, 'side': side,
+                                             'entry_price': entry_price,
+                                             'current_price': entry_price})
+            if hold and hold.get('ok'):
+                snap['hold'] = {'score': hold.get('score'),
+                                'verdict': hold.get('verdict')}
+        except Exception as e:
+            print(f"[TM] snapshot hold error: {e}")
+        return snap
+
     def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str):
         s = self._settings
         
@@ -1882,6 +1950,15 @@ class TradeManager:
             # column and legacy load_positions code; the dict shape is the
             # Decision Center verdict (headline, recommended, verdict, etc.).
             position['entry_score'] = decision
+
+        # Full pre-trade snapshot for the Trade Quality Gate backtest dataset.
+        # Captured ONCE at open — decision + move-potential + hold score —
+        # so we can later test which signals predicted good vs bad trades.
+        try:
+            position['entry_snapshot'] = self._capture_entry_snapshot(
+                symbol, side, entry_price, decision)
+        except Exception as e:
+            print(f"[TM] entry snapshot error: {e}")
         
         with self._lock:
             self._positions[symbol] = position
@@ -1939,6 +2016,7 @@ class TradeManager:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
         self._persist_positions()
         self._persist_closed_trades()
+        self._archive_closed(closed, pos, is_paper=False)
         
         sign = '+' if pnl_pct >= 0 else ''
         print(f"[TM] 🔄 External close detected for {symbol}: "
@@ -2240,6 +2318,7 @@ class TradeManager:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
         self._persist_positions()
         self._persist_closed_trades()
+        self._archive_closed(closed, pos, is_paper=False)
         
         self._notify_close(closed)
     
@@ -2591,6 +2670,7 @@ class TradeManager:
                 self._shadow_closed = self._shadow_closed[-CLOSED_TRADES_LIMIT:]
         self._persist_shadow_positions()
         self._persist_shadow_closed()
+        self._archive_closed(closed, pos, is_paper=True)
         
         is_win = pnl_pct > 0
         icon = '✅' if is_win else '❌'
