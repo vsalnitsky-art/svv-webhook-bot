@@ -1101,6 +1101,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-rev-level.building { color:#fbbf24; background:rgba(251,191,36,0.12); }
     .sm-rev-level.high { color:#f87171; background:rgba(248,113,113,0.12); }
     .sm-rev-src { font-size:0.66rem; color:#94a3b8; margin-top:6px; }
+    .sm-rev-direction { font-size:0.72rem; color:#cbd5e1; margin:2px 0 10px;
+        padding:6px 10px; border-radius:6px; background:rgba(255,255,255,0.03); }
     .sm-rev-source-badge { font-size:0.64rem; font-weight:700; padding:2px 8px;
         border-radius:5px; letter-spacing:0.3px; }
     .sm-rev-source-badge.binance { color:#f0b90b; background:rgba(240,185,11,0.14);
@@ -1232,6 +1234,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-rev-level" id="sm-rev-level">—</span>
                 </span>
             </div>
+            <div class="sm-rev-direction" id="sm-rev-direction" style="display:none"></div>
             <div class="sm-move-bar-wrap">
                 <span class="sm-move-bar-label">Тиск розвороту</span>
                 <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev-bar-fill"></div></div>
@@ -5939,6 +5942,24 @@ function renderReversal(rev) {
     const li = lmap[rev.level] || ['building', rev.level || '—'];
     lvl.className = 'sm-rev-level ' + li[0];
     lvl.textContent = li[1];
+
+    // Direction line: WHICH way the reversal would go + plain reading.
+    const dirEl = document.getElementById('sm-rev-direction');
+    if (dirEl) {
+        const to = rev.reversal_to;
+        if (to) {
+            const arrow = to === 'LONG' ? '↑ ВГОРУ (в LONG)' : '↓ ВНИЗ (в SHORT)';
+            const col = to === 'LONG' ? '#4ade80' : '#f87171';
+            let reading;
+            if (rev.index >= 60) reading = `висока — розворот ${arrow} ймовірний`;
+            else if (rev.index >= 35) reading = `наростає — розворот ${arrow} визріває`;
+            else reading = `низька — рух тримається, розворот ${arrow} слабкий`;
+            dirEl.innerHTML = `Розворот: <b style="color:${col}">${arrow}</b> · ${reading}`;
+            dirEl.style.display = '';
+        } else {
+            dirEl.style.display = 'none';
+        }
+    }
     const bf = document.getElementById('sm-rev-bar-fill');
     const bv = document.getElementById('sm-rev-bar-val');
     bf.style.width = rev.index + '%';

@@ -98,6 +98,13 @@ def analyze_reversal_pressure(
         out['notes'].append('недостатньо 4H даних')
         return out
 
+    # The reversal is AGAINST the current move: a LONG move reverses DOWN
+    # (to SHORT), a SHORT move reverses UP (to LONG). Surface this explicitly
+    # so the UI can say which way, not just "how much".
+    reversal_to = 'SHORT' if side == 'LONG' else 'LONG'
+    out['from_side'] = side
+    out['reversal_to'] = reversal_to
+
     closes = [k['close'] for k in klines_4h]
     price = closes[-1]
     comp = {}
