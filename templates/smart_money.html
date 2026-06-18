@@ -5934,7 +5934,16 @@ function renderReversal(rev) {
     document.getElementById('sm-rev-notes').innerHTML = (rev.notes || [])
         .map(n => `<span class="sm-move-note">• ${n}</span>`).join('');
     const src = document.getElementById('sm-rev-src');
-    if (src) src.textContent = 'Джерела: ' + (rev.sources_used || []).join(', ');
+    if (src) {
+        const exch = rev.data_source && rev.data_source !== 'none'
+            ? rev.data_source.charAt(0).toUpperCase() + rev.data_source.slice(1)
+            : null;
+        const parts = [];
+        if (exch) parts.push('Біржа: ' + exch);
+        if (rev.sources_used && rev.sources_used.length)
+            parts.push('дані: ' + rev.sources_used.join(', '));
+        src.textContent = parts.join(' · ');
+    }
 }
 
 function renderMovePanel(move) {

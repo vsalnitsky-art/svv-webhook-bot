@@ -5280,37 +5280,30 @@ def compute_bias(db, symbol, wl=None):
     reversal = None
     try:
         from detection.reversal_pressure import analyze_reversal_pressure
+        from detection import exchange_router as xr
         rev_side = verdict if verdict in ('LONG', 'SHORT') else mp_side
-        from core.bybit_connector import get_connector
-        bb = get_connector()
-        if bb:
-            k4h = bb.get_klines(symbol, interval="240", limit=120)
-            if k4h and len(k4h) >= 30:
-                # Funding
-                fr = None
-                try:
-                    fd = bb.get_funding_rate(symbol)
-                    fr = fd.get('funding_rate') if fd else None
-                except Exception:
-                    fr = None
-                # OI history on 4h
-                oi_hist = None
-                try:
-                    oi_hist = bb.get_open_interest(symbol, interval="4h", limit=12)
-                except Exception:
-                    oi_hist = None
-                # Long/short ratio — reuse sentiment if available
+        # Router prefers Binance (deeper data) but falls back to Bybit when
+        # Binance is geo-blocked; each result is tagged with its source.
+        k4h, src_k = xr.get_klines(symbol, interval="240", limit=120)
+        if k4h and len(k4h) >= 30:
+            fr, src_f = xr.get_funding_rate(symbol)
+            oi_hist, src_oi = xr.get_open_interest(symbol, interval="4h", limit=12)
+            # Long/short ratio — sentiment module (Bybit account ratio)
+            lp = None
+            try:
+                from detection.market_sentiment import get_sentiment
+                sent = get_sentiment('bybit')
+                if sent and sent.get('ok'):
+                    lp = sent.get('long_pct')
+            except Exception:
                 lp = None
-                try:
-                    from detection.market_sentiment import get_sentiment
-                    sent = get_sentiment('bybit')
-                    if sent and sent.get('ok'):
-                        lp = sent.get('long_pct')
-                except Exception:
-                    lp = None
-                reversal = analyze_reversal_pressure(
-                    side=rev_side, klines_4h=k4h,
-                    funding_rate=fr, oi_history=oi_hist, long_pct=lp)
+            reversal = analyze_reversal_pressure(
+                side=rev_side, klines_4h=k4h,
+                funding_rate=fr, oi_history=oi_hist, long_pct=lp)
+            if reversal and reversal.get('ok'):
+                # Primary data source = the kline source (the backbone of the
+                # calculation). Tag it so the UI can label honestly.
+                reversal['data_source'] = src_k
     except Exception as e:
         reversal = None
 
