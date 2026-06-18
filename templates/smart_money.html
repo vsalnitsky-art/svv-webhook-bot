@@ -1133,6 +1133,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         .sm-bias-body { grid-template-columns:1fr; }
         .sm-bias-extra { padding-left:0; border-left:none;
             padding-top:12px; border-top:1px solid rgba(255,255,255,0.06); }
+        /* Stack the watchlist + chart into one full-width column so nothing
+           is squeezed into a narrow left strip on phones. */
+        .sm-layout { grid-template-columns:1fr; height:auto; min-height:0; }
+        .sm-watchlist { max-height:340px; }
+        .sm-container { padding:8px; max-width:100%; }
+        /* Bias board metrics already collapse; make the board breathe. */
+        .sm-bias { padding:12px 12px; }
+        /* Trade tables scroll horizontally instead of crushing columns,
+           matching how Open Paper Positions already behaves. */
+        .tm-body { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+        .tm-table { min-width:640px; }
     }
     .sm-bias-mini { display:flex; flex-direction:column; gap:4px; min-width:200px; }
     .sm-bias-mini-label { font-size:0.7rem; color:#8b93a7; font-weight:600; letter-spacing:0.5px; }
@@ -5891,11 +5902,11 @@ function renderMovePanel(move) {
     // Verdict pill
     const vEl = document.getElementById('sm-move-verdict');
     const vmap = {
-        FRESH: ['fresh', '🟢 FRESH — є простір',
+        FRESH: ['fresh', '🟢 СВІЖИЙ — є простір',
             'Рух свіжий: ціна недалеко від середнього, запас ходу великий. Потенціал у вказаному напрямку ще не вичерпано.'],
-        MATURE: ['mature', '🟡 MATURE — рух дозрів',
+        MATURE: ['mature', '🟡 ДОЗРІЛИЙ — рух розвинувся',
             'Рух дозрів: частина потенціалу вже реалізована. Заходити можна обережно, але кращі точки входу вже позаду.'],
-        EXHAUSTED: ['exhausted', '🔴 EXHAUSTED — виснажений',
+        EXHAUSTED: ['exhausted', '🔴 ВИСНАЖЕНИЙ',
             'Рух виснажений: ціна сильно розтягнута, денний хід майже вичерпано, запасу мало. Вхід у цьому напрямку запізнілий, розворот близько.'],
     };
     const vinfo = vmap[move.verdict] || ['mature', move.verdict || '—', ''];
