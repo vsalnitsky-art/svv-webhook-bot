@@ -5235,6 +5235,44 @@ def compute_bias(db, symbol, wl=None):
                     price = p
     except Exception:
         price = None
+    # Move-potential snapshot — objective ATR / exhaustion / runway for the
+    # CURRENT verdict direction. Pure measurement (no future-% promises).
+    # Uses the trade direction from `verdict`; for WAIT we still compute
+    # against the leaning side so the board can show context.
+    move = None
+    try:
+        from detection.move_potential import analyze_move_potential
+        mp_side = verdict if verdict in ('LONG', 'SHORT') else (
+            'LONG' if (comp.get('forecast', {}) or {}).get('f1_side', 0) > 0
+            else 'SHORT')
+        # Work bars: prefer scanner LTF cache (the TF the bot trades, 15m);
+        # fall back to the 1H klines already fetched above for squeeze.
+        mp_klines = None
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            if _sc:
+                mp_klines = _sc._get_cached_klines(symbol)
+        except Exception:
+            mp_klines = None
+        bars_per_day = 96  # 15m bars
+        if not mp_klines:
+            mp_klines = kl  # 1h fallback
+            bars_per_day = 24
+        # Liquidation levels (reuse fuel computation's state if present)
+        liq_levels = None
+        try:
+            liq_levels = (lst.get('levels') if 'lst' in dir() and lst else None)
+        except Exception:
+            liq_levels = None
+        if mp_klines and len(mp_klines) >= 20:
+            move = analyze_move_potential(
+                side=mp_side, klines=mp_klines,
+                liquidation_levels=liq_levels,
+                bars_per_day=bars_per_day)
+    except Exception as e:
+        move = None
+
     return {'ok': True, 'symbol': symbol, 'verdict': verdict,
             'confidence': confidence, 'components': comp,
-            'reasons': reasons, 'price': price, 'ts': _t.time()}
+            'reasons': reasons, 'price': price, 'move': move, 'ts': _t.time()}
