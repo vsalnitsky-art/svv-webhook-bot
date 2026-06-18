@@ -2577,6 +2577,24 @@ def register_api_routes(app):
     def tickr_page():
         return render_template('tickr.html')
     
+    @app.route('/api/sm/data-source')
+    def api_sm_data_source():
+        """Report which exchange analytics is currently sourced from, so the
+        UI can show it honestly even when no per-symbol panel is visible."""
+        try:
+            from detection import exchange_router as xr
+            avail = xr.binance_available()
+            h = xr.health()
+            return jsonify({
+                'ok': True,
+                'active': 'binance' if avail else 'bybit',
+                'binance_ok': h.get('binance_ok'),
+                'last_reason': h.get('last_reason'),
+                'checked_age_secs': h.get('age_secs'),
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/sm/bias')
     def api_sm_bias():
         """Trade-bias verdict (LONG / SHORT / WAIT) for one symbol, by

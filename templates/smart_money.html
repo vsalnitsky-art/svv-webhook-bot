@@ -975,6 +975,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span class="sm-pulse"></span>
             <span>—</span>
         </div>
+        <div class="sm-control-item" id="sm-datasource" title="Біржа, з якої зараз береться аналітика. Binance переважно (глибші дані); Bybit — резерв, якщо Binance заблокований." style="display:none">
+            <span style="font-size:0.72rem;color:#8b93a7">Аналітика:</span>
+            <span id="sm-datasource-val" style="font-size:0.74rem;font-weight:700">—</span>
+        </div>
     </div>
     
     <!--
@@ -1096,7 +1100,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-rev-level.low { color:#4ade80; background:rgba(34,197,94,0.12); }
     .sm-rev-level.building { color:#fbbf24; background:rgba(251,191,36,0.12); }
     .sm-rev-level.high { color:#f87171; background:rgba(248,113,113,0.12); }
-    .sm-rev-src { font-size:0.6rem; color:#6b7280; margin-top:6px; }
+    .sm-rev-src { font-size:0.66rem; color:#94a3b8; margin-top:6px; }
+    .sm-rev-source-badge { font-size:0.64rem; font-weight:700; padding:2px 8px;
+        border-radius:5px; letter-spacing:0.3px; }
+    .sm-rev-source-badge.binance { color:#f0b90b; background:rgba(240,185,11,0.14);
+        border:1px solid rgba(240,185,11,0.4); }
+    .sm-rev-source-badge.bybit { color:#f7a600; background:rgba(247,166,0,0.14);
+        border:1px solid rgba(247,166,0,0.4); }
     .sm-move-note { font-size:0.68rem; color:#94a3b8; }
     .sm-bias-price { display:flex; align-items:center; gap:8px; margin-bottom:10px;
         padding:8px 12px; border-radius:8px;
@@ -1217,7 +1227,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div class="sm-move-panel sm-rev-panel" id="sm-rev-section" style="display:none">
             <div class="sm-rev-header" title="Індекс схильності до розвороту на 4H: зважена сума умов, що історично передують розвороту (RSI-екстремум, дивергенція, розтяг, funding, OI, натовп, тіні). Це НЕ передбачення майбутнього — це ступінь накопичення умов розвороту проти поточного напрямку.">
                 <span class="sm-rev-title">🔄 Схильність до розвороту (4H)</span>
-                <span class="sm-rev-level" id="sm-rev-level">—</span>
+                <span style="display:flex;align-items:center;gap:6px">
+                    <span class="sm-rev-source-badge" id="sm-rev-source-badge" style="display:none"></span>
+                    <span class="sm-rev-level" id="sm-rev-level">—</span>
+                </span>
             </div>
             <div class="sm-move-bar-wrap">
                 <span class="sm-move-bar-label">Тиск розвороту</span>
@@ -5934,14 +5947,22 @@ function renderReversal(rev) {
     document.getElementById('sm-rev-notes').innerHTML = (rev.notes || [])
         .map(n => `<span class="sm-move-note">• ${n}</span>`).join('');
     const src = document.getElementById('sm-rev-src');
+    // Prominent source badge in the header
+    const badge = document.getElementById('sm-rev-source-badge');
+    if (badge) {
+        const ds = rev.data_source;
+        if (ds && ds !== 'none') {
+            badge.style.display = '';
+            badge.className = 'sm-rev-source-badge ' + ds;
+            badge.textContent = '📊 ' + ds.charAt(0).toUpperCase() + ds.slice(1);
+        } else {
+            badge.style.display = 'none';
+        }
+    }
     if (src) {
-        const exch = rev.data_source && rev.data_source !== 'none'
-            ? rev.data_source.charAt(0).toUpperCase() + rev.data_source.slice(1)
-            : null;
         const parts = [];
-        if (exch) parts.push('Біржа: ' + exch);
         if (rev.sources_used && rev.sources_used.length)
-            parts.push('дані: ' + rev.sources_used.join(', '));
+            parts.push('Дані: ' + rev.sources_used.join(', '));
         src.textContent = parts.join(' · ');
     }
 }
@@ -6139,6 +6160,26 @@ async function loadSentimentFor(exchange, ids) {
         val.textContent = '—';
         val.style.color = '#9aa3b5';
         val.title = String(e);
+    }
+}
+
+async function loadDataSource() {
+    const wrap = document.getElementById('sm-datasource');
+    const val = document.getElementById('sm-datasource-val');
+    if (!wrap || !val) return;
+    try {
+        const d = await (await fetch('/api/sm/data-source')).json();
+        if (!d.ok) { wrap.style.display = 'none'; return; }
+        wrap.style.display = '';
+        const act = d.active;
+        val.textContent = act === 'binance' ? '📊 Binance' : '📊 Bybit';
+        val.style.color = act === 'binance' ? '#f0b90b' : '#f7a600';
+        // Add a hint when Binance is blocked and we're on the fallback
+        if (act === 'bybit' && d.binance_ok === false) {
+            val.textContent += ' (Binance недоступний)';
+        }
+    } catch {
+        wrap.style.display = 'none';
     }
 }
 
@@ -6645,7 +6686,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadBias();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadSentiment(); };
+    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); };
     refreshAll();
     setInterval(refreshAll, 60000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
