@@ -1004,15 +1004,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </button>
         </div>
         <div class="sm-side-gates-right">
-            <div class="sm-sentiment" id="sm-sentiment-binance" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (Binance account ratio, 1h)">
-                <span class="sm-sentiment-label">Binance</span>
-                <div class="sm-sentiment-bar">
-                    <div class="sm-sentiment-long" id="sm-sentiment-binance-long" style="width:50%"></div>
-                    <div class="sm-sentiment-short" id="sm-sentiment-binance-short" style="width:50%"></div>
-                </div>
-                <span class="sm-sentiment-val" id="sm-sentiment-binance-val">⏳</span>
-            </div>
-            <div class="sm-sentiment-note" id="sm-sentiment-binance-note"></div>
             <div class="sm-sentiment" id="sm-sentiment" title="Настрій біржі: частка акаунтів у LONG vs SHORT по ліквідних монетах (Bybit account ratio, 1h)">
                 <span class="sm-sentiment-label">Bybit</span>
                 <div class="sm-sentiment-bar">
@@ -1066,30 +1057,32 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-body { display:grid; grid-template-columns:1fr 1fr; gap:18px;
         margin-top:12px; align-items:start; }
     .sm-bias-reasons { display:flex; flex-direction:column; gap:3px; }
-    .sm-move-panel { margin-top:12px; padding:10px 12px; border-radius:8px;
-        background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07); }
+    .sm-move-panel { margin-top:14px; padding:12px 16px; border-radius:8px;
+        background:rgba(255,255,255,0.025); border:1px solid rgba(255,255,255,0.07);
+        width:100%; box-sizing:border-box; }
     .sm-move-header { display:flex; align-items:center; justify-content:space-between;
-        margin-bottom:8px; }
-    .sm-move-title { font-size:0.78rem; font-weight:700; color:#cbd5e1; }
-    .sm-move-verdict { font-size:0.72rem; font-weight:700; padding:2px 8px; border-radius:5px; }
+        margin-bottom:10px; }
+    .sm-move-title { font-size:0.82rem; font-weight:700; color:#cbd5e1; }
+    .sm-move-verdict { font-size:0.74rem; font-weight:700; padding:3px 10px; border-radius:5px; }
     .sm-move-verdict.fresh { color:#4ade80; background:rgba(34,197,94,0.12); }
     .sm-move-verdict.mature { color:#fbbf24; background:rgba(251,191,36,0.12); }
     .sm-move-verdict.exhausted { color:#f87171; background:rgba(248,113,113,0.12); }
-    .sm-move-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:6px 14px;
-        margin-bottom:8px; }
-    .sm-move-cell { display:flex; flex-direction:column; gap:1px; }
+    .sm-move-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px 18px;
+        margin-bottom:10px; }
+    @media (max-width:760px) { .sm-move-grid { grid-template-columns:repeat(2,1fr); } }
+    .sm-move-cell { display:flex; flex-direction:column; gap:2px; }
     .sm-move-cell-label { font-size:0.62rem; color:#8b93a7; text-transform:uppercase;
         letter-spacing:0.3px; }
-    .sm-move-cell-val { font-family:monospace; font-size:0.84rem; color:#e2e8f0; font-weight:600; }
-    .sm-move-bar-wrap { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-    .sm-move-bar-label { font-size:0.62rem; color:#8b93a7; min-width:74px; }
-    .sm-move-bar { flex:1; height:7px; border-radius:4px; background:rgba(255,255,255,0.08);
+    .sm-move-cell-val { font-family:monospace; font-size:0.92rem; color:#e2e8f0; font-weight:600; }
+    .sm-move-bar-wrap { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    .sm-move-bar-label { font-size:0.66rem; color:#8b93a7; min-width:84px; }
+    .sm-move-bar { flex:1; height:8px; border-radius:4px; background:rgba(255,255,255,0.08);
         overflow:hidden; }
     .sm-move-bar-fill { height:100%; transition:width .4s; border-radius:4px; }
-    .sm-move-bar-val { font-family:monospace; font-size:0.78rem; font-weight:700; min-width:34px;
+    .sm-move-bar-val { font-family:monospace; font-size:0.82rem; font-weight:700; min-width:38px;
         text-align:right; }
-    .sm-move-notes { display:flex; flex-direction:column; gap:2px; }
-    .sm-move-note { font-size:0.66rem; color:#94a3b8; }
+    .sm-move-notes { display:flex; flex-wrap:wrap; gap:4px 16px; }
+    .sm-move-note { font-size:0.68rem; color:#94a3b8; }
     .sm-bias-price { display:flex; align-items:center; gap:8px; margin-bottom:10px;
         padding:8px 12px; border-radius:8px;
         background:rgba(59,130,246,0.10); border:1px solid rgba(59,130,246,0.25); }
@@ -1189,21 +1182,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-bias-price-val" id="sm-bias-price-val">—</span>
                 </div>
                 <div class="sm-bias-reasons" id="sm-bias-reasons"></div>
-                <div class="sm-move-panel" id="sm-move-panel" style="display:none">
-                    <div class="sm-move-header">
-                        <span class="sm-move-title">📊 Потенціал руху</span>
-                        <span class="sm-move-verdict" id="sm-move-verdict">—</span>
-                    </div>
-                    <div class="sm-move-grid" id="sm-move-grid"></div>
-                    <div class="sm-move-bar-wrap" title="Виснаженість руху: 0 = свіжий, 100 = вичерпаний">
-                        <span class="sm-move-bar-label">Виснаженість</span>
-                        <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-move-bar-fill"></div></div>
-                        <span class="sm-move-bar-val" id="sm-move-bar-val">—</span>
-                    </div>
-                    <div class="sm-move-notes" id="sm-move-notes"></div>
-                </div>
             </div>
             <div class="sm-bias-extra" id="sm-bias-extra"></div>
+        </div>
+        <div class="sm-move-panel" id="sm-move-panel" style="display:none">
+            <div class="sm-move-header">
+                <span class="sm-move-title">📊 Потенціал руху</span>
+                <span class="sm-move-verdict" id="sm-move-verdict">—</span>
+            </div>
+            <div class="sm-move-grid" id="sm-move-grid"></div>
+            <div class="sm-move-bar-wrap" title="Виснаженість руху: наскільки рух уже вичерпав свій хід. 0 = свіжий рух із запасом, 100 = повністю виснажений, розворот близько">
+                <span class="sm-move-bar-label">Виснаженість</span>
+                <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-move-bar-fill"></div></div>
+                <span class="sm-move-bar-val" id="sm-move-bar-val">—</span>
+            </div>
+            <div class="sm-move-notes" id="sm-move-notes"></div>
         </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
         <div class="sm-bias-updated" id="sm-bias-updated"></div>
@@ -5898,26 +5891,35 @@ function renderMovePanel(move) {
     // Verdict pill
     const vEl = document.getElementById('sm-move-verdict');
     const vmap = {
-        FRESH: ['fresh', '🟢 FRESH — є простір'],
-        MATURE: ['mature', '🟡 MATURE — рух дозрів'],
-        EXHAUSTED: ['exhausted', '🔴 EXHAUSTED — виснажений'],
+        FRESH: ['fresh', '🟢 FRESH — є простір',
+            'Рух свіжий: ціна недалеко від середнього, запас ходу великий. Потенціал у вказаному напрямку ще не вичерпано.'],
+        MATURE: ['mature', '🟡 MATURE — рух дозрів',
+            'Рух дозрів: частина потенціалу вже реалізована. Заходити можна обережно, але кращі точки входу вже позаду.'],
+        EXHAUSTED: ['exhausted', '🔴 EXHAUSTED — виснажений',
+            'Рух виснажений: ціна сильно розтягнута, денний хід майже вичерпано, запасу мало. Вхід у цьому напрямку запізнілий, розворот близько.'],
     };
-    const vinfo = vmap[move.verdict] || ['mature', move.verdict || '—'];
+    const vinfo = vmap[move.verdict] || ['mature', move.verdict || '—', ''];
     vEl.className = 'sm-move-verdict ' + vinfo[0];
     vEl.textContent = vinfo[1];
+    if (vinfo[2]) vEl.title = vinfo[2];
 
     // Metric grid — only cells we actually have
     const fmt = (v, suf) => (v === null || v === undefined) ? '—' : v + (suf || '');
     const cells = [
-        ['ATR / бар', fmt(move.atr_pct, '%')],
-        ['Розтяг від середн.', move.stretch_atr === null ? '—' : move.stretch_atr + ' ATR'],
+        ['ATR / бар', fmt(move.atr_pct, '%'),
+         'Середній хід ціни за одну свічку у відсотках. Це базова волатильність монети: чим вищий ATR, тим ширші рухи.'],
+        ['Розтяг від середн.', move.stretch_atr === null ? '—' : move.stretch_atr + ' ATR',
+         'Наскільки далеко ціна відійшла від свого середнього (VWAP), виміряно в ATR. До 1-2 ATR — нормально; понад 3 ATR — рух розтягнутий і виснажується.'],
         ['Запас ходу', move.runway_pct === null ? '—'
-            : move.runway_pct + '% (' + fmt(move.runway_atr, ' ATR') + ')'],
+            : move.runway_pct + '% (' + fmt(move.runway_atr, ' ATR') + ')',
+         'Відстань до наступної реальної перешкоди в напрямку угоди (ліквідний рівень або край діапазону) — у відсотках і в ATR. Це скільки ще «простору» має рух, а не прогноз.'],
         ['Денний хід (ADR)', move.adr_used_pct === null ? fmt(move.adr_pct, '%')
-            : move.adr_used_pct + '% з ' + fmt(move.adr_pct, '%')],
+            : move.adr_used_pct + '% з ' + fmt(move.adr_pct, '%'),
+         'Скільки із середньоденного діапазону (ADR) монета вже пройшла сьогодні. Понад 100% означає, що день перерозтягнутий і подальший хід менш імовірний.'],
     ];
     document.getElementById('sm-move-grid').innerHTML = cells.map(c =>
-        `<div class="sm-move-cell"><span class="sm-move-cell-label">${c[0]}</span>`
+        `<div class="sm-move-cell" title="${c[2].replace(/"/g,'&quot;')}">`
+        + `<span class="sm-move-cell-label">${c[0]}</span>`
         + `<span class="sm-move-cell-val">${c[1]}</span></div>`).join('');
 
     // Exhaustion bar
@@ -6076,17 +6078,11 @@ async function loadSentimentFor(exchange, ids) {
 }
 
 async function loadSentiment() {
-    // Bybit (the bot trades Bybit) + Binance for reference.
-    await Promise.all([
-        loadSentimentFor('bybit', {
-            val: 'sm-sentiment-val', long: 'sm-sentiment-long',
-            short: 'sm-sentiment-short', note: 'sm-sentiment-note'
-        }),
-        loadSentimentFor('binance', {
-            val: 'sm-sentiment-binance-val', long: 'sm-sentiment-binance-long',
-            short: 'sm-sentiment-binance-short', note: 'sm-sentiment-binance-note'
-        }),
-    ]);
+    // Bybit only — the bot trades Bybit.
+    await loadSentimentFor('bybit', {
+        val: 'sm-sentiment-val', long: 'sm-sentiment-long',
+        short: 'sm-sentiment-short', note: 'sm-sentiment-note'
+    });
 }
 
 async function loadTMState() {
