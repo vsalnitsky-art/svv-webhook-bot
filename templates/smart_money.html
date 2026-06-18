@@ -1070,7 +1070,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-move-verdict.exhausted { color:#f87171; background:rgba(248,113,113,0.12); }
     .sm-move-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px 18px;
         margin-bottom:10px; }
-    @media (max-width:760px) { .sm-move-grid { grid-template-columns:repeat(2,1fr); } }
+    .sm-analysis-row .sm-move-grid { grid-template-columns:repeat(2,1fr); }
     .sm-move-cell { display:flex; flex-direction:column; gap:2px; }
     .sm-move-cell-label { font-size:0.62rem; color:#8b93a7; text-transform:uppercase;
         letter-spacing:0.3px; }
@@ -1083,6 +1083,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-move-bar-val { font-family:monospace; font-size:0.82rem; font-weight:700; min-width:38px;
         text-align:right; }
     .sm-move-notes { display:flex; flex-wrap:wrap; gap:4px 16px; }
+    .sm-analysis-row { display:flex; gap:14px; margin-top:14px; align-items:stretch; }
+    .sm-analysis-row > .sm-move-panel { flex:1; margin-top:0; min-width:0; }
+    @media (max-width:760px) { .sm-analysis-row { flex-direction:column; } }
+    .sm-rev-panel { }
     .sm-rev-section { margin-top:12px; padding-top:10px;
         border-top:1px solid rgba(255,255,255,0.07); }
     .sm-rev-header { display:flex; align-items:center; justify-content:space-between;
@@ -1196,6 +1200,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             <div class="sm-bias-extra" id="sm-bias-extra"></div>
         </div>
+        <div class="sm-analysis-row">
         <div class="sm-move-panel" id="sm-move-panel" style="display:none">
             <div class="sm-move-header">
                 <span class="sm-move-title">📊 Потенціал руху</span>
@@ -1208,19 +1213,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="sm-move-bar-val" id="sm-move-bar-val">—</span>
             </div>
             <div class="sm-move-notes" id="sm-move-notes"></div>
-            <div class="sm-rev-section" id="sm-rev-section" style="display:none">
-                <div class="sm-rev-header" title="Індекс схильності до розвороту на 4H: зважена сума умов, що історично передують розвороту (RSI-екстремум, дивергенція, розтяг, funding, OI, натовп, тіні). Це НЕ передбачення майбутнього — це ступінь накопичення умов розвороту проти поточного напрямку.">
-                    <span class="sm-rev-title">🔄 Схильність до розвороту (4H)</span>
-                    <span class="sm-rev-level" id="sm-rev-level">—</span>
-                </div>
-                <div class="sm-move-bar-wrap">
-                    <span class="sm-move-bar-label">Тиск розвороту</span>
-                    <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev-bar-fill"></div></div>
-                    <span class="sm-move-bar-val" id="sm-rev-bar-val">—</span>
-                </div>
-                <div class="sm-move-notes" id="sm-rev-notes"></div>
-                <div class="sm-rev-src" id="sm-rev-src"></div>
+        </div>
+        <div class="sm-move-panel sm-rev-panel" id="sm-rev-section" style="display:none">
+            <div class="sm-rev-header" title="Індекс схильності до розвороту на 4H: зважена сума умов, що історично передують розвороту (RSI-екстремум, дивергенція, розтяг, funding, OI, натовп, тіні). Це НЕ передбачення майбутнього — це ступінь накопичення умов розвороту проти поточного напрямку.">
+                <span class="sm-rev-title">🔄 Схильність до розвороту (4H)</span>
+                <span class="sm-rev-level" id="sm-rev-level">—</span>
             </div>
+            <div class="sm-move-bar-wrap">
+                <span class="sm-move-bar-label">Тиск розвороту</span>
+                <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev-bar-fill"></div></div>
+                <span class="sm-move-bar-val" id="sm-rev-bar-val">—</span>
+            </div>
+            <div class="sm-move-notes" id="sm-rev-notes"></div>
+            <div class="sm-rev-src" id="sm-rev-src"></div>
+        </div>
         </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
         <div class="sm-bias-updated" id="sm-bias-updated"></div>
