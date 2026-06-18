@@ -118,13 +118,14 @@ def analyze_move_potential(
     range_high/low: optional swing-range bounds (fallback obstacle).
     """
     out = {
-        'ok': False, 'atr_abs': None, 'atr_pct': None,
+        'ok': False, 'side': None, 'atr_abs': None, 'atr_pct': None,
         'stretch_atr': None, 'stretch_pct': None,
         'adr_pct': None, 'adr_used_pct': None,
         'runway_pct': None, 'runway_atr': None,
         'exhaustion': None, 'verdict': None, 'notes': [],
     }
     side = (side or '').upper()
+    out['side'] = side
     dir_sign = 1 if side == 'LONG' else -1 if side == 'SHORT' else 0
     if dir_sign == 0 or not klines or len(klines) < 20 or _atr is None:
         out['notes'].append('недостатньо даних')

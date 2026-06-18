@@ -2579,18 +2579,21 @@ def register_api_routes(app):
     
     @app.route('/api/sm/data-source')
     def api_sm_data_source():
-        """Report which exchange analytics is currently sourced from, so the
-        UI can show it honestly even when no per-symbol panel is visible."""
+        """Report active analytics source + live API health of BOTH
+        exchanges, so the UI can show whether Binance/Bybit are reachable
+        or blocked."""
         try:
             from detection import exchange_router as xr
             avail = xr.binance_available()
+            xr.bybit_available()  # refresh bybit flag (cached)
             h = xr.health()
             return jsonify({
                 'ok': True,
                 'active': 'binance' if avail else 'bybit',
                 'binance_ok': h.get('binance_ok'),
-                'last_reason': h.get('last_reason'),
-                'checked_age_secs': h.get('age_secs'),
+                'binance_reason': h.get('binance_reason'),
+                'bybit_ok': h.get('bybit_ok'),
+                'bybit_reason': h.get('bybit_reason'),
             })
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})

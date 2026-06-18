@@ -42,6 +42,37 @@ def _probe_binance() -> Tuple[bool, str]:
         return False, type(e).__name__
 
 
+def _probe_bybit() -> Tuple[bool, str]:
+    """Light reachability check for Bybit's public API. Never raises."""
+    try:
+        import requests
+        r = requests.get('https://api.bybit.com/v5/market/time',
+                         timeout=PROBE_TIMEOUT)
+        if r.status_code == 200:
+            return True, 'ok'
+        return False, f'HTTP {r.status_code}'
+    except Exception as e:
+        return False, type(e).__name__
+
+
+# Bybit health is cached the same way as Binance.
+_bybit_state = {'ok': None, 'checked_at': 0.0, 'reason': ''}
+
+
+def bybit_available(force: bool = False) -> bool:
+    now = time.time()
+    with _lock:
+        fresh = (now - _bybit_state['checked_at']) < CHECK_INTERVAL
+        if _bybit_state['ok'] is not None and fresh and not force:
+            return _bybit_state['ok']
+    ok, reason = _probe_bybit()
+    with _lock:
+        _bybit_state['ok'] = ok
+        _bybit_state['checked_at'] = time.time()
+        _bybit_state['reason'] = reason
+    return ok
+
+
 def binance_available(force: bool = False) -> bool:
     """Cached availability flag. Refreshes at most once per CHECK_INTERVAL.
     Reads are instant; only the periodic refresh touches the network."""
@@ -61,14 +92,17 @@ def binance_available(force: bool = False) -> bool:
 
 
 def health() -> Dict:
-    """Current router health for diagnostics/UI."""
+    """Current router health for diagnostics/UI — both exchanges."""
     with _lock:
         return {
             'binance_ok': _state['binance_ok'],
-            'checked_at': _state['checked_at'],
-            'last_reason': _state['last_reason'],
-            'age_secs': round(time.time() - _state['checked_at'], 1)
+            'binance_reason': _state['last_reason'],
+            'binance_age_secs': round(time.time() - _state['checked_at'], 1)
                         if _state['checked_at'] else None,
+            'bybit_ok': _bybit_state['ok'],
+            'bybit_reason': _bybit_state['reason'],
+            'bybit_age_secs': round(time.time() - _bybit_state['checked_at'], 1)
+                        if _bybit_state['checked_at'] else None,
         }
 
 

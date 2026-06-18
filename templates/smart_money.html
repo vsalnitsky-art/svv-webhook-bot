@@ -979,6 +979,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span style="font-size:0.72rem;color:#8b93a7">Аналітика:</span>
             <span id="sm-datasource-val" style="font-size:0.74rem;font-weight:700">—</span>
         </div>
+        <div class="sm-control-item" id="sm-api-health" title="Стан API бірж: 🟢 живий / 🔴 заблокований або недоступний" style="display:none;gap:10px">
+            <span id="sm-api-binance" style="font-size:0.72rem;font-weight:600">Binance —</span>
+            <span id="sm-api-bybit" style="font-size:0.72rem;font-weight:600">Bybit —</span>
+        </div>
     </div>
     
     <!--
@@ -1218,6 +1222,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="sm-move-title">📊 Потенціал руху</span>
                 <span class="sm-move-verdict" id="sm-move-verdict">—</span>
             </div>
+            <div class="sm-rev-direction" id="sm-move-direction" style="display:none"></div>
             <div class="sm-move-grid" id="sm-move-grid"></div>
             <div class="sm-move-bar-wrap" title="Виснаженість руху: наскільки рух уже вичерпав свій хід. 0 = свіжий рух із запасом, 100 = повністю виснажений, розворот близько">
                 <span class="sm-move-bar-label">Виснаженість</span>
@@ -6009,6 +6014,24 @@ function renderMovePanel(move) {
     vEl.textContent = vinfo[1];
     if (vinfo[2]) vEl.title = vinfo[2];
 
+    // Direction context — WHICH way this move/potential is measured.
+    const mdEl = document.getElementById('sm-move-direction');
+    if (mdEl) {
+        const sd = move.side;
+        if (sd === 'LONG' || sd === 'SHORT') {
+            const arrow = sd === 'LONG' ? '↑ ВГОРУ (LONG)' : '↓ ВНИЗ (SHORT)';
+            const col = sd === 'LONG' ? '#4ade80' : '#f87171';
+            let reading;
+            if (move.verdict === 'FRESH') reading = `є простір для руху ${arrow}`;
+            else if (move.verdict === 'EXHAUSTED') reading = `рух ${arrow} майже вичерпано`;
+            else reading = `рух ${arrow} частково реалізований`;
+            mdEl.innerHTML = `Напрямок: <b style="color:${col}">${arrow}</b> · ${reading}`;
+            mdEl.style.display = '';
+        } else {
+            mdEl.style.display = 'none';
+        }
+    }
+
     // Metric grid — only cells we actually have
     const fmt = (v, suf) => (v === null || v === undefined) ? '—' : v + (suf || '');
     const cells = [
@@ -6198,6 +6221,22 @@ async function loadDataSource() {
         // Add a hint when Binance is blocked and we're on the fallback
         if (act === 'bybit' && d.binance_ok === false) {
             val.textContent += ' (Binance недоступний)';
+        }
+        // Live API-health badges for BOTH exchanges
+        const hWrap = document.getElementById('sm-api-health');
+        const bn = document.getElementById('sm-api-binance');
+        const bb = document.getElementById('sm-api-bybit');
+        if (hWrap && bn && bb) {
+            const fmt = (name, ok, reason) => {
+                if (ok === true)  return [`${name} 🟢 живий`, '#4ade80'];
+                if (ok === false) return [`${name} 🔴 ${reason && reason !== 'ok' ? reason : 'заблокований'}`, '#f87171'];
+                return [`${name} ⚪ —`, '#8b93a7'];  // not yet checked
+            };
+            const [bnTxt, bnCol] = fmt('Binance', d.binance_ok, d.binance_reason);
+            const [bbTxt, bbCol] = fmt('Bybit', d.bybit_ok, d.bybit_reason);
+            bn.textContent = bnTxt; bn.style.color = bnCol;
+            bb.textContent = bbTxt; bb.style.color = bbCol;
+            hWrap.style.display = 'flex';
         }
     } catch {
         wrap.style.display = 'none';
