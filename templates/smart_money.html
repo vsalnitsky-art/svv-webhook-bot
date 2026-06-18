@@ -5491,10 +5491,24 @@ function reasonLabel(r) {
         'time_stop': '⏱ Time',
         'trailing_stop': '📈 Trailing',
         'manual': '✋ Manual',
+        'external_close': '🌐 External',
+        'reverse_signal': '🔄 Reverse sig',
+        'opposite_ob_exit': '🧱 Opp OB',
         'bos_2_partial': '✂️ BOS-2',
         'bos_3_partial': '✂️ BOS-3',
         'bos_4_partial': '✂️ BOS-4',
     }[r] || r;
+}
+
+// Full reason cell: short label headline + the enriched detail line
+// (duration, peak/MFE, SMC context) beneath it, when present.
+function reasonCellHTML(c) {
+    const label = reasonLabel(c.reason);
+    const recap = decisionRecap(c.entry_score);
+    const detail = c.reason_detail
+        ? `<div style="color:#777;font-size:0.66rem;margin-top:1px;line-height:1.3">${c.reason_detail}</div>`
+        : '';
+    return `<td style="color:#aaa;font-size:0.72rem">${label}${recap}${detail}</td>`;
 }
 
 // Inline recap of the at-open decision for closed-trade rows. Compact —
@@ -6053,7 +6067,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}% (${pnlSign}$${c.pnl_usd.toFixed(2)})</td>
-                    <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}${decisionRecap(c.entry_score)}</td>
+                    ${reasonCellHTML(c)}
                     <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMClosed('${c.symbol}', ${JSON.stringify(c.closed_at)}, ${c.exit_price})">✕</button></td>
                 </tr>`;
             }).join('');
@@ -6115,7 +6129,7 @@ async function loadTMState() {
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${c.pnl_pct.toFixed(2)}%</td>
-                    <td style="color:#aaa;font-size:0.72rem">${reasonLabel(c.reason)}${decisionRecap(c.entry_score)}</td>
+                    ${reasonCellHTML(c)}
                     <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMShadowClosed('${c.symbol}', ${JSON.stringify(c.closed_at)}, ${c.exit_price})">✕</button></td>
                 </tr>`;
             }).join('');

@@ -1924,6 +1924,8 @@ class TradeManager:
             'pnl_pct': round(pnl_pct, 4),
             'pnl_usd': round(pnl_usd, 2),
             'reason': reason,
+            'reason_detail': self._build_reason_detail(
+                symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             'entry_score': pos.get('entry_score'),
@@ -2122,6 +2124,67 @@ class TradeManager:
             'live_count': len(live_symbols),
         }
     
+    def _build_reason_detail(self, symbol: str, pos: Dict, reason: str,
+                             pnl_pct: float, is_shadow: bool = False) -> str:
+        """Compose a human-readable, information-rich close reason.
+
+        Keeps the short `reason` code intact for stats/grouping; this is a
+        separate descriptive string for the UI. Includes: a plain-language
+        detail of WHY it closed, trade duration, peak/MFE (best unrealised
+        PnL reached), and the SMC context (bias/zone + hold score) at close.
+        """
+        parts = []
+
+        # 1. Plain-language detail of the trigger
+        detail_map = {
+            'stop_loss': 'Спрацював стоп-лосс',
+            'take_profit': 'Досягнуто тейк-профіт',
+            'trailing_stop': 'Трейлінг-стоп від піку',
+            'time_stop': 'Закрито за часом (time-stop)',
+            'htf_flip': 'HTF bias розвернувся проти позиції',
+            'reverse_smc': 'SMC-структура розвернулась (CHoCH проти)',
+            'reverse_signal': 'Протилежний сигнал входу',
+            'forecast_1h_confluence': '1H прогноз проти позиції',
+            'opposite_ob_exit': 'Ціна вдарилась у протилежний Order Block',
+            'external_close': 'Закрито поза ботом (на біржі)',
+            'manual': 'Закрито вручну',
+        }
+        base = detail_map.get(reason)
+        if base is None and reason.startswith('bos_') and reason.endswith('_partial'):
+            n = reason.split('_')[1]
+            base = f'Частковий вихід на BOS-{n}'
+        parts.append(base or reason)
+
+        # 2. Trade duration
+        opened = pos.get('opened_at')
+        if opened:
+            secs = max(0, time.time() - opened)
+            if secs < 3600:
+                parts.append(f'тривалість {int(secs // 60)}хв')
+            elif secs < 86400:
+                parts.append(f'тривалість {secs / 3600:.1f}год')
+            else:
+                parts.append(f'тривалість {secs / 86400:.1f}дн')
+
+        # 3. Peak / MFE — best unrealised PnL the trade reached
+        state = (self._shadow_pos_state if is_shadow else self._pos_state).get(symbol, {})
+        peak = state.get('peak_pnl_pct')
+        if peak is not None and peak > 0:
+            # How much of the peak we gave back by exit
+            give_back = peak - pnl_pct
+            if give_back > 0.1:
+                parts.append(f'пік +{peak:.2f}% (віддано {give_back:.2f}%)')
+            else:
+                parts.append(f'пік +{peak:.2f}%')
+
+        # 4. SMC context at close (from the hold-confidence cache, if fresh)
+        cached = self._hold_cache.get(symbol)
+        hold = cached[1] if cached and cached[1] else None
+        if hold and hold.get('ok'):
+            parts.append(f"SMC {int(hold['score'])}/100 {hold['verdict']}")
+
+        return ' · '.join(str(p) for p in parts if p)
+
     def _close_position(self, symbol: str, exit_price: float, reason: str):
         with self._lock:
             pos = self._positions.get(symbol)
@@ -2157,6 +2220,8 @@ class TradeManager:
             'pnl_pct': round(pnl_pct, 4),
             'pnl_usd': round(pnl_usd, 2),
             'reason': reason,
+            'reason_detail': self._build_reason_detail(
+                symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             # Carry the entry-side advisory snapshot into the closed record
@@ -2508,6 +2573,8 @@ class TradeManager:
             'closed_at': time.time(),
             'pnl_pct': round(pnl_pct, 4),
             'reason': reason,
+            'reason_detail': self._build_reason_detail(
+                symbol, pos, reason, round(pnl_pct, 4), is_shadow=True),
             'opened_by': pos.get('opened_by', ''),
             'shadow': True,
             # Same as real-position close — preserve the entry snapshot for
