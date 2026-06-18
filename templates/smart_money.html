@@ -551,6 +551,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     transform: translateX(22px);
 }
 .tm-body { padding: 12px 14px; }
+#top100-panel, #volradar-panel { width: 100%; box-sizing: border-box; }
 .tm-warn {
     background: rgba(234, 88, 12, 0.1);
     border: 1px solid rgba(234, 88, 12, 0.3);
@@ -1133,13 +1134,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         .sm-bias-body { grid-template-columns:1fr; }
         .sm-bias-extra { padding-left:0; border-left:none;
             padding-top:12px; border-top:1px solid rgba(255,255,255,0.06); }
-        /* Stack the watchlist + chart into one full-width column so nothing
-           is squeezed into a narrow left strip on phones. */
-        .sm-layout { grid-template-columns:1fr; height:auto; min-height:0; }
-        .sm-watchlist { max-height:340px; }
-        .sm-container { padding:8px; max-width:100%; }
-        /* Bias board metrics already collapse; make the board breathe. */
-        .sm-bias { padding:12px 12px; }
     }
     .sm-bias-mini { display:flex; flex-direction:column; gap:4px; min-width:200px; }
     .sm-bias-mini-label { font-size:0.7rem; color:#8b93a7; font-weight:600; letter-spacing:0.5px; }
@@ -2102,7 +2096,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
          User can opt-in per-symbol via "Add to SMC Watchlist" button. -->
     <div class="tm-panel" id="top100-panel" style="margin-top:14px">
         <div class="tm-header" id="top100-header">
-            <h2><span id="top100-chevron" onclick="toggleRadarPanel('top100-body','top100-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▼</span>📡 TOP-100 OB Radar
+            <h2><span id="top100-chevron" onclick="toggleRadarPanel('top100-body','top100-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▶</span>📡 TOP-100 OB Radar
                 <span id="top100-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
                 <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">
                     (informational — Binance Futures top-N by 24h volume)
@@ -2116,7 +2110,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
             </div>
         </div>
-        <div class="tm-body" id="top100-body">
+        <div class="tm-body" id="top100-body" style="display:none">
             
             <div class="tm-row" style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#86efac;font-size:0.78rem">
                 ℹ️ Сканує TOP-100 USDT-perp монет на Binance Futures з налаштовуваним інтервалом для виявлення нових Order Blocks на обраному таймфреймі. Не торгує, не гейтить SMC сигнали — тільки відображає кандидатів. CHoCH-created OBs позначені ★ (fresh trend reversal); BOS-created — → (continuation). При зміні TF — DB очищується (різні TFs мають різні OBs).
@@ -2276,9 +2270,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
      qualifying symbols to the SMC watchlist (TTL 24h) — Trade Manager
      fires only when SMC actually fires a signal on the symbol. -->
 <div style="margin-top:14px">
-    <div class="tm-panel" id="volradar-panel">
+    <div class="tm-panel" id="volradar-panel" style="margin-top:14px">
         <div class="tm-header" id="volradar-header">
-            <h2><span id="volradar-chevron" onclick="toggleRadarPanel('volradar-body','volradar-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▼</span>📦 Volumized OB Radar
+            <h2><span id="volradar-chevron" onclick="toggleRadarPanel('volradar-body','volradar-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▶</span>📦 Volumized OB Radar
                 <span id="volradar-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
             </h2>
             <div class="tm-master-toggle">
@@ -2290,7 +2284,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
             </div>
         </div>
-        <div class="tm-body" id="volradar-body">
+        <div class="tm-body" id="volradar-body" style="display:none">
             <div style="background:rgba(168,85,247,0.08);border:1px solid rgba(168,85,247,0.2);border-radius:4px;padding:9px 11px;margin-bottom:10px;font-size:0.78rem;color:#c4b5fd;line-height:1.45">
                 ℹ️ Сканує TOP-N USDT-perp монет на Binance Futures та шукає <strong>fresh Volumized OBs</strong>. Кваліфікується тільки якщо OB сидить у <strong>Discount</strong> (BULL, ≤38.2%) або <strong>Premium</strong> (BEAR, ≥61.8%) зоні від поточного swing range. Mode A — додає у watchlist на 24h; якщо за цей час SMC дав сигнал → монета залишається у watchlist як звичайна. Якщо ні → auto-remove.
             </div>
