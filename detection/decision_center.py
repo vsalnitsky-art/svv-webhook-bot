@@ -63,11 +63,15 @@ from typing import Dict, List, Optional, Tuple
 import math
 
 
-# Softmax temperature — calibrated so:
-#   |scoreΔ|=10  →  ~58/42
-#   |scoreΔ|=40  →  ~79/21  (this is the typical "clear edge")
-#   |scoreΔ|=80  →  ~96/4   (extreme one-sidedness)
-TEMPERATURE = 30.0
+# Softmax temperature — calibrated so probabilities reflect ADVISORY
+# confidence, not false certainty. Higher temp = cooler, less extreme.
+#   |scoreΔ|=10  →  ~56/44
+#   |scoreΔ|=30  →  ~67/33
+#   |scoreΔ|=50  →  ~75/25  (a genuinely clear edge)
+#   |scoreΔ|=80  →  ~86/14  (strong, rarely higher in practice)
+# Previously 30.0, which inflated a Δ40 lean into 79% and Δ65 into 92% —
+# unjustified precision for what is advisory analysis over noisy inputs.
+TEMPERATURE = 45.0
 
 # Confidence buckets based on the WIN side's probability
 CONFIDENCE_HIGH = 0.70   # 70%+ win-side prob → "high confidence"
@@ -109,7 +113,8 @@ def _build_rationale(recommended: str,
                      short_components: List[Dict],
                      htf_bias: Optional[str],
                      forecast: Optional[Dict],
-                     ctr: Optional[Dict]) -> str:
+                     ctr: Optional[Dict],
+                     ctr_conflict: bool = False) -> str:
     """Compose a one-line plain-English rationale.
     
     Strategy: pick the 2 strongest contributing factors for the recommended
@@ -164,7 +169,14 @@ def _build_rationale(recommended: str,
             caveat = f" (despite {worst_lbl})"
     
     head = " + ".join(pos_phrases)
-    return f"{head} confirm {recommended}{caveat}"
+    base = f"{head} confirm {recommended}{caveat}"
+    # When the score was capped for riding into a CTR cycle extreme, say so
+    # plainly — this is the single most important caveat for the trader.
+    if ctr_conflict:
+        stc_v = int((ctr or {}).get('stc', 0))
+        zone = 'Oversold' if stc_v <= 50 else 'Overbought'
+        base += f" — ⚠ обмежено: вхід у зону розвороту CTR {zone} ({stc_v})"
+    return base
 
 
 def _build_headline(recommended: str,
@@ -212,6 +224,10 @@ def build_decision(
     short_score = float((short_eval or {}).get('score', 0))
     long_components = (long_eval or {}).get('components', [])
     short_components = (short_eval or {}).get('components', [])
+    # Conviction-cap flag: set when the winning side rides into a CTR cycle
+    # extreme (mean-reversion risk). Surfaced in the rationale + headline.
+    ctr_conflict = bool((long_eval or {}).get('ctr_conflict')
+                        or (short_eval or {}).get('ctr_conflict'))
     
     # Probabilities via softmax
     prob_long, prob_short = _softmax2(long_score, short_score)
@@ -232,6 +248,10 @@ def build_decision(
     # Confidence based on winning side's probability magnitude
     winner_prob = max(prob_long, prob_short)
     confidence = _confidence_label(winner_prob)
+    # A CTR-extreme conflict means we are leaning into a known reversal zone:
+    # never report "high" confidence in that case — cap at "medium".
+    if ctr_conflict and confidence == 'high':
+        confidence = 'medium'
     
     # Rationale (human-readable)
     rationale = _build_rationale(
@@ -243,6 +263,7 @@ def build_decision(
         htf_bias=htf_bias,
         forecast=forecast,
         ctr=ctr,
+        ctr_conflict=ctr_conflict,
     )
     
     # Headline

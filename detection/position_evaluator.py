@@ -136,6 +136,20 @@ def _signed_for_side(side: str, raw_dir: str) -> int:
     return 0
 
 
+# ---- Professional scoring tuning ----
+# How much of the SMALLER of {HTF, Forecast} to remove when both agree, to
+# avoid double-counting one macro view. 0.5 = treat the agreeing pair as
+# ~1.5 independent signals rather than 2.
+CORRELATION_DISCOUNT = 0.5
+
+# CTR/STC cycle extremes that warn of mean reversion against continuation.
+CTR_EXTREME_LOW = 5.0     # ≤5 = deep oversold (reversal-up risk → fights SHORT)
+CTR_EXTREME_HIGH = 95.0   # ≥95 = deep overbought (reversal-down risk → fights LONG)
+# When the score rides INTO that reversal zone, cap its magnitude so the
+# verdict can't claim high conviction into a known turning point.
+CTR_EXTREME_SCORE_CAP = 30.0
+
+
 def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
@@ -804,8 +818,55 @@ def evaluate_entry(
                                               cfg.weight_volume_confirmation))
     add('atr', _score_atr_health(atr, entry_price, cfg.weight_atr_health))
     
+    # ---- Professional adjustments (applied AFTER raw scoring) ----
+    #
+    # (A) HTF / Forecast correlation discount.
+    #     HTF bias and the 1H Forecast both read the higher-timeframe trend,
+    #     so when they agree they are NOT two independent confirmations —
+    #     counting both at full weight double-counts one macro view and
+    #     inflates conviction. When they point the SAME way we discount the
+    #     SMALLER of the two contributions by CORRELATION_DISCOUNT. When they
+    #     DISAGREE we leave them — genuine disagreement is real information.
+    def _find(name):
+        for c in components:
+            if c['name'] == name:
+                return c
+        return None
+    htf_c = _find('htf')
+    fc_c = _find('forecast')
+    if htf_c and fc_c and htf_c['value'] != 0 and fc_c['value'] != 0:
+        same_dir = (htf_c['value'] > 0) == (fc_c['value'] > 0)
+        if same_dir:
+            smaller = htf_c if abs(htf_c['value']) <= abs(fc_c['value']) else fc_c
+            discount = round(smaller['value'] * CORRELATION_DISCOUNT, 2)
+            smaller['value'] = round(smaller['value'] - discount, 2)
+            smaller['label'] = smaller.get('label', '') + ' [corr↓]'
+    
     raw_total = sum(c['value'] for c in components)
     score = round(_clamp(raw_total, -100.0, 100.0), 1)
+    
+    # (B) CTR-extreme conviction cap.
+    #     A CTR/STC reading at a cycle extreme (≤ CTR_EXTREME_LOW oversold,
+    #     ≥ CTR_EXTREME_HIGH overbought) is a strong mean-reversion warning
+    #     AGAINST continuation. If the score's direction would ride straight
+    #     into that reversal risk, we CAP the magnitude — the bot may still
+    #     lean that way, but it must not claim high conviction into a known
+    #     turning zone. This is what stops "SHORT 92%" while CTR=0 (Oversold).
+    ctr_conflict = False
+    if ctr and ctr.get('stc') is not None:
+        try:
+            stc_v = float(ctr['stc'])
+        except Exception:
+            stc_v = None
+        if stc_v is not None:
+            # Oversold extreme fights SHORT; Overbought extreme fights LONG.
+            if stc_v <= CTR_EXTREME_LOW and score < 0:
+                ctr_conflict = True
+            elif stc_v >= CTR_EXTREME_HIGH and score > 0:
+                ctr_conflict = True
+        if ctr_conflict:
+            capped = _clamp(score, -CTR_EXTREME_SCORE_CAP, CTR_EXTREME_SCORE_CAP)
+            score = round(capped, 1)
     
     # Verdict — entry threshold is positive (we want a signal worth taking)
     if score >= cfg.threshold:
@@ -833,4 +894,5 @@ def evaluate_entry(
         'threshold': cfg.threshold,
         'components': components,
         'summary': summary,
+        'ctr_conflict': ctr_conflict,
     }
