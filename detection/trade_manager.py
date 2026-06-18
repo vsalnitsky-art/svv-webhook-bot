@@ -2147,6 +2147,7 @@ class TradeManager:
             'forecast_1h_confluence': '1H прогноз проти позиції',
             'opposite_ob_exit': 'Ціна вдарилась у протилежний Order Block',
             'external_close': 'Закрито поза ботом (на біржі)',
+            'auto_gate_wait': 'Закрито авто-гейтом по WAIT (немає вирівнювання ТФ)',
             'manual': 'Закрито вручну',
         }
         base = detail_map.get(reason)
@@ -3116,24 +3117,26 @@ class TradeManager:
             }
         return result
     
-    def manual_close(self, symbol: str) -> Dict:
-        """Manually close a position via UI button."""
+    def manual_close(self, symbol: str, reason: str = 'manual') -> Dict:
+        """Close a real position. Default reason 'manual' (UI button); callers
+        like the WAIT-gate pass their own reason so the close is labelled
+        correctly instead of always showing 'Manual'."""
         with self._lock:
             pos = self._positions.get(symbol)
         if not pos:
             return {'ok': False, 'reason': 'No open position for symbol'}
         current = self._get_current_price(symbol) or pos['entry_price']
-        self._close_position(symbol, current, reason='manual')
+        self._close_position(symbol, current, reason=reason)
         return {'ok': True}
     
-    def manual_close_shadow(self, symbol: str) -> Dict:
-        """Manually close a paper-trading position via UI button."""
+    def manual_close_shadow(self, symbol: str, reason: str = 'manual') -> Dict:
+        """Close a paper position. See manual_close re: reason."""
         with self._lock:
             pos = self._shadow_positions.get(symbol)
         if not pos:
             return {'ok': False, 'reason': 'No open paper position for symbol'}
         current = self._get_current_price(symbol) or pos['entry_price']
-        self._close_shadow(symbol, current, reason='manual')
+        self._close_shadow(symbol, current, reason=reason)
         return {'ok': True}
     
     def close_all_with_queue(self, reason: str = 'auto_gate_wait',
@@ -3161,7 +3164,7 @@ class TradeManager:
 
         for sym in real_syms:
             try:
-                r = self.manual_close(sym)
+                r = self.manual_close(sym, reason=reason)
                 if r.get('ok'):
                     closed_real.append(sym)
                 else:
@@ -3173,7 +3176,7 @@ class TradeManager:
 
         for sym in shadow_syms:
             try:
-                r = self.manual_close_shadow(sym)
+                r = self.manual_close_shadow(sym, reason=reason)
                 if r.get('ok'):
                     closed_shadow.append(sym)
                 else:

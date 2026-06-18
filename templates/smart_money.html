@@ -2065,7 +2065,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
          User can opt-in per-symbol via "Add to SMC Watchlist" button. -->
     <div class="tm-panel" id="top100-panel" style="margin-top:14px">
         <div class="tm-header" id="top100-header">
-            <h2>📡 TOP-100 OB Radar
+            <h2><span id="top100-chevron" onclick="toggleRadarPanel('top100-body','top100-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▼</span>📡 TOP-100 OB Radar
                 <span id="top100-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
                 <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">
                     (informational — Binance Futures top-N by 24h volume)
@@ -2241,7 +2241,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 <div style="margin-top:14px">
     <div class="tm-panel" id="volradar-panel">
         <div class="tm-header" id="volradar-header">
-            <h2>📦 Volumized OB Radar
+            <h2><span id="volradar-chevron" onclick="toggleRadarPanel('volradar-body','volradar-chevron')" style="cursor:pointer;margin-right:6px;user-select:none;font-size:0.85rem">▼</span>📦 Volumized OB Radar
                 <span id="volradar-tf-label" style="color:#a5b4fc;font-size:0.78rem;font-weight:600;margin-left:6px">1H</span>
             </h2>
             <div class="tm-master-toggle">
@@ -2815,6 +2815,18 @@ function renderWatchlist(list) {
 }
 
 // ============================================================
+// Collapse/expand a radar panel body via its chevron. Toggles the body's
+// display and rotates the chevron. Kept off the toggle-switch so enabling
+// the radar and folding the panel are independent actions.
+function toggleRadarPanel(bodyId, chevronId) {
+    const body = document.getElementById(bodyId);
+    const chev = document.getElementById(chevronId);
+    if (!body) return;
+    const hidden = body.style.display === 'none';
+    body.style.display = hidden ? '' : 'none';
+    if (chev) chev.textContent = hidden ? '▼' : '▶';
+}
+
 // 📦 Volumized OB Radar — UI controller
 // ============================================================
 // Mirror of the TOP-100 radar panel (different daemon, different filter).
@@ -4243,21 +4255,21 @@ async function loadChart() {
             //   At/above long_max  — only SHORT can enter (price too high for LONG)
             //   At/below short_min — only LONG can enter (price too low for SHORT)
             //   In between         — both directions valid
-            let icon, bg, color, sideHint;
+            let icon, bg, color, sideHint, zoneName;
             if (pdPct >= longMax) {
                 // High-zone: SHORT-only
                 icon = '🔴'; bg = 'rgba(239,68,68,0.15)'; color = '#fca5a5';
-                sideHint = 'SHORT only';
+                sideHint = 'SHORT only'; zoneName = 'Premium';
             } else if (pdPct <= shortMin) {
                 // Low-zone: LONG-only
                 icon = '🟢'; bg = 'rgba(34,197,94,0.15)'; color = '#86efac';
-                sideHint = 'LONG only';
+                sideHint = 'LONG only'; zoneName = 'Discount';
             } else {
                 // Mid-zone: both allowed
                 icon = '🟡'; bg = 'rgba(234,179,8,0.15)'; color = '#fde68a';
-                sideHint = 'LONG/SHORT';
+                sideHint = 'LONG/SHORT'; zoneName = 'Equilibrium';
             }
-            pdBadge.textContent = `${filterMark}${icon} ${displayPct}% ${pdTf}`;
+            pdBadge.textContent = `${filterMark}${icon} ${zoneName} ${displayPct}% ${pdTf}`;
             pdBadge.className = 'sm-status-badge';
             pdBadge.style.background = bg;
             pdBadge.style.color = color;
@@ -4373,21 +4385,33 @@ async function loadChart() {
         const ctrBadge = document.getElementById('sm-ctr-badge');
         const ctr = d.ctr;
         if (ctr && ctr.stc !== null && ctr.stc !== undefined) {
-            // Determine zone label from current STC value
-            let zoneLabel, zoneColor;
+            // Determine zone label + reversal bias from current STC value.
+            // STC is a cycle oscillator: near 100 = cycle top (downward
+            // reversal more likely → SHORT bias); near 0 = cycle bottom
+            // (upward reversal → LONG bias). We surface that lean directly
+            // instead of a bare number, so the badge reads as a direction.
+            let zoneLabel, zoneColor, revBias;
             if (ctr.stc >= 75) {
                 zoneLabel = 'Overbought';
                 zoneColor = '#fca5a5';
+                revBias = '🔴 SHORT-нахил';
             } else if (ctr.stc <= 25) {
                 zoneLabel = 'Oversold';
                 zoneColor = '#86efac';
+                revBias = '🟢 LONG-нахил';
             } else {
                 zoneLabel = 'Mid';
                 zoneColor = '#aaa';
+                revBias = '⚪ нейтрально';
             }
+            // Express STC as a "distance to reversal zone" percentage so it
+            // reads as conviction toward the lean, not a raw oscillator value.
+            const leanPct = ctr.stc >= 75 ? Math.round((ctr.stc - 75) / 25 * 100)
+                          : ctr.stc <= 25 ? Math.round((25 - ctr.stc) / 25 * 100)
+                          : Math.round((1 - Math.abs(ctr.stc - 50) / 25) * 100);
             
-            // Build badge: zone status + last signal age
-            let badgeText = `⚡ CTR ${ctr.stc.toFixed(0)} · ${zoneLabel}`;
+            // Build badge: reversal lean + conviction %
+            let badgeText = `⚡ CTR ${revBias} ${leanPct}%`;
             let bgColor = 'rgba(100,100,100,0.12)';
             let txtColor = zoneColor;
             
@@ -4396,7 +4420,7 @@ async function loadChart() {
                 const age = ctr.last_signal_age_bars;
                 const ageStr = age === null || age === undefined ? '' :
                     (age === 0 ? 'now' : age === 1 ? '1 bar ago' : `${age} bars ago`);
-                badgeText = `⚡ CTR: ${ctrIcon} ${ctr.last_dir} (${ageStr}) · ${zoneLabel} ${ctr.stc.toFixed(0)}`;
+                badgeText = `⚡ CTR ${ctrIcon} ${ctr.last_dir} (${ageStr}) · ${revBias} ${leanPct}%`;
                 bgColor = ctr.last_dir === 'LONG' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)';
                 txtColor = ctr.last_dir === 'LONG' ? '#86efac' : '#fca5a5';
             }
@@ -4411,6 +4435,7 @@ async function loadChart() {
             const tooltipParts = [
                 'CTR (Cyclic Trend Reversal) — Pine STC indicator',
                 `STC value: ${ctr.stc.toFixed(2)} / 100`,
+                `Нахил розвороту: ${revBias} (${leanPct}% впевненості)`,
                 `Zone: ${zoneLabel}` + (ctr.stc >= 75 ? ' (>75)' : ctr.stc <= 25 ? ' (<25)' : ' (25-75)'),
             ];
             if (ctr.last_dir) {
@@ -5492,6 +5517,7 @@ function reasonLabel(r) {
         'trailing_stop': '📈 Trailing',
         'manual': '✋ Manual',
         'external_close': '🌐 External',
+        'auto_gate_wait': '⏸ WAIT-gate',
         'reverse_signal': '🔄 Reverse sig',
         'opposite_ob_exit': '🧱 Opp OB',
         'bos_2_partial': '✂️ BOS-2',
