@@ -5328,41 +5328,49 @@ def compute_bias(db, symbol, wl=None):
     except Exception as e:
         move = None
 
-    # 4H reversal-pressure index — how much pressure has built for a reversal
-    # AGAINST the current move. Pulls max signal from Bybit (4H klines +
+    # Reversal-pressure index — how much pressure has built for a reversal
+    # AGAINST the current 4H/1H trend. Pulls max signal from Bybit (klines +
     # funding + OI + long/short ratio); degrades gracefully if a source is
     # unavailable. NOT a probability — a weighted index of reversal conditions.
-    reversal = None
+    reversal = None       # 4H (primary)
+    reversal_1h = None    # 1H (faster horizon)
     try:
         from detection.reversal_pressure import analyze_reversal_pressure
         from detection import exchange_router as xr
         rev_side = verdict if verdict in ('LONG', 'SHORT') else mp_side
-        # Router prefers Binance (deeper data) but falls back to Bybit when
-        # Binance is geo-blocked; each result is tagged with its source.
-        k4h, src_k = xr.get_klines(symbol, interval="240", limit=200)
-        if k4h and len(k4h) >= 30:
-            fr, src_f = xr.get_funding_rate(symbol)
-            oi_hist, src_oi = xr.get_open_interest(symbol, interval="4h", limit=12)
-            # Long/short ratio — sentiment module (Bybit account ratio)
+        # Shared extra signals (funding + L/S are TF-agnostic; OI per TF)
+        fr, _ = xr.get_funding_rate(symbol)
+        lp = None
+        try:
+            from detection.market_sentiment import get_sentiment
+            sent = get_sentiment('bybit')
+            if sent and sent.get('ok'):
+                lp = sent.get('long_pct')
+        except Exception:
             lp = None
-            try:
-                from detection.market_sentiment import get_sentiment
-                sent = get_sentiment('bybit')
-                if sent and sent.get('ok'):
-                    lp = sent.get('long_pct')
-            except Exception:
-                lp = None
-            reversal = analyze_reversal_pressure(
-                side=rev_side, klines_4h=k4h,
-                funding_rate=fr, oi_history=oi_hist, long_pct=lp)
-            if reversal and reversal.get('ok'):
-                # Primary data source = the kline source (the backbone of the
-                # calculation). Tag it so the UI can label honestly.
-                reversal['data_source'] = src_k
+
+        def _rev_for(interval, oi_interval, limit, tf_label):
+            k, src_k = xr.get_klines(symbol, interval=interval, limit=limit)
+            if not k or len(k) < 30:
+                return None
+            oi_hist, _ = xr.get_open_interest(symbol, interval=oi_interval, limit=12)
+            r = analyze_reversal_pressure(
+                side=rev_side, klines_4h=k,
+                funding_rate=fr, oi_history=oi_hist, long_pct=lp,
+                tf_label=tf_label)
+            if r and r.get('ok'):
+                r['data_source'] = src_k
+            return r
+
+        # 4H — Binance/Bybit preferred via router
+        reversal = _rev_for("240", "4h", 200, "4H")
+        # 1H — faster horizon, same calculation
+        reversal_1h = _rev_for("60", "1h", 200, "1H")
     except Exception as e:
         reversal = None
+        reversal_1h = None
 
     return {'ok': True, 'symbol': symbol, 'verdict': verdict,
             'confidence': confidence, 'components': comp,
             'reasons': reasons, 'price': price, 'move': move,
-            'reversal': reversal, 'ts': _t.time()}
+            'reversal': reversal, 'reversal_1h': reversal_1h, 'ts': _t.time()}

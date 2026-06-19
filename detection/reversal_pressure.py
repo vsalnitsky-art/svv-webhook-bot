@@ -185,6 +185,7 @@ def analyze_reversal_pressure(
     oi_history: Optional[List[Dict]] = None,
     long_pct: Optional[float] = None,
     use_actual_trend: bool = True,
+    tf_label: str = '4H',
 ) -> Dict:
     """Compute the 4H reversal-pressure index.
 
@@ -236,10 +237,10 @@ def analyze_reversal_pressure(
         out['reversal_to'] = break_to
         out['from_side'] = None
         arrow = '↑ вгору (LONG)' if break_to == 'LONG' else '↓ вниз (SHORT)'
-        out['verdict_text'] = (f'4H у консолідації (тренду немає). Ціна в '
+        out['verdict_text'] = (f'{tf_label} у консолідації (тренду немає). Ціна в '
                                f'{"верхній" if pos_pct >= 50 else "нижній"} частині діапазону — '
                                f'ймовірніший вихід {arrow}.')
-        out['notes'] = [f'4H флет — ціна на {pos_pct:.0f}% діапазону']
+        out['notes'] = [f'{tf_label} флет — ціна на {pos_pct:.0f}% діапазону']
         return out
 
     if use_actual_trend and trend_info['trend'] in ('LONG', 'SHORT'):
@@ -391,12 +392,12 @@ def analyze_reversal_pressure(
     trend_word = 'висхідний (LONG)' if side == 'LONG' else 'низхідний (SHORT)'
     flip_word = '↑ вгору (LONG)' if reversal_to == 'LONG' else '↓ вниз (SHORT)'
     if index >= 60:
-        out['verdict_text'] = (f'4H тренд {trend_word} ВИСНАЖУЄТЬСЯ — '
+        out['verdict_text'] = (f'{tf_label} тренд {trend_word} ВИСНАЖУЄТЬСЯ — '
                                f'високий тиск зламу, розворот {flip_word} ймовірний.')
     elif index >= 35:
-        out['verdict_text'] = (f'4H тренд {trend_word} ще тримається, але злам '
+        out['verdict_text'] = (f'{tf_label} тренд {trend_word} ще тримається, але злам '
                                f'визріває — стежити за розворотом {flip_word}.')
     else:
-        out['verdict_text'] = (f'4H тренд {trend_word} міцний — тиск зламу низький, '
+        out['verdict_text'] = (f'{tf_label} тренд {trend_word} міцний — тиск зламу низький, '
                                f'розворот {flip_word} поки не на часі.')
     return out

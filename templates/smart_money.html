@@ -1260,6 +1260,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </label>
         </div>
         </div>
+        <div class="sm-analysis-row" id="sm-rev1h-row" style="display:none">
+        <div class="sm-move-panel sm-rev-panel" id="sm-rev1h-section">
+            <div class="sm-rev-header" title="Те саме, що 4H, але для 1H таймфрейму — швидший горизонт. Індекс схильності до розвороту: зважена сума умов, що передують розвороту. НЕ передбачення майбутнього.">
+                <span class="sm-rev-title">🔄 Схильність до розвороту (1H)</span>
+                <span style="display:flex;align-items:center;gap:6px">
+                    <span class="sm-rev-source-badge" id="sm-rev1h-source-badge" style="display:none"></span>
+                    <span class="sm-rev-level" id="sm-rev1h-level">—</span>
+                </span>
+            </div>
+            <div class="sm-rev-trend" id="sm-rev1h-trend" style="display:none"></div>
+            <div class="sm-rev-direction" id="sm-rev1h-direction" style="display:none"></div>
+            <div class="sm-move-bar-wrap">
+                <span class="sm-move-bar-label" id="sm-rev1h-bar-label">% до розвороту</span>
+                <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev1h-bar-fill"></div></div>
+                <span class="sm-move-bar-val" id="sm-rev1h-bar-val">—</span>
+            </div>
+            <div class="sm-move-notes" id="sm-rev1h-notes"></div>
+            <div class="sm-rev-src" id="sm-rev1h-src"></div>
+        </div>
+        </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
         <div class="sm-bias-updated" id="sm-bias-updated"></div>
     </div>
@@ -5954,92 +5974,76 @@ function biasWatchlistParams() {
     return `&wl_src=${src}&wl_long=${nLong}&wl_short=${nShort}&wl_flat=${nFlat}`;
 }
 
-function renderReversal(rev) {
-    const sec = document.getElementById('sm-rev-section');
+function renderReversal(rev, opts) {
+    // opts: {sec, lvl, trend, dir, barFill, barVal, barLabel, notes, src,
+    //        badge, row} id strings + tf ('4H'|'1H'). Defaults = 4H panel.
+    opts = opts || {};
+    const tf = opts.tf || '4H';
+    const id = (suffix, fallback) => opts[suffix] || fallback;
+    const sec = document.getElementById(id('sec', 'sm-rev-section'));
+    const row = opts.row ? document.getElementById(opts.row) : null;
     if (!sec) return;
     if (!rev || !rev.ok || rev.index === null || rev.index === undefined) {
-        sec.style.display = 'none'; return;
+        sec.style.display = 'none';
+        if (row) row.style.display = 'none';
+        return;
     }
     sec.style.display = '';
-    const lvl = document.getElementById('sm-rev-level');
-    // Color scheme follows DIRECTION of the expected break:
-    //   reversal/exit toward LONG (up) → green family
-    //   toward SHORT (down)            → red family
-    // The level WORD still conveys strength (НИЗЬКА/НАРОСТАЄ/ВИСОКА).
+    if (row) row.style.display = '';
+    const lvl = document.getElementById(id('lvl', 'sm-rev-level'));
     const to = rev.reversal_to;
     const dirClass = to === 'LONG' ? 'dir-up' : to === 'SHORT' ? 'dir-down' : 'dir-none';
-    const lmap = {
-        NONE: '⚪ ТРЕНДУ НЕМАЄ',
-        LOW: 'НИЗЬКА',
-        BUILDING: 'НАРОСТАЄ',
-        HIGH: 'ВИСОКА',
-    };
+    const lmap = { NONE: '⚪ ТРЕНДУ НЕМАЄ', LOW: 'НИЗЬКА', BUILDING: 'НАРОСТАЄ', HIGH: 'ВИСОКА' };
     let word = lmap[rev.level] || rev.level || '—';
-    // Prefix an arrow matching the direction (except the no-trend case)
-    if (rev.level !== 'NONE' && to) {
-        word = (to === 'LONG' ? '↑ ' : '↓ ') + word;
-    }
-    lvl.className = 'sm-rev-level ' + dirClass;
-    lvl.textContent = word;
+    if (rev.level !== 'NONE' && to) word = (to === 'LONG' ? '↑ ' : '↓ ') + word;
+    if (lvl) { lvl.className = 'sm-rev-level ' + dirClass; lvl.textContent = word; }
 
-
-    // 4H trend line — WHERE the 4H trend is right now (from structure).
-    const trendEl = document.getElementById('sm-rev-trend');
+    const trendEl = document.getElementById(id('trend', 'sm-rev-trend'));
     if (trendEl) {
         const t = rev.trend_4h;
         if (t === 'LONG' || t === 'SHORT') {
             const lbl = rev.trend_4h_label || (t === 'LONG' ? '↑ ВГОРУ' : '↓ ВНИЗ');
             const col = t === 'LONG' ? '#4ade80' : '#f87171';
-            trendEl.innerHTML = `4H тренд зараз: <span style="color:${col}">${lbl}</span>`;
+            trendEl.innerHTML = `${tf} тренд зараз: <span style="color:${col}">${lbl}</span>`;
         } else {
-            trendEl.innerHTML = `4H тренд зараз: <span style="color:#8b93a7">↔ ВБІК (консолідація)</span>`;
+            trendEl.innerHTML = `${tf} тренд зараз: <span style="color:#8b93a7">↔ ВБІК (консолідація)</span>`;
         }
         trendEl.style.display = '';
     }
 
-    // Main verdict — one coherent sentence (the headline takeaway).
-    const dirEl = document.getElementById('sm-rev-direction');
+    const dirEl = document.getElementById(id('dir', 'sm-rev-direction'));
     if (dirEl) {
-        if (rev.verdict_text) {
-            dirEl.innerHTML = `<b>${rev.verdict_text}</b>`;
-            dirEl.style.display = '';
-        } else {
-            dirEl.style.display = 'none';
-        }
+        if (rev.verdict_text) { dirEl.innerHTML = `<b>${rev.verdict_text}</b>`; dirEl.style.display = ''; }
+        else dirEl.style.display = 'none';
     }
 
-    // Pressure bar — always shown, as % toward the opposite side.
-    const bf = document.getElementById('sm-rev-bar-fill');
-    const bv = document.getElementById('sm-rev-bar-val');
+    const bf = document.getElementById(id('barFill', 'sm-rev-bar-fill'));
+    const bv = document.getElementById(id('barVal', 'sm-rev-bar-val'));
     const idx = rev.index || 0;
-    bf.style.width = idx + '%';
-    // Bar fill colored by DIRECTION of the break (green=up/LONG, red=down/
-    // SHORT, grey=undefined); the width already conveys strength.
-    bf.style.background = to === 'LONG' ? '#4ade80'
-                        : to === 'SHORT' ? '#f87171' : '#8b93a7';
-    bv.textContent = idx + '%';
-    // Bar label reflects which way the % points (e.g. SHORT trend → % to LONG)
-    const barLbl = document.getElementById('sm-rev-bar-label');
+    if (bf) {
+        bf.style.width = idx + '%';
+        bf.style.background = to === 'LONG' ? '#4ade80' : to === 'SHORT' ? '#f87171' : '#8b93a7';
+    }
+    if (bv) bv.textContent = idx + '%';
+    const barLbl = document.getElementById(id('barLabel', 'sm-rev-bar-label'));
     if (barLbl) {
-        if (rev.reversal_to === 'LONG') barLbl.textContent = '% до LONG ↑';
-        else if (rev.reversal_to === 'SHORT') barLbl.textContent = '% до SHORT ↓';
+        if (to === 'LONG') barLbl.textContent = '% до LONG ↑';
+        else if (to === 'SHORT') barLbl.textContent = '% до SHORT ↓';
         else barLbl.textContent = '% до розвороту';
     }
-    document.getElementById('sm-rev-notes').innerHTML = (rev.notes || [])
+    const notesEl = document.getElementById(id('notes', 'sm-rev-notes'));
+    if (notesEl) notesEl.innerHTML = (rev.notes || [])
         .map(n => `<span class="sm-move-note">• ${n}</span>`).join('');
-    const src = document.getElementById('sm-rev-src');
-    // Prominent source badge in the header
-    const badge = document.getElementById('sm-rev-source-badge');
+    const badge = document.getElementById(id('badge', 'sm-rev-source-badge'));
     if (badge) {
         const ds = rev.data_source;
         if (ds && ds !== 'none') {
             badge.style.display = '';
             badge.className = 'sm-rev-source-badge ' + ds;
             badge.textContent = '📊 ' + ds.charAt(0).toUpperCase() + ds.slice(1);
-        } else {
-            badge.style.display = 'none';
-        }
+        } else badge.style.display = 'none';
     }
+    const src = document.getElementById(id('src', 'sm-rev-src'));
     if (src) {
         const parts = [];
         if (rev.sources_used && rev.sources_used.length)
@@ -6142,7 +6146,16 @@ async function loadBias() {
         fill.style.background = d.verdict === 'LONG' ? '#4ade80'
             : d.verdict === 'SHORT' ? '#f87171' : '#6b7280';
         renderMovePanel(d.move);
-        renderReversal(d.reversal);
+        renderReversal(d.reversal);  // 4H (default ids)
+        renderReversal(d.reversal_1h, {
+            tf: '1H',
+            sec: 'sm-rev1h-section', row: 'sm-rev1h-row',
+            lvl: 'sm-rev1h-level', trend: 'sm-rev1h-trend',
+            dir: 'sm-rev1h-direction', barFill: 'sm-rev1h-bar-fill',
+            barVal: 'sm-rev1h-bar-val', barLabel: 'sm-rev1h-bar-label',
+            notes: 'sm-rev1h-notes', src: 'sm-rev1h-src',
+            badge: 'sm-rev1h-source-badge',
+        });
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
         // The watchlist-consensus reason line is rendered under the
         // consensus bar in the RIGHT column (not in the left reasons list),
