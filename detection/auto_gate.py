@@ -37,6 +37,7 @@ _DB_ENABLED = 'sm_auto_gate_enabled'
 _DB_SYMBOL = 'sm_bias_symbol'
 _DB_WL_CACHE = 'sm_wl_consensus_cache'
 _DB_CLOSE_ON_WAIT = 'sm_auto_gate_close_on_wait'
+_DB_TREND_ALERT = 'sm_4h_trend_alert_enabled'
 _DB_WAIT_HYSTERESIS = 'sm_auto_gate_wait_hysteresis'
 
 
@@ -53,6 +54,17 @@ class AutoGateDaemon:
         # a brief LONG→WAIT→LONG flicker doesn't liquidate the whole book.
         self._wait_streak = 0
         self._wait_closed_this_streak = False
+        # Last known 4H trend per symbol, for change detection → Telegram.
+        self._last_trend = {}
+
+    def is_trend_alert(self) -> bool:
+        """Telegram alert on 4H trend change (independent of auto-gate)."""
+        return str(self._db.get_setting(_DB_TREND_ALERT, 'false')).lower() in ('true', '1')
+
+    def set_trend_alert(self, on: bool):
+        self._db.set_setting(_DB_TREND_ALERT, 'true' if on else 'false')
+        if on:
+            self.start()  # ensure the loop runs even if auto-gate is off
 
     # --- persisted state ---
     def is_enabled(self) -> bool:
@@ -127,23 +139,74 @@ class AutoGateDaemon:
                             'allow_short_entries': allow_short})
         print(f"[AutoGate] verdict={verdict} → LONG={allow_long} SHORT={allow_short}")
 
+    def _run(self):
+        # small initial delay so other singletons finish booting
+        self._stop.wait(8)
+        while not self._stop.is_set():
+            try:
+                self._tick()
+            except Exception as e:
+                print(f"[AutoGate] tick error: {e}")
+            self._stop.wait(CYCLE_SECS)
+
     def _tick(self):
-        if not self.is_enabled():
+        # Trend-change alert runs independently of the auto-gate enable flag,
+        # so it must be checked even when auto-gate itself is off.
+        gate_on = self.is_enabled()
+        alert_on = self.is_trend_alert()
+        if not gate_on and not alert_on:
             return
         symbol = self.get_symbol()
         wl = self._wl_consensus()
         verdict_data = self._compute_bias(symbol, wl)
+
+        # --- 4H trend-change Telegram alert (independent of gate) ---
+        if alert_on:
+            try:
+                self._check_trend_change(symbol, verdict_data)
+            except Exception as e:
+                print(f"[AutoGate] trend-alert error: {e}")
+
+        if not gate_on:
+            return
+        self._gate_logic(symbol, verdict_data)
+
+    def _check_trend_change(self, symbol: str, verdict_data: dict):
+        """Detect a 4H trend flip vs the last seen value and notify Telegram."""
+        rev = (verdict_data or {}).get('reversal') or {}
+        trend = rev.get('trend_4h')
+        if trend not in ('LONG', 'SHORT'):
+            return  # ignore NEUTRAL transitions (too noisy)
+        prev = self._last_trend.get(symbol)
+        self._last_trend[symbol] = trend
+        if prev is None or prev == trend:
+            return  # first observation or no change
+        # Real flip LONG↔SHORT
+        try:
+            from alerts.telegram_notifier import get_notifier
+            tg = get_notifier()
+            if tg:
+                arrow = '🟢 ВГОРУ (LONG)' if trend == 'LONG' else '🔴 ВНИЗ (SHORT)'
+                was = '🟢 LONG' if prev == 'LONG' else '🔴 SHORT'
+                price = verdict_data.get('price')
+                px = f"\nЦіна: {price}" if price else ''
+                tg.send_message(
+                    f"🔄 <b>Зміна 4H тренду — {symbol}</b>\n"
+                    f"Було: {was} → Стало: {arrow}{px}\n"
+                    f"<i>Smart Money · Схильність до розвороту</i>")
+                print(f"[AutoGate] trend change {symbol}: {prev}→{trend}, alerted")
+        except Exception as e:
+            print(f"[AutoGate] trend telegram error: {e}")
+
+    def _gate_logic(self, symbol: str, verdict_data: dict):
         verdict = verdict_data.get('verdict', 'WAIT')
         with self._lock:
             self._last = {'verdict': verdict, 'ts': time.time(),
                           'applied_at': time.time(), 'symbol': symbol,
                           'confidence': verdict_data.get('confidence', 0)}
         self._apply(verdict)
-        # Close-on-WAIT with HYSTERESIS: a single WAIT tick no longer
-        # liquidates the book — the verdict flickers LONG↔WAIT every few
-        # minutes when liq-fuel is balanced, and closing on the first WAIT
-        # was zeroing out live, profitable positions. Instead we require N
-        # consecutive WAIT ticks, and close only ONCE per sustained streak.
+        # Close-on-WAIT with HYSTERESIS (see history): require N consecutive
+        # WAIT ticks and close only ONCE per sustained streak.
         if verdict == 'WAIT':
             self._wait_streak += 1
             need = self.wait_hysteresis()
@@ -162,23 +225,11 @@ class AutoGateDaemon:
                 except Exception as e:
                     print(f"[AutoGate] close-on-WAIT error: {e}")
         else:
-            # Any decisive verdict ends the WAIT streak and re-arms the
-            # close trigger for the next sustained WAIT.
             if self._wait_streak:
                 print(f"[AutoGate] WAIT streak reset by {verdict} "
                       f"(was {self._wait_streak})")
             self._wait_streak = 0
             self._wait_closed_this_streak = False
-
-    def _run(self):
-        # small initial delay so other singletons finish booting
-        self._stop.wait(8)
-        while not self._stop.is_set():
-            try:
-                self._tick()
-            except Exception as e:
-                print(f"[AutoGate] tick error: {e}")
-            self._stop.wait(CYCLE_SECS)
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -194,6 +245,7 @@ class AutoGateDaemon:
             last = dict(self._last)
         return {'enabled': self.is_enabled(), 'symbol': self.get_symbol(),
                 'close_on_wait': self.is_close_on_wait(),
+                'trend_alert': self.is_trend_alert(),
                 'wait_hysteresis': self.wait_hysteresis(),
                 'wait_streak': self._wait_streak,
                 'running': bool(self._thread and self._thread.is_alive()),

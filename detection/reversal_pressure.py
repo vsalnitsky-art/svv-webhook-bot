@@ -77,50 +77,104 @@ def _atr(klines: List[Dict], period: int = 14) -> Optional[float]:
 
 
 def detect_4h_trend(klines_4h: List[Dict]) -> Dict:
-    """Determine the ACTUAL 4H trend from swing structure (HH/HL = up,
-    LH/LL = down), independent of any bot verdict. Returns
-    {trend: 'LONG'|'SHORT'|'NEUTRAL', label: '↑ ВГОРУ'|...}.
+    """Determine the ACTUAL 4H trend using MULTIPLE professional factors,
+    not a single structure check that too often returns NEUTRAL.
 
-    Uses SMCStructureDetector when available; falls back to a simple
-    higher-highs/lower-lows heuristic so it always returns something.
+    A real market almost always has a directional bias — true range-bound
+    flat is rare and short-lived. We score four independent signals and
+    combine them; NEUTRAL is returned ONLY when they genuinely conflict
+    (near-zero net), which is the honest definition of "no trend".
+
+    Factors (each votes -1..+1):
+      1. EMA structure: fast(21) vs slow(55) vs price location
+      2. Linear-regression slope of closes (normalised by ATR)
+      3. SMC swing structure bias (HH/HL vs LH/LL)
+      4. Position vs longer EMA(100) — where price sits in the bigger picture
+
+    Returns {trend: 'LONG'|'SHORT'|'NEUTRAL', label, strength 0..1}.
     """
-    out = {'trend': 'NEUTRAL', 'label': '↔ ВБІК'}
-    if not klines_4h or len(klines_4h) < 20:
+    out = {'trend': 'NEUTRAL', 'label': '↔ ВБІК', 'strength': 0.0}
+    if not klines_4h or len(klines_4h) < 30:
         return out
-    # Preferred: SMC structure detector (HH/HL/LH/LL → trend bias)
+
+    closes = [float(k['close']) for k in klines_4h]
+    price = closes[-1]
+    votes = []   # each in [-1, +1]
+
+    # --- Factor 1: EMA structure (21 vs 55) + price location ---
+    def _ema(vals, p):
+        if len(vals) < p:
+            return None
+        k = 2 / (p + 1)
+        e = sum(vals[:p]) / p
+        for v in vals[p:]:
+            e = v * k + e * (1 - k)
+        return e
+    ema_f = _ema(closes, 21)
+    ema_s = _ema(closes, 55)
+    if ema_f and ema_s:
+        # fast above slow → up; plus price above both reinforces
+        v = 0.0
+        v += 0.6 if ema_f > ema_s else -0.6
+        v += 0.4 if price > ema_f else -0.4
+        votes.append(max(-1.0, min(1.0, v)))
+
+    # --- Factor 2: linear-regression slope of last N closes (ATR-normalised) ---
+    n = min(50, len(closes))
+    seg = closes[-n:]
+    xs = list(range(n))
+    mx = sum(xs) / n
+    my = sum(seg) / n
+    num = sum((xs[i] - mx) * (seg[i] - my) for i in range(n))
+    den = sum((xs[i] - mx) ** 2 for i in range(n)) or 1e-9
+    slope = num / den  # price units per bar
+    # normalise by ATR so it's comparable across coins
+    trs = []
+    for i in range(1, len(klines_4h)):
+        h = float(klines_4h[i]['high']); l = float(klines_4h[i]['low'])
+        pc = closes[i - 1]
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    atr = (sum(trs[-14:]) / min(14, len(trs))) if trs else 0
+    if atr > 0:
+        slope_atr = slope / atr  # ATRs per bar
+        # ±0.15 ATR/bar ≈ a clear trend
+        votes.append(max(-1.0, min(1.0, slope_atr / 0.15)))
+
+    # --- Factor 3: SMC swing structure bias ---
     try:
         import numpy as np
-        from detection.smc_structure_filter import SMCStructureDetector, TrendBias
-        highs = np.array([k['high'] for k in klines_4h], dtype=float)
-        lows = np.array([k['low'] for k in klines_4h], dtype=float)
-        closes = np.array([k['close'] for k in klines_4h], dtype=float)
+        from detection.smc_structure_filter import SMCStructureDetector
         det = SMCStructureDetector(swing_length=min(50, len(klines_4h) // 3))
-        res = det.update(highs, lows, closes)
+        res = det.update(
+            np.array([float(k['high']) for k in klines_4h]),
+            np.array([float(k['low']) for k in klines_4h]),
+            np.array(closes, dtype=float))
         tb = res.get('trend_bias')
         val = getattr(tb, 'value', tb)
-        if val == 1:
-            return {'trend': 'LONG', 'label': '↑ ВГОРУ'}
-        if val == -1:
-            return {'trend': 'SHORT', 'label': '↓ ВНИЗ'}
-        # NEUTRAL from detector → fall through to heuristic for a hint
+        if val in (1, -1):
+            votes.append(float(val))
     except Exception:
         pass
-    # Fallback heuristic: compare recent swing highs/lows
-    try:
-        n = len(klines_4h)
-        half = n // 2
-        recent_hi = max(k['high'] for k in klines_4h[half:])
-        older_hi = max(k['high'] for k in klines_4h[:half])
-        recent_lo = min(k['low'] for k in klines_4h[half:])
-        older_lo = min(k['low'] for k in klines_4h[:half])
-        hh = recent_hi > older_hi
-        hl = recent_lo > older_lo
-        if hh and hl:
-            return {'trend': 'LONG', 'label': '↑ ВГОРУ'}
-        if not hh and not hl:
-            return {'trend': 'SHORT', 'label': '↓ ВНИЗ'}
-    except Exception:
-        pass
+
+    # --- Factor 4: position vs EMA(100) (bigger-picture bias) ---
+    ema_l = _ema(closes, min(100, len(closes) - 1))
+    if ema_l:
+        dist = (price - ema_l) / ema_l
+        votes.append(max(-1.0, min(1.0, dist / 0.03)))  # ±3% = full vote
+
+    if not votes:
+        return out
+
+    net = sum(votes) / len(votes)   # -1..+1
+    strength = min(1.0, abs(net))
+    # Threshold for calling a trend: net must clear a dead-zone. 0.25 keeps
+    # genuine flat (conflicting factors) NEUTRAL while still labelling normal
+    # directional drift correctly.
+    if net >= 0.25:
+        return {'trend': 'LONG', 'label': '↑ ВГОРУ', 'strength': round(strength, 2)}
+    if net <= -0.25:
+        return {'trend': 'SHORT', 'label': '↓ ВНИЗ', 'strength': round(strength, 2)}
+    out['strength'] = round(strength, 2)
     return out
 
 

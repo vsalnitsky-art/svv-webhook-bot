@@ -2686,6 +2686,8 @@ def register_api_routes(app):
                 ag.set_enabled(bool(body['enabled']))
             if 'close_on_wait' in body:
                 ag.set_close_on_wait(bool(body['close_on_wait']))
+            if 'trend_alert' in body:
+                ag.set_trend_alert(bool(body['trend_alert']))
             if 'wait_hysteresis' in body:
                 ag.set_wait_hysteresis(body['wait_hysteresis'])
             if 'symbol' in body and body['symbol']:
@@ -5337,7 +5339,7 @@ def compute_bias(db, symbol, wl=None):
         rev_side = verdict if verdict in ('LONG', 'SHORT') else mp_side
         # Router prefers Binance (deeper data) but falls back to Bybit when
         # Binance is geo-blocked; each result is tagged with its source.
-        k4h, src_k = xr.get_klines(symbol, interval="240", limit=120)
+        k4h, src_k = xr.get_klines(symbol, interval="240", limit=200)
         if k4h and len(k4h) >= 30:
             fr, src_f = xr.get_funding_rate(symbol)
             oi_hist, src_oi = xr.get_open_interest(symbol, interval="4h", limit=12)

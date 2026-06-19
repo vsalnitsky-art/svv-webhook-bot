@@ -1105,6 +1105,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-rev-level.dir-down { color:#f87171; background:rgba(248,113,113,0.12); }
     .sm-rev-level.dir-none { color:#8b93a7; background:rgba(139,147,167,0.12); }
     .sm-rev-src { font-size:0.66rem; color:#94a3b8; margin-top:6px; }
+    .sm-rev-alert-row { display:flex; align-items:center; justify-content:space-between;
+        gap:10px; margin-top:10px; padding-top:9px; cursor:pointer;
+        border-top:1px solid rgba(255,255,255,0.06); font-size:0.7rem; color:#cbd5e1; }
+    .sm-rev-alert-row input { cursor:pointer; width:16px; height:16px; }
     .sm-rev-trend { font-size:0.78rem; font-weight:700; color:#e2e8f0; margin:2px 0 6px;
         padding:6px 10px; border-radius:6px; background:rgba(255,255,255,0.04); }
     .sm-rev-direction { font-size:0.72rem; color:#cbd5e1; margin:2px 0 10px;
@@ -1250,6 +1254,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             <div class="sm-move-notes" id="sm-rev-notes"></div>
             <div class="sm-rev-src" id="sm-rev-src"></div>
+            <label class="sm-rev-alert-row" title="Надсилати сповіщення в Telegram, коли 4H тренд змінює напрямок (LONG↔SHORT). За замовчуванням вимкнено.">
+                <span>🔔 Telegram-сповіщення про зміну 4H тренду</span>
+                <input type="checkbox" id="sm-rev-trend-alert" onchange="toggleTrendAlert(this.checked)">
+            </label>
         </div>
         </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
@@ -6298,6 +6306,25 @@ async function clearTradeArchive() {
     }
 }
 
+async function toggleTrendAlert(on) {
+    try {
+        await fetch('/api/sm/auto-gate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({trend_alert: on})
+        });
+    } catch (e) { /* non-fatal */ }
+}
+
+async function loadTrendAlertState() {
+    const cb = document.getElementById('sm-rev-trend-alert');
+    if (!cb) return;
+    try {
+        const d = await (await fetch('/api/sm/auto-gate')).json();
+        if (d.ok && typeof d.trend_alert === 'boolean') cb.checked = d.trend_alert;
+    } catch (e) { /* ignore */ }
+}
+
 async function loadDataSource() {
     const wrap = document.getElementById('sm-datasource');
     const val = document.getElementById('sm-datasource-val');
@@ -6839,6 +6866,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }).catch(() => {});
     const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); };
     refreshAll();
+    loadTrendAlertState();
     setInterval(refreshAll, 60000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
     // a scan we want fast updates so user sees rows appear progressively.
