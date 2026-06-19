@@ -1101,9 +1101,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         margin-bottom:8px; }
     .sm-rev-title { font-size:0.78rem; font-weight:700; color:#cbd5e1; }
     .sm-rev-level { font-size:0.72rem; font-weight:700; padding:2px 9px; border-radius:5px; }
-    .sm-rev-level.low { color:#4ade80; background:rgba(34,197,94,0.12); }
-    .sm-rev-level.building { color:#fbbf24; background:rgba(251,191,36,0.12); }
-    .sm-rev-level.high { color:#f87171; background:rgba(248,113,113,0.12); }
+    .sm-rev-level.dir-up { color:#4ade80; background:rgba(34,197,94,0.12); }
+    .sm-rev-level.dir-down { color:#f87171; background:rgba(248,113,113,0.12); }
+    .sm-rev-level.dir-none { color:#8b93a7; background:rgba(139,147,167,0.12); }
     .sm-rev-src { font-size:0.66rem; color:#94a3b8; margin-top:6px; }
     .sm-rev-trend { font-size:0.78rem; font-weight:700; color:#e2e8f0; margin:2px 0 6px;
         padding:6px 10px; border-radius:6px; background:rgba(255,255,255,0.04); }
@@ -5954,15 +5954,25 @@ function renderReversal(rev) {
     }
     sec.style.display = '';
     const lvl = document.getElementById('sm-rev-level');
+    // Color scheme follows DIRECTION of the expected break:
+    //   reversal/exit toward LONG (up) → green family
+    //   toward SHORT (down)            → red family
+    // The level WORD still conveys strength (НИЗЬКА/НАРОСТАЄ/ВИСОКА).
+    const to = rev.reversal_to;
+    const dirClass = to === 'LONG' ? 'dir-up' : to === 'SHORT' ? 'dir-down' : 'dir-none';
     const lmap = {
-        NONE: ['low', '⚪ ТРЕНДУ НЕМАЄ'],
-        LOW: ['low', '🟢 НИЗЬКА'],
-        BUILDING: ['building', '🟡 НАРОСТАЄ'],
-        HIGH: ['high', '🔴 ВИСОКА'],
+        NONE: '⚪ ТРЕНДУ НЕМАЄ',
+        LOW: 'НИЗЬКА',
+        BUILDING: 'НАРОСТАЄ',
+        HIGH: 'ВИСОКА',
     };
-    const li = lmap[rev.level] || ['building', rev.level || '—'];
-    lvl.className = 'sm-rev-level ' + li[0];
-    lvl.textContent = li[1];
+    let word = lmap[rev.level] || rev.level || '—';
+    // Prefix an arrow matching the direction (except the no-trend case)
+    if (rev.level !== 'NONE' && to) {
+        word = (to === 'LONG' ? '↑ ' : '↓ ') + word;
+    }
+    lvl.className = 'sm-rev-level ' + dirClass;
+    lvl.textContent = word;
 
 
     // 4H trend line — WHERE the 4H trend is right now (from structure).
@@ -5995,7 +6005,10 @@ function renderReversal(rev) {
     const bv = document.getElementById('sm-rev-bar-val');
     const idx = rev.index || 0;
     bf.style.width = idx + '%';
-    bf.style.background = idx >= 60 ? '#f87171' : idx >= 35 ? '#fbbf24' : '#4ade80';
+    // Bar fill colored by DIRECTION of the break (green=up/LONG, red=down/
+    // SHORT, grey=undefined); the width already conveys strength.
+    bf.style.background = to === 'LONG' ? '#4ade80'
+                        : to === 'SHORT' ? '#f87171' : '#8b93a7';
     bv.textContent = idx + '%';
     // Bar label reflects which way the % points (e.g. SHORT trend → % to LONG)
     const barLbl = document.getElementById('sm-rev-bar-label');

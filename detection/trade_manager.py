@@ -796,6 +796,19 @@ class TradeManager:
         if current_price is None:
             return
         
+        # Peak PnL high-water mark for the shadow position (mirrors the real
+        # path). Without this, paper trades never accumulated a peak and the
+        # close detail could show a peak below the realised PnL.
+        entry = pos['entry_price']
+        if pos['side'] == 'LONG':
+            cur_pnl = (current_price - entry) / entry * 100
+        else:
+            cur_pnl = (entry - current_price) / entry * 100
+        with self._lock:
+            sst = self._shadow_pos_state.get(symbol)
+            if sst is not None and cur_pnl > sst.get('peak_pnl_pct', 0):
+                sst['peak_pnl_pct'] = cur_pnl
+        
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)
@@ -2271,10 +2284,16 @@ class TradeManager:
             else:
                 parts.append(f'тривалість {secs / 86400:.1f}дн')
 
-        # 3. Peak / MFE — best unrealised PnL the trade reached
+        # 3. Peak / MFE — best unrealised PnL the trade reached.
+        # The evaluator's peak_pnl_pct only updates during evaluate cycles, so
+        # for a fast close (e.g. WAIT-gate) it can lag behind the actual exit
+        # PnL — which is impossible (peak must be >= final, since the final
+        # level WAS reached). Clamp to at least the final pnl_pct so the shown
+        # peak never contradicts the realised result.
         state = (self._shadow_pos_state if is_shadow else self._pos_state).get(symbol, {})
         peak = state.get('peak_pnl_pct')
-        if peak is not None and peak > 0:
+        peak = max(peak if peak is not None else 0.0, pnl_pct)
+        if peak > 0:
             # How much of the peak we gave back by exit
             give_back = peak - pnl_pct
             if give_back > 0.1:
