@@ -2577,6 +2577,34 @@ def register_api_routes(app):
     def tickr_page():
         return render_template('tickr.html')
     
+    @app.route('/api/trade-archive/stats')
+    def api_trade_archive_stats():
+        """Counts of archived trades (permanent backtest dataset)."""
+        try:
+            db = get_db()
+            return jsonify({
+                'ok': True,
+                'total': db.count_trade_archive(),
+                'real': db.count_trade_archive(is_paper=False),
+                'paper': db.count_trade_archive(is_paper=True),
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/trade-archive/clear', methods=['POST'])
+    def api_trade_archive_clear():
+        """Clear the trade archive. DESTRUCTIVE — requires explicit scope.
+        Body: {"scope": "all"|"real"|"paper"}."""
+        try:
+            data = request.get_json(silent=True) or {}
+            scope = data.get('scope', 'all')
+            is_paper = None if scope == 'all' else (scope == 'paper')
+            db = get_db()
+            removed = db.clear_trade_archive(is_paper=is_paper)
+            return jsonify({'ok': True, 'removed': removed, 'scope': scope})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/sm/data-source')
     def api_sm_data_source():
         """Report active analytics source + live API health of BOTH

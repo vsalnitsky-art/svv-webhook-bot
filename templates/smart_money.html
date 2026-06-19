@@ -2081,6 +2081,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
     
     <!-- ====== TEST MODE (Paper Trading) — separate panel ====== -->
+    <div class="tm-panel" id="trade-archive-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Постійний архів усіх закритих угод зі знімком входу. Накопичується для майбутнього навчання бота відбору угод. Ніколи не очищається автоматично.">🗄️ Архів угод (для навчання)</span>
+                <span id="ta-total" style="font-size:0.8rem;font-family:monospace;color:#4ade80;font-weight:700">—</span>
+                <span id="ta-breakdown" style="font-size:0.7rem;color:#8b93a7"></span>
+            </div>
+            <button onclick="clearTradeArchive()" style="font-size:0.72rem;padding:5px 12px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer">🗑️ Очистити архів</button>
+        </div>
+        <div id="ta-hint" style="font-size:0.66rem;color:#6b7280;margin-top:6px"></div>
+    </div>
+
     <div class="tm-panel" id="testmode-panel" style="margin-top:14px">
         <div class="tm-header" id="testmode-header">
             <h2>🧪 Test Mode <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(paper trading — no real orders)</span></h2>
@@ -6207,6 +6219,50 @@ async function loadSentimentFor(exchange, ids) {
     }
 }
 
+async function loadTradeArchive() {
+    const totalEl = document.getElementById('ta-total');
+    const brEl = document.getElementById('ta-breakdown');
+    const hintEl = document.getElementById('ta-hint');
+    if (!totalEl) return;
+    try {
+        const d = await (await fetch('/api/trade-archive/stats')).json();
+        if (!d.ok) { totalEl.textContent = '—'; return; }
+        totalEl.textContent = d.total + ' угод';
+        if (brEl) brEl.textContent = `(реальних: ${d.real} · paper: ${d.paper})`;
+        // Honest readiness hint toward the training milestone (~60-100)
+        if (hintEl) {
+            if (d.total < 60) {
+                hintEl.textContent = `Для навчання бота треба ≥60 угод із різними результатами — зібрано ${d.total}.`;
+                totalEl.style.color = '#fbbf24';
+            } else {
+                hintEl.textContent = `Достатньо даних для backtest. Див. TRADE_QUALITY_GATE_PLAN.md.`;
+                totalEl.style.color = '#4ade80';
+            }
+        }
+    } catch {
+        totalEl.textContent = '—';
+    }
+}
+
+async function clearTradeArchive() {
+    if (!confirm('Очистити ВЕСЬ архів угод?\n\nЦе постійний датасет для майбутнього навчання бота. Після очищення дані НЕ відновити, і навчання доведеться починати зі збору заново.\n\nПродовжити?')) return;
+    try {
+        const r = await (await fetch('/api/trade-archive/clear', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({scope: 'all'})
+        })).json();
+        if (r.ok) {
+            alert(`Архів очищено: видалено ${r.removed} угод.`);
+            loadTradeArchive();
+        } else {
+            alert('Помилка: ' + (r.reason || 'невідома'));
+        }
+    } catch (e) {
+        alert('Помилка запиту: ' + e);
+    }
+}
+
 async function loadDataSource() {
     const wrap = document.getElementById('sm-datasource');
     const val = document.getElementById('sm-datasource-val');
@@ -6746,7 +6802,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadBias();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); };
+    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); };
     refreshAll();
     setInterval(refreshAll, 60000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during

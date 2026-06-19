@@ -172,6 +172,29 @@ class DBOperations:
         finally:
             session.close()
 
+    def clear_trade_archive(self, is_paper: Optional[bool] = None) -> int:
+        """Delete archived trades and return how many were removed.
+
+        DESTRUCTIVE — this is the backtest dataset. Only called from an
+        explicit, confirmed UI action. `is_paper=None` clears everything;
+        pass True/False to clear only paper or only real trades.
+        """
+        session = get_session()
+        try:
+            q = session.query(TradeArchive)
+            if is_paper is not None:
+                q = q.filter(TradeArchive.is_paper == is_paper)
+            n = q.count()
+            q.delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[Archive] clear error: {e}")
+            return 0
+        finally:
+            session.close()
+
     def get_all_settings(self) -> Dict:
         """Get all settings"""
         session = get_session()
