@@ -38,6 +38,7 @@ _DB_SYMBOL = 'sm_bias_symbol'
 _DB_WL_CACHE = 'sm_wl_consensus_cache'
 _DB_CLOSE_ON_WAIT = 'sm_auto_gate_close_on_wait'
 _DB_TREND_ALERT = 'sm_4h_trend_alert_enabled'
+_DB_TREND_ALERT_1H = 'sm_1h_trend_alert_enabled'
 _DB_WAIT_HYSTERESIS = 'sm_auto_gate_wait_hysteresis'
 
 
@@ -54,7 +55,7 @@ class AutoGateDaemon:
         # a brief LONG→WAIT→LONG flicker doesn't liquidate the whole book.
         self._wait_streak = 0
         self._wait_closed_this_streak = False
-        # Last known 4H trend per symbol, for change detection → Telegram.
+        # Last known trend per (symbol, tf), for change detection → Telegram.
         self._last_trend = {}
 
     def is_trend_alert(self) -> bool:
@@ -64,7 +65,16 @@ class AutoGateDaemon:
     def set_trend_alert(self, on: bool):
         self._db.set_setting(_DB_TREND_ALERT, 'true' if on else 'false')
         if on:
-            self.start()  # ensure the loop runs even if auto-gate is off
+            self.start()
+
+    def is_trend_alert_1h(self) -> bool:
+        """Telegram alert on 1H trend change."""
+        return str(self._db.get_setting(_DB_TREND_ALERT_1H, 'false')).lower() in ('true', '1')
+
+    def set_trend_alert_1h(self, on: bool):
+        self._db.set_setting(_DB_TREND_ALERT_1H, 'true' if on else 'false')
+        if on:
+            self.start()
 
     # --- persisted state ---
     def is_enabled(self) -> bool:
@@ -153,32 +163,40 @@ class AutoGateDaemon:
         # Trend-change alert runs independently of the auto-gate enable flag,
         # so it must be checked even when auto-gate itself is off.
         gate_on = self.is_enabled()
-        alert_on = self.is_trend_alert()
-        if not gate_on and not alert_on:
+        alert_4h = self.is_trend_alert()
+        alert_1h = self.is_trend_alert_1h()
+        if not gate_on and not alert_4h and not alert_1h:
             return
         symbol = self.get_symbol()
         wl = self._wl_consensus()
         verdict_data = self._compute_bias(symbol, wl)
 
-        # --- 4H trend-change Telegram alert (independent of gate) ---
-        if alert_on:
+        # --- Trend-change Telegram alerts (independent of gate) ---
+        if alert_4h:
             try:
-                self._check_trend_change(symbol, verdict_data)
+                self._check_trend_change(symbol, verdict_data, 'reversal', '4H')
             except Exception as e:
-                print(f"[AutoGate] trend-alert error: {e}")
+                print(f"[AutoGate] 4H trend-alert error: {e}")
+        if alert_1h:
+            try:
+                self._check_trend_change(symbol, verdict_data, 'reversal_1h', '1H')
+            except Exception as e:
+                print(f"[AutoGate] 1H trend-alert error: {e}")
 
         if not gate_on:
             return
         self._gate_logic(symbol, verdict_data)
 
-    def _check_trend_change(self, symbol: str, verdict_data: dict):
-        """Detect a 4H trend flip vs the last seen value and notify Telegram."""
-        rev = (verdict_data or {}).get('reversal') or {}
-        trend = rev.get('trend_4h')
+    def _check_trend_change(self, symbol: str, verdict_data: dict,
+                            rev_key: str = 'reversal', tf: str = '4H'):
+        """Detect a trend flip on the given TF vs last seen and notify Telegram."""
+        rev = (verdict_data or {}).get(rev_key) or {}
+        trend = rev.get('trend_4h')   # field name is generic in the module
         if trend not in ('LONG', 'SHORT'):
             return  # ignore NEUTRAL transitions (too noisy)
-        prev = self._last_trend.get(symbol)
-        self._last_trend[symbol] = trend
+        state_key = f'{symbol}:{tf}'
+        prev = self._last_trend.get(state_key)
+        self._last_trend[state_key] = trend
         if prev is None or prev == trend:
             return  # first observation or no change
         # Real flip LONG↔SHORT
@@ -191,10 +209,10 @@ class AutoGateDaemon:
                 price = verdict_data.get('price')
                 px = f"\nЦіна: {price}" if price else ''
                 tg.send_message(
-                    f"🔄 <b>Зміна 4H тренду — {symbol}</b>\n"
+                    f"🔄 <b>Зміна {tf} тренду — {symbol}</b>\n"
                     f"Було: {was} → Стало: {arrow}{px}\n"
-                    f"<i>Smart Money · Схильність до розвороту</i>")
-                print(f"[AutoGate] trend change {symbol}: {prev}→{trend}, alerted")
+                    f"<i>Smart Money · Схильність до розвороту ({tf})</i>")
+                print(f"[AutoGate] {tf} trend change {symbol}: {prev}→{trend}, alerted")
         except Exception as e:
             print(f"[AutoGate] trend telegram error: {e}")
 
@@ -246,6 +264,7 @@ class AutoGateDaemon:
         return {'enabled': self.is_enabled(), 'symbol': self.get_symbol(),
                 'close_on_wait': self.is_close_on_wait(),
                 'trend_alert': self.is_trend_alert(),
+                'trend_alert_1h': self.is_trend_alert_1h(),
                 'wait_hysteresis': self.wait_hysteresis(),
                 'wait_streak': self._wait_streak,
                 'running': bool(self._thread and self._thread.is_alive()),

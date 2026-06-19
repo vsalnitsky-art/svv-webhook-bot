@@ -302,7 +302,7 @@ def analyze_reversal_pressure(
         stretch_atr = signed / atr
         comp['stretch'] = max(0.0, min(1.0, stretch_atr / 4.0))
         if stretch_atr > 3:
-            notes.append(f'ціна розтягнута на {stretch_atr:.1f} ATR (4H)')
+            notes.append(f'ціна розтягнута на {stretch_atr:.1f} ATR ({tf_label})')
 
     # 4. Funding extreme (crowded in the move's direction)
     if funding_rate is not None:

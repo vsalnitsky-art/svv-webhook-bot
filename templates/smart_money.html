@@ -1255,15 +1255,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-move-notes" id="sm-rev-notes"></div>
             <div class="sm-rev-src" id="sm-rev-src"></div>
             <label class="sm-rev-alert-row" title="Надсилати сповіщення в Telegram, коли 4H тренд змінює напрямок (LONG↔SHORT). За замовчуванням вимкнено.">
-                <span>🔔 Telegram-сповіщення про зміну 4H тренду</span>
-                <input type="checkbox" id="sm-rev-trend-alert" onchange="toggleTrendAlert(this.checked)">
+                <span>🔔 Telegram при зміні 4H тренду</span>
+                <input type="checkbox" id="sm-rev-trend-alert" onchange="toggleTrendAlert('4h', this.checked)">
             </label>
         </div>
-        </div>
-        <div class="sm-analysis-row" id="sm-rev1h-row" style="display:none">
-        <div class="sm-move-panel sm-rev-panel" id="sm-rev1h-section">
+        <div class="sm-move-panel sm-rev-panel" id="sm-rev1h-section" style="display:none">
             <div class="sm-rev-header" title="Те саме, що 4H, але для 1H таймфрейму — швидший горизонт. Індекс схильності до розвороту: зважена сума умов, що передують розвороту. НЕ передбачення майбутнього.">
-                <span class="sm-rev-title">🔄 Схильність до розвороту (1H)</span>
+                <span class="sm-rev-title">🔄 Розворот (1H)</span>
                 <span style="display:flex;align-items:center;gap:6px">
                     <span class="sm-rev-source-badge" id="sm-rev1h-source-badge" style="display:none"></span>
                     <span class="sm-rev-level" id="sm-rev1h-level">—</span>
@@ -1272,12 +1270,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-rev-trend" id="sm-rev1h-trend" style="display:none"></div>
             <div class="sm-rev-direction" id="sm-rev1h-direction" style="display:none"></div>
             <div class="sm-move-bar-wrap">
-                <span class="sm-move-bar-label" id="sm-rev1h-bar-label">% до розвороту</span>
+                <span class="sm-move-bar-label" id="sm-rev1h-bar-label">готовність розвороту</span>
                 <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev1h-bar-fill"></div></div>
                 <span class="sm-move-bar-val" id="sm-rev1h-bar-val">—</span>
             </div>
             <div class="sm-move-notes" id="sm-rev1h-notes"></div>
             <div class="sm-rev-src" id="sm-rev1h-src"></div>
+            <label class="sm-rev-alert-row" title="Надсилати сповіщення в Telegram, коли 1H тренд змінює напрямок (LONG↔SHORT). За замовчуванням вимкнено.">
+                <span>🔔 Telegram при зміні 1H тренду</span>
+                <input type="checkbox" id="sm-rev1h-trend-alert" onchange="toggleTrendAlert('1h', this.checked)">
+            </label>
         </div>
         </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
@@ -6027,9 +6029,9 @@ function renderReversal(rev, opts) {
     if (bv) bv.textContent = idx + '%';
     const barLbl = document.getElementById(id('barLabel', 'sm-rev-bar-label'));
     if (barLbl) {
-        if (to === 'LONG') barLbl.textContent = '% до LONG ↑';
-        else if (to === 'SHORT') barLbl.textContent = '% до SHORT ↓';
-        else barLbl.textContent = '% до розвороту';
+        if (to === 'LONG') barLbl.textContent = 'готовність розвороту ↑ LONG';
+        else if (to === 'SHORT') barLbl.textContent = 'готовність розвороту ↓ SHORT';
+        else barLbl.textContent = 'готовність розвороту';
     }
     const notesEl = document.getElementById(id('notes', 'sm-rev-notes'));
     if (notesEl) notesEl.innerHTML = (rev.notes || [])
@@ -6149,7 +6151,7 @@ async function loadBias() {
         renderReversal(d.reversal);  // 4H (default ids)
         renderReversal(d.reversal_1h, {
             tf: '1H',
-            sec: 'sm-rev1h-section', row: 'sm-rev1h-row',
+            sec: 'sm-rev1h-section',
             lvl: 'sm-rev1h-level', trend: 'sm-rev1h-trend',
             dir: 'sm-rev1h-direction', barFill: 'sm-rev1h-bar-fill',
             barVal: 'sm-rev1h-bar-val', barLabel: 'sm-rev1h-bar-label',
@@ -6319,22 +6321,26 @@ async function clearTradeArchive() {
     }
 }
 
-async function toggleTrendAlert(on) {
+async function toggleTrendAlert(tf, on) {
+    const key = tf === '1h' ? 'trend_alert_1h' : 'trend_alert';
     try {
         await fetch('/api/sm/auto-gate', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({trend_alert: on})
+            body: JSON.stringify({[key]: on})
         });
     } catch (e) { /* non-fatal */ }
 }
 
 async function loadTrendAlertState() {
-    const cb = document.getElementById('sm-rev-trend-alert');
-    if (!cb) return;
+    const cb4 = document.getElementById('sm-rev-trend-alert');
+    const cb1 = document.getElementById('sm-rev1h-trend-alert');
     try {
         const d = await (await fetch('/api/sm/auto-gate')).json();
-        if (d.ok && typeof d.trend_alert === 'boolean') cb.checked = d.trend_alert;
+        if (d.ok) {
+            if (cb4 && typeof d.trend_alert === 'boolean') cb4.checked = d.trend_alert;
+            if (cb1 && typeof d.trend_alert_1h === 'boolean') cb1.checked = d.trend_alert_1h;
+        }
     } catch (e) { /* ignore */ }
 }
 

@@ -2688,6 +2688,8 @@ def register_api_routes(app):
                 ag.set_close_on_wait(bool(body['close_on_wait']))
             if 'trend_alert' in body:
                 ag.set_trend_alert(bool(body['trend_alert']))
+            if 'trend_alert_1h' in body:
+                ag.set_trend_alert_1h(bool(body['trend_alert_1h']))
             if 'wait_hysteresis' in body:
                 ag.set_wait_hysteresis(body['wait_hysteresis'])
             if 'symbol' in body and body['symbol']:
