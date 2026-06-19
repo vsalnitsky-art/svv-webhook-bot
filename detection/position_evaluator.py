@@ -57,7 +57,12 @@ class EvaluationConfig:
     """
     # Macro alignment (highest impact)
     weight_htf_alignment: float = 25.0       # HTF Bias direction
-    weight_forecast_alignment: float = 30.0  # Forecast 1H side · confidence
+    # Forecast is split into two independent levers: the 1H and the 4H
+    # forecasts each contribute on their own. 4H (higher TF) carries a bit
+    # more weight. When the two agree, a correlation discount is applied
+    # (see evaluate_entry) so we don't double-count one macro view.
+    weight_forecast_1h: float = 14.0         # Forecast 1H side · confidence
+    weight_forecast_4h: float = 18.0         # Forecast 4H side · confidence
     
     # Microstructure
     weight_ltf_choch: float = 25.0           # opposite CHoCH after entry
@@ -174,29 +179,28 @@ def _score_htf_alignment(side: str, htf_bias: str, weight: float) -> Tuple[float
     return score, label
 
 
-def _score_forecast_alignment(side: str, forecast: Optional[Dict], weight: float) -> Tuple[float, str]:
-    """Forecast 1H. Score combines side AND confidence:
+def _score_forecast_tf(side: str, forecast: Optional[Dict], weight: float,
+                       side_key: str, conf_key: str, tf_label: str) -> Tuple[float, str]:
+    """Score ONE forecast timeframe (1H or 4H) independently.
         sign × (confidence/100) × weight
-    
-    Forecast confidence ranges 50/60/75/90 for non-trivial signals,
-    or 0 for "no signal". A confidence-90 LONG forecast on a LONG
-    position gives +0.9·weight. Opposite SHORT forecast gives -0.9·weight.
+    side_key/conf_key select which TF's fields to read from the forecast
+    component dict (e.g. 'f1_side'/'f1_conf' or 'f4_side'/'f4_conf').
     """
     if not forecast:
-        return 0.0, 'Forecast: —'
-    
-    side_n = forecast.get('side', 0)  # +1 / 0 / -1
-    conf = forecast.get('confidence', 0) or 0
+        return 0.0, f'Forecast {tf_label}: —'
+
+    side_n = forecast.get(side_key, 0)        # +1 / 0 / -1
+    conf = forecast.get(conf_key, 0) or 0
     if conf <= 0 or side_n == 0:
-        return 0.0, 'Forecast: neutral'
-    
+        return 0.0, f'Forecast {tf_label}: нейтральний'
+
     sign = _signed_for_side(side, side_n)
     if sign == 0:
-        return 0.0, 'Forecast: unclear'
-    
+        return 0.0, f'Forecast {tf_label}: неясний'
+
     score = weight * sign * (conf / 100.0)
     fc_side = 'LONG' if side_n > 0 else 'SHORT'
-    label = f"Forecast {fc_side} {conf}%: {'+' if score > 0 else ''}{score:.0f}"
+    label = f"Forecast {tf_label} {fc_side} {conf}%: {'+' if score > 0 else ''}{score:.0f}"
     return score, label
 
 
@@ -467,7 +471,10 @@ def evaluate_position(
         })
     
     add('htf', _score_htf_alignment(side, htf_bias, cfg.weight_htf_alignment))
-    add('forecast', _score_forecast_alignment(side, forecast, cfg.weight_forecast_alignment))
+    add('forecast_1h', _score_forecast_tf(side, forecast, cfg.weight_forecast_1h,
+                                          'f1_side', 'f1_conf', '1H'))
+    add('forecast_4h', _score_forecast_tf(side, forecast, cfg.weight_forecast_4h,
+                                          'f4_side', 'f4_conf', '4H'))
     add('ltf_choch', _score_ltf_choch(side, recent_choch, cfg.weight_ltf_choch))
     add('ltf_bos', _score_ltf_bos(side, bos_count_with, bos_count_against, cfg.weight_ltf_bos))
     add('ctr_align', _score_ctr_alignment(side, ctr, cfg.weight_ctr_alignment))
@@ -543,7 +550,8 @@ class EntryEvaluationConfig:
     """
     # Macro confluence
     weight_htf_alignment: float = 25.0       # HTF Bias direction
-    weight_forecast_alignment: float = 25.0  # Forecast 1H side · confidence
+    weight_forecast_1h: float = 12.0         # Forecast 1H side · confidence
+    weight_forecast_4h: float = 15.0         # Forecast 4H side · confidence
     weight_ctr_alignment: float = 15.0       # CTR signal direction
     weight_ctr_zone: float = 10.0            # Overbought (LONG bad) etc.
     
@@ -801,8 +809,10 @@ def evaluate_entry(
     
     # Macro factors — reuse exit-side scorers (they're side-aware already)
     add('htf', _score_htf_alignment(side, htf_bias, cfg.weight_htf_alignment))
-    add('forecast', _score_forecast_alignment(side, forecast,
-                                                cfg.weight_forecast_alignment))
+    add('forecast_1h', _score_forecast_tf(side, forecast, cfg.weight_forecast_1h,
+                                          'f1_side', 'f1_conf', '1H'))
+    add('forecast_4h', _score_forecast_tf(side, forecast, cfg.weight_forecast_4h,
+                                          'f4_side', 'f4_conf', '4H'))
     add('ctr_align', _score_ctr_alignment(side, ctr, cfg.weight_ctr_alignment))
     add('ctr_zone', _score_ctr_zone(side, ctr, cfg.weight_ctr_zone))
     
@@ -820,27 +830,32 @@ def evaluate_entry(
     
     # ---- Professional adjustments (applied AFTER raw scoring) ----
     #
-    # (A) HTF / Forecast correlation discount.
-    #     HTF bias and the 1H Forecast both read the higher-timeframe trend,
-    #     so when they agree they are NOT two independent confirmations —
-    #     counting both at full weight double-counts one macro view and
-    #     inflates conviction. When they point the SAME way we discount the
-    #     SMALLER of the two contributions by CORRELATION_DISCOUNT. When they
-    #     DISAGREE we leave them — genuine disagreement is real information.
+    # (A) Macro correlation discount across HTF + Forecast-1H + Forecast-4H.
+    #     These three all read the higher-timeframe trend, so when several
+    #     agree they are NOT independent confirmations — counting each at
+    #     full weight double-counts one macro view and inflates conviction.
+    #     Rule: among the agreeing macro signals on the WINNING side, keep
+    #     the single strongest at full weight and discount each of the others
+    #     by CORRELATION_DISCOUNT. Disagreeing signals are left untouched —
+    #     genuine disagreement is real information.
     def _find(name):
         for c in components:
             if c['name'] == name:
                 return c
         return None
-    htf_c = _find('htf')
-    fc_c = _find('forecast')
-    if htf_c and fc_c and htf_c['value'] != 0 and fc_c['value'] != 0:
-        same_dir = (htf_c['value'] > 0) == (fc_c['value'] > 0)
-        if same_dir:
-            smaller = htf_c if abs(htf_c['value']) <= abs(fc_c['value']) else fc_c
-            discount = round(smaller['value'] * CORRELATION_DISCOUNT, 2)
-            smaller['value'] = round(smaller['value'] - discount, 2)
-            smaller['label'] = smaller.get('label', '') + ' [corr↓]'
+    macro = [c for c in (_find('htf'), _find('forecast_1h'), _find('forecast_4h'))
+             if c and c['value'] != 0]
+    if len(macro) >= 2:
+        pos = [c for c in macro if c['value'] > 0]
+        neg = [c for c in macro if c['value'] < 0]
+        for group in (pos, neg):
+            if len(group) >= 2:
+                # keep strongest, discount the rest
+                group_sorted = sorted(group, key=lambda c: abs(c['value']), reverse=True)
+                for c in group_sorted[1:]:
+                    discount = round(c['value'] * CORRELATION_DISCOUNT, 2)
+                    c['value'] = round(c['value'] - discount, 2)
+                    c['label'] = c.get('label', '') + ' [corr↓]'
     
     raw_total = sum(c['value'] for c in components)
     score = round(_clamp(raw_total, -100.0, 100.0), 1)

@@ -184,7 +184,8 @@ DEFAULT_SETTINGS = {
     # number representing the maximum points that component can contribute.
     'health_score_weights': {
         'weight_htf_alignment': 25.0,
-        'weight_forecast_alignment': 30.0,
+        'weight_forecast_1h': 14.0,
+        'weight_forecast_4h': 18.0,
         'weight_ltf_choch': 25.0,
         'weight_ltf_bos': 12.0,
         'weight_ctr_alignment': 15.0,
@@ -207,7 +208,8 @@ DEFAULT_SETTINGS = {
     'entry_score_preset': 'balanced',
     'entry_score_weights': {
         'weight_htf_alignment': 25.0,
-        'weight_forecast_alignment': 25.0,
+        'weight_forecast_1h': 12.0,
+        'weight_forecast_4h': 15.0,
         'weight_ctr_alignment': 15.0,
         'weight_ctr_zone': 10.0,
         'weight_choch_freshness': 12.0,
@@ -1147,6 +1149,30 @@ class TradeManager:
         except Exception:
             return None
     
+    def _get_forecast_both(self, symbol: str) -> Optional[Dict]:
+        """Read both 1H and 4H forecasts, returned in the dual-TF shape
+        {f1_side, f1_conf, f4_side, f4_conf} consumed by the evaluator's
+        two independent forecast levers. Also carries legacy 'side'/'confidence'
+        (= 1H) so any older reader keeps working."""
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            if not fe:
+                return None
+            cached = fe.get(symbol)
+            if not cached:
+                return None
+            f1 = cached.get('forecast_1h') or {}
+            f4 = cached.get('forecast_4h') or {}
+            return {
+                'f1_side': f1.get('side', 0), 'f1_conf': f1.get('confidence', 0),
+                'f4_side': f4.get('side', 0), 'f4_conf': f4.get('confidence', 0),
+                # legacy 1H fields for backward compat
+                'side': f1.get('side', 0), 'confidence': f1.get('confidence', 0),
+            }
+        except Exception:
+            return None
+    
     def _get_ctr(self, symbol: str) -> Optional[Dict]:
         """Read the latest CTR (STC) for the symbol from forecast_engine cache."""
         try:
@@ -1297,7 +1323,7 @@ class TradeManager:
             pass
         
         # Forecast 1H + CTR (already cached by forecast_engine)
-        ctx['forecast'] = self._get_forecast_1h(symbol)
+        ctx['forecast'] = self._get_forecast_both(symbol)
         ctx['ctr'] = self._get_ctr(symbol)
         
         # Klines cache for ATR / volume / pivot extraction

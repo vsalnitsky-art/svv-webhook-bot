@@ -5028,14 +5028,18 @@ def compute_bias(db, symbol, wl=None):
             comp['forecast'] = {
                 'f1_side': s1, 'f1_conf': f1.get('confidence', 0),
                 'f4_side': s4, 'f4_conf': f4.get('confidence', 0)}
+            # Each timeframe gets its own reason line, coloured by ITS own
+            # direction — 1H and 4H are independent levers now.
+            def _fc_line(tf, sd, cf):
+                if not sd or not cf:
+                    return ('wait', f"Forecast {tf}: нейтральний", 'wait')
+                d = 'LONG' if sd > 0 else 'SHORT'
+                return ('ok', f"Forecast {tf}: {d} {cf}%",
+                        'long' if sd > 0 else 'short')
+            reasons.append(_fc_line('1H', s1, f1.get('confidence', 0)))
+            reasons.append(_fc_line('4H', s4, f4.get('confidence', 0)))
             if s1 and s1 == s4:
                 fc_side = 1 if s1 > 0 else -1
-                reasons.append(('ok', f"Forecast 1H+4H узгоджені "
-                                f"{'LONG' if fc_side > 0 else 'SHORT'}", 'long' if fc_side > 0 else 'short'))
-            elif s1 or s4:
-                reasons.append(('wait', "Forecast 1H/4H не узгоджені"))
-            else:
-                reasons.append(('wait', "Forecast нейтральний"))
         else:
             comp['forecast'] = None
             reasons.append(('wait', "Forecast немає даних"))
