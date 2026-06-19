@@ -1244,7 +1244,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-rev-trend" id="sm-rev-trend" style="display:none"></div>
             <div class="sm-rev-direction" id="sm-rev-direction" style="display:none"></div>
             <div class="sm-move-bar-wrap">
-                <span class="sm-move-bar-label">Тиск розвороту</span>
+                <span class="sm-move-bar-label" id="sm-rev-bar-label">% до розвороту</span>
                 <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev-bar-fill"></div></div>
                 <span class="sm-move-bar-val" id="sm-rev-bar-val">—</span>
             </div>
@@ -5955,6 +5955,7 @@ function renderReversal(rev) {
     sec.style.display = '';
     const lvl = document.getElementById('sm-rev-level');
     const lmap = {
+        NONE: ['low', '⚪ ТРЕНДУ НЕМАЄ'],
         LOW: ['low', '🟢 НИЗЬКА'],
         BUILDING: ['building', '🟡 НАРОСТАЄ'],
         HIGH: ['high', '🔴 ВИСОКА'],
@@ -5962,6 +5963,7 @@ function renderReversal(rev) {
     const li = lmap[rev.level] || ['building', rev.level || '—'];
     lvl.className = 'sm-rev-level ' + li[0];
     lvl.textContent = li[1];
+
 
     // 4H trend line — WHERE the 4H trend is right now (from structure).
     const trendEl = document.getElementById('sm-rev-trend');
@@ -5971,35 +5973,37 @@ function renderReversal(rev) {
             const lbl = rev.trend_4h_label || (t === 'LONG' ? '↑ ВГОРУ' : '↓ ВНИЗ');
             const col = t === 'LONG' ? '#4ade80' : '#f87171';
             trendEl.innerHTML = `4H тренд зараз: <span style="color:${col}">${lbl}</span>`;
-            trendEl.style.display = '';
         } else {
-            trendEl.innerHTML = `4H тренд зараз: <span style="color:#8b93a7">↔ ВБІК / невизначений</span>`;
-            trendEl.style.display = '';
+            trendEl.innerHTML = `4H тренд зараз: <span style="color:#8b93a7">↔ ВБІК (консолідація)</span>`;
         }
+        trendEl.style.display = '';
     }
 
-    // Direction line: how close the 4H trend is to BREAKING + which way.
+    // Main verdict — one coherent sentence (the headline takeaway).
     const dirEl = document.getElementById('sm-rev-direction');
     if (dirEl) {
-        const to = rev.reversal_to;
-        if (to) {
-            const arrow = to === 'LONG' ? '↑ ВГОРУ (в LONG)' : '↓ ВНИЗ (в SHORT)';
-            const col = to === 'LONG' ? '#4ade80' : '#f87171';
-            let reading;
-            if (rev.index >= 60) reading = `тренд близький до зламу — розворот ${arrow} ймовірний`;
-            else if (rev.index >= 35) reading = `злам визріває — можливий розворот ${arrow}`;
-            else reading = `тренд міцний — розворот ${arrow} ще далеко`;
-            dirEl.innerHTML = `Якщо зламається: <b style="color:${col}">${arrow}</b> · ${reading}`;
+        if (rev.verdict_text) {
+            dirEl.innerHTML = `<b>${rev.verdict_text}</b>`;
             dirEl.style.display = '';
         } else {
             dirEl.style.display = 'none';
         }
     }
+
+    // Pressure bar — always shown, as % toward the opposite side.
     const bf = document.getElementById('sm-rev-bar-fill');
     const bv = document.getElementById('sm-rev-bar-val');
-    bf.style.width = rev.index + '%';
-    bf.style.background = rev.index >= 60 ? '#f87171' : rev.index >= 35 ? '#fbbf24' : '#4ade80';
-    bv.textContent = rev.index;
+    const idx = rev.index || 0;
+    bf.style.width = idx + '%';
+    bf.style.background = idx >= 60 ? '#f87171' : idx >= 35 ? '#fbbf24' : '#4ade80';
+    bv.textContent = idx + '%';
+    // Bar label reflects which way the % points (e.g. SHORT trend → % to LONG)
+    const barLbl = document.getElementById('sm-rev-bar-label');
+    if (barLbl) {
+        if (rev.reversal_to === 'LONG') barLbl.textContent = '% до LONG ↑';
+        else if (rev.reversal_to === 'SHORT') barLbl.textContent = '% до SHORT ↓';
+        else barLbl.textContent = '% до розвороту';
+    }
     document.getElementById('sm-rev-notes').innerHTML = (rev.notes || [])
         .map(n => `<span class="sm-move-note">• ${n}</span>`).join('');
     const src = document.getElementById('sm-rev-src');

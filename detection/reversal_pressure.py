@@ -154,12 +154,46 @@ def analyze_reversal_pressure(
     out['trend_4h'] = trend_info['trend']
     out['trend_4h_label'] = trend_info['label']
 
+    # Guard: need enough data first.
+    if not klines_4h or len(klines_4h) < 30:
+        out['notes'].append('недостатньо 4H даних')
+        return out
+
+    # If the 4H trend is sideways/undefined there is no trend to "reverse",
+    # but the bar should still be meaningful: show pressure toward whichever
+    # range edge is nearer to breaking. We pick the side by where price sits
+    # in its recent range (upper half → pressure to break UP / LONG).
+    if use_actual_trend and trend_info['trend'] not in ('LONG', 'SHORT'):
+        try:
+            window = klines_4h[-60:] if len(klines_4h) >= 60 else klines_4h
+            hi = max(k['high'] for k in window)
+            lo = min(k['low'] for k in window)
+            px = klines_4h[-1]['close']
+            pos_pct = (px - lo) / (hi - lo) * 100 if hi > lo else 50
+        except Exception:
+            pos_pct = 50
+        # Nearer to top → likelier to break up (LONG); nearer bottom → SHORT.
+        break_to = 'LONG' if pos_pct >= 50 else 'SHORT'
+        # Pressure = how close to the edge (0 at mid-range, ~100 at the edge)
+        edge_idx = round(abs(pos_pct - 50) / 50 * 100, 1)
+        out['ok'] = True
+        out['index'] = edge_idx
+        out['level'] = 'NONE'
+        out['reversal_to'] = break_to
+        out['from_side'] = None
+        arrow = '↑ вгору (LONG)' if break_to == 'LONG' else '↓ вниз (SHORT)'
+        out['verdict_text'] = (f'4H у консолідації (тренду немає). Ціна в '
+                               f'{"верхній" if pos_pct >= 50 else "нижній"} частині діапазону — '
+                               f'ймовірніший вихід {arrow}.')
+        out['notes'] = [f'4H флет — ціна на {pos_pct:.0f}% діапазону']
+        return out
+
     if use_actual_trend and trend_info['trend'] in ('LONG', 'SHORT'):
         side = trend_info['trend']
     side = (side or '').upper()
     dir_sign = 1 if side == 'LONG' else -1 if side == 'SHORT' else 0
-    if dir_sign == 0 or not klines_4h or len(klines_4h) < 30:
-        out['notes'].append('недостатньо 4H даних або тренд невизначений')
+    if dir_sign == 0:
+        out['notes'].append('тренд невизначений')
         return out
 
     # The reversal is AGAINST the reference trend: an UP trend reverses DOWN
@@ -296,4 +330,19 @@ def analyze_reversal_pressure(
     out['notes'] = notes or ['сигналів розвороту мало']
     out['sources_used'] = used
     out['ok'] = True
+
+    # Single coherent verdict sentence — trend + how close to breaking + which
+    # way it would flip. No contradictions: this only runs when a real trend
+    # exists.
+    trend_word = 'висхідний (LONG)' if side == 'LONG' else 'низхідний (SHORT)'
+    flip_word = '↑ вгору (LONG)' if reversal_to == 'LONG' else '↓ вниз (SHORT)'
+    if index >= 60:
+        out['verdict_text'] = (f'4H тренд {trend_word} ВИСНАЖУЄТЬСЯ — '
+                               f'високий тиск зламу, розворот {flip_word} ймовірний.')
+    elif index >= 35:
+        out['verdict_text'] = (f'4H тренд {trend_word} ще тримається, але злам '
+                               f'визріває — стежити за розворотом {flip_word}.')
+    else:
+        out['verdict_text'] = (f'4H тренд {trend_word} міцний — тиск зламу низький, '
+                               f'розворот {flip_word} поки не на часі.')
     return out
