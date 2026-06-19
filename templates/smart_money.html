@@ -1105,6 +1105,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-rev-level.building { color:#fbbf24; background:rgba(251,191,36,0.12); }
     .sm-rev-level.high { color:#f87171; background:rgba(248,113,113,0.12); }
     .sm-rev-src { font-size:0.66rem; color:#94a3b8; margin-top:6px; }
+    .sm-rev-trend { font-size:0.78rem; font-weight:700; color:#e2e8f0; margin:2px 0 6px;
+        padding:6px 10px; border-radius:6px; background:rgba(255,255,255,0.04); }
     .sm-rev-direction { font-size:0.72rem; color:#cbd5e1; margin:2px 0 10px;
         padding:6px 10px; border-radius:6px; background:rgba(255,255,255,0.03); }
     .sm-rev-source-badge { font-size:0.64rem; font-weight:700; padding:2px 8px;
@@ -1239,6 +1241,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-rev-level" id="sm-rev-level">—</span>
                 </span>
             </div>
+            <div class="sm-rev-trend" id="sm-rev-trend" style="display:none"></div>
             <div class="sm-rev-direction" id="sm-rev-direction" style="display:none"></div>
             <div class="sm-move-bar-wrap">
                 <span class="sm-move-bar-label">Тиск розвороту</span>
@@ -5960,7 +5963,22 @@ function renderReversal(rev) {
     lvl.className = 'sm-rev-level ' + li[0];
     lvl.textContent = li[1];
 
-    // Direction line: WHICH way the reversal would go + plain reading.
+    // 4H trend line — WHERE the 4H trend is right now (from structure).
+    const trendEl = document.getElementById('sm-rev-trend');
+    if (trendEl) {
+        const t = rev.trend_4h;
+        if (t === 'LONG' || t === 'SHORT') {
+            const lbl = rev.trend_4h_label || (t === 'LONG' ? '↑ ВГОРУ' : '↓ ВНИЗ');
+            const col = t === 'LONG' ? '#4ade80' : '#f87171';
+            trendEl.innerHTML = `4H тренд зараз: <span style="color:${col}">${lbl}</span>`;
+            trendEl.style.display = '';
+        } else {
+            trendEl.innerHTML = `4H тренд зараз: <span style="color:#8b93a7">↔ ВБІК / невизначений</span>`;
+            trendEl.style.display = '';
+        }
+    }
+
+    // Direction line: how close the 4H trend is to BREAKING + which way.
     const dirEl = document.getElementById('sm-rev-direction');
     if (dirEl) {
         const to = rev.reversal_to;
@@ -5968,10 +5986,10 @@ function renderReversal(rev) {
             const arrow = to === 'LONG' ? '↑ ВГОРУ (в LONG)' : '↓ ВНИЗ (в SHORT)';
             const col = to === 'LONG' ? '#4ade80' : '#f87171';
             let reading;
-            if (rev.index >= 60) reading = `висока — розворот ${arrow} ймовірний`;
-            else if (rev.index >= 35) reading = `наростає — розворот ${arrow} визріває`;
-            else reading = `низька — рух тримається, розворот ${arrow} слабкий`;
-            dirEl.innerHTML = `Розворот: <b style="color:${col}">${arrow}</b> · ${reading}`;
+            if (rev.index >= 60) reading = `тренд близький до зламу — розворот ${arrow} ймовірний`;
+            else if (rev.index >= 35) reading = `злам визріває — можливий розворот ${arrow}`;
+            else reading = `тренд міцний — розворот ${arrow} ще далеко`;
+            dirEl.innerHTML = `Якщо зламається: <b style="color:${col}">${arrow}</b> · ${reading}`;
             dirEl.style.display = '';
         } else {
             dirEl.style.display = 'none';

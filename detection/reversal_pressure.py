@@ -76,31 +76,94 @@ def _atr(klines: List[Dict], period: int = 14) -> Optional[float]:
     return atr
 
 
+def detect_4h_trend(klines_4h: List[Dict]) -> Dict:
+    """Determine the ACTUAL 4H trend from swing structure (HH/HL = up,
+    LH/LL = down), independent of any bot verdict. Returns
+    {trend: 'LONG'|'SHORT'|'NEUTRAL', label: '↑ ВГОРУ'|...}.
+
+    Uses SMCStructureDetector when available; falls back to a simple
+    higher-highs/lower-lows heuristic so it always returns something.
+    """
+    out = {'trend': 'NEUTRAL', 'label': '↔ ВБІК'}
+    if not klines_4h or len(klines_4h) < 20:
+        return out
+    # Preferred: SMC structure detector (HH/HL/LH/LL → trend bias)
+    try:
+        import numpy as np
+        from detection.smc_structure_filter import SMCStructureDetector, TrendBias
+        highs = np.array([k['high'] for k in klines_4h], dtype=float)
+        lows = np.array([k['low'] for k in klines_4h], dtype=float)
+        closes = np.array([k['close'] for k in klines_4h], dtype=float)
+        det = SMCStructureDetector(swing_length=min(50, len(klines_4h) // 3))
+        res = det.update(highs, lows, closes)
+        tb = res.get('trend_bias')
+        val = getattr(tb, 'value', tb)
+        if val == 1:
+            return {'trend': 'LONG', 'label': '↑ ВГОРУ'}
+        if val == -1:
+            return {'trend': 'SHORT', 'label': '↓ ВНИЗ'}
+        # NEUTRAL from detector → fall through to heuristic for a hint
+    except Exception:
+        pass
+    # Fallback heuristic: compare recent swing highs/lows
+    try:
+        n = len(klines_4h)
+        half = n // 2
+        recent_hi = max(k['high'] for k in klines_4h[half:])
+        older_hi = max(k['high'] for k in klines_4h[:half])
+        recent_lo = min(k['low'] for k in klines_4h[half:])
+        older_lo = min(k['low'] for k in klines_4h[:half])
+        hh = recent_hi > older_hi
+        hl = recent_lo > older_lo
+        if hh and hl:
+            return {'trend': 'LONG', 'label': '↑ ВГОРУ'}
+        if not hh and not hl:
+            return {'trend': 'SHORT', 'label': '↓ ВНИЗ'}
+    except Exception:
+        pass
+    return out
+
+
 def analyze_reversal_pressure(
     side: str,
     klines_4h: List[Dict],
     funding_rate: Optional[float] = None,
     oi_history: Optional[List[Dict]] = None,
     long_pct: Optional[float] = None,
+    use_actual_trend: bool = True,
 ) -> Dict:
-    """Compute the 4H reversal-pressure index against `side`.
+    """Compute the 4H reversal-pressure index.
 
-    side: 'LONG'|'SHORT' — direction of the current move. Reversal pressure
-          is the pressure to turn the OTHER way.
+    By default (use_actual_trend=True) the pressure is measured against the
+    ACTUAL 4H trend derived from swing structure — answering "how close is
+    the current 4H trend to flipping?". This is what a trader wants: first
+    where the 4H trend is, then how near it is to breaking.
+
+    When use_actual_trend=False, pressure is measured against the supplied
+    `side` (e.g. the bot's verdict) instead — kept for callers that need that.
+
     klines_4h: Bybit 4H bars {open,high,low,close,volume,timestamp}, old→new.
     funding_rate / oi_history / long_pct: optional extra signals.
     """
     out = {'ok': False, 'index': None, 'level': None,
-           'components': {}, 'notes': [], 'sources_used': []}
+           'components': {}, 'notes': [], 'sources_used': [],
+           'trend_4h': None, 'trend_4h_label': None}
+
+    # Determine the reference direction the pressure is measured against.
+    trend_info = detect_4h_trend(klines_4h) if klines_4h else {'trend': 'NEUTRAL', 'label': '↔ ВБІК'}
+    out['trend_4h'] = trend_info['trend']
+    out['trend_4h_label'] = trend_info['label']
+
+    if use_actual_trend and trend_info['trend'] in ('LONG', 'SHORT'):
+        side = trend_info['trend']
     side = (side or '').upper()
     dir_sign = 1 if side == 'LONG' else -1 if side == 'SHORT' else 0
     if dir_sign == 0 or not klines_4h or len(klines_4h) < 30:
-        out['notes'].append('недостатньо 4H даних')
+        out['notes'].append('недостатньо 4H даних або тренд невизначений')
         return out
 
-    # The reversal is AGAINST the current move: a LONG move reverses DOWN
-    # (to SHORT), a SHORT move reverses UP (to LONG). Surface this explicitly
-    # so the UI can say which way, not just "how much".
+    # The reversal is AGAINST the reference trend: an UP trend reverses DOWN
+    # (to SHORT), a DOWN trend reverses UP (to LONG). Surface this explicitly.
     reversal_to = 'SHORT' if side == 'LONG' else 'LONG'
     out['from_side'] = side
     out['reversal_to'] = reversal_to
