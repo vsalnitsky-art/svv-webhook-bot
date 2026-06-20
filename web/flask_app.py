@@ -5294,11 +5294,15 @@ def compute_bias(db, symbol, wl=None):
                     price = p
     except Exception:
         price = None
-    # Move-potential snapshot — objective ATR / exhaustion / runway for the
-    # CURRENT verdict direction. Pure measurement (no future-% promises).
-    # Uses the trade direction from `verdict`; for WAIT we still compute
-    # against the leaning side so the board can show context.
-    move = None
+    # Move-potential snapshot — objective ATR / exhaustion / runway.
+    # Computed for BOTH directions (LONG and SHORT) so the board can show
+    # them side-by-side: this is the key to understanding why the verdict
+    # flips. When SHORT is EXHAUSTED (63%) and LONG is FRESH (31%), the
+    # verdict naturally tilts LONG — and the user can SEE that, instead of
+    # the panel just swapping numbers. Pure measurement (no future-% promises).
+    move = None          # current verdict direction (back-compat)
+    move_long = None     # always LONG perspective
+    move_short = None    # always SHORT perspective
     try:
         from detection.move_potential import analyze_move_potential
         mp_side = verdict if verdict in ('LONG', 'SHORT') else (
@@ -5325,12 +5329,20 @@ def compute_bias(db, symbol, wl=None):
         except Exception:
             liq_levels = None
         if mp_klines and len(mp_klines) >= 20:
-            move = analyze_move_potential(
-                side=mp_side, klines=mp_klines,
+            move_long = analyze_move_potential(
+                side='LONG', klines=mp_klines,
                 liquidation_levels=liq_levels,
                 bars_per_day=bars_per_day)
+            move_short = analyze_move_potential(
+                side='SHORT', klines=mp_klines,
+                liquidation_levels=liq_levels,
+                bars_per_day=bars_per_day)
+            # `move` = the verdict-side one, for any legacy consumer.
+            move = move_long if mp_side == 'LONG' else move_short
     except Exception as e:
         move = None
+        move_long = None
+        move_short = None
 
     # Reversal-pressure index — how much pressure has built for a reversal
     # AGAINST the current 4H/1H trend. Pulls max signal from Bybit (klines +
@@ -5377,4 +5389,5 @@ def compute_bias(db, symbol, wl=None):
     return {'ok': True, 'symbol': symbol, 'verdict': verdict,
             'confidence': confidence, 'components': comp,
             'reasons': reasons, 'price': price, 'move': move,
+            'move_long': move_long, 'move_short': move_short,
             'reversal': reversal, 'reversal_1h': reversal_1h, 'ts': _t.time()}

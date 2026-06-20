@@ -1076,6 +1076,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-move-verdict.fresh { color:#4ade80; background:rgba(34,197,94,0.12); }
     .sm-move-verdict.mature { color:#fbbf24; background:rgba(251,191,36,0.12); }
     .sm-move-verdict.exhausted { color:#f87171; background:rgba(248,113,113,0.12); }
+    .sm-move-active-badge { font-size:0.6rem; font-weight:700; color:#a855f7;
+        background:rgba(168,85,247,0.14); padding:1px 6px; border-radius:4px;
+        letter-spacing:0.3px; margin-left:6px; vertical-align:middle; }
+    /* Active (verdict) panel gets a subtle purple ring so the eye lands on
+       the side the bot is actually leaning toward. */
+    .sm-move-panel.sm-move-active { border-color:rgba(168,85,247,0.5);
+        background:rgba(168,85,247,0.04); box-shadow:0 0 0 1px rgba(168,85,247,0.25) inset; }
+    /* Dimmed (non-verdict) panel — present for comparison but visually quieter. */
+    .sm-move-panel.sm-move-dim { opacity:0.72; }
     .sm-move-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px 18px;
         margin-bottom:10px; }
     .sm-analysis-row .sm-move-grid { grid-template-columns:repeat(2,1fr); }
@@ -1238,21 +1247,42 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-bias-extra" id="sm-bias-extra"></div>
         </div>
         <div class="sm-align-banner" id="sm-align-banner" style="display:none"></div>
+        <!-- Row 1: Move-potential for BOTH directions side-by-side.
+             The verdict direction is highlighted. Seeing LONG and SHORT
+             at once makes verdict flips understandable: when SHORT is
+             EXHAUSTED and LONG is FRESH, the LONG tilt is obvious. -->
         <div class="sm-analysis-row">
-        <div class="sm-move-panel" id="sm-move-panel" style="display:none">
+        <div class="sm-move-panel" id="sm-move-panel-long" style="display:none">
             <div class="sm-move-header">
-                <span class="sm-move-title">📊 Потенціал руху</span>
-                <span class="sm-move-verdict" id="sm-move-verdict">—</span>
+                <span class="sm-move-title">📈 Потенціал LONG <span class="sm-move-active-badge" id="sm-move-active-long" style="display:none">◄ вердикт</span></span>
+                <span class="sm-move-verdict" id="sm-move-verdict-long">—</span>
             </div>
-            <div class="sm-rev-direction" id="sm-move-direction" style="display:none"></div>
-            <div class="sm-move-grid" id="sm-move-grid"></div>
-            <div class="sm-move-bar-wrap" title="Виснаженість руху: наскільки рух уже вичерпав свій хід. 0 = свіжий рух із запасом, 100 = повністю виснажений, розворот близько">
+            <div class="sm-rev-direction" id="sm-move-direction-long" style="display:none"></div>
+            <div class="sm-move-grid" id="sm-move-grid-long"></div>
+            <div class="sm-move-bar-wrap" title="Виснаженість руху ВГОРУ: наскільки рух LONG уже вичерпав свій хід. 0 = свіжий рух із запасом, 100 = повністю виснажений, розворот близько">
                 <span class="sm-move-bar-label">Виснаженість</span>
-                <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-move-bar-fill"></div></div>
-                <span class="sm-move-bar-val" id="sm-move-bar-val">—</span>
+                <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-move-bar-fill-long"></div></div>
+                <span class="sm-move-bar-val" id="sm-move-bar-val-long">—</span>
             </div>
-            <div class="sm-move-notes" id="sm-move-notes"></div>
+            <div class="sm-move-notes" id="sm-move-notes-long"></div>
         </div>
+        <div class="sm-move-panel" id="sm-move-panel-short" style="display:none">
+            <div class="sm-move-header">
+                <span class="sm-move-title">📉 Потенціал SHORT <span class="sm-move-active-badge" id="sm-move-active-short" style="display:none">◄ вердикт</span></span>
+                <span class="sm-move-verdict" id="sm-move-verdict-short">—</span>
+            </div>
+            <div class="sm-rev-direction" id="sm-move-direction-short" style="display:none"></div>
+            <div class="sm-move-grid" id="sm-move-grid-short"></div>
+            <div class="sm-move-bar-wrap" title="Виснаженість руху ВНИЗ: наскільки рух SHORT уже вичерпав свій хід. 0 = свіжий рух із запасом, 100 = повністю виснажений, розворот близько">
+                <span class="sm-move-bar-label">Виснаженість</span>
+                <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-move-bar-fill-short"></div></div>
+                <span class="sm-move-bar-val" id="sm-move-bar-val-short">—</span>
+            </div>
+            <div class="sm-move-notes" id="sm-move-notes-short"></div>
+        </div>
+        </div>
+        <!-- Row 2: Trend exhaustion (4H | 1H) -->
+        <div class="sm-analysis-row">
         <div class="sm-move-panel sm-rev-panel" id="sm-rev-section" style="display:none">
             <div class="sm-rev-header" title="Виснаження 4H тренду: 0% = тренд свіжий і міцний, 100% = тренд повністю виснажений і близький до зламу. Рахується як зважена сума умов, що історично передують розвороту (RSI-екстремум, дивергенція, розтяг, funding, OI, натовп, тіні). Це НЕ сигнал розвертатись — це оцінка того, скільки запасу лишилось у ПОТОЧНОГО тренду. Напрямок зламу (куди піде ПРИ розвороті) показано лише як контекст.">
                 <span class="sm-rev-title">📉 Виснаження тренду (4H)</span>
@@ -6145,20 +6175,29 @@ function renderTrendAlignment(verdict, rev) {
     el.style.display = '';
 }
 
-function renderMovePanel(move) {
-    const panel = document.getElementById('sm-move-panel');
+// Render one move-potential panel for a given side ('LONG'|'SHORT').
+// suffix = '-long' | '-short' → element id suffix.
+// isActive = true if this is the current verdict direction (highlighted).
+function renderMoveSide(move, side, suffix, isActive) {
+    const panel = document.getElementById('sm-move-panel' + suffix);
     if (!panel) return;
     if (!move || !move.ok) { panel.style.display = 'none'; return; }
     panel.style.display = '';
 
-    // Verdict pill
-    const vEl = document.getElementById('sm-move-verdict');
+    // Active/dim styling — verdict side gets the purple ring.
+    panel.classList.toggle('sm-move-active', !!isActive);
+    panel.classList.toggle('sm-move-dim', !isActive);
+    const badge = document.getElementById('sm-move-active' + suffix);
+    if (badge) badge.style.display = isActive ? '' : 'none';
+
+    // Verdict pill — Ukrainian wording.
+    const vEl = document.getElementById('sm-move-verdict' + suffix);
     const vmap = {
         FRESH: ['fresh', '🟢 СВІЖИЙ — є простір',
-            'Рух свіжий: ціна недалеко від середнього, запас ходу великий. Потенціал у вказаному напрямку ще не вичерпано.'],
+            'Рух свіжий: ціна недалеко від середнього, запас ходу великий. Потенціал у цьому напрямку ще не вичерпано.'],
         MATURE: ['mature', '🟡 ДОЗРІЛИЙ — рух розвинувся',
             'Рух дозрів: частина потенціалу вже реалізована. Заходити можна обережно, але кращі точки входу вже позаду.'],
-        EXHAUSTED: ['exhausted', '🔴 ВИСНАЖЕНИЙ',
+        EXHAUSTED: ['exhausted', '🔴 ВИСНАЖЕНИЙ — запас малий',
             'Рух виснажений: ціна сильно розтягнута, денний хід майже вичерпано, запасу мало. Вхід у цьому напрямку запізнілий, розворот близько.'],
     };
     const vinfo = vmap[move.verdict] || ['mature', move.verdict || '—', ''];
@@ -6166,47 +6205,42 @@ function renderMovePanel(move) {
     vEl.textContent = vinfo[1];
     if (vinfo[2]) vEl.title = vinfo[2];
 
-    // Direction context — WHICH way this move/potential is measured.
-    const mdEl = document.getElementById('sm-move-direction');
+    // Direction reading line
+    const mdEl = document.getElementById('sm-move-direction' + suffix);
     if (mdEl) {
-        const sd = move.side;
-        if (sd === 'LONG' || sd === 'SHORT') {
-            const arrow = sd === 'LONG' ? '↑ ВГОРУ (LONG)' : '↓ ВНИЗ (SHORT)';
-            const col = sd === 'LONG' ? '#4ade80' : '#f87171';
-            let reading;
-            if (move.verdict === 'FRESH') reading = `є простір для руху ${arrow}`;
-            else if (move.verdict === 'EXHAUSTED') reading = `рух ${arrow} майже вичерпано`;
-            else reading = `рух ${arrow} частково реалізований`;
-            mdEl.innerHTML = `Напрямок: <b style="color:${col}">${arrow}</b> · ${reading}`;
-            mdEl.style.display = '';
-        } else {
-            mdEl.style.display = 'none';
-        }
+        const arrow = side === 'LONG' ? '↑ ВГОРУ' : '↓ ВНИЗ';
+        const col = side === 'LONG' ? '#4ade80' : '#f87171';
+        let reading;
+        if (move.verdict === 'FRESH') reading = `є простір для руху ${arrow}`;
+        else if (move.verdict === 'EXHAUSTED') reading = `рух ${arrow} майже вичерпано`;
+        else reading = `рух ${arrow} частково реалізований`;
+        mdEl.innerHTML = `<b style="color:${col}">${arrow} (${side})</b> · ${reading}`;
+        mdEl.style.display = '';
     }
 
-    // Metric grid — only cells we actually have
+    // Metric grid
     const fmt = (v, suf) => (v === null || v === undefined) ? '—' : v + (suf || '');
     const cells = [
         ['ATR / бар', fmt(move.atr_pct, '%'),
          'Середній хід ціни за одну свічку у відсотках. Це базова волатильність монети: чим вищий ATR, тим ширші рухи.'],
         ['Розтяг від середн.', move.stretch_atr === null ? '—' : move.stretch_atr + ' ATR',
-         'Наскільки далеко ціна відійшла від свого середнього (VWAP), виміряно в ATR. До 1-2 ATR — нормально; понад 3 ATR — рух розтягнутий і виснажується.'],
+         'Наскільки далеко ціна відійшла від свого середнього (VWAP) у бік цього напрямку, виміряно в ATR. До 1-2 ATR — нормально; понад 3 ATR — рух розтягнутий і виснажується. Від’ємне = ціна ще не пішла в цей бік.'],
         ['Запас ходу', move.runway_pct === null ? '—'
             : move.runway_pct + '% (' + fmt(move.runway_atr, ' ATR') + ')',
-         'Відстань до наступної реальної перешкоди в напрямку угоди (ліквідний рівень або край діапазону) — у відсотках і в ATR. Це скільки ще «простору» має рух, а не прогноз.'],
+         'Відстань до наступної реальної перешкоди в цьому напрямку (ліквідний рівень або край діапазону) — у відсотках і в ATR. Це скільки ще «простору» має рух, а не прогноз.'],
         ['Денний хід (ADR)', move.adr_used_pct === null ? fmt(move.adr_pct, '%')
             : move.adr_used_pct + '% з ' + fmt(move.adr_pct, '%'),
          'Скільки із середньоденного діапазону (ADR) монета вже пройшла сьогодні. Понад 100% означає, що день перерозтягнутий і подальший хід менш імовірний.'],
     ];
-    document.getElementById('sm-move-grid').innerHTML = cells.map(c =>
+    document.getElementById('sm-move-grid' + suffix).innerHTML = cells.map(c =>
         `<div class="sm-move-cell" title="${c[2].replace(/"/g,'&quot;')}">`
         + `<span class="sm-move-cell-label">${c[0]}</span>`
         + `<span class="sm-move-cell-val">${c[1]}</span></div>`).join('');
 
     // Exhaustion bar
     const ex = move.exhaustion;
-    const bf = document.getElementById('sm-move-bar-fill');
-    const bv = document.getElementById('sm-move-bar-val');
+    const bf = document.getElementById('sm-move-bar-fill' + suffix);
+    const bv = document.getElementById('sm-move-bar-val' + suffix);
     if (ex === null || ex === undefined) {
         bf.style.width = '0%'; bv.textContent = '—';
     } else {
@@ -6216,8 +6250,15 @@ function renderMovePanel(move) {
     }
 
     // Notes
-    document.getElementById('sm-move-notes').innerHTML = (move.notes || [])
+    document.getElementById('sm-move-notes' + suffix).innerHTML = (move.notes || [])
         .map(n => `<span class="sm-move-note">• ${n}</span>`).join('');
+}
+
+// Render BOTH move-potential panels (LONG + SHORT). `verdict` decides which
+// one is highlighted as the active/leaning direction.
+function renderMovePanel(moveLong, moveShort, verdict) {
+    renderMoveSide(moveLong, 'LONG', '-long', verdict === 'LONG');
+    renderMoveSide(moveShort, 'SHORT', '-short', verdict === 'SHORT');
 }
 
 async function loadBias() {
@@ -6238,7 +6279,7 @@ async function loadBias() {
         fill.style.width = d.confidence + '%';
         fill.style.background = d.verdict === 'LONG' ? '#4ade80'
             : d.verdict === 'SHORT' ? '#f87171' : '#6b7280';
-        renderMovePanel(d.move);
+        renderMovePanel(d.move_long, d.move_short, d.verdict);
         renderReversal(d.reversal);  // 4H (default ids)
         renderReversal(d.reversal_1h, {
             tf: '1H',
