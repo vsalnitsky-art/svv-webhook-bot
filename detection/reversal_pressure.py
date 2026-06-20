@@ -386,18 +386,22 @@ def analyze_reversal_pressure(
     out['sources_used'] = used
     out['ok'] = True
 
-    # Single coherent verdict sentence — trend + how close to breaking + which
-    # way it would flip. No contradictions: this only runs when a real trend
-    # exists.
-    trend_word = 'висхідний (LONG)' if side == 'LONG' else 'низхідний (SHORT)'
+    # Single coherent verdict sentence framed as TREND EXHAUSTION, not a trade
+    # call. The index measures how worn-out the CURRENT trend is; the flip
+    # direction is stated only as "what to expect IF it breaks", never as a
+    # recommendation. This only runs when a real trend exists.
+    trend_word = '↑ висхідний (LONG)' if side == 'LONG' else '↓ низхідний (SHORT)'
     flip_word = '↑ вгору (LONG)' if reversal_to == 'LONG' else '↓ вниз (SHORT)'
     if index >= 60:
-        out['verdict_text'] = (f'{tf_label} тренд {trend_word} ВИСНАЖУЄТЬСЯ — '
-                               f'високий тиск зламу, розворот {flip_word} ймовірний.')
+        out['verdict_text'] = (f'{tf_label} тренд {trend_word} критично виснажений '
+                               f'({index:.0f}%) — тримається слабко; якщо зламається, '
+                               f'розворот {flip_word}.')
     elif index >= 35:
-        out['verdict_text'] = (f'{tf_label} тренд {trend_word} ще тримається, але злам '
-                               f'визріває — стежити за розворотом {flip_word}.')
+        out['verdict_text'] = (f'{tf_label} тренд {trend_word} дозрів '
+                               f'({index:.0f}% виснаження) — ще тримається, але слабшає; '
+                               f'при зламі очікувати {flip_word}.')
     else:
-        out['verdict_text'] = (f'{tf_label} тренд {trend_word} міцний — тиск зламу низький, '
-                               f'розворот {flip_word} поки не на часі.')
+        out['verdict_text'] = (f'{tf_label} тренд {trend_word} свіжий і міцний '
+                               f'(виснаження лише {index:.0f}%) — розворот {flip_word} '
+                               f'поки не на часі.')
     return out

@@ -1160,6 +1160,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-updated { font-size:0.7rem; color:#667; font-family:monospace; margin-top:8px; }
     .sm-bias-autonote { font-size:0.74rem; color:#c084fc; margin-top:6px;
         display:none; font-family:monospace; }
+    /* Alignment banner — explains how the bot verdict relates to the 4H trend
+       so the reversal/exhaustion blocks stop reading as a contradiction. */
+    .sm-align-banner { margin:10px 0 4px; padding:8px 12px; border-radius:8px;
+        font-size:0.8rem; line-height:1.35; border:1px solid transparent; }
+    .sm-align-banner.ok   { background:rgba(74,222,128,0.10); border-color:rgba(74,222,128,0.35); color:#bbf7d0; }
+    .sm-align-banner.warn { background:rgba(251,191,36,0.10); border-color:rgba(251,191,36,0.40); color:#fde68a; }
+    .sm-align-banner.bad  { background:rgba(248,113,113,0.10); border-color:rgba(248,113,113,0.40); color:#fecaca; }
+    .sm-align-banner.info { background:rgba(148,163,184,0.10); border-color:rgba(148,163,184,0.30); color:#cbd5e1; }
+    .sm-align-banner b { color:#fff; }
     .sm-bias-sym-input { background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.15);
         border-radius:6px; color:#93c5fd; padding:5px 10px; font-family:monospace;
         font-size:0.82rem; width:110px; text-transform:uppercase; }
@@ -1222,6 +1231,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             <div class="sm-bias-extra" id="sm-bias-extra"></div>
         </div>
+        <div class="sm-align-banner" id="sm-align-banner" style="display:none"></div>
         <div class="sm-analysis-row">
         <div class="sm-move-panel" id="sm-move-panel" style="display:none">
             <div class="sm-move-header">
@@ -1238,8 +1248,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-move-notes" id="sm-move-notes"></div>
         </div>
         <div class="sm-move-panel sm-rev-panel" id="sm-rev-section" style="display:none">
-            <div class="sm-rev-header" title="Індекс схильності до розвороту на 4H: зважена сума умов, що історично передують розвороту (RSI-екстремум, дивергенція, розтяг, funding, OI, натовп, тіні). Це НЕ передбачення майбутнього — це ступінь накопичення умов розвороту проти поточного напрямку.">
-                <span class="sm-rev-title">🔄 Схильність до розвороту (4H)</span>
+            <div class="sm-rev-header" title="Виснаження 4H тренду: 0% = тренд свіжий і міцний, 100% = тренд повністю виснажений і близький до зламу. Рахується як зважена сума умов, що історично передують розвороту (RSI-екстремум, дивергенція, розтяг, funding, OI, натовп, тіні). Це НЕ сигнал розвертатись — це оцінка того, скільки запасу лишилось у ПОТОЧНОГО тренду. Напрямок зламу (куди піде ПРИ розвороті) показано лише як контекст.">
+                <span class="sm-rev-title">📉 Виснаження тренду (4H)</span>
                 <span style="display:flex;align-items:center;gap:6px">
                     <span class="sm-rev-source-badge" id="sm-rev-source-badge" style="display:none"></span>
                     <span class="sm-rev-level" id="sm-rev-level">—</span>
@@ -1248,7 +1258,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-rev-trend" id="sm-rev-trend" style="display:none"></div>
             <div class="sm-rev-direction" id="sm-rev-direction" style="display:none"></div>
             <div class="sm-move-bar-wrap">
-                <span class="sm-move-bar-label" id="sm-rev-bar-label">% до розвороту</span>
+                <span class="sm-move-bar-label" id="sm-rev-bar-label">виснаження тренду</span>
                 <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev-bar-fill"></div></div>
                 <span class="sm-move-bar-val" id="sm-rev-bar-val">—</span>
             </div>
@@ -1260,8 +1270,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </label>
         </div>
         <div class="sm-move-panel sm-rev-panel" id="sm-rev1h-section" style="display:none">
-            <div class="sm-rev-header" title="Те саме, що 4H, але для 1H таймфрейму — швидший горизонт. Індекс схильності до розвороту: зважена сума умов, що передують розвороту. НЕ передбачення майбутнього.">
-                <span class="sm-rev-title">🔄 Розворот (1H)</span>
+            <div class="sm-rev-header" title="Те саме, що 4H, але для 1H таймфрейму — швидший горизонт. Виснаження 1H тренду: 0% = свіжий і міцний, 100% = виснажений, близький до зламу. НЕ сигнал розвертатись — оцінка запасу поточного тренду.">
+                <span class="sm-rev-title">📉 Виснаження тренду (1H)</span>
                 <span style="display:flex;align-items:center;gap:6px">
                     <span class="sm-rev-source-badge" id="sm-rev1h-source-badge" style="display:none"></span>
                     <span class="sm-rev-level" id="sm-rev1h-level">—</span>
@@ -1270,7 +1280,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-rev-trend" id="sm-rev1h-trend" style="display:none"></div>
             <div class="sm-rev-direction" id="sm-rev1h-direction" style="display:none"></div>
             <div class="sm-move-bar-wrap">
-                <span class="sm-move-bar-label" id="sm-rev1h-bar-label">готовність розвороту</span>
+                <span class="sm-move-bar-label" id="sm-rev1h-bar-label">виснаження тренду</span>
                 <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev1h-bar-fill"></div></div>
                 <span class="sm-move-bar-val" id="sm-rev1h-bar-val">—</span>
             </div>
@@ -5993,12 +6003,15 @@ function renderReversal(rev, opts) {
     sec.style.display = '';
     if (row) row.style.display = '';
     const lvl = document.getElementById(id('lvl', 'sm-rev-level'));
-    const to = rev.reversal_to;
-    const dirClass = to === 'LONG' ? 'dir-up' : to === 'SHORT' ? 'dir-down' : 'dir-none';
-    const lmap = { NONE: '⚪ ТРЕНДУ НЕМАЄ', LOW: 'НИЗЬКА', BUILDING: 'НАРОСТАЄ', HIGH: 'ВИСОКА' };
-    let word = lmap[rev.level] || rev.level || '—';
-    if (rev.level !== 'NONE' && to) word = (to === 'LONG' ? '↑ ' : '↓ ') + word;
-    if (lvl) { lvl.className = 'sm-rev-level ' + dirClass; lvl.textContent = word; }
+    // Level now describes EXHAUSTION of the CURRENT trend, not a flip call.
+    // No reversal arrow here — "↓ ВИСОКА" used to read like "go SHORT now".
+    // The trend arrow lives in sm-rev-trend; the flip direction stays in the
+    // verdict text only, framed as "if it breaks".
+    const lmap = { NONE: '⚪ ТРЕНДУ НЕМАЄ', LOW: '🟢 СВІЖИЙ', BUILDING: '🟡 ДОЗРІЛИЙ', HIGH: '🔴 ВИСНАЖЕНИЙ' };
+    const word = lmap[rev.level] || rev.level || '—';
+    const lvlCol = rev.level === 'HIGH' ? '#f87171' : rev.level === 'BUILDING' ? '#fbbf24'
+        : rev.level === 'NONE' ? '#8b93a7' : '#4ade80';
+    if (lvl) { lvl.className = 'sm-rev-level'; lvl.style.color = lvlCol; lvl.textContent = word; }
 
     const trendEl = document.getElementById(id('trend', 'sm-rev-trend'));
     if (trendEl) {
@@ -6024,14 +6037,19 @@ function renderReversal(rev, opts) {
     const idx = rev.index || 0;
     if (bf) {
         bf.style.width = idx + '%';
-        bf.style.background = to === 'LONG' ? '#4ade80' : to === 'SHORT' ? '#f87171' : '#8b93a7';
+        // Colour by exhaustion, not by flip direction: green=fresh,
+        // amber=maturing, red=exhausted. Flat (NONE) stays neutral grey.
+        bf.style.background = rev.level === 'NONE' ? '#8b93a7'
+            : idx >= 60 ? '#f87171' : idx >= 35 ? '#fbbf24' : '#4ade80';
     }
     if (bv) bv.textContent = idx + '%';
     const barLbl = document.getElementById(id('barLabel', 'sm-rev-bar-label'));
     if (barLbl) {
-        if (to === 'LONG') barLbl.textContent = 'готовність розвороту ↑ LONG';
-        else if (to === 'SHORT') barLbl.textContent = 'готовність розвороту ↓ SHORT';
-        else barLbl.textContent = 'готовність розвороту';
+        const t = rev.trend_4h;
+        const trendArrow = t === 'LONG' ? '↑ LONG' : t === 'SHORT' ? '↓ SHORT' : '';
+        if (rev.level === 'NONE') barLbl.textContent = 'близькість до краю діапазону';
+        else if (trendArrow) barLbl.textContent = `виснаження ${trendArrow} тренду`;
+        else barLbl.textContent = 'виснаження тренду';
     }
     const notesEl = document.getElementById(id('notes', 'sm-rev-notes'));
     if (notesEl) notesEl.innerHTML = (rev.notes || [])
@@ -6052,6 +6070,52 @@ function renderReversal(rev, opts) {
             parts.push('Дані: ' + rev.sources_used.join(', '));
         src.textContent = parts.join(' · ');
     }
+}
+
+// Bridge between the bot verdict and the 4H trend so the exhaustion blocks
+// stop reading as a contradiction. Uses the 4H reversal payload (trend_4h +
+// exhaustion index) as the higher-TF context.
+function renderTrendAlignment(verdict, rev) {
+    const el = document.getElementById('sm-align-banner');
+    if (!el) return;
+    if (!rev || !rev.ok || !rev.trend_4h || rev.index === null || rev.index === undefined) {
+        el.style.display = 'none';
+        return;
+    }
+    const t = rev.trend_4h;            // 'LONG' | 'SHORT' | 'NEUTRAL'
+    const idx = rev.index || 0;        // exhaustion 0..100
+    const v = verdict;                 // 'LONG' | 'SHORT' | 'WAIT'
+    const exWord = idx >= 60 ? 'критично виснажений' : idx >= 35 ? 'дозрів' : 'свіжий і міцний';
+    const tw = t === 'LONG' ? '↑ LONG' : '↓ SHORT';
+    let cls = 'info', html = '';
+
+    if (t === 'NEUTRAL' || rev.level === 'NONE') {
+        cls = 'info';
+        html = `↔ <b>4H у консолідації</b> — старшого тренду немає. Вердикт <b>${v}</b> спирається на молодші ТФ; чекай підтвердження 4H.`;
+    } else if (v === t) {
+        if (idx >= 60) {
+            cls = 'warn';
+            html = `⚠️ Вердикт <b>${v}</b> збігається з 4H трендом, але той <b>${exWord}</b> (${idx.toFixed(0)}%). Тренд за тебе, проте запасу мало — нові входи ризиковані, став ближчий стоп.`;
+        } else {
+            cls = 'ok';
+            html = `✅ Вердикт <b>${v}</b> у бік 4H тренду (${exWord}, ${idx.toFixed(0)}% виснаження). Молодший і старший ТФ узгоджені${idx < 35 ? ' — запас ходу великий' : ''}.`;
+        }
+    } else if (v === 'WAIT' || !v) {
+        cls = 'info';
+        html = `⏸ Вердикт <b>WAIT</b>. 4H тренд ${tw}, ${exWord} (${idx.toFixed(0)}%). Сигналу на вхід немає — це лише контекст старшого ТФ.`;
+    } else {
+        // verdict OPPOSES the 4H trend — the genuinely risky case
+        if (idx >= 60) {
+            cls = 'warn';
+            html = `⚠️ Вердикт <b>${v}</b> ПРОТИ 4H тренду (${tw}), але той ${exWord} (${idx.toFixed(0)}%) — можливий розворот саме у бік вердикту. Контр-трендовий вхід лише з підтвердженням зламу.`;
+        } else {
+            cls = 'bad';
+            html = `🔴 Вердикт <b>${v}</b> ПРОТИ 4H тренду (${tw}), а той ще ${exWord} (${idx.toFixed(0)}%). Вхід проти сильного старшого ТФ — найризикованіший сценарій.`;
+        }
+    }
+    el.className = 'sm-align-banner ' + cls;
+    el.innerHTML = html;
+    el.style.display = '';
 }
 
 function renderMovePanel(move) {
@@ -6158,6 +6222,7 @@ async function loadBias() {
             notes: 'sm-rev1h-notes', src: 'sm-rev1h-src',
             badge: 'sm-rev1h-source-badge',
         });
+        renderTrendAlignment(d.verdict, d.reversal);  // 4H context vs verdict
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
         // The watchlist-consensus reason line is rendered under the
         // consensus bar in the RIGHT column (not in the left reasons list),
