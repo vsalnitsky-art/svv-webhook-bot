@@ -3911,7 +3911,39 @@ def register_api_routes(app):
             enabled=bool(data.get('enabled')),
             is_shadow=bool(data.get('is_shadow')),
         ))
-    
+
+    @app.route('/api/tm/positions/breakeven-close', methods=['POST'])
+    def api_tm_breakeven_close():
+        """Toggle per-position breakeven + fees auto-close.
+
+        Body: {
+            symbol: 'BTCUSDT',
+            enabled: bool,          # True = auto-close ON, False = OFF
+            is_shadow?: bool        # default False (real position)
+        }
+
+        When breakeven_close=True:
+          - Position closes automatically when price reaches entry +/- fees.
+          - For LONG: closes when price >= entry * (1 + fee%)
+          - For SHORT: closes when price <= entry * (1 - fee%)
+          - Uses BE commission buffer setting (default 0.12%).
+
+        When OFF (default), no breakeven auto-close.
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'symbol required'})
+        return jsonify(tm.update_breakeven_close(
+            symbol=symbol,
+            enabled=bool(data.get('enabled')),
+            is_shadow=bool(data.get('is_shadow')),
+        ))
+
     @app.route('/api/tm/closed/delete', methods=['POST'])
     def api_tm_closed_delete():
         """Permanently delete a real-trade entry from Recent Closed Trades.

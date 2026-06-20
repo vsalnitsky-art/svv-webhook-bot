@@ -2135,11 +2135,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
+                        <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
                         <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
                         <th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -2207,11 +2208,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
+                        <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, paper позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
                         <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
                         <th>Status</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -6587,6 +6589,7 @@ async function loadTMState() {
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
+                    ${breakevenCloseCellHTML(p, false)}
                     ${holdScoreCellHTML(p.hold)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
@@ -6656,6 +6659,7 @@ async function loadTMState() {
                     <td style="color:#888;font-size:0.72rem">${p.opened_by || '—'}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
+                    ${breakevenCloseCellHTML(p, true)}
                     ${holdScoreCellHTML(p.hold)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
@@ -6773,6 +6777,43 @@ async function submitManualMode(symbol, enabled, isShadow) {
         setTimeout(loadTMState, 150);
     } catch (err) {
         console.error('Manual mode error:', err);
+        setTimeout(loadTMState, 200);
+    }
+}
+
+function breakevenCloseCellHTML(p, isShadow) {
+    const sym = p.symbol;
+    const shFlag = isShadow ? 'true' : 'false';
+    const checked = p.breakeven_close ? 'checked' : '';
+    return `
+        <td style="text-align:center">
+            <label class="tm-toggle-mini" title="${p.breakeven_close ? 'Беззбиток+комісія ON — позиція закриється автоматично при досягненні ціни входу + комісія' : 'Увімкніть для автоматичного закриття при беззбитку + комісія біржі'}">
+                <input type="checkbox" ${checked}
+                       onchange="submitBreakevenClose('${sym}', this.checked, ${shFlag})">
+                <span class="slider"></span>
+            </label>
+        </td>`;
+}
+
+// POST breakeven close toggle. enabled = bool. Refreshes the table after.
+async function submitBreakevenClose(symbol, enabled, isShadow) {
+    try {
+        const res = await fetch('/api/tm/positions/breakeven-close', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                symbol, enabled: !!enabled, is_shadow: !!isShadow,
+            }),
+        });
+        const d = await res.json();
+        if (!d.ok) {
+            console.warn('Breakeven close toggle failed:', d.reason || 'unknown');
+            setTimeout(loadTMState, 200);
+            return;
+        }
+        setTimeout(loadTMState, 150);
+    } catch (err) {
+        console.error('Breakeven close error:', err);
         setTimeout(loadTMState, 200);
     }
 }

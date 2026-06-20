@@ -247,6 +247,7 @@ def _new_position(symbol, side, entry_price, qty, sl_price, tp_price, order_id, 
         'trailing_via_bos2': False,
         'partial_closes_done': [],       # ['bos_2', 'bos_3', ...]
         'bos_count_since_entry': 1,      # the opening BOS itself counts as #1
+        'breakeven_close': False,        # auto-close when price reaches breakeven+fees
     }
 
 
@@ -688,7 +689,22 @@ class TradeManager:
         if manual_reason:
             self._close_position(symbol, current_price, reason=manual_reason)
             return
-        
+
+        # === Breakeven + fees auto-close ===
+        # Checks BEFORE manual_mode gate so it works like manual SL/TP —
+        # a user-set preference that fires even when the position is in
+        # manual mode. If the user wants breakeven close, they get it
+        # immediately when price reaches the level, regardless of manual
+        # mode state.
+        if pos.get('breakeven_close'):
+            be_price = self._calculate_breakeven_price(pos)
+            if be_price:
+                hit = ((pos['side'] == 'LONG' and current_price >= be_price) or
+                       (pos['side'] == 'SHORT' and current_price <= be_price))
+                if hit:
+                    self._close_position(symbol, current_price, reason='breakeven_close')
+                    return
+
         # === Manual mode gate ===
         # When the user flipped this position into manual mode, ONLY the
         # manual SL/TP above and force-close from UI can close it. All
@@ -779,7 +795,27 @@ class TradeManager:
                 return 'manual_tp'
         
         return None
-    
+
+    def _calculate_breakeven_price(self, pos: Dict) -> Optional[float]:
+        """Calculate breakeven price including exchange fees.
+
+        For LONG: entry * (1 + fees%)
+        For SHORT: entry * (1 - fees%)
+
+        Uses the BE commission buffer setting (default 0.12% = round-trip
+        taker fee on Bybit Perpetual: 0.06% × 2).
+        """
+        entry = pos.get('entry_price')
+        if not entry:
+            return None
+
+        fee_pct = self._settings.get('be_commission_buffer_pct', 0.12) / 100
+
+        if pos['side'] == 'LONG':
+            return entry * (1 + fee_pct)
+        else:
+            return entry * (1 - fee_pct)
+
     def _monitor_shadow_position(self, symbol: str):
         """Per-tick monitor for shadow positions — currently only enforces
         manual SL/TP overrides. The strategy's automatic SL/TP and other
@@ -812,7 +848,18 @@ class TradeManager:
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)
-    
+            return
+
+        # === Breakeven + fees auto-close for paper positions ===
+        if pos.get('breakeven_close'):
+            be_price = self._calculate_breakeven_price(pos)
+            if be_price:
+                hit = ((pos['side'] == 'LONG' and current_price >= be_price) or
+                       (pos['side'] == 'SHORT' and current_price <= be_price))
+                if hit:
+                    self._close_shadow(symbol, current_price, reason='breakeven_close')
+                    return
+
     def _update_trailing(self, pos, current_price):
         s = self._settings
         # Two paths can activate trailing:
@@ -3623,7 +3670,48 @@ class TradeManager:
         print(f"[TM] Manual mode {state} for {symbol} ({kind}): "
               f"new signals/auto-exits {'ignored' if enabled else 'active'}")
         return {'ok': True, 'position': updated, 'manual_mode': bool(enabled)}
-    
+
+    def update_breakeven_close(self, symbol: str, enabled: bool,
+                                 is_shadow: bool = False) -> Dict:
+        """Toggle per-position BREAKEVEN + FEES AUTO-CLOSE.
+
+        When breakeven_close=True for a position:
+          - The position will automatically close when price reaches
+            entry + commission fees (for LONG) or entry - fees (SHORT).
+          - Uses the BE commission buffer setting (default 0.12%).
+          - Fires BEFORE manual_mode gate and other exits, similar to
+            manual SL/TP — immediate close when condition is met.
+
+        When breakeven_close=False (default), this auto-close is disabled.
+
+        Works for both real and shadow positions.
+        """
+        store = self._shadow_positions if is_shadow else self._positions
+        kind = 'shadow' if is_shadow else 'real'
+
+        with self._lock:
+            pos = store.get(symbol)
+            if not pos:
+                return {'ok': False,
+                        'reason': f'No open {kind} position for {symbol}'}
+            pos['breakeven_close'] = bool(enabled)
+            updated = dict(pos)
+
+        # Persist outside the lock
+        try:
+            if is_shadow:
+                self._persist_shadow_positions()
+            else:
+                self._persist_positions()
+        except Exception as e:
+            print(f"[TM] breakeven close persist warn for {symbol}: {e}")
+
+        state = 'ON' if enabled else 'OFF'
+        be_price = self._calculate_breakeven_price(updated) if enabled else None
+        be_str = f" (target: {be_price:.6f})" if be_price else ""
+        print(f"[TM] Breakeven auto-close {state} for {symbol} ({kind}){be_str}")
+        return {'ok': True, 'position': updated, 'breakeven_close': bool(enabled)}
+
     def manual_open(self, symbol: str, side: str) -> Dict:
         """User-initiated position open from the Decision Center panel.
         
