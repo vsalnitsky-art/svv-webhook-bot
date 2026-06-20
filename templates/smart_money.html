@@ -1200,13 +1200,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="sm-bias-confbar"><div class="sm-bias-conffill" id="sm-bias-conffill" style="width:0%"></div></div>
             <span class="sm-bias-conf" id="sm-bias-conf">—</span>
             <label class="sm-bias-auto" id="sm-bias-auto-wrap"
-                   title="Авто-керування: коли увімкнено, вердикт табло сам вмикає/вимикає кнопки LONG/SHORT.&#10;LONG-вердикт → лишає тільки LONG. SHORT → тільки SHORT. WAIT не чіпає кнопки.">
-                <input type="checkbox" id="sm-bias-auto" onchange="toggleAutoGate(this.checked)">
+                   title="Smart Direction: автоматично керує кнопками LONG/SHORT 24/7 (навіть без браузера), враховуючи вердикт, 4H тренд і виснаження. Розумніше за сирий вердикт.">
+                <input type="checkbox" id="sm-bias-auto" onchange="toggleSmartDirection(this.checked)">
                 <span class="sm-bias-auto-slider"></span>
-                <span class="sm-bias-auto-label">Auto-gate</span>
+                <span class="sm-bias-auto-label">Smart Direction</span>
             </label>
+            <select id="sm-bias-auto-mode" onchange="onSmartDirectionModeChange()"
+                    style="display:none;padding:3px 6px;background:#1a1a1a;border:1px solid rgba(168,85,247,0.4);color:#c084fc;border-radius:4px;font-size:0.74rem;cursor:pointer"
+                    title="Simple — дзеркалить сирий вердикт 1:1 (LONG/SHORT/WAIT). Smart — враховує 4H тренд + виснаження, дозволяє ранній розворот (рекомендовано).">
+                <option value="simple">Simple</option>
+                <option value="smart">Smart (recommended)</option>
+            </select>
             <label class="sm-bias-auto" id="sm-bias-cow-wrap"
-                   title="Закривати всі відкриті угоди при переході в WAIT (потрібен увімкнений Auto-gate).">
+                   title="Закривати всі відкриті угоди при переході в WAIT (потрібен увімкнений Smart Direction).">
                 <input type="checkbox" id="sm-bias-cow" onchange="toggleCloseOnWait(this.checked)">
                 <span class="sm-bias-auto-slider" style="--ag-on:#f87171"></span>
                 <span class="sm-bias-auto-label" style="color:#f87171">Close on WAIT</span>
@@ -5802,7 +5808,8 @@ function renderEntryScoreBreakdown(breakdown) {
     host.style.display = anyData ? 'flex' : 'none';
 }
 
-let autoGateEnabled = false;
+let smartDirectionEnabled = false;
+let smartDirectionMode = 'smart';  // 'simple' | 'smart'
 let biasSymbol = 'BTCUSDT';
 
 function applyBiasSymbol() {
@@ -5853,9 +5860,9 @@ async function setSideGate(side, on) {
 }
 
 function toggleCloseOnWait(on) {
-    // Guard: only meaningful with Auto-gate enabled.
-    if (on && !autoGateEnabled) {
-        alert('Спершу увімкніть Auto-gate — Close on WAIT діє лише разом з ним.');
+    // Guard: only meaningful with Smart Direction enabled.
+    if (on && !smartDirectionEnabled) {
+        alert('Спершу увімкніть Smart Direction — Close on WAIT діє лише разом з ним.');
         const cb = document.getElementById('sm-bias-cow');
         if (cb) cb.checked = false;
         return;
@@ -5887,7 +5894,7 @@ function setWaitHysteresis(n) {
 function showCloseOnWaitHelp() {
     alert(
         '🔴 Close on WAIT\n\n' +
-        'Коли увімкнено (і працює Auto-gate), щойно вердикт табло переходить ' +
+        'Коли увімкнено (і працює Smart Direction), щойно вердикт табло переходить ' +
         'у стан WAIT, бот АВТОМАТИЧНО закриває ВСІ відкриті угоди:\n' +
         '  • реальні — у 💼 Trade Manager (через біржу Bybit)\n' +
         '  • тестові — у 🧪 Test Mode (paper)\n\n' +
@@ -5906,29 +5913,49 @@ function showCloseOnWaitHelp() {
     );
 }
 
-function toggleAutoGate(on) {
-    autoGateEnabled = on;
-    try { localStorage.setItem('sm_auto_gate', on ? '1' : '0'); } catch {}
+function toggleSmartDirection(on) {
+    smartDirectionEnabled = on;
+    try { localStorage.setItem('sm_smart_direction', on ? '1' : '0'); } catch {}
+    const modeSelect = document.getElementById('sm-bias-auto-mode');
+    if (modeSelect) modeSelect.style.display = on ? '' : 'none';
     // Persist server-side so the bot drives gates 24/7 even with no browser
     // open, and the state survives restarts.
     fetch('/api/sm/auto-gate', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({enabled: on, symbol: biasSymbol}),
+        body: JSON.stringify({enabled: on, mode: smartDirectionMode, symbol: biasSymbol}),
     }).catch(() => {});
     const note = document.getElementById('sm-bias-autonote');
     if (note) {
         note.style.display = on ? '' : 'none';
-        if (on) note.textContent = '🤖 Auto-gate увімкнено — бот керує кнопками 24/7 (працює і без браузера)';
+        if (on) {
+            const modeLabel = smartDirectionMode === 'smart'
+                ? 'Smart (враховує 4H виснаження, ловить розвороти)'
+                : 'Simple (дзеркалить сирий вердикт)';
+            note.textContent = `🤖 Smart Direction увімкнено (режим: ${modeLabel}) — працює 24/7`;
+        }
     }
     if (on) loadBias();
 }
 
-// Apply the verdict to the side gates (only when auto-gate is on).
-//   LONG  → enable LONG, disable SHORT
-//   SHORT → enable SHORT, disable LONG
-//   WAIT  → disable BOTH (no new entries while direction is unclear)
+function onSmartDirectionModeChange() {
+    const sel = document.getElementById('sm-bias-auto-mode');
+    if (!sel) return;
+    smartDirectionMode = sel.value || 'smart';
+    try { localStorage.setItem('sm_smart_direction_mode', smartDirectionMode); } catch {}
+    if (smartDirectionEnabled) {
+        fetch('/api/sm/auto-gate', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({mode: smartDirectionMode}),
+        }).catch(() => {});
+        toggleSmartDirection(true);  // refresh the note
+    }
+}
+
+// Apply the verdict to the side gates (only when Smart Direction is on).
+// The server-side loop does the heavy lifting — this is a no-op now;
+// the gates are driven by the background daemon. Legacy hook kept for compat.
 async function applyAutoGate(verdict) {
-    if (!autoGateEnabled) return;
+    if (!smartDirectionEnabled) return;
     let changed = false;
     if (verdict === 'LONG') {
         const a = await setSideGate('LONG', true);
@@ -6907,11 +6934,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Trade-bias board + exchange sentiment + watchlist consensus — all
     // refresh TOGETHER on one 60s cycle (sentiment row lives inside the
     // board now; the Trade-Direction strip indicator is refreshed here too).
-    // Restore Auto-gate state + symbol from the SERVER (authoritative —
+    // Restore Smart Direction state + symbol from the SERVER (authoritative —
     // survives restarts and is shared across browsers). localStorage is
     // only a fast first paint before the server answers.
     try {
-        autoGateEnabled = localStorage.getItem('sm_auto_gate') === '1';
+        smartDirectionEnabled = localStorage.getItem('sm_smart_direction') === '1';
+        smartDirectionMode = localStorage.getItem('sm_smart_direction_mode') || 'smart';
         const savedSym = localStorage.getItem('sm_bias_symbol');
         if (savedSym) {
             biasSymbol = savedSym;
@@ -6919,14 +6947,25 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (si) si.value = savedSym;
         }
         const ag = document.getElementById('sm-bias-auto');
-        if (ag) ag.checked = autoGateEnabled;
+        if (ag) ag.checked = smartDirectionEnabled;
+        const modeSelect = document.getElementById('sm-bias-auto-mode');
+        if (modeSelect) {
+            modeSelect.value = smartDirectionMode;
+            modeSelect.style.display = smartDirectionEnabled ? '' : 'none';
+        }
     } catch {}
     // Authoritative sync from server
     fetch('/api/sm/auto-gate').then(r => r.json()).then(d => {
         if (!d || !d.ok) return;
-        autoGateEnabled = !!d.enabled;
+        smartDirectionEnabled = !!d.enabled;
+        smartDirectionMode = d.mode || 'smart';
         const ag = document.getElementById('sm-bias-auto');
-        if (ag) ag.checked = autoGateEnabled;
+        if (ag) ag.checked = smartDirectionEnabled;
+        const modeSelect = document.getElementById('sm-bias-auto-mode');
+        if (modeSelect) {
+            modeSelect.value = smartDirectionMode;
+            modeSelect.style.display = smartDirectionEnabled ? '' : 'none';
+        }
         const cow = document.getElementById('sm-bias-cow');
         if (cow) cow.checked = !!d.close_on_wait;
         const hyst = document.getElementById('sm-bias-hyst');
@@ -6937,14 +6976,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (si) si.value = d.symbol;
         }
         try {
-            localStorage.setItem('sm_auto_gate', autoGateEnabled ? '1' : '0');
+            localStorage.setItem('sm_smart_direction', smartDirectionEnabled ? '1' : '0');
+            localStorage.setItem('sm_smart_direction_mode', smartDirectionMode);
             localStorage.setItem('sm_bias_symbol', biasSymbol);
         } catch {}
         const note = document.getElementById('sm-bias-autonote');
         if (note) {
-            note.style.display = autoGateEnabled ? '' : 'none';
-            if (autoGateEnabled)
-                note.textContent = '🤖 Auto-gate увімкнено — бот керує кнопками 24/7 (працює і без браузера)';
+            note.style.display = smartDirectionEnabled ? '' : 'none';
+            if (smartDirectionEnabled) {
+                const modeLabel = smartDirectionMode === 'smart'
+                    ? 'Smart (враховує 4H виснаження, ловить розвороти)'
+                    : 'Simple (дзеркалить сирий вердикт)';
+                note.textContent = `🤖 Smart Direction увімкнено (режим: ${modeLabel}) — працює 24/7`;
+            }
         }
         loadBias();
     }).catch(() => {});

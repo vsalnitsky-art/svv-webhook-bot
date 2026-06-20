@@ -2684,6 +2684,8 @@ def register_api_routes(app):
             body = request.get_json() or {}
             if 'enabled' in body:
                 ag.set_enabled(bool(body['enabled']))
+            if 'mode' in body:
+                ag.set_mode(str(body['mode']))
             if 'close_on_wait' in body:
                 ag.set_close_on_wait(bool(body['close_on_wait']))
             if 'trend_alert' in body:
