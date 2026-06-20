@@ -2298,7 +2298,7 @@ class SMCScanner:
                 entry_price = self._get_live_price(symbol) or 0
             
             entry_str = self._fmt_price(entry_price)
-            
+
             # Telegram notification is sent by Trade Manager — either via
             # _notify_open() for real positions (gated by tm.telegram_alerts)
             # or via _open_shadow() for test/paper mode (gated by
@@ -2306,51 +2306,55 @@ class SMCScanner:
             # Telegram to avoid duplicate messages on a single signal.
             # When TM (real) AND test_mode are both off, no Telegram is sent —
             # this is the intended behavior (silent mode).
-            
-            # Record signal marker for chart display
-            # Use to_t (timestamp of bar where crossover happened) as the time
-            to_t = event.get('to_t', 0)
-            t_sec = int(to_t // 1000) if to_t > 1e12 else int(to_t)
-            persisted = False
-            with self._lock:
-                markers = self._signal_markers.setdefault(symbol, [])
-                # Dedup — don't add the same time+side twice
-                if not any(m['time'] == t_sec and m['side'] == side_label for m in markers):
-                    markers.append({
-                        'time': t_sec,
-                        'price': float(entry_price),
-                        'side': side_label,
-                    })
-                    # Keep last SIGNALS_PERSIST_LIMIT
-                    if len(markers) > SIGNALS_PERSIST_LIMIT:
-                        self._signal_markers[symbol] = markers[-SIGNALS_PERSIST_LIMIT:]
-                    persisted = True
-            
-            # Save to DB outside the lock to avoid holding it during I/O
-            if persisted:
-                self._persist_signals(symbol)
-            
+
+            # === Forward signal to Trade Manager FIRST ===
+            # TM decides whether to actually open a position (real or shadow)
+            # based on its filters (side gates, tradeable list, manual mode).
+            # We only add a chart marker if TM confirms it opened something.
+            trade_opened = False
+            try:
+                from detection.trade_manager import get_trade_manager
+                tm = get_trade_manager()
+                if tm:
+                    result = tm.on_signal(symbol=symbol, side=side_label,
+                                          entry_price=entry_price, opened_by=mode)
+                    # TM returns {'real_opened': bool, 'shadow_opened': bool}
+                    trade_opened = result.get('real_opened') or result.get('shadow_opened')
+            except Exception as e:
+                print(f"[SMC] TM hook error: {e}")
+
+            # Record signal marker for chart display ONLY if a trade was opened
+            if trade_opened:
+                to_t = event.get('to_t', 0)
+                t_sec = int(to_t // 1000) if to_t > 1e12 else int(to_t)
+                persisted = False
+                with self._lock:
+                    markers = self._signal_markers.setdefault(symbol, [])
+                    # Dedup — don't add the same time+side twice
+                    if not any(m['time'] == t_sec and m['side'] == side_label for m in markers):
+                        markers.append({
+                            'time': t_sec,
+                            'price': float(entry_price),
+                            'side': side_label,
+                        })
+                        # Keep last SIGNALS_PERSIST_LIMIT
+                        if len(markers) > SIGNALS_PERSIST_LIMIT:
+                            self._signal_markers[symbol] = markers[-SIGNALS_PERSIST_LIMIT:]
+                        persisted = True
+
+                # Save to DB outside the lock to avoid holding it during I/O
+                if persisted:
+                    self._persist_signals(symbol)
+
+                print(f"[SMC] ✅ Position opened: {symbol} {side_label} @ {entry_str}")
+            else:
+                print(f"[SMC] ⊘ Signal filtered: {symbol} {side_label} @ {entry_str} (no position opened)")
+
             # Update last-direction state (used by dedup gate). Pine updates
             # this even when dedup is OFF, so toggling dedup ON later doesn't
             # cause a sudden re-fire of the prior direction.
             self._last_signal_dir[symbol] = side_label
             self._persist_dedup_state()
-            
-            print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
-            
-            # === Forward signal to Trade Manager ===
-            # Always call on_signal — TM itself decides:
-            #   - if enabled=True → opens real Bybit position
-            #   - if enabled=False but test_mode=True → opens shadow (paper) position
-            #   - if both off → does nothing
-            try:
-                from detection.trade_manager import get_trade_manager
-                tm = get_trade_manager()
-                if tm:
-                    tm.on_signal(symbol=symbol, side=side_label,
-                                 entry_price=entry_price, opened_by=mode)
-            except Exception as e:
-                print(f"[SMC] TM hook error: {e}")
             
             # === Volumized OB Radar hook ===
             # If this symbol was added by the radar (within the 24h TTL),

@@ -899,11 +899,11 @@ class TradeManager:
     # Signal hooks (called from SMC scanner)
     # ============================================================
     
-    def on_signal(self, symbol: str, side: str, entry_price: float, opened_by: str):
+    def on_signal(self, symbol: str, side: str, entry_price: float, opened_by: str) -> dict:
         """Called when SMC scanner fires a signal.
         side: 'LONG' or 'SHORT'
         opened_by: 'choch' or 'choch_bos'
-        
+
         Behavior matrix:
           - No existing position: open (real if enabled, shadow if test_mode)
           - Same-direction position exists: ignore (dedup at signal level)
@@ -914,33 +914,40 @@ class TradeManager:
             the new signal has cleared ALL gates (dedup, HTF, OB filter,
             mode-specific recency) — i.e. it's a "qualified" reversal,
             same caliber as a fresh entry.
-        
+
         The reverse path runs in BOTH real and shadow modes so paper-trading
         produces the same trade history as a live deployment would.
+
+        Returns:
+          {'real_opened': bool, 'shadow_opened': bool}
+          where real_opened means a real position was opened (or already existed),
+          and shadow_opened means a shadow position was opened. At least one
+          should be True for the signal to produce a chart marker.
         """
         s = self._settings
         enabled = self.is_enabled()
         test_mode = s.get('test_mode', True)
-        
+
         with self._lock:
             existing_real = self._positions.get(symbol)
             existing_shadow = self._shadow_positions.get(symbol)
-        
+
         # === Manual mode gate ===
         # If the user has locked this symbol into manual mode on EITHER
         # real or shadow track, ignore new signals entirely — no open, no
         # reverse. The operator wants to manage this trade by hand.
         if existing_real and existing_real.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (real) — signal ignored")
-            return
+            return {'real_opened': False, 'shadow_opened': False}
         if existing_shadow and existing_shadow.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
-            return
-        
+            return {'real_opened': False, 'shadow_opened': False}
+
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list so only
         # explicitly-allowed symbols ever hit the exchange.
         real_opened = False
+        shadow_opened = False
         if enabled:
             if existing_real:
                 if existing_real['side'] == side:
@@ -986,18 +993,23 @@ class TradeManager:
         if test_mode and not real_opened:
             if existing_shadow:
                 if existing_shadow['side'] == side:
-                    return  # already in this trend on paper
-                # OPPOSITE direction — same reverse semantics for paper trades
-                print(f"[TM] 🔄 [TEST] Reverse signal for {symbol}: "
-                      f"closing {existing_shadow['side']} → opening {side}")
-                try:
-                    self._close_shadow(symbol, entry_price, reason='reverse_signal')
-                except Exception as e:
-                    print(f"[TM] ❌ [TEST] Reverse-close-shadow failed for {symbol}: {e}")
-                    return
+                    shadow_opened = True  # already in this trend on paper
+                else:
+                    # OPPOSITE direction — same reverse semantics for paper trades
+                    print(f"[TM] 🔄 [TEST] Reverse signal for {symbol}: "
+                          f"closing {existing_shadow['side']} → opening {side}")
+                    try:
+                        self._close_shadow(symbol, entry_price, reason='reverse_signal')
+                    except Exception as e:
+                        print(f"[TM] ❌ [TEST] Reverse-close-shadow failed for {symbol}: {e}")
+                        return {'real_opened': real_opened, 'shadow_opened': False}
+                    self._open_shadow(symbol, side, entry_price, opened_by)
+                    shadow_opened = True
+            else:
                 self._open_shadow(symbol, side, entry_price, opened_by)
-                return
-            self._open_shadow(symbol, side, entry_price, opened_by)
+                shadow_opened = True
+
+        return {'real_opened': real_opened, 'shadow_opened': shadow_opened}
     
     def on_choch_event(self, symbol: str, direction: str, level: float, bar_t):
         """Called by SMC scanner for EVERY CHoCH detected (regardless of dedup/HTF).
