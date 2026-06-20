@@ -2211,7 +2211,40 @@ class TradeManager:
         for sym in live_symbols - tm_symbols:
             if self._adopt_external_position(live_by_symbol[sym]):
                 adopted.append(sym)
-        
+
+        # 1.5 Sync live Bybit truth onto positions held in BOTH places.
+        #     Bybit is the source of truth for entry (avgPrice after the real
+        #     fills), mark price, unrealised PnL and size. Caching these means
+        #     get_state() can report numbers that MATCH the exchange exactly,
+        #     instead of recomputing PnL from the signal price + last price —
+        #     which drifts from Bybit due to entry slippage, fees, and the
+        #     mark-vs-last-price difference. This is the core of "PnL у боті
+        #     має збігатися з біржею".
+        for sym in (live_symbols & tm_symbols):
+            bp = live_by_symbol.get(sym)
+            if not bp:
+                continue
+            with self._lock:
+                pos = self._positions.get(sym)
+                if not pos:
+                    continue
+                avg = float(bp.get('entry_price') or 0)
+                if avg > 0:
+                    pos['entry_price'] = avg          # actual avg fill price
+                size = float(bp.get('size') or 0)
+                if size > 0:
+                    # Keep qty in sync (partial fills / partial closes done on
+                    # the exchange). remaining_qty mirrors the live size.
+                    pos['qty'] = size
+                    pos['remaining_qty'] = size
+                mp = float(bp.get('mark_price') or 0)
+                pos['bybit_mark_price'] = mp if mp > 0 else None
+                upnl = bp.get('unrealized_pnl')
+                pos['bybit_pnl_usd'] = float(upnl) if upnl is not None else None
+                pv = bp.get('position_value')
+                pos['bybit_position_value'] = float(pv) if pv is not None else None
+                pos['bybit_synced_at'] = time.time()
+
         # 2. Detect external closes: in TM but not on Bybit.
         #    ONLY when the fetch was clean — a partial/error page must never
         #    trigger closes (root cause of the phantom-close storm).
@@ -2511,6 +2544,11 @@ class TradeManager:
             # real trades for accurate paper-trading data.
             'qty': 1.0,
             'remaining_qty': 1.0,
+            # Realistic USD exposure (Position Sizing applied) so the paper
+            # trade's $ PnL matches what a real position of this size would
+            # make. qty stays a 1.0 fraction for partial-close book-keeping;
+            # notional_usd is what turns the price move into real dollars.
+            'notional_usd': self._shadow_notional_usd(entry_price),
             'partial_closes_done': [],       # ['bos_2', 'bos_3', ...]
             'bos_count_since_entry': 1,      # opening BOS counts as #1 (matches real)
             'trailing_active': False,
@@ -2753,6 +2791,38 @@ class TradeManager:
     # Position sizing
     # ============================================================
     
+    def _shadow_notional_usd(self, entry_price: float) -> float:
+        """USD notional a REAL trade would use, given the current Position
+        Sizing settings — without any lot rounding or Bybit order call.
+
+        Shadow (paper) positions store qty as a 1.0 unit fraction for the
+        partial-close lifecycle, which is useless for a dollar PnL. This
+        returns the realistic dollar exposure so the paper trade's PnL in $
+        matches what a real position of the same size would earn/lose — i.e.
+        "реальний PnL" for test trades too, not a per-coin figure.
+
+        fixed_pct / risk_based need the account balance (one cheap cached
+        Bybit call); fixed_usd needs nothing. Any failure falls back to the
+        configured fixed USD amount so we never return 0.
+        """
+        s = self._settings
+        mode = s.get('sizing_mode', 'fixed_usd')
+        try:
+            if mode == 'fixed_usd':
+                return float(s.get('fixed_usd_amount', 100))
+            elif mode == 'fixed_pct':
+                balance = self._get_balance()
+                return balance * (float(s.get('fixed_pct_balance', 2.0)) / 100)
+            elif mode == 'risk_based':
+                balance = self._get_balance()
+                risk_usd = balance * (float(s.get('risk_pct_balance', 1.0)) / 100)
+                sl_pct = float(s.get('sl_pct', 2.0)) / 100
+                if sl_pct > 0:
+                    return risk_usd / sl_pct  # notional = risk / sl%
+        except Exception as e:
+            print(f"[TM] shadow notional calc warn: {e}")
+        return float(s.get('fixed_usd_amount', 100))
+
     def _calculate_qty(self, symbol: str, entry_price: float) -> float:
         s = self._settings
         mode = s.get('sizing_mode', 'fixed_usd')
@@ -3132,7 +3202,13 @@ class TradeManager:
         with self._lock:
             positions = []
             for sym, pos in self._positions.items():
-                current = self._get_current_price(sym) or pos['entry_price']
+                # Prefer Bybit's live truth (cached on reconcile) so the
+                # displayed numbers match the exchange. Mark price (not last
+                # price) is what Bybit uses for unrealised PnL; entry_price is
+                # already synced to avgPrice. Fall back to local compute only
+                # when not yet synced (e.g. just opened, before first reconcile).
+                mark = pos.get('bybit_mark_price')
+                current = mark or self._get_current_price(sym) or pos['entry_price']
                 entry = pos['entry_price']
                 if pos['side'] == 'LONG':
                     pnl_pct = (current - entry) / entry * 100
@@ -3143,6 +3219,19 @@ class TradeManager:
                     'current_price': current,
                     'pnl_pct': round(pnl_pct, 3),
                 }
+                # Exact $ PnL straight from the exchange when available — this
+                # is Bybit's unrealisedPnl, the same figure shown on the
+                # Bybit positions page. Local fallback derives it from the
+                # price move × qty (no fees) when not yet synced.
+                bpnl = pos.get('bybit_pnl_usd')
+                if bpnl is not None:
+                    pos_dict['pnl_usd'] = round(bpnl, 2)
+                    pos_dict['pnl_source'] = 'bybit'
+                else:
+                    qty = pos.get('remaining_qty') or pos.get('qty') or 0
+                    sign = 1 if pos['side'] == 'LONG' else -1
+                    pos_dict['pnl_usd'] = round((current - entry) * qty * sign, 2)
+                    pos_dict['pnl_source'] = 'local'
                 # Attach Health Score (None when feature disabled)
                 health = self._compute_health(pos, is_shadow=False)
                 if health is not None:
@@ -3175,6 +3264,17 @@ class TradeManager:
                     'current_price': current,
                     'pnl_pct': round(pnl_pct, 3),
                 }
+                # Realistic $ PnL for the paper trade: price move × notional,
+                # scaled by the remaining fraction (after any BOS partials).
+                # notional_usd may be absent on positions opened before this
+                # field existed → fall back to the configured fixed USD amount
+                # so the column is never blank.
+                notional = pos.get('notional_usd')
+                if notional is None:
+                    notional = float(self._settings.get('fixed_usd_amount', 100))
+                frac = pos.get('remaining_qty', 1.0) or 1.0
+                pos_dict['pnl_usd'] = round(notional * frac * (pnl_pct / 100.0), 2)
+                pos_dict['pnl_source'] = 'paper'
                 health = self._compute_health(pos, is_shadow=True)
                 if health is not None:
                     pos_dict['health'] = health
