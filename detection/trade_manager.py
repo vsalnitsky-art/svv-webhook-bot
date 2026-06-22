@@ -1056,17 +1056,17 @@ class TradeManager:
                     if real:
                         self._close_position(symbol, current_price,
                                               reason='forecast_1h_confluence')
-                    elif shadow and s.get('test_mode'):
+                    elif shadow:
                         self._close_shadow(symbol, current_price,
                                             reason='forecast_1h_confluence')
                     return  # closed; don't fall through to plain reverse
-        
+
         # === Plain Reverse SMC (CHoCH only) ===
         if s.get('use_reverse_smc'):
             current_price = self._get_current_price(symbol) or pos['entry_price']
             if real:
                 self._close_position(symbol, current_price, reason='reverse_smc')
-            elif shadow and s.get('test_mode'):
+            elif shadow:
                 self._close_shadow(symbol, current_price, reason='reverse_smc')
     
     def on_main_ob_update(self, symbol: str, ob_data: Optional[Dict] = None):
@@ -1144,7 +1144,7 @@ class TradeManager:
         if real:
             self._close_position(symbol, current_price,
                                   reason='opposite_ob_exit')
-        elif shadow and s.get('test_mode'):
+        elif shadow:
             self._close_shadow(symbol, current_price,
                                 reason='opposite_ob_exit')
     
@@ -1637,24 +1637,23 @@ class TradeManager:
                         state_dict[symbol].get('bos_against_count', 0) + 1)
         
         # === Partial-close logic ===
-        # Two independent code paths:
-        #   1) Real positions — gated by is_enabled() AND use_bos_partials,
-        #      operate on _positions and call Bybit API via _partial_close
-        #   2) Shadow positions — gated by use_bos_partials only (test_mode
-        #      is supposed to work with TM master toggle OFF), operate on
-        #      _shadow_positions, no Bybit calls.
+        # Two independent code paths (both gated by use_bos_partials only):
+        #   1) Real positions — operate on _positions, call Bybit via _partial_close
+        #   2) Shadow positions — operate on _shadow_positions, no Bybit calls.
+        # Neither is gated by the enabled toggle: the toggle only blocks NEW
+        # entries. An already-open position is always worked through.
         # Both paths run on every BOS event so a symbol with both a real
         # AND a shadow position would partial-close both. In practice
         # users only have one of the two at a time but the code is robust
         # to either configuration.
-        
+
         if not s.get('use_bos_partials'):
             # User explicitly disabled the feature — log once and skip both paths.
             print(f"[TM] BOS {symbol} {direction} ignored: use_bos_partials=False")
             return
-        
+
         # ----- REAL position path -----
-        if real and self.is_enabled():
+        if real:
             # Manual mode skips auto partial-closes; evaluator state above
             # still updated so reverting manual mode works seamlessly.
             if real.get('manual_mode'):
@@ -1662,9 +1661,7 @@ class TradeManager:
                       f"partial-close skipped (manual mode)")
             else:
                 self._process_bos_real(symbol, direction, level, bar_t, real)
-        elif real and not self.is_enabled():
-            print(f"[TM] BOS {symbol} {direction} for real position ignored: TM disabled")
-        
+
         # ----- SHADOW position path -----
         # Always runs when a shadow position exists. test_mode by design
         # operates while TM master toggle is off.
@@ -2160,14 +2157,16 @@ class TradeManager:
           - For each self._positions entry not on Bybit → it was closed
             externally; call _close_externally to update bookkeeping.
         
-        Runs only when TM is enabled — disabled means user wants no
-        automatic management of anything. Runs only if bybit connector
-        is configured with API key (returns no positions otherwise).
-        
+        Runs regardless of the enabled toggle. The toggle only controls
+        whether NEW trades are accepted (see on_signal / _open_position).
+        Existing positions must always be loaded, synced and managed — when
+        disabled we simply stop opening new trades, everything else works as
+        usual. Runs only if bybit connector is configured with API key.
+
         Returns a summary dict for logging/diagnostics.
         """
-        if not self.is_enabled() or not self.bybit:
-            return {'skipped': True, 'reason': 'TM disabled or no bybit'}
+        if not self.bybit:
+            return {'skipped': True, 'reason': 'no bybit connector'}
         try:
             # Use the checked variant so we can tell a real "no positions"
             # apart from an API error / partial page. On error we must NOT
