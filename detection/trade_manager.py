@@ -1190,8 +1190,10 @@ class TradeManager:
           - Reverse SMC (CHoCH only): close position when opposite CHoCH appears
           - Forecast 1H Confluence: close when opposite CHoCH AND Forecast 1H also opposite
         
-        Both rules work on real (when TM enabled) and shadow (when test_mode on)
-        positions. Telegram notifications are sent regardless.
+        Both rules work on real AND shadow positions regardless of the TM
+        master toggle or test_mode. Those toggles only gate NEW entries —
+        an already-open position must be worked through to the end. Telegram
+        notifications are sent regardless.
         """
         s = self._settings
         with self._lock:
@@ -1240,7 +1242,10 @@ class TradeManager:
                     if real:
                         self._close_position(symbol, current_price,
                                               reason='forecast_1h_confluence')
-                    elif shadow and s.get('test_mode'):
+                    elif shadow:
+                        # No test_mode gate — exit rules manage an already-open
+                        # paper position regardless of the toggle (toggle only
+                        # blocks NEW paper entries).
                         self._close_shadow(symbol, current_price,
                                             reason='forecast_1h_confluence')
                     return  # closed; don't fall through to plain reverse
@@ -1250,7 +1255,8 @@ class TradeManager:
             current_price = self._get_current_price(symbol) or pos['entry_price']
             if real:
                 self._close_position(symbol, current_price, reason='reverse_smc')
-            elif shadow and s.get('test_mode'):
+            elif shadow:
+                # No test_mode gate — manage existing paper position regardless.
                 self._close_shadow(symbol, current_price, reason='reverse_smc')
     
     def on_main_ob_update(self, symbol: str, ob_data: Optional[Dict] = None):
@@ -1328,7 +1334,8 @@ class TradeManager:
         if real:
             self._close_position(symbol, current_price,
                                   reason='opposite_ob_exit')
-        elif shadow and s.get('test_mode'):
+        elif shadow:
+            # No test_mode gate — manage existing paper position regardless.
             self._close_shadow(symbol, current_price,
                                 reason='opposite_ob_exit')
     
@@ -1822,23 +1829,28 @@ class TradeManager:
         
         # === Partial-close logic ===
         # Two independent code paths:
-        #   1) Real positions — gated by is_enabled() AND use_bos_partials,
-        #      operate on _positions and call Bybit API via _partial_close
-        #   2) Shadow positions — gated by use_bos_partials only (test_mode
-        #      is supposed to work with TM master toggle OFF), operate on
+        #   1) Real positions — gated by use_bos_partials only, operate on
+        #      _positions and call Bybit API via _partial_close
+        #   2) Shadow positions — gated by use_bos_partials only, operate on
         #      _shadow_positions, no Bybit calls.
+        # Neither path is gated by the TM master toggle / test_mode: those
+        # toggles only block NEW entries. A BOS-N partial close manages an
+        # ALREADY-OPEN position and must keep working it through to the end.
         # Both paths run on every BOS event so a symbol with both a real
         # AND a shadow position would partial-close both. In practice
         # users only have one of the two at a time but the code is robust
         # to either configuration.
-        
+
         if not s.get('use_bos_partials'):
             # User explicitly disabled the feature — log once and skip both paths.
             print(f"[TM] BOS {symbol} {direction} ignored: use_bos_partials=False")
             return
-        
+
         # ----- REAL position path -----
-        if real and self.is_enabled():
+        # Runs whenever a real position exists, regardless of the TM master
+        # toggle. The toggle only blocks new entries (see on_signal); an
+        # open position is always worked through, partial closes included.
+        if real:
             # Manual mode skips auto partial-closes; evaluator state above
             # still updated so reverting manual mode works seamlessly.
             if real.get('manual_mode'):
@@ -1846,12 +1858,9 @@ class TradeManager:
                       f"partial-close skipped (manual mode)")
             else:
                 self._process_bos_real(symbol, direction, level, bar_t, real)
-        elif real and not self.is_enabled():
-            print(f"[TM] BOS {symbol} {direction} for real position ignored: TM disabled")
-        
+
         # ----- SHADOW position path -----
-        # Always runs when a shadow position exists. test_mode by design
-        # operates while TM master toggle is off.
+        # Always runs when a shadow position exists, regardless of test_mode.
         if shadow:
             if shadow.get('manual_mode'):
                 print(f"[TM] BOS {symbol} {direction} for shadow {symbol}: "
