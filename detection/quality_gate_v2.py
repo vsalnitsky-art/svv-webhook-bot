@@ -34,36 +34,25 @@ Default filter threshold: 50 (blocks POOR + lower FAIR).
 from typing import Dict, Optional
 
 
-def calculate_quality_score_v2(
-    symbol: str,
-    side: str,
-    scanner,  # smc_scanner instance (for bias data)
-    smart_direction_result: Optional[Dict] = None,
-) -> Dict:
-    """Calculate Trade Quality Score V2 (0-100) with independent factors.
+def calculate_quality_score_v2(symbol: str, side: str, scanner,
+                               smart_direction_result: Optional[Dict] = None) -> Dict:
+    """Score a candidate trade 0-100 from four INDEPENDENT factors.
 
-    Args:
-        symbol: trading pair
-        side: 'LONG' or 'SHORT'
-        scanner: SMCScanner instance (provides get_bias())
-        smart_direction_result: output from smart_direction.compute_smart_direction()
-            Contains {allow_long, allow_short, mode, reason}. If None, HTF
-            alignment component defaults to neutral (15/30 points).
+    Returns a dict:
+      score      — int 0..100
+      grade      — EXCELLENT / GOOD / FAIR / POOR (or BLOCKED on kill-switch)
+      breakdown  — per-factor point allocation
+      reason     — short human-readable explanation
+      blocked    — True only when the exhaustion kill-switch fired
+      metrics    — raw inputs used (adr_room, atr_pct, exhaustion,
+                   decision_score, htf_mode) for the Blocked Trades table
 
-    Returns:
-        {
-            'score': 0-100,
-            'grade': 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR',
-            'breakdown': {component: points},
-            'reason': str (human-readable summary),
-            'blocked': bool (True if exhaustion kill-switch triggered),
-            'metrics': {...} (raw values for validation)
-        }
+    Never raises — any error degrades to a neutral FAIR/50 result.
     """
-    if not scanner:
-        return _error_result('Scanner not available')
-
     try:
+        if not scanner:
+            return _error_result('Scanner not available')
+
         bias_data = scanner.get_bias(symbol)
         if not bias_data:
             return _error_result('No bias data')
@@ -71,12 +60,12 @@ def calculate_quality_score_v2(
         move = bias_data.get('move', {})
         decision = bias_data.get('decision', {})
 
-        points = {}
+        points: Dict[str, int] = {}
         total = 0
         blocked = False
         reason_parts = []
 
-        # --- KILL-SWITCH: Exhaustion >85% ---
+        # === Exhaustion kill-switch (not scored — hard block) ===
         exhaustion = move.get('exhaustion', 50)
         if exhaustion > 85:
             blocked = True
@@ -89,8 +78,7 @@ def calculate_quality_score_v2(
                 'metrics': {'exhaustion': exhaustion},
             }
 
-        # --- 1. ADR ROOM (35 points) ---
-        # Most important: winners had 36.5% room, losers 9.8% (Δ=-26.67%)
+        # === ADR room — 35 pts (strongest predictor) ===
         adr_used = move.get('adr_used_pct', 100)
         adr_room = 100 - adr_used
         if adr_room >= 35:
@@ -104,50 +92,40 @@ def calculate_quality_score_v2(
         else:
             points['adr_room'] = 0
         total += points['adr_room']
-
         if adr_room >= 30:
-            reason_parts.append(f"ADR {adr_room:.0f}%✓")
+            reason_parts.append(f'ADR {adr_room:.0f}%✓')
         elif adr_room < 10:
-            reason_parts.append(f"⚠ ADR {adr_room:.0f}%")
+            reason_parts.append(f'⚠ ADR {adr_room:.0f}%')
 
-        # --- 2. HTF TREND ALIGNMENT (30 points) ---
-        # New factor: trading WITH 4H trend (via Smart Direction) vs. against.
-        # If smart_direction says "allow this side", award full points.
-        # If it blocks this side (but allows opposite), penalize.
-        # If WAIT mode or no data, neutral (15 points).
+        # === HTF trend alignment (Smart Direction) — 30 pts ===
         if smart_direction_result:
             mode = smart_direction_result.get('mode', 'WAIT')
             allow_long = smart_direction_result.get('allow_long', False)
             allow_short = smart_direction_result.get('allow_short', False)
-
             if side == 'LONG':
                 if allow_long:
                     points['htf_alignment'] = 30
-                    reason_parts.append("4H✓")
+                    reason_parts.append('4H✓')
                 elif allow_short and not allow_long:
-                    # Contra-trend: 4H wants SHORT but we're going LONG
                     points['htf_alignment'] = 0
-                    reason_parts.append("⚠ contra-4H")
+                    reason_parts.append('⚠ contra-4H')
                 else:
-                    # WAIT or BOTH → neutral
                     points['htf_alignment'] = 15
             else:  # SHORT
                 if allow_short:
                     points['htf_alignment'] = 30
-                    reason_parts.append("4H✓")
+                    reason_parts.append('4H✓')
                 elif allow_long and not allow_short:
                     points['htf_alignment'] = 0
-                    reason_parts.append("⚠ contra-4H")
+                    reason_parts.append('⚠ contra-4H')
                 else:
                     points['htf_alignment'] = 15
         else:
-            # No Smart Direction data → neutral
+            # No Smart Direction data — neutral half-credit (don't punish).
             points['htf_alignment'] = 15
-
         total += points['htf_alignment']
 
-        # --- 3. ATR VOLATILITY (20 points) ---
-        # Winners 0.53%, losers 0.69% → lower is better (calmer = tradeable)
+        # === ATR volatility — 20 pts (lower is better) ===
         atr_pct = move.get('atr_pct', 0.6)
         if atr_pct < 0.4:
             points['atr'] = 20
@@ -161,14 +139,8 @@ def calculate_quality_score_v2(
             points['atr'] = 0
         total += points['atr']
 
-        # --- 4. DECISION CENTER SCORE (15 points) ---
-        # Use the raw numeric score from evaluate_entry(), NOT the verdict.
-        # V1 had "marginal>good" paradox because verdict was noise on 142 trades.
-        # Decision score is a composite (HTF/Forecast/CTR) → independent from above.
-        #
-        # evaluate_entry() returns score ~[-10, +30]. Threshold is usually 10.
-        # Map: ≥20 → 15pts, ≥10 → 12pts, ≥0 → 8pts, <0 → 0pts.
-        decision_score = decision.get('score', 0)  # fallback 0 if missing
+        # === Decision Center composite score — 15 pts ===
+        decision_score = decision.get('score', 0)
         if decision_score >= 20:
             points['decision'] = 15
         elif decision_score >= 10:
@@ -179,7 +151,7 @@ def calculate_quality_score_v2(
             points['decision'] = 0
         total += points['decision']
 
-        # --- GRADE ---
+        # === Grade ===
         if total >= 75:
             grade = 'EXCELLENT'
         elif total >= 60:
@@ -205,7 +177,6 @@ def calculate_quality_score_v2(
                 'htf_mode': smart_direction_result.get('mode') if smart_direction_result else None,
             },
         }
-
     except Exception as e:
         return _error_result(f'Error: {e}')
 
@@ -222,26 +193,12 @@ def _error_result(reason: str) -> Dict:
     }
 
 
-# ============================================================================
-# VALIDATION TOOLING
-# ============================================================================
-
 def validate_on_archive(archive_path: str, test_size: float = 0.3):
-    """Run train/test validation on a trade archive JSON.
+    """Train/test split validation against a closed-trade archive JSON.
 
-    Args:
-        archive_path: path to JSON file with closed trades
-        test_size: fraction for test set (0.3 = 70% train, 30% test)
-
-    Prints:
-        - Correlation of score with win/loss (train + test)
-        - Win rate by grade bucket (train + test)
-        - Distribution of scores (train + test)
-        - Out-of-sample performance metrics
-
-    Usage:
-        from detection.quality_gate_v2 import validate_on_archive
-        validate_on_archive('/path/to/trade_archive.json', test_size=0.3)
+    Splits trades into train/test, recomputes the V2 grade from each trade's
+    `pre_trade_snapshot`, and reports win rate by grade for both splits so you
+    can spot overfitting (large train↔test divergence).
     """
     import json
     import random
@@ -249,151 +206,105 @@ def validate_on_archive(archive_path: str, test_size: float = 0.3):
 
     with open(archive_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
-
-    trades = data.get('closed_trades', [])
+    trades = data.get('closed_trades')
     if not trades:
-        print("❌ No closed_trades in archive")
+        print('❌ No closed_trades in archive')
         return
 
-    # Shuffle and split
     random.seed(42)
     random.shuffle(trades)
-    split_idx = int(len(trades) * (1 - test_size))
-    train = trades[:split_idx]
-    test = trades[split_idx:]
+    split = int(len(trades) * (1 - test_size))
+    train = trades[:split]
+    test = trades[split:]
 
-    print(f"\n{'='*60}")
-    print(f"Quality Gate V2 — Train/Test Validation")
-    print(f"{'='*60}")
-    print(f"Total trades: {len(trades)}")
-    print(f"Train: {len(train)} ({(1-test_size)*100:.0f}%)")
-    print(f"Test:  {len(test)} ({test_size*100:.0f}%)\n")
+    print('\n' + '=' * 60)
+    print('Quality Gate V2 — Train/Test Validation')
+    print('Total trades: ' + str(len(trades)))
+    print('Train: ' + str(len(train)) + ' (' + f'{(1 - test_size) * 100:.0f}' + '%)')
+    print('Test:  ' + str(len(test)) + ' (' + f'{test_size * 100:.0f}' + '%)\n')
+
+    def _grade_from_snapshot(snap):
+        """Recompute the V2 grade from a stored pre-trade snapshot."""
+        move = snap.get('move', {})
+        decision = snap.get('decision', {})
+        adr_room = 100 - move.get('adr_used_pct', 100)
+        atr_pct = move.get('atr_pct', 0.6)
+        exhaustion = move.get('exhaustion', 50)
+        if exhaustion > 85:
+            return 0, 'BLOCKED'
+        total = 0
+        if adr_room >= 35:
+            total += 35
+        elif adr_room >= 25:
+            total += 28
+        elif adr_room >= 15:
+            total += 18
+        elif adr_room >= 5:
+            total += 8
+        total += snap.get('htf', 15)
+        if atr_pct < 0.4:
+            total += 20
+        elif atr_pct < 0.55:
+            total += 15
+        elif atr_pct < 0.7:
+            total += 10
+        elif atr_pct < 0.9:
+            total += 5
+        dec = decision.get('score', 0)
+        if dec >= 20:
+            total += 15
+        elif dec >= 10:
+            total += 12
+        elif dec >= 0:
+            total += 8
+        if total >= 75:
+            grade = 'EXCELLENT'
+        elif total >= 60:
+            grade = 'GOOD'
+        elif total >= 45:
+            grade = 'FAIR'
+        else:
+            grade = 'POOR'
+        return total, grade
 
     def analyze_split(name, subset):
         """Compute metrics for train or test split."""
+        by_grade = defaultdict(lambda: {'wins': 0, 'losses': 0})
         scores = []
-        outcomes = []  # 1 = win, 0 = loss
-        grade_buckets = defaultdict(lambda: {'wins': 0, 'losses': 0})
-
+        wins = losses = 0
         for t in subset:
-            # Mock score calculation (real would need scanner instance)
-            # For validation, we extract PRE-TRADE metrics if available.
-            pre = t.get('pre_trade_snapshot', {})
-            move = pre.get('move', {})
-            decision = pre.get('decision', {})
-
-            adr_used = move.get('adr_used_pct', 100)
-            adr_room = 100 - adr_used
-            atr_pct = move.get('atr_pct', 0.6)
-            exhaustion = move.get('exhaustion', 50)
-            decision_score = decision.get('score', 0)
-
-            # Simplified scoring (HTF alignment not in archive, default neutral=15)
-            pts = {}
-            if exhaustion > 85:
-                # Blocked
-                score = 0
-                grade = 'BLOCKED'
-            else:
-                # ADR room
-                if adr_room >= 35:
-                    pts['adr'] = 35
-                elif adr_room >= 25:
-                    pts['adr'] = 28
-                elif adr_room >= 15:
-                    pts['adr'] = 18
-                elif adr_room >= 5:
-                    pts['adr'] = 8
-                else:
-                    pts['adr'] = 0
-
-                # HTF (default neutral)
-                pts['htf'] = 15
-
-                # ATR
-                if atr_pct < 0.4:
-                    pts['atr_v'] = 20
-                elif atr_pct < 0.55:
-                    pts['atr_v'] = 15
-                elif atr_pct < 0.7:
-                    pts['atr_v'] = 10
-                elif atr_pct < 0.9:
-                    pts['atr_v'] = 5
-                else:
-                    pts['atr_v'] = 0
-
-                # Decision
-                if decision_score >= 20:
-                    pts['dec'] = 15
-                elif decision_score >= 10:
-                    pts['dec'] = 12
-                elif decision_score >= 0:
-                    pts['dec'] = 8
-                else:
-                    pts['dec'] = 0
-
-                score = sum(pts.values())
-
-                if score >= 75:
-                    grade = 'EXCELLENT'
-                elif score >= 60:
-                    grade = 'GOOD'
-                elif score >= 45:
-                    grade = 'FAIR'
-                else:
-                    grade = 'POOR'
-
-            # Outcome
-            pnl = t.get('pnl_pct', 0)
-            win = 1 if pnl > 0 else 0
-
+            snap = t.get('pre_trade_snapshot')
+            if not snap:
+                continue
+            score, grade = _grade_from_snapshot(snap)
             scores.append(score)
-            outcomes.append(win)
-
-            if win:
-                grade_buckets[grade]['wins'] += 1
+            pnl = t.get('pnl_pct', 0)
+            if pnl >= 0:
+                by_grade[grade]['wins'] += 1
+                wins += 1
             else:
-                grade_buckets[grade]['losses'] += 1
+                by_grade[grade]['losses'] += 1
+                losses += 1
+        n = wins + losses
+        print('--- ' + name + ' ---')
+        if scores:
+            print('Avg score: ' + f'{sum(scores) / len(scores):.1f}')
+        if n:
+            print('Overall win rate: ' + f'{wins / n * 100:.1f}' + '%')
+        print('\nWin rate by grade:')
+        for grade in ('EXCELLENT', 'GOOD', 'FAIR', 'POOR', 'BLOCKED'):
+            g = by_grade.get(grade)
+            if not g:
+                continue
+            gn = g['wins'] + g['losses']
+            wr = g['wins'] / gn * 100 if gn else 0
+            print('  ' + f'{grade:12s}' + ': ' + f'{wr:5.1f}' + '% ('
+                  + str(g['wins']) + 'W / ' + str(g['losses']) + 'L, n=' + str(gn) + ')')
+        print('\nScore distribution:')
 
-        # Stats
-        avg_score = sum(scores) / len(scores) if scores else 0
-        win_rate_overall = sum(outcomes) / len(outcomes) * 100 if outcomes else 0
-
-        # Score distribution
-        dist = defaultdict(int)
-        for s in scores:
-            if s >= 75:
-                dist['EXCELLENT'] += 1
-            elif s >= 60:
-                dist['GOOD'] += 1
-            elif s >= 45:
-                dist['FAIR'] += 1
-            else:
-                dist['POOR'] += 1
-
-        print(f"--- {name} ---")
-        print(f"Avg score: {avg_score:.1f}")
-        print(f"Overall win rate: {win_rate_overall:.1f}%")
-        print(f"\nWin rate by grade:")
-        for g in ['EXCELLENT', 'GOOD', 'FAIR', 'POOR', 'BLOCKED']:
-            b = grade_buckets[g]
-            total = b['wins'] + b['losses']
-            if total > 0:
-                wr = b['wins'] / total * 100
-                print(f"  {g:12s}: {wr:5.1f}% ({b['wins']}W / {b['losses']}L, n={total})")
-
-        print(f"\nScore distribution:")
-        for g in ['EXCELLENT', 'GOOD', 'FAIR', 'POOR']:
-            count = dist[g]
-            pct = count / len(scores) * 100 if scores else 0
-            print(f"  {g:12s}: {count:3d} ({pct:5.1f}%)")
-        print()
-
-    analyze_split("TRAIN SET", train)
-    analyze_split("TEST SET (out-of-sample)", test)
-
-    print("="*60)
-    print("✅ Validation complete. Compare train vs. test metrics:")
-    print("   - Similar win rates by grade → model generalizes")
-    print("   - Large divergence → overfitting on train data")
-    print("="*60 + "\n")
+    analyze_split('TRAIN SET', train)
+    analyze_split('TEST SET (out-of-sample)', test)
+    print('\n✅ Validation complete. Compare train vs. test metrics:')
+    print('   - Similar win rates by grade → model generalizes')
+    print('   - Large divergence → overfitting on train data')
+    print('=' * 60 + '\n')
