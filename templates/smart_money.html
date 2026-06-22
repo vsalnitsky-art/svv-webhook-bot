@@ -2126,11 +2126,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div id="ta-hint" style="font-size:0.66rem;color:#6b7280;margin-top:6px"></div>
     </div>
 
-    <!-- Blocked Trades (rejected by Quality Gate) -->
+    <!-- Blocked Trades (rejected by Trade Quality Gate filters) -->
     <details class="tm-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
         <summary style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none">
             <div style="display:flex;align-items:center;gap:12px">
-                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Угоди, що були проігноровані/заблоковані фільтром Trade Quality Gate. Використовується для налаштування порогів фільтрів.">🚫 Blocked Trades (Quality Gate)</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Сигнали (CHoCH/BOS), що були проігноровані фільтрами Trade Quality Gate (HTF Bias, OB Filter, PD Zone, Forecast) і не дійшли до відкриття угоди. Показує, який саме фільтр і чому заблокував кожну можливість.">🚫 Blocked Trades (Quality Gate)</span>
                 <span id="bt-total" style="font-size:0.8rem;font-family:monospace;color:#fbbf24;font-weight:700">—</span>
                 <span id="bt-breakdown" style="font-size:0.7rem;color:#8b93a7"></span>
             </div>
@@ -2143,16 +2143,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Time</th>
                         <th>Symbol</th>
                         <th>Side</th>
-                        <th>Entry Price</th>
-                        <th>Blocked Reason</th>
-                        <th title="Health Score (if calculated)">Health</th>
-                        <th title="Entry Score (if calculated)">Entry</th>
-                        <th title="Type: real or paper">Type</th>
-                        <th title="Full quality metrics snapshot">Info</th>
+                        <th title="Would-be entry price (the structural break level)">Entry Price</th>
+                        <th title="Which Quality Gate filter rejected this signal">Blocked By</th>
+                        <th title="Why the filter blocked this signal">Reason / Characteristics</th>
+                        <th title="Full filter snapshot">Info</th>
                     </tr>
                 </thead>
                 <tbody id="bt-tbody">
-                    <tr><td colspan="9" class="tm-empty-msg">No blocked trades yet</td></tr>
+                    <tr><td colspan="7" class="tm-empty-msg">No blocked signals yet</td></tr>
                 </tbody>
             </table>
         </div>
@@ -6365,25 +6363,29 @@ async function loadBlockedTrades() {
         const stats = await (await fetch('/api/blocked-trades/stats')).json();
         if (stats.ok) {
             totalEl.textContent = stats.total + ' blocked';
-            if (brEl) brEl.textContent = `(реальних: ${stats.real} · paper: ${stats.paper})`;
         }
         // Load trades list
         const res = await (await fetch('/api/blocked-trades/list?limit=100')).json();
         if (!res.ok || !res.trades || res.trades.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">No blocked trades yet</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">No blocked signals yet</td></tr>';
             return;
         }
+        // Color-code each filter so the user can scan reasons at a glance
+        const filterColor = {
+            'HTF Bias Filter': '#a78bfa',
+            'OB Filter': '#60a5fa',
+            'PD Zone Filter': '#fbbf24',
+            'Forecast Filter': '#34d399',
+        };
         tbody.innerHTML = res.trades.map(t => {
             const dt = new Date(t.blocked_at * 1000);
             const time = dt.toLocaleString('en-GB', {
                 day: '2-digit', month: '2-digit',
                 hour: '2-digit', minute: '2-digit'
             });
-            const healthTxt = (t.health_score !== null && t.health_score !== undefined)
-                ? t.health_score.toFixed(0) : '—';
-            const entryTxt = (t.entry_score !== null && t.entry_score !== undefined)
-                ? t.entry_score.toFixed(0) : '—';
-            const typeTxt = t.is_paper ? '📝 Paper' : '💼 Real';
+            const snap = t.snapshot || {};
+            const reasonColor = filterColor[t.blocked_reason] || '#fbbf24';
+            const detail = snap.detail || '—';
             const infoBtn = t.snapshot
                 ? `<button onclick="showBlockedTradeInfo(${t.id})" style="padding:2px 8px;font-size:0.7rem;cursor:pointer;border-radius:3px;border:1px solid rgba(59,130,246,0.4);background:rgba(59,130,246,0.1);color:#60a5fa">ℹ️ Details</button>`
                 : '—';
@@ -6393,14 +6395,21 @@ async function loadBlockedTrades() {
                     <td>${t.symbol}</td>
                     <td style="color:${t.side === 'LONG' ? '#4ade80' : '#f87171'}">${t.side}</td>
                     <td>${fmtPriceJS(t.entry_price)}</td>
-                    <td style="color:#fbbf24;font-size:0.68rem">${t.blocked_reason}</td>
-                    <td>${healthTxt}</td>
-                    <td>${entryTxt}</td>
-                    <td style="font-size:0.68rem">${typeTxt}</td>
+                    <td style="color:${reasonColor};font-weight:600;font-size:0.7rem">${t.blocked_reason}</td>
+                    <td style="color:#cbd5e1;font-size:0.68rem">${detail}</td>
                     <td>${infoBtn}</td>
                 </tr>
             `;
         }).join('');
+        // Per-filter breakdown so the user sees which gate is most active
+        if (brEl) {
+            const counts = {};
+            for (const t of res.trades) {
+                counts[t.blocked_reason] = (counts[t.blocked_reason] || 0) + 1;
+            }
+            brEl.textContent = '(' + Object.entries(counts)
+                .map(([k, n]) => `${k}: ${n}`).join(' · ') + ')';
+        }
         // Store trades data for info modal
         window._blockedTradesData = res.trades;
     } catch (e) {
@@ -6432,19 +6441,30 @@ function showBlockedTradeInfo(tradeId) {
     const trades = window._blockedTradesData || [];
     const trade = trades.find(t => t.id === tradeId);
     if (!trade || !trade.snapshot) {
-        alert('No snapshot data available for this trade.');
+        alert('No snapshot data available for this signal.');
         return;
     }
-    // Format the snapshot as readable JSON
-    const snapshotText = JSON.stringify(trade.snapshot, null, 2);
-    const msg = `🚫 Blocked Trade Details\n\n` +
+    const snap = trade.snapshot;
+    const dt = new Date(trade.blocked_at * 1000);
+    // Build a readable characteristics list from the snapshot, skipping the
+    // redundant top-level keys we already show in the header.
+    const skip = new Set(['filter', 'signal_side', 'signal_mode', 'detail']);
+    const lines = [];
+    for (const [k, v] of Object.entries(snap)) {
+        if (skip.has(k)) continue;
+        let val = v;
+        if (v && typeof v === 'object') val = JSON.stringify(v);
+        lines.push(`  • ${k}: ${val}`);
+    }
+    const msg = `🚫 Blocked Signal — Quality Gate\n\n` +
                 `Symbol: ${trade.symbol}\n` +
                 `Side: ${trade.side}\n` +
-                `Entry Price: ${fmtPriceJS(trade.entry_price)}\n` +
-                `Blocked Reason: ${trade.blocked_reason}\n` +
-                `Health Score: ${trade.health_score !== null ? trade.health_score.toFixed(2) : 'N/A'}\n` +
-                `Entry Score: ${trade.entry_score !== null ? trade.entry_score.toFixed(2) : 'N/A'}\n\n` +
-                `Full Quality Snapshot:\n${snapshotText}`;
+                `Would-be entry: ${fmtPriceJS(trade.entry_price)}\n` +
+                `Time: ${dt.toLocaleString('en-GB')}\n` +
+                `Signal type: ${snap.signal_mode || '—'}\n\n` +
+                `Blocked by: ${trade.blocked_reason}\n` +
+                `Why: ${snap.detail || '—'}\n\n` +
+                `Filter characteristics:\n${lines.join('\n') || '  (none)'}`;
     alert(msg);
 }
 

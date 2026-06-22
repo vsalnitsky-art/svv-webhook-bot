@@ -1924,12 +1924,6 @@ class TradeManager:
         # normally; only the open step is blocked.
         if not self._side_allowed(side):
             print(f"[TM] 🚫 REAL {side} entries disabled — {symbol} not opened")
-            # Record this blocked trade for analysis
-            self._record_blocked_trade(
-                symbol=symbol, side=side, entry_price=entry_price,
-                blocked_reason=f"{side}_side_gate_disabled",
-                is_paper=False
-            )
             return
         
         # Calculate size
@@ -2479,12 +2473,6 @@ class TradeManager:
         # would have done. Closures/exits run normally; only opens blocked.
         if not self._side_allowed(side):
             print(f"[TM] 🚫 SHADOW {side} entries disabled — {symbol} not opened")
-            # Record this blocked trade for analysis
-            self._record_blocked_trade(
-                symbol=symbol, side=side, entry_price=entry_price,
-                blocked_reason=f"{side}_side_gate_disabled",
-                is_paper=True
-            )
             return
         
         # Compute unified Decision Center verdict — same shape as real open
@@ -3674,46 +3662,6 @@ class TradeManager:
             self._closed_trades = []
         self._persist_closed_trades()
         return {'ok': True, 'cleared': n}
-
-    # ============================================================
-    # Blocked Trade Recording
-    # ============================================================
-
-    def _record_blocked_trade(self, symbol: str, side: str, entry_price: float,
-                              blocked_reason: str, health_score: float = None,
-                              entry_score: float = None, snapshot: dict = None,
-                              is_paper: bool = False):
-        """Record a trade that was blocked/rejected by Quality Gate or other filters.
-
-        Captures the moment of rejection with all available quality metrics so
-        we can later analyze what signals were filtered out and tune the gates.
-
-        Args:
-            symbol: Trading pair
-            side: 'LONG' or 'SHORT'
-            entry_price: Price at which entry would have occurred
-            blocked_reason: Why it was blocked (e.g. 'LONG_side_gate_disabled',
-                           'health_score_too_low', 'entry_score_below_threshold')
-            health_score: Computed health score if available
-            entry_score: Computed entry score if available
-            snapshot: Full quality metrics dict
-            is_paper: Whether this was in test_mode
-        """
-        if not self.db:
-            return
-        try:
-            self.db.record_blocked_trade(
-                symbol=symbol,
-                side=side,
-                entry_price=entry_price,
-                blocked_reason=blocked_reason,
-                snapshot=snapshot,
-                health_score=health_score,
-                entry_score=entry_score,
-                is_paper=is_paper
-            )
-        except Exception as e:
-            print(f"[TM] blocked trade record error: {e}")
 
     # ============================================================
     # Notifications

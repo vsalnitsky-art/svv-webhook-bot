@@ -2078,6 +2078,7 @@ class SMCScanner:
                 if tag == 'CHoCH' and is_recent:
                     if not self._htf_allows(symbol, ev['dir']):
                         print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
+                        self._record_htf_block(symbol, ev, 'choch')
                     elif not self._dedup_allows(symbol, ev['dir']):
                         # _dedup_allows blocks for two possible reasons —
                         # log which one fired so the user can debug "why
@@ -2109,6 +2110,7 @@ class SMCScanner:
                     if is_recent:
                         if not self._htf_allows(symbol, ev['dir']):
                             print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
+                            self._record_htf_block(symbol, ev, 'choch')
                         elif not self._dedup_allows(symbol, ev['dir']):
                             print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by dedup")
                         else:
@@ -2129,6 +2131,7 @@ class SMCScanner:
                         if ev.get('to_t', 0) > pending.get('to_t', 0):
                             if not self._htf_allows(symbol, ev['dir']):
                                 print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
+                                self._record_htf_block(symbol, ev, 'choch_bos')
                             elif not self._dedup_allows(symbol, ev['dir']):
                                 print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by dedup")
                                 self._pending_choch.pop(symbol, None)
@@ -2241,11 +2244,71 @@ class SMCScanner:
         # event_dir = 'bull' | 'bear'; bias = 'bull' | 'bear'
         return bias == event_dir
     
+    def _record_blocked_signal(self, symbol: str, side: str, entry_price: float,
+                               mode: str, filter_name: str, details: Dict):
+        """Record a structurally-valid signal that fired a CHoCH/BOS but was
+        rejected by a data-driven quality filter (HTF Bias, OB, PD Zone,
+        Forecast) before it could reach the Trade Manager.
+
+        These are the "Trade Quality Gate" rejections — signals the bot saw
+        and deliberately skipped. Captured for the Blocked Trades table so the
+        user can see exactly which filter blocked each opportunity and why.
+
+        Best-effort — must never break scanning.
+        """
+        if not self.db:
+            return
+        try:
+            snapshot = dict(details or {})
+            snapshot['filter'] = filter_name
+            snapshot['signal_mode'] = mode          # 'choch' or 'choch_bos'
+            snapshot['signal_side'] = side
+            self.db.record_blocked_trade(
+                symbol=symbol,
+                side=side,
+                entry_price=float(entry_price or 0),
+                blocked_reason=filter_name,
+                snapshot=snapshot,
+                is_paper=False,
+            )
+        except Exception as e:
+            print(f"[SMC] blocked-signal record error: {e}")
+
+    def _record_htf_block(self, symbol: str, event: Dict, mode: str):
+        """Record an HTF Bias Filter rejection. The signal direction opposed
+        the higher-timeframe bias, so the gate dropped it."""
+        side_label = 'LONG' if event['dir'] == 'bull' else 'SHORT'
+        entry_price = event.get('level', 0) or (self._get_live_price(symbol) or 0)
+        htf = self.get_htf_settings()
+        bias = self._htf_cache.get(symbol, {}).get('bias', 'neutral')
+        bias_label = {'bull': 'BULLISH', 'bear': 'BEARISH'}.get(bias, str(bias).upper())
+        self._record_blocked_signal(
+            symbol, side_label, entry_price, mode, 'HTF Bias Filter', {
+                'htf_timeframe': htf.get('timeframe'),
+                'htf_method': htf.get('method'),
+                'htf_bias': bias_label,
+                'detail': f'HTF bias {bias_label} opposes {side_label}',
+            })
+
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:
             is_bull = event['dir'] == 'bull'
             side_label = 'LONG' if is_bull else 'SHORT'
-            
+
+            # Entry price = the structural break LEVEL of the event that fired
+            # the signal: the BOS break level in CHoCH+BOS mode, or the CHoCH
+            # break level in CHoCH mode. This is the exact price `close` crossed
+            # to confirm the structure — i.e. the actual trigger. Pinning the
+            # entry to this level keeps it sitting ON the structure drawn on the
+            # chart, instead of drifting to wherever live price happens to be at
+            # scan time. Live price is only a last-resort fallback if, for some
+            # reason, the event carries no usable level. Computed up front so a
+            # blocked signal can still record the would-be entry for the
+            # Blocked Trades table.
+            entry_price = event.get('level', 0)
+            if not entry_price or entry_price <= 0:
+                entry_price = self._get_live_price(symbol) or 0
+
             # === OB Filter gate ===
             # When the user has enabled OB Filter, we require directional
             # agreement between the signal and the LAST VALID OB on the
@@ -2259,8 +2322,23 @@ class SMCScanner:
                     # Drop silently — no marker, no TM call. Logged so
                     # production can verify filter is actually firing.
                     print(f"[SMC] 🚫 OB Filter blocked {symbol} {side_label} signal")
+                    ob_tf = self._settings.get('ob_filter_timeframe', '1h')
+                    ob_bias = None
+                    try:
+                        from storage.db_operations import get_db
+                        row = get_db().get_smc_ob_state(symbol, ob_tf)
+                        ob_bias = row.get('bias') if row else None
+                    except Exception:
+                        pass
+                    self._record_blocked_signal(
+                        symbol, side_label, entry_price, mode, 'OB Filter', {
+                            'ob_timeframe': ob_tf,
+                            'ob_bias': ob_bias,
+                            'detail': ('No valid OB at this TF' if ob_bias is None
+                                       else f'OB bias {ob_bias} opposes {side_label}'),
+                        })
                     return
-            
+
             # === PD Zone Filter (Premium/Discount) ===
             # Independent of OB Filter — this is a price-position filter,
             # OB is a structure filter. Both can be on simultaneously
@@ -2272,8 +2350,20 @@ class SMCScanner:
             # newbie mistake; default protection is more useful than
             # default permissiveness.
             if not self._pd_zone_filter_allows(symbol, side_label):
+                if self._settings.get('use_pd_zone_filter', True):
+                    cached = self._pd_zone_cache.get(symbol) or {}
+                    pct = cached.get('pct')
+                    self._record_blocked_signal(
+                        symbol, side_label, entry_price, mode, 'PD Zone Filter', {
+                            'pd_timeframe': self._settings.get('pd_zone_timeframe'),
+                            'position_pct': pct,
+                            'long_max_pct': float(self._settings.get('pd_long_max_pct', 75.0)),
+                            'short_min_pct': float(self._settings.get('pd_short_min_pct', 25.0)),
+                            'detail': (f'Price at {pct}% of trailing range'
+                                       if pct is not None else 'Range undefined (few pivots)'),
+                        })
                 return  # Already logged inside the helper
-            
+
             # === Forecast Filter (1H / 4H multi-horizon prediction) ===
             # Per-TF enable, combine mode (AND/OR) when both ON. Reads the
             # cached forecast computed by ForecastEngine on a separate
@@ -2283,20 +2373,27 @@ class SMCScanner:
             if (self._settings.get('forecast_1h_filter_enabled', False)
                     or self._settings.get('forecast_4h_filter_enabled', False)):
                 if not self._forecast_filter_allows(symbol, side_label):
+                    f1, f4 = None, None
+                    try:
+                        from detection.forecast_engine import get_forecast_engine
+                        fe = get_forecast_engine()
+                        if fe is not None:
+                            c = fe.get(symbol) or {}
+                            f1 = c.get('forecast_1h')
+                            f4 = c.get('forecast_4h')
+                    except Exception:
+                        pass
+                    self._record_blocked_signal(
+                        symbol, side_label, entry_price, mode, 'Forecast Filter', {
+                            'forecast_1h_on': bool(self._settings.get('forecast_1h_filter_enabled', False)),
+                            'forecast_4h_on': bool(self._settings.get('forecast_4h_filter_enabled', False)),
+                            'combine_mode': str(self._settings.get('forecast_combine_mode', 'AND')).upper(),
+                            'forecast_1h': f1,
+                            'forecast_4h': f4,
+                            'detail': f'Forecast disagrees with {side_label}',
+                        })
                     return  # Already logged inside the helper
-            
-            # Entry price = the structural break LEVEL of the event that fired
-            # the signal: the BOS break level in CHoCH+BOS mode, or the CHoCH
-            # break level in CHoCH mode. This is the exact price `close` crossed
-            # to confirm the structure — i.e. the actual trigger. Pinning the
-            # entry to this level keeps it sitting ON the structure drawn on the
-            # chart, instead of drifting to wherever live price happens to be at
-            # scan time. Live price is only a last-resort fallback if, for some
-            # reason, the event carries no usable level.
-            entry_price = event.get('level', 0)
-            if not entry_price or entry_price <= 0:
-                entry_price = self._get_live_price(symbol) or 0
-            
+
             entry_str = self._fmt_price(entry_price)
             
             # Telegram notification is sent by Trade Manager — either via
