@@ -5633,6 +5633,16 @@ async function saveTMSettings() {
                 return isNaN(n) ? null : n;
             })(),
             entry_score_weights: collectEntryWeights(),
+            // Quality Gate
+            use_quality_gate: document.getElementById('tm-quality-gate-enabled')?.checked || false,
+            quality_gate_mode: (function() {
+                const modeInputs = document.getElementsByName('qg-mode');
+                for (const input of modeInputs) {
+                    if (input.checked) return input.value;
+                }
+                return 'advisory';
+            })(),
+            quality_gate_threshold: parseInt(document.getElementById('tm-quality-threshold')?.value, 10) || 40,
         };
         try {
             await fetch('/api/tm/settings', {
@@ -6590,7 +6600,8 @@ async function toggleQualityGate() {
         body.style.display = enabled ? 'block' : 'none';
     }
 
-    await saveQualityGateSettings();
+    // Save all TM settings (includes quality gate)
+    await saveTMSettings();
 }
 
 function updateQualityThreshold() {
@@ -6600,50 +6611,29 @@ function updateQualityThreshold() {
 }
 
 async function saveQualityGateSettings() {
-    try {
-        const enabled = document.getElementById('tm-quality-gate-enabled').checked;
-        const modeInputs = document.getElementsByName('qg-mode');
-        let mode = 'advisory';
-        for (const input of modeInputs) {
-            if (input.checked) {
-                mode = input.value;
-                break;
-            }
+    // Update mode hint text
+    const modeInputs = document.getElementsByName('qg-mode');
+    let mode = 'advisory';
+    for (const input of modeInputs) {
+        if (input.checked) {
+            mode = input.value;
+            break;
         }
-        const threshold = parseInt(document.getElementById('tm-quality-threshold').value, 10);
-
-        // Update mode hint
-        const hint = document.getElementById('qg-mode-hint');
-        if (hint) {
-            const hints = {
-                'off': 'Оцінка не рахується',
-                'advisory': 'Показує оцінку якості, але не блокує сигнали',
-                'filter': `Блокує сигнали з оцінкою < ${threshold}`
-            };
-            hint.textContent = hints[mode] || '';
-        }
-
-        // Include in general TM settings save
-        const settings = {
-            use_quality_gate: enabled,
-            quality_gate_mode: mode,
-            quality_gate_threshold: threshold
-        };
-
-        const res = await fetch('/api/tm/settings', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({settings})
-        });
-        const d = await res.json();
-        if (!d.ok) {
-            console.error('Quality Gate save failed:', d.reason);
-        } else {
-            console.log('Quality Gate saved:', settings);
-        }
-    } catch (err) {
-        console.error('Quality Gate save error:', err);
     }
+    const threshold = parseInt(document.getElementById('tm-quality-threshold')?.value, 10) || 40;
+
+    const hint = document.getElementById('qg-mode-hint');
+    if (hint) {
+        const hints = {
+            'off': 'Оцінка не рахується',
+            'advisory': 'Показує оцінку якості, але не блокує сигнали',
+            'filter': `Блокує сигнали з оцінкою < ${threshold}`
+        };
+        hint.textContent = hints[mode] || '';
+    }
+
+    // Save all TM settings (includes quality gate)
+    await saveTMSettings();
 }
 
 async function toggleTradeArchive() {
