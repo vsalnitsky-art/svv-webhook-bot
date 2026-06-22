@@ -455,18 +455,22 @@ class EventLog(Base):
 
 
 class BlockedTrade(Base):
-    """Trades blocked/ignored by Quality Gate filters. Captured for analysis
+    """Trades blocked/ignored by the V2 Quality Gate. Captured for analysis
     to understand which signals were rejected and why.
 
     Stores the full snapshot at the moment of rejection including:
     - Symbol, side, entry price
-    - Health score and entry score (if calculated)
-    - All quality metrics and weights
-    - Reason for blocking (which filter/threshold failed)
+    - V2 Quality Gate score (0-100) stored in health_score column
+    - All quality metrics: ADR room, HTF alignment, ATR, Decision score
+    - Point breakdown per factor
+    - Reason for blocking: 'quality_score_too_low' or 'exhaustion_kill_switch'
 
     Unlike TradeArchive (successful trades), this table tracks REJECTED
-    opportunities so we can tune the Quality Gate thresholds and understand
+    opportunities so we can tune the V2 Quality Gate thresholds and understand
     what we're missing vs what we're correctly filtering out.
+
+    The health_score column holds the V2 overall score. entry_score is reserved
+    for future integration of separate Health/Entry scoring systems.
     """
     __tablename__ = f'{TABLE_PREFIX}blocked_trades'
 

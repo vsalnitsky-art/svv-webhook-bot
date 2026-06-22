@@ -400,7 +400,47 @@ class TradeManager:
                                      self._shadow_closed[-CLOSED_TRADES_LIMIT:])
             except Exception as e:
                 print(f"[TM] Shadow closed persist error: {e}")
-    
+
+    def _record_blocked_trade(self, symbol: str, side: str, entry_price: float,
+                               is_paper: bool, blocked_reason: str, qg_result: Dict):
+        """Record a trade blocked by the V2 Quality Gate to the database.
+
+        Args:
+            symbol: Trading pair (e.g., BTCUSDT)
+            side: 'LONG' or 'SHORT'
+            entry_price: Would-be entry price
+            is_paper: True if test_mode was active
+            blocked_reason: 'quality_score_too_low' or 'exhaustion_kill_switch'
+            qg_result: Full result dict from calculate_quality_score_v2 with
+                      score, grade, breakdown, reason, metrics
+        """
+        if not self.db:
+            return
+        try:
+            snapshot = {
+                'score': qg_result.get('score', 0),
+                'grade': qg_result.get('grade', ''),
+                'breakdown': qg_result.get('breakdown', {}),
+                'reason': qg_result.get('reason', ''),
+                'metrics': qg_result.get('metrics', {}),
+                'blocked_reason': blocked_reason,
+            }
+            # Pass score in the legacy health_score column for backwards compatibility
+            # (entry_score is reserved for future Health/Entry scoring integration)
+            self.db.record_blocked_trade(
+                symbol=symbol,
+                side=side,
+                entry_price=entry_price,
+                blocked_reason=blocked_reason,
+                is_paper=is_paper,
+                snapshot=snapshot,  # dict, will be JSON-encoded by db_operations
+                health_score=qg_result.get('score'),  # V2 overall score
+                entry_score=None,
+            )
+        except Exception as e:
+            # Never break signal flow on recording errors
+            print(f"[TM] ⚠️ Failed to record blocked trade for {symbol}: {e}")
+
     # ============================================================
     # Settings API
     # ============================================================
@@ -936,7 +976,53 @@ class TradeManager:
         if existing_shadow and existing_shadow.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
             return
-        
+
+        # === V2 Quality Gate (data-driven filter) ===
+        # Evaluate trade quality score (0-100) from 4 independent factors:
+        # ADR room, HTF alignment, ATR, Decision score. Modes:
+        #   - off: skip scoring entirely
+        #   - advisory: calculate + log score, but don't block
+        #   - filter: block if score < threshold, record to BlockedTrade table
+        use_qg = s.get('use_quality_gate', False)
+        qg_mode = s.get('quality_gate_mode', 'advisory')
+        qg_threshold = s.get('quality_gate_threshold', 50)
+
+        if use_qg and qg_mode != 'off':
+            try:
+                from detection.quality_gate_v2 import calculate_quality_score_v2
+                from detection.smc_scanner import get_scanner
+                scanner = get_scanner()
+
+                qg_result = calculate_quality_score_v2(symbol, side, scanner,
+                                                       smart_direction_result=None)
+                score = qg_result.get('score', 50)
+                grade = qg_result.get('grade', 'FAIR')
+                reason = qg_result.get('reason', '')
+                blocked = qg_result.get('blocked', False)
+
+                # Exhaustion kill-switch (>85%) → hard block regardless of mode
+                if blocked:
+                    print(f"[TM] ⛔ V2 Quality Gate BLOCKED {symbol} {side}: {reason}")
+                    self._record_blocked_trade(symbol, side, entry_price, test_mode,
+                                               'exhaustion_kill_switch', qg_result)
+                    return
+
+                # Filter mode: block if score < threshold
+                if qg_mode == 'filter' and score < qg_threshold:
+                    print(f"[TM] 🚫 V2 Quality Gate filtered {symbol} {side}: "
+                          f"score {score} < {qg_threshold} ({grade})")
+                    self._record_blocked_trade(symbol, side, entry_price, test_mode,
+                                               'quality_score_too_low', qg_result)
+                    return
+
+                # Advisory mode or passing filter: log but continue
+                if qg_mode == 'advisory' or score >= qg_threshold:
+                    print(f"[TM] ✓ V2 Quality Gate: {symbol} {side} score={score} "
+                          f"grade={grade} ({reason})")
+            except Exception as e:
+                # Never break signal flow on scoring errors — degrade gracefully
+                print(f"[TM] ⚠️ V2 Quality Gate error for {symbol}: {e}")
+
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list so only
         # explicitly-allowed symbols ever hit the exchange.
