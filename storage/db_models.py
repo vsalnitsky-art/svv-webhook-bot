@@ -454,6 +454,41 @@ class EventLog(Base):
         }
 
 
+class BlockedTrade(Base):
+    """Trades blocked/ignored by Quality Gate filters. Captured for analysis
+    to understand which signals were rejected and why.
+
+    Stores the full snapshot at the moment of rejection including:
+    - Symbol, side, entry price
+    - Health score and entry score (if calculated)
+    - All quality metrics and weights
+    - Reason for blocking (which filter/threshold failed)
+
+    Unlike TradeArchive (successful trades), this table tracks REJECTED
+    opportunities so we can tune the Quality Gate thresholds and understand
+    what we're missing vs what we're correctly filtering out.
+    """
+    __tablename__ = f'{TABLE_PREFIX}blocked_trades'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    is_paper = Column(Boolean, default=False, index=True)  # was it test_mode?
+    symbol = Column(String(20), index=True)
+    side = Column(String(8))                               # LONG / SHORT
+    entry_price = Column(Float)
+    blocked_at = Column(Float, index=True)                 # unix timestamp
+    blocked_reason = Column(String(100))                   # e.g. "health_score_too_low"
+    # Quality scores at the time of rejection (if calculated)
+    health_score = Column(Float)
+    entry_score = Column(Float)
+    # Full snapshot of all quality metrics as JSON
+    snapshot = Column(Text)                                # JSON: all metrics
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index(f'ix_{TABLE_PREFIX}blocked_sym_at', 'symbol', 'blocked_at'),
+    )
+
+
 class SymbolBlacklist(Base):
     """
     Blacklist - v8.2: Монети виключені з аналізу

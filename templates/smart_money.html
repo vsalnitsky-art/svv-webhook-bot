@@ -2126,6 +2126,38 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div id="ta-hint" style="font-size:0.66rem;color:#6b7280;margin-top:6px"></div>
     </div>
 
+    <!-- Blocked Trades (rejected by Quality Gate) -->
+    <details class="tm-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <summary style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none">
+            <div style="display:flex;align-items:center;gap:12px">
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Угоди, що були проігноровані/заблоковані фільтром Trade Quality Gate. Використовується для налаштування порогів фільтрів.">🚫 Blocked Trades (Quality Gate)</span>
+                <span id="bt-total" style="font-size:0.8rem;font-family:monospace;color:#fbbf24;font-weight:700">—</span>
+                <span id="bt-breakdown" style="font-size:0.7rem;color:#8b93a7"></span>
+            </div>
+            <button onclick="event.stopPropagation();clearBlockedTrades()" style="font-size:0.72rem;padding:5px 12px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer">🗑️ Clear</button>
+        </summary>
+        <div style="margin-top:12px">
+            <table class="tm-table" id="bt-table" style="font-size:0.72rem">
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Entry Price</th>
+                        <th>Blocked Reason</th>
+                        <th title="Health Score (if calculated)">Health</th>
+                        <th title="Entry Score (if calculated)">Entry</th>
+                        <th title="Type: real or paper">Type</th>
+                        <th title="Full quality metrics snapshot">Info</th>
+                    </tr>
+                </thead>
+                <tbody id="bt-tbody">
+                    <tr><td colspan="9" class="tm-empty-msg">No blocked trades yet</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </details>
+
     <div class="tm-panel" id="testmode-panel" style="margin-top:14px">
         <div class="tm-header" id="testmode-header">
             <h2>🧪 Test Mode <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(paper trading — no real orders)</span></h2>
@@ -5166,10 +5198,12 @@ async function loadTMSettings() {
         const etov = s.entry_score_threshold_override;
         document.getElementById('tm-entry-threshold').value =
             (etov === null || etov === undefined) ? '' : etov;
-        // Weight sliders are hidden in the simplified UI — collectors
-        // gracefully fall back to defaults when DOM nodes aren't rendered,
-        // so we skip the render calls entirely.
-        
+        // Render weight sliders with saved values from the server. Even if
+        // the containers are hidden (display:none), we must populate them
+        // so the values persist across page reloads.
+        renderHealthWeights(s.health_score_weights || {});
+        renderEntryWeights(s.entry_score_weights || {});
+
         updateTMSummary();
     } catch (err) {
         console.error('TM settings load error', err);
@@ -6321,6 +6355,99 @@ async function clearTradeArchive() {
     }
 }
 
+async function loadBlockedTrades() {
+    const totalEl = document.getElementById('bt-total');
+    const brEl = document.getElementById('bt-breakdown');
+    const tbody = document.getElementById('bt-tbody');
+    if (!totalEl || !tbody) return;
+    try {
+        // Load stats
+        const stats = await (await fetch('/api/blocked-trades/stats')).json();
+        if (stats.ok) {
+            totalEl.textContent = stats.total + ' blocked';
+            if (brEl) brEl.textContent = `(реальних: ${stats.real} · paper: ${stats.paper})`;
+        }
+        // Load trades list
+        const res = await (await fetch('/api/blocked-trades/list?limit=100')).json();
+        if (!res.ok || !res.trades || res.trades.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">No blocked trades yet</td></tr>';
+            return;
+        }
+        tbody.innerHTML = res.trades.map(t => {
+            const dt = new Date(t.blocked_at * 1000);
+            const time = dt.toLocaleString('en-GB', {
+                day: '2-digit', month: '2-digit',
+                hour: '2-digit', minute: '2-digit'
+            });
+            const healthTxt = (t.health_score !== null && t.health_score !== undefined)
+                ? t.health_score.toFixed(0) : '—';
+            const entryTxt = (t.entry_score !== null && t.entry_score !== undefined)
+                ? t.entry_score.toFixed(0) : '—';
+            const typeTxt = t.is_paper ? '📝 Paper' : '💼 Real';
+            const infoBtn = t.snapshot
+                ? `<button onclick="showBlockedTradeInfo(${t.id})" style="padding:2px 8px;font-size:0.7rem;cursor:pointer;border-radius:3px;border:1px solid rgba(59,130,246,0.4);background:rgba(59,130,246,0.1);color:#60a5fa">ℹ️ Details</button>`
+                : '—';
+            return `
+                <tr data-bt-id="${t.id}">
+                    <td>${time}</td>
+                    <td>${t.symbol}</td>
+                    <td style="color:${t.side === 'LONG' ? '#4ade80' : '#f87171'}">${t.side}</td>
+                    <td>${fmtPriceJS(t.entry_price)}</td>
+                    <td style="color:#fbbf24;font-size:0.68rem">${t.blocked_reason}</td>
+                    <td>${healthTxt}</td>
+                    <td>${entryTxt}</td>
+                    <td style="font-size:0.68rem">${typeTxt}</td>
+                    <td>${infoBtn}</td>
+                </tr>
+            `;
+        }).join('');
+        // Store trades data for info modal
+        window._blockedTradesData = res.trades;
+    } catch (e) {
+        console.error('Blocked trades load error:', e);
+        totalEl.textContent = '—';
+    }
+}
+
+async function clearBlockedTrades() {
+    if (!confirm('Очистити ВСІ заблоковані угоди?\n\nЦі дані використовуються для аналізу фільтрів Quality Gate. Після видалення вони НЕ відновляться.\n\nПродовжити?')) return;
+    try {
+        const r = await (await fetch('/api/blocked-trades/clear', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({scope: 'all'})
+        })).json();
+        if (r.ok) {
+            alert(`Blocked trades cleared: видалено ${r.removed} записів.`);
+            loadBlockedTrades();
+        } else {
+            alert('Помилка: ' + (r.reason || 'невідома'));
+        }
+    } catch (e) {
+        alert('Помилка запиту: ' + e);
+    }
+}
+
+function showBlockedTradeInfo(tradeId) {
+    const trades = window._blockedTradesData || [];
+    const trade = trades.find(t => t.id === tradeId);
+    if (!trade || !trade.snapshot) {
+        alert('No snapshot data available for this trade.');
+        return;
+    }
+    // Format the snapshot as readable JSON
+    const snapshotText = JSON.stringify(trade.snapshot, null, 2);
+    const msg = `🚫 Blocked Trade Details\n\n` +
+                `Symbol: ${trade.symbol}\n` +
+                `Side: ${trade.side}\n` +
+                `Entry Price: ${fmtPriceJS(trade.entry_price)}\n` +
+                `Blocked Reason: ${trade.blocked_reason}\n` +
+                `Health Score: ${trade.health_score !== null ? trade.health_score.toFixed(2) : 'N/A'}\n` +
+                `Entry Score: ${trade.entry_score !== null ? trade.entry_score.toFixed(2) : 'N/A'}\n\n` +
+                `Full Quality Snapshot:\n${snapshotText}`;
+    alert(msg);
+}
+
 async function toggleTrendAlert(tf, on) {
     const key = tf === '1h' ? 'trend_alert_1h' : 'trend_alert';
     try {
@@ -6883,7 +7010,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadBias();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); };
+    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadBlockedTrades(); };
     refreshAll();
     loadTrendAlertState();
     setInterval(refreshAll, 60000);

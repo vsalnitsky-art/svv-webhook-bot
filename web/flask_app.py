@@ -2605,6 +2605,53 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/blocked-trades/list')
+    def api_blocked_trades_list():
+        """Get list of blocked trades with optional filters.
+        Query params:
+          ?limit=100 (default 100)
+          &is_paper=true|false (optional, None = all)
+          &symbol=BTCUSDT (optional)
+        """
+        try:
+            limit = int(request.args.get('limit', 100))
+            is_paper_str = request.args.get('is_paper')
+            is_paper = None
+            if is_paper_str == 'true':
+                is_paper = True
+            elif is_paper_str == 'false':
+                is_paper = False
+            symbol = request.args.get('symbol')
+            db = get_db()
+            trades = db.get_blocked_trades(limit=limit, is_paper=is_paper, symbol=symbol)
+            return jsonify({'ok': True, 'trades': trades})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e), 'trades': []})
+
+    @app.route('/api/blocked-trades/stats')
+    def api_blocked_trades_stats():
+        """Get stats about blocked trades (total, real, paper counts)."""
+        try:
+            db = get_db()
+            stats = db.get_blocked_trades_stats()
+            return jsonify(stats)
+        except Exception as e:
+            return jsonify({'ok': False, 'total': 0, 'real': 0, 'paper': 0})
+
+    @app.route('/api/blocked-trades/clear', methods=['POST'])
+    def api_blocked_trades_clear():
+        """Clear blocked trades. DESTRUCTIVE.
+        Body: {"scope": "all"|"real"|"paper"}."""
+        try:
+            data = request.get_json(silent=True) or {}
+            scope = data.get('scope', 'all')
+            is_paper = None if scope == 'all' else (scope == 'paper')
+            db = get_db()
+            removed = db.clear_blocked_trades(is_paper=is_paper)
+            return jsonify({'ok': True, 'removed': removed, 'scope': scope})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/sm/data-source')
     def api_sm_data_source():
         """Report active analytics source + live API health of BOTH
