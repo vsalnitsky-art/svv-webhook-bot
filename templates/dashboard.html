@@ -3839,6 +3839,37 @@ function liqmapDrawChart(data) {
         .attr('fill', '#778')
         .attr('font-size', '11.5px')
         .text(`${liqmapState.candleTF || '15m'} · walls + liq zones`);
+
+    // --- Liq-zone totals by colour (next to the subtitle) ---
+    // Sum the USD of the rendered liq levels split by side:
+    //   above mid → green (short liqs), below mid → red (long liqs).
+    // Mirrors the per-line colours so the user can read the aggregate
+    // fuel on each side at a glance.
+    {
+        let sumAbove = 0, sumBelow = 0;
+        for (const lv of liqLevels) {
+            const u = lv.usd || 0;
+            if (lv.price > mid) sumAbove += u; else sumBelow += u;
+        }
+        const subtitleText = `${liqmapState.candleTF || '15m'} · walls + liq zones`;
+        // Estimate subtitle width (11.5px sans ≈ 6.0px/char) to position after it.
+        const sumsX = margin.left + liqmapState.symbol.length * 9.5 + 14
+                      + subtitleText.length * 6.0 + 18;
+        const greenTxt = '↑' + liqmapFormatUsd(sumAbove);
+        const redTxt = '↓' + liqmapFormatUsd(sumBelow);
+        svg.append('text')
+            .attr('x', sumsX).attr('y', 18)
+            .attr('font-family', 'monospace')
+            .attr('font-size', '11.5px').attr('font-weight', 700)
+            .attr('fill', '#a3e635')
+            .text(greenTxt);
+        svg.append('text')
+            .attr('x', sumsX + greenTxt.length * 7.0 + 10).attr('y', 18)
+            .attr('font-family', 'monospace')
+            .attr('font-size', '11.5px').attr('font-weight', 700)
+            .attr('fill', '#fb7185')
+            .text(redTxt);
+    }
     svg.append('text')
         .attr('x', W - margin.right).attr('y', 14)
         .attr('text-anchor', 'end')
