@@ -1,0 +1,19 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local database
+*.db
+sleeper_ob_bot.db
+
+# Archives (deliverables, not source)
+*.tar.gz
+
+# Env / secrets
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+*.swp
