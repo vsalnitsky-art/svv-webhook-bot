@@ -9,9 +9,6 @@ Responsibilities:
   - Send Telegram notifications on every action
   - Persist positions and recent trades in DB
 
-Quality Gate V2: Uses detection/quality_gate_v2.py (independent factors,
-no triple-counting, HTF alignment, realistic thresholds).
-
 Position sizing (3 modes):
   - 'fixed_usd'    : qty = $usd_amount / entry_price          (default $100)
   - 'fixed_pct'    : qty = (balance * pct/100) / entry_price
@@ -34,8 +31,6 @@ import time
 import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
-
-from detection.quality_gate_v2 import calculate_quality_score_v2
 
 
 # ======== DB keys ========
@@ -224,21 +219,6 @@ DEFAULT_SETTINGS = {
         'weight_atr_health': 8.0,
     },
     'entry_score_threshold_override': None,
-
-    # === Trade Quality Gate V2 (data-driven signal filter) ===
-    # Scores each signal 0-100 based on empirical patterns from trade archive.
-    # V2: independent factors (ADR room, HTF alignment, ATR, Decision score),
-    # exhaustion kill-switch (>85%), realistic thresholds (75/60/45/poor).
-    # Grades: EXCELLENT ≥75, GOOD ≥60, FAIR ≥45, POOR <45.
-    'use_quality_gate': False,              # Master toggle (default OFF)
-    'quality_gate_mode': 'advisory',        # 'off' | 'advisory' | 'filter'
-    'quality_gate_threshold': 50,           # Minimum score (0-100) for filter mode
-
-    # === Trade Archive (training data collection) ===
-    # When ON, all closed trades are saved to permanent archive table for
-    # backtesting and ML training. When OFF, closed trades only appear in
-    # the rolling Recent Closed list (UI only, capped at 500).
-    'archive_trades': False,                # Default OFF — opt-in data collection
 }
 
 
@@ -267,7 +247,6 @@ def _new_position(symbol, side, entry_price, qty, sl_price, tp_price, order_id, 
         'trailing_via_bos2': False,
         'partial_closes_done': [],       # ['bos_2', 'bos_3', ...]
         'bos_count_since_entry': 1,      # the opening BOS itself counts as #1
-        'breakeven_close': False,        # auto-close when price reaches breakeven+fees
     }
 
 
@@ -709,22 +688,7 @@ class TradeManager:
         if manual_reason:
             self._close_position(symbol, current_price, reason=manual_reason)
             return
-
-        # === Breakeven + fees auto-close ===
-        # Checks BEFORE manual_mode gate so it works like manual SL/TP —
-        # a user-set preference that fires even when the position is in
-        # manual mode. If the user wants breakeven close, they get it
-        # immediately when price reaches the level, regardless of manual
-        # mode state.
-        if pos.get('breakeven_close'):
-            be_price = self._calculate_breakeven_price(pos)
-            if be_price:
-                hit = ((pos['side'] == 'LONG' and current_price >= be_price) or
-                       (pos['side'] == 'SHORT' and current_price <= be_price))
-                if hit:
-                    self._close_position(symbol, current_price, reason='breakeven_close')
-                    return
-
+        
         # === Manual mode gate ===
         # When the user flipped this position into manual mode, ONLY the
         # manual SL/TP above and force-close from UI can close it. All
@@ -815,27 +779,7 @@ class TradeManager:
                 return 'manual_tp'
         
         return None
-
-    def _calculate_breakeven_price(self, pos: Dict) -> Optional[float]:
-        """Calculate breakeven price including exchange fees.
-
-        For LONG: entry * (1 + fees%)
-        For SHORT: entry * (1 - fees%)
-
-        Uses the BE commission buffer setting (default 0.12% = round-trip
-        taker fee on Bybit Perpetual: 0.06% × 2).
-        """
-        entry = pos.get('entry_price')
-        if not entry:
-            return None
-
-        fee_pct = self._settings.get('be_commission_buffer_pct', 0.12) / 100
-
-        if pos['side'] == 'LONG':
-            return entry * (1 + fee_pct)
-        else:
-            return entry * (1 - fee_pct)
-
+    
     def _monitor_shadow_position(self, symbol: str):
         """Per-tick monitor for shadow positions — currently only enforces
         manual SL/TP overrides. The strategy's automatic SL/TP and other
@@ -868,18 +812,7 @@ class TradeManager:
         manual_reason = self._check_manual_sl_tp(pos, current_price)
         if manual_reason:
             self._close_shadow(symbol, current_price, reason=manual_reason)
-            return
-
-        # === Breakeven + fees auto-close for paper positions ===
-        if pos.get('breakeven_close'):
-            be_price = self._calculate_breakeven_price(pos)
-            if be_price:
-                hit = ((pos['side'] == 'LONG' and current_price >= be_price) or
-                       (pos['side'] == 'SHORT' and current_price <= be_price))
-                if hit:
-                    self._close_shadow(symbol, current_price, reason='breakeven_close')
-                    return
-
+    
     def _update_trailing(self, pos, current_price):
         s = self._settings
         # Two paths can activate trailing:
@@ -966,32 +899,11 @@ class TradeManager:
     # Signal hooks (called from SMC scanner)
     # ============================================================
     
-    def _calculate_quality_score(self, symbol: str, side: str) -> dict:
-        """Calculate Trade Quality Score V2 (0-100) — professional rewrite.
-
-        V2 improvements over V1:
-          - Removed triple-counting of ADR/exhaustion/verdict
-          - Independent factors: ADR room, HTF alignment, ATR, Decision score
-          - Exhaustion is a kill-switch (>85% → block), not scored
-          - Realistic thresholds: 75/60/45 for grades, default filter@50
-          - Decision uses numeric score (not noisy verdict)
-
-        See detection/quality_gate_v2.py for full documentation.
-        """
-        # Smart Direction not yet integrated in TM; passing None defaults
-        # HTF alignment to neutral (15/30 points). Can add later if needed.
-        return calculate_quality_score_v2(
-            symbol=symbol,
-            side=side,
-            scanner=self.scanner,
-            smart_direction_result=None,
-        )
-
-    def on_signal(self, symbol: str, side: str, entry_price: float, opened_by: str) -> dict:
+    def on_signal(self, symbol: str, side: str, entry_price: float, opened_by: str):
         """Called when SMC scanner fires a signal.
         side: 'LONG' or 'SHORT'
         opened_by: 'choch' or 'choch_bos'
-
+        
         Behavior matrix:
           - No existing position: open (real if enabled, shadow if test_mode)
           - Same-direction position exists: ignore (dedup at signal level)
@@ -1002,90 +914,33 @@ class TradeManager:
             the new signal has cleared ALL gates (dedup, HTF, OB filter,
             mode-specific recency) — i.e. it's a "qualified" reversal,
             same caliber as a fresh entry.
-
+        
         The reverse path runs in BOTH real and shadow modes so paper-trading
         produces the same trade history as a live deployment would.
-
-        Returns:
-          {'real_opened': bool, 'shadow_opened': bool}
-          where real_opened means a real position was opened (or already existed),
-          and shadow_opened means a shadow position was opened. At least one
-          should be True for the signal to produce a chart marker.
         """
         s = self._settings
         enabled = self.is_enabled()
         test_mode = s.get('test_mode', True)
-
+        
         with self._lock:
             existing_real = self._positions.get(symbol)
             existing_shadow = self._shadow_positions.get(symbol)
-
+        
         # === Manual mode gate ===
         # If the user has locked this symbol into manual mode on EITHER
         # real or shadow track, ignore new signals entirely — no open, no
         # reverse. The operator wants to manage this trade by hand.
         if existing_real and existing_real.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (real) — signal ignored")
-            return {'real_opened': False, 'shadow_opened': False,
-                    'status': 'rejected', 'reason': 'Manual mode (real)',
-                    'is_paper': False}
+            return
         if existing_shadow and existing_shadow.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
-            return {'real_opened': False, 'shadow_opened': False,
-                    'status': 'rejected', 'reason': 'Manual mode (shadow)',
-                    'is_paper': False}
-
-        # === Trade Quality Gate ===
-        # Data-driven filter based on empirical patterns from trade archive.
-        # Scores 0-100, with threshold check in 'filter' mode.
-        # Store result as instance var so _open_position/_open_shadow can use it.
-        self._last_quality_score = None
-        if s.get('use_quality_gate'):
-            mode = s.get('quality_gate_mode', 'advisory')
-            if mode != 'off':
-                quality_result = self._calculate_quality_score(symbol, side)
-                self._last_quality_score = quality_result
-                score = quality_result['score']
-                grade = quality_result['grade']
-                threshold = s.get('quality_gate_threshold', 40)
-
-                # Log quality score
-                print(f"[TM] 🎯 Quality: {score}/100 ({grade}) — {symbol} {side}")
-
-                # Filter mode: block if below threshold
-                if mode == 'filter' and score < threshold:
-                    reason = quality_result.get('reason', 'low quality')
-                    print(f"[TM] ⊘ Signal BLOCKED by Quality Gate: "
-                          f"{score}/100 < {threshold} — {reason}")
-                    # Notify user about blocked signal
-                    self._notify(
-                        f"⊘ Signal BLOCKED: {symbol} {side}\n"
-                        f"🎯 Quality: {score}/100 ({grade}) < threshold {threshold}\n"
-                        f"Reason: {reason}"
-                    )
-                    return {'real_opened': False, 'shadow_opened': False,
-                            'status': 'rejected',
-                            'reason': f'Quality Gate {score}/100 < {threshold}: {reason}',
-                            'is_paper': False}
-
-                # Advisory mode: just log and continue
-                if mode == 'advisory':
-                    print(f"[TM] ℹ️ Advisory: quality {score}/100 — proceeding")
-
+            return
+        
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list so only
         # explicitly-allowed symbols ever hit the exchange.
-        #
-        # Marker-status tracking (2026-06-22): the chart needs to tell apart
-        # a genuine NEW open from a same-direction duplicate or a filtered
-        # rejection. We track these explicitly so on_signal can report an
-        # accurate status back to the scanner.
         real_opened = False
-        shadow_opened = False
-        opened_new = False        # a brand-new position was actually opened
-        is_duplicate = False      # signal in a direction we're already holding
-        is_paper = False          # the new open happened on the paper track
-        reject_reason = ''        # why nothing opened (when applicable)
         if enabled:
             if existing_real:
                 if existing_real['side'] == side:
@@ -1093,7 +948,6 @@ class TradeManager:
                     # (Don't return — paper track below may still need to run
                     #  for symbols where no shadow exists yet.)
                     real_opened = True
-                    is_duplicate = True
                 else:
                     # OPPOSITE direction — reverse: close + open
                     print(f"[TM] 🔄 Reverse signal for {symbol}: "
@@ -1107,24 +961,19 @@ class TradeManager:
                         # is independent and should not be affected by a real
                         # exchange error, so we don't return here.
                         real_opened = True  # treat as "real handled it" to avoid paper dup
-                        reject_reason = 'Reverse-close failed (real)'
                     else:
                         if self._is_tradeable(symbol):
                             self._open_position(symbol, side, entry_price, opened_by)
                             real_opened = True
-                            opened_new = True
                         else:
                             print(f"[TM] {symbol} not in tradeable list — reverse-open skipped")
-                            reject_reason = 'Not in tradeable list (real)'
             else:
                 # No existing real position
                 if self._is_tradeable(symbol):
                     self._open_position(symbol, side, entry_price, opened_by)
                     real_opened = True
-                    opened_new = True
                 else:
                     print(f"[TM] {symbol} not in tradeable list — signal ignored (real)")
-                    reject_reason = 'Not in tradeable list (real)'
 
         # === Paper (shadow) track ===
         # Independent of the real track. Runs on EVERY qualified signal
@@ -1137,51 +986,18 @@ class TradeManager:
         if test_mode and not real_opened:
             if existing_shadow:
                 if existing_shadow['side'] == side:
-                    shadow_opened = True  # already in this trend on paper
-                    is_duplicate = True
-                else:
-                    # OPPOSITE direction — same reverse semantics for paper trades
-                    print(f"[TM] 🔄 [TEST] Reverse signal for {symbol}: "
-                          f"closing {existing_shadow['side']} → opening {side}")
-                    try:
-                        self._close_shadow(symbol, entry_price, reason='reverse_signal')
-                    except Exception as e:
-                        print(f"[TM] ❌ [TEST] Reverse-close-shadow failed for {symbol}: {e}")
-                        return {'real_opened': real_opened, 'shadow_opened': False,
-                                'status': 'rejected',
-                                'reason': 'Reverse-close-shadow failed (paper)',
-                                'is_paper': True}
-                    self._open_shadow(symbol, side, entry_price, opened_by)
-                    shadow_opened = True
-                    opened_new = True
-                    is_paper = True
-            else:
+                    return  # already in this trend on paper
+                # OPPOSITE direction — same reverse semantics for paper trades
+                print(f"[TM] 🔄 [TEST] Reverse signal for {symbol}: "
+                      f"closing {existing_shadow['side']} → opening {side}")
+                try:
+                    self._close_shadow(symbol, entry_price, reason='reverse_signal')
+                except Exception as e:
+                    print(f"[TM] ❌ [TEST] Reverse-close-shadow failed for {symbol}: {e}")
+                    return
                 self._open_shadow(symbol, side, entry_price, opened_by)
-                shadow_opened = True
-                opened_new = True
-                is_paper = True
-
-        # === Resolve final marker status ===
-        # opened   — a genuinely new position (real or paper) was opened
-        # duplicate— signal matched a position we already hold (no new trade)
-        # rejected — nothing opened (not tradeable, reverse-fail, TM disabled)
-        if opened_new:
-            status, reason = 'opened', ''
-        elif is_duplicate:
-            status, reason = 'duplicate', f'Already in {side} position'
-        else:
-            status = 'rejected'
-            if reject_reason:
-                reason = reject_reason
-            elif not enabled:
-                reason = 'Trade Manager disabled'
-            elif not test_mode:
-                reason = 'Not opened (no real entry, paper off)'
-            else:
-                reason = 'Signal not opened'
-
-        return {'real_opened': real_opened, 'shadow_opened': shadow_opened,
-                'status': status, 'reason': reason, 'is_paper': is_paper}
+                return
+            self._open_shadow(symbol, side, entry_price, opened_by)
     
     def on_choch_event(self, symbol: str, direction: str, level: float, bar_t):
         """Called by SMC scanner for EVERY CHoCH detected (regardless of dedup/HTF).
@@ -1190,10 +1006,8 @@ class TradeManager:
           - Reverse SMC (CHoCH only): close position when opposite CHoCH appears
           - Forecast 1H Confluence: close when opposite CHoCH AND Forecast 1H also opposite
         
-        Both rules work on real AND shadow positions regardless of the TM
-        master toggle or test_mode. Those toggles only gate NEW entries —
-        an already-open position must be worked through to the end. Telegram
-        notifications are sent regardless.
+        Both rules work on real (when TM enabled) and shadow (when test_mode on)
+        positions. Telegram notifications are sent regardless.
         """
         s = self._settings
         with self._lock:
@@ -1243,20 +1057,16 @@ class TradeManager:
                         self._close_position(symbol, current_price,
                                               reason='forecast_1h_confluence')
                     elif shadow:
-                        # No test_mode gate — exit rules manage an already-open
-                        # paper position regardless of the toggle (toggle only
-                        # blocks NEW paper entries).
                         self._close_shadow(symbol, current_price,
                                             reason='forecast_1h_confluence')
                     return  # closed; don't fall through to plain reverse
-        
+
         # === Plain Reverse SMC (CHoCH only) ===
         if s.get('use_reverse_smc'):
             current_price = self._get_current_price(symbol) or pos['entry_price']
             if real:
                 self._close_position(symbol, current_price, reason='reverse_smc')
             elif shadow:
-                # No test_mode gate — manage existing paper position regardless.
                 self._close_shadow(symbol, current_price, reason='reverse_smc')
     
     def on_main_ob_update(self, symbol: str, ob_data: Optional[Dict] = None):
@@ -1335,7 +1145,6 @@ class TradeManager:
             self._close_position(symbol, current_price,
                                   reason='opposite_ob_exit')
         elif shadow:
-            # No test_mode gate — manage existing paper position regardless.
             self._close_shadow(symbol, current_price,
                                 reason='opposite_ob_exit')
     
@@ -1828,14 +1637,11 @@ class TradeManager:
                         state_dict[symbol].get('bos_against_count', 0) + 1)
         
         # === Partial-close logic ===
-        # Two independent code paths:
-        #   1) Real positions — gated by use_bos_partials only, operate on
-        #      _positions and call Bybit API via _partial_close
-        #   2) Shadow positions — gated by use_bos_partials only, operate on
-        #      _shadow_positions, no Bybit calls.
-        # Neither path is gated by the TM master toggle / test_mode: those
-        # toggles only block NEW entries. A BOS-N partial close manages an
-        # ALREADY-OPEN position and must keep working it through to the end.
+        # Two independent code paths (both gated by use_bos_partials only):
+        #   1) Real positions — operate on _positions, call Bybit via _partial_close
+        #   2) Shadow positions — operate on _shadow_positions, no Bybit calls.
+        # Neither is gated by the enabled toggle: the toggle only blocks NEW
+        # entries. An already-open position is always worked through.
         # Both paths run on every BOS event so a symbol with both a real
         # AND a shadow position would partial-close both. In practice
         # users only have one of the two at a time but the code is robust
@@ -1847,9 +1653,6 @@ class TradeManager:
             return
 
         # ----- REAL position path -----
-        # Runs whenever a real position exists, regardless of the TM master
-        # toggle. The toggle only blocks new entries (see on_signal); an
-        # open position is always worked through, partial closes included.
         if real:
             # Manual mode skips auto partial-closes; evaluator state above
             # still updated so reverting manual mode works seamlessly.
@@ -1860,7 +1663,8 @@ class TradeManager:
                 self._process_bos_real(symbol, direction, level, bar_t, real)
 
         # ----- SHADOW position path -----
-        # Always runs when a shadow position exists, regardless of test_mode.
+        # Always runs when a shadow position exists. test_mode by design
+        # operates while TM master toggle is off.
         if shadow:
             if shadow.get('manual_mode'):
                 print(f"[TM] BOS {symbol} {direction} for shadow {symbol}: "
@@ -2049,9 +1853,6 @@ class TradeManager:
         never disrupt the close flow."""
         if not self.db:
             return
-        # Check if archiving is enabled
-        if not self._settings.get('archive_trades', False):
-            return
         try:
             snap = pos.get('entry_snapshot')
             self.db.archive_trade(closed, entry_snapshot=snap, is_paper=is_paper)
@@ -2185,10 +1986,6 @@ class TradeManager:
             # column and legacy load_positions code; the dict shape is the
             # Decision Center verdict (headline, recommended, verdict, etc.).
             position['entry_score'] = decision
-
-        # Store Quality Gate score if it was calculated
-        if hasattr(self, '_last_quality_score') and self._last_quality_score:
-            position['quality_score'] = self._last_quality_score
 
         # Full pre-trade snapshot for the Trade Quality Gate backtest dataset.
         # Captured ONCE at open — decision + move-potential + hold score —
@@ -2354,19 +2151,17 @@ class TradeManager:
     def _reconcile_with_bybit(self) -> Dict:
         """Sync TM's view of open positions with what actually exists on
         Bybit. Two-way reconciliation:
-
+        
           - For each Bybit position not in self._positions → ADOPT it
             (call _adopt_external_position). TM starts managing it.
           - For each self._positions entry not on Bybit → it was closed
             externally; call _close_externally to update bookkeeping.
-
-        Runs regardless of the TM master toggle — existing positions must
-        be loaded and tracked, external closes detected. However, ADOPTION
-        of new external positions is gated by is_enabled() (adopting is
-        taking on new exposure, same as opening a fresh trade).
-
-        Runs only if bybit connector is configured with API key (returns
-        no positions otherwise).
+        
+        Runs regardless of the enabled toggle. The toggle only controls
+        whether NEW trades are accepted (see on_signal / _open_position).
+        Existing positions must always be loaded, synced and managed — when
+        disabled we simply stop opening new trades, everything else works as
+        usual. Runs only if bybit connector is configured with API key.
 
         Returns a summary dict for logging/diagnostics.
         """
@@ -2398,53 +2193,12 @@ class TradeManager:
         
         adopted = []
         closed_externally = []
-
-        # 1. Adopt positions present on Bybit but not in TM (only when enabled)
-        # Adoption = taking on new exposure (position opened outside TM) →
-        # same semantics as opening a new trade. The toggle gates NEW entries.
-        if self.is_enabled():
-            for sym in live_symbols - tm_symbols:
-                if self._adopt_external_position(live_by_symbol[sym]):
-                    adopted.append(sym)
-        else:
-            # TM disabled — log that we're skipping adoption but still syncing
-            if live_symbols - tm_symbols:
-                skipped = ', '.join(sorted(live_symbols - tm_symbols))
-                print(f"[TM] Reconcile: TM disabled, skipping adoption of: {skipped}")
-
-        # 1.5 Sync live Bybit truth onto positions held in BOTH places.
-        #     Bybit is the source of truth for entry (avgPrice after the real
-        #     fills), mark price, unrealised PnL and size. Caching these means
-        #     get_state() can report numbers that MATCH the exchange exactly,
-        #     instead of recomputing PnL from the signal price + last price —
-        #     which drifts from Bybit due to entry slippage, fees, and the
-        #     mark-vs-last-price difference. This is the core of "PnL у боті
-        #     має збігатися з біржею".
-        for sym in (live_symbols & tm_symbols):
-            bp = live_by_symbol.get(sym)
-            if not bp:
-                continue
-            with self._lock:
-                pos = self._positions.get(sym)
-                if not pos:
-                    continue
-                avg = float(bp.get('entry_price') or 0)
-                if avg > 0:
-                    pos['entry_price'] = avg          # actual avg fill price
-                size = float(bp.get('size') or 0)
-                if size > 0:
-                    # Keep qty in sync (partial fills / partial closes done on
-                    # the exchange). remaining_qty mirrors the live size.
-                    pos['qty'] = size
-                    pos['remaining_qty'] = size
-                mp = float(bp.get('mark_price') or 0)
-                pos['bybit_mark_price'] = mp if mp > 0 else None
-                upnl = bp.get('unrealized_pnl')
-                pos['bybit_pnl_usd'] = float(upnl) if upnl is not None else None
-                pv = bp.get('position_value')
-                pos['bybit_position_value'] = float(pv) if pv is not None else None
-                pos['bybit_synced_at'] = time.time()
-
+        
+        # 1. Adopt positions present on Bybit but not in TM
+        for sym in live_symbols - tm_symbols:
+            if self._adopt_external_position(live_by_symbol[sym]):
+                adopted.append(sym)
+        
         # 2. Detect external closes: in TM but not on Bybit.
         #    ONLY when the fetch was clean — a partial/error page must never
         #    trigger closes (root cause of the phantom-close storm).
@@ -2744,11 +2498,6 @@ class TradeManager:
             # real trades for accurate paper-trading data.
             'qty': 1.0,
             'remaining_qty': 1.0,
-            # Realistic USD exposure (Position Sizing applied) so the paper
-            # trade's $ PnL matches what a real position of this size would
-            # make. qty stays a 1.0 fraction for partial-close book-keeping;
-            # notional_usd is what turns the price move into real dollars.
-            'notional_usd': self._shadow_notional_usd(entry_price),
             'partial_closes_done': [],       # ['bos_2', 'bos_3', ...]
             'bos_count_since_entry': 1,      # opening BOS counts as #1 (matches real)
             'trailing_active': False,
@@ -2757,9 +2506,6 @@ class TradeManager:
         }
         if decision is not None:
             pos['entry_score'] = decision
-        # Store Quality Gate score if it was calculated
-        if hasattr(self, '_last_quality_score') and self._last_quality_score:
-            pos['quality_score'] = self._last_quality_score
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
@@ -2994,38 +2740,6 @@ class TradeManager:
     # Position sizing
     # ============================================================
     
-    def _shadow_notional_usd(self, entry_price: float) -> float:
-        """USD notional a REAL trade would use, given the current Position
-        Sizing settings — without any lot rounding or Bybit order call.
-
-        Shadow (paper) positions store qty as a 1.0 unit fraction for the
-        partial-close lifecycle, which is useless for a dollar PnL. This
-        returns the realistic dollar exposure so the paper trade's PnL in $
-        matches what a real position of the same size would earn/lose — i.e.
-        "реальний PnL" for test trades too, not a per-coin figure.
-
-        fixed_pct / risk_based need the account balance (one cheap cached
-        Bybit call); fixed_usd needs nothing. Any failure falls back to the
-        configured fixed USD amount so we never return 0.
-        """
-        s = self._settings
-        mode = s.get('sizing_mode', 'fixed_usd')
-        try:
-            if mode == 'fixed_usd':
-                return float(s.get('fixed_usd_amount', 100))
-            elif mode == 'fixed_pct':
-                balance = self._get_balance()
-                return balance * (float(s.get('fixed_pct_balance', 2.0)) / 100)
-            elif mode == 'risk_based':
-                balance = self._get_balance()
-                risk_usd = balance * (float(s.get('risk_pct_balance', 1.0)) / 100)
-                sl_pct = float(s.get('sl_pct', 2.0)) / 100
-                if sl_pct > 0:
-                    return risk_usd / sl_pct  # notional = risk / sl%
-        except Exception as e:
-            print(f"[TM] shadow notional calc warn: {e}")
-        return float(s.get('fixed_usd_amount', 100))
-
     def _calculate_qty(self, symbol: str, entry_price: float) -> float:
         s = self._settings
         mode = s.get('sizing_mode', 'fixed_usd')
@@ -3405,13 +3119,7 @@ class TradeManager:
         with self._lock:
             positions = []
             for sym, pos in self._positions.items():
-                # Prefer Bybit's live truth (cached on reconcile) so the
-                # displayed numbers match the exchange. Mark price (not last
-                # price) is what Bybit uses for unrealised PnL; entry_price is
-                # already synced to avgPrice. Fall back to local compute only
-                # when not yet synced (e.g. just opened, before first reconcile).
-                mark = pos.get('bybit_mark_price')
-                current = mark or self._get_current_price(sym) or pos['entry_price']
+                current = self._get_current_price(sym) or pos['entry_price']
                 entry = pos['entry_price']
                 if pos['side'] == 'LONG':
                     pnl_pct = (current - entry) / entry * 100
@@ -3422,19 +3130,6 @@ class TradeManager:
                     'current_price': current,
                     'pnl_pct': round(pnl_pct, 3),
                 }
-                # Exact $ PnL straight from the exchange when available — this
-                # is Bybit's unrealisedPnl, the same figure shown on the
-                # Bybit positions page. Local fallback derives it from the
-                # price move × qty (no fees) when not yet synced.
-                bpnl = pos.get('bybit_pnl_usd')
-                if bpnl is not None:
-                    pos_dict['pnl_usd'] = round(bpnl, 2)
-                    pos_dict['pnl_source'] = 'bybit'
-                else:
-                    qty = pos.get('remaining_qty') or pos.get('qty') or 0
-                    sign = 1 if pos['side'] == 'LONG' else -1
-                    pos_dict['pnl_usd'] = round((current - entry) * qty * sign, 2)
-                    pos_dict['pnl_source'] = 'local'
                 # Attach Health Score (None when feature disabled)
                 health = self._compute_health(pos, is_shadow=False)
                 if health is not None:
@@ -3467,17 +3162,6 @@ class TradeManager:
                     'current_price': current,
                     'pnl_pct': round(pnl_pct, 3),
                 }
-                # Realistic $ PnL for the paper trade: price move × notional,
-                # scaled by the remaining fraction (after any BOS partials).
-                # notional_usd may be absent on positions opened before this
-                # field existed → fall back to the configured fixed USD amount
-                # so the column is never blank.
-                notional = pos.get('notional_usd')
-                if notional is None:
-                    notional = float(self._settings.get('fixed_usd_amount', 100))
-                frac = pos.get('remaining_qty', 1.0) or 1.0
-                pos_dict['pnl_usd'] = round(notional * frac * (pnl_pct / 100.0), 2)
-                pos_dict['pnl_source'] = 'paper'
                 health = self._compute_health(pos, is_shadow=True)
                 if health is not None:
                     pos_dict['health'] = health
@@ -3826,48 +3510,7 @@ class TradeManager:
         print(f"[TM] Manual mode {state} for {symbol} ({kind}): "
               f"new signals/auto-exits {'ignored' if enabled else 'active'}")
         return {'ok': True, 'position': updated, 'manual_mode': bool(enabled)}
-
-    def update_breakeven_close(self, symbol: str, enabled: bool,
-                                 is_shadow: bool = False) -> Dict:
-        """Toggle per-position BREAKEVEN + FEES AUTO-CLOSE.
-
-        When breakeven_close=True for a position:
-          - The position will automatically close when price reaches
-            entry + commission fees (for LONG) or entry - fees (SHORT).
-          - Uses the BE commission buffer setting (default 0.12%).
-          - Fires BEFORE manual_mode gate and other exits, similar to
-            manual SL/TP — immediate close when condition is met.
-
-        When breakeven_close=False (default), this auto-close is disabled.
-
-        Works for both real and shadow positions.
-        """
-        store = self._shadow_positions if is_shadow else self._positions
-        kind = 'shadow' if is_shadow else 'real'
-
-        with self._lock:
-            pos = store.get(symbol)
-            if not pos:
-                return {'ok': False,
-                        'reason': f'No open {kind} position for {symbol}'}
-            pos['breakeven_close'] = bool(enabled)
-            updated = dict(pos)
-
-        # Persist outside the lock
-        try:
-            if is_shadow:
-                self._persist_shadow_positions()
-            else:
-                self._persist_positions()
-        except Exception as e:
-            print(f"[TM] breakeven close persist warn for {symbol}: {e}")
-
-        state = 'ON' if enabled else 'OFF'
-        be_price = self._calculate_breakeven_price(updated) if enabled else None
-        be_str = f" (target: {be_price:.6f})" if be_price else ""
-        print(f"[TM] Breakeven auto-close {state} for {symbol} ({kind}){be_str}")
-        return {'ok': True, 'position': updated, 'breakeven_close': bool(enabled)}
-
+    
     def manual_open(self, symbol: str, side: str) -> Dict:
         """User-initiated position open from the Decision Center panel.
         
