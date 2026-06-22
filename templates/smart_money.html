@@ -220,6 +220,7 @@
 #sm-chart {
     width: 100%;
     height: 100%;
+    position: relative;  /* anchor for the signal-marker tooltip */
 }
 
 .sm-loading, .sm-empty {
@@ -2764,6 +2765,10 @@ let volumizedObLines = [];
 let activeMarkers = [];
 let showPivots = false; // HH/HL/LH/LL toggle, default OFF
 let showStructure = true;  // BOS/CHoCH toggle, default ON
+// Maps a signal marker's time → its full record (side/status/reason/paper)
+// so the chart click handler can surface WHY a rejected signal didn't open.
+let signalMarkerMap = {};
+let signalClickBound = false;
 
 function onShowPivotsChange() {
     showPivots = document.getElementById('sm-show-pivots').checked;
@@ -3965,12 +3970,96 @@ function ensureChart() {
         width: chartEl.clientWidth,
         height: chartEl.clientHeight,
     });
+
+    // Click handler for signal markers — reveal WHY a rejected signal
+    // didn't open a trade. We match the clicked time to the nearest
+    // recorded marker; opened markers show a confirmation, rejected ones
+    // show the block reason.
+    if (!signalClickBound) {
+        signalClickBound = true;
+        chart.subscribeClick((param) => {
+            if (!param || param.time == null) { hideSignalTooltip(); return; }
+            // param.time is the bar time; markers are keyed on signal time
+            // which sits on a bar, so exact match works. Fall back to the
+            // closest marker within one bar if needed.
+            let sig = signalMarkerMap[param.time];
+            if (!sig) {
+                let best = null, bestDiff = Infinity;
+                for (const k in signalMarkerMap) {
+                    const diff = Math.abs(Number(k) - Number(param.time));
+                    if (diff < bestDiff) { bestDiff = diff; best = signalMarkerMap[k]; }
+                }
+                // Only accept if very close (within ~2 bars worth of seconds)
+                if (best && bestDiff <= 7200) sig = best;
+            }
+            if (!sig) { hideSignalTooltip(); return; }
+            showSignalTooltip(param, sig);
+        });
+    }
+}
+
+// === Signal marker tooltip ===
+// Lightweight Charts has no native marker-click payload, so we render our
+// own small popup with the marker's status + reason.
+function showSignalTooltip(param, sig) {
+    let tip = document.getElementById('sm-signal-tooltip');
+    if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'sm-signal-tooltip';
+        tip.style.cssText =
+            'position:absolute;z-index:50;max-width:280px;padding:10px 12px;'
+          + 'border-radius:8px;font-size:0.8rem;line-height:1.4;pointer-events:auto;'
+          + 'box-shadow:0 4px 18px rgba(0,0,0,0.5);background:#1a1f2e;'
+          + 'border:1px solid rgba(255,255,255,0.15);color:#e5e7eb';
+        const chartEl = document.getElementById('sm-chart');
+        (chartEl || document.body).appendChild(tip);
+    }
+    const isOpened = (sig.status || 'opened') === 'opened';
+    const sideColor = sig.side === 'LONG' ? '#22c55e' : '#ef4444';
+    const when = sig.time
+        ? new Date(sig.time * 1000).toLocaleString() : '';
+    let html = '';
+    if (isOpened) {
+        html = `<div style="font-weight:700;color:${sideColor};margin-bottom:4px">`
+             + `${sig.paper ? '📝 Paper ' : '✅ '}${sig.side} opened</div>`
+             + (sig.price ? `<div>Entry: ${sig.price}</div>` : '')
+             + (when ? `<div style="color:#9ca3af;margin-top:4px">${when}</div>` : '');
+    } else {
+        html = `<div style="font-weight:700;color:#fbbf24;margin-bottom:4px">`
+             + `⊘ ${sig.side} signal — NOT opened</div>`
+             + `<div style="color:#fca5a5">Причина: ${sig.reason || 'unknown'}</div>`
+             + (when ? `<div style="color:#9ca3af;margin-top:4px">${when}</div>` : '');
+    }
+    html += `<div style="text-align:right;margin-top:6px">`
+          + `<span style="cursor:pointer;color:#60a5fa;font-size:0.72rem" `
+          + `onclick="hideSignalTooltip()">закрити ✕</span></div>`;
+    tip.innerHTML = html;
+    // Position near the click point
+    const chartEl = document.getElementById('sm-chart');
+    const rect = chartEl ? chartEl.getBoundingClientRect() : {left:0, top:0};
+    let x = (param.point ? param.point.x : 20) + 14;
+    let y = (param.point ? param.point.y : 20) + 14;
+    // Keep inside the chart bounds
+    if (chartEl) {
+        x = Math.min(x, chartEl.clientWidth - 290);
+        y = Math.min(y, chartEl.clientHeight - 110);
+    }
+    tip.style.left = Math.max(4, x) + 'px';
+    tip.style.top = Math.max(4, y) + 'px';
+    tip.style.display = 'block';
+}
+
+function hideSignalTooltip() {
+    const tip = document.getElementById('sm-signal-tooltip');
+    if (tip) tip.style.display = 'none';
 }
 
 function clearChart() {
     if (!chart) return;
     activeLines.forEach(s => chart.removeSeries(s));
     activeLines = [];
+    signalMarkerMap = {};
+    hideSignalTooltip();
     if (candleSeries) candleSeries.setData([]);
     if (candleSeries) candleSeries.setMarkers([]);
     document.getElementById('sm-empty').style.display = 'flex';
@@ -4119,7 +4208,7 @@ async function loadChart() {
         const pivotsKey = showPivots
             ? internalPivots.map(p => `${p.time}:${p.type}:${p.price}`).join('|')
             : '';
-        const signalsKey = signalMarkers.map(s => `${s.time}:${s.side}`).join('|');
+        const signalsKey = signalMarkers.map(s => `${s.time}:${s.side}:${s.status || 'opened'}`).join('|');
         const eventsKey = `S=${showStructure}|P=${showPivots}|${structureKey}||${pivotsKey}||${signalsKey}`;
         const structureChanged = (eventsKey !== lastEventsKey) || isSymbolChange;
         
@@ -4174,19 +4263,42 @@ async function loadChart() {
                 }
             }
             
-            // === SIGNAL DOTS — points where Telegram alerts actually fired ===
-            // Always shown. Bright green LONG below the bar, bright red SHORT
-            // above the bar, as small filled circles.
+            // === SIGNAL MARKERS ===
+            // Two kinds, distinguished by status (2026-06-22):
+            //   'opened'   → a real/paper position actually opened. Bright
+            //                green LONG (below bar) / red SHORT (above bar)
+            //                filled circle — the marker the user trades off.
+            //   'rejected' → signal fired but a filter blocked the open.
+            //                Muted grey square; click it to see the reason.
+            // Same-direction duplicates are never sent here (filtered server
+            // side) so the chart only shows genuine opens + informative
+            // rejections. Markers are stored in signalMarkerMap so the chart
+            // click handler can surface the reason on tap.
+            signalMarkerMap = {};
             for (const sig of signalMarkers) {
                 const isLong = sig.side === 'LONG';
-                markers.push({
-                    time: sig.time,
-                    position: isLong ? 'belowBar' : 'aboveBar',
-                    color: isLong ? '#00ff00' : '#ff0000',  // bright pure colors
-                    shape: 'circle',
-                    text: sig.side,
-                    size: 2,
-                });
+                const status = sig.status || 'opened';
+                signalMarkerMap[sig.time] = sig;
+                if (status === 'opened') {
+                    markers.push({
+                        time: sig.time,
+                        position: isLong ? 'belowBar' : 'aboveBar',
+                        color: isLong ? '#00ff00' : '#ff0000',  // bright pure colors
+                        shape: 'circle',
+                        text: sig.paper ? `${sig.side} 📝` : sig.side,
+                        size: 2,
+                    });
+                } else {
+                    // rejected — muted, distinct shape, carries reason on click
+                    markers.push({
+                        time: sig.time,
+                        position: isLong ? 'belowBar' : 'aboveBar',
+                        color: '#9ca3af',  // grey
+                        shape: 'square',
+                        text: `⊘ ${sig.side}`,
+                        size: 1,
+                    });
+                }
             }
             
             markers.sort((a, b) => a.time - b.time);
