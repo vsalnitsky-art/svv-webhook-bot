@@ -223,11 +223,12 @@
     <!-- Summary Stats -->
     <div class="db-summary">
         <div class="db-stat-card">
-            <div class="db-stat-label">Total Database Size</div>
-            <div class="db-stat-value total" id="db-total">—</div>
+            <div class="db-stat-label">Real DB Size (Render)</div>
+            <div class="db-stat-value total" id="db-actual">—</div>
+            <div class="db-stat-label" style="margin-top:5px;color:#60a5fa;">Storage: <span id="db-limit-pct">—</span>% of 1 GB</div>
         </div>
         <div class="db-stat-card">
-            <div class="db-stat-label">This Bot's Data</div>
+            <div class="db-stat-label">This Bot's Tables</div>
             <div class="db-stat-value bot" id="db-bot">—</div>
         </div>
         <div class="db-stat-card">
@@ -235,8 +236,12 @@
             <div class="db-stat-value foreign" id="db-foreign">—</div>
         </div>
         <div class="db-stat-card">
-            <div class="db-stat-label">Storage Limit (Render)</div>
-            <div class="db-stat-value total">1.0 GB</div>
+            <div class="db-stat-label">Indexes (Bot + Foreign)</div>
+            <div class="db-stat-value total" id="db-indexes">—</div>
+        </div>
+        <div class="db-stat-card">
+            <div class="db-stat-label">Overhead (WAL, bloat, etc)</div>
+            <div class="db-stat-value" style="color:#fbbf24;" id="db-overhead">—</div>
         </div>
     </div>
 
@@ -325,6 +330,16 @@
                     🗑️ Delete >7 days
                 </button>
             </div>
+
+            <div style="padding:15px;background:rgba(255,68,68,0.05);border:2px solid rgba(239,68,68,0.3);border-radius:6px">
+                <h3 style="font-size:0.9rem;color:#fca5a5;margin:0 0 10px 0">⚡ VACUUM FULL</h3>
+                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
+                    <strong>ПОВЕРТАЄ МІСЦЕ</strong> після видалення даних. БД буде заблоковано на 5-15 хв!
+                </p>
+                <button class="cleanup-btn danger" onclick="runVacuumFull()">
+                    ⚡ VACUUM FULL (reclaim space)
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -354,9 +369,13 @@ function renderDBStats(data) {
     const summary = data.summary;
 
     // Update stats
-    document.getElementById('db-total').textContent = summary.total_mb.toFixed(1) + ' MB';
+    document.getElementById('db-actual').textContent = summary.actual_db_mb.toFixed(1) + ' MB';
+    document.getElementById('db-limit-pct').textContent = (summary.actual_db_mb / 1024 * 100).toFixed(1);
     document.getElementById('db-bot').textContent = summary.bot_mb.toFixed(1) + ' MB';
     document.getElementById('db-foreign').textContent = summary.foreign_mb.toFixed(1) + ' MB';
+    document.getElementById('db-indexes').textContent =
+        ((summary.bot_indexes_mb || 0) + (summary.foreign_indexes_mb || 0)).toFixed(1) + ' MB';
+    document.getElementById('db-overhead').textContent = (summary.overhead_mb || 0).toFixed(1) + ' MB';
 
     // Update progress bar
     const botBar = document.getElementById('bot-progress');
@@ -507,6 +526,39 @@ async function cleanupOldCache() {
     } catch (err) {
         console.error('Cleanup error:', err);
         alert('Failed to cleanup');
+    }
+}
+
+async function runVacuumFull() {
+    if (!confirm('⚠️ VACUUM FULL - ПОВЕРНУТИ МІСЦЕ НА ДИСК?\n\n' +
+                 'БД буде ЗАБЛОКОВАНО на 5-15 хвилин!\n' +
+                 'Бот зупиниться на цей час.\n\n' +
+                 'Продовжити?')) return;
+
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Running VACUUM FULL...';
+
+    try {
+        const res = await fetch('/api/db/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'vacuum_full'})
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+            alert('✅ VACUUM FULL завершено!\n\nМісце повернуто операційній системі.\nОновіть сторінку через 10 секунд.');
+            setTimeout(() => loadDBAnalysis(), 10000);
+        } else {
+            alert('Error: ' + (data.reason || 'unknown'));
+        }
+    } catch (err) {
+        console.error('VACUUM error:', err);
+        alert('Failed to run VACUUM FULL: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ VACUUM FULL (reclaim space)';
     }
 }
 
