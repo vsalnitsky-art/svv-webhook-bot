@@ -2637,6 +2637,33 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/trade-archive/toggle', methods=['POST'])
+    def api_trade_archive_toggle():
+        """Toggle trade archive collection on/off.
+
+        Body: {"enabled": true/false}
+
+        When enabled, all closed trades are saved to permanent archive.
+        When disabled, trades only appear in Recent Closed (UI only, cap 500).
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'TM not initialized'})
+
+        data = request.get_json(silent=True) or {}
+        enabled = bool(data.get('enabled', False))
+
+        # Update setting
+        tm.update_settings({'archive_trades': enabled})
+
+        return jsonify({
+            'ok': True,
+            'archive_trades': enabled,
+            'message': 'Archive enabled — trades will be saved for ML training' if enabled
+                      else 'Archive disabled — trades only in Recent Closed list'
+        })
+
     @app.route('/api/sm/data-source')
     def api_sm_data_source():
         """Report active analytics source + live API health of BOTH
