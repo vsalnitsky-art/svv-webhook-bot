@@ -2354,20 +2354,24 @@ class TradeManager:
     def _reconcile_with_bybit(self) -> Dict:
         """Sync TM's view of open positions with what actually exists on
         Bybit. Two-way reconciliation:
-        
+
           - For each Bybit position not in self._positions → ADOPT it
             (call _adopt_external_position). TM starts managing it.
           - For each self._positions entry not on Bybit → it was closed
             externally; call _close_externally to update bookkeeping.
-        
-        Runs only when TM is enabled — disabled means user wants no
-        automatic management of anything. Runs only if bybit connector
-        is configured with API key (returns no positions otherwise).
-        
+
+        Runs regardless of the TM master toggle — existing positions must
+        be loaded and tracked, external closes detected. However, ADOPTION
+        of new external positions is gated by is_enabled() (adopting is
+        taking on new exposure, same as opening a fresh trade).
+
+        Runs only if bybit connector is configured with API key (returns
+        no positions otherwise).
+
         Returns a summary dict for logging/diagnostics.
         """
-        if not self.is_enabled() or not self.bybit:
-            return {'skipped': True, 'reason': 'TM disabled or no bybit'}
+        if not self.bybit:
+            return {'skipped': True, 'reason': 'no bybit connector'}
         try:
             # Use the checked variant so we can tell a real "no positions"
             # apart from an API error / partial page. On error we must NOT
@@ -2394,11 +2398,19 @@ class TradeManager:
         
         adopted = []
         closed_externally = []
-        
-        # 1. Adopt positions present on Bybit but not in TM
-        for sym in live_symbols - tm_symbols:
-            if self._adopt_external_position(live_by_symbol[sym]):
-                adopted.append(sym)
+
+        # 1. Adopt positions present on Bybit but not in TM (only when enabled)
+        # Adoption = taking on new exposure (position opened outside TM) →
+        # same semantics as opening a new trade. The toggle gates NEW entries.
+        if self.is_enabled():
+            for sym in live_symbols - tm_symbols:
+                if self._adopt_external_position(live_by_symbol[sym]):
+                    adopted.append(sym)
+        else:
+            # TM disabled — log that we're skipping adoption but still syncing
+            if live_symbols - tm_symbols:
+                skipped = ', '.join(sorted(live_symbols - tm_symbols))
+                print(f"[TM] Reconcile: TM disabled, skipping adoption of: {skipped}")
 
         # 1.5 Sync live Bybit truth onto positions held in BOTH places.
         #     Bybit is the source of truth for entry (avgPrice after the real
