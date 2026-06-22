@@ -2605,6 +2605,38 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/trade-archive/export')
+    def api_trade_archive_export():
+        """Export all trade archive data for analysis.
+
+        Returns JSON with full dataset including entry snapshots.
+        Query params:
+          - limit: max trades to return (default 10000)
+          - is_paper: 'true'/'false' to filter by type, omit for all
+        """
+        try:
+            db = get_db()
+            limit = int(request.args.get('limit', 10000))
+            is_paper_str = request.args.get('is_paper')
+            is_paper = None
+            if is_paper_str is not None:
+                is_paper = is_paper_str.lower() == 'true'
+
+            trades = db.get_trade_archive(limit=limit, is_paper=is_paper)
+
+            real = [t for t in trades if not t['is_paper']]
+            paper = [t for t in trades if t['is_paper']]
+
+            return jsonify({
+                'ok': True,
+                'total': len(trades),
+                'real_count': len(real),
+                'paper_count': len(paper),
+                'trades': trades
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/sm/data-source')
     def api_sm_data_source():
         """Report active analytics source + live API health of BOTH
