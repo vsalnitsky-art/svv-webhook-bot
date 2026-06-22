@@ -2685,12 +2685,26 @@ def register_api_routes(app):
 
         try:
             with engine.connect() as conn:
-                # Get all tables with sizes
+                # Get actual database size
+                db_size_result = conn.execute(text("""
+                    SELECT
+                        pg_database_size(current_database()) AS db_size_bytes,
+                        pg_size_pretty(pg_database_size(current_database())) AS db_size
+                """))
+                db_row = db_size_result.fetchone()
+                actual_db_size_bytes = db_row[0]
+                actual_db_size = db_row[1]
+
+                # Get all tables with sizes (including indexes)
                 result = conn.execute(text("""
                     SELECT
                         tablename,
                         pg_size_pretty(pg_total_relation_size('public.'||tablename)) AS size,
-                        pg_total_relation_size('public.'||tablename) AS size_bytes
+                        pg_total_relation_size('public.'||tablename) AS size_bytes,
+                        pg_size_pretty(pg_relation_size('public.'||tablename)) AS table_size,
+                        pg_relation_size('public.'||tablename) AS table_size_bytes,
+                        pg_size_pretty(pg_total_relation_size('public.'||tablename) - pg_relation_size('public.'||tablename)) AS index_size,
+                        pg_total_relation_size('public.'||tablename) - pg_relation_size('public.'||tablename) AS index_size_bytes
                     FROM pg_tables
                     WHERE schemaname = 'public'
                     ORDER BY pg_total_relation_size('public.'||tablename) DESC
@@ -2700,9 +2714,11 @@ def register_api_routes(app):
                 foreign_tables = []
                 bot_total = 0
                 foreign_total = 0
+                bot_indexes = 0
+                foreign_indexes = 0
 
                 for row in result:
-                    table, size, size_bytes = row
+                    table, size, size_bytes, table_size, table_size_bytes, index_size, index_size_bytes = row
 
                     # Get row count
                     try:
@@ -2716,28 +2732,42 @@ def register_api_routes(app):
                         'size': size,
                         'size_bytes': size_bytes,
                         'size_mb': round(size_bytes / (1024**2), 2),
+                        'table_size': table_size,
+                        'table_size_bytes': table_size_bytes,
+                        'index_size': index_size,
+                        'index_size_bytes': index_size_bytes,
                         'rows': count
                     }
 
                     if belongs_to_bot(table):
                         bot_tables.append(table_info)
                         bot_total += size_bytes
+                        bot_indexes += index_size_bytes
                     else:
                         foreign_tables.append(table_info)
                         foreign_total += size_bytes
+                        foreign_indexes += index_size_bytes
 
                 total_bytes = bot_total + foreign_total
+                overhead_bytes = actual_db_size_bytes - total_bytes
 
                 return jsonify({
                     'ok': True,
                     'bot_tables': bot_tables,
                     'foreign_tables': foreign_tables,
                     'summary': {
+                        'actual_db_size': actual_db_size,
+                        'actual_db_size_bytes': actual_db_size_bytes,
+                        'actual_db_mb': round(actual_db_size_bytes / (1024**2), 2),
                         'total_mb': round(total_bytes / (1024**2), 2),
                         'bot_mb': round(bot_total / (1024**2), 2),
                         'foreign_mb': round(foreign_total / (1024**2), 2),
-                        'bot_pct': round(bot_total / total_bytes * 100, 1) if total_bytes > 0 else 0,
-                        'foreign_pct': round(foreign_total / total_bytes * 100, 1) if total_bytes > 0 else 0,
+                        'bot_indexes_mb': round(bot_indexes / (1024**2), 2),
+                        'foreign_indexes_mb': round(foreign_indexes / (1024**2), 2),
+                        'overhead_mb': round(overhead_bytes / (1024**2), 2),
+                        'bot_pct': round(bot_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
+                        'foreign_pct': round(foreign_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
+                        'overhead_pct': round(overhead_bytes / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
                     }
                 })
         except Exception as e:
@@ -2813,6 +2843,24 @@ def register_api_routes(app):
                         except:
                             pass
                     conn.commit()
+
+                elif action == 'vacuum_full':
+                    # VACUUM FULL to actually reclaim disk space and return it to OS
+                    # WARNING: This locks the entire database and can take 5-15 minutes
+                    from sqlalchemy import create_engine
+                    vacuum_engine = create_engine(
+                        engine.url,
+                        isolation_level='AUTOCOMMIT'
+                    )
+                    with vacuum_engine.connect() as vacuum_conn:
+                        vacuum_conn.execute(text("VACUUM FULL ANALYZE"))
+                    vacuum_engine.dispose()
+
+                    return jsonify({
+                        'ok': True,
+                        'action': 'vacuum_full',
+                        'message': 'VACUUM FULL completed - disk space reclaimed and returned to OS'
+                    })
 
                 else:
                     return jsonify({'ok': False, 'reason': 'unknown action'})
