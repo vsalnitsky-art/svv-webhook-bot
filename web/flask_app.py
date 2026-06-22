@@ -2664,6 +2664,169 @@ def register_api_routes(app):
                       else 'Archive disabled — trades only in Recent Closed list'
         })
 
+    # ========== Database Admin ==========
+
+    @app.route('/database')
+    def database_admin():
+        """Database administration page."""
+        return render_template('database_admin.html')
+
+    @app.route('/api/db/analyze')
+    def api_db_analyze():
+        """Analyze database size and table usage."""
+        from storage.db_models import engine
+        from sqlalchemy import text
+
+        # Bot's table prefixes
+        BOT_PREFIXES = ['sob_', 'volumized_radar']
+
+        def belongs_to_bot(table_name):
+            return any(table_name.startswith(p) for p in BOT_PREFIXES)
+
+        try:
+            with engine.connect() as conn:
+                # Get all tables with sizes
+                result = conn.execute(text("""
+                    SELECT
+                        tablename,
+                        pg_size_pretty(pg_total_relation_size('public.'||tablename)) AS size,
+                        pg_total_relation_size('public.'||tablename) AS size_bytes
+                    FROM pg_tables
+                    WHERE schemaname = 'public'
+                    ORDER BY pg_total_relation_size('public.'||tablename) DESC
+                """))
+
+                bot_tables = []
+                foreign_tables = []
+                bot_total = 0
+                foreign_total = 0
+
+                for row in result:
+                    table, size, size_bytes = row
+
+                    # Get row count
+                    try:
+                        count_res = conn.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                        count = count_res.scalar()
+                    except:
+                        count = 0
+
+                    table_info = {
+                        'name': table,
+                        'size': size,
+                        'size_bytes': size_bytes,
+                        'size_mb': round(size_bytes / (1024**2), 2),
+                        'rows': count
+                    }
+
+                    if belongs_to_bot(table):
+                        bot_tables.append(table_info)
+                        bot_total += size_bytes
+                    else:
+                        foreign_tables.append(table_info)
+                        foreign_total += size_bytes
+
+                total_bytes = bot_total + foreign_total
+
+                return jsonify({
+                    'ok': True,
+                    'bot_tables': bot_tables,
+                    'foreign_tables': foreign_tables,
+                    'summary': {
+                        'total_mb': round(total_bytes / (1024**2), 2),
+                        'bot_mb': round(bot_total / (1024**2), 2),
+                        'foreign_mb': round(foreign_total / (1024**2), 2),
+                        'bot_pct': round(bot_total / total_bytes * 100, 1) if total_bytes > 0 else 0,
+                        'foreign_pct': round(foreign_total / total_bytes * 100, 1) if total_bytes > 0 else 0,
+                    }
+                })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/db/cleanup', methods=['POST'])
+    def api_db_cleanup():
+        """Perform database cleanup operations."""
+        from storage.db_models import engine
+        from sqlalchemy import text
+
+        data = request.get_json() or {}
+        action = data.get('action')  # 'foreign_tables' | 'event_logs' | 'trade_archive' | 'old_cache'
+        table_name = data.get('table')  # specific table for foreign cleanup
+
+        if not action:
+            return jsonify({'ok': False, 'reason': 'action required'})
+
+        try:
+            with engine.connect() as conn:
+                deleted_rows = 0
+                freed_mb = 0
+
+                if action == 'drop_table' and table_name:
+                    # Drop specific foreign table
+                    # Get size before dropping
+                    size_res = conn.execute(text(f"""
+                        SELECT pg_total_relation_size('public.{table_name}')
+                    """))
+                    freed_bytes = size_res.scalar() or 0
+                    freed_mb = round(freed_bytes / (1024**2), 2)
+
+                    conn.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
+                    conn.commit()
+                    return jsonify({
+                        'ok': True,
+                        'action': 'drop_table',
+                        'table': table_name,
+                        'freed_mb': freed_mb
+                    })
+
+                elif action == 'event_logs_old':
+                    # Delete old event logs (>30 days)
+                    result = conn.execute(text("""
+                        DELETE FROM sob_event_logs
+                        WHERE timestamp < NOW() - INTERVAL '30 days'
+                    """))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'event_logs_all':
+                    # Delete ALL event logs
+                    result = conn.execute(text("DELETE FROM sob_event_logs"))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'trade_archive':
+                    # Clear trade archive
+                    result = conn.execute(text("DELETE FROM sob_trade_archive"))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'old_cache':
+                    # Delete old cache data (>7 days)
+                    tables = ['sob_order_blocks', 'sob_top100_ob_snapshots', 'sob_top100_ob_history']
+                    for tbl in tables:
+                        try:
+                            result = conn.execute(text(f"""
+                                DELETE FROM {tbl}
+                                WHERE timestamp < NOW() - INTERVAL '7 days'
+                            """))
+                            deleted_rows += result.rowcount
+                        except:
+                            pass
+                    conn.commit()
+
+                else:
+                    return jsonify({'ok': False, 'reason': 'unknown action'})
+
+                return jsonify({
+                    'ok': True,
+                    'action': action,
+                    'deleted_rows': deleted_rows,
+                    'freed_mb': freed_mb
+                })
+
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/sm/data-source')
     def api_sm_data_source():
         """Report active analytics source + live API health of BOTH
