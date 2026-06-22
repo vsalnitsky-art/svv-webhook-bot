@@ -604,6 +604,12 @@ class SMCScanner:
                                 'time': int(item['time']),
                                 'price': float(item.get('price', 0)),
                                 'side': str(item['side']),
+                                # Legacy markers (pre-2026-06-22) have no
+                                # status — they were only ever recorded for
+                                # opened trades, so default to 'opened'.
+                                'status': str(item.get('status', 'opened')),
+                                'reason': str(item.get('reason', '')),
+                                'paper': bool(item.get('paper', False)),
                             })
                     if cleaned:
                         self._signal_markers[symbol] = cleaned
@@ -673,6 +679,46 @@ class SMCScanner:
             self.db.set_setting(key, markers)
         except Exception as e:
             print(f"[SMC] Signal persist error for {symbol}: {e}")
+
+    def _record_marker(self, symbol: str, event: Dict, side: str,
+                       status: str, reason: str = '',
+                       is_paper: bool = False, entry_price: float = 0.0):
+        """Record a chart marker for a signal with an explicit status.
+
+        status:
+          'opened'   — a real or paper position was actually opened (bright
+                       green LONG / red SHORT dot on the chart)
+          'rejected' — the signal was blocked by a filter (OB / PD Zone /
+                       Forecast / Quality Gate / tradeable list). Shown as a
+                       muted grey marker; clicking it reveals `reason`.
+
+        We deliberately do NOT record 'duplicate' (same-direction) signals —
+        those are not new trades and only add chart noise.
+
+        Markers are deduped on (time, side, status) so a re-scan of the same
+        bar doesn't stack identical markers.
+        """
+        to_t = event.get('to_t', 0) or 0
+        t_sec = int(to_t // 1000) if to_t > 1e12 else int(to_t)
+        persisted = False
+        with self._lock:
+            markers = self._signal_markers.setdefault(symbol, [])
+            if not any(m['time'] == t_sec and m.get('side') == side
+                       and m.get('status', 'opened') == status
+                       for m in markers):
+                markers.append({
+                    'time': t_sec,
+                    'price': float(entry_price or 0),
+                    'side': side,
+                    'status': status,
+                    'reason': reason,
+                    'paper': bool(is_paper),
+                })
+                if len(markers) > SIGNALS_PERSIST_LIMIT:
+                    self._signal_markers[symbol] = markers[-SIGNALS_PERSIST_LIMIT:]
+                persisted = True
+        if persisted:
+            self._persist_signals(symbol)
     
     def clear_signals(self, symbol: Optional[str] = None) -> Dict:
         """Clear persisted signal markers. If symbol is None, clear ALL.
@@ -2254,11 +2300,17 @@ class SMCScanner:
             # opposite, the signal is dropped completely (no markers, no
             # dedup state update, no TM hook). The user explicitly chose
             # this behavior.
+            # Level for rejected-marker placement (entry computed later).
+            evt_level = event.get('level', 0) or 0
+
             if self._settings.get('ob_filter_enabled', False):
                 if not self._ob_filter_allows(symbol, side_label):
-                    # Drop silently — no marker, no TM call. Logged so
-                    # production can verify filter is actually firing.
+                    # Blocked — record a rejected marker so the user can see
+                    # (and click for the reason) why no trade fired here.
                     print(f"[SMC] 🚫 OB Filter blocked {symbol} {side_label} signal")
+                    self._record_marker(symbol, event, side_label,
+                                        'rejected', 'OB Filter blocked',
+                                        entry_price=evt_level)
                     return
             
             # === PD Zone Filter (Premium/Discount) ===
@@ -2272,6 +2324,9 @@ class SMCScanner:
             # newbie mistake; default protection is more useful than
             # default permissiveness.
             if not self._pd_zone_filter_allows(symbol, side_label):
+                self._record_marker(symbol, event, side_label,
+                                    'rejected', 'PD Zone filter blocked',
+                                    entry_price=evt_level)
                 return  # Already logged inside the helper
             
             # === Forecast Filter (1H / 4H multi-horizon prediction) ===
@@ -2283,6 +2338,9 @@ class SMCScanner:
             if (self._settings.get('forecast_1h_filter_enabled', False)
                     or self._settings.get('forecast_4h_filter_enabled', False)):
                 if not self._forecast_filter_allows(symbol, side_label):
+                    self._record_marker(symbol, event, side_label,
+                                        'rejected', 'Forecast filter blocked',
+                                        entry_price=evt_level)
                     return  # Already logged inside the helper
             
             # Entry price = the structural break LEVEL of the event that fired
@@ -2312,43 +2370,42 @@ class SMCScanner:
             # based on its filters (side gates, tradeable list, manual mode).
             # We only add a chart marker if TM confirms it opened something.
             trade_opened = False
+            tm_status = 'rejected'
+            tm_reason = 'Trade Manager unavailable'
+            tm_is_paper = False
             try:
                 from detection.trade_manager import get_trade_manager
                 tm = get_trade_manager()
                 if tm:
                     result = tm.on_signal(symbol=symbol, side=side_label,
                                           entry_price=entry_price, opened_by=mode)
-                    # TM returns {'real_opened': bool, 'shadow_opened': bool}
+                    # TM returns {'real_opened','shadow_opened','status','reason','is_paper'}
                     trade_opened = result.get('real_opened') or result.get('shadow_opened')
+                    tm_status = result.get('status',
+                                           'opened' if trade_opened else 'rejected')
+                    tm_reason = result.get('reason', '')
+                    tm_is_paper = result.get('is_paper', False)
             except Exception as e:
                 print(f"[SMC] TM hook error: {e}")
+                tm_reason = f'TM error: {e}'
 
-            # Record signal marker for chart display ONLY if a trade was opened
-            if trade_opened:
-                to_t = event.get('to_t', 0)
-                t_sec = int(to_t // 1000) if to_t > 1e12 else int(to_t)
-                persisted = False
-                with self._lock:
-                    markers = self._signal_markers.setdefault(symbol, [])
-                    # Dedup — don't add the same time+side twice
-                    if not any(m['time'] == t_sec and m['side'] == side_label for m in markers):
-                        markers.append({
-                            'time': t_sec,
-                            'price': float(entry_price),
-                            'side': side_label,
-                        })
-                        # Keep last SIGNALS_PERSIST_LIMIT
-                        if len(markers) > SIGNALS_PERSIST_LIMIT:
-                            self._signal_markers[symbol] = markers[-SIGNALS_PERSIST_LIMIT:]
-                        persisted = True
-
-                # Save to DB outside the lock to avoid holding it during I/O
-                if persisted:
-                    self._persist_signals(symbol)
-
-                print(f"[SMC] ✅ Position opened: {symbol} {side_label} @ {entry_str}")
+            # Record a chart marker based on the resolved status:
+            #   opened    → bright LONG/SHORT dot (a new position was opened)
+            #   rejected  → muted grey marker carrying the block reason
+            #   duplicate → no marker (not a new trade; just chart noise)
+            if tm_status == 'opened':
+                self._record_marker(symbol, event, side_label, 'opened',
+                                    is_paper=tm_is_paper, entry_price=entry_price)
+                tag = '📝 Paper' if tm_is_paper else '✅ Position'
+                print(f"[SMC] {tag} opened: {symbol} {side_label} @ {entry_str}")
+            elif tm_status == 'duplicate':
+                print(f"[SMC] ↺ Duplicate {symbol} {side_label} "
+                      f"(already in position) — no marker")
             else:
-                print(f"[SMC] ⊘ Signal filtered: {symbol} {side_label} @ {entry_str} (no position opened)")
+                self._record_marker(symbol, event, side_label, 'rejected',
+                                    tm_reason, entry_price=entry_price)
+                print(f"[SMC] ⊘ Signal rejected: {symbol} {side_label} "
+                      f"@ {entry_str} — {tm_reason}")
 
             # Update last-direction state (used by dedup gate). Pine updates
             # this even when dedup is OFF, so toggling dedup ON later doesn't
@@ -2541,7 +2598,16 @@ class SMCScanner:
         htf_settings = self.get_htf_settings()
         with self._lock:
             htf_data = dict(self._htf_cache.get(symbol, {}))
-            signals = list(self._signal_markers.get(symbol, []))
+            # Normalize markers so the frontend always gets status/reason/paper,
+            # even for legacy markers persisted before these fields existed.
+            signals = [{
+                'time': m.get('time'),
+                'price': m.get('price', 0),
+                'side': m.get('side'),
+                'status': m.get('status', 'opened'),
+                'reason': m.get('reason', ''),
+                'paper': m.get('paper', False),
+            } for m in self._signal_markers.get(symbol, [])]
         htf_filter_active = htf_settings.get('enabled', False)
         htf_bias = htf_data.get('bias', 'neutral')
         

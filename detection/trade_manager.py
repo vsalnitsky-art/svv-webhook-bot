@@ -1147,10 +1147,14 @@ class TradeManager:
         # reverse. The operator wants to manage this trade by hand.
         if existing_real and existing_real.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (real) — signal ignored")
-            return {'real_opened': False, 'shadow_opened': False}
+            return {'real_opened': False, 'shadow_opened': False,
+                    'status': 'rejected', 'reason': 'Manual mode (real)',
+                    'is_paper': False}
         if existing_shadow and existing_shadow.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
-            return {'real_opened': False, 'shadow_opened': False}
+            return {'real_opened': False, 'shadow_opened': False,
+                    'status': 'rejected', 'reason': 'Manual mode (shadow)',
+                    'is_paper': False}
 
         # === Trade Quality Gate ===
         # Data-driven filter based on empirical patterns from trade archive.
@@ -1180,7 +1184,10 @@ class TradeManager:
                         f"🎯 Quality: {score}/100 ({grade}) < threshold {threshold}\n"
                         f"Reason: {reason}"
                     )
-                    return {'real_opened': False, 'shadow_opened': False}
+                    return {'real_opened': False, 'shadow_opened': False,
+                            'status': 'rejected',
+                            'reason': f'Quality Gate {score}/100 < {threshold}: {reason}',
+                            'is_paper': False}
 
                 # Advisory mode: just log and continue
                 if mode == 'advisory':
@@ -1189,8 +1196,17 @@ class TradeManager:
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list so only
         # explicitly-allowed symbols ever hit the exchange.
+        #
+        # Marker-status tracking (2026-06-22): the chart needs to tell apart
+        # a genuine NEW open from a same-direction duplicate or a filtered
+        # rejection. We track these explicitly so on_signal can report an
+        # accurate status back to the scanner.
         real_opened = False
         shadow_opened = False
+        opened_new = False        # a brand-new position was actually opened
+        is_duplicate = False      # signal in a direction we're already holding
+        is_paper = False          # the new open happened on the paper track
+        reject_reason = ''        # why nothing opened (when applicable)
         if enabled:
             if existing_real:
                 if existing_real['side'] == side:
@@ -1198,6 +1214,7 @@ class TradeManager:
                     # (Don't return — paper track below may still need to run
                     #  for symbols where no shadow exists yet.)
                     real_opened = True
+                    is_duplicate = True
                 else:
                     # OPPOSITE direction — reverse: close + open
                     print(f"[TM] 🔄 Reverse signal for {symbol}: "
@@ -1211,19 +1228,24 @@ class TradeManager:
                         # is independent and should not be affected by a real
                         # exchange error, so we don't return here.
                         real_opened = True  # treat as "real handled it" to avoid paper dup
+                        reject_reason = 'Reverse-close failed (real)'
                     else:
                         if self._is_tradeable(symbol):
                             self._open_position(symbol, side, entry_price, opened_by)
                             real_opened = True
+                            opened_new = True
                         else:
                             print(f"[TM] {symbol} not in tradeable list — reverse-open skipped")
+                            reject_reason = 'Not in tradeable list (real)'
             else:
                 # No existing real position
                 if self._is_tradeable(symbol):
                     self._open_position(symbol, side, entry_price, opened_by)
                     real_opened = True
+                    opened_new = True
                 else:
                     print(f"[TM] {symbol} not in tradeable list — signal ignored (real)")
+                    reject_reason = 'Not in tradeable list (real)'
 
         # === Paper (shadow) track ===
         # Independent of the real track. Runs on EVERY qualified signal
@@ -1237,6 +1259,7 @@ class TradeManager:
             if existing_shadow:
                 if existing_shadow['side'] == side:
                     shadow_opened = True  # already in this trend on paper
+                    is_duplicate = True
                 else:
                     # OPPOSITE direction — same reverse semantics for paper trades
                     print(f"[TM] 🔄 [TEST] Reverse signal for {symbol}: "
@@ -1245,14 +1268,41 @@ class TradeManager:
                         self._close_shadow(symbol, entry_price, reason='reverse_signal')
                     except Exception as e:
                         print(f"[TM] ❌ [TEST] Reverse-close-shadow failed for {symbol}: {e}")
-                        return {'real_opened': real_opened, 'shadow_opened': False}
+                        return {'real_opened': real_opened, 'shadow_opened': False,
+                                'status': 'rejected',
+                                'reason': 'Reverse-close-shadow failed (paper)',
+                                'is_paper': True}
                     self._open_shadow(symbol, side, entry_price, opened_by)
                     shadow_opened = True
+                    opened_new = True
+                    is_paper = True
             else:
                 self._open_shadow(symbol, side, entry_price, opened_by)
                 shadow_opened = True
+                opened_new = True
+                is_paper = True
 
-        return {'real_opened': real_opened, 'shadow_opened': shadow_opened}
+        # === Resolve final marker status ===
+        # opened   — a genuinely new position (real or paper) was opened
+        # duplicate— signal matched a position we already hold (no new trade)
+        # rejected — nothing opened (not tradeable, reverse-fail, TM disabled)
+        if opened_new:
+            status, reason = 'opened', ''
+        elif is_duplicate:
+            status, reason = 'duplicate', f'Already in {side} position'
+        else:
+            status = 'rejected'
+            if reject_reason:
+                reason = reject_reason
+            elif not enabled:
+                reason = 'Trade Manager disabled'
+            elif not test_mode:
+                reason = 'Not opened (no real entry, paper off)'
+            else:
+                reason = 'Signal not opened'
+
+        return {'real_opened': real_opened, 'shadow_opened': shadow_opened,
+                'status': status, 'reason': reason, 'is_paper': is_paper}
     
     def on_choch_event(self, symbol: str, direction: str, level: float, bar_t):
         """Called by SMC scanner for EVERY CHoCH detected (regardless of dedup/HTF).
