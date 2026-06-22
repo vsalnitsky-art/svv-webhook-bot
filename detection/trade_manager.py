@@ -219,6 +219,21 @@ DEFAULT_SETTINGS = {
         'weight_atr_health': 8.0,
     },
     'entry_score_threshold_override': None,
+
+    # === Trade Quality Gate (data-driven signal filter) ===
+    # Scores each signal 0-100 based on empirical patterns from trade archive.
+    # Key metrics: ADR room, exhaustion range, move maturity, ATR, decision.
+    # Unlike Entry Score (complex multi-factor), Quality Gate uses simple,
+    # proven predictors from actual trade results.
+    'use_quality_gate': False,              # Master toggle (default OFF)
+    'quality_gate_mode': 'advisory',        # 'off' | 'advisory' | 'filter'
+    'quality_gate_threshold': 40,           # Minimum score (0-100) for filter mode
+
+    # === Trade Archive (training data collection) ===
+    # When ON, all closed trades are saved to permanent archive table for
+    # backtesting and ML training. When OFF, closed trades only appear in
+    # the rolling Recent Closed list (UI only, capped at 500).
+    'archive_trades': False,                # Default OFF — opt-in data collection
 }
 
 
@@ -946,6 +961,153 @@ class TradeManager:
     # Signal hooks (called from SMC scanner)
     # ============================================================
     
+    def _calculate_quality_score(self, symbol: str, side: str) -> dict:
+        """Calculate Trade Quality Score (0-100) based on empirical patterns.
+
+        Scoring formula derived from trade archive analysis:
+          - ADR room (100 - adr_used_pct): 35 points max
+          - Exhaustion range (30-70% optimal): 25 points max
+          - Move verdict (MATURE best): 20 points max
+          - ATR level (lower better): 10 points max
+          - Decision verdict: 10 points max
+
+        Returns:
+          {
+            'score': 0-100,
+            'grade': 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR',
+            'breakdown': {...},
+            'reason': str  # human-readable summary
+          }
+        """
+        if not self.scanner:
+            return {'score': 50, 'grade': 'FAIR', 'breakdown': {},
+                    'reason': 'Scanner not available'}
+
+        try:
+            # Get current analysis from scanner
+            bias_data = self.scanner.get_bias(symbol)
+            if not bias_data:
+                return {'score': 50, 'grade': 'FAIR', 'breakdown': {},
+                        'reason': 'No analysis data'}
+
+            move = bias_data.get('move', {})
+            decision = bias_data.get('decision', {})
+
+            points = {}
+            total = 0
+
+            # 1. ADR ROOM (35 points) — most important predictor!
+            # Winners avg 36.5% room, losers 9.8% room
+            adr_used = move.get('adr_used_pct', 100)
+            adr_room = 100 - adr_used
+            if adr_room >= 30:
+                points['adr_room'] = 35
+            elif adr_room >= 20:
+                points['adr_room'] = 25
+            elif adr_room >= 10:
+                points['adr_room'] = 15
+            else:
+                points['adr_room'] = 0
+            total += points['adr_room']
+
+            # 2. EXHAUSTION RANGE (25 points)
+            # Optimal: 30-70%, Critical >70% = losers
+            exhaustion = move.get('exhaustion', 50)
+            if 30 <= exhaustion <= 70:
+                points['exhaustion'] = 25
+            elif exhaustion < 30:
+                points['exhaustion'] = 15
+            elif exhaustion <= 85:
+                points['exhaustion'] = 10
+            else:
+                points['exhaustion'] = 0
+            total += points['exhaustion']
+
+            # 3. MOVE VERDICT (20 points)
+            # MATURE = 69.7% win rate, FRESH = 63.6%, EXHAUSTED = 52.2%
+            move_verdict = move.get('verdict', '').upper()
+            if move_verdict == 'MATURE':
+                points['move_verdict'] = 20
+            elif move_verdict == 'FRESH':
+                points['move_verdict'] = 12
+            elif move_verdict == 'EXHAUSTED':
+                points['move_verdict'] = 5
+            else:
+                points['move_verdict'] = 10
+            total += points['move_verdict']
+
+            # 4. ATR LEVEL (10 points)
+            # Winners avg 0.53%, losers 0.69%
+            atr_pct = move.get('atr_pct', 0.6)
+            if atr_pct < 0.5:
+                points['atr'] = 10
+            elif atr_pct < 0.6:
+                points['atr'] = 7
+            elif atr_pct < 0.8:
+                points['atr'] = 4
+            else:
+                points['atr'] = 0
+            total += points['atr']
+
+            # 5. DECISION VERDICT (10 points)
+            # Surprisingly, 'marginal' = 72.4% win rate, 'good' = 57.6%
+            dec_verdict = decision.get('verdict', '').lower()
+            if dec_verdict == 'marginal':
+                points['decision'] = 10
+            elif dec_verdict == 'good':
+                points['decision'] = 8
+            elif dec_verdict == 'excellent':
+                points['decision'] = 9
+            else:
+                points['decision'] = 0
+            total += points['decision']
+
+            # Grade based on score
+            if total >= 70:
+                grade = 'EXCELLENT'
+            elif total >= 55:
+                grade = 'GOOD'
+            elif total >= 40:
+                grade = 'FAIR'
+            else:
+                grade = 'POOR'
+
+            # Build reason string
+            reason_parts = []
+            if points['adr_room'] >= 25:
+                reason_parts.append(f"ADR room {adr_room:.0f}%")
+            else:
+                reason_parts.append(f"⚠ ADR tight {adr_room:.0f}%")
+
+            if move_verdict == 'MATURE':
+                reason_parts.append("MATURE✓")
+            elif move_verdict == 'EXHAUSTED':
+                reason_parts.append("EXHAUSTED⚠")
+
+            if exhaustion > 70:
+                reason_parts.append(f"exh {exhaustion:.0f}%⚠")
+
+            reason = ' · '.join(reason_parts)
+
+            return {
+                'score': total,
+                'grade': grade,
+                'breakdown': points,
+                'reason': reason,
+                'metrics': {
+                    'adr_room': adr_room,
+                    'exhaustion': exhaustion,
+                    'move_verdict': move_verdict,
+                    'atr_pct': atr_pct,
+                    'decision_verdict': dec_verdict,
+                }
+            }
+
+        except Exception as e:
+            print(f"[TM] Quality score error for {symbol}: {e}")
+            return {'score': 50, 'grade': 'FAIR', 'breakdown': {},
+                    'reason': f'Error: {e}'}
+
     def on_signal(self, symbol: str, side: str, entry_price: float, opened_by: str) -> dict:
         """Called when SMC scanner fires a signal.
         side: 'LONG' or 'SHORT'
@@ -989,6 +1151,40 @@ class TradeManager:
         if existing_shadow and existing_shadow.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
             return {'real_opened': False, 'shadow_opened': False}
+
+        # === Trade Quality Gate ===
+        # Data-driven filter based on empirical patterns from trade archive.
+        # Scores 0-100, with threshold check in 'filter' mode.
+        # Store result as instance var so _open_position/_open_shadow can use it.
+        self._last_quality_score = None
+        if s.get('use_quality_gate'):
+            mode = s.get('quality_gate_mode', 'advisory')
+            if mode != 'off':
+                quality_result = self._calculate_quality_score(symbol, side)
+                self._last_quality_score = quality_result
+                score = quality_result['score']
+                grade = quality_result['grade']
+                threshold = s.get('quality_gate_threshold', 40)
+
+                # Log quality score
+                print(f"[TM] 🎯 Quality: {score}/100 ({grade}) — {symbol} {side}")
+
+                # Filter mode: block if below threshold
+                if mode == 'filter' and score < threshold:
+                    reason = quality_result.get('reason', 'low quality')
+                    print(f"[TM] ⊘ Signal BLOCKED by Quality Gate: "
+                          f"{score}/100 < {threshold} — {reason}")
+                    # Notify user about blocked signal
+                    self._notify(
+                        f"⊘ Signal BLOCKED: {symbol} {side}\n"
+                        f"🎯 Quality: {score}/100 ({grade}) < threshold {threshold}\n"
+                        f"Reason: {reason}"
+                    )
+                    return {'real_opened': False, 'shadow_opened': False}
+
+                # Advisory mode: just log and continue
+                if mode == 'advisory':
+                    print(f"[TM] ℹ️ Advisory: quality {score}/100 — proceeding")
 
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list so only
@@ -1915,6 +2111,9 @@ class TradeManager:
         never disrupt the close flow."""
         if not self.db:
             return
+        # Check if archiving is enabled
+        if not self._settings.get('archive_trades', False):
+            return
         try:
             snap = pos.get('entry_snapshot')
             self.db.archive_trade(closed, entry_snapshot=snap, is_paper=is_paper)
@@ -2048,6 +2247,10 @@ class TradeManager:
             # column and legacy load_positions code; the dict shape is the
             # Decision Center verdict (headline, recommended, verdict, etc.).
             position['entry_score'] = decision
+
+        # Store Quality Gate score if it was calculated
+        if hasattr(self, '_last_quality_score') and self._last_quality_score:
+            position['quality_score'] = self._last_quality_score
 
         # Full pre-trade snapshot for the Trade Quality Gate backtest dataset.
         # Captured ONCE at open — decision + move-potential + hold score —
@@ -2604,6 +2807,9 @@ class TradeManager:
         }
         if decision is not None:
             pos['entry_score'] = decision
+        # Store Quality Gate score if it was calculated
+        if hasattr(self, '_last_quality_score') and self._last_quality_score:
+            pos['quality_score'] = self._last_quality_score
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
