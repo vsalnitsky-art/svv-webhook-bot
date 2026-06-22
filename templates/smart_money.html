@@ -2160,11 +2160,97 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
     </div>
     
+    <!-- ====== TRADE QUALITY GATE ====== -->
+    <div class="tm-panel" id="quality-gate-panel" style="margin-top:14px">
+        <div class="tm-header">
+            <h2 style="display:flex;align-items:center;gap:8px">
+                🎯 Trade Quality Gate
+                <span style="color:#666;font-size:0.75rem;font-weight:normal">(data-driven filter)</span>
+            </h2>
+            <div class="tm-master-toggle">
+                <span id="qg-status-label" style="font-size:0.8rem;color:#888">Off</span>
+                <label class="tm-toggle-switch">
+                    <input type="checkbox" id="tm-quality-gate-enabled" onchange="toggleQualityGate()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+        <div class="tm-body" id="quality-gate-body">
+            <div class="tm-row" style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#c4b5fd;font-size:0.78rem">
+                ℹ️ Оцінює кожен сигнал 0-100 балів на основі аналізу 142 угод. Ключові метрики: ADR room, виснаження, зрілість руху, волатильність. Фільтрує слабкі сигнали або показує оцінку як підказку.
+            </div>
+
+            <!-- Mode selector -->
+            <div class="tm-row">
+                <label style="display:block;margin-bottom:6px;color:#aaa;font-size:0.8rem">
+                    Режим роботи
+                    <span class="tm-help" title="Advisory — показує оцінку, але не блокує. Filter — блокує сигнали нижче порогу.">?</span>
+                </label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <label class="tm-radio-label">
+                        <input type="radio" name="qg-mode" value="off" onchange="saveQualityGateSettings()">
+                        <span>❌ Off</span>
+                    </label>
+                    <label class="tm-radio-label">
+                        <input type="radio" name="qg-mode" value="advisory" checked onchange="saveQualityGateSettings()">
+                        <span>ℹ️ Advisory</span>
+                    </label>
+                    <label class="tm-radio-label">
+                        <input type="radio" name="qg-mode" value="filter" onchange="saveQualityGateSettings()">
+                        <span>🚫 Filter</span>
+                    </label>
+                </div>
+                <div style="font-size:0.7rem;color:#888;margin-top:4px" id="qg-mode-hint">
+                    Показує оцінку якості, але не блокує сигнали
+                </div>
+            </div>
+
+            <!-- Threshold slider -->
+            <div class="tm-row">
+                <label style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                    <span style="color:#aaa;font-size:0.8rem">Мінімальна оцінка (Filter mode)</span>
+                    <span id="qg-threshold-value" style="font-family:monospace;color:#c4b5fd;font-weight:700">40</span>
+                </label>
+                <input type="range" id="tm-quality-threshold" min="0" max="100" step="5" value="40"
+                       style="width:100%" oninput="updateQualityThreshold()" onchange="saveQualityGateSettings()">
+                <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:#666;margin-top:2px">
+                    <span>0 (всі)</span>
+                    <span>40 (рекомендовано)</span>
+                    <span>100 (тільки відмінні)</span>
+                </div>
+            </div>
+
+            <!-- Stats hint -->
+            <div class="tm-row" style="background:rgba(255,255,255,0.02);padding:8px;border-radius:4px;font-size:0.72rem;color:#94a3b8">
+                <div style="margin-bottom:4px;font-weight:600;color:#cbd5e1">📊 Очікувані результати:</div>
+                <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;gap:4px 12px;font-family:monospace">
+                    <span style="color:#888">Поріг</span>
+                    <span style="color:#888">Сигналів</span>
+                    <span style="color:#888">Win Rate</span>
+                    <span style="color:#888">Avg PnL</span>
+
+                    <span>0</span><span>100%</span><span>57%</span><span>+0.12%</span>
+                    <span>40</span><span>~60%</span><span style="color:#22c55e">68%</span><span style="color:#22c55e">+0.40%</span>
+                    <span>60</span><span>~25%</span><span style="color:#4ade80">78%</span><span style="color:#4ade80">+0.85%</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ====== TEST MODE (Paper Trading) — separate panel ====== -->
     <div class="tm-panel" id="trade-archive-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
                 <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Постійний архів усіх закритих угод зі знімком входу. Накопичується для майбутнього навчання бота відбору угод. Ніколи не очищається автоматично.">🗄️ Архів угод (для навчання)</span>
+                <label class="tm-toggle-mini" style="margin-left:6px" title="Увімкніть для збереження угод у постійний архів">
+                    <input type="checkbox" id="tm-archive-enabled" onchange="toggleTradeArchive()">
+                    <span class="slider"></span>
+                </label>
+                <span id="ta-status" style="font-size:0.7rem;color:#888">Вимкнено</span>
+            </div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
                 <span id="ta-total" style="font-size:0.8rem;font-family:monospace;color:#4ade80;font-weight:700">—</span>
                 <span id="ta-breakdown" style="font-size:0.7rem;color:#8b93a7"></span>
             </div>
@@ -5163,7 +5249,56 @@ async function loadTMSettings() {
         // Test mode (paper trading)
         document.getElementById('tm-test-mode').checked = !!s.test_mode;
         updateTestModeHeader(!!s.test_mode);
-        
+
+        // === Trade Archive toggle ===
+        const archiveEnabled = !!s.archive_trades;
+        const archiveToggle = document.getElementById('tm-archive-enabled');
+        const archiveStatus = document.getElementById('ta-status');
+        if (archiveToggle) archiveToggle.checked = archiveEnabled;
+        if (archiveStatus) {
+            archiveStatus.textContent = archiveEnabled
+                ? '✅ Збір даних активний'
+                : '⚠️ Архів вимкнений';
+            archiveStatus.style.color = archiveEnabled ? '#22c55e' : '#888';
+        }
+
+        // === Quality Gate ===
+        const qgEnabled = !!s.use_quality_gate;
+        const qgToggle = document.getElementById('tm-quality-gate-enabled');
+        const qgStatus = document.getElementById('qg-status-label');
+        const qgBody = document.getElementById('quality-gate-body');
+        if (qgToggle) qgToggle.checked = qgEnabled;
+        if (qgStatus) {
+            qgStatus.textContent = qgEnabled ? 'Enabled' : 'Off';
+            qgStatus.style.color = qgEnabled ? '#22c55e' : '#888';
+        }
+        if (qgBody) qgBody.style.display = qgEnabled ? 'block' : 'none';
+
+        // Quality Gate mode
+        const qgMode = s.quality_gate_mode || 'advisory';
+        const modeInputs = document.getElementsByName('qg-mode');
+        for (const input of modeInputs) {
+            input.checked = (input.value === qgMode);
+        }
+
+        // Quality Gate threshold
+        const qgThreshold = s.quality_gate_threshold || 40;
+        const thresholdSlider = document.getElementById('tm-quality-threshold');
+        const thresholdValue = document.getElementById('qg-threshold-value');
+        if (thresholdSlider) thresholdSlider.value = qgThreshold;
+        if (thresholdValue) thresholdValue.textContent = qgThreshold;
+
+        // Update mode hint
+        const modeHint = document.getElementById('qg-mode-hint');
+        if (modeHint) {
+            const hints = {
+                'off': 'Оцінка не рахується',
+                'advisory': 'Показує оцінку якості, але не блокує сигнали',
+                'filter': `Блокує сигнали з оцінкою < ${qgThreshold}`
+            };
+            modeHint.textContent = hints[qgMode] || '';
+        }
+
         // === Global direction gates (LONG / SHORT) — apply to ALL opens ===
         // Default both ON when keys are missing (older deploys). We use
         // explicit `=== false` check to distinguish "not yet saved" from
@@ -6437,6 +6572,107 @@ async function loadTradeArchive() {
         }
     } catch {
         totalEl.textContent = '—';
+    }
+}
+
+// ========== Quality Gate ==========
+
+async function toggleQualityGate() {
+    const enabled = document.getElementById('tm-quality-gate-enabled').checked;
+    const statusLabel = document.getElementById('qg-status-label');
+    const body = document.getElementById('quality-gate-body');
+
+    if (statusLabel) {
+        statusLabel.textContent = enabled ? 'Enabled' : 'Off';
+        statusLabel.style.color = enabled ? '#22c55e' : '#888';
+    }
+    if (body) {
+        body.style.display = enabled ? 'block' : 'none';
+    }
+
+    await saveQualityGateSettings();
+}
+
+function updateQualityThreshold() {
+    const slider = document.getElementById('tm-quality-threshold');
+    const valueDisplay = document.getElementById('qg-threshold-value');
+    if (valueDisplay) valueDisplay.textContent = slider.value;
+}
+
+async function saveQualityGateSettings() {
+    try {
+        const enabled = document.getElementById('tm-quality-gate-enabled').checked;
+        const modeInputs = document.getElementsByName('qg-mode');
+        let mode = 'advisory';
+        for (const input of modeInputs) {
+            if (input.checked) {
+                mode = input.value;
+                break;
+            }
+        }
+        const threshold = parseInt(document.getElementById('tm-quality-threshold').value, 10);
+
+        // Update mode hint
+        const hint = document.getElementById('qg-mode-hint');
+        if (hint) {
+            const hints = {
+                'off': 'Оцінка не рахується',
+                'advisory': 'Показує оцінку якості, але не блокує сигнали',
+                'filter': `Блокує сигнали з оцінкою < ${threshold}`
+            };
+            hint.textContent = hints[mode] || '';
+        }
+
+        // Include in general TM settings save
+        const settings = {
+            use_quality_gate: enabled,
+            quality_gate_mode: mode,
+            quality_gate_threshold: threshold
+        };
+
+        const res = await fetch('/api/tm/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({settings})
+        });
+        const d = await res.json();
+        if (!d.ok) {
+            console.error('Quality Gate save failed:', d.reason);
+        } else {
+            console.log('Quality Gate saved:', settings);
+        }
+    } catch (err) {
+        console.error('Quality Gate save error:', err);
+    }
+}
+
+async function toggleTradeArchive() {
+    try {
+        const enabled = document.getElementById('tm-archive-enabled').checked;
+        const res = await fetch('/api/trade-archive/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled})
+        });
+        const d = await res.json();
+        if (!d.ok) {
+            alert('Помилка: ' + (d.reason || 'unknown'));
+            return;
+        }
+
+        // Update status text
+        const status = document.getElementById('ta-status');
+        if (status) {
+            status.textContent = enabled
+                ? '✅ Збір даних активний'
+                : '⚠️ Архів вимкнений';
+            status.style.color = enabled ? '#22c55e' : '#888';
+        }
+
+        console.log('Archive toggle:', enabled, d.message);
+    } catch (err) {
+        console.error('Archive toggle error:', err);
+        alert('Помилка перемикання архіву');
     }
 }
 
