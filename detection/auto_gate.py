@@ -33,7 +33,7 @@ DB keys:
 import time
 import json
 import threading
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict
 
 CYCLE_SECS = 60          # match the UI refresh cadence
 WAIT_HYSTERESIS_DEFAULT = 3   # consecutive WAIT ticks before close-on-WAIT fires
