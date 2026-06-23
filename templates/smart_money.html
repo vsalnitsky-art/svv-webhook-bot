@@ -2138,6 +2138,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
                         <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
+                        <th title="Trade Quality Gate V2 (data-driven filter): оцінка якості входу 0–100 та grade, зафіксовані на момент відкриття. Наведіть для розкладу балів по 4 факторам.">QG</th>
                         <th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
@@ -2339,10 +2340,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, paper позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
                         <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
+                        <th title="Trade Quality Gate V2 (data-driven filter): оцінка якості входу 0–100 та grade, зафіксовані на момент відкриття. Наведіть для розкладу балів по 4 факторам.">QG</th>
                         <th>Status</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -6059,6 +6061,47 @@ function holdScoreCellHTML(hold) {
         </span></td>`;
 }
 
+function qgCellHTML(qg) {
+    // V2 Quality Gate verdict captured at entry. qg = {score, grade, mode,
+    // reason, breakdown}. None/undefined → gate was off or manual entry.
+    if (!qg || qg.score === undefined || qg.score === null) {
+        return '<td style="color:#555;font-size:0.7rem" title="Quality Gate вимкнено або ручний вхід">—</td>';
+    }
+    const gradeColor = {
+        'EXCELLENT': '#22c55e',
+        'GOOD': '#4ade80',
+        'FAIR': '#facc15',
+        'POOR': '#f87171',
+        'BLOCKED': '#ef4444'
+    }[qg.grade] || '#9ca3af';
+    const bg = {
+        'EXCELLENT': 'rgba(34,197,94,0.12)',
+        'GOOD': 'rgba(74,222,128,0.12)',
+        'FAIR': 'rgba(250,204,21,0.10)',
+        'POOR': 'rgba(248,113,113,0.12)',
+        'BLOCKED': 'rgba(239,68,68,0.12)'
+    }[qg.grade] || 'rgba(255,255,255,0.05)';
+    const b = qg.breakdown || {};
+    const compLines = [
+        `ADR room: ${b.adr_room ?? '-'} / 35`,
+        `HTF alignment: ${b.htf_alignment ?? '-'} / 30`,
+        `ATR: ${b.atr ?? '-'} / 20`,
+        `Decision: ${b.decision ?? '-'} / 15`,
+    ].join('\n');
+    const modeLabel = qg.mode === 'filter' ? 'Filter (блокує < поріг)'
+                    : qg.mode === 'advisory' ? 'Advisory (тільки оцінка)' : (qg.mode || '');
+    const tip = `Trade Quality Gate V2: ${qg.score}/100 → ${qg.grade}\\n`
+        + `Режим: ${modeLabel}\\n`
+        + (qg.reason ? `${qg.reason}\\n` : '') + '\\n'
+        + compLines;
+    return `<td title="${tip.replace(/"/g, '&quot;')}">
+        <span style="display:inline-flex;align-items:center;gap:6px;
+            padding:2px 8px;border-radius:6px;background:${bg};
+            border:1px solid ${gradeColor}55;font-weight:700;font-size:0.78rem;color:${gradeColor}">
+            ${qg.score}<span style="font-size:0.6rem;opacity:0.9;letter-spacing:0.3px">${qg.grade}</span>
+        </span></td>`;
+}
+
 function statusBadgeHTML(entryScore, health) {
     // Headline from the entry-side decision (frozen at open time)
     let entryPart = '';
@@ -7108,7 +7151,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7139,6 +7182,7 @@ async function loadTMState() {
                     ${manualModeCellHTML(p, false)}
                     ${breakevenCloseCellHTML(p, false)}
                     ${holdScoreCellHTML(p.hold)}
+                    ${qgCellHTML(p.qg)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -7187,7 +7231,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7209,6 +7253,7 @@ async function loadTMState() {
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
                     ${holdScoreCellHTML(p.hold)}
+                    ${qgCellHTML(p.qg)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;

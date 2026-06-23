@@ -987,6 +987,11 @@ class TradeManager:
         qg_mode = s.get('quality_gate_mode', 'advisory')
         qg_threshold = s.get('quality_gate_threshold', 50)
 
+        # QG summary attached to the opened position so the UI tables can
+        # show the Quality Gate verdict for live trades. None when the gate
+        # is off or errored (UI renders "—").
+        qg_summary = None
+
         if use_qg and qg_mode != 'off':
             try:
                 from detection.quality_gate_v2 import calculate_quality_score_v2
@@ -1013,10 +1018,18 @@ class TradeManager:
                                                'quality_score_too_low', qg_result)
                     return
 
-                # Advisory mode or passing filter: log but continue
+                # Advisory mode or passing filter: log but continue.
+                # Build a compact summary for the position record / UI tables.
                 if qg_mode == 'advisory' or score >= qg_threshold:
                     print(f"[TM] ✓ V2 Quality Gate: {symbol} {side} score={score} "
                           f"({grade}) — {reason[:60]}")
+                    qg_summary = {
+                        'score': score,
+                        'grade': grade,
+                        'mode': qg_mode,
+                        'reason': reason,
+                        'breakdown': qg_result.get('breakdown', {}),
+                    }
 
             except Exception as e:
                 # Never block on gate errors — log and continue
@@ -1048,14 +1061,14 @@ class TradeManager:
                         real_opened = True  # treat as "real handled it" to avoid paper dup
                     else:
                         if self._is_tradeable(symbol):
-                            self._open_position(symbol, side, entry_price, opened_by)
+                            self._open_position(symbol, side, entry_price, opened_by, qg=qg_summary)
                             real_opened = True
                         else:
                             print(f"[TM] {symbol} not in tradeable list — reverse-open skipped")
             else:
                 # No existing real position
                 if self._is_tradeable(symbol):
-                    self._open_position(symbol, side, entry_price, opened_by)
+                    self._open_position(symbol, side, entry_price, opened_by, qg=qg_summary)
                     real_opened = True
                 else:
                     print(f"[TM] {symbol} not in tradeable list — signal ignored (real)")
@@ -1080,9 +1093,9 @@ class TradeManager:
                 except Exception as e:
                     print(f"[TM] ❌ [TEST] Reverse-close-shadow failed for {symbol}: {e}")
                     return
-                self._open_shadow(symbol, side, entry_price, opened_by)
+                self._open_shadow(symbol, side, entry_price, opened_by, qg=qg_summary)
                 return
-            self._open_shadow(symbol, side, entry_price, opened_by)
+            self._open_shadow(symbol, side, entry_price, opened_by, qg=qg_summary)
     
     def on_choch_event(self, symbol: str, direction: str, level: float, bar_t):
         """Called by SMC scanner for EVERY CHoCH detected (regardless of dedup/HTF).
@@ -1998,7 +2011,7 @@ class TradeManager:
             print(f"[TM] snapshot hold error: {e}")
         return snap
 
-    def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str):
+    def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str, qg=None):
         s = self._settings
         
         # === Global directional gate ===
@@ -2080,13 +2093,18 @@ class TradeManager:
                 symbol, side, entry_price, decision)
         except Exception as e:
             print(f"[TM] entry snapshot error: {e}")
-        
+
+        # V2 Quality Gate verdict at entry (None if gate off/manual) — shown
+        # in the Trade Manager open-positions table.
+        if qg is not None:
+            position['qg'] = qg
+
         with self._lock:
             self._positions[symbol] = position
             # Init evaluator state alongside the position
             self._pos_state[symbol] = self._fresh_pos_state()
         self._persist_positions()
-        
+
         self._notify_open(position)
     
     def _close_externally(self, symbol: str, exit_price: float, reason: str = 'external_close'):
@@ -2550,7 +2568,7 @@ class TradeManager:
     # Shadow (paper) positions — for test_mode
     # ============================================================
     
-    def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str):
+    def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str, qg=None):
         """Open a paper-trading position. No Bybit calls."""
         # === Global directional gate (same toggle as real) ===
         # Test mode shadows respect the same LONG/SHORT master gate so the
@@ -2591,6 +2609,10 @@ class TradeManager:
         }
         if decision is not None:
             pos['entry_score'] = decision
+        # V2 Quality Gate verdict at entry (None if gate off) — shown in the
+        # Test Mode paper-positions table.
+        if qg is not None:
+            pos['qg'] = qg
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
