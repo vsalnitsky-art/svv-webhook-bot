@@ -1,0 +1,569 @@
+{% extends "base.html" %}
+{% block title %}Database Admin — SVV Bot{% endblock %}
+
+{% block content %}
+<style>
+.db-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.db-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.db-header h1 {
+    color: #ddd;
+    font-size: 1.6rem;
+    margin: 0;
+}
+
+.db-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.db-stat-card {
+    background: linear-gradient(135deg, #1a1f2e 0%, #2d3548 100%);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 15px;
+}
+
+.db-stat-label {
+    font-size: 0.75rem;
+    color: #888;
+    margin-bottom: 5px;
+}
+
+.db-stat-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    font-family: monospace;
+}
+
+.db-stat-value.total { color: #60a5fa; }
+.db-stat-value.bot { color: #22c55e; }
+.db-stat-value.foreign { color: #ef4444; }
+
+.db-panel {
+    background: #1a1f2e;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.db-panel h2 {
+    color: #cbd5e1;
+    font-size: 1.2rem;
+    margin: 0 0 15px 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.db-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.db-table thead {
+    background: rgba(255,255,255,0.05);
+}
+
+.db-table th {
+    text-align: left;
+    padding: 10px;
+    color: #94a3b8;
+    font-weight: 600;
+    border-bottom: 2px solid rgba(255,255,255,0.1);
+}
+
+.db-table td {
+    padding: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    color: #cbd5e1;
+}
+
+.db-table tr:hover {
+    background: rgba(255,255,255,0.02);
+}
+
+.db-table .table-name {
+    font-family: monospace;
+    color: #60a5fa;
+}
+
+.db-table .size {
+    font-family: monospace;
+    font-weight: 600;
+}
+
+.db-table .rows {
+    text-align: right;
+    font-family: monospace;
+    color: #94a3b8;
+}
+
+.cleanup-btn {
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.cleanup-btn.danger {
+    background: rgba(239,68,68,0.2);
+    border: 1px solid rgba(239,68,68,0.4);
+    color: #ef4444;
+}
+
+.cleanup-btn.danger:hover {
+    background: rgba(239,68,68,0.3);
+}
+
+.cleanup-btn.warning {
+    background: rgba(251,191,36,0.2);
+    border: 1px solid rgba(251,191,36,0.4);
+    color: #fbbf24;
+}
+
+.cleanup-btn.warning:hover {
+    background: rgba(251,191,36,0.3);
+}
+
+.cleanup-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.progress-bar {
+    height: 30px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    margin: 10px 0;
+}
+
+.progress-fill {
+    height: 100%;
+    transition: width 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.progress-fill.bot {
+    background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
+}
+
+.progress-fill.foreign {
+    background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+}
+
+.alert {
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    font-size: 0.85rem;
+}
+
+.alert.info {
+    background: rgba(59,130,246,0.1);
+    border: 1px solid rgba(59,130,246,0.3);
+    color: #93c5fd;
+}
+
+.alert.warning {
+    background: rgba(251,191,36,0.1);
+    border: 1px solid rgba(251,191,36,0.3);
+    color: #fcd34d;
+}
+
+.alert.danger {
+    background: rgba(239,68,68,0.1);
+    border: 1px solid rgba(239,68,68,0.3);
+    color: #fca5a5;
+}
+
+.refresh-btn {
+    padding: 8px 16px;
+    background: rgba(59,130,246,0.2);
+    border: 1px solid rgba(59,130,246,0.4);
+    color: #60a5fa;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.refresh-btn:hover {
+    background: rgba(59,130,246,0.3);
+}
+</style>
+
+<div class="db-container">
+    <div class="db-header">
+        <h1>🗄️ Database Administration</h1>
+        <button class="refresh-btn" onclick="loadDBAnalysis()">🔄 Refresh</button>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="db-summary">
+        <div class="db-stat-card">
+            <div class="db-stat-label">Real DB Size (Render)</div>
+            <div class="db-stat-value total" id="db-actual">—</div>
+            <div class="db-stat-label" style="margin-top:5px;color:#60a5fa;">Storage: <span id="db-limit-pct">—</span>% of 1 GB</div>
+        </div>
+        <div class="db-stat-card">
+            <div class="db-stat-label">This Bot's Tables</div>
+            <div class="db-stat-value bot" id="db-bot">—</div>
+        </div>
+        <div class="db-stat-card">
+            <div class="db-stat-label">Foreign Tables</div>
+            <div class="db-stat-value foreign" id="db-foreign">—</div>
+        </div>
+        <div class="db-stat-card">
+            <div class="db-stat-label">Indexes (Bot + Foreign)</div>
+            <div class="db-stat-value total" id="db-indexes">—</div>
+        </div>
+        <div class="db-stat-card">
+            <div class="db-stat-label">Overhead (WAL, bloat, etc)</div>
+            <div class="db-stat-value" style="color:#fbbf24;" id="db-overhead">—</div>
+        </div>
+    </div>
+
+    <!-- Usage Bar -->
+    <div class="progress-bar">
+        <div class="progress-fill bot" id="bot-progress" style="width:0%"></div>
+        <div class="progress-fill foreign" id="foreign-progress" style="width:0%"></div>
+    </div>
+
+    <!-- Foreign Tables (Priority!) -->
+    <div class="db-panel" id="foreign-panel" style="display:none">
+        <h2>
+            ⚠️ Foreign Tables (NOT this bot)
+            <span style="font-size:0.8rem;color:#ef4444;font-weight:normal">— Safe to delete!</span>
+        </h2>
+
+        <div class="alert danger">
+            <strong>⚠️ Увага:</strong> Ці таблиці НЕ належать svv-webhook-bot. Вони займають місце і можуть бути безпечно видалені.
+            Переконайтесь що ви не використовуєте інші боти на цій же БД!
+        </div>
+
+        <table class="db-table" id="foreign-table">
+            <thead>
+                <tr>
+                    <th>Table Name</th>
+                    <th>Size</th>
+                    <th>Rows</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="foreign-tbody"></tbody>
+        </table>
+    </div>
+
+    <!-- Bot Tables -->
+    <div class="db-panel">
+        <h2>✅ This Bot's Tables (sob_*, volumized_radar_*)</h2>
+
+        <table class="db-table">
+            <thead>
+                <tr>
+                    <th>Table Name</th>
+                    <th>Size</th>
+                    <th>Rows</th>
+                    <th>Category</th>
+                </tr>
+            </thead>
+            <tbody id="bot-tbody"></tbody>
+        </table>
+    </div>
+
+    <!-- Cleanup Actions -->
+    <div class="db-panel">
+        <h2>🧹 Cleanup Actions</h2>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:15px">
+            <div style="padding:15px;background:rgba(255,255,255,0.02);border-radius:6px">
+                <h3 style="font-size:0.9rem;color:#cbd5e1;margin:0 0 10px 0">Event Logs</h3>
+                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
+                    Логи подій ростуть нескінченно. Очистка старих даних економить місце.
+                </p>
+                <button class="cleanup-btn warning" onclick="cleanupEventLogs('old')">
+                    🗑️ Delete >30 days
+                </button>
+                <button class="cleanup-btn danger" onclick="cleanupEventLogs('all')" style="margin-left:8px">
+                    ⚠️ Delete ALL
+                </button>
+            </div>
+
+            <div style="padding:15px;background:rgba(255,255,255,0.02);border-radius:6px">
+                <h3 style="font-size:0.9rem;color:#cbd5e1;margin:0 0 10px 0">Trade Archive</h3>
+                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
+                    Архів угод для ML. Якщо не збираєте дані — можна видалити.
+                </p>
+                <button class="cleanup-btn danger" onclick="cleanupTradeArchive()">
+                    🗑️ Clear Archive
+                </button>
+            </div>
+
+            <div style="padding:15px;background:rgba(255,255,255,0.02);border-radius:6px">
+                <h3 style="font-size:0.9rem;color:#cbd5e1;margin:0 0 10px 0">Old Cache Data</h3>
+                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
+                    Видалити кеші OB, snapshots старші 7 днів.
+                </p>
+                <button class="cleanup-btn warning" onclick="cleanupOldCache()">
+                    🗑️ Delete >7 days
+                </button>
+            </div>
+
+            <div style="padding:15px;background:rgba(255,68,68,0.05);border:2px solid rgba(239,68,68,0.3);border-radius:6px">
+                <h3 style="font-size:0.9rem;color:#fca5a5;margin:0 0 10px 0">⚡ VACUUM FULL</h3>
+                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
+                    <strong>ПОВЕРТАЄ МІСЦЕ</strong> після видалення даних. БД буде заблоковано на 5-15 хв!
+                </p>
+                <button class="cleanup-btn danger" onclick="runVacuumFull()">
+                    ⚡ VACUUM FULL (reclaim space)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let dbData = null;
+
+async function loadDBAnalysis() {
+    try {
+        const res = await fetch('/api/db/analyze');
+        const data = await res.json();
+
+        if (!data.ok) {
+            alert('Error: ' + (data.reason || 'unknown'));
+            return;
+        }
+
+        dbData = data;
+        renderDBStats(data);
+    } catch (err) {
+        console.error('DB analysis error:', err);
+        alert('Failed to load database analysis');
+    }
+}
+
+function renderDBStats(data) {
+    const summary = data.summary;
+
+    // Update stats
+    document.getElementById('db-actual').textContent = summary.actual_db_mb.toFixed(1) + ' MB';
+    document.getElementById('db-limit-pct').textContent = (summary.actual_db_mb / 1024 * 100).toFixed(1);
+    document.getElementById('db-bot').textContent = summary.bot_mb.toFixed(1) + ' MB';
+    document.getElementById('db-foreign').textContent = summary.foreign_mb.toFixed(1) + ' MB';
+    document.getElementById('db-indexes').textContent =
+        ((summary.bot_indexes_mb || 0) + (summary.foreign_indexes_mb || 0)).toFixed(1) + ' MB';
+    document.getElementById('db-overhead').textContent = (summary.overhead_mb || 0).toFixed(1) + ' MB';
+
+    // Update progress bar
+    const botBar = document.getElementById('bot-progress');
+    const foreignBar = document.getElementById('foreign-progress');
+    botBar.style.width = summary.bot_pct + '%';
+    foreignBar.style.width = summary.foreign_pct + '%';
+    botBar.textContent = `Bot ${summary.bot_pct}%`;
+    foreignBar.textContent = `Foreign ${summary.foreign_pct}%`;
+
+    // Foreign tables
+    const foreignPanel = document.getElementById('foreign-panel');
+    const foreignTbody = document.getElementById('foreign-tbody');
+
+    if (data.foreign_tables.length > 0) {
+        foreignPanel.style.display = 'block';
+        foreignTbody.innerHTML = data.foreign_tables.map(t => `
+            <tr>
+                <td class="table-name">${t.name}</td>
+                <td class="size">${t.size}</td>
+                <td class="rows">${t.rows.toLocaleString()}</td>
+                <td>
+                    <button class="cleanup-btn danger" onclick="dropTable('${t.name}')">
+                        🗑️ DROP TABLE
+                    </button>
+                </td>
+            </tr>
+        `).join('');
+    } else {
+        foreignPanel.style.display = 'none';
+    }
+
+    // Bot tables
+    const botTbody = document.getElementById('bot-tbody');
+    botTbody.innerHTML = data.bot_tables.map(t => {
+        let category = 'Other';
+        if (t.name.includes('event_log')) category = 'Event Logs';
+        else if (t.name.includes('trade_archive')) category = 'Trade Archive';
+        else if (t.name.includes('order_block') || t.name.includes('ob_')) category = 'OB Cache';
+        else if (t.name.includes('snapshot')) category = 'Snapshots';
+        else if (t.name.includes('volumized_radar')) category = 'Vol Radar';
+
+        return `
+            <tr>
+                <td class="table-name">${t.name}</td>
+                <td class="size">${t.size}</td>
+                <td class="rows">${t.rows.toLocaleString()}</td>
+                <td style="color:#94a3b8;font-size:0.75rem">${category}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function dropTable(tableName) {
+    if (!confirm(`⚠️ ВИДАЛИТИ ТАБЛИЦЮ?\n\n${tableName}\n\nВся дані буде втрачено НАЗАВЖДИ!\n\nПродовжити?`)) {
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/db/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'drop_table', table: tableName})
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+            alert(`✅ Видалено: ${tableName}\nЗвільнено: ${data.freed_mb} MB`);
+            loadDBAnalysis();
+        } else {
+            alert('Error: ' + (data.reason || 'unknown'));
+        }
+    } catch (err) {
+        console.error('Drop table error:', err);
+        alert('Failed to drop table');
+    }
+}
+
+async function cleanupEventLogs(mode) {
+    const confirmMsg = mode === 'all'
+        ? '⚠️ Видалити ВСІ event logs?\n\nВся історія подій буде втрачена!'
+        : 'Видалити event logs старші 30 днів?';
+
+    if (!confirm(confirmMsg)) return;
+
+    try {
+        const action = mode === 'all' ? 'event_logs_all' : 'event_logs_old';
+        const res = await fetch('/api/db/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action})
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+            alert(`✅ Видалено ${data.deleted_rows.toLocaleString()} рядків`);
+            loadDBAnalysis();
+        } else {
+            alert('Error: ' + (data.reason || 'unknown'));
+        }
+    } catch (err) {
+        console.error('Cleanup error:', err);
+        alert('Failed to cleanup');
+    }
+}
+
+async function cleanupTradeArchive() {
+    if (!confirm('⚠️ Очистити ВЕСЬ trade archive?\n\nВсі дані для ML training буде втрачено!')) {
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/db/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'trade_archive'})
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+            alert(`✅ Видалено ${data.deleted_rows.toLocaleString()} угод`);
+            loadDBAnalysis();
+        } else {
+            alert('Error: ' + (data.reason || 'unknown'));
+        }
+    } catch (err) {
+        console.error('Cleanup error:', err);
+        alert('Failed to cleanup');
+    }
+}
+
+async function cleanupOldCache() {
+    if (!confirm('Видалити кеші старші 7 днів?')) return;
+
+    try {
+        const res = await fetch('/api/db/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'old_cache'})
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+            alert(`✅ Видалено ${data.deleted_rows.toLocaleString()} рядків`);
+            loadDBAnalysis();
+        } else {
+            alert('Error: ' + (data.reason || 'unknown'));
+        }
+    } catch (err) {
+        console.error('Cleanup error:', err);
+        alert('Failed to cleanup');
+    }
+}
+
+async function runVacuumFull() {
+    if (!confirm('⚠️ VACUUM FULL - ПОВЕРНУТИ МІСЦЕ НА ДИСК?\n\n' +
+                 'БД буде ЗАБЛОКОВАНО на 5-15 хвилин!\n' +
+                 'Бот зупиниться на цей час.\n\n' +
+                 'Продовжити?')) return;
+
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Running VACUUM FULL...';
+
+    try {
+        const res = await fetch('/api/db/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: 'vacuum_full'})
+        });
+        const data = await res.json();
+
+        if (data.ok) {
+            alert('✅ VACUUM FULL завершено!\n\nМісце повернуто операційній системі.\nОновіть сторінку через 10 секунд.');
+            setTimeout(() => loadDBAnalysis(), 10000);
+        } else {
+            alert('Error: ' + (data.reason || 'unknown'));
+        }
+    } catch (err) {
+        console.error('VACUUM error:', err);
+        alert('Failed to run VACUUM FULL: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ VACUUM FULL (reclaim space)';
+    }
+}
+
+// Load on page load
+window.addEventListener('DOMContentLoaded', loadDBAnalysis);
+</script>
+
+{% endblock %}

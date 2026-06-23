@@ -18,8 +18,14 @@ of truth. The watchlist-consensus component is a FRONTEND-pushed cache
 (markers live in the browser); when the browser is closed the loop uses
 the last cached consensus if fresh, otherwise omits that vote.
 
+Two modes (DB key sm_auto_gate_mode):
+  'simple' (legacy) — mirrors the raw verdict (LONG/SHORT/WAIT) 1:1.
+  'smart'  (new)    — runs the smart_direction algorithm that considers
+                       4H trend exhaustion + confluence for optimal direction.
+
 DB keys:
   sm_auto_gate_enabled : 'true' | 'false'
+  sm_auto_gate_mode    : 'simple' | 'smart'  (default 'simple' for compat)
   sm_bias_symbol       : symbol for the verdict (default BTCUSDT)
   sm_wl_consensus_cache: JSON {src, n_long, n_short, n_flat, ts} (frontend)
 """
@@ -27,13 +33,14 @@ DB keys:
 import time
 import json
 import threading
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict
 
 CYCLE_SECS = 60          # match the UI refresh cadence
 WAIT_HYSTERESIS_DEFAULT = 3   # consecutive WAIT ticks before close-on-WAIT fires
 WL_CACHE_TTL = 300       # frontend consensus older than 5 min is ignored
 
 _DB_ENABLED = 'sm_auto_gate_enabled'
+_DB_MODE = 'sm_auto_gate_mode'
 _DB_SYMBOL = 'sm_bias_symbol'
 _DB_WL_CACHE = 'sm_wl_consensus_cache'
 _DB_CLOSE_ON_WAIT = 'sm_auto_gate_close_on_wait'
@@ -89,6 +96,23 @@ class AutoGateDaemon:
             except Exception as e:
                 print(f"[AutoGate] immediate apply error: {e}")
 
+    def get_mode(self) -> str:
+        """'simple' (legacy raw verdict mirror) or 'smart' (new algorithm)."""
+        return (self._db.get_setting(_DB_MODE, 'simple') or 'simple').lower()
+
+    def set_mode(self, mode: str):
+        """Set 'simple' or 'smart'. Changes take effect on next tick."""
+        m = (mode or 'simple').lower()
+        if m not in ('simple', 'smart'):
+            m = 'simple'
+        self._db.set_setting(_DB_MODE, m)
+        # Immediate apply if the gate is already running
+        if self.is_enabled():
+            try:
+                self._tick()
+            except Exception as e:
+                print(f"[AutoGate] mode-change apply error: {e}")
+
     def is_close_on_wait(self) -> bool:
         return str(self._db.get_setting(_DB_CLOSE_ON_WAIT, 'false')).lower() in ('true', '1')
 
@@ -129,16 +153,42 @@ class AutoGateDaemon:
             return None
 
     # --- gate application ---
-    def _apply(self, verdict: str):
+    def _apply(self, verdict: str, verdict_data: Optional[Dict] = None):
+        """Apply the direction gates. In 'simple' mode, `verdict` is mirrored
+        1:1 (LONG/SHORT/WAIT). In 'smart' mode, `verdict_data` is run through
+        the smart_direction algorithm which may produce different gates
+        (e.g. WAIT verdict but 4H exhausted → opens reversal side)."""
         tm = self._get_tm()
         if not tm:
             return
-        if verdict == 'LONG':
-            allow_long, allow_short = True, False
-        elif verdict == 'SHORT':
-            allow_long, allow_short = False, True
-        else:                       # WAIT → both off
-            allow_long, allow_short = False, False
+
+        mode = self.get_mode()
+        if mode == 'smart' and verdict_data:
+            try:
+                from detection.smart_direction import compute_smart_direction
+                sd = compute_smart_direction(
+                    verdict_data,
+                    allow_early_reversal=True,
+                    require_confidence=60,
+                )
+                allow_long = sd.get('allow_long', False)
+                allow_short = sd.get('allow_short', False)
+                reason = sd.get('reason', '')
+                log_msg = f"smart: {sd.get('mode')} ({reason})"
+            except Exception as e:
+                print(f"[AutoGate] smart_direction error: {e} — falling back to simple")
+                mode = 'simple'
+
+        if mode == 'simple':
+            # Legacy 1:1 verdict mirror
+            if verdict == 'LONG':
+                allow_long, allow_short = True, False
+            elif verdict == 'SHORT':
+                allow_long, allow_short = False, True
+            else:
+                allow_long, allow_short = False, False
+            log_msg = f"simple: {verdict}"
+
         # Only POST when something actually changes (avoid log/DB churn)
         s = tm.get_settings() if hasattr(tm, 'get_settings') else {}
         cur_l = bool(s.get('allow_long_entries', True))
@@ -147,7 +197,7 @@ class AutoGateDaemon:
             return
         tm.update_settings({'allow_long_entries': allow_long,
                             'allow_short_entries': allow_short})
-        print(f"[AutoGate] verdict={verdict} → LONG={allow_long} SHORT={allow_short}")
+        print(f"[AutoGate] {log_msg} → LONG={allow_long} SHORT={allow_short}")
 
     def _run(self):
         # small initial delay so other singletons finish booting
@@ -221,8 +271,9 @@ class AutoGateDaemon:
         with self._lock:
             self._last = {'verdict': verdict, 'ts': time.time(),
                           'applied_at': time.time(), 'symbol': symbol,
-                          'confidence': verdict_data.get('confidence', 0)}
-        self._apply(verdict)
+                          'confidence': verdict_data.get('confidence', 0),
+                          'mode': self.get_mode()}
+        self._apply(verdict, verdict_data)
         # Close-on-WAIT with HYSTERESIS (see history): require N consecutive
         # WAIT ticks and close only ONCE per sustained streak.
         if verdict == 'WAIT':
@@ -261,7 +312,8 @@ class AutoGateDaemon:
     def status(self) -> dict:
         with self._lock:
             last = dict(self._last)
-        return {'enabled': self.is_enabled(), 'symbol': self.get_symbol(),
+        return {'enabled': self.is_enabled(), 'mode': self.get_mode(),
+                'symbol': self.get_symbol(),
                 'close_on_wait': self.is_close_on_wait(),
                 'trend_alert': self.is_trend_alert(),
                 'trend_alert_1h': self.is_trend_alert_1h(),

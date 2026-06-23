@@ -24,6 +24,7 @@
             <a href="{{ url_for('smart_money_page') }}" class="nav-link {% if request.endpoint == 'smart_money_page' %}active{% endif %}">🎯 Smart Money</a>
             <a href="{{ url_for('tickr_page') }}" class="nav-link {% if request.endpoint == 'tickr_page' %}active{% endif %}">📡 Tickr</a>
             <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}">⚙️</a>
+            <a href="{{ url_for('database_admin') }}" class="nav-link {% if request.endpoint == 'database_admin' %}active{% endif %}">🗄️ DB</a>
         </div>
         <div class="nav-status">
             <span class="status-badge {% if paper_trading %}paper{% else %}live{% endif %}">

@@ -2605,50 +2605,273 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
-    @app.route('/api/blocked-trades/list')
-    def api_blocked_trades_list():
-        """Get list of blocked trades with optional filters.
+    @app.route('/api/trade-archive/export')
+    def api_trade_archive_export():
+        """Export all trade archive data for analysis.
+
+        Returns JSON with full dataset including entry snapshots.
         Query params:
-          ?limit=100 (default 100)
-          &is_paper=true|false (optional, None = all)
-          &symbol=BTCUSDT (optional)
+          - limit: max trades to return (default 10000)
+          - is_paper: 'true'/'false' to filter by type, omit for all
         """
         try:
-            limit = int(request.args.get('limit', 100))
+            db = get_db()
+            limit = int(request.args.get('limit', 10000))
             is_paper_str = request.args.get('is_paper')
             is_paper = None
-            if is_paper_str == 'true':
-                is_paper = True
-            elif is_paper_str == 'false':
-                is_paper = False
-            symbol = request.args.get('symbol')
-            db = get_db()
-            trades = db.get_blocked_trades(limit=limit, is_paper=is_paper, symbol=symbol)
-            return jsonify({'ok': True, 'trades': trades})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e), 'trades': []})
+            if is_paper_str is not None:
+                is_paper = is_paper_str.lower() == 'true'
 
-    @app.route('/api/blocked-trades/stats')
-    def api_blocked_trades_stats():
-        """Get stats about blocked trades (total, real, paper counts)."""
-        try:
-            db = get_db()
-            stats = db.get_blocked_trades_stats()
-            return jsonify(stats)
-        except Exception as e:
-            return jsonify({'ok': False, 'total': 0, 'real': 0, 'paper': 0})
+            trades = db.get_trade_archive(limit=limit, is_paper=is_paper)
 
-    @app.route('/api/blocked-trades/clear', methods=['POST'])
-    def api_blocked_trades_clear():
-        """Clear blocked trades. DESTRUCTIVE.
-        Body: {"scope": "all"|"real"|"paper"}."""
+            real = [t for t in trades if not t['is_paper']]
+            paper = [t for t in trades if t['is_paper']]
+
+            return jsonify({
+                'ok': True,
+                'total': len(trades),
+                'real_count': len(real),
+                'paper_count': len(paper),
+                'trades': trades
+            })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/trade-archive/toggle', methods=['POST'])
+    def api_trade_archive_toggle():
+        """Toggle trade archive collection on/off.
+
+        Body: {"enabled": true/false}
+
+        When enabled, all closed trades are saved to permanent archive.
+        When disabled, trades only appear in Recent Closed (UI only, cap 500).
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'TM not initialized'})
+
+        data = request.get_json(silent=True) or {}
+        enabled = bool(data.get('enabled', False))
+
+        # Update setting
+        tm.update_settings({'archive_trades': enabled})
+
+        return jsonify({
+            'ok': True,
+            'archive_trades': enabled,
+            'message': 'Archive enabled — trades will be saved for ML training' if enabled
+                      else 'Archive disabled — trades only in Recent Closed list'
+        })
+
+    # ========== Database Admin ==========
+
+    @app.route('/database')
+    def database_admin():
+        """Database administration page."""
+        return render_template('database_admin.html')
+
+    @app.route('/api/db/analyze')
+    def api_db_analyze():
+        """Analyze database size and table usage."""
+        from storage.db_models import engine
+        from sqlalchemy import text
+
+        # Bot's table prefixes
+        BOT_PREFIXES = ['sob_', 'volumized_radar']
+
+        def belongs_to_bot(table_name):
+            return any(table_name.startswith(p) for p in BOT_PREFIXES)
+
         try:
-            data = request.get_json(silent=True) or {}
-            scope = data.get('scope', 'all')
-            is_paper = None if scope == 'all' else (scope == 'paper')
-            db = get_db()
-            removed = db.clear_blocked_trades(is_paper=is_paper)
-            return jsonify({'ok': True, 'removed': removed, 'scope': scope})
+            with engine.connect() as conn:
+                # Get actual database size
+                db_size_result = conn.execute(text("""
+                    SELECT
+                        pg_database_size(current_database()) AS db_size_bytes,
+                        pg_size_pretty(pg_database_size(current_database())) AS db_size
+                """))
+                db_row = db_size_result.fetchone()
+                actual_db_size_bytes = db_row[0]
+                actual_db_size = db_row[1]
+
+                # Get all tables with sizes (including indexes)
+                result = conn.execute(text("""
+                    SELECT
+                        tablename,
+                        pg_size_pretty(pg_total_relation_size('public.'||tablename)) AS size,
+                        pg_total_relation_size('public.'||tablename) AS size_bytes,
+                        pg_size_pretty(pg_relation_size('public.'||tablename)) AS table_size,
+                        pg_relation_size('public.'||tablename) AS table_size_bytes,
+                        pg_size_pretty(pg_total_relation_size('public.'||tablename) - pg_relation_size('public.'||tablename)) AS index_size,
+                        pg_total_relation_size('public.'||tablename) - pg_relation_size('public.'||tablename) AS index_size_bytes
+                    FROM pg_tables
+                    WHERE schemaname = 'public'
+                    ORDER BY pg_total_relation_size('public.'||tablename) DESC
+                """))
+
+                bot_tables = []
+                foreign_tables = []
+                bot_total = 0
+                foreign_total = 0
+                bot_indexes = 0
+                foreign_indexes = 0
+
+                for row in result:
+                    table, size, size_bytes, table_size, table_size_bytes, index_size, index_size_bytes = row
+
+                    # Get row count
+                    try:
+                        count_res = conn.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                        count = count_res.scalar()
+                    except:
+                        count = 0
+
+                    table_info = {
+                        'name': table,
+                        'size': size,
+                        'size_bytes': size_bytes,
+                        'size_mb': round(size_bytes / (1024**2), 2),
+                        'table_size': table_size,
+                        'table_size_bytes': table_size_bytes,
+                        'index_size': index_size,
+                        'index_size_bytes': index_size_bytes,
+                        'rows': count
+                    }
+
+                    if belongs_to_bot(table):
+                        bot_tables.append(table_info)
+                        bot_total += size_bytes
+                        bot_indexes += index_size_bytes
+                    else:
+                        foreign_tables.append(table_info)
+                        foreign_total += size_bytes
+                        foreign_indexes += index_size_bytes
+
+                total_bytes = bot_total + foreign_total
+                overhead_bytes = actual_db_size_bytes - total_bytes
+
+                return jsonify({
+                    'ok': True,
+                    'bot_tables': bot_tables,
+                    'foreign_tables': foreign_tables,
+                    'summary': {
+                        'actual_db_size': actual_db_size,
+                        'actual_db_size_bytes': actual_db_size_bytes,
+                        'actual_db_mb': round(actual_db_size_bytes / (1024**2), 2),
+                        'total_mb': round(total_bytes / (1024**2), 2),
+                        'bot_mb': round(bot_total / (1024**2), 2),
+                        'foreign_mb': round(foreign_total / (1024**2), 2),
+                        'bot_indexes_mb': round(bot_indexes / (1024**2), 2),
+                        'foreign_indexes_mb': round(foreign_indexes / (1024**2), 2),
+                        'overhead_mb': round(overhead_bytes / (1024**2), 2),
+                        'bot_pct': round(bot_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
+                        'foreign_pct': round(foreign_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
+                        'overhead_pct': round(overhead_bytes / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
+                    }
+                })
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/db/cleanup', methods=['POST'])
+    def api_db_cleanup():
+        """Perform database cleanup operations."""
+        from storage.db_models import engine
+        from sqlalchemy import text
+
+        data = request.get_json() or {}
+        action = data.get('action')  # 'foreign_tables' | 'event_logs' | 'trade_archive' | 'old_cache'
+        table_name = data.get('table')  # specific table for foreign cleanup
+
+        if not action:
+            return jsonify({'ok': False, 'reason': 'action required'})
+
+        try:
+            with engine.connect() as conn:
+                deleted_rows = 0
+                freed_mb = 0
+
+                if action == 'drop_table' and table_name:
+                    # Drop specific foreign table
+                    # Get size before dropping
+                    size_res = conn.execute(text(f"""
+                        SELECT pg_total_relation_size('public.{table_name}')
+                    """))
+                    freed_bytes = size_res.scalar() or 0
+                    freed_mb = round(freed_bytes / (1024**2), 2)
+
+                    conn.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
+                    conn.commit()
+                    return jsonify({
+                        'ok': True,
+                        'action': 'drop_table',
+                        'table': table_name,
+                        'freed_mb': freed_mb
+                    })
+
+                elif action == 'event_logs_old':
+                    # Delete old event logs (>30 days)
+                    result = conn.execute(text("""
+                        DELETE FROM sob_event_logs
+                        WHERE timestamp < NOW() - INTERVAL '30 days'
+                    """))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'event_logs_all':
+                    # Delete ALL event logs
+                    result = conn.execute(text("DELETE FROM sob_event_logs"))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'trade_archive':
+                    # Clear trade archive
+                    result = conn.execute(text("DELETE FROM sob_trade_archive"))
+                    deleted_rows = result.rowcount
+                    conn.commit()
+
+                elif action == 'old_cache':
+                    # Delete old cache data (>7 days)
+                    tables = ['sob_order_blocks', 'sob_top100_ob_snapshots', 'sob_top100_ob_history']
+                    for tbl in tables:
+                        try:
+                            result = conn.execute(text(f"""
+                                DELETE FROM {tbl}
+                                WHERE timestamp < NOW() - INTERVAL '7 days'
+                            """))
+                            deleted_rows += result.rowcount
+                        except:
+                            pass
+                    conn.commit()
+
+                elif action == 'vacuum_full':
+                    # VACUUM FULL to actually reclaim disk space and return it to OS
+                    # WARNING: This locks the entire database and can take 5-15 minutes
+                    from sqlalchemy import create_engine
+                    vacuum_engine = create_engine(
+                        engine.url,
+                        isolation_level='AUTOCOMMIT'
+                    )
+                    with vacuum_engine.connect() as vacuum_conn:
+                        vacuum_conn.execute(text("VACUUM FULL ANALYZE"))
+                    vacuum_engine.dispose()
+
+                    return jsonify({
+                        'ok': True,
+                        'action': 'vacuum_full',
+                        'message': 'VACUUM FULL completed - disk space reclaimed and returned to OS'
+                    })
+
+                else:
+                    return jsonify({'ok': False, 'reason': 'unknown action'})
+
+                return jsonify({
+                    'ok': True,
+                    'action': action,
+                    'deleted_rows': deleted_rows,
+                    'freed_mb': freed_mb
+                })
+
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
@@ -2731,6 +2954,8 @@ def register_api_routes(app):
             body = request.get_json() or {}
             if 'enabled' in body:
                 ag.set_enabled(bool(body['enabled']))
+            if 'mode' in body:
+                ag.set_mode(str(body['mode']))
             if 'close_on_wait' in body:
                 ag.set_close_on_wait(bool(body['close_on_wait']))
             if 'trend_alert' in body:
@@ -3956,7 +4181,39 @@ def register_api_routes(app):
             enabled=bool(data.get('enabled')),
             is_shadow=bool(data.get('is_shadow')),
         ))
-    
+
+    @app.route('/api/tm/positions/breakeven-close', methods=['POST'])
+    def api_tm_breakeven_close():
+        """Toggle per-position breakeven + fees auto-close.
+
+        Body: {
+            symbol: 'BTCUSDT',
+            enabled: bool,          # True = auto-close ON, False = OFF
+            is_shadow?: bool        # default False (real position)
+        }
+
+        When breakeven_close=True:
+          - Position closes automatically when price reaches entry +/- fees.
+          - For LONG: closes when price >= entry * (1 + fee%)
+          - For SHORT: closes when price <= entry * (1 - fee%)
+          - Uses BE commission buffer setting (default 0.12%).
+
+        When OFF (default), no breakeven auto-close.
+        """
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        data = request.get_json() or {}
+        symbol = data.get('symbol', '')
+        if not symbol:
+            return jsonify({'ok': False, 'reason': 'symbol required'})
+        return jsonify(tm.update_breakeven_close(
+            symbol=symbol,
+            enabled=bool(data.get('enabled')),
+            is_shadow=bool(data.get('is_shadow')),
+        ))
+
     @app.route('/api/tm/closed/delete', methods=['POST'])
     def api_tm_closed_delete():
         """Permanently delete a real-trade entry from Recent Closed Trades.
@@ -5339,11 +5596,15 @@ def compute_bias(db, symbol, wl=None):
                     price = p
     except Exception:
         price = None
-    # Move-potential snapshot — objective ATR / exhaustion / runway for the
-    # CURRENT verdict direction. Pure measurement (no future-% promises).
-    # Uses the trade direction from `verdict`; for WAIT we still compute
-    # against the leaning side so the board can show context.
-    move = None
+    # Move-potential snapshot — objective ATR / exhaustion / runway.
+    # Computed for BOTH directions (LONG and SHORT) so the board can show
+    # them side-by-side: this is the key to understanding why the verdict
+    # flips. When SHORT is EXHAUSTED (63%) and LONG is FRESH (31%), the
+    # verdict naturally tilts LONG — and the user can SEE that, instead of
+    # the panel just swapping numbers. Pure measurement (no future-% promises).
+    move = None          # current verdict direction (back-compat)
+    move_long = None     # always LONG perspective
+    move_short = None    # always SHORT perspective
     try:
         from detection.move_potential import analyze_move_potential
         mp_side = verdict if verdict in ('LONG', 'SHORT') else (
@@ -5370,12 +5631,20 @@ def compute_bias(db, symbol, wl=None):
         except Exception:
             liq_levels = None
         if mp_klines and len(mp_klines) >= 20:
-            move = analyze_move_potential(
-                side=mp_side, klines=mp_klines,
+            move_long = analyze_move_potential(
+                side='LONG', klines=mp_klines,
                 liquidation_levels=liq_levels,
                 bars_per_day=bars_per_day)
+            move_short = analyze_move_potential(
+                side='SHORT', klines=mp_klines,
+                liquidation_levels=liq_levels,
+                bars_per_day=bars_per_day)
+            # `move` = the verdict-side one, for any legacy consumer.
+            move = move_long if mp_side == 'LONG' else move_short
     except Exception as e:
         move = None
+        move_long = None
+        move_short = None
 
     # Reversal-pressure index — how much pressure has built for a reversal
     # AGAINST the current 4H/1H trend. Pulls max signal from Bybit (klines +
@@ -5422,4 +5691,5 @@ def compute_bias(db, symbol, wl=None):
     return {'ok': True, 'symbol': symbol, 'verdict': verdict,
             'confidence': confidence, 'components': comp,
             'reasons': reasons, 'price': price, 'move': move,
+            'move_long': move_long, 'move_short': move_short,
             'reversal': reversal, 'reversal_1h': reversal_1h, 'ts': _t.time()}
