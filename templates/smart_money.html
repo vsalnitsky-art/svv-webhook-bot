@@ -2263,6 +2263,45 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div id="ta-hint" style="font-size:0.66rem;color:#6b7280;margin-top:6px"></div>
     </div>
 
+    <!-- ===== BLOCKED TRADES (V2 Quality Gate rejections) ===== -->
+    <div class="tm-panel" id="blocked-trades-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;cursor:pointer" onclick="toggleBlockedTradesPanel()">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span id="blocked-trades-chevron" style="font-size:0.75rem;user-select:none">▶</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Сигнали, відхилені V2 Quality Gate через низький скор або exhaustion kill-switch. Натисніть для розгортання.">🚫 Blocked Trades (V2 Quality Filter)</span>
+                <span id="blocked-total" style="font-size:0.8rem;font-family:monospace;color:#f87171;font-weight:700">—</span>
+                <span id="blocked-breakdown" style="font-size:0.7rem;color:#8b93a7"></span>
+            </div>
+            <button onclick="clearBlockedTrades(event)" style="font-size:0.72rem;padding:5px 12px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer" title="Очистити всі заблоковані угоди">🗑️ Очистити</button>
+        </div>
+        <div id="blocked-trades-body" style="display:none;margin-top:12px">
+            <table class="tm-table" id="blocked-trades-table">
+                <thead>
+                    <tr>
+                        <th>Час</th>
+                        <th>Символ</th>
+                        <th>Side</th>
+                        <th>Ціна</th>
+                        <th>Score</th>
+                        <th>Grade</th>
+                        <th>ADR</th>
+                        <th>HTF</th>
+                        <th>ATR</th>
+                        <th>Decision</th>
+                        <th>Причина блоку</th>
+                        <th title="Test (paper) чи Real">Mode</th>
+                    </tr>
+                </thead>
+                <tbody id="blocked-trades-tbody">
+                    <tr><td colspan="12" class="tm-empty-msg">Немає заблокованих угод</td></tr>
+                </tbody>
+            </table>
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
+                💡 Кожна заблокована угода містить повний розклад балів по 4 факторам + сирі метрики для аналізу якості фільтрації.
+            </div>
+        </div>
+    </div>
+
     <div class="tm-panel" id="testmode-panel" style="margin-top:14px">
         <div class="tm-header" id="testmode-header">
             <h2>🧪 Test Mode <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(paper trading — no real orders)</span></h2>
@@ -6844,6 +6883,127 @@ async function clearTradeArchive() {
     }
 }
 
+// ========== Blocked Trades (V2 Quality Gate) ==========
+
+async function loadBlockedTradesStats() {
+    try {
+        const stats = await fetch('/api/blocked-trades/stats').then(r => r.json());
+        const totalEl = document.getElementById('blocked-total');
+        const breakdownEl = document.getElementById('blocked-breakdown');
+        if (totalEl && stats.ok) {
+            totalEl.textContent = stats.total || 0;
+            if (breakdownEl) {
+                breakdownEl.textContent = `(Real: ${stats.real || 0} | Paper: ${stats.paper || 0})`;
+            }
+        }
+    } catch (e) {
+        console.error('[Blocked Trades] Stats error:', e);
+    }
+}
+
+function toggleBlockedTradesPanel() {
+    const body = document.getElementById('blocked-trades-body');
+    const chevron = document.getElementById('blocked-trades-chevron');
+    if (!body || !chevron) return;
+    if (body.style.display === 'none') {
+        body.style.display = '';
+        chevron.textContent = '▼';
+        loadBlockedTrades();  // Lazy-load when opened
+    } else {
+        body.style.display = 'none';
+        chevron.textContent = '▶';
+    }
+}
+
+async function loadBlockedTrades() {
+    try {
+        const [list, stats] = await Promise.all([
+            fetch('/api/blocked-trades/list?limit=100').then(r => r.json()),
+            fetch('/api/blocked-trades/stats').then(r => r.json())
+        ]);
+
+        // Update stats
+        const totalEl = document.getElementById('blocked-total');
+        const breakdownEl = document.getElementById('blocked-breakdown');
+        if (totalEl && stats.ok) {
+            totalEl.textContent = stats.total || 0;
+            if (breakdownEl) {
+                breakdownEl.textContent = `(Real: ${stats.real || 0} | Paper: ${stats.paper || 0})`;
+            }
+        }
+
+        // Render table
+        const tbody = document.getElementById('blocked-trades-tbody');
+        if (!tbody || !list.ok || !list.trades || list.trades.length === 0) {
+            if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">Немає заблокованих угод</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = list.trades.map(t => {
+            const snap = t.snapshot || {};
+            const breakdown = snap.breakdown || {};
+            const metrics = snap.metrics || {};
+            const blockedAt = new Date(t.blocked_at);
+            const timeStr = blockedAt.toLocaleString('uk-UA', {
+                month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit'
+            });
+
+            // Grade color
+            const gradeColor = {
+                'EXCELLENT': '#22c55e',
+                'GOOD': '#4ade80',
+                'FAIR': '#facc15',
+                'POOR': '#f87171',
+                'BLOCKED': '#ef4444'
+            }[snap.grade] || '#888';
+
+            // Reason icon
+            const reasonIcon = t.blocked_reason === 'exhaustion_kill_switch' ? '⛔' : '🚫';
+
+            return `
+                <tr>
+                    <td style="font-size:0.7rem;color:#888">${timeStr}</td>
+                    <td style="font-weight:600">${t.symbol}</td>
+                    <td style="color:${t.side === 'LONG' ? '#22c55e' : '#ef4444'}">${t.side}</td>
+                    <td style="font-family:monospace;font-size:0.75rem">${t.entry_price.toFixed(2)}</td>
+                    <td style="font-weight:700;color:${gradeColor}">${snap.score || 0}</td>
+                    <td style="color:${gradeColor};font-size:0.75rem">${snap.grade || '—'}</td>
+                    <td style="font-size:0.7rem">${breakdown.adr_room || 0}</td>
+                    <td style="font-size:0.7rem">${breakdown.htf_alignment || 0}</td>
+                    <td style="font-size:0.7rem">${breakdown.atr || 0}</td>
+                    <td style="font-size:0.7rem">${breakdown.decision || 0}</td>
+                    <td style="font-size:0.7rem" title="${snap.reason || ''}">${reasonIcon} ${t.blocked_reason.replace(/_/g, ' ')}</td>
+                    <td style="font-size:0.7rem;color:${t.is_paper ? '#a5b4fc' : '#fbbf24'}">${t.is_paper ? 'TEST' : 'REAL'}</td>
+                </tr>
+            `;
+        }).join('');
+
+    } catch (e) {
+        console.error('[Blocked Trades] Load error:', e);
+    }
+}
+
+async function clearBlockedTrades(event) {
+    event.stopPropagation();  // Don't toggle panel
+    if (!confirm('Очистити всі заблоковані угоди?\n\nЦе видалить історію відхилень V2 Quality Gate. Продовжити?')) return;
+    try {
+        const r = await (await fetch('/api/blocked-trades/clear', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({scope: 'all'})
+        })).json();
+        if (r.ok) {
+            alert(`Видалено ${r.removed} заблокованих угод.`);
+            loadBlockedTrades();
+        } else {
+            alert('Помилка: ' + (r.reason || 'невідома'));
+        }
+    } catch (e) {
+        alert('Помилка запиту: ' + e);
+    }
+}
+
 async function toggleTrendAlert(tf, on) {
     const key = tf === '1h' ? 'trend_alert_1h' : 'trend_alert';
     try {
@@ -7472,7 +7632,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadBias();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); };
+    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadBlockedTradesStats(); };
     refreshAll();
     loadTrendAlertState();
     setInterval(refreshAll, 60000);

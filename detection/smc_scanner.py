@@ -604,6 +604,12 @@ class SMCScanner:
                                 'time': int(item['time']),
                                 'price': float(item.get('price', 0)),
                                 'side': str(item['side']),
+                                # Legacy markers (pre-2026-06-22) have no
+                                # status — they were only ever recorded for
+                                # opened trades, so default to 'opened'.
+                                'status': str(item.get('status', 'opened')),
+                                'reason': str(item.get('reason', '')),
+                                'paper': bool(item.get('paper', False)),
                             })
                     if cleaned:
                         self._signal_markers[symbol] = cleaned
@@ -673,6 +679,46 @@ class SMCScanner:
             self.db.set_setting(key, markers)
         except Exception as e:
             print(f"[SMC] Signal persist error for {symbol}: {e}")
+
+    def _record_marker(self, symbol: str, event: Dict, side: str,
+                       status: str, reason: str = '',
+                       is_paper: bool = False, entry_price: float = 0.0):
+        """Record a chart marker for a signal with an explicit status.
+
+        status:
+          'opened'   — a real or paper position was actually opened (bright
+                       green LONG / red SHORT dot on the chart)
+          'rejected' — the signal was blocked by a filter (OB / PD Zone /
+                       Forecast / Quality Gate / tradeable list). Shown as a
+                       muted grey marker; clicking it reveals `reason`.
+
+        We deliberately do NOT record 'duplicate' (same-direction) signals —
+        those are not new trades and only add chart noise.
+
+        Markers are deduped on (time, side, status) so a re-scan of the same
+        bar doesn't stack identical markers.
+        """
+        to_t = event.get('to_t', 0) or 0
+        t_sec = int(to_t // 1000) if to_t > 1e12 else int(to_t)
+        persisted = False
+        with self._lock:
+            markers = self._signal_markers.setdefault(symbol, [])
+            if not any(m['time'] == t_sec and m.get('side') == side
+                       and m.get('status', 'opened') == status
+                       for m in markers):
+                markers.append({
+                    'time': t_sec,
+                    'price': float(entry_price or 0),
+                    'side': side,
+                    'status': status,
+                    'reason': reason,
+                    'paper': bool(is_paper),
+                })
+                if len(markers) > SIGNALS_PERSIST_LIMIT:
+                    self._signal_markers[symbol] = markers[-SIGNALS_PERSIST_LIMIT:]
+                persisted = True
+        if persisted:
+            self._persist_signals(symbol)
     
     def clear_signals(self, symbol: Optional[str] = None) -> Dict:
         """Clear persisted signal markers. If symbol is None, clear ALL.
@@ -1093,7 +1139,160 @@ class SMCScanner:
             return int(self._settings.get('internal_size', DEFAULT_INTERNAL_SIZE))
         except:
             return DEFAULT_INTERNAL_SIZE
-    
+
+    def get_bias(self, symbol: str) -> Dict:
+        """Get bias data for quality_gate_v2.py scoring.
+
+        Returns dict with structure:
+            {
+                'move': {
+                    'exhaustion': float (0-100),
+                    'adr_used_pct': float,
+                    'atr_pct': float
+                },
+                'decision': {
+                    'score': int
+                }
+            }
+
+        Returns safe defaults (exhaustion=50, adr_used_pct=50, score=50) on error.
+        """
+        safe_defaults = {
+            'move': {
+                'exhaustion': 50.0,
+                'adr_used_pct': 50.0,
+                'atr_pct': 0.6
+            },
+            'decision': {
+                'score': 50
+            }
+        }
+
+        symbol = self._normalize_symbol(symbol)
+
+        try:
+            # Fetch market data for ADR/exhaustion calculations
+            from detection.market_data import get_market_data
+            md = get_market_data()
+
+            # Get klines for move potential analysis
+            # Use 1h timeframe with enough bars for ADR calculation (14 days * 24h = 336 bars)
+            klines = md.fetch_klines(symbol, interval='1h', limit=400)
+
+            if not klines or len(klines) < 100:
+                return safe_defaults
+
+            # Use move_potential module to compute ADR and exhaustion
+            try:
+                from detection.move_potential import analyze_move_potential
+
+                # We don't have a specific side here, so we'll compute for both
+                # and average the exhaustion or use the higher one
+                long_analysis = analyze_move_potential(
+                    side='LONG',
+                    klines=klines,
+                    bars_per_day=24  # 1h bars
+                )
+
+                short_analysis = analyze_move_potential(
+                    side='SHORT',
+                    klines=klines,
+                    bars_per_day=24  # 1h bars
+                )
+
+                # Take the higher exhaustion (more conservative)
+                exhaustion = 50.0
+                if long_analysis.get('exhaustion') is not None and short_analysis.get('exhaustion') is not None:
+                    exhaustion = max(long_analysis['exhaustion'], short_analysis['exhaustion'])
+                elif long_analysis.get('exhaustion') is not None:
+                    exhaustion = long_analysis['exhaustion']
+                elif short_analysis.get('exhaustion') is not None:
+                    exhaustion = short_analysis['exhaustion']
+
+                # ADR used percentage (take from either analysis, should be same)
+                adr_used_pct = 50.0
+                if long_analysis.get('adr_used_pct') is not None:
+                    adr_used_pct = long_analysis['adr_used_pct']
+                elif short_analysis.get('adr_used_pct') is not None:
+                    adr_used_pct = short_analysis['adr_used_pct']
+
+                # ATR percentage
+                atr_pct = 0.6
+                if long_analysis.get('atr_pct') is not None:
+                    atr_pct = long_analysis['atr_pct']
+                elif short_analysis.get('atr_pct') is not None:
+                    atr_pct = short_analysis['atr_pct']
+
+            except Exception:
+                # Fallback to safe defaults if move_potential fails
+                exhaustion = 50.0
+                adr_used_pct = 50.0
+                atr_pct = 0.6
+
+            # Get decision score
+            decision_score = 50
+            try:
+                # Try to get decision score from decision center if available
+                from detection.decision_center import evaluate_entry
+
+                # evaluate_entry needs HTF bias, forecast, CTR data
+                # We'll try to get these, but fall back to default score if not available
+                try:
+                    # Get HTF bias from cache if available
+                    htf_bias_data = self._htf_cache.get(symbol, {})
+                    htf_bias = htf_bias_data.get('bias', 'neutral')
+
+                    # Get forecast data if available
+                    forecast = None
+                    try:
+                        from detection.forecast_engine import get_forecast_engine
+                        fe = get_forecast_engine()
+                        cached = fe.get(symbol) if fe else None
+                        if cached:
+                            f1 = cached.get('forecast_1h') or {}
+                            f4 = cached.get('forecast_4h') or {}
+                            # Combine both timeframes
+                            if f1.get('side') and f4.get('side') and f1['side'] == f4['side']:
+                                forecast = {
+                                    'side': f1['side'],
+                                    'confidence': max(f1.get('confidence', 0), f4.get('confidence', 0))
+                                }
+                    except Exception:
+                        pass
+
+                    # Try to evaluate entry score
+                    # Note: evaluate_entry might not exist or might have different signature
+                    # We'll use a simple heuristic based on HTF and forecast if available
+                    if forecast and htf_bias != 'neutral':
+                        # Simple scoring: if forecast and HTF align, score is higher
+                        base_score = 50
+                        if (forecast['side'] > 0 and htf_bias == 'bull') or \
+                           (forecast['side'] < 0 and htf_bias == 'bear'):
+                            base_score += forecast.get('confidence', 0) // 5  # 0-20 bonus
+                        decision_score = min(100, max(0, base_score))
+
+                except Exception:
+                    decision_score = 50
+
+            except Exception:
+                decision_score = 50
+
+            return {
+                'move': {
+                    'exhaustion': float(exhaustion),
+                    'adr_used_pct': float(adr_used_pct),
+                    'atr_pct': float(atr_pct)
+                },
+                'decision': {
+                    'score': int(decision_score)
+                }
+            }
+
+        except Exception as e:
+            # On any error, return safe defaults
+            print(f"[SMC] get_bias error for {symbol}: {e}")
+            return safe_defaults
+
     def get_htf_settings(self) -> Dict:
         return {
             'enabled': bool(self._settings.get('htf_enabled', False)),
@@ -2078,7 +2277,6 @@ class SMCScanner:
                 if tag == 'CHoCH' and is_recent:
                     if not self._htf_allows(symbol, ev['dir']):
                         print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
-                        self._record_htf_block(symbol, ev, 'choch')
                     elif not self._dedup_allows(symbol, ev['dir']):
                         # _dedup_allows blocks for two possible reasons —
                         # log which one fired so the user can debug "why
@@ -2110,7 +2308,6 @@ class SMCScanner:
                     if is_recent:
                         if not self._htf_allows(symbol, ev['dir']):
                             print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by HTF filter")
-                            self._record_htf_block(symbol, ev, 'choch')
                         elif not self._dedup_allows(symbol, ev['dir']):
                             print(f"[SMC] {symbol} CHoCH {ev['dir']} blocked by dedup")
                         else:
@@ -2131,7 +2328,6 @@ class SMCScanner:
                         if ev.get('to_t', 0) > pending.get('to_t', 0):
                             if not self._htf_allows(symbol, ev['dir']):
                                 print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by HTF filter")
-                                self._record_htf_block(symbol, ev, 'choch_bos')
                             elif not self._dedup_allows(symbol, ev['dir']):
                                 print(f"[SMC] {symbol} CHoCH+BOS {ev['dir']} blocked by dedup")
                                 self._pending_choch.pop(symbol, None)
@@ -2244,71 +2440,11 @@ class SMCScanner:
         # event_dir = 'bull' | 'bear'; bias = 'bull' | 'bear'
         return bias == event_dir
     
-    def _record_blocked_signal(self, symbol: str, side: str, entry_price: float,
-                               mode: str, filter_name: str, details: Dict):
-        """Record a structurally-valid signal that fired a CHoCH/BOS but was
-        rejected by a data-driven quality filter (HTF Bias, OB, PD Zone,
-        Forecast) before it could reach the Trade Manager.
-
-        These are the "Trade Quality Gate" rejections — signals the bot saw
-        and deliberately skipped. Captured for the Blocked Trades table so the
-        user can see exactly which filter blocked each opportunity and why.
-
-        Best-effort — must never break scanning.
-        """
-        if not self.db:
-            return
-        try:
-            snapshot = dict(details or {})
-            snapshot['filter'] = filter_name
-            snapshot['signal_mode'] = mode          # 'choch' or 'choch_bos'
-            snapshot['signal_side'] = side
-            self.db.record_blocked_trade(
-                symbol=symbol,
-                side=side,
-                entry_price=float(entry_price or 0),
-                blocked_reason=filter_name,
-                snapshot=snapshot,
-                is_paper=False,
-            )
-        except Exception as e:
-            print(f"[SMC] blocked-signal record error: {e}")
-
-    def _record_htf_block(self, symbol: str, event: Dict, mode: str):
-        """Record an HTF Bias Filter rejection. The signal direction opposed
-        the higher-timeframe bias, so the gate dropped it."""
-        side_label = 'LONG' if event['dir'] == 'bull' else 'SHORT'
-        entry_price = event.get('level', 0) or (self._get_live_price(symbol) or 0)
-        htf = self.get_htf_settings()
-        bias = self._htf_cache.get(symbol, {}).get('bias', 'neutral')
-        bias_label = {'bull': 'BULLISH', 'bear': 'BEARISH'}.get(bias, str(bias).upper())
-        self._record_blocked_signal(
-            symbol, side_label, entry_price, mode, 'HTF Bias Filter', {
-                'htf_timeframe': htf.get('timeframe'),
-                'htf_method': htf.get('method'),
-                'htf_bias': bias_label,
-                'detail': f'HTF bias {bias_label} opposes {side_label}',
-            })
-
     def _send_alert(self, symbol: str, event: Dict, mode: str, choch_event: Dict = None):
         try:
             is_bull = event['dir'] == 'bull'
             side_label = 'LONG' if is_bull else 'SHORT'
-
-            # Entry price = the structural break LEVEL of the event that fired
-            # the signal: the BOS break level in CHoCH+BOS mode, or the CHoCH
-            # break level in CHoCH mode. This is the exact price `close` crossed
-            # to confirm the structure — i.e. the actual trigger. Pinning the
-            # entry to this level keeps it sitting ON the structure drawn on the
-            # chart, instead of drifting to wherever live price happens to be at
-            # scan time. Live price is only a last-resort fallback if, for some
-            # reason, the event carries no usable level. Computed up front so a
-            # blocked signal can still record the would-be entry for the
-            # Blocked Trades table.
-            entry_price = event.get('level', 0)
-            if not entry_price or entry_price <= 0:
-                entry_price = self._get_live_price(symbol) or 0
-
+            
             # === OB Filter gate ===
             # When the user has enabled OB Filter, we require directional
             # agreement between the signal and the LAST VALID OB on the
@@ -2317,28 +2453,19 @@ class SMCScanner:
             # opposite, the signal is dropped completely (no markers, no
             # dedup state update, no TM hook). The user explicitly chose
             # this behavior.
+            # Level for rejected-marker placement (entry computed later).
+            evt_level = event.get('level', 0) or 0
+
             if self._settings.get('ob_filter_enabled', False):
                 if not self._ob_filter_allows(symbol, side_label):
-                    # Drop silently — no marker, no TM call. Logged so
-                    # production can verify filter is actually firing.
+                    # Blocked — record a rejected marker so the user can see
+                    # (and click for the reason) why no trade fired here.
                     print(f"[SMC] 🚫 OB Filter blocked {symbol} {side_label} signal")
-                    ob_tf = self._settings.get('ob_filter_timeframe', '1h')
-                    ob_bias = None
-                    try:
-                        from storage.db_operations import get_db
-                        row = get_db().get_smc_ob_state(symbol, ob_tf)
-                        ob_bias = row.get('bias') if row else None
-                    except Exception:
-                        pass
-                    self._record_blocked_signal(
-                        symbol, side_label, entry_price, mode, 'OB Filter', {
-                            'ob_timeframe': ob_tf,
-                            'ob_bias': ob_bias,
-                            'detail': ('No valid OB at this TF' if ob_bias is None
-                                       else f'OB bias {ob_bias} opposes {side_label}'),
-                        })
+                    self._record_marker(symbol, event, side_label,
+                                        'rejected', 'OB Filter blocked',
+                                        entry_price=evt_level)
                     return
-
+            
             # === PD Zone Filter (Premium/Discount) ===
             # Independent of OB Filter — this is a price-position filter,
             # OB is a structure filter. Both can be on simultaneously
@@ -2350,20 +2477,11 @@ class SMCScanner:
             # newbie mistake; default protection is more useful than
             # default permissiveness.
             if not self._pd_zone_filter_allows(symbol, side_label):
-                if self._settings.get('use_pd_zone_filter', True):
-                    cached = self._pd_zone_cache.get(symbol) or {}
-                    pct = cached.get('pct')
-                    self._record_blocked_signal(
-                        symbol, side_label, entry_price, mode, 'PD Zone Filter', {
-                            'pd_timeframe': self._settings.get('pd_zone_timeframe'),
-                            'position_pct': pct,
-                            'long_max_pct': float(self._settings.get('pd_long_max_pct', 75.0)),
-                            'short_min_pct': float(self._settings.get('pd_short_min_pct', 25.0)),
-                            'detail': (f'Price at {pct}% of trailing range'
-                                       if pct is not None else 'Range undefined (few pivots)'),
-                        })
+                self._record_marker(symbol, event, side_label,
+                                    'rejected', 'PD Zone filter blocked',
+                                    entry_price=evt_level)
                 return  # Already logged inside the helper
-
+            
             # === Forecast Filter (1H / 4H multi-horizon prediction) ===
             # Per-TF enable, combine mode (AND/OR) when both ON. Reads the
             # cached forecast computed by ForecastEngine on a separate
@@ -2373,29 +2491,25 @@ class SMCScanner:
             if (self._settings.get('forecast_1h_filter_enabled', False)
                     or self._settings.get('forecast_4h_filter_enabled', False)):
                 if not self._forecast_filter_allows(symbol, side_label):
-                    f1, f4 = None, None
-                    try:
-                        from detection.forecast_engine import get_forecast_engine
-                        fe = get_forecast_engine()
-                        if fe is not None:
-                            c = fe.get(symbol) or {}
-                            f1 = c.get('forecast_1h')
-                            f4 = c.get('forecast_4h')
-                    except Exception:
-                        pass
-                    self._record_blocked_signal(
-                        symbol, side_label, entry_price, mode, 'Forecast Filter', {
-                            'forecast_1h_on': bool(self._settings.get('forecast_1h_filter_enabled', False)),
-                            'forecast_4h_on': bool(self._settings.get('forecast_4h_filter_enabled', False)),
-                            'combine_mode': str(self._settings.get('forecast_combine_mode', 'AND')).upper(),
-                            'forecast_1h': f1,
-                            'forecast_4h': f4,
-                            'detail': f'Forecast disagrees with {side_label}',
-                        })
+                    self._record_marker(symbol, event, side_label,
+                                        'rejected', 'Forecast filter blocked',
+                                        entry_price=evt_level)
                     return  # Already logged inside the helper
-
-            entry_str = self._fmt_price(entry_price)
             
+            # Entry price = the structural break LEVEL of the event that fired
+            # the signal: the BOS break level in CHoCH+BOS mode, or the CHoCH
+            # break level in CHoCH mode. This is the exact price `close` crossed
+            # to confirm the structure — i.e. the actual trigger. Pinning the
+            # entry to this level keeps it sitting ON the structure drawn on the
+            # chart, instead of drifting to wherever live price happens to be at
+            # scan time. Live price is only a last-resort fallback if, for some
+            # reason, the event carries no usable level.
+            entry_price = event.get('level', 0)
+            if not entry_price or entry_price <= 0:
+                entry_price = self._get_live_price(symbol) or 0
+            
+            entry_str = self._fmt_price(entry_price)
+
             # Telegram notification is sent by Trade Manager — either via
             # _notify_open() for real positions (gated by tm.telegram_alerts)
             # or via _open_shadow() for test/paper mode (gated by
@@ -2403,51 +2517,54 @@ class SMCScanner:
             # Telegram to avoid duplicate messages on a single signal.
             # When TM (real) AND test_mode are both off, no Telegram is sent —
             # this is the intended behavior (silent mode).
-            
-            # Record signal marker for chart display
-            # Use to_t (timestamp of bar where crossover happened) as the time
-            to_t = event.get('to_t', 0)
-            t_sec = int(to_t // 1000) if to_t > 1e12 else int(to_t)
-            persisted = False
-            with self._lock:
-                markers = self._signal_markers.setdefault(symbol, [])
-                # Dedup — don't add the same time+side twice
-                if not any(m['time'] == t_sec and m['side'] == side_label for m in markers):
-                    markers.append({
-                        'time': t_sec,
-                        'price': float(entry_price),
-                        'side': side_label,
-                    })
-                    # Keep last SIGNALS_PERSIST_LIMIT
-                    if len(markers) > SIGNALS_PERSIST_LIMIT:
-                        self._signal_markers[symbol] = markers[-SIGNALS_PERSIST_LIMIT:]
-                    persisted = True
-            
-            # Save to DB outside the lock to avoid holding it during I/O
-            if persisted:
-                self._persist_signals(symbol)
-            
+
+            # === Forward signal to Trade Manager FIRST ===
+            # TM decides whether to actually open a position (real or shadow)
+            # based on its filters (side gates, tradeable list, manual mode).
+            # We only add a chart marker if TM confirms it opened something.
+            trade_opened = False
+            tm_status = 'rejected'
+            tm_reason = 'Trade Manager unavailable'
+            tm_is_paper = False
+            try:
+                from detection.trade_manager import get_trade_manager
+                tm = get_trade_manager()
+                if tm:
+                    result = tm.on_signal(symbol=symbol, side=side_label,
+                                          entry_price=entry_price, opened_by=mode)
+                    # TM returns {'real_opened','shadow_opened','status','reason','is_paper'}
+                    trade_opened = result.get('real_opened') or result.get('shadow_opened')
+                    tm_status = result.get('status',
+                                           'opened' if trade_opened else 'rejected')
+                    tm_reason = result.get('reason', '')
+                    tm_is_paper = result.get('is_paper', False)
+            except Exception as e:
+                print(f"[SMC] TM hook error: {e}")
+                tm_reason = f'TM error: {e}'
+
+            # Record a chart marker based on the resolved status:
+            #   opened    → bright LONG/SHORT dot (a new position was opened)
+            #   rejected  → muted grey marker carrying the block reason
+            #   duplicate → no marker (not a new trade; just chart noise)
+            if tm_status == 'opened':
+                self._record_marker(symbol, event, side_label, 'opened',
+                                    is_paper=tm_is_paper, entry_price=entry_price)
+                tag = '📝 Paper' if tm_is_paper else '✅ Position'
+                print(f"[SMC] {tag} opened: {symbol} {side_label} @ {entry_str}")
+            elif tm_status == 'duplicate':
+                print(f"[SMC] ↺ Duplicate {symbol} {side_label} "
+                      f"(already in position) — no marker")
+            else:
+                self._record_marker(symbol, event, side_label, 'rejected',
+                                    tm_reason, entry_price=entry_price)
+                print(f"[SMC] ⊘ Signal rejected: {symbol} {side_label} "
+                      f"@ {entry_str} — {tm_reason}")
+
             # Update last-direction state (used by dedup gate). Pine updates
             # this even when dedup is OFF, so toggling dedup ON later doesn't
             # cause a sudden re-fire of the prior direction.
             self._last_signal_dir[symbol] = side_label
             self._persist_dedup_state()
-            
-            print(f"[SMC] 📨 Alert sent: {symbol} {side_label} @ {entry_str}")
-            
-            # === Forward signal to Trade Manager ===
-            # Always call on_signal — TM itself decides:
-            #   - if enabled=True → opens real Bybit position
-            #   - if enabled=False but test_mode=True → opens shadow (paper) position
-            #   - if both off → does nothing
-            try:
-                from detection.trade_manager import get_trade_manager
-                tm = get_trade_manager()
-                if tm:
-                    tm.on_signal(symbol=symbol, side=side_label,
-                                 entry_price=entry_price, opened_by=mode)
-            except Exception as e:
-                print(f"[SMC] TM hook error: {e}")
             
             # === Volumized OB Radar hook ===
             # If this symbol was added by the radar (within the 24h TTL),
@@ -2634,7 +2751,16 @@ class SMCScanner:
         htf_settings = self.get_htf_settings()
         with self._lock:
             htf_data = dict(self._htf_cache.get(symbol, {}))
-            signals = list(self._signal_markers.get(symbol, []))
+            # Normalize markers so the frontend always gets status/reason/paper,
+            # even for legacy markers persisted before these fields existed.
+            signals = [{
+                'time': m.get('time'),
+                'price': m.get('price', 0),
+                'side': m.get('side'),
+                'status': m.get('status', 'opened'),
+                'reason': m.get('reason', ''),
+                'paper': m.get('paper', False),
+            } for m in self._signal_markers.get(symbol, [])]
         htf_filter_active = htf_settings.get('enabled', False)
         htf_bias = htf_data.get('bias', 'neutral')
         
