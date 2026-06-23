@@ -2,7 +2,6 @@
 Database Operations - CRUD operations for Sleeper OB Bot
 """
 import json
-import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from sqlalchemy import desc, and_, or_
@@ -13,7 +12,7 @@ from storage.db_models import (
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
     LiquidationBucket, LiquidationOISnapshot, LiquidationEvent,
-    LiqHeatmapProfile, TradeArchive, BlockedTrade
+    LiqHeatmapProfile, TradeArchive
 )
 from config import DEFAULT_SETTINGS
 
@@ -210,146 +209,7 @@ class DBOperations:
             return result
         finally:
             session.close()
-
-    # === BLOCKED TRADES (rejected by Quality Gate) ===
-
-    def record_blocked_trade(self, symbol: str, side: str, entry_price: float,
-                            blocked_reason: str, snapshot: Optional[Dict] = None,
-                            health_score: Optional[float] = None,
-                            entry_score: Optional[float] = None,
-                            is_paper: bool = False) -> bool:
-        """Record a trade that was blocked/rejected by Quality Gate filters.
-
-        Args:
-            symbol: Trading pair (e.g. 'BTCUSDT')
-            side: 'LONG' or 'SHORT'
-            entry_price: Price at which entry would have occurred
-            blocked_reason: Short description of why it was blocked
-            snapshot: Full quality metrics as dict (will be JSON-encoded)
-            health_score: Calculated health score (if available)
-            entry_score: Calculated entry score (if available)
-            is_paper: Whether this was in test_mode
-
-        Returns:
-            True if successfully recorded, False on error
-        """
-        session = get_session()
-        try:
-            from storage.db_models import BlockedTrade
-            row = BlockedTrade(
-                is_paper=bool(is_paper),
-                symbol=symbol,
-                side=side,
-                entry_price=entry_price,
-                blocked_at=time.time(),
-                blocked_reason=blocked_reason[:100] if blocked_reason else '',
-                health_score=health_score,
-                entry_score=entry_score,
-                snapshot=json.dumps(snapshot) if snapshot else None,
-            )
-            session.add(row)
-            session.commit()
-            return True
-        except Exception as e:
-            session.rollback()
-            print(f"[BlockedTrade] record error: {e}")
-            return False
-        finally:
-            session.close()
-
-    def get_blocked_trades(self, limit: int = 100, is_paper: Optional[bool] = None,
-                          symbol: Optional[str] = None) -> List[Dict]:
-        """Retrieve blocked trades (newest first).
-
-        Args:
-            limit: Max number of trades to return
-            is_paper: Filter by test_mode (None = all)
-            symbol: Filter by symbol (None = all)
-
-        Returns:
-            List of blocked trade dicts with all fields
-        """
-        session = get_session()
-        try:
-            from storage.db_models import BlockedTrade
-            q = session.query(BlockedTrade).order_by(BlockedTrade.blocked_at.desc())
-            if is_paper is not None:
-                q = q.filter(BlockedTrade.is_paper == is_paper)
-            if symbol:
-                q = q.filter(BlockedTrade.symbol == symbol)
-            rows = q.limit(limit).all()
-            result = []
-            for row in rows:
-                snapshot_data = None
-                if row.snapshot:
-                    try:
-                        snapshot_data = json.loads(row.snapshot)
-                    except:
-                        pass
-                result.append({
-                    'id': row.id,
-                    'is_paper': row.is_paper,
-                    'symbol': row.symbol,
-                    'side': row.side,
-                    'entry_price': row.entry_price,
-                    'blocked_at': row.blocked_at,
-                    'blocked_reason': row.blocked_reason,
-                    'health_score': row.health_score,
-                    'entry_score': row.entry_score,
-                    'snapshot': snapshot_data,
-                })
-            return result
-        except Exception as e:
-            print(f"[BlockedTrade] get error: {e}")
-            return []
-        finally:
-            session.close()
-
-    def get_blocked_trades_stats(self) -> Dict:
-        """Get stats about blocked trades.
-
-        Returns:
-            Dict with total, real, paper counts
-        """
-        session = get_session()
-        try:
-            from storage.db_models import BlockedTrade
-            total = session.query(BlockedTrade).count()
-            real = session.query(BlockedTrade).filter(BlockedTrade.is_paper == False).count()
-            paper = total - real
-            return {'ok': True, 'total': total, 'real': real, 'paper': paper}
-        except Exception as e:
-            print(f"[BlockedTrade] stats error: {e}")
-            return {'ok': False, 'total': 0, 'real': 0, 'paper': 0}
-        finally:
-            session.close()
-
-    def clear_blocked_trades(self, is_paper: Optional[bool] = None) -> int:
-        """Delete blocked trades and return count removed.
-
-        Args:
-            is_paper: None = clear all, True = only paper, False = only real
-
-        Returns:
-            Number of records deleted
-        """
-        session = get_session()
-        try:
-            from storage.db_models import BlockedTrade
-            q = session.query(BlockedTrade)
-            if is_paper is not None:
-                q = q.filter(BlockedTrade.is_paper == is_paper)
-            n = q.count()
-            q.delete(synchronize_session=False)
-            session.commit()
-            return n
-        except Exception as e:
-            session.rollback()
-            print(f"[BlockedTrade] clear error: {e}")
-            return 0
-        finally:
-            session.close()
-
+    
     # === SLEEPER CANDIDATES ===
     
     def upsert_sleeper(self, data: Dict) -> Optional[SleeperCandidate]:

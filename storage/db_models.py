@@ -454,45 +454,6 @@ class EventLog(Base):
         }
 
 
-class BlockedTrade(Base):
-    """Trades blocked/ignored by the V2 Quality Gate. Captured for analysis
-    to understand which signals were rejected and why.
-
-    Stores the full snapshot at the moment of rejection including:
-    - Symbol, side, entry price
-    - V2 Quality Gate score (0-100) stored in health_score column
-    - All quality metrics: ADR room, HTF alignment, ATR, Decision score
-    - Point breakdown per factor
-    - Reason for blocking: 'quality_score_too_low' or 'exhaustion_kill_switch'
-
-    Unlike TradeArchive (successful trades), this table tracks REJECTED
-    opportunities so we can tune the V2 Quality Gate thresholds and understand
-    what we're missing vs what we're correctly filtering out.
-
-    The health_score column holds the V2 overall score. entry_score is reserved
-    for future integration of separate Health/Entry scoring systems.
-    """
-    __tablename__ = f'{TABLE_PREFIX}blocked_trades'
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    is_paper = Column(Boolean, default=False, index=True)  # was it test_mode?
-    symbol = Column(String(20), index=True)
-    side = Column(String(8))                               # LONG / SHORT
-    entry_price = Column(Float)
-    blocked_at = Column(Float, index=True)                 # unix timestamp
-    blocked_reason = Column(String(100))                   # e.g. "health_score_too_low"
-    # Quality scores at the time of rejection (if calculated)
-    health_score = Column(Float)
-    entry_score = Column(Float)
-    # Full snapshot of all quality metrics as JSON
-    snapshot = Column(Text)                                # JSON: all metrics
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        Index(f'ix_{TABLE_PREFIX}blocked_sym_at', 'symbol', 'blocked_at'),
-    )
-
-
 class SymbolBlacklist(Base):
     """
     Blacklist - v8.2: Монети виключені з аналізу
