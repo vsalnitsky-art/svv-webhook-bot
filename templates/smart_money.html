@@ -2172,13 +2172,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
 
             <!-- running timers -->
-            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;margin:14px 0 6px">⏱️ Активні таймери</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">⏱️ Активні таймери</div>
+                <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всі таймери">🗑️ Очистити всі</button>
+            </div>
             <table class="tm-table" id="ff-timers-table">
                 <thead>
-                    <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Видно стан монети ДО відкриття.">Виснаженість</th><th>Тримається</th><th>Прогрес</th></tr>
+                    <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Видно стан монети ДО відкриття.">Виснаженість</th><th>Тримається</th><th>Прогрес</th><th>Дії</th></tr>
                 </thead>
                 <tbody id="ff-timers-tbody">
-                    <tr><td colspan="5" class="tm-empty-msg">Немає активних таймерів</td></tr>
+                    <tr><td colspan="6" class="tm-empty-msg">Немає активних таймерів</td></tr>
                 </tbody>
             </table>
 
@@ -6634,7 +6637,7 @@ function renderFuelFilter(d) {
     if (tb) {
         const rows = d.timers || [];
         if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="5" class="tm-empty-msg">Немає активних таймерів</td></tr>';
+            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">Немає активних таймерів</td></tr>';
         } else {
             tb.innerHTML = rows.map(t => {
                 const prog = t.progress_pct != null ? t.progress_pct : 0;
@@ -6649,9 +6652,47 @@ function renderFuelFilter(d) {
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
                     <td style="min-width:120px"><div style="background:rgba(255,255,255,0.08);border-radius:4px;height:10px;overflow:hidden"><div style="width:${prog}%;height:100%;background:${prog >= 100 ? '#4ade80' : '#facc15'}"></div></div><span style="font-size:0.62rem;color:#8b93a7">${prog}%</span></td>
+                    <td><span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span></td>
                 </tr>`;
             }).join('');
         }
+    }
+}
+
+async function deleteTimer(symbol) {
+    if (!confirm(`Видалити таймер для ${symbol}?`)) return;
+    try {
+        const res = await fetch('/api/fuel-filter/delete-timer', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol})
+        });
+        const d = await res.json();
+        if (d.ok) {
+            loadFuelFilterStatus();
+        } else {
+            alert('Помилка: ' + (d.reason || 'невідома'));
+        }
+    } catch (e) {
+        alert('Помилка запиту: ' + e);
+    }
+}
+
+async function clearAllTimers() {
+    if (!confirm('Очистити всі таймери?')) return;
+    try {
+        const res = await fetch('/api/fuel-filter/clear-timers', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const d = await res.json();
+        if (d.ok) {
+            loadFuelFilterStatus();
+        } else {
+            alert('Помилка: ' + (d.reason || 'невідома'));
+        }
+    } catch (e) {
+        alert('Помилка запиту: ' + e);
     }
 }
 
