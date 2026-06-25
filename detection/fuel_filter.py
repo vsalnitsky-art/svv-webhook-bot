@@ -53,9 +53,16 @@ EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
 FUEL_LONG_THR = 0.1            # fuel_dir > +0.1 → LONG bias
 FUEL_SHORT_THR = -0.1          # fuel_dir < -0.1 → SHORT bias
 CLOSED_LIMIT = 100             # keep last N closes for the UI
+# Grace period before closing on FUEL FADE (status → neutral/None). Without
+# this, a single transient liq-map data gap or a brief dip into the ±0.1
+# neutral zone would slam the position shut the very next tick. We only honour
+# a *sustained* loss of fuel. A clear FLIP to the opposite side still closes
+# immediately (that's a real reversal, not a data gap).
+FUEL_FADE_GRACE_SEC = 180      # 3 min of continuous neutral before close
 
 _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
+_DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 
 DEFAULT_SETTINGS = {
     'enabled': False,
@@ -132,6 +139,43 @@ class FuelFilterDaemon:
                 self._tick()
             except Exception as e:
                 print(f"[FuelFilter] immediate tick error: {e}")
+
+    # ------------------------------------------------------------------
+    # scan-list (whitelist) — which WATCHLIST coins FF is allowed to scan.
+    # Lets the operator pick a handful of coins instead of hammering every
+    # coin on the board (load control). Empty list = scan NOTHING (opt-in).
+    # ------------------------------------------------------------------
+    def get_scan_list(self) -> List[str]:
+        try:
+            lst = self._db.get_setting(_DB_SCAN_LIST, []) or []
+        except Exception:
+            lst = []
+        if not isinstance(lst, list):
+            return []
+        return [str(s).upper() for s in lst]
+
+    def set_scan(self, symbol: str, on: bool) -> List[str]:
+        """Add/remove a symbol from the scan-list. Returns the new list."""
+        sym = (symbol or '').upper().strip()
+        if not sym:
+            return self.get_scan_list()
+        lst = self.get_scan_list()
+        if on:
+            if sym not in lst:
+                lst.append(sym)
+        else:
+            lst = [s for s in lst if s != sym]
+            # No longer scanning → drop any pending timer for it (an open
+            # position stays managed until it exits on its own rules).
+            self._timers.pop(sym, None)
+        try:
+            self._db.set_setting(_DB_SCAN_LIST, lst)
+        except Exception as e:
+            print(f"[FuelFilter] scan-list persist error: {e}")
+        return lst
+
+    def is_scanned(self, symbol: str) -> bool:
+        return (symbol or '').upper() in self.get_scan_list()
 
     # ------------------------------------------------------------------
     # state persistence
@@ -289,26 +333,42 @@ class FuelFilterDaemon:
         is_real = tm_enabled
         mode = 'real' if is_real else 'paper'
 
-        try:
-            if is_real:
-                # Real position via TM
-                res = tm.manual_open(symbol, side)
-                if not res or not res.get('ok'):
-                    reason = (res or {}).get('reason', 'unknown')
-                    print(f"[FuelFilter] real open rejected {symbol}: {reason}")
-                    return
-            else:
-                # Paper position via Test Mode (shadow)
-                if hasattr(tm, '_open_shadow') and callable(tm._open_shadow):
-                    tm._open_shadow(symbol, side, entry_price, 'fuel_filter')
+        # Don't double-open: if TM already holds this symbol (real or shadow),
+        # just adopt it into tracking instead of trying to open again.
+        if self._tm_has_position(symbol, is_real):
+            print(f"[FuelFilter] {symbol}: TM already has a position — adopting")
+        else:
+            try:
+                if is_real:
+                    # Real position via TM
+                    res = tm.manual_open(symbol, side)
+                    if not res or not res.get('ok'):
+                        reason = (res or {}).get('reason', 'unknown')
+                        print(f"[FuelFilter] real open rejected {symbol}: {reason}")
+                        return
                 else:
-                    print(f"[FuelFilter] Test Mode enabled but _open_shadow not available")
-                    return
-        except Exception as e:
-            print(f"[FuelFilter] open error {symbol} ({mode}): {e}")
-            import traceback
-            traceback.print_exc()
-            return
+                    # Paper position via Test Mode (shadow)
+                    if hasattr(tm, '_open_shadow') and callable(tm._open_shadow):
+                        tm._open_shadow(symbol, side, entry_price, 'fuel_filter')
+                    else:
+                        print(f"[FuelFilter] Test Mode enabled but _open_shadow not available")
+                        return
+            except Exception as e:
+                print(f"[FuelFilter] open error {symbol} ({mode}): {e}")
+                import traceback
+                traceback.print_exc()
+                return
+
+            # VERIFY the open actually landed before tracking. _open_shadow can
+            # silently return early (e.g. LONG/SHORT entries gated off), and a
+            # real open can be rejected at the order layer. If nothing landed,
+            # do NOT mark _fuel_managed — otherwise the timer disappears but no
+            # position exists ("trades vanish, nothing happens"). Leaving it
+            # untracked lets the timer keep running and retry next cycle.
+            if not self._tm_has_position(symbol, is_real):
+                print(f"[FuelFilter] {symbol}: open did not land in TM "
+                      f"(gated/rejected) — NOT tracking, timer continues")
+                return
 
         # Track that fuel filter opened this position (for exit condition monitoring)
         with self._lock:
@@ -322,11 +382,48 @@ class FuelFilterDaemon:
         print(f"[FuelFilter] OPEN {mode} {side} {symbol} @ {entry_price} "
               f"(fuel {fuel.get('dir')})")
 
+    def _tm_has_position(self, symbol: str, is_real: bool) -> bool:
+        """True if TradeManager currently holds a position for this symbol in
+        the relevant book (real → _positions, paper → _shadow_positions)."""
+        tm = self._get_tm() if self._get_tm else None
+        if not tm:
+            return False
+        try:
+            if is_real:
+                book = getattr(tm, '_positions', {}) or {}
+            else:
+                book = getattr(tm, '_shadow_positions', {}) or {}
+            return symbol in book
+        except Exception:
+            return False
+
     def _close(self, symbol: str, exit_price: float, reason: str, is_real: bool):
-        """Trigger position close via TM. Removes fuel tracking."""
+        """Trigger position close via TM. Removes fuel tracking.
+
+        For SHADOW positions a valid exit_price is required (it drives the paper
+        PnL). If we don't have one we abort the close and keep tracking so the
+        next tick — with a fresh price — can do it cleanly. A bad price would
+        otherwise record a garbage (huge) PnL. Real closes go through Bybit so
+        the price arg is irrelevant there.
+        """
         tm = self._get_tm() if self._get_tm else None
         if not tm:
             return
+
+        if not is_real and (not exit_price or exit_price <= 0):
+            # Try once more to get a price for the paper close
+            try:
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                if md:
+                    ticker = md.get_ticker(symbol)
+                    exit_price = ticker.get('last') if ticker else None
+            except Exception:
+                exit_price = None
+            if not exit_price or exit_price <= 0:
+                print(f"[FuelFilter] {symbol}: no price for paper close — "
+                      f"deferring (reason={reason})")
+                return  # keep tracking; retry next tick
 
         try:
             if is_real:
@@ -394,13 +491,22 @@ class FuelFilterDaemon:
             watchlist = self._get_watchlist() or []
         except Exception:
             watchlist = []
-        # union of watchlist + symbols fuel filter opened (so we keep managing
-        # positions even if a coin drops off the watchlist)
-        symbols = list(dict.fromkeys(
-            [s.upper() for s in watchlist] + list(self._fuel_managed.keys())))
+        watchlist = [s.upper() for s in watchlist]
 
-        # CRITICAL: register all symbols with the liq map so it scans them.
-        # Otherwise only BTC/ETH + UI-viewed coins have fuel data.
+        # SCAN-LIST (whitelist): only scan coins the operator explicitly marked
+        # with the "FF" flag — keeps load off the bot instead of scanning every
+        # coin on the board. Empty list = scan nothing (pure opt-in). We still
+        # always manage coins we already opened (so an open position is never
+        # abandoned even if it's later un-flagged).
+        scan_list = set(self.get_scan_list())
+        scan_targets = [s for s in watchlist if s in scan_list]
+        symbols = list(dict.fromkeys(
+            scan_targets + list(self._fuel_managed.keys())))
+
+        # CRITICAL: register scanned symbols with the liq map so it scans them.
+        # Otherwise only BTC/ETH + UI-viewed coins have fuel data. We only
+        # register the small FF whitelist now (not the whole watchlist) — the
+        # whole point of the FF flag is to keep this set small.
         self._register_with_liqmap(symbols)
 
         # Get TM settings to know which mode positions live in
@@ -421,6 +527,7 @@ class FuelFilterDaemon:
                 track = self._fuel_managed[symbol]
                 side = track['side']
                 is_real = track.get('mode') == 'real'
+                opposite = 'SHORT' if side == 'LONG' else 'LONG'
                 mark = fuel.get('mark_price') if fuel else None
 
                 # If no mark price available, try to get current price
@@ -434,25 +541,61 @@ class FuelFilterDaemon:
                     except Exception:
                         pass
 
+                # --- SYNC: if the position no longer exists in TM (user closed
+                # it manually, or it was never actually opened), drop our marker
+                # so the timer can run again. Prevents "ghost" tracked symbols
+                # that hide the timer but have no real position. ---
+                if not self._tm_has_position(symbol, is_real):
+                    print(f"[FuelFilter] {symbol}: tracked but no TM position — "
+                          f"dropping marker")
+                    with self._lock:
+                        self._fuel_managed.pop(symbol, None)
+                    self._timers.pop(symbol, None)
+                    continue
+
                 # Compute exhaustion (for UI display + exit condition)
                 exh = self._exhaustion(symbol, side)
                 if exh is not None:
                     with self._lock:
                         track['exhaustion'] = exh
 
-                # exit 1: fuel status changed / disappeared / flipped
-                if status != side:
-                    exit_price = mark if mark else 0.0
-                    self._close(symbol, exit_price, reason='fuel_status_changed', is_real=is_real)
+                # exit 1a: CLEAR FLIP to the opposite side → close immediately.
+                # This is a genuine reversal, not a data gap.
+                if status == opposite:
+                    self._close(symbol, mark or 0.0, reason='fuel_flipped',
+                                is_real=is_real)
                     self._timers.pop(symbol, None)
                     continue
+
+                # exit 1b: FUEL FADE (status neutral/None) → only close after a
+                # sustained grace period. Transient gaps must NOT close us.
+                if status != side:
+                    faded_since = track.get('faded_since')
+                    if not faded_since:
+                        with self._lock:
+                            track['faded_since'] = now
+                        # first observed fade — keep position, wait it out
+                    elif (now - faded_since) >= FUEL_FADE_GRACE_SEC:
+                        self._close(symbol, mark or 0.0, reason='fuel_faded',
+                                    is_real=is_real)
+                        self._timers.pop(symbol, None)
+                        continue
+                    # else: still inside grace window — hold
+                else:
+                    # fuel back to our side → reset the fade timer
+                    if track.get('faded_since'):
+                        with self._lock:
+                            track.pop('faded_since', None)
 
                 # exit 2: exhaustion reached (optional)
                 if settings['use_potential_exit'] and exh is not None:
                     if exh >= settings['potential_threshold_pct']:
-                        self._close(symbol, mark if mark else 0.0, reason='potential_reached', is_real=is_real)
+                        self._close(symbol, mark or 0.0, reason='potential_reached', is_real=is_real)
                         self._timers.pop(symbol, None)
                         continue
+
+                with self._lock:
+                    self._persist_state()
                 continue
 
             # ---- no position: run the timer ----
@@ -461,7 +604,12 @@ class FuelFilterDaemon:
                 if not t or t.get('dir') != status:
                     # new status (or direction flip) → (re)start timer
                     self._timers[symbol] = {'dir': status, 'since': now}
-                    continue
+                    t = self._timers[symbol]
+                # Exhaustion for the timer row — lets the operator SEE the
+                # coin's state (how much room is left) BEFORE a position opens.
+                exh = self._exhaustion(symbol, status)
+                if exh is not None:
+                    t['exhaustion'] = exh
                 held = now - t.get('since', now)
                 if held >= duration_sec:
                     self._open(symbol, status, fuel, settings)
@@ -503,9 +651,11 @@ class FuelFilterDaemon:
                 timers.append({
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
+                    'exhaustion': t.get('exhaustion'),
                     'progress_pct': (round(min(100.0, held / duration_sec * 100.0), 1)
                                      if duration_sec > 0 else 100.0),
                 })
+            scan_list = self.get_scan_list()
         return {
             'ok': True,
             'settings': settings,
@@ -514,6 +664,7 @@ class FuelFilterDaemon:
             'timers': sorted(timers, key=lambda x: -x['held_sec']),
             'active_symbols': list(self._fuel_managed.keys()),
             'tracked_count': len(self._fuel_managed),
+            'scan_list': scan_list,
         }
 
     def active_symbols(self) -> List[str]:
