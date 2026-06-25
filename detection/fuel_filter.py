@@ -893,39 +893,50 @@ class FuelFilterDaemon:
         if symbol in self._fuel_managed:
             return {'ok': False, 'reason': f'Already holding position for {symbol}'}
 
-        # Get current fuel status
-        try:
-            from detection.liquidation_map.liquidation_map import get_liquidation_map
-            lm = get_liquidation_map()
-            if lm is None:
-                return {'ok': False, 'reason': 'Liquidation map not available'}
+        # Direction comes from the timer (set when the timer started). For a
+        # manual force-open we don't require fuel to STILL point that way —
+        # the operator explicitly wants in. We only need a valid entry price.
+        side = timer['side']
 
+        # Use the SAME fuel helper the tick loop uses. It returns
+        # {dir, mark_price, status} and has its own market_data fallback for
+        # mark_price, so even with neutral/faded fuel we still get a price.
+        fuel = self._fuel_dir(symbol)
+        if not fuel or not fuel.get('mark_price'):
+            # Last-ditch: try a direct price fetch so a liq-map gap doesn't
+            # block a manual open the user explicitly asked for.
+            price = None
             try:
-                prof = self._db.get_setting('liqmap_decay_profile', 'tori')
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                if md:
+                    ticker = md.get_ticker(symbol)
+                    price = ticker.get('last') if ticker else None
             except Exception:
-                prof = 'tori'
+                price = None
+            if not price or price <= 0:
+                return {'ok': False, 'reason': f'Не вдалося отримати ціну для {symbol}'}
+            fuel = {'dir': (fuel.get('dir') if fuel else 0.0),
+                    'mark_price': price,
+                    'status': (fuel.get('status') if fuel else None)}
 
-            state = lm.get_state(symbol, lookback_hours=24, profile=prof)
-            fuel_dir = state.get('fuel_direction')
-            if not fuel_dir:
-                return {'ok': False, 'reason': 'No fuel direction available'}
-
-            # Force open using timer's side
-            side = timer['side']
-            opened = self._open(symbol, side, state, settings)
-
-            if opened:
-                # Remove timer since we opened successfully
-                with self._lock:
-                    self._timers.pop(symbol, None)
-                    self._persist_state()
-                return {'ok': True, 'reason': 'Position opened manually', 'opened': True}
-            else:
-                return {'ok': False, 'reason': 'Position open failed (check logs)', 'opened': False}
-
+        try:
+            opened = self._open(symbol, side, fuel, settings)
         except Exception as e:
             print(f"[FuelFilter] force_open_timer error for {symbol}: {e}")
-            return {'ok': False, 'reason': f'Error: {str(e)}'}
+            return {'ok': False, 'reason': f'Помилка: {str(e)}'}
+
+        if opened:
+            # Remove timer since we opened successfully
+            with self._lock:
+                self._timers.pop(symbol, None)
+                self._persist_state()
+            return {'ok': True, 'reason': f'Позицію {side} відкрито вручну', 'opened': True}
+        else:
+            # _open() returns False on its own gates (exhaustion too high,
+            # WAIT verdict if skip_wait on, no entry price, qty below min, …).
+            return {'ok': False, 'opened': False,
+                    'reason': 'Відкриття відхилено (виснаженість/вердикт/розмір — див. лог)'}
 
     def clear_all_timers(self) -> int:
         """Clear all timers. Returns count of timers cleared."""
