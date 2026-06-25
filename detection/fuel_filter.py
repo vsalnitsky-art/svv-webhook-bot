@@ -107,7 +107,10 @@ class FuelFilterDaemon:
         s['duration_minutes'] = max(0, int(s.get('duration_minutes', 5) or 0))
         s['potential_threshold_pct'] = max(
             1, min(100, int(s.get('potential_threshold_pct', 95) or 95)))
+        s['max_exhaustion_pct'] = max(
+            1, min(100, int(s.get('max_exhaustion_pct', 75) or 75)))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
+        s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['enabled'] = bool(s.get('enabled', False))
         # Remove obsolete keys
         s.pop('mode', None)
@@ -671,6 +674,20 @@ class FuelFilterDaemon:
                 exh = self._exhaustion(symbol, status)
                 if exh is not None:
                     t['exhaustion'] = exh
+
+                # ENTRY EXHAUSTION GATE: if exhaustion already exceeds the max
+                # entry threshold, the position can NEVER open (it would be
+                # rejected in _open). Running the timer is pointless and confusing
+                # ("100% exhaustion but still counting"). Reset it so the coin is
+                # not shown as a running timer. It restarts fresh if exhaustion
+                # later drops back below the threshold.
+                max_exh = settings.get('max_exhaustion_pct', 75)
+                if exh is not None and exh > max_exh:
+                    print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% "
+                          f"— resetting timer (too exhausted to enter)")
+                    self._timers.pop(symbol, None)
+                    continue
+
                 held = now - t.get('since', now)
                 if held >= duration_sec:
                     self._open(symbol, status, fuel, settings)
