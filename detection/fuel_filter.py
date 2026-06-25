@@ -279,6 +279,39 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] verdict check error {symbol}: {e}")
             return False  # on error, don't block the trade
 
+    def get_coin_indicators(self, symbol: str) -> Dict:
+        """Collect key indicators for a symbol (used by FF UI second row).
+        Returns: {forecast_1h, forecast_4h, fuel_status} or partial dict on error.
+        Forecast: {side, pct, confidence} or None. Fuel: 'LONG'|'SHORT'|None."""
+        result = {}
+        # --- Forecast 1H & 4H ---
+        try:
+            from detection.forecast_engine import get_forecast_engine
+            fe = get_forecast_engine()
+            cached = fe.get(symbol) if fe else None
+            if cached:
+                f1 = cached.get('forecast_1h') or {}
+                f4 = cached.get('forecast_4h') or {}
+                result['forecast_1h'] = {'side': f1.get('side', 0),
+                                          'pct': f1.get('pct', 0),
+                                          'confidence': f1.get('confidence', 0)} if f1.get('side') else None
+                result['forecast_4h'] = {'side': f4.get('side', 0),
+                                          'pct': f4.get('pct', 0),
+                                          'confidence': f4.get('confidence', 0)} if f4.get('side') else None
+            else:
+                result['forecast_1h'] = None
+                result['forecast_4h'] = None
+        except Exception:
+            result['forecast_1h'] = None
+            result['forecast_4h'] = None
+        # --- Fuel direction ---
+        try:
+            fuel_data = self._fuel_dir(symbol)
+            result['fuel_status'] = fuel_data.get('status') if fuel_data else None
+        except Exception:
+            result['fuel_status'] = None
+        return result
+
     def _exhaustion(self, symbol: str, side: str) -> Optional[float]:
         """Move exhaustion (0..100) for an OPEN position only. Uses the SAME
         data source as the dashboard's "Потенціал LONG/SHORT" panel (scanner's
@@ -726,13 +759,17 @@ class FuelFilterDaemon:
                 if sym in self._fuel_managed:
                     continue  # already opened, don't show timer
                 held = now - t.get('since', now)
-                timers.append({
+                timer_data = {
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
                     'exhaustion': t.get('exhaustion'),
                     'progress_pct': (round(min(100.0, held / duration_sec * 100.0), 1)
                                      if duration_sec > 0 else 100.0),
-                })
+                }
+                # Attach indicators (forecast + fuel) for UI display
+                indicators = self.get_coin_indicators(sym)
+                timer_data['indicators'] = indicators
+                timers.append(timer_data)
             scan_list = self.get_scan_list()
         return {
             'ok': True,

@@ -2773,6 +2773,20 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/indicators/<symbol>')
+    def api_fuel_filter_indicators(symbol):
+        """Return key indicators for a symbol (forecast 1H/4H, fuel direction).
+        Used by FF UI to show compact status row under each timer."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            indicators = ff.get_coin_indicators(symbol.upper())
+            return jsonify({'ok': True, **indicators})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     # ========== Database Admin ==========
 
     @app.route('/database')

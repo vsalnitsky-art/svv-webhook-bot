@@ -6646,6 +6646,31 @@ function renderFuelFilter(d) {
                 const exhColor = (t.exhaustion != null && t.exhaustion >= 85)
                     ? '#f87171' : (t.exhaustion != null && t.exhaustion >= 66
                         ? '#facc15' : '#cbd5e1');
+
+                // Build indicators row (forecast 1H/4H, fuel)
+                const ind = t.indicators || {};
+                const f1 = ind.forecast_1h;
+                const f4 = ind.forecast_4h;
+                const fuel = ind.fuel_status;
+
+                let indHtml = '';
+                if (f1) {
+                    const icon1 = f1.side === 1 ? '🟢' : '🔴';
+                    const dir1 = f1.side === 1 ? 'LONG' : 'SHORT';
+                    const sign1 = f1.pct > 0 ? '+' : '';
+                    indHtml += `<span style="font-size:0.68rem;color:#9ca3af;margin-right:8px">🔮 1H: ${icon1} ${dir1} ${sign1}${f1.pct}% · ${f1.confidence}%</span>`;
+                }
+                if (f4) {
+                    const icon4 = f4.side === 1 ? '🟢' : '🔴';
+                    const dir4 = f4.side === 1 ? 'LONG' : 'SHORT';
+                    const sign4 = f4.pct > 0 ? '+' : '';
+                    indHtml += `<span style="font-size:0.68rem;color:#9ca3af;margin-right:8px">🔮 4H: ${icon4} ${dir4} ${sign4}${f4.pct}% · ${f4.confidence}%</span>`;
+                }
+                if (fuel) {
+                    const fuelIcon = fuel === 'LONG' ? '🟢' : '🔴';
+                    indHtml += `<span style="font-size:0.68rem;color:#9ca3af">⚡ Паливо: ${fuelIcon} ${fuel}</span>`;
+                }
+
                 return `<tr>
                     <td style="font-weight:600">${t.symbol}</td>
                     <td style="color:${t.dir === 'LONG' ? '#22c55e' : '#ef4444'}">${t.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</td>
@@ -6653,7 +6678,7 @@ function renderFuelFilter(d) {
                     <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
                     <td style="min-width:120px"><div style="background:rgba(255,255,255,0.08);border-radius:4px;height:10px;overflow:hidden"><div style="width:${prog}%;height:100%;background:${prog >= 100 ? '#4ade80' : '#facc15'}"></div></div><span style="font-size:0.62rem;color:#8b93a7">${prog}%</span></td>
                     <td><span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span></td>
-                </tr>`;
+                </tr>` + (indHtml ? `<tr><td colspan="6" style="padding:3px 10px;background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,255,255,0.05)">${indHtml}</td></tr>` : '');
             }).join('');
         }
     }
