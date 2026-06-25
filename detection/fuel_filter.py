@@ -70,6 +70,7 @@ DEFAULT_SETTINGS = {
     'potential_threshold_pct': 95,  # exhaustion ≥ this → close
     'use_potential_exit': True,   # toggle the exhaustion exit on/off
     'max_exhaustion_pct': 75,     # don't open if exhaustion > this (entry filter)
+    'skip_wait_coins': False,     # don't open if coin verdict is WAIT
 }
 
 
@@ -262,6 +263,19 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] fuel calc error {symbol}: {e}")
             return None
 
+    def _is_wait_verdict(self, symbol: str) -> bool:
+        """Check if the given symbol has a WAIT verdict (unclear direction).
+        Returns True if verdict is WAIT, False otherwise (or on error)."""
+        try:
+            # Import compute_bias from flask_app (shared bias computation)
+            from web.flask_app import compute_bias
+            verdict_data = compute_bias(self._db, symbol, wl=None)
+            verdict = verdict_data.get('verdict', 'WAIT')
+            return verdict == 'WAIT'
+        except Exception as e:
+            print(f"[FuelFilter] verdict check error {symbol}: {e}")
+            return False  # on error, don't block the trade
+
     def _exhaustion(self, symbol: str, side: str) -> Optional[float]:
         """Move exhaustion (0..100) for an OPEN position only. Uses the SAME
         data source as the dashboard's "Потенціал LONG/SHORT" panel (scanner's
@@ -326,6 +340,13 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
                   f"rejecting open (too exhausted)")
             return
+
+        # CHECK WAIT VERDICT: if enabled, don't open coins in WAIT state
+        if settings.get('skip_wait_coins', False):
+            if self._is_wait_verdict(symbol):
+                print(f"[FuelFilter] {symbol}: verdict is WAIT — "
+                      f"rejecting open (skip_wait_coins enabled)")
+                return
 
         tm = self._get_tm() if self._get_tm else None
         if not tm:

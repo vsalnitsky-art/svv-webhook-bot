@@ -2161,6 +2161,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="checkbox" id="ff-use-potential"> Вихід за виснаженістю
                             </label>
                         </div>
+                        <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоди по монетах у стані WAIT (невизначений напрямок)">
+                                <input type="checkbox" id="ff-skip-wait"> Ігнорувати WAIT монети
+                            </label>
+                        </div>
                         <button onclick="saveFuelFilterSettings()" style="font-size:0.72rem;padding:6px 14px;border-radius:6px;border:1px solid rgba(74,222,128,0.4);background:rgba(74,222,128,0.1);color:#4ade80;cursor:pointer">💾 Зберегти</button>
                     </div>
                 </div>
@@ -6622,6 +6627,7 @@ function renderFuelFilter(d) {
     setIf('ff-max-exhaustion', s.max_exhaustion_pct);
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
+    setIf('ff-skip-wait', s.skip_wait_coins);
 
     // timers
     const tb = document.getElementById('ff-timers-tbody');
@@ -6701,6 +6707,7 @@ async function saveFuelFilterSettings() {
         max_exhaustion_pct: parseInt(document.getElementById('ff-max-exhaustion').value || '75', 10),
         potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
         use_potential_exit: document.getElementById('ff-use-potential').checked,
+        skip_wait_coins: document.getElementById('ff-skip-wait').checked,
     };
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
