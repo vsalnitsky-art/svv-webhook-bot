@@ -434,6 +434,12 @@ class FuelFilterDaemon:
                     except Exception:
                         pass
 
+                # Compute exhaustion (for UI display + exit condition)
+                exh = self._exhaustion(symbol, side)
+                if exh is not None:
+                    with self._lock:
+                        track['exhaustion'] = exh
+
                 # exit 1: fuel status changed / disappeared / flipped
                 if status != side:
                     exit_price = mark if mark else 0.0
@@ -442,10 +448,9 @@ class FuelFilterDaemon:
                     continue
 
                 # exit 2: exhaustion reached (optional)
-                if settings['use_potential_exit'] and mark:
-                    exh = self._exhaustion(symbol, side)
-                    if exh is not None and exh >= settings['potential_threshold_pct']:
-                        self._close(symbol, mark, reason='potential_reached', is_real=is_real)
+                if settings['use_potential_exit'] and exh is not None:
+                    if exh >= settings['potential_threshold_pct']:
+                        self._close(symbol, mark if mark else 0.0, reason='potential_reached', is_real=is_real)
                         self._timers.pop(symbol, None)
                         continue
                 continue
@@ -516,6 +521,14 @@ class FuelFilterDaemon:
         in the watchlist."""
         with self._lock:
             return list(self._fuel_managed.keys())
+
+    def get_exhaustion_map(self) -> Dict[str, float]:
+        """Get exhaustion values for all fuel-managed positions (for UI merge).
+        Returns {symbol: exhaustion_pct, ...}."""
+        with self._lock:
+            return {sym: track.get('exhaustion')
+                    for sym, track in self._fuel_managed.items()
+                    if track.get('exhaustion') is not None}
 
 
 _instance: Optional[FuelFilterDaemon] = None

@@ -2723,19 +2723,6 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
-    @app.route('/api/fuel-filter/clear-closed', methods=['POST'])
-    def api_fuel_filter_clear_closed():
-        """Clear the recent-closes history (does not touch open positions)."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            ff.clear_closed()
-            return jsonify({'ok': True})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
     # ========== Database Admin ==========
 
     @app.route('/database')
