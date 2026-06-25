@@ -69,6 +69,8 @@ DEFAULT_SETTINGS = {
     'duration_minutes': 5,        # status must hold this long before open
     'potential_threshold_pct': 95,  # exhaustion ≥ this → close
     'use_potential_exit': True,   # toggle the exhaustion exit on/off
+    'max_exhaustion_pct': 75,     # don't open if exhaustion > this (entry filter)
+    'skip_wait_coins': False,     # don't open if coin verdict is WAIT
 }
 
 
@@ -261,6 +263,19 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] fuel calc error {symbol}: {e}")
             return None
 
+    def _is_wait_verdict(self, symbol: str) -> bool:
+        """Check if the given symbol has a WAIT verdict (unclear direction).
+        Returns True if verdict is WAIT, False otherwise (or on error)."""
+        try:
+            # Import compute_bias from flask_app (shared bias computation)
+            from web.flask_app import compute_bias
+            verdict_data = compute_bias(self._db, symbol, wl=None)
+            verdict = verdict_data.get('verdict', 'WAIT')
+            return verdict == 'WAIT'
+        except Exception as e:
+            print(f"[FuelFilter] verdict check error {symbol}: {e}")
+            return False  # on error, don't block the trade
+
     def _exhaustion(self, symbol: str, side: str) -> Optional[float]:
         """Move exhaustion (0..100) for an OPEN position only. Uses the SAME
         data source as the dashboard's "Потенціал LONG/SHORT" panel (scanner's
@@ -311,13 +326,31 @@ class FuelFilterDaemon:
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
         tables based on toggle states."""
+        print(f"[FuelFilter] _open CALLED for {symbol} {side} (timer reached 100%)")
+
         entry_price = fuel.get('mark_price')
         if not entry_price or entry_price <= 0:
+            print(f"[FuelFilter] {symbol}: no entry price — skip open")
             return
+
+        # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves
+        max_exh = settings.get('max_exhaustion_pct', 75)
+        exh = self._exhaustion(symbol, side)
+        if exh is not None and exh > max_exh:
+            print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
+                  f"rejecting open (too exhausted)")
+            return
+
+        # CHECK WAIT VERDICT: if enabled, don't open coins in WAIT state
+        if settings.get('skip_wait_coins', False):
+            if self._is_wait_verdict(symbol):
+                print(f"[FuelFilter] {symbol}: verdict is WAIT — "
+                      f"rejecting open (skip_wait_coins enabled)")
+                return
 
         tm = self._get_tm() if self._get_tm else None
         if not tm:
-            print(f"[FuelFilter] no TradeManager available — skip {symbol}")
+            print(f"[FuelFilter] {symbol}: no TradeManager available — skip open")
             return
 
         # Check which mode is active (TM real or Test Mode paper)
@@ -325,36 +358,44 @@ class FuelFilterDaemon:
         tm_enabled = tm_settings.get('enabled', False)
         test_mode = tm_settings.get('test_mode', True)
 
+        print(f"[FuelFilter] {symbol}: TM settings: enabled={tm_enabled}, test_mode={test_mode}")
+
         if not tm_enabled and not test_mode:
-            print(f"[FuelFilter] neither TM nor Test Mode enabled — skip {symbol}")
+            print(f"[FuelFilter] {symbol}: neither TM nor Test Mode enabled — skip open")
             return
 
         # Prefer real TM if both are on
         is_real = tm_enabled
         mode = 'real' if is_real else 'paper'
+        print(f"[FuelFilter] {symbol}: opening in {mode} mode")
 
         # Don't double-open: if TM already holds this symbol (real or shadow),
         # just adopt it into tracking instead of trying to open again.
         if self._tm_has_position(symbol, is_real):
-            print(f"[FuelFilter] {symbol}: TM already has a position — adopting")
+            print(f"[FuelFilter] {symbol}: TM already has a position — adopting into tracking")
         else:
+            print(f"[FuelFilter] {symbol}: attempting to open {side} position via TM...")
             try:
                 if is_real:
                     # Real position via TM
+                    print(f"[FuelFilter] {symbol}: calling tm.manual_open({symbol}, {side})")
                     res = tm.manual_open(symbol, side)
+                    print(f"[FuelFilter] {symbol}: manual_open returned: {res}")
                     if not res or not res.get('ok'):
                         reason = (res or {}).get('reason', 'unknown')
-                        print(f"[FuelFilter] real open rejected {symbol}: {reason}")
+                        print(f"[FuelFilter] {symbol}: real open rejected: {reason}")
                         return
                 else:
                     # Paper position via Test Mode (shadow)
                     if hasattr(tm, '_open_shadow') and callable(tm._open_shadow):
+                        print(f"[FuelFilter] {symbol}: calling tm._open_shadow({symbol}, {side}, {entry_price}, 'fuel_filter')")
                         tm._open_shadow(symbol, side, entry_price, 'fuel_filter')
+                        print(f"[FuelFilter] {symbol}: _open_shadow call completed")
                     else:
-                        print(f"[FuelFilter] Test Mode enabled but _open_shadow not available")
+                        print(f"[FuelFilter] {symbol}: Test Mode enabled but _open_shadow not available")
                         return
             except Exception as e:
-                print(f"[FuelFilter] open error {symbol} ({mode}): {e}")
+                print(f"[FuelFilter] {symbol}: open error ({mode}): {e}")
                 import traceback
                 traceback.print_exc()
                 return
@@ -365,7 +406,9 @@ class FuelFilterDaemon:
             # do NOT mark _fuel_managed — otherwise the timer disappears but no
             # position exists ("trades vanish, nothing happens"). Leaving it
             # untracked lets the timer keep running and retry next cycle.
-            if not self._tm_has_position(symbol, is_real):
+            has_pos = self._tm_has_position(symbol, is_real)
+            print(f"[FuelFilter] {symbol}: verification check — _tm_has_position={has_pos}")
+            if not has_pos:
                 print(f"[FuelFilter] {symbol}: open did not land in TM "
                       f"(gated/rejected) — NOT tracking, timer continues")
                 return
@@ -379,8 +422,8 @@ class FuelFilterDaemon:
                 'mode': mode,
             }
             self._persist_state()
-        print(f"[FuelFilter] OPEN {mode} {side} {symbol} @ {entry_price} "
-              f"(fuel {fuel.get('dir')})")
+        print(f"[FuelFilter] OPEN SUCCESS: {mode} {side} {symbol} @ {entry_price} "
+              f"(fuel {fuel.get('dir')}, exhaustion {exh:.1f}% if exh else 'N/A')")
 
     def _tm_has_position(self, symbol: str, is_real: bool) -> bool:
         """True if TradeManager currently holds a position for this symbol in
