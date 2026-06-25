@@ -3588,10 +3588,13 @@ class TradeManager:
                     f'Could not fetch current price for {symbol}'}
 
         # Decision: real or paper?
-        # If TM enabled AND (not at limit OR bypass requested by caller like FF):
-        #   open real. Otherwise if test_mode on: open shadow.
+        # If TM enabled AND not at limit: open real.
+        # Otherwise if test_mode on: open shadow.
+        # NOTE: bypass_gates does NOT bypass max_open_positions — the limit is
+        # a hard ceiling for REAL positions. bypass_gates only affects the
+        # LONG/SHORT entry gates inside _open_position (quality/trend checks).
         open_real = False
-        if self.is_enabled() and (not at_limit or bypass_gates):
+        if self.is_enabled() and not at_limit:
             if not self.bybit or not getattr(self.bybit, 'api_key', None):
                 return {'ok': False, 'reason': 'Bybit not configured (no API key)'}
             open_real = True
