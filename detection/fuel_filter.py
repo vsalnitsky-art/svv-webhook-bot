@@ -60,6 +60,12 @@ CLOSED_LIMIT = 100             # keep last N closes for the UI
 # a *sustained* loss of fuel. A clear FLIP to the opposite side still closes
 # immediately (that's a real reversal, not a data gap).
 FUEL_FADE_GRACE_SEC = 180      # 3 min of continuous neutral before close
+# Minimum time a freshly-opened position is held before ANY auto-exit
+# (flip / fade / wait / exhaustion) may fire. A manual force-open takes the
+# timer's side regardless of where fuel currently points, so without this
+# grace the very next tick could see fuel on the opposite side and close the
+# trade instantly ("opened → immediately in Recent Closed Trades").
+MIN_HOLD_AFTER_OPEN_SEC = 90
 
 _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
@@ -480,6 +486,17 @@ class FuelFilterDaemon:
                         reason = (res or {}).get('reason', 'unknown')
                         print(f"[FuelFilter] {symbol}: real open rejected: {reason}")
                         return False
+                    # manual_open may DOWNGRADE to a paper (shadow) position when
+                    # max_open_positions is reached. Respect the mode it ACTUALLY
+                    # used — otherwise we'd verify/track against the wrong book
+                    # (real vs shadow), the verification below would fail, and the
+                    # tick loop would immediately drop the marker / close it.
+                    actual_mode = res.get('mode', 'real')
+                    is_real = (actual_mode == 'real')
+                    mode = 'real' if is_real else 'paper'
+                    if not is_real:
+                        print(f"[FuelFilter] {symbol}: manual_open downgraded to "
+                              f"paper (max positions reached) — tracking as paper")
                 else:
                     # Paper position via Test Mode (shadow) — bypass LONG/SHORT gates
                     # Fuel Filter operates independently from manual trade signals
@@ -700,6 +717,17 @@ class FuelFilterDaemon:
                 if exh is not None:
                     with self._lock:
                         track['exhaustion'] = exh
+
+                # MIN-HOLD GRACE: don't run ANY auto-exit for the first
+                # MIN_HOLD_AFTER_OPEN_SEC after opening. A manual force-open
+                # uses the timer's side even if fuel currently points the other
+                # way; without this the flip exit below would close it on the
+                # very next tick. UI display (exhaustion) is already updated above.
+                opened_at = track.get('opened_at', 0)
+                if opened_at and (now - opened_at) < MIN_HOLD_AFTER_OPEN_SEC:
+                    with self._lock:
+                        self._persist_state()
+                    continue
 
                 # exit 1a: CLEAR FLIP to the opposite side → close immediately.
                 # This is a genuine reversal, not a data gap.
