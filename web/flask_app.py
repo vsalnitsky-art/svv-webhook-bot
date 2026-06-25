@@ -2787,6 +2787,20 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/panel/<symbol>')
+    def api_fuel_filter_panel(symbol):
+        """Full FF decision-state for ONE symbol — drives the chart panel's
+        second status row (fuel dir, exhaustion, verdict, timer, scan state)."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            status = ff.get_panel_status(symbol.upper())
+            return jsonify({'ok': True, **status})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     # ========== Database Admin ==========
 
     @app.route('/database')
