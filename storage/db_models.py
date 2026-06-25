@@ -398,8 +398,8 @@ class TradeArchive(Base):
     """Permanent, append-only archive of every closed trade.
 
     Unlike the rolling `tm_closed_trades` setting (capped for the UI), this
-    table is NEVER auto-trimmed — it is the dataset for backtesting the
-    Trade Quality Gate. Each row carries a full pre-trade snapshot captured
+    table is NEVER auto-trimmed — it is the dataset for backtesting entry
+    quality. Each row carries a full pre-trade snapshot captured
     at OPEN time (entry decision, move-potential, hold score, ATR/runway/
     exhaustion) so we can later test which signals actually predicted good
     vs bad trades. One row per trade; scales to thousands without bloating
@@ -1343,55 +1343,4 @@ class LiqHeatmapProfile(Base):
             'mid_price': self.mid_price,
             'bid_data': self.bid_data,
             'ask_data': self.ask_data,
-        }
-
-
-class BlockedTrade(Base):
-    """Trade signals blocked by Quality Gate V2 filter.
-
-    Records trades that were rejected due to low quality score or exhaustion
-    kill-switch, with full breakdown for analysis.
-    """
-    __tablename__ = 'blocked_trades'
-
-    id = Column(Integer, primary_key=True)
-    symbol = Column(String(20), nullable=False)
-    side = Column(String(10), nullable=False)  # LONG / SHORT
-    entry_price = Column(Float, nullable=False)
-    blocked_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    blocked_reason = Column(String(50), nullable=False)  # 'quality_score_too_low' | 'exhaustion_kill_switch'
-    is_paper = Column(Boolean, nullable=False, default=True)
-
-    # Quality Gate V2 results snapshot (JSON-encoded dict)
-    # Contains: score, grade, breakdown, reason, metrics
-    snapshot = Column(Text, nullable=True)
-
-    # Legacy compatibility columns (for future Health+Entry scoring integration)
-    health_score = Column(Integer, nullable=True)  # 0-100 (V2 overall score for now)
-    entry_score = Column(Integer, nullable=True)   # reserved
-
-    __table_args__ = (
-        Index('idx_blocked_symbol_ts', 'symbol', 'blocked_at'),
-        Index('idx_blocked_paper', 'is_paper', 'blocked_at'),
-    )
-
-    def to_dict(self):
-        import json
-        snap = {}
-        if self.snapshot:
-            try:
-                snap = json.loads(self.snapshot)
-            except Exception:
-                pass
-        return {
-            'id': self.id,
-            'symbol': self.symbol,
-            'side': self.side,
-            'entry_price': self.entry_price,
-            'blocked_at': self.blocked_at.isoformat() if self.blocked_at else None,
-            'blocked_reason': self.blocked_reason,
-            'is_paper': self.is_paper,
-            'snapshot': snap,
-            'health_score': self.health_score,
-            'entry_score': self.entry_score,
         }
