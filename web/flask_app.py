@@ -5897,6 +5897,8 @@ def compute_bias_for_ff(db, symbol):
 
     # Fuel - те саме
     fuel_side = 0
+    kl = None    # 1h klines (reused below for move potential / exhaustion)
+    lst = None   # liq-map state (reused below for move potential / exhaustion)
     try:
         from detection.market_data import get_market_data
         from detection.squeeze import calc_squeeze
@@ -6007,6 +6009,48 @@ def compute_bias_for_ff(db, symbol):
             # Один голос без fuel - WAIT
             verdict = 'WAIT'
 
+    # Move potential / exhaustion — SAME computation as compute_bias so FF's
+    # "Виснаженість" column matches the "Потенціал LONG/SHORT" panel exactly.
+    # Without this block move_long/move_short are absent and FF shows "—".
+    move = None
+    move_long = None
+    move_short = None
+    try:
+        from detection.move_potential import analyze_move_potential
+        mp_side = verdict if verdict in ('LONG', 'SHORT') else (
+            'LONG' if (comp.get('forecast', {}) or {}).get('f1_side', 0) > 0
+            else 'SHORT')
+        # Work bars: prefer scanner LTF cache (15m), fall back to 1H klines.
+        mp_klines = None
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            _sc = get_smc_scanner()
+            if _sc:
+                mp_klines = _sc._get_cached_klines(symbol)
+        except Exception:
+            mp_klines = None
+        bars_per_day = 96  # 15m bars
+        if not mp_klines:
+            mp_klines = kl  # 1h fallback
+            bars_per_day = 24
+        liq_levels = lst.get('levels') if lst else None
+        if mp_klines and len(mp_klines) >= 20:
+            move_long = analyze_move_potential(
+                side='LONG', klines=mp_klines,
+                liquidation_levels=liq_levels,
+                bars_per_day=bars_per_day)
+            move_short = analyze_move_potential(
+                side='SHORT', klines=mp_klines,
+                liquidation_levels=liq_levels,
+                bars_per_day=bars_per_day)
+            move = move_long if mp_side == 'LONG' else move_short
+    except Exception:
+        move = None
+        move_long = None
+        move_short = None
+
     return {'ok': True, 'symbol': symbol, 'verdict': verdict,
             'confidence': confidence, 'components': comp,
-            'reasons': reasons, 'ts': _t.time()}
+            'reasons': reasons, 'move': move,
+            'move_long': move_long, 'move_short': move_short,
+            'ts': _t.time()}
