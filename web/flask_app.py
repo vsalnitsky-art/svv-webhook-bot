@@ -2723,6 +2723,27 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/scan', methods=['POST'])
+    def api_fuel_filter_scan():
+        """Add/remove a symbol from the FF scan-list (whitelist of coins the
+        Fuel Auto-Filter is allowed to scan). Body: {"symbol": "BTCUSDT",
+        "on": true|false}. Returns the updated scan-list."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            symbol = data.get('symbol', '')
+            on = bool(data.get('on', False))
+            if not symbol:
+                return jsonify({'ok': False, 'reason': 'symbol required'})
+            scan_list = ff.set_scan(symbol, on)
+            return jsonify({'ok': True, 'scan_list': scan_list,
+                            'symbol': symbol.upper(), 'on': on})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     # ========== Database Admin ==========
 
     @app.route('/database')
@@ -3258,7 +3279,19 @@ def register_api_routes(app):
         s = get_smc_scanner()
         if not s:
             return jsonify({'running': False, 'error': 'Not initialized'})
-        return jsonify(s.get_state())
+        state = s.get_state()
+        # Merge the Fuel Auto-Filter scan-list (whitelist) so the watchlist UI
+        # can render the "FF" flag per coin without a second round-trip.
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if ff:
+                state['fuel_scan_list'] = ff.get_scan_list()
+                state['fuel_active_symbols'] = ff.active_symbols()
+        except Exception:
+            state['fuel_scan_list'] = []
+            state['fuel_active_symbols'] = []
+        return jsonify(state)
     
     @app.route('/api/smc/dedup/reset', methods=['POST'])
     def api_smc_dedup_reset():

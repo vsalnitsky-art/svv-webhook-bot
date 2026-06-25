@@ -62,6 +62,7 @@ FUEL_FADE_GRACE_SEC = 180      # 3 min of continuous neutral before close
 
 _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
+_DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 
 DEFAULT_SETTINGS = {
     'enabled': False,
@@ -138,6 +139,43 @@ class FuelFilterDaemon:
                 self._tick()
             except Exception as e:
                 print(f"[FuelFilter] immediate tick error: {e}")
+
+    # ------------------------------------------------------------------
+    # scan-list (whitelist) — which WATCHLIST coins FF is allowed to scan.
+    # Lets the operator pick a handful of coins instead of hammering every
+    # coin on the board (load control). Empty list = scan NOTHING (opt-in).
+    # ------------------------------------------------------------------
+    def get_scan_list(self) -> List[str]:
+        try:
+            lst = self._db.get_setting(_DB_SCAN_LIST, []) or []
+        except Exception:
+            lst = []
+        if not isinstance(lst, list):
+            return []
+        return [str(s).upper() for s in lst]
+
+    def set_scan(self, symbol: str, on: bool) -> List[str]:
+        """Add/remove a symbol from the scan-list. Returns the new list."""
+        sym = (symbol or '').upper().strip()
+        if not sym:
+            return self.get_scan_list()
+        lst = self.get_scan_list()
+        if on:
+            if sym not in lst:
+                lst.append(sym)
+        else:
+            lst = [s for s in lst if s != sym]
+            # No longer scanning → drop any pending timer for it (an open
+            # position stays managed until it exits on its own rules).
+            self._timers.pop(sym, None)
+        try:
+            self._db.set_setting(_DB_SCAN_LIST, lst)
+        except Exception as e:
+            print(f"[FuelFilter] scan-list persist error: {e}")
+        return lst
+
+    def is_scanned(self, symbol: str) -> bool:
+        return (symbol or '').upper() in self.get_scan_list()
 
     # ------------------------------------------------------------------
     # state persistence
@@ -453,13 +491,22 @@ class FuelFilterDaemon:
             watchlist = self._get_watchlist() or []
         except Exception:
             watchlist = []
-        # union of watchlist + symbols fuel filter opened (so we keep managing
-        # positions even if a coin drops off the watchlist)
-        symbols = list(dict.fromkeys(
-            [s.upper() for s in watchlist] + list(self._fuel_managed.keys())))
+        watchlist = [s.upper() for s in watchlist]
 
-        # CRITICAL: register all symbols with the liq map so it scans them.
-        # Otherwise only BTC/ETH + UI-viewed coins have fuel data.
+        # SCAN-LIST (whitelist): only scan coins the operator explicitly marked
+        # with the "FF" flag — keeps load off the bot instead of scanning every
+        # coin on the board. Empty list = scan nothing (pure opt-in). We still
+        # always manage coins we already opened (so an open position is never
+        # abandoned even if it's later un-flagged).
+        scan_list = set(self.get_scan_list())
+        scan_targets = [s for s in watchlist if s in scan_list]
+        symbols = list(dict.fromkeys(
+            scan_targets + list(self._fuel_managed.keys())))
+
+        # CRITICAL: register scanned symbols with the liq map so it scans them.
+        # Otherwise only BTC/ETH + UI-viewed coins have fuel data. We only
+        # register the small FF whitelist now (not the whole watchlist) — the
+        # whole point of the FF flag is to keep this set small.
         self._register_with_liqmap(symbols)
 
         # Get TM settings to know which mode positions live in
@@ -557,7 +604,12 @@ class FuelFilterDaemon:
                 if not t or t.get('dir') != status:
                     # new status (or direction flip) → (re)start timer
                     self._timers[symbol] = {'dir': status, 'since': now}
-                    continue
+                    t = self._timers[symbol]
+                # Exhaustion for the timer row — lets the operator SEE the
+                # coin's state (how much room is left) BEFORE a position opens.
+                exh = self._exhaustion(symbol, status)
+                if exh is not None:
+                    t['exhaustion'] = exh
                 held = now - t.get('since', now)
                 if held >= duration_sec:
                     self._open(symbol, status, fuel, settings)
@@ -599,9 +651,11 @@ class FuelFilterDaemon:
                 timers.append({
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
+                    'exhaustion': t.get('exhaustion'),
                     'progress_pct': (round(min(100.0, held / duration_sec * 100.0), 1)
                                      if duration_sec > 0 else 100.0),
                 })
+            scan_list = self.get_scan_list()
         return {
             'ok': True,
             'settings': settings,
@@ -610,6 +664,7 @@ class FuelFilterDaemon:
             'timers': sorted(timers, key=lambda x: -x['held_sec']),
             'active_symbols': list(self._fuel_managed.keys()),
             'tracked_count': len(self._fuel_managed),
+            'scan_list': scan_list,
         }
 
     def active_symbols(self) -> List[str]:
