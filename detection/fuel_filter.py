@@ -19,6 +19,12 @@ Safety / exchange-friendliness:
   • Fuel direction is read from the *cached* liquidation map state
     (refreshed by its own daemon every 60 s) — this module makes ZERO extra
     exchange calls to compute fuel.
+  • IMPORTANT: the liq-map daemon only tracks BACKGROUND_SYMBOLS (BTC/ETH)
+    plus symbols requested on-demand in the last 30 min. So each tick we
+    call lm.request_symbol() for every WATCHLIST coin — this is what makes
+    the daemon actually scan ALL watchlist coins (not just the ones a user
+    happens to be viewing in the UI). First-seen coins need ~1-2 liq-map
+    ticks (≤2 min) before fuel data becomes meaningful.
   • Exhaustion ("Потенціал") needs klines, so it is computed ONLY for coins
     that already have an OPEN fuel position (a handful at most), never for
     the whole watchlist. Results are cached per-symbol with a short TTL.
@@ -378,6 +384,27 @@ class FuelFilterDaemon:
                 print(f"[FuelFilter] tick error: {e}")
             self._stop.wait(CYCLE_SECS)
 
+    def _register_with_liqmap(self, symbols: List[str]):
+        """Register every watchlist symbol with the liquidation-map daemon so
+        it actually SCANS them. This is the root fix for "not all WATCHLIST
+        coins scanned": the liq map only tracks BACKGROUND_SYMBOLS (BTC/ETH)
+        plus on-demand symbols requested in the last 30 min. Without this call,
+        coins nobody is actively viewing in the UI have zero OI data, so
+        fuel_dir is always neutral and they never trigger. We re-request every
+        tick (30 s) which keeps them well inside the 30-min on-demand TTL."""
+        try:
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if not lm:
+                return
+            for s in symbols:
+                try:
+                    lm.request_symbol(s)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[FuelFilter] liqmap register error: {e}")
+
     def _tick(self):
         settings = self.get_settings()
         self._last_tick_ts = time.time()
@@ -391,6 +418,10 @@ class FuelFilterDaemon:
         # position even if its coin drops off the watchlist)
         symbols = list(dict.fromkeys(
             [s.upper() for s in watchlist] + list(self._positions.keys())))
+
+        # CRITICAL: register all symbols with the liq map so it scans them.
+        # Otherwise only BTC/ETH + UI-viewed coins have fuel data.
+        self._register_with_liqmap(symbols)
 
         duration_sec = settings['duration_minutes'] * 60
         now = time.time()
