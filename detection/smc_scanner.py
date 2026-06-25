@@ -1206,10 +1206,29 @@ class SMCScanner:
         
         from detection.market_data import get_market_data
         from detection.smc_structure import detect_smc_structure
-        
+
         md = get_market_data()
         self._scan_count += 1
-        
+
+        # CONTINUOUS LIQ-MAP REGISTRATION: register EVERY watchlist coin with
+        # the liquidation-map daemon each scan cycle. The liq-map only tracks
+        # BTC/ETH + on-demand symbols (30-min TTL). Without this, watchlist
+        # coins that aren't FF-flagged or recently viewed in the UI have no
+        # fuel data → "Liq-палива немає даних". Re-requesting every scan keeps
+        # the whole watchlist inside the TTL so all coins always have data.
+        try:
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if lm:
+                for sym in list(self._watchlist):
+                    try:
+                        lm.request_symbol(sym)
+                    except Exception:
+                        pass
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[SMC] liqmap register error: {e}")
+
         for symbol in list(self._watchlist):
             if not self._running:
                 return
