@@ -296,7 +296,23 @@ def create_app():
                 )
             except Exception as e:
                 print(f"[APP] Failed to start Auto-gate: {e}")
-        
+
+        if not _auto_started.get('fuel_filter'):
+            _auto_started['fuel_filter'] = True
+            try:
+                from detection.fuel_filter import init_fuel_filter
+                from detection.trade_manager import get_trade_manager
+                def _fuel_watchlist():
+                    raw = get_db().get_setting('ctr_watchlist', '') or ''
+                    return [s.strip().upper() for s in raw.split(',') if s.strip()]
+                init_fuel_filter(
+                    db=get_db(),
+                    get_trade_manager=get_trade_manager,
+                    get_watchlist=_fuel_watchlist,
+                )
+            except Exception as e:
+                print(f"[APP] Failed to start Fuel Filter: {e}")
+
         if not _auto_started.get('tickr_opp'):
             _auto_started['tickr_opp'] = True
             try:
@@ -2710,6 +2726,62 @@ def register_api_routes(app):
             db = get_db()
             removed = db.clear_blocked_trades(is_paper=is_paper)
             return jsonify({'ok': True, 'removed': removed, 'scope': scope})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    # ========== Fuel Auto-Filter (liquidation-fuel timed entries) ==========
+
+    @app.route('/api/fuel-filter/state')
+    def api_fuel_filter_state():
+        """Live snapshot: settings + timers + open positions + recent closes."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify(ff.get_state())
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/settings', methods=['POST'])
+    def api_fuel_filter_settings():
+        """Update settings. Body may include any of: enabled, duration_minutes,
+        potential_threshold_pct, use_potential_exit, mode, max_positions."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            settings = ff.update_settings(data)
+            return jsonify({'ok': True, 'settings': settings})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/toggle', methods=['POST'])
+    def api_fuel_filter_toggle():
+        """Enable/disable the filter. Body: {"enabled": true|false}."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            ff.set_enabled(bool(data.get('enabled', False)))
+            return jsonify({'ok': True, 'settings': ff.get_settings()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/clear-closed', methods=['POST'])
+    def api_fuel_filter_clear_closed():
+        """Clear the recent-closes history (does not touch open positions)."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            ff.clear_closed()
+            return jsonify({'ok': True})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 

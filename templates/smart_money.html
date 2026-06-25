@@ -2303,6 +2303,95 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
     </div>
 
+    <!-- ===== FUEL AUTO-FILTER (liquidation-fuel timed entries) ===== -->
+    <div class="tm-panel" id="fuel-filter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;cursor:pointer" onclick="toggleFuelFilterPanel()">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span id="fuel-filter-chevron" style="font-size:0.75rem;user-select:none">▶</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Автофільтр: коли по монеті зі WATCHLIST статус «Паливо зверху/знизу» тримається задану кількість хвилин — відкриває угоду в напрямку палива. Закриває при зміні статусу або досягненні виснаженості. Натисніть для розгортання.">❤️ Fuel Auto-Filter</span>
+                <span id="fuel-filter-status" style="font-size:0.8rem;font-family:monospace;font-weight:700;color:#8b93a7">—</span>
+                <span id="fuel-filter-summary" style="font-size:0.7rem;color:#8b93a7"></span>
+            </div>
+            <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімкнути/вимкнути автофільтр">
+                <input type="checkbox" id="fuel-filter-toggle" onchange="onFuelFilterToggle(event)">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div id="fuel-filter-body" style="display:none;margin-top:12px">
+            <!-- settings -->
+            <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015);margin-bottom:12px">
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин статус палива має триматись безперервно перед відкриттям">Тривалість статусу (хв)</label>
+                    <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості (%)</label>
+                    <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                </div>
+                <div>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
+                        <input type="checkbox" id="ff-use-potential"> Вихід за виснаженістю
+                    </label>
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="paper = віртуальні угоди (без реальних ордерів); real = реальні угоди через Trade Manager">Режим</label>
+                    <select id="ff-mode" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb">
+                        <option value="paper">📝 Paper (віртуально)</option>
+                        <option value="real">💰 Real (через TM)</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="0 = без ліміту">Макс. позицій</label>
+                    <input type="number" id="ff-maxpos" min="0" step="1" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                </div>
+                <button onclick="saveFuelFilterSettings()" style="font-size:0.72rem;padding:6px 14px;border-radius:6px;border:1px solid rgba(74,222,128,0.4);background:rgba(74,222,128,0.1);color:#4ade80;cursor:pointer">💾 Зберегти</button>
+            </div>
+
+            <!-- open positions -->
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;margin:6px 0">📊 Відкриті позиції</div>
+            <table class="tm-table" id="ff-positions-table">
+                <thead>
+                    <tr>
+                        <th>Символ</th><th>Side</th><th>Вхід</th><th>Ціна</th>
+                        <th>PnL %</th><th title="Виснаженість руху">Виснаж.</th>
+                        <th title="Паливо при вході">Fuel</th><th>Вік</th><th>Режим</th>
+                    </tr>
+                </thead>
+                <tbody id="ff-positions-tbody">
+                    <tr><td colspan="9" class="tm-empty-msg">Немає відкритих позицій</td></tr>
+                </tbody>
+            </table>
+
+            <!-- running timers -->
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;margin:14px 0 6px">⏱️ Активні таймери</div>
+            <table class="tm-table" id="ff-timers-table">
+                <thead>
+                    <tr><th>Символ</th><th>Напрямок</th><th>Тримається</th><th>Прогрес</th></tr>
+                </thead>
+                <tbody id="ff-timers-tbody">
+                    <tr><td colspan="4" class="tm-empty-msg">Немає активних таймерів</td></tr>
+                </tbody>
+            </table>
+
+            <!-- recent closes -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 6px">
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">📕 Останні закриття</div>
+                <button onclick="clearFuelFilterClosed(event)" style="font-size:0.68rem;padding:4px 10px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer">🗑️ Очистити</button>
+            </div>
+            <table class="tm-table" id="ff-closed-table">
+                <thead>
+                    <tr><th>Закрито</th><th>Символ</th><th>Side</th><th>Вхід</th><th>Вихід</th><th>PnL %</th><th>Причина</th><th>Режим</th></tr>
+                </thead>
+                <tbody id="ff-closed-tbody">
+                    <tr><td colspan="8" class="tm-empty-msg">Немає закритих угод</td></tr>
+                </tbody>
+            </table>
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
+                💡 Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість рахується лише для відкритих позицій. Скан кожні 30с. Усі дані зберігаються в БД і відновлюються після перезапуску.
+            </div>
+        </div>
+    </div>
+
     <div class="tm-panel" id="testmode-panel" style="margin-top:14px">
         <div class="tm-header" id="testmode-header">
             <h2>🧪 Test Mode <span style="color:#666;font-size:0.75rem;font-weight:normal;margin-left:6px">(paper trading — no real orders)</span></h2>
@@ -3108,8 +3197,15 @@ function renderWatchlist(list) {
             srcHtml = `<span class="wl-src wl-src-manual" title="Додано вручну">M</span>`;
         }
         
+        // ❤ Fuel Auto-Filter marker — shown when this coin currently has an
+        // open fuel-filter position. Updated from loadFuelFilterStatus (30s).
+        let fuelHeartHtml = '';
+        if (typeof _ffActiveSymbols !== 'undefined' && _ffActiveSymbols.indexOf(sym) !== -1) {
+            fuelHeartHtml = `<span title="Активна угода Fuel Auto-Filter" style="margin-right:4px;font-size:0.8rem">❤️</span>`;
+        }
+
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${fuelHeartHtml}${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -7047,6 +7143,209 @@ async function clearBlockedTrades(event) {
     }
 }
 
+// ========== Fuel Auto-Filter ==========
+let _ffPanelOpen = false;
+let _ffActiveSymbols = [];
+
+async function loadFuelFilterStatus() {
+    // Lightweight header refresh (always runs) + full table if panel open.
+    try {
+        const d = await fetch('/api/fuel-filter/state').then(r => r.json());
+        if (!d || !d.ok) return;
+        _ffActiveSymbols = d.active_symbols || [];
+        const s = d.settings || {};
+        const toggle = document.getElementById('fuel-filter-toggle');
+        if (toggle) toggle.checked = !!s.enabled;
+        const statusEl = document.getElementById('fuel-filter-status');
+        if (statusEl) {
+            const on = s.enabled;
+            statusEl.textContent = on ? 'ON' : 'OFF';
+            statusEl.style.color = on ? '#4ade80' : '#8b93a7';
+        }
+        const sumEl = document.getElementById('fuel-filter-summary');
+        if (sumEl) {
+            const np = (d.positions || []).length;
+            const nt = (d.timers || []).length;
+            const mode = s.mode === 'real' ? '💰 real' : '📝 paper';
+            sumEl.textContent = `(${mode} · позицій: ${np} · таймерів: ${nt})`;
+        }
+        if (_ffPanelOpen) renderFuelFilter(d);
+    } catch (e) { /* non-fatal */ }
+}
+
+function renderFuelFilter(d) {
+    const s = d.settings || {};
+    // settings inputs (don't clobber while focused)
+    const setIf = (id, val) => {
+        const el = document.getElementById(id);
+        if (el && document.activeElement !== el) {
+            if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+        }
+    };
+    setIf('ff-duration', s.duration_minutes);
+    setIf('ff-potential', s.potential_threshold_pct);
+    setIf('ff-use-potential', s.use_potential_exit);
+    setIf('ff-mode', s.mode);
+    setIf('ff-maxpos', s.max_positions);
+
+    // positions
+    const pb = document.getElementById('ff-positions-tbody');
+    if (pb) {
+        const rows = d.positions || [];
+        if (!rows.length) {
+            pb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Немає відкритих позицій</td></tr>';
+        } else {
+            pb.innerHTML = rows.map(p => {
+                const pnl = (p.pnl_pct != null) ? p.pnl_pct : 0;
+                const pnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#888';
+                const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(0) + '%' : '—';
+                const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
+                return `<tr>
+                    <td style="font-weight:600">${p.symbol}</td>
+                    <td style="color:${p.side === 'LONG' ? '#22c55e' : '#ef4444'}">${p.side}</td>
+                    <td style="font-family:monospace;font-size:0.74rem">${fmtNum(p.entry_price)}</td>
+                    <td style="font-family:monospace;font-size:0.74rem">${fmtNum(p.last_price)}</td>
+                    <td style="font-weight:700;color:${pnlColor}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
+                    <td style="color:${exhColor};font-size:0.74rem">${exh}</td>
+                    <td style="font-size:0.7rem;color:#8b93a7">${p.fuel_dir_at_entry != null ? p.fuel_dir_at_entry : '—'}</td>
+                    <td style="font-size:0.7rem;color:#888">${fmtAge(p.age_sec)}</td>
+                    <td style="font-size:0.7rem;color:${p.mode === 'real' ? '#fbbf24' : '#a5b4fc'}">${p.mode === 'real' ? 'REAL' : 'PAPER'}</td>
+                </tr>`;
+            }).join('');
+        }
+    }
+
+    // timers
+    const tb = document.getElementById('ff-timers-tbody');
+    if (tb) {
+        const rows = d.timers || [];
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="4" class="tm-empty-msg">Немає активних таймерів</td></tr>';
+        } else {
+            tb.innerHTML = rows.map(t => {
+                const prog = t.progress_pct != null ? t.progress_pct : 0;
+                return `<tr>
+                    <td style="font-weight:600">${t.symbol}</td>
+                    <td style="color:${t.dir === 'LONG' ? '#22c55e' : '#ef4444'}">${t.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</td>
+                    <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
+                    <td style="min-width:120px"><div style="background:rgba(255,255,255,0.08);border-radius:4px;height:10px;overflow:hidden"><div style="width:${prog}%;height:100%;background:${prog >= 100 ? '#4ade80' : '#facc15'}"></div></div><span style="font-size:0.62rem;color:#8b93a7">${prog}%</span></td>
+                </tr>`;
+            }).join('');
+        }
+    }
+
+    // closed
+    const cb = document.getElementById('ff-closed-tbody');
+    if (cb) {
+        const rows = d.closed || [];
+        if (!rows.length) {
+            cb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Немає закритих угод</td></tr>';
+        } else {
+            cb.innerHTML = rows.map(c => {
+                const pnl = (c.pnl_pct != null) ? c.pnl_pct : 0;
+                const pnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#888';
+                const ts = c.closed_at ? new Date(c.closed_at * 1000).toLocaleString('uk-UA', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+                const reason = (c.reason || '').replace(/_/g, ' ');
+                return `<tr>
+                    <td style="font-size:0.68rem;color:#888">${ts}</td>
+                    <td style="font-weight:600">${c.symbol}</td>
+                    <td style="color:${c.side === 'LONG' ? '#22c55e' : '#ef4444'}">${c.side}</td>
+                    <td style="font-family:monospace;font-size:0.72rem">${fmtNum(c.entry_price)}</td>
+                    <td style="font-family:monospace;font-size:0.72rem">${fmtNum(c.exit_price)}</td>
+                    <td style="font-weight:700;color:${pnlColor}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
+                    <td style="font-size:0.68rem;color:#8b93a7">${reason}</td>
+                    <td style="font-size:0.68rem;color:${c.mode === 'real' ? '#fbbf24' : '#a5b4fc'}">${c.mode === 'real' ? 'REAL' : 'PAPER'}</td>
+                </tr>`;
+            }).join('');
+        }
+    }
+}
+
+function fmtNum(v) {
+    if (v == null) return '—';
+    const n = Number(v);
+    if (!isFinite(n)) return '—';
+    if (n >= 1000) return n.toFixed(1);
+    if (n >= 1) return n.toFixed(3);
+    return n.toPrecision(4);
+}
+
+function fmtAge(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    if (sec < 60) return sec + 'с';
+    const m = Math.floor(sec / 60), s = sec % 60;
+    if (m < 60) return m + 'хв ' + s + 'с';
+    const h = Math.floor(m / 60);
+    return h + 'г ' + (m % 60) + 'хв';
+}
+
+function toggleFuelFilterPanel() {
+    const body = document.getElementById('fuel-filter-body');
+    const chevron = document.getElementById('fuel-filter-chevron');
+    if (!body || !chevron) return;
+    if (body.style.display === 'none') {
+        body.style.display = '';
+        chevron.textContent = '▼';
+        _ffPanelOpen = true;
+        loadFuelFilterStatus();  // full render on open
+    } else {
+        body.style.display = 'none';
+        chevron.textContent = '▶';
+        _ffPanelOpen = false;
+    }
+}
+
+async function onFuelFilterToggle(event) {
+    event.stopPropagation();
+    const cb = document.getElementById('fuel-filter-toggle');
+    if (!cb) return;
+    try {
+        await fetch('/api/fuel-filter/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: cb.checked})
+        });
+        loadFuelFilterStatus();
+    } catch (e) {
+        alert('Помилка перемикання: ' + e);
+    }
+}
+
+async function saveFuelFilterSettings() {
+    const payload = {
+        duration_minutes: parseInt(document.getElementById('ff-duration').value || '5', 10),
+        potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
+        use_potential_exit: document.getElementById('ff-use-potential').checked,
+        mode: document.getElementById('ff-mode').value,
+        max_positions: parseInt(document.getElementById('ff-maxpos').value || '0', 10),
+    };
+    try {
+        const r = await (await fetch('/api/fuel-filter/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        })).json();
+        if (r.ok) {
+            loadFuelFilterStatus();
+        } else {
+            alert('Помилка: ' + (r.reason || 'невідома'));
+        }
+    } catch (e) {
+        alert('Помилка запиту: ' + e);
+    }
+}
+
+async function clearFuelFilterClosed(event) {
+    event.stopPropagation();
+    if (!confirm('Очистити історію закритих угод fuel-фільтра?')) return;
+    try {
+        await fetch('/api/fuel-filter/clear-closed', {method: 'POST'});
+        loadFuelFilterStatus();
+    } catch (e) {
+        alert('Помилка: ' + e);
+    }
+}
+
 async function toggleTrendAlert(tf, on) {
     const key = tf === '1h' ? 'trend_alert_1h' : 'trend_alert';
     try {
@@ -7677,10 +7976,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadBias();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadBlockedTradesStats(); };
+    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadBlockedTradesStats(); loadFuelFilterStatus(); };
     refreshAll();
     loadTrendAlertState();
     setInterval(refreshAll, 60000);
+    // Fuel-filter refreshes faster (30s) so timers/positions feel live.
+    setInterval(loadFuelFilterStatus, 30000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
     // a scan we want fast updates so user sees rows appear progressively.
     // Snapshot endpoint is cheap (single DB query), no real cost.
