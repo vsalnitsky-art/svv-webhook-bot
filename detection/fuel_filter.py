@@ -377,19 +377,21 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] {symbol}: attempting to open {side} position via TM...")
             try:
                 if is_real:
-                    # Real position via TM
-                    print(f"[FuelFilter] {symbol}: calling tm.manual_open({symbol}, {side})")
-                    res = tm.manual_open(symbol, side)
+                    # Real position via TM — bypass LONG/SHORT gates
+                    # Fuel Filter operates independently from manual trade signals
+                    print(f"[FuelFilter] {symbol}: calling tm.manual_open({symbol}, {side}, bypass_gates=True)")
+                    res = tm.manual_open(symbol, side, bypass_gates=True)
                     print(f"[FuelFilter] {symbol}: manual_open returned: {res}")
                     if not res or not res.get('ok'):
                         reason = (res or {}).get('reason', 'unknown')
                         print(f"[FuelFilter] {symbol}: real open rejected: {reason}")
                         return
                 else:
-                    # Paper position via Test Mode (shadow)
+                    # Paper position via Test Mode (shadow) — bypass LONG/SHORT gates
+                    # Fuel Filter operates independently from manual trade signals
                     if hasattr(tm, '_open_shadow') and callable(tm._open_shadow):
-                        print(f"[FuelFilter] {symbol}: calling tm._open_shadow({symbol}, {side}, {entry_price}, 'fuel_filter')")
-                        tm._open_shadow(symbol, side, entry_price, 'fuel_filter')
+                        print(f"[FuelFilter] {symbol}: calling tm._open_shadow({symbol}, {side}, {entry_price}, 'fuel_filter', bypass_gates=True)")
+                        tm._open_shadow(symbol, side, entry_price, 'fuel_filter', bypass_gates=True)
                         print(f"[FuelFilter] {symbol}: _open_shadow call completed")
                     else:
                         print(f"[FuelFilter] {symbol}: Test Mode enabled but _open_shadow not available")
@@ -610,6 +612,15 @@ class FuelFilterDaemon:
                     self._timers.pop(symbol, None)
                     continue
 
+                # exit 1a-WAIT: WAIT verdict → close position immediately and clear timer
+                # WAIT means unclear direction, position should not be held
+                if settings.get('skip_wait_coins', False) and self._is_wait_verdict(symbol):
+                    print(f"[FuelFilter] {symbol}: WAIT verdict detected — closing position")
+                    self._close(symbol, mark or 0.0, reason='wait_verdict',
+                                is_real=is_real)
+                    self._timers.pop(symbol, None)
+                    continue
+
                 # exit 1b: FUEL FADE (status neutral/None) → only close after a
                 # sustained grace period. Transient gaps must NOT close us.
                 if status != side:
@@ -643,6 +654,13 @@ class FuelFilterDaemon:
 
             # ---- no position: run the timer ----
             if status in ('LONG', 'SHORT'):
+                # WAIT check: if skip_wait_coins enabled and verdict is WAIT, reset timer
+                if settings.get('skip_wait_coins', False) and self._is_wait_verdict(symbol):
+                    print(f"[FuelFilter] {symbol}: WAIT verdict — resetting timer")
+                    if symbol in self._timers:
+                        self._timers.pop(symbol, None)
+                    continue
+
                 t = self._timers.get(symbol)
                 if not t or t.get('dir') != status:
                     # new status (or direction flip) → (re)start timer
@@ -723,6 +741,26 @@ class FuelFilterDaemon:
             return {sym: track.get('exhaustion')
                     for sym, track in self._fuel_managed.items()
                     if track.get('exhaustion') is not None}
+
+    def delete_timer(self, symbol: str) -> bool:
+        """Delete a specific timer. Returns True if deleted, False if not found."""
+        symbol = symbol.upper()
+        with self._lock:
+            if symbol in self._timers:
+                self._timers.pop(symbol)
+                self._persist_state()
+                print(f"[FuelFilter] Timer deleted: {symbol}")
+                return True
+            return False
+
+    def clear_all_timers(self) -> int:
+        """Clear all timers. Returns count of timers cleared."""
+        with self._lock:
+            count = len(self._timers)
+            self._timers.clear()
+            self._persist_state()
+            print(f"[FuelFilter] Cleared {count} timers")
+            return count
 
 
 _instance: Optional[FuelFilterDaemon] = None

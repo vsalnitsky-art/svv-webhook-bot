@@ -2744,6 +2744,34 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/delete-timer', methods=['POST'])
+    def api_fuel_filter_delete_timer():
+        """Delete a specific timer. Body: {"symbol": "BTCUSDT"}."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            symbol = data.get('symbol', '')
+            deleted = ff.delete_timer(symbol)
+            return jsonify({'ok': True, 'deleted': deleted, 'symbol': symbol.upper()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/clear-timers', methods=['POST'])
+    def api_fuel_filter_clear_timers():
+        """Clear all timers."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            count = ff.clear_all_timers()
+            return jsonify({'ok': True, 'cleared': count})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     # ========== Database Admin ==========
 
     @app.route('/database')

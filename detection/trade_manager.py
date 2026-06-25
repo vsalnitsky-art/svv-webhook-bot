@@ -1917,16 +1917,17 @@ class TradeManager:
             print(f"[TM] snapshot hold error: {e}")
         return snap
 
-    def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str):
+    def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False):
         s = self._settings
-        
+
         # === Global directional gate ===
         # Master toggle ON by default for both sides. When the user flips
         # off LONG (or SHORT), NO real opens go through for that side —
         # regardless of who called us (SMC signal, manual UI, future
         # webhook). Closures and reverses still close existing positions
         # normally; only the open step is blocked.
-        if not self._side_allowed(side):
+        # EXCEPT: when bypass_gates=True (Fuel Auto-Filter), always allow.
+        if not bypass_gates and not self._side_allowed(side):
             print(f"[TM] 🚫 REAL {side} entries disabled — {symbol} not opened")
             return
         
@@ -2469,13 +2470,17 @@ class TradeManager:
     # Shadow (paper) positions — for test_mode
     # ============================================================
     
-    def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str):
-        """Open a paper-trading position. No Bybit calls."""
+    def _open_shadow(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False):
+        """Open a paper-trading position. No Bybit calls.
+
+        bypass_gates: If True, ignore LONG/SHORT entry gates (used by Fuel Auto-Filter).
+        """
         # === Global directional gate (same toggle as real) ===
         # Test mode shadows respect the same LONG/SHORT master gate so the
         # paper-trading view stays consistent with what a real deployment
         # would have done. Closures/exits run normally; only opens blocked.
-        if not self._side_allowed(side):
+        # EXCEPT: when bypass_gates=True (Fuel Auto-Filter), always allow.
+        if not bypass_gates and not self._side_allowed(side):
             print(f"[TM] 🚫 SHADOW {side} entries disabled — {symbol} not opened")
             return
         
@@ -3515,14 +3520,16 @@ class TradeManager:
               f"new signals/auto-exits {'ignored' if enabled else 'active'}")
         return {'ok': True, 'position': updated, 'manual_mode': bool(enabled)}
     
-    def manual_open(self, symbol: str, side: str) -> Dict:
+    def manual_open(self, symbol: str, side: str, bypass_gates: bool = False) -> Dict:
         """User-initiated position open from the Decision Center panel.
-        
+
         Uses Position Sizing settings from TM (sizing_mode, fixed_usd_amount,
         leverage, use_sl, use_tp, sl_pct, tp_pct etc.) — exactly the same
         path as auto-opened positions, but triggered by an explicit user
         click rather than an SMC signal.
-        
+
+        bypass_gates: If True, ignore LONG/SHORT entry gates (used by Fuel Auto-Filter).
+
         Validations before placing the order:
           - TM must be enabled (master toggle ON)
           - Symbol must not already have an open position (real or shadow)
@@ -3530,7 +3537,7 @@ class TradeManager:
           - side ∈ {'LONG', 'SHORT'}
           - Bybit must be configured (API key)
           - Current price must be available (market_data lookup)
-        
+
         Returns:
           { ok: bool, reason?: str, position?: {...} }
         """
@@ -3569,7 +3576,7 @@ class TradeManager:
         # _open_position handles sizing, SL/TP, leverage, place_order,
         # entry_score computation, position dict, persistence, notify.
         try:
-            self._open_position(symbol, side, entry_price, opened_by='manual_ui')
+            self._open_position(symbol, side, entry_price, opened_by='manual_ui', bypass_gates=bypass_gates)
         except Exception as e:
             return {'ok': False, 'reason': f'Open error: {e}'}
         
