@@ -5580,6 +5580,14 @@ def compute_bias(db, symbol, wl=None):
         lm = get_liquidation_map()
         fa = fb = 0.0
         if lm is not None:
+            # Register symbol so liq-map scans it. Without this, only BTC/ETH +
+            # FF-flagged coins + recently UI-viewed coins have data; everything
+            # else shows "Liq-палива немає даних". request_symbol adds it to the
+            # on-demand list (30-min TTL, refreshed each call).
+            try:
+                lm.request_symbol(symbol)
+            except Exception:
+                pass
             try:
                 prof = db.get_setting('liqmap_decay_profile', 'tori')
             except Exception:
@@ -5909,6 +5917,14 @@ def compute_bias_for_ff(db, symbol):
         lm = get_liquidation_map()
         fa = fb = 0.0
         if lm is not None:
+            # Register symbol so liq-map scans it. Without this, only BTC/ETH +
+            # FF-flagged coins + recently UI-viewed coins have data; everything
+            # else shows "Liq-палива немає даних". request_symbol adds it to the
+            # on-demand list (30-min TTL, refreshed each call).
+            try:
+                lm.request_symbol(symbol)
+            except Exception:
+                pass
             try:
                 prof = db.get_setting('liqmap_decay_profile', 'tori')
             except Exception:
