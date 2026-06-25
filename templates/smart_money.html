@@ -1776,27 +1776,26 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                         <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин статус палива має триматись безперервно перед відкриттям">Тривалість статусу (хв)</label>
-                            <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                            <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Не відкривати угоду якщо виснаженість вище цього порога">Макс. виснаженість входу (%)</label>
-                            <input type="number" id="ff-max-exhaustion" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                            <input type="number" id="ff-max-exhaustion" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості виходу (%)</label>
-                            <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                            <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
-                                <input type="checkbox" id="ff-use-potential"> Вихід за виснаженістю
+                                <input type="checkbox" id="ff-use-potential" onchange="saveFuelFilterSettings()"> Вихід за виснаженістю
                             </label>
                         </div>
                         <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоди по монетах у стані WAIT (невизначений напрямок)">
-                                <input type="checkbox" id="ff-skip-wait"> Ігнорувати WAIT монети
+                                <input type="checkbox" id="ff-skip-wait" onchange="saveFuelFilterSettings()"> Ігнорувати WAIT монети
                             </label>
                         </div>
-                        <button onclick="saveFuelFilterSettings()" style="font-size:0.72rem;padding:6px 14px;border-radius:6px;border:1px solid rgba(74,222,128,0.4);background:rgba(74,222,128,0.1);color:#4ade80;cursor:pointer">💾 Зберегти</button>
                     </div>
                 </div>
             </div>
