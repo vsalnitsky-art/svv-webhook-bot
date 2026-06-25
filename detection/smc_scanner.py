@@ -2379,6 +2379,10 @@ class SMCScanner:
                 if tm:
                     result = tm.on_signal(symbol=symbol, side=side_label,
                                           entry_price=entry_price, opened_by=mode)
+                    # TM may return None (e.g. signal ignored: manual mode,
+                    # side-gate disabled, dedup) — normalize so the .get()
+                    # calls below never crash on NoneType.
+                    result = result or {}
                     # TM returns {'real_opened','shadow_opened','status','reason','is_paper'}
                     trade_opened = result.get('real_opened') or result.get('shadow_opened')
                     tm_status = result.get('status',

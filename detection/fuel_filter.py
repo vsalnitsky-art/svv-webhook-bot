@@ -50,6 +50,7 @@ from typing import Optional, Callable, Dict, List
 
 CYCLE_SECS = 30                 # scan cadence (twice per liq-map refresh)
 EXHAUSTION_TTL = 120            # cache exhaustion per symbol for 2 min
+BIAS_TTL = 10                   # cache compute_bias result per symbol (sec)
 FUEL_LONG_THR = 0.1            # fuel_dir > +0.1 → LONG bias
 FUEL_SHORT_THR = -0.1          # fuel_dir < -0.1 → SHORT bias
 CLOSED_LIMIT = 100             # keep last N closes for the UI
@@ -89,6 +90,10 @@ class FuelFilterDaemon:
         self._fuel_managed: Dict[str, Dict] = {}  # symbol -> {opened_at, side, fuel_dir}
         # exhaustion cache: symbol -> {ts, exhaustion, side}
         self._exh_cache: Dict[str, Dict] = {}
+        # compute_bias cache: symbol -> {ts, data}. Shared by exhaustion,
+        # verdict and panel-status so we call the (heavy) shared bias
+        # computation at most once per symbol per BIAS_TTL window.
+        self._bias_cache: Dict[str, Dict] = {}
         self._last_tick_ts = 0
         self._load_state()
 
@@ -266,14 +271,27 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] fuel calc error {symbol}: {e}")
             return None
 
+    def _bias(self, symbol: str) -> Dict:
+        """Cached shared-bias computation (the SAME function that powers the
+        dashboard's verdict board + "Потенціал LONG/SHORT" panel). All FF
+        consumers (exhaustion, verdict, panel-status) go through here so the
+        numbers FF shows/uses are byte-for-byte the panel's numbers — no
+        independent re-computation that could drift. wl=None on purpose:
+        watchlist consensus is intentionally NOT considered by FF."""
+        now = time.time()
+        c = self._bias_cache.get(symbol)
+        if c and (now - c.get('ts', 0)) < BIAS_TTL:
+            return c.get('data') or {}
+        from web.flask_app import compute_bias
+        data = compute_bias(self._db, symbol, wl=None) or {}
+        self._bias_cache[symbol] = {'ts': now, 'data': data}
+        return data
+
     def _is_wait_verdict(self, symbol: str) -> bool:
         """Check if the given symbol has a WAIT verdict (unclear direction).
         Returns True if verdict is WAIT, False otherwise (or on error)."""
         try:
-            # Import compute_bias from flask_app (shared bias computation)
-            from web.flask_app import compute_bias
-            verdict_data = compute_bias(self._db, symbol, wl=None)
-            verdict = verdict_data.get('verdict', 'WAIT')
+            verdict = self._bias(symbol).get('verdict', 'WAIT')
             return verdict == 'WAIT'
         except Exception as e:
             print(f"[FuelFilter] verdict check error {symbol}: {e}")
@@ -357,9 +375,7 @@ class FuelFilterDaemon:
         out['exhausted'] = (exh is not None and exh > out['max_exhaustion'])
         # Verdict (WAIT gate input) — uses wl=None (watchlist NOT considered)
         try:
-            from web.flask_app import compute_bias
-            verdict_data = compute_bias(self._db, symbol, wl=None)
-            out['verdict'] = verdict_data.get('verdict', 'WAIT')
+            out['verdict'] = self._bias(symbol).get('verdict', 'WAIT')
         except Exception:
             out['verdict'] = None
         out['wait_blocked'] = (out['skip_wait'] and out.get('verdict') == 'WAIT')
@@ -382,43 +398,17 @@ class FuelFilterDaemon:
         return out
 
     def _exhaustion(self, symbol: str, side: str) -> Optional[float]:
-        """Move exhaustion (0..100) for an OPEN position only. Uses the SAME
-        data source as the dashboard's "Потенціал LONG/SHORT" panel (scanner's
-        cached klines) so percentages match. Cached with a short TTL. Returns
-        None on insufficient data."""
-        now = time.time()
-        c = self._exh_cache.get(symbol)
-        if c and c.get('side') == side and (now - c.get('ts', 0)) < EXHAUSTION_TTL:
-            return c.get('exhaustion')
+        """Move exhaustion (0..100) for `side`. Reads the EXACT value the
+        dashboard's "Потенціал LONG/SHORT" panel shows — i.e. compute_bias's
+        move_long['exhaustion'] / move_short['exhaustion'] — so FF's numbers
+        match the panel byte-for-byte (no separate re-computation that drifts).
+        Returns None on insufficient data."""
         try:
-            from detection.move_potential import analyze_move_potential
-            # Use scanner's cached klines (same source as dashboard panel)
-            mp_klines = None
-            bars_per_day = 96
-            try:
-                from detection.smc_scanner import get_smc_scanner
-                _sc = get_smc_scanner()
-                if _sc:
-                    mp_klines = _sc._get_cached_klines(symbol)
-            except Exception:
-                pass
-            # Fallback to 1h klines if scanner cache unavailable
-            if not mp_klines or len(mp_klines) < 20:
-                try:
-                    from detection.market_data import get_market_data
-                    md = get_market_data()
-                    if md:
-                        mp_klines = md.fetch_klines(symbol, interval='1h', limit=200)
-                        bars_per_day = 24
-                except Exception:
-                    pass
-            if not mp_klines or len(mp_klines) < 20:
-                return None
-            mp = analyze_move_potential(side=side, klines=mp_klines,
-                                        bars_per_day=bars_per_day)
-            exh = mp.get('exhaustion') if mp and mp.get('ok') else None
-            self._exh_cache[symbol] = {'ts': now, 'exhaustion': exh, 'side': side}
-            return exh
+            data = self._bias(symbol)
+            mv = data.get('move_long') if side == 'LONG' else data.get('move_short')
+            if mv and mv.get('ok'):
+                return mv.get('exhaustion')
+            return None
         except Exception as e:
             print(f"[FuelFilter] exhaustion calc error {symbol}: {e}")
             return None
@@ -436,7 +426,7 @@ class FuelFilterDaemon:
         entry_price = fuel.get('mark_price')
         if not entry_price or entry_price <= 0:
             print(f"[FuelFilter] {symbol}: no entry price — skip open")
-            return
+            return False
 
         # CHECK EXHAUSTION BEFORE OPENING: don't enter exhausted moves
         max_exh = settings.get('max_exhaustion_pct', 75)
@@ -444,19 +434,19 @@ class FuelFilterDaemon:
         if exh is not None and exh > max_exh:
             print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% — "
                   f"rejecting open (too exhausted)")
-            return
+            return False
 
         # CHECK WAIT VERDICT: if enabled, don't open coins in WAIT state
         if settings.get('skip_wait_coins', False):
             if self._is_wait_verdict(symbol):
                 print(f"[FuelFilter] {symbol}: verdict is WAIT — "
                       f"rejecting open (skip_wait_coins enabled)")
-                return
+                return False
 
         tm = self._get_tm() if self._get_tm else None
         if not tm:
             print(f"[FuelFilter] {symbol}: no TradeManager available — skip open")
-            return
+            return False
 
         # Check which mode is active (TM real or Test Mode paper)
         tm_settings = tm.get_settings() if hasattr(tm, 'get_settings') and callable(tm.get_settings) else {}
@@ -467,7 +457,7 @@ class FuelFilterDaemon:
 
         if not tm_enabled and not test_mode:
             print(f"[FuelFilter] {symbol}: neither TM nor Test Mode enabled — skip open")
-            return
+            return False
 
         # Prefer real TM if both are on
         is_real = tm_enabled
@@ -490,7 +480,7 @@ class FuelFilterDaemon:
                     if not res or not res.get('ok'):
                         reason = (res or {}).get('reason', 'unknown')
                         print(f"[FuelFilter] {symbol}: real open rejected: {reason}")
-                        return
+                        return False
                 else:
                     # Paper position via Test Mode (shadow) — bypass LONG/SHORT gates
                     # Fuel Filter operates independently from manual trade signals
@@ -500,25 +490,26 @@ class FuelFilterDaemon:
                         print(f"[FuelFilter] {symbol}: _open_shadow call completed")
                     else:
                         print(f"[FuelFilter] {symbol}: Test Mode enabled but _open_shadow not available")
-                        return
+                        return False
             except Exception as e:
                 print(f"[FuelFilter] {symbol}: open error ({mode}): {e}")
                 import traceback
                 traceback.print_exc()
-                return
+                return False
 
             # VERIFY the open actually landed before tracking. _open_shadow can
             # silently return early (e.g. LONG/SHORT entries gated off), and a
             # real open can be rejected at the order layer. If nothing landed,
             # do NOT mark _fuel_managed — otherwise the timer disappears but no
-            # position exists ("trades vanish, nothing happens"). Leaving it
-            # untracked lets the timer keep running and retry next cycle.
+            # position exists ("trades vanish, nothing happens"). Returning
+            # False makes the caller reset the timer so we retry next DURATION
+            # window instead of hammering the failing open every single cycle.
             has_pos = self._tm_has_position(symbol, is_real)
             print(f"[FuelFilter] {symbol}: verification check — _tm_has_position={has_pos}")
             if not has_pos:
                 print(f"[FuelFilter] {symbol}: open did not land in TM "
-                      f"(gated/rejected) — NOT tracking, timer continues")
-                return
+                      f"(gated/rejected) — NOT tracking, timer will restart")
+                return False
 
         # Track that fuel filter opened this position (for exit condition monitoring)
         with self._lock:
@@ -529,8 +520,10 @@ class FuelFilterDaemon:
                 'mode': mode,
             }
             self._persist_state()
+        exh_str = f"{exh:.1f}%" if exh is not None else 'N/A'
         print(f"[FuelFilter] OPEN SUCCESS: {mode} {side} {symbol} @ {entry_price} "
-              f"(fuel {fuel.get('dir')}, exhaustion {exh:.1f}% if exh else 'N/A')")
+              f"(fuel {fuel.get('dir')}, exhaustion {exh_str})")
+        return True
 
     def _tm_has_position(self, symbol: str, is_real: bool) -> bool:
         """True if TradeManager currently holds a position for this symbol in
@@ -792,7 +785,15 @@ class FuelFilterDaemon:
 
                 held = now - t.get('since', now)
                 if held >= duration_sec:
-                    self._open(symbol, status, fuel, settings)
+                    opened = self._open(symbol, status, fuel, settings)
+                    if not opened:
+                        # Open failed/rejected (e.g. qty below minOrderQty for
+                        # high-priced coins like BTC/ETH, gated, exhausted).
+                        # Reset the timer so we retry once per DURATION window
+                        # instead of hammering the same failing open every cycle
+                        # (which floods the log). It restarts fresh and, if the
+                        # blocking condition clears, opens on the next cycle.
+                        self._timers.pop(symbol, None)
             else:
                 # status off → reset any running timer
                 if symbol in self._timers:
@@ -828,17 +829,13 @@ class FuelFilterDaemon:
                 if sym in self._fuel_managed:
                     continue  # already opened, don't show timer
                 held = now - t.get('since', now)
-                timer_data = {
+                timers.append({
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
                     'exhaustion': t.get('exhaustion'),
                     'progress_pct': (round(min(100.0, held / duration_sec * 100.0), 1)
                                      if duration_sec > 0 else 100.0),
-                }
-                # Attach indicators (forecast + fuel) for UI display
-                indicators = self.get_coin_indicators(sym)
-                timer_data['indicators'] = indicators
-                timers.append(timer_data)
+                })
             scan_list = self.get_scan_list()
         return {
             'ok': True,
