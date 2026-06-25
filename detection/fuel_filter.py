@@ -896,7 +896,11 @@ class FuelFilterDaemon:
         # Direction comes from the timer (set when the timer started). For a
         # manual force-open we don't require fuel to STILL point that way —
         # the operator explicitly wants in. We only need a valid entry price.
-        side = timer['side']
+        # NOTE: timers store the direction under 'dir' (see tick loop /
+        # get_state), NOT 'side' — reading 'side' raised KeyError: 'side'.
+        side = timer.get('dir')
+        if side not in ('LONG', 'SHORT'):
+            return {'ok': False, 'reason': f'Таймер {symbol} без напрямку'}
 
         # Use the SAME fuel helper the tick loop uses. It returns
         # {dir, mark_price, status} and has its own market_data fallback for
