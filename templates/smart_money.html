@@ -1860,7 +1860,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span id="tm-reconcile-info" style="color:#888;font-size:0.74rem;font-style:italic"></span>
                 </label>
             </div>
-            
+
+            <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:8px 10px;margin-bottom:10px">
+                <label style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <span>📊 Max Open Positions:</span>
+                    <input type="number" id="tm-max-positions"
+                           min="1" max="50" step="1"
+                           style="width:70px"
+                           onchange="saveTMSettings()">
+                    <span style="color:#888;font-size:0.78rem">позицій</span>
+                    <span class="tm-help" title="Максимальна кількість одночасно відкритих РЕАЛЬНИХ позицій на Bybit. При досягненні ліміту нові сигнали (та ручні відкриття) автоматично йдуть у 🧪 Test Mode (якщо тумблер Test Mode увімкнений). Дефолт: 10.">?</span>
+                </label>
+            </div>
+
             <details>
                 <summary class="sm-settings-summary" style="padding:6px 0">
                     <span>⚙️ Strategy Settings</span>
@@ -1905,13 +1917,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                             <input type="number" id="tm-leverage" min="1" max="50" step="1" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">x</span>
-                        </div>
-                        <div class="tm-row">
-                            <label>Max Open Positions:
-                                <span class="tm-help" title="Максимальна кількість одночасно відкритих РЕАЛЬНИХ позицій. При досягненні ліміту нові сигнали автоматично відкриваються в Test Mode (якщо увімкнений). Дефолт: 10">?</span>
-                            </label>
-                            <input type="number" id="tm-max-positions" min="1" max="50" step="1" onchange="saveTMSettings()">
-                            <span style="color:#888;font-size:0.75rem">позицій</span>
                         </div>
                     </div>
 
