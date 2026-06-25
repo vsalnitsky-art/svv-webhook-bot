@@ -2697,7 +2697,8 @@ def register_api_routes(app):
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
         """Update settings. Body may include any of: enabled, duration_minutes,
-        potential_threshold_pct, use_potential_exit, mode, max_positions."""
+        potential_threshold_pct, use_potential_exit, max_exhaustion_pct,
+        skip_wait_coins. All persisted to DB and reloaded on boot."""
         try:
             from detection.fuel_filter import get_fuel_filter
             ff = get_fuel_filter()
