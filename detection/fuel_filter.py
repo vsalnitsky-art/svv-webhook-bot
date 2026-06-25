@@ -76,8 +76,8 @@ class FuelFilterDaemon:
         self._lock = threading.RLock()
         # live state (restored from DB on boot)
         self._timers: Dict[str, Dict] = {}      # symbol -> {dir, since}
-        self._positions: Dict[str, Dict] = {}   # symbol -> position dict
-        self._closed: List[Dict] = []           # recent closes (newest last)
+        # Tracking dict: which symbols fuel filter opened (not full position data)
+        self._fuel_managed: Dict[str, Dict] = {}  # symbol -> {opened_at, side, fuel_dir}
         # exhaustion cache: symbol -> {ts, exhaustion, side}
         self._exh_cache: Dict[str, Dict] = {}
         self._last_tick_ts = 0
@@ -143,18 +143,16 @@ class FuelFilterDaemon:
             st = {}
         if isinstance(st, dict):
             self._timers = st.get('timers', {}) or {}
-            self._positions = st.get('positions', {}) or {}
-            self._closed = st.get('closed', []) or []
-            if self._positions:
-                print(f"[FuelFilter] restored {len(self._positions)} open "
+            self._fuel_managed = st.get('fuel_managed', {}) or {}
+            if self._fuel_managed:
+                print(f"[FuelFilter] restored {len(self._fuel_managed)} tracked "
                       f"position(s), {len(self._timers)} timer(s) from DB")
 
     def _persist_state(self):
         try:
             self._db.set_setting(_DB_STATE, {
                 'timers': self._timers,
-                'positions': self._positions,
-                'closed': self._closed[-CLOSED_LIMIT:],
+                'fuel_managed': self._fuel_managed,
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -262,12 +260,13 @@ class FuelFilterDaemon:
             return None
 
     # ------------------------------------------------------------------
-    # open / close (paper native, real delegated to TradeManager)
+    # open / close (pure delegation to TradeManager)
     # ------------------------------------------------------------------
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict):
-        """Open position via Trade Manager (real) or Test Mode (paper) based on
-        their toggle states. No local 'mode' setting — positions are delegated
-        to the existing TM/Test Mode infrastructure."""
+        """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
+        store position data — it only tracks which symbols it opened and delegates
+        the actual position to TM. Positions appear in Trade Manager or Test Mode
+        tables based on toggle states."""
         entry_price = fuel.get('mark_price')
         if not entry_price or entry_price <= 0:
             return
@@ -278,29 +277,17 @@ class FuelFilterDaemon:
             return
 
         # Check which mode is active (TM real or Test Mode paper)
-        tm_enabled = tm.is_enabled() if hasattr(tm, 'is_enabled') and callable(tm.is_enabled) else False
-        test_enabled = tm.is_test_mode_enabled() if hasattr(tm, 'is_test_mode_enabled') and callable(tm.is_test_mode_enabled) else False
+        tm_settings = tm.get_settings() if hasattr(tm, 'get_settings') and callable(tm.get_settings) else {}
+        tm_enabled = tm_settings.get('enabled', False)
+        test_mode = tm_settings.get('test_mode', True)
 
-        if not tm_enabled and not test_enabled:
+        if not tm_enabled and not test_mode:
             print(f"[FuelFilter] neither TM nor Test Mode enabled — skip {symbol}")
             return
 
         # Prefer real TM if both are on
         is_real = tm_enabled
         mode = 'real' if is_real else 'paper'
-
-        pos = {
-            'symbol': symbol,
-            'side': side,
-            'entry_price': entry_price,
-            'opened_at': time.time(),
-            'fuel_dir_at_entry': fuel.get('dir'),
-            'mode': mode,
-            'is_paper': not is_real,
-            'last_price': entry_price,
-            'pnl_pct': 0.0,
-            'exhaustion': None,
-        }
 
         try:
             if is_real:
@@ -310,67 +297,60 @@ class FuelFilterDaemon:
                     reason = (res or {}).get('reason', 'unknown')
                     print(f"[FuelFilter] real open rejected {symbol}: {reason}")
                     return
-                rp = res.get('entry_price') or res.get('position', {}).get('entry_price')
-                if rp:
-                    pos['entry_price'] = rp
-                    pos['last_price'] = rp
             else:
                 # Paper position via Test Mode (shadow)
                 if hasattr(tm, '_open_shadow') and callable(tm._open_shadow):
-                    tm._open_shadow(symbol, side, entry_price, source='fuel_filter')
+                    tm._open_shadow(symbol, side, entry_price, 'fuel_filter')
                 else:
                     print(f"[FuelFilter] Test Mode enabled but _open_shadow not available")
                     return
         except Exception as e:
             print(f"[FuelFilter] open error {symbol} ({mode}): {e}")
+            import traceback
+            traceback.print_exc()
             return
 
+        # Track that fuel filter opened this position (for exit condition monitoring)
         with self._lock:
-            self._positions[symbol] = pos
+            self._fuel_managed[symbol] = {
+                'opened_at': time.time(),
+                'side': side,
+                'fuel_dir': fuel.get('dir'),
+                'mode': mode,
+            }
             self._persist_state()
-        print(f"[FuelFilter] OPEN {mode} {side} {symbol} @ {pos['entry_price']} "
+        print(f"[FuelFilter] OPEN {mode} {side} {symbol} @ {entry_price} "
               f"(fuel {fuel.get('dir')})")
 
-    def _close(self, symbol: str, exit_price: float, reason: str):
-        with self._lock:
-            pos = self._positions.pop(symbol, None)
-        if not pos:
+    def _close(self, symbol: str, exit_price: float, reason: str, is_real: bool):
+        """Trigger position close via TM. Removes fuel tracking."""
+        tm = self._get_tm() if self._get_tm else None
+        if not tm:
             return
-        if pos.get('mode') == 'real':
-            tm = self._get_tm() if self._get_tm else None
-            if tm:
-                try:
-                    # Route through whichever close helper the TM exposes.
-                    if hasattr(tm, 'manual_close'):
-                        tm.manual_close(symbol, reason=reason)
-                    elif hasattr(tm, 'close_position'):
-                        tm.close_position(symbol, reason=reason)
-                    elif hasattr(tm, '_close_position'):
-                        tm._close_position(symbol, exit_price, reason)
-                except Exception as e:
-                    print(f"[FuelFilter] real close error {symbol}: {e}")
-        side = pos.get('side')
-        entry = pos.get('entry_price') or exit_price
-        if entry and exit_price:
-            sign = 1 if side == 'LONG' else -1
-            pnl_pct = (exit_price - entry) / entry * 100.0 * sign
-        else:
-            pnl_pct = 0.0
-        rec = {
-            'symbol': symbol, 'side': side,
-            'entry_price': entry, 'exit_price': exit_price,
-            'opened_at': pos.get('opened_at'),
-            'closed_at': time.time(),
-            'pnl_pct': round(pnl_pct, 3),
-            'reason': reason,
-            'mode': pos.get('mode', 'paper'),
-        }
+
+        try:
+            if is_real:
+                # Real position — TM will close via Bybit
+                if hasattr(tm, 'manual_close') and callable(tm.manual_close):
+                    tm.manual_close(symbol, reason=reason)
+                else:
+                    print(f"[FuelFilter] TM has no manual_close method")
+            else:
+                # Shadow position — TM will close internally (needs exit_price)
+                if hasattr(tm, '_close_shadow') and callable(tm._close_shadow):
+                    tm._close_shadow(symbol, exit_price, reason)
+                else:
+                    print(f"[FuelFilter] TM has no _close_shadow method")
+        except Exception as e:
+            print(f"[FuelFilter] close error {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Remove fuel tracking
         with self._lock:
-            self._closed.append(rec)
-            self._closed = self._closed[-CLOSED_LIMIT:]
+            self._fuel_managed.pop(symbol, None)
             self._persist_state()
-        print(f"[FuelFilter] CLOSE {symbol} @ {exit_price} "
-              f"({pnl_pct:+.2f}%) reason={reason}")
+        print(f"[FuelFilter] CLOSE trigger {symbol} reason={reason}")
 
     # ------------------------------------------------------------------
     # main loop
@@ -414,14 +394,19 @@ class FuelFilterDaemon:
             watchlist = self._get_watchlist() or []
         except Exception:
             watchlist = []
-        # union of watchlist + symbols we already hold (so we keep managing a
-        # position even if its coin drops off the watchlist)
+        # union of watchlist + symbols fuel filter opened (so we keep managing
+        # positions even if a coin drops off the watchlist)
         symbols = list(dict.fromkeys(
-            [s.upper() for s in watchlist] + list(self._positions.keys())))
+            [s.upper() for s in watchlist] + list(self._fuel_managed.keys())))
 
         # CRITICAL: register all symbols with the liq map so it scans them.
         # Otherwise only BTC/ETH + UI-viewed coins have fuel data.
         self._register_with_liqmap(symbols)
+
+        # Get TM settings to know which mode positions live in
+        tm = self._get_tm() if self._get_tm else None
+        tm_settings = tm.get_settings() if tm and hasattr(tm, 'get_settings') else {}
+        tm_enabled = tm_settings.get('enabled', False)
 
         duration_sec = settings['duration_minutes'] * 60
         now = time.time()
@@ -429,36 +414,45 @@ class FuelFilterDaemon:
         for symbol in symbols:
             fuel = self._fuel_dir(symbol)
             status = fuel.get('status') if fuel else None
-            has_pos = symbol in self._positions
+            fuel_managed = symbol in self._fuel_managed
 
-            # ---- manage an OPEN position ----
-            if has_pos:
-                pos = self._positions[symbol]
+            # ---- manage positions fuel filter opened ----
+            if fuel_managed:
+                track = self._fuel_managed[symbol]
+                side = track['side']
+                is_real = track.get('mode') == 'real'
                 mark = fuel.get('mark_price') if fuel else None
-                if mark:
-                    pos['last_price'] = mark
-                    sign = 1 if pos['side'] == 'LONG' else -1
-                    pos['pnl_pct'] = round(
-                        (mark - pos['entry_price']) / pos['entry_price']
-                        * 100.0 * sign, 3)
+
+                # If no mark price available, try to get current price
+                if not mark:
+                    try:
+                        from detection.market_data import get_market_data
+                        md = get_market_data()
+                        if md:
+                            ticker = md.get_ticker(symbol)
+                            mark = ticker.get('last') if ticker else None
+                    except Exception:
+                        pass
+
+                # Compute exhaustion (for UI display + exit condition)
+                exh = self._exhaustion(symbol, side)
+                if exh is not None:
+                    with self._lock:
+                        track['exhaustion'] = exh
+
                 # exit 1: fuel status changed / disappeared / flipped
-                if status != pos['side']:
-                    self._close(symbol, mark or pos['entry_price'],
-                                reason='fuel_status_changed')
+                if status != side:
+                    exit_price = mark if mark else 0.0
+                    self._close(symbol, exit_price, reason='fuel_status_changed', is_real=is_real)
                     self._timers.pop(symbol, None)
                     continue
+
                 # exit 2: exhaustion reached (optional)
-                if settings['use_potential_exit']:
-                    exh = self._exhaustion(symbol, pos['side'])
-                    if exh is not None:
-                        pos['exhaustion'] = exh
-                        if exh >= settings['potential_threshold_pct']:
-                            self._close(symbol, mark or pos['entry_price'],
-                                        reason='potential_reached')
-                            self._timers.pop(symbol, None)
-                            continue
-                with self._lock:
-                    self._persist_state()
+                if settings['use_potential_exit'] and exh is not None:
+                    if exh >= settings['potential_threshold_pct']:
+                        self._close(symbol, mark if mark else 0.0, reason='potential_reached', is_real=is_real)
+                        self._timers.pop(symbol, None)
+                        continue
                 continue
 
             # ---- no position: run the timer ----
@@ -495,16 +489,16 @@ class FuelFilterDaemon:
         self._stop.set()
 
     def get_state(self) -> Dict:
-        """Snapshot for the UI: settings + live timers + open positions +
-        recent closes."""
+        """Snapshot for the UI: settings + live timers + active tracking.
+        Actual position data lives in TM/Test Mode and is shown in their tables."""
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
             now = time.time()
             timers = []
             for sym, t in self._timers.items():
-                if sym in self._positions:
-                    continue
+                if sym in self._fuel_managed:
+                    continue  # already opened, don't show timer
                 held = now - t.get('since', now)
                 timers.append({
                     'symbol': sym, 'dir': t.get('dir'),
@@ -512,41 +506,29 @@ class FuelFilterDaemon:
                     'progress_pct': (round(min(100.0, held / duration_sec * 100.0), 1)
                                      if duration_sec > 0 else 100.0),
                 })
-            positions = []
-            for sym, p in self._positions.items():
-                positions.append({
-                    'symbol': sym, 'side': p.get('side'),
-                    'entry_price': p.get('entry_price'),
-                    'last_price': p.get('last_price'),
-                    'pnl_pct': p.get('pnl_pct'),
-                    'exhaustion': p.get('exhaustion'),
-                    'fuel_dir_at_entry': p.get('fuel_dir_at_entry'),
-                    'opened_at': p.get('opened_at'),
-                    'mode': p.get('mode', 'paper'),
-                    'age_sec': int(now - (p.get('opened_at') or now)),
-                })
-            closed = list(reversed(self._closed[-50:]))
         return {
             'ok': True,
             'settings': settings,
             'running': bool(self._thread and self._thread.is_alive()),
             'last_tick_ts': self._last_tick_ts,
             'timers': sorted(timers, key=lambda x: -x['held_sec']),
-            'positions': positions,
-            'closed': closed,
-            'active_symbols': list(self._positions.keys()),
+            'active_symbols': list(self._fuel_managed.keys()),
+            'tracked_count': len(self._fuel_managed),
         }
 
     def active_symbols(self) -> List[str]:
-        """Symbols with an open fuel position — used to draw the ❤ marker in
-        the watchlist."""
+        """Symbols with an open fuel-managed position — used to draw the ❤ marker
+        in the watchlist."""
         with self._lock:
-            return list(self._positions.keys())
+            return list(self._fuel_managed.keys())
 
-    def clear_closed(self):
+    def get_exhaustion_map(self) -> Dict[str, float]:
+        """Get exhaustion values for all fuel-managed positions (for UI merge).
+        Returns {symbol: exhaustion_pct, ...}."""
         with self._lock:
-            self._closed = []
-            self._persist_state()
+            return {sym: track.get('exhaustion')
+                    for sym, track in self._fuel_managed.items()
+                    if track.get('exhaustion') is not None}
 
 
 _instance: Optional[FuelFilterDaemon] = None
