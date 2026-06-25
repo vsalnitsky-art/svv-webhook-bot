@@ -1104,31 +1104,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-analysis-row { display:flex; gap:14px; margin-top:14px; align-items:stretch; }
     .sm-analysis-row > .sm-move-panel { flex:1; margin-top:0; min-width:0; }
     @media (max-width:760px) { .sm-analysis-row { flex-direction:column; } }
-    .sm-rev-panel { }
-    .sm-rev-section { margin-top:12px; padding-top:10px;
-        border-top:1px solid rgba(255,255,255,0.07); }
-    .sm-rev-header { display:flex; align-items:center; justify-content:space-between;
-        margin-bottom:8px; }
-    .sm-rev-title { font-size:0.78rem; font-weight:700; color:#cbd5e1; }
-    .sm-rev-level { font-size:0.72rem; font-weight:700; padding:2px 9px; border-radius:5px; }
-    .sm-rev-level.dir-up { color:#4ade80; background:rgba(34,197,94,0.12); }
-    .sm-rev-level.dir-down { color:#f87171; background:rgba(248,113,113,0.12); }
-    .sm-rev-level.dir-none { color:#8b93a7; background:rgba(139,147,167,0.12); }
-    .sm-rev-src { font-size:0.66rem; color:#94a3b8; margin-top:6px; }
-    .sm-rev-alert-row { display:flex; align-items:center; justify-content:space-between;
-        gap:10px; margin-top:10px; padding-top:9px; cursor:pointer;
-        border-top:1px solid rgba(255,255,255,0.06); font-size:0.7rem; color:#cbd5e1; }
-    .sm-rev-alert-row input { cursor:pointer; width:16px; height:16px; }
-    .sm-rev-trend { font-size:0.78rem; font-weight:700; color:#e2e8f0; margin:2px 0 6px;
-        padding:6px 10px; border-radius:6px; background:rgba(255,255,255,0.04); }
     .sm-rev-direction { font-size:0.72rem; color:#cbd5e1; margin:2px 0 10px;
         padding:6px 10px; border-radius:6px; background:rgba(255,255,255,0.03); }
-    .sm-rev-source-badge { font-size:0.64rem; font-weight:700; padding:2px 8px;
-        border-radius:5px; letter-spacing:0.3px; }
-    .sm-rev-source-badge.binance { color:#f0b90b; background:rgba(240,185,11,0.14);
-        border:1px solid rgba(240,185,11,0.4); }
-    .sm-rev-source-badge.bybit { color:#f7a600; background:rgba(247,166,0,0.14);
-        border:1px solid rgba(247,166,0,0.4); }
     .sm-move-note { font-size:0.68rem; color:#94a3b8; }
     .sm-bias-price { display:flex; align-items:center; gap:8px; margin-bottom:10px;
         padding:8px 12px; border-radius:8px;
@@ -1170,15 +1147,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-bias-updated { font-size:0.7rem; color:#667; font-family:monospace; margin-top:8px; }
     .sm-bias-autonote { font-size:0.74rem; color:#c084fc; margin-top:6px;
         display:none; font-family:monospace; }
-    /* Alignment banner — explains how the bot verdict relates to the 4H trend
-       so the reversal/exhaustion blocks stop reading as a contradiction. */
-    .sm-align-banner { margin:10px 0 4px; padding:8px 12px; border-radius:8px;
-        font-size:0.8rem; line-height:1.35; border:1px solid transparent; }
-    .sm-align-banner.ok   { background:rgba(74,222,128,0.10); border-color:rgba(74,222,128,0.35); color:#bbf7d0; }
-    .sm-align-banner.warn { background:rgba(251,191,36,0.10); border-color:rgba(251,191,36,0.40); color:#fde68a; }
-    .sm-align-banner.bad  { background:rgba(248,113,113,0.10); border-color:rgba(248,113,113,0.40); color:#fecaca; }
-    .sm-align-banner.info { background:rgba(148,163,184,0.10); border-color:rgba(148,163,184,0.30); color:#cbd5e1; }
-    .sm-align-banner b { color:#fff; }
     .sm-bias-sym-input { background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.15);
         border-radius:6px; color:#93c5fd; padding:5px 10px; font-family:monospace;
         font-size:0.82rem; width:110px; text-transform:uppercase; }
@@ -1247,7 +1215,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             <div class="sm-bias-extra" id="sm-bias-extra"></div>
         </div>
-        <div class="sm-align-banner" id="sm-align-banner" style="display:none"></div>
         <!-- Row 1: Move-potential for BOTH directions side-by-side.
              The verdict direction is highlighted. Seeing LONG and SHORT
              at once makes verdict flips understandable: when SHORT is
@@ -1280,53 +1247,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="sm-move-bar-val" id="sm-move-bar-val-short">—</span>
             </div>
             <div class="sm-move-notes" id="sm-move-notes-short"></div>
-        </div>
-        </div>
-        <!-- Row 2: Trend exhaustion (4H | 1H) -->
-        <div class="sm-analysis-row">
-        <div class="sm-move-panel sm-rev-panel" id="sm-rev-section" style="display:none">
-            <div class="sm-rev-header" title="Виснаження 4H тренду: 0% = тренд свіжий і міцний, 100% = тренд повністю виснажений і близький до зламу. Рахується як зважена сума умов, що історично передують розвороту (RSI-екстремум, дивергенція, розтяг, funding, OI, натовп, тіні). Це НЕ сигнал розвертатись — це оцінка того, скільки запасу лишилось у ПОТОЧНОГО тренду. Напрямок зламу (куди піде ПРИ розвороті) показано лише як контекст.">
-                <span class="sm-rev-title">📉 Виснаження тренду (4H)</span>
-                <span style="display:flex;align-items:center;gap:6px">
-                    <span class="sm-rev-source-badge" id="sm-rev-source-badge" style="display:none"></span>
-                    <span class="sm-rev-level" id="sm-rev-level">—</span>
-                </span>
-            </div>
-            <div class="sm-rev-trend" id="sm-rev-trend" style="display:none"></div>
-            <div class="sm-rev-direction" id="sm-rev-direction" style="display:none"></div>
-            <div class="sm-move-bar-wrap">
-                <span class="sm-move-bar-label" id="sm-rev-bar-label">виснаження тренду</span>
-                <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev-bar-fill"></div></div>
-                <span class="sm-move-bar-val" id="sm-rev-bar-val">—</span>
-            </div>
-            <div class="sm-move-notes" id="sm-rev-notes"></div>
-            <div class="sm-rev-src" id="sm-rev-src"></div>
-            <label class="sm-rev-alert-row" title="Надсилати сповіщення в Telegram, коли 4H тренд змінює напрямок (LONG↔SHORT). За замовчуванням вимкнено.">
-                <span>🔔 Telegram при зміні 4H тренду</span>
-                <input type="checkbox" id="sm-rev-trend-alert" onchange="toggleTrendAlert('4h', this.checked)">
-            </label>
-        </div>
-        <div class="sm-move-panel sm-rev-panel" id="sm-rev1h-section" style="display:none">
-            <div class="sm-rev-header" title="Те саме, що 4H, але для 1H таймфрейму — швидший горизонт. Виснаження 1H тренду: 0% = свіжий і міцний, 100% = виснажений, близький до зламу. НЕ сигнал розвертатись — оцінка запасу поточного тренду.">
-                <span class="sm-rev-title">📉 Виснаження тренду (1H)</span>
-                <span style="display:flex;align-items:center;gap:6px">
-                    <span class="sm-rev-source-badge" id="sm-rev1h-source-badge" style="display:none"></span>
-                    <span class="sm-rev-level" id="sm-rev1h-level">—</span>
-                </span>
-            </div>
-            <div class="sm-rev-trend" id="sm-rev1h-trend" style="display:none"></div>
-            <div class="sm-rev-direction" id="sm-rev1h-direction" style="display:none"></div>
-            <div class="sm-move-bar-wrap">
-                <span class="sm-move-bar-label" id="sm-rev1h-bar-label">виснаження тренду</span>
-                <div class="sm-move-bar"><div class="sm-move-bar-fill" id="sm-rev1h-bar-fill"></div></div>
-                <span class="sm-move-bar-val" id="sm-rev1h-bar-val">—</span>
-            </div>
-            <div class="sm-move-notes" id="sm-rev1h-notes"></div>
-            <div class="sm-rev-src" id="sm-rev1h-src"></div>
-            <label class="sm-rev-alert-row" title="Надсилати сповіщення в Telegram, коли 1H тренд змінює напрямок (LONG↔SHORT). За замовчуванням вимкнено.">
-                <span>🔔 Telegram при зміні 1H тренду</span>
-                <input type="checkbox" id="sm-rev1h-trend-alert" onchange="toggleTrendAlert('1h', this.checked)">
-            </label>
         </div>
         </div>
         <div class="sm-bias-autonote" id="sm-bias-autonote"></div>
@@ -2138,7 +2058,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
                         <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
-                        <th title="Trade Quality Gate V2 (data-driven filter): оцінка якості входу 0–100 та grade, зафіксовані на момент відкриття. Наведіть для розкладу балів по 4 факторам.">QG</th>
                         <th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
@@ -2162,83 +2081,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
     </div>
     
-    <!-- ====== TRADE QUALITY GATE ====== -->
-    <div class="tm-panel" id="quality-gate-panel" style="margin-top:14px">
-        <div class="tm-header">
-            <h2 style="display:flex;align-items:center;gap:8px">
-                🎯 Trade Quality Gate
-                <span style="color:#666;font-size:0.75rem;font-weight:normal">(data-driven filter)</span>
-            </h2>
-            <div class="tm-master-toggle">
-                <span id="qg-status-label" style="font-size:0.8rem;color:#888">Off</span>
-                <label class="tm-toggle-switch">
-                    <input type="checkbox" id="tm-quality-gate-enabled" onchange="toggleQualityGate()">
-                    <span class="slider"></span>
-                </label>
-            </div>
-        </div>
-        <div class="tm-body" id="quality-gate-body">
-            <div class="tm-row" style="background:rgba(124,58,237,0.06);border:1px solid rgba(124,58,237,0.2);border-radius:4px;padding:8px 10px;margin-bottom:10px;color:#c4b5fd;font-size:0.78rem">
-                ℹ️ V2: незалежні фактори (ADR room, HTF alignment, ATR, Decision score). Грейди: EXCELLENT ≥75, GOOD ≥60, FAIR ≥45, POOR &lt;45. Виснаження &gt;85% → жорстке блокування.
-            </div>
-
-            <!-- Mode selector -->
-            <div class="tm-row">
-                <label style="display:block;margin-bottom:6px;color:#aaa;font-size:0.8rem">
-                    Режим роботи
-                    <span class="tm-help" title="Advisory — показує оцінку, але не блокує. Filter — блокує сигнали нижче порогу.">?</span>
-                </label>
-                <div style="display:flex;gap:8px;flex-wrap:wrap">
-                    <label class="tm-radio-label">
-                        <input type="radio" name="qg-mode" value="off" onchange="saveQualityGateSettings()">
-                        <span>❌ Off</span>
-                    </label>
-                    <label class="tm-radio-label">
-                        <input type="radio" name="qg-mode" value="advisory" checked onchange="saveQualityGateSettings()">
-                        <span>ℹ️ Advisory</span>
-                    </label>
-                    <label class="tm-radio-label">
-                        <input type="radio" name="qg-mode" value="filter" onchange="saveQualityGateSettings()">
-                        <span>🚫 Filter</span>
-                    </label>
-                </div>
-                <div style="font-size:0.7rem;color:#888;margin-top:4px" id="qg-mode-hint">
-                    Показує оцінку якості, але не блокує сигнали
-                </div>
-            </div>
-
-            <!-- Threshold slider -->
-            <div class="tm-row">
-                <label style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                    <span style="color:#aaa;font-size:0.8rem">Мінімальна оцінка (Filter mode)</span>
-                    <span id="qg-threshold-value" style="font-family:monospace;color:#c4b5fd;font-weight:700">50</span>
-                </label>
-                <input type="range" id="tm-quality-threshold" min="0" max="100" step="5" value="50"
-                       style="width:100%" oninput="updateQualityThreshold()" onchange="saveQualityGateSettings()">
-                <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:#666;margin-top:2px">
-                    <span>0 (всі)</span>
-                    <span>50 (median)</span>
-                    <span>75 (EXCELLENT)</span>
-                </div>
-            </div>
-
-            <!-- Stats hint -->
-            <div class="tm-row" style="background:rgba(255,255,255,0.02);padding:8px;border-radius:4px;font-size:0.72rem;color:#94a3b8">
-                <div style="margin-bottom:4px;font-weight:600;color:#cbd5e1">📊 V2 Grades (логічні пороги):</div>
-                <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-family:monospace">
-                    <span style="color:#888">Оцінка</span>
-                    <span style="color:#888">Grade</span>
-
-                    <span>75-100</span><span style="color:#4ade80">EXCELLENT</span>
-                    <span>60-74</span><span style="color:#22c55e">GOOD</span>
-                    <span>45-59</span><span style="color:#fbbf24">FAIR</span>
-                    <span>0-44</span><span style="color:#f87171">POOR</span>
-                </div>
-                <div style="margin-top:6px;font-size:0.68rem;color:#6b7280">⚠️ Поріг 50 блокує POOR + нижню половину FAIR. Train/test валідація: /detection/quality_gate_v2.py</div>
-            </div>
-        </div>
-    </div>
-
     <!-- ====== TEST MODE (Paper Trading) — separate panel ====== -->
     <div class="tm-panel" id="trade-archive-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
@@ -2264,41 +2106,91 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         <div id="ta-hint" style="font-size:0.66rem;color:#6b7280;margin-top:6px"></div>
     </div>
 
-    <!-- ===== BLOCKED TRADES (V2 Quality Gate rejections) ===== -->
-    <div class="tm-panel" id="blocked-trades-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;cursor:pointer" onclick="toggleBlockedTradesPanel()">
+    <!-- ===== FUEL AUTO-FILTER (liquidation-fuel timed entries) ===== -->
+    <div class="tm-panel" id="fuel-filter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;cursor:pointer" onclick="toggleFuelFilterPanel()">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span id="blocked-trades-chevron" style="font-size:0.75rem;user-select:none">▶</span>
-                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Сигнали, відхилені V2 Quality Gate через низький скор або exhaustion kill-switch. Натисніть для розгортання.">🚫 Blocked Trades (V2 Quality Filter)</span>
-                <span id="blocked-total" style="font-size:0.8rem;font-family:monospace;color:#f87171;font-weight:700">—</span>
-                <span id="blocked-breakdown" style="font-size:0.7rem;color:#8b93a7"></span>
+                <span id="fuel-filter-chevron" style="font-size:0.75rem;user-select:none">▶</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Автофільтр: коли по монеті зі WATCHLIST статус «Паливо зверху/знизу» тримається задану кількість хвилин — відкриває угоду в напрямку палива. Закриває при зміні статусу або досягненні виснаженості. Натисніть для розгортання.">❤️ Fuel Auto-Filter</span>
+                <span id="fuel-filter-status" style="font-size:0.8rem;font-family:monospace;font-weight:700;color:#8b93a7">—</span>
+                <span id="fuel-filter-summary" style="font-size:0.7rem;color:#8b93a7"></span>
             </div>
-            <button onclick="clearBlockedTrades(event)" style="font-size:0.72rem;padding:5px 12px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer" title="Очистити всі заблоковані угоди">🗑️ Очистити</button>
+            <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="Увімкнути/вимкнути автофільтр">
+                <input type="checkbox" id="fuel-filter-toggle" onchange="onFuelFilterToggle(event)">
+                <span class="slider"></span>
+            </label>
         </div>
-        <div id="blocked-trades-body" style="display:none;margin-top:12px">
-            <table class="tm-table" id="blocked-trades-table">
+        <div id="fuel-filter-body" style="display:none;margin-top:12px">
+            <!-- settings -->
+            <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015);margin-bottom:12px">
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин статус палива має триматись безперервно перед відкриттям">Тривалість статусу (хв)</label>
+                    <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості (%)</label>
+                    <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                </div>
+                <div>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
+                        <input type="checkbox" id="ff-use-potential"> Вихід за виснаженістю
+                    </label>
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="paper = віртуальні угоди (без реальних ордерів); real = реальні угоди через Trade Manager">Режим</label>
+                    <select id="ff-mode" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb">
+                        <option value="paper">📝 Paper (віртуально)</option>
+                        <option value="real">💰 Real (через TM)</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="0 = без ліміту">Макс. позицій</label>
+                    <input type="number" id="ff-maxpos" min="0" step="1" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                </div>
+                <button onclick="saveFuelFilterSettings()" style="font-size:0.72rem;padding:6px 14px;border-radius:6px;border:1px solid rgba(74,222,128,0.4);background:rgba(74,222,128,0.1);color:#4ade80;cursor:pointer">💾 Зберегти</button>
+            </div>
+
+            <!-- open positions -->
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;margin:6px 0">📊 Відкриті позиції</div>
+            <table class="tm-table" id="ff-positions-table">
                 <thead>
                     <tr>
-                        <th>Час</th>
-                        <th>Символ</th>
-                        <th>Side</th>
-                        <th>Ціна</th>
-                        <th>Score</th>
-                        <th>Grade</th>
-                        <th>ADR</th>
-                        <th>HTF</th>
-                        <th>ATR</th>
-                        <th>Decision</th>
-                        <th>Причина блоку</th>
-                        <th title="Test (paper) чи Real">Mode</th>
+                        <th>Символ</th><th>Side</th><th>Вхід</th><th>Ціна</th>
+                        <th>PnL %</th><th title="Виснаженість руху">Виснаж.</th>
+                        <th title="Паливо при вході">Fuel</th><th>Вік</th><th>Режим</th>
                     </tr>
                 </thead>
-                <tbody id="blocked-trades-tbody">
-                    <tr><td colspan="12" class="tm-empty-msg">Немає заблокованих угод</td></tr>
+                <tbody id="ff-positions-tbody">
+                    <tr><td colspan="9" class="tm-empty-msg">Немає відкритих позицій</td></tr>
+                </tbody>
+            </table>
+
+            <!-- running timers -->
+            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;margin:14px 0 6px">⏱️ Активні таймери</div>
+            <table class="tm-table" id="ff-timers-table">
+                <thead>
+                    <tr><th>Символ</th><th>Напрямок</th><th>Тримається</th><th>Прогрес</th></tr>
+                </thead>
+                <tbody id="ff-timers-tbody">
+                    <tr><td colspan="4" class="tm-empty-msg">Немає активних таймерів</td></tr>
+                </tbody>
+            </table>
+
+            <!-- recent closes -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 6px">
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">📕 Останні закриття</div>
+                <button onclick="clearFuelFilterClosed(event)" style="font-size:0.68rem;padding:4px 10px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer">🗑️ Очистити</button>
+            </div>
+            <table class="tm-table" id="ff-closed-table">
+                <thead>
+                    <tr><th>Закрито</th><th>Символ</th><th>Side</th><th>Вхід</th><th>Вихід</th><th>PnL %</th><th>Причина</th><th>Режим</th></tr>
+                </thead>
+                <tbody id="ff-closed-tbody">
+                    <tr><td colspan="8" class="tm-empty-msg">Немає закритих угод</td></tr>
                 </tbody>
             </table>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Кожна заблокована угода містить повний розклад балів по 4 факторам + сирі метрики для аналізу якості фільтрації.
+                💡 Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість рахується лише для відкритих позицій. Скан кожні 30с. Усі дані зберігаються в БД і відновлюються після перезапуску.
             </div>
         </div>
     </div>
@@ -2340,11 +2232,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, paper позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
                         <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
-                        <th title="Trade Quality Gate V2 (data-driven filter): оцінка якості входу 0–100 та grade, зафіксовані на момент відкриття. Наведіть для розкладу балів по 4 факторам.">QG</th>
                         <th>Status</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -3108,8 +2999,15 @@ function renderWatchlist(list) {
             srcHtml = `<span class="wl-src wl-src-manual" title="Додано вручну">M</span>`;
         }
         
+        // ❤ Fuel Auto-Filter marker — shown when this coin currently has an
+        // open fuel-filter position. Updated from loadFuelFilterStatus (30s).
+        let fuelHeartHtml = '';
+        if (typeof _ffActiveSymbols !== 'undefined' && _ffActiveSymbols.indexOf(sym) !== -1) {
+            fuelHeartHtml = `<span title="Активна угода Fuel Auto-Filter" style="margin-right:4px;font-size:0.8rem">❤️</span>`;
+        }
+
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${fuelHeartHtml}${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
@@ -5415,43 +5313,6 @@ async function loadTMSettings() {
             archiveStatus.style.color = archiveEnabled ? '#22c55e' : '#888';
         }
 
-        // === Quality Gate ===
-        const qgEnabled = !!s.use_quality_gate;
-        const qgToggle = document.getElementById('tm-quality-gate-enabled');
-        const qgStatus = document.getElementById('qg-status-label');
-        const qgBody = document.getElementById('quality-gate-body');
-        if (qgToggle) qgToggle.checked = qgEnabled;
-        if (qgStatus) {
-            qgStatus.textContent = qgEnabled ? 'Enabled' : 'Off';
-            qgStatus.style.color = qgEnabled ? '#22c55e' : '#888';
-        }
-        if (qgBody) qgBody.style.display = qgEnabled ? 'block' : 'none';
-
-        // Quality Gate mode
-        const qgMode = s.quality_gate_mode || 'advisory';
-        const modeInputs = document.getElementsByName('qg-mode');
-        for (const input of modeInputs) {
-            input.checked = (input.value === qgMode);
-        }
-
-        // Quality Gate threshold (V2 default: 50)
-        const qgThreshold = s.quality_gate_threshold ?? 50;
-        const thresholdSlider = document.getElementById('tm-quality-threshold');
-        const thresholdValue = document.getElementById('qg-threshold-value');
-        if (thresholdSlider) thresholdSlider.value = qgThreshold;
-        if (thresholdValue) thresholdValue.textContent = qgThreshold;
-
-        // Update mode hint
-        const modeHint = document.getElementById('qg-mode-hint');
-        if (modeHint) {
-            const hints = {
-                'off': 'Оцінка не рахується',
-                'advisory': 'Показує оцінку якості, але не блокує сигнали',
-                'filter': `Блокує сигнали з оцінкою < ${qgThreshold}`
-            };
-            modeHint.textContent = hints[qgMode] || '';
-        }
-
         // === Global direction gates (LONG / SHORT) — apply to ALL opens ===
         // Default both ON when keys are missing (older deploys). We use
         // explicit `=== false` check to distinguish "not yet saved" from
@@ -5786,16 +5647,6 @@ async function saveTMSettings() {
                 return isNaN(n) ? null : n;
             })(),
             entry_score_weights: collectEntryWeights(),
-            // Quality Gate
-            use_quality_gate: document.getElementById('tm-quality-gate-enabled')?.checked || false,
-            quality_gate_mode: (function() {
-                const modeInputs = document.getElementsByName('qg-mode');
-                for (const input of modeInputs) {
-                    if (input.checked) return input.value;
-                }
-                return 'advisory';
-            })(),
-            quality_gate_threshold: parseInt(document.getElementById('tm-quality-threshold')?.value, 10) || 50,
         };
         try {
             await fetch('/api/tm/settings', {
@@ -6058,47 +5909,6 @@ function holdScoreCellHTML(hold) {
             padding:2px 8px;border-radius:6px;background:${bg};
             border:1px solid ${c}55;font-weight:700;font-size:0.78rem;color:${c}">
             ${hold.score}<span style="font-size:0.6rem;opacity:0.9;letter-spacing:0.3px">${hold.verdict}</span>
-        </span></td>`;
-}
-
-function qgCellHTML(qg) {
-    // V2 Quality Gate verdict captured at entry. qg = {score, grade, mode,
-    // reason, breakdown}. None/undefined → gate was off or manual entry.
-    if (!qg || qg.score === undefined || qg.score === null) {
-        return '<td style="color:#555;font-size:0.7rem" title="Quality Gate вимкнено або ручний вхід">—</td>';
-    }
-    const gradeColor = {
-        'EXCELLENT': '#22c55e',
-        'GOOD': '#4ade80',
-        'FAIR': '#facc15',
-        'POOR': '#f87171',
-        'BLOCKED': '#ef4444'
-    }[qg.grade] || '#9ca3af';
-    const bg = {
-        'EXCELLENT': 'rgba(34,197,94,0.12)',
-        'GOOD': 'rgba(74,222,128,0.12)',
-        'FAIR': 'rgba(250,204,21,0.10)',
-        'POOR': 'rgba(248,113,113,0.12)',
-        'BLOCKED': 'rgba(239,68,68,0.12)'
-    }[qg.grade] || 'rgba(255,255,255,0.05)';
-    const b = qg.breakdown || {};
-    const compLines = [
-        `ADR room: ${b.adr_room ?? '-'} / 35`,
-        `HTF alignment: ${b.htf_alignment ?? '-'} / 30`,
-        `ATR: ${b.atr ?? '-'} / 20`,
-        `Decision: ${b.decision ?? '-'} / 15`,
-    ].join('\n');
-    const modeLabel = qg.mode === 'filter' ? 'Filter (блокує < поріг)'
-                    : qg.mode === 'advisory' ? 'Advisory (тільки оцінка)' : (qg.mode || '');
-    const tip = `Trade Quality Gate V2: ${qg.score}/100 → ${qg.grade}\\n`
-        + `Режим: ${modeLabel}\\n`
-        + (qg.reason ? `${qg.reason}\\n` : '') + '\\n'
-        + compLines;
-    return `<td title="${tip.replace(/"/g, '&quot;')}">
-        <span style="display:inline-flex;align-items:center;gap:6px;
-            padding:2px 8px;border-radius:6px;background:${bg};
-            border:1px solid ${gradeColor}55;font-weight:700;font-size:0.78rem;color:${gradeColor}">
-            ${qg.score}<span style="font-size:0.6rem;opacity:0.9;letter-spacing:0.3px">${qg.grade}</span>
         </span></td>`;
 }
 
@@ -6387,138 +6197,6 @@ function biasWatchlistParams() {
     return `&wl_src=${src}&wl_long=${nLong}&wl_short=${nShort}&wl_flat=${nFlat}`;
 }
 
-function renderReversal(rev, opts) {
-    // opts: {sec, lvl, trend, dir, barFill, barVal, barLabel, notes, src,
-    //        badge, row} id strings + tf ('4H'|'1H'). Defaults = 4H panel.
-    opts = opts || {};
-    const tf = opts.tf || '4H';
-    const id = (suffix, fallback) => opts[suffix] || fallback;
-    const sec = document.getElementById(id('sec', 'sm-rev-section'));
-    const row = opts.row ? document.getElementById(opts.row) : null;
-    if (!sec) return;
-    if (!rev || !rev.ok || rev.index === null || rev.index === undefined) {
-        sec.style.display = 'none';
-        if (row) row.style.display = 'none';
-        return;
-    }
-    sec.style.display = '';
-    if (row) row.style.display = '';
-    const lvl = document.getElementById(id('lvl', 'sm-rev-level'));
-    // Level now describes EXHAUSTION of the CURRENT trend, not a flip call.
-    // No reversal arrow here — "↓ ВИСОКА" used to read like "go SHORT now".
-    // The trend arrow lives in sm-rev-trend; the flip direction stays in the
-    // verdict text only, framed as "if it breaks".
-    const lmap = { NONE: '⚪ ТРЕНДУ НЕМАЄ', LOW: '🟢 СВІЖИЙ', BUILDING: '🟡 ДОЗРІЛИЙ', HIGH: '🔴 ВИСНАЖЕНИЙ' };
-    const word = lmap[rev.level] || rev.level || '—';
-    const lvlCol = rev.level === 'HIGH' ? '#f87171' : rev.level === 'BUILDING' ? '#fbbf24'
-        : rev.level === 'NONE' ? '#8b93a7' : '#4ade80';
-    if (lvl) { lvl.className = 'sm-rev-level'; lvl.style.color = lvlCol; lvl.textContent = word; }
-
-    const trendEl = document.getElementById(id('trend', 'sm-rev-trend'));
-    if (trendEl) {
-        const t = rev.trend_4h;
-        if (t === 'LONG' || t === 'SHORT') {
-            const lbl = rev.trend_4h_label || (t === 'LONG' ? '↑ ВГОРУ' : '↓ ВНИЗ');
-            const col = t === 'LONG' ? '#4ade80' : '#f87171';
-            trendEl.innerHTML = `${tf} тренд зараз: <span style="color:${col}">${lbl}</span>`;
-        } else {
-            trendEl.innerHTML = `${tf} тренд зараз: <span style="color:#8b93a7">↔ ВБІК (консолідація)</span>`;
-        }
-        trendEl.style.display = '';
-    }
-
-    const dirEl = document.getElementById(id('dir', 'sm-rev-direction'));
-    if (dirEl) {
-        if (rev.verdict_text) { dirEl.innerHTML = `<b>${rev.verdict_text}</b>`; dirEl.style.display = ''; }
-        else dirEl.style.display = 'none';
-    }
-
-    const bf = document.getElementById(id('barFill', 'sm-rev-bar-fill'));
-    const bv = document.getElementById(id('barVal', 'sm-rev-bar-val'));
-    const idx = rev.index || 0;
-    if (bf) {
-        bf.style.width = idx + '%';
-        // Colour by exhaustion, not by flip direction: green=fresh,
-        // amber=maturing, red=exhausted. Flat (NONE) stays neutral grey.
-        bf.style.background = rev.level === 'NONE' ? '#8b93a7'
-            : idx >= 60 ? '#f87171' : idx >= 35 ? '#fbbf24' : '#4ade80';
-    }
-    if (bv) bv.textContent = idx + '%';
-    const barLbl = document.getElementById(id('barLabel', 'sm-rev-bar-label'));
-    if (barLbl) {
-        const t = rev.trend_4h;
-        const trendArrow = t === 'LONG' ? '↑ LONG' : t === 'SHORT' ? '↓ SHORT' : '';
-        if (rev.level === 'NONE') barLbl.textContent = 'близькість до краю діапазону';
-        else if (trendArrow) barLbl.textContent = `виснаження ${trendArrow} тренду`;
-        else barLbl.textContent = 'виснаження тренду';
-    }
-    const notesEl = document.getElementById(id('notes', 'sm-rev-notes'));
-    if (notesEl) notesEl.innerHTML = (rev.notes || [])
-        .map(n => `<span class="sm-move-note">• ${n}</span>`).join('');
-    const badge = document.getElementById(id('badge', 'sm-rev-source-badge'));
-    if (badge) {
-        const ds = rev.data_source;
-        if (ds && ds !== 'none') {
-            badge.style.display = '';
-            badge.className = 'sm-rev-source-badge ' + ds;
-            badge.textContent = '📊 ' + ds.charAt(0).toUpperCase() + ds.slice(1);
-        } else badge.style.display = 'none';
-    }
-    const src = document.getElementById(id('src', 'sm-rev-src'));
-    if (src) {
-        const parts = [];
-        if (rev.sources_used && rev.sources_used.length)
-            parts.push('Дані: ' + rev.sources_used.join(', '));
-        src.textContent = parts.join(' · ');
-    }
-}
-
-// Bridge between the bot verdict and the 4H trend so the exhaustion blocks
-// stop reading as a contradiction. Uses the 4H reversal payload (trend_4h +
-// exhaustion index) as the higher-TF context.
-function renderTrendAlignment(verdict, rev) {
-    const el = document.getElementById('sm-align-banner');
-    if (!el) return;
-    if (!rev || !rev.ok || !rev.trend_4h || rev.index === null || rev.index === undefined) {
-        el.style.display = 'none';
-        return;
-    }
-    const t = rev.trend_4h;            // 'LONG' | 'SHORT' | 'NEUTRAL'
-    const idx = rev.index || 0;        // exhaustion 0..100
-    const v = verdict;                 // 'LONG' | 'SHORT' | 'WAIT'
-    const exWord = idx >= 60 ? 'критично виснажений' : idx >= 35 ? 'дозрів' : 'свіжий і міцний';
-    const tw = t === 'LONG' ? '↑ LONG' : '↓ SHORT';
-    let cls = 'info', html = '';
-
-    if (t === 'NEUTRAL' || rev.level === 'NONE') {
-        cls = 'info';
-        html = `↔ <b>4H у консолідації</b> — старшого тренду немає. Вердикт <b>${v}</b> спирається на молодші ТФ; чекай підтвердження 4H.`;
-    } else if (v === t) {
-        if (idx >= 60) {
-            cls = 'warn';
-            html = `⚠️ Вердикт <b>${v}</b> збігається з 4H трендом, але той <b>${exWord}</b> (${idx.toFixed(0)}%). Тренд за тебе, проте запасу мало — нові входи ризиковані, став ближчий стоп.`;
-        } else {
-            cls = 'ok';
-            html = `✅ Вердикт <b>${v}</b> у бік 4H тренду (${exWord}, ${idx.toFixed(0)}% виснаження). Молодший і старший ТФ узгоджені${idx < 35 ? ' — запас ходу великий' : ''}.`;
-        }
-    } else if (v === 'WAIT' || !v) {
-        cls = 'info';
-        html = `⏸ Вердикт <b>WAIT</b>. 4H тренд ${tw}, ${exWord} (${idx.toFixed(0)}%). Сигналу на вхід немає — це лише контекст старшого ТФ.`;
-    } else {
-        // verdict OPPOSES the 4H trend — the genuinely risky case
-        if (idx >= 60) {
-            cls = 'warn';
-            html = `⚠️ Вердикт <b>${v}</b> ПРОТИ 4H тренду (${tw}), але той ${exWord} (${idx.toFixed(0)}%) — можливий розворот саме у бік вердикту. Контр-трендовий вхід лише з підтвердженням зламу.`;
-        } else {
-            cls = 'bad';
-            html = `🔴 Вердикт <b>${v}</b> ПРОТИ 4H тренду (${tw}), а той ще ${exWord} (${idx.toFixed(0)}%). Вхід проти сильного старшого ТФ — найризикованіший сценарій.`;
-        }
-    }
-    el.className = 'sm-align-banner ' + cls;
-    el.innerHTML = html;
-    el.style.display = '';
-}
-
 // Render one move-potential panel for a given side ('LONG'|'SHORT').
 // suffix = '-long' | '-short' → element id suffix.
 // isActive = true if this is the current verdict direction (highlighted).
@@ -6624,17 +6302,6 @@ async function loadBias() {
         fill.style.background = d.verdict === 'LONG' ? '#4ade80'
             : d.verdict === 'SHORT' ? '#f87171' : '#6b7280';
         renderMovePanel(d.move_long, d.move_short, d.verdict);
-        renderReversal(d.reversal);  // 4H (default ids)
-        renderReversal(d.reversal_1h, {
-            tf: '1H',
-            sec: 'sm-rev1h-section',
-            lvl: 'sm-rev1h-level', trend: 'sm-rev1h-trend',
-            dir: 'sm-rev1h-direction', barFill: 'sm-rev1h-bar-fill',
-            barVal: 'sm-rev1h-bar-val', barLabel: 'sm-rev1h-bar-label',
-            notes: 'sm-rev1h-notes', src: 'sm-rev1h-src',
-            badge: 'sm-rev1h-source-badge',
-        });
-        renderTrendAlignment(d.verdict, d.reversal);  // 4H context vs verdict
         const icons = {ok: '✓', warn: '⚠', wait: '•'};
         // The watchlist-consensus reason line is rendered under the
         // consensus bar in the RIGHT column (not in the left reasons list),
@@ -6779,57 +6446,6 @@ async function loadTradeArchive() {
     }
 }
 
-// ========== Quality Gate ==========
-
-async function toggleQualityGate() {
-    const enabled = document.getElementById('tm-quality-gate-enabled').checked;
-    const statusLabel = document.getElementById('qg-status-label');
-    const body = document.getElementById('quality-gate-body');
-
-    if (statusLabel) {
-        statusLabel.textContent = enabled ? 'Enabled' : 'Off';
-        statusLabel.style.color = enabled ? '#22c55e' : '#888';
-    }
-    if (body) {
-        body.style.display = enabled ? 'block' : 'none';
-    }
-
-    // Save all TM settings (includes quality gate)
-    await saveTMSettings();
-}
-
-function updateQualityThreshold() {
-    const slider = document.getElementById('tm-quality-threshold');
-    const valueDisplay = document.getElementById('qg-threshold-value');
-    if (valueDisplay) valueDisplay.textContent = slider.value;
-}
-
-async function saveQualityGateSettings() {
-    // Update mode hint text
-    const modeInputs = document.getElementsByName('qg-mode');
-    let mode = 'advisory';
-    for (const input of modeInputs) {
-        if (input.checked) {
-            mode = input.value;
-            break;
-        }
-    }
-    const threshold = parseInt(document.getElementById('tm-quality-threshold')?.value, 10) || 40;
-
-    const hint = document.getElementById('qg-mode-hint');
-    if (hint) {
-        const hints = {
-            'off': 'Оцінка не рахується',
-            'advisory': 'Показує оцінку якості, але не блокує сигнали',
-            'filter': `Блокує сигнали з оцінкою < ${threshold}`
-        };
-        hint.textContent = hints[mode] || '';
-    }
-
-    // Save all TM settings (includes quality gate)
-    await saveTMSettings();
-}
-
 async function toggleTradeArchive() {
     try {
         const enabled = document.getElementById('tm-archive-enabled').checked;
@@ -6926,119 +6542,190 @@ async function clearTradeArchive() {
     }
 }
 
-// ========== Blocked Trades (V2 Quality Gate) ==========
+// ========== Fuel Auto-Filter ==========
+let _ffPanelOpen = false;
+let _ffActiveSymbols = [];
 
-async function loadBlockedTradesStats() {
+async function loadFuelFilterStatus() {
+    // Lightweight header refresh (always runs) + full table if panel open.
     try {
-        const stats = await fetch('/api/blocked-trades/stats').then(r => r.json());
-        const totalEl = document.getElementById('blocked-total');
-        const breakdownEl = document.getElementById('blocked-breakdown');
-        if (totalEl && stats.ok) {
-            totalEl.textContent = stats.total || 0;
-            if (breakdownEl) {
-                breakdownEl.textContent = `(Real: ${stats.real || 0} | Paper: ${stats.paper || 0})`;
-            }
+        const d = await fetch('/api/fuel-filter/state').then(r => r.json());
+        if (!d || !d.ok) return;
+        _ffActiveSymbols = d.active_symbols || [];
+        const s = d.settings || {};
+        const toggle = document.getElementById('fuel-filter-toggle');
+        if (toggle) toggle.checked = !!s.enabled;
+        const statusEl = document.getElementById('fuel-filter-status');
+        if (statusEl) {
+            const on = s.enabled;
+            statusEl.textContent = on ? 'ON' : 'OFF';
+            statusEl.style.color = on ? '#4ade80' : '#8b93a7';
         }
-    } catch (e) {
-        console.error('[Blocked Trades] Stats error:', e);
+        const sumEl = document.getElementById('fuel-filter-summary');
+        if (sumEl) {
+            const np = (d.positions || []).length;
+            const nt = (d.timers || []).length;
+            const mode = s.mode === 'real' ? '💰 real' : '📝 paper';
+            sumEl.textContent = `(${mode} · позицій: ${np} · таймерів: ${nt})`;
+        }
+        if (_ffPanelOpen) renderFuelFilter(d);
+    } catch (e) { /* non-fatal */ }
+}
+
+function renderFuelFilter(d) {
+    const s = d.settings || {};
+    // settings inputs (don't clobber while focused)
+    const setIf = (id, val) => {
+        const el = document.getElementById(id);
+        if (el && document.activeElement !== el) {
+            if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+        }
+    };
+    setIf('ff-duration', s.duration_minutes);
+    setIf('ff-potential', s.potential_threshold_pct);
+    setIf('ff-use-potential', s.use_potential_exit);
+    setIf('ff-mode', s.mode);
+    setIf('ff-maxpos', s.max_positions);
+
+    // positions
+    const pb = document.getElementById('ff-positions-tbody');
+    if (pb) {
+        const rows = d.positions || [];
+        if (!rows.length) {
+            pb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Немає відкритих позицій</td></tr>';
+        } else {
+            pb.innerHTML = rows.map(p => {
+                const pnl = (p.pnl_pct != null) ? p.pnl_pct : 0;
+                const pnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#888';
+                const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(0) + '%' : '—';
+                const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
+                return `<tr>
+                    <td style="font-weight:600">${p.symbol}</td>
+                    <td style="color:${p.side === 'LONG' ? '#22c55e' : '#ef4444'}">${p.side}</td>
+                    <td style="font-family:monospace;font-size:0.74rem">${fmtNum(p.entry_price)}</td>
+                    <td style="font-family:monospace;font-size:0.74rem">${fmtNum(p.last_price)}</td>
+                    <td style="font-weight:700;color:${pnlColor}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
+                    <td style="color:${exhColor};font-size:0.74rem">${exh}</td>
+                    <td style="font-size:0.7rem;color:#8b93a7">${p.fuel_dir_at_entry != null ? p.fuel_dir_at_entry : '—'}</td>
+                    <td style="font-size:0.7rem;color:#888">${fmtAge(p.age_sec)}</td>
+                    <td style="font-size:0.7rem;color:${p.mode === 'real' ? '#fbbf24' : '#a5b4fc'}">${p.mode === 'real' ? 'REAL' : 'PAPER'}</td>
+                </tr>`;
+            }).join('');
+        }
+    }
+
+    // timers
+    const tb = document.getElementById('ff-timers-tbody');
+    if (tb) {
+        const rows = d.timers || [];
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="4" class="tm-empty-msg">Немає активних таймерів</td></tr>';
+        } else {
+            tb.innerHTML = rows.map(t => {
+                const prog = t.progress_pct != null ? t.progress_pct : 0;
+                return `<tr>
+                    <td style="font-weight:600">${t.symbol}</td>
+                    <td style="color:${t.dir === 'LONG' ? '#22c55e' : '#ef4444'}">${t.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</td>
+                    <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
+                    <td style="min-width:120px"><div style="background:rgba(255,255,255,0.08);border-radius:4px;height:10px;overflow:hidden"><div style="width:${prog}%;height:100%;background:${prog >= 100 ? '#4ade80' : '#facc15'}"></div></div><span style="font-size:0.62rem;color:#8b93a7">${prog}%</span></td>
+                </tr>`;
+            }).join('');
+        }
+    }
+
+    // closed
+    const cb = document.getElementById('ff-closed-tbody');
+    if (cb) {
+        const rows = d.closed || [];
+        if (!rows.length) {
+            cb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Немає закритих угод</td></tr>';
+        } else {
+            cb.innerHTML = rows.map(c => {
+                const pnl = (c.pnl_pct != null) ? c.pnl_pct : 0;
+                const pnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#888';
+                const ts = c.closed_at ? new Date(c.closed_at * 1000).toLocaleString('uk-UA', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+                const reason = (c.reason || '').replace(/_/g, ' ');
+                return `<tr>
+                    <td style="font-size:0.68rem;color:#888">${ts}</td>
+                    <td style="font-weight:600">${c.symbol}</td>
+                    <td style="color:${c.side === 'LONG' ? '#22c55e' : '#ef4444'}">${c.side}</td>
+                    <td style="font-family:monospace;font-size:0.72rem">${fmtNum(c.entry_price)}</td>
+                    <td style="font-family:monospace;font-size:0.72rem">${fmtNum(c.exit_price)}</td>
+                    <td style="font-weight:700;color:${pnlColor}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
+                    <td style="font-size:0.68rem;color:#8b93a7">${reason}</td>
+                    <td style="font-size:0.68rem;color:${c.mode === 'real' ? '#fbbf24' : '#a5b4fc'}">${c.mode === 'real' ? 'REAL' : 'PAPER'}</td>
+                </tr>`;
+            }).join('');
+        }
     }
 }
 
-function toggleBlockedTradesPanel() {
-    const body = document.getElementById('blocked-trades-body');
-    const chevron = document.getElementById('blocked-trades-chevron');
+function fmtNum(v) {
+    if (v == null) return '—';
+    const n = Number(v);
+    if (!isFinite(n)) return '—';
+    if (n >= 1000) return n.toFixed(1);
+    if (n >= 1) return n.toFixed(3);
+    return n.toPrecision(4);
+}
+
+function fmtAge(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    if (sec < 60) return sec + 'с';
+    const m = Math.floor(sec / 60), s = sec % 60;
+    if (m < 60) return m + 'хв ' + s + 'с';
+    const h = Math.floor(m / 60);
+    return h + 'г ' + (m % 60) + 'хв';
+}
+
+function toggleFuelFilterPanel() {
+    const body = document.getElementById('fuel-filter-body');
+    const chevron = document.getElementById('fuel-filter-chevron');
     if (!body || !chevron) return;
     if (body.style.display === 'none') {
         body.style.display = '';
         chevron.textContent = '▼';
-        loadBlockedTrades();  // Lazy-load when opened
+        _ffPanelOpen = true;
+        loadFuelFilterStatus();  // full render on open
     } else {
         body.style.display = 'none';
         chevron.textContent = '▶';
+        _ffPanelOpen = false;
     }
 }
 
-async function loadBlockedTrades() {
+async function onFuelFilterToggle(event) {
+    event.stopPropagation();
+    const cb = document.getElementById('fuel-filter-toggle');
+    if (!cb) return;
     try {
-        const [list, stats] = await Promise.all([
-            fetch('/api/blocked-trades/list?limit=100').then(r => r.json()),
-            fetch('/api/blocked-trades/stats').then(r => r.json())
-        ]);
-
-        // Update stats
-        const totalEl = document.getElementById('blocked-total');
-        const breakdownEl = document.getElementById('blocked-breakdown');
-        if (totalEl && stats.ok) {
-            totalEl.textContent = stats.total || 0;
-            if (breakdownEl) {
-                breakdownEl.textContent = `(Real: ${stats.real || 0} | Paper: ${stats.paper || 0})`;
-            }
-        }
-
-        // Render table
-        const tbody = document.getElementById('blocked-trades-tbody');
-        if (!tbody || !list.ok || !list.trades || list.trades.length === 0) {
-            if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">Немає заблокованих угод</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = list.trades.map(t => {
-            const snap = t.snapshot || {};
-            const breakdown = snap.breakdown || {};
-            const metrics = snap.metrics || {};
-            const blockedAt = new Date(t.blocked_at);
-            const timeStr = blockedAt.toLocaleString('uk-UA', {
-                month: '2-digit', day: '2-digit',
-                hour: '2-digit', minute: '2-digit'
-            });
-
-            // Grade color
-            const gradeColor = {
-                'EXCELLENT': '#22c55e',
-                'GOOD': '#4ade80',
-                'FAIR': '#facc15',
-                'POOR': '#f87171',
-                'BLOCKED': '#ef4444'
-            }[snap.grade] || '#888';
-
-            // Reason icon
-            const reasonIcon = t.blocked_reason === 'exhaustion_kill_switch' ? '⛔' : '🚫';
-
-            return `
-                <tr>
-                    <td style="font-size:0.7rem;color:#888">${timeStr}</td>
-                    <td style="font-weight:600">${t.symbol}</td>
-                    <td style="color:${t.side === 'LONG' ? '#22c55e' : '#ef4444'}">${t.side}</td>
-                    <td style="font-family:monospace;font-size:0.75rem">${t.entry_price.toFixed(2)}</td>
-                    <td style="font-weight:700;color:${gradeColor}">${snap.score || 0}</td>
-                    <td style="color:${gradeColor};font-size:0.75rem">${snap.grade || '—'}</td>
-                    <td style="font-size:0.7rem">${breakdown.adr_room || 0}</td>
-                    <td style="font-size:0.7rem">${breakdown.htf_alignment || 0}</td>
-                    <td style="font-size:0.7rem">${breakdown.atr || 0}</td>
-                    <td style="font-size:0.7rem">${breakdown.decision || 0}</td>
-                    <td style="font-size:0.7rem" title="${snap.reason || ''}">${reasonIcon} ${t.blocked_reason.replace(/_/g, ' ')}</td>
-                    <td style="font-size:0.7rem;color:${t.is_paper ? '#a5b4fc' : '#fbbf24'}">${t.is_paper ? 'TEST' : 'REAL'}</td>
-                </tr>
-            `;
-        }).join('');
-
-    } catch (e) {
-        console.error('[Blocked Trades] Load error:', e);
-    }
-}
-
-async function clearBlockedTrades(event) {
-    event.stopPropagation();  // Don't toggle panel
-    if (!confirm('Очистити всі заблоковані угоди?\n\nЦе видалить історію відхилень V2 Quality Gate. Продовжити?')) return;
-    try {
-        const r = await (await fetch('/api/blocked-trades/clear', {
+        await fetch('/api/fuel-filter/toggle', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({scope: 'all'})
+            body: JSON.stringify({enabled: cb.checked})
+        });
+        loadFuelFilterStatus();
+    } catch (e) {
+        alert('Помилка перемикання: ' + e);
+    }
+}
+
+async function saveFuelFilterSettings() {
+    const payload = {
+        duration_minutes: parseInt(document.getElementById('ff-duration').value || '5', 10),
+        potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
+        use_potential_exit: document.getElementById('ff-use-potential').checked,
+        mode: document.getElementById('ff-mode').value,
+        max_positions: parseInt(document.getElementById('ff-maxpos').value || '0', 10),
+    };
+    try {
+        const r = await (await fetch('/api/fuel-filter/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
         })).json();
         if (r.ok) {
-            alert(`Видалено ${r.removed} заблокованих угод.`);
-            loadBlockedTrades();
+            loadFuelFilterStatus();
         } else {
             alert('Помилка: ' + (r.reason || 'невідома'));
         }
@@ -7047,27 +6734,15 @@ async function clearBlockedTrades(event) {
     }
 }
 
-async function toggleTrendAlert(tf, on) {
-    const key = tf === '1h' ? 'trend_alert_1h' : 'trend_alert';
+async function clearFuelFilterClosed(event) {
+    event.stopPropagation();
+    if (!confirm('Очистити історію закритих угод fuel-фільтра?')) return;
     try {
-        await fetch('/api/sm/auto-gate', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({[key]: on})
-        });
-    } catch (e) { /* non-fatal */ }
-}
-
-async function loadTrendAlertState() {
-    const cb4 = document.getElementById('sm-rev-trend-alert');
-    const cb1 = document.getElementById('sm-rev1h-trend-alert');
-    try {
-        const d = await (await fetch('/api/sm/auto-gate')).json();
-        if (d.ok) {
-            if (cb4 && typeof d.trend_alert === 'boolean') cb4.checked = d.trend_alert;
-            if (cb1 && typeof d.trend_alert_1h === 'boolean') cb1.checked = d.trend_alert_1h;
-        }
-    } catch (e) { /* ignore */ }
+        await fetch('/api/fuel-filter/clear-closed', {method: 'POST'});
+        loadFuelFilterStatus();
+    } catch (e) {
+        alert('Помилка: ' + e);
+    }
 }
 
 async function loadDataSource() {
@@ -7151,7 +6826,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7182,7 +6857,6 @@ async function loadTMState() {
                     ${manualModeCellHTML(p, false)}
                     ${breakevenCloseCellHTML(p, false)}
                     ${holdScoreCellHTML(p.hold)}
-                    ${qgCellHTML(p.qg)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -7231,7 +6905,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7253,7 +6927,6 @@ async function loadTMState() {
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
                     ${holdScoreCellHTML(p.hold)}
-                    ${qgCellHTML(p.qg)}
                     <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
@@ -7677,10 +7350,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         loadBias();
     }).catch(() => {});
-    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadBlockedTradesStats(); };
+    const refreshAll = () => { loadBias(); loadSentiment(); loadDataSource(); loadTradeArchive(); loadFuelFilterStatus(); };
     refreshAll();
-    loadTrendAlertState();
     setInterval(refreshAll, 60000);
+    // Fuel-filter refreshes faster (30s) so timers/positions feel live.
+    setInterval(loadFuelFilterStatus, 30000);
     // Refresh TOP-100 every 60s — scans only happen every 4h, but during
     // a scan we want fast updates so user sees rows appear progressively.
     // Snapshot endpoint is cheap (single DB query), no real cost.
