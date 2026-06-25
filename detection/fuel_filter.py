@@ -684,7 +684,7 @@ class FuelFilterDaemon:
         # over scan_targets (the watchlist coins FF actually scans).
         scan_set = set(scan_targets)
         _scanned_ok = 0
-        _max_long = _max_short = None
+        _sum_long = _sum_short = 0.0
         _cnt_long = _cnt_short = 0
 
         for symbol in symbols:
@@ -693,19 +693,24 @@ class FuelFilterDaemon:
             fuel_managed = symbol in self._fuel_managed
 
             # --- accumulate panel scan stats (watchlist FF-scan targets only).
-            # Runs before any branch/continue so every target is counted. Both
-            # sides read the cached _bias, so this is one bias-compute per coin.
+            # Runs before any branch/continue so every target is counted.
+            # The side indicator is decided by ALL coins MOVING that way, not by
+            # one coin: a coin's exhaustion only counts toward the side that its
+            # fuel direction (status) points to, and we average those. So the
+            # number is "how close to 100% the whole LONG/SHORT side is".
             if symbol in scan_set:
                 if fuel and fuel.get('mark_price'):
                     _scanned_ok += 1
-                _el = self._exhaustion(symbol, 'LONG')
-                if _el is not None:
-                    _max_long = max(_max_long, _el) if _max_long is not None else _el
-                    _cnt_long += 1
-                _es = self._exhaustion(symbol, 'SHORT')
-                if _es is not None:
-                    _max_short = max(_max_short, _es) if _max_short is not None else _es
-                    _cnt_short += 1
+                if status == 'LONG':
+                    _el = self._exhaustion(symbol, 'LONG')
+                    if _el is not None:
+                        _sum_long += _el
+                        _cnt_long += 1
+                elif status == 'SHORT':
+                    _es = self._exhaustion(symbol, 'SHORT')
+                    if _es is not None:
+                        _sum_short += _es
+                        _cnt_short += 1
 
             # ---- manage positions fuel filter opened ----
             if fuel_managed:
@@ -858,8 +863,10 @@ class FuelFilterDaemon:
                 'targets': len(scan_targets),
                 'scanned': _scanned_ok,
                 'watchlist_total': len(watchlist),
-                'max_exh_long': (round(_max_long, 1) if _max_long is not None else None),
-                'max_exh_short': (round(_max_short, 1) if _max_short is not None else None),
+                'dir_exh_long': (round(_sum_long / _cnt_long, 1)
+                                 if _cnt_long else None),
+                'dir_exh_short': (round(_sum_short / _cnt_short, 1)
+                                  if _cnt_short else None),
                 'exh_long_count': _cnt_long,
                 'exh_short_count': _cnt_short,
             }
