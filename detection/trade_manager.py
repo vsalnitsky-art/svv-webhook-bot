@@ -1850,8 +1850,12 @@ class TradeManager:
     def _archive_closed(self, closed: Dict, pos: Dict, is_paper: bool):
         """Append a closed trade to the permanent DB archive (never trimmed).
         Carries the pre-trade snapshot captured at open. Guarded so it can
-        never disrupt the close flow."""
+        never disrupt the close flow. Only archives if the archive toggle is ON."""
         if not self.db:
+            return
+        # Check if archiving is enabled
+        settings = self.get_settings()
+        if not settings.get('archive_trades', False):
             return
         try:
             snap = pos.get('entry_snapshot')

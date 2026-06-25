@@ -2052,7 +2052,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <h3 style="font-size:0.85rem;color:#aaa;margin:12px 0 4px 0">📂 Open Positions <span id="tm-open-count" style="color:#666;font-weight:normal;font-size:0.75rem">(0)</span></h3>
             <table class="tm-table" id="tm-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Qty</th>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
+                        <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
+                        <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
@@ -2061,7 +2063,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -2080,38 +2082,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
         </div>
     </div>
-    
-    <!-- ====== TEST MODE (Paper Trading) — separate panel ====== -->
-    <div class="tm-panel" id="trade-archive-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
-            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Постійний архів усіх закритих угод зі знімком входу. Накопичується для майбутнього навчання бота відбору угод. Ніколи не очищається автоматично.">🗄️ Архів угод (для навчання)</span>
-                <label class="tm-toggle-mini" style="margin-left:6px" title="Увімкніть для збереження угод у постійний архів">
-                    <input type="checkbox" id="tm-archive-enabled" onchange="toggleTradeArchive()">
-                    <span class="slider"></span>
-                </label>
-                <span id="ta-status" style="font-size:0.7rem;color:#888">Вимкнено</span>
-            </div>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span id="ta-total" style="font-size:0.8rem;font-family:monospace;color:#4ade80;font-weight:700">—</span>
-                <span id="ta-breakdown" style="font-size:0.7rem;color:#8b93a7"></span>
-            </div>
-            <div style="display:flex;gap:8px">
-                <button onclick="exportTradeArchive()" style="font-size:0.72rem;padding:5px 12px;border-radius:6px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#22c55e;cursor:pointer" title="Завантажити всі угоди у форматі JSON для аналізу">📥 Експорт JSON</button>
-                <button onclick="clearTradeArchive()" style="font-size:0.72rem;padding:5px 12px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer">🗑️ Очистити архів</button>
-            </div>
-        </div>
-        <div id="ta-hint" style="font-size:0.66rem;color:#6b7280;margin-top:6px"></div>
-    </div>
 
     <!-- ===== FUEL AUTO-FILTER (liquidation-fuel timed entries) ===== -->
     <div class="tm-panel" id="fuel-filter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;cursor:pointer" onclick="toggleFuelFilterPanel()">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span id="fuel-filter-chevron" style="font-size:0.75rem;user-select:none">▶</span>
-                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Автофільтр: коли по монеті зі WATCHLIST статус «Паливо зверху/знизу» тримається задану кількість хвилин — відкриває угоду в напрямку палива. Закриває при зміні статусу або досягненні виснаженості. Натисніть для розгортання.">❤️ Fuel Auto-Filter</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Автофільтр: коли по монеті зі WATCHLIST статус «Паливо зверху/знизу» тримається задану кількість хвилин — відкриває угоду в напрямку палива. Закриває при зміні статусу або досягненні виснаженості. Позиції відображаються в Trade Manager або Test Mode.">❤️ Fuel Auto-Filter</span>
                 <span id="fuel-filter-status" style="font-size:0.8rem;font-family:monospace;font-weight:700;color:#8b93a7">—</span>
                 <span id="fuel-filter-summary" style="font-size:0.7rem;color:#8b93a7"></span>
             </div>
@@ -2120,50 +2096,32 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="slider"></span>
             </label>
         </div>
-        <div id="fuel-filter-body" style="display:none;margin-top:12px">
-            <!-- settings -->
-            <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015);margin-bottom:12px">
-                <div>
-                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин статус палива має триматись безперервно перед відкриттям">Тривалість статусу (хв)</label>
-                    <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+        <div id="fuel-filter-body" style="margin-top:12px">
+            <!-- settings accordion (collapsed by default) -->
+            <div style="margin-bottom:12px">
+                <div style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:8px 10px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)" onclick="toggleFuelFilterSettings()">
+                    <span id="ff-settings-chevron" style="font-size:0.7rem;user-select:none">▶</span>
+                    <span style="font-size:0.74rem;font-weight:600;color:#cbd5e1">⚙️ Налаштування</span>
                 </div>
-                <div>
-                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості (%)</label>
-                    <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                <div id="ff-settings-body" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)">
+                    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+                        <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин статус палива має триматись безперервно перед відкриттям">Тривалість статусу (хв)</label>
+                            <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості (%)</label>
+                            <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                        </div>
+                        <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
+                                <input type="checkbox" id="ff-use-potential"> Вихід за виснаженістю
+                            </label>
+                        </div>
+                        <button onclick="saveFuelFilterSettings()" style="font-size:0.72rem;padding:6px 14px;border-radius:6px;border:1px solid rgba(74,222,128,0.4);background:rgba(74,222,128,0.1);color:#4ade80;cursor:pointer">💾 Зберегти</button>
+                    </div>
                 </div>
-                <div>
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
-                        <input type="checkbox" id="ff-use-potential"> Вихід за виснаженістю
-                    </label>
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="paper = віртуальні угоди (без реальних ордерів); real = реальні угоди через Trade Manager">Режим</label>
-                    <select id="ff-mode" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb">
-                        <option value="paper">📝 Paper (віртуально)</option>
-                        <option value="real">💰 Real (через TM)</option>
-                    </select>
-                </div>
-                <div>
-                    <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="0 = без ліміту">Макс. позицій</label>
-                    <input type="number" id="ff-maxpos" min="0" step="1" style="width:70px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
-                </div>
-                <button onclick="saveFuelFilterSettings()" style="font-size:0.72rem;padding:6px 14px;border-radius:6px;border:1px solid rgba(74,222,128,0.4);background:rgba(74,222,128,0.1);color:#4ade80;cursor:pointer">💾 Зберегти</button>
             </div>
-
-            <!-- open positions -->
-            <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;margin:6px 0">📊 Відкриті позиції</div>
-            <table class="tm-table" id="ff-positions-table">
-                <thead>
-                    <tr>
-                        <th>Символ</th><th>Side</th><th>Вхід</th><th>Ціна</th>
-                        <th>PnL %</th><th title="Виснаженість руху">Виснаж.</th>
-                        <th title="Паливо при вході">Fuel</th><th>Вік</th><th>Режим</th>
-                    </tr>
-                </thead>
-                <tbody id="ff-positions-tbody">
-                    <tr><td colspan="9" class="tm-empty-msg">Немає відкритих позицій</td></tr>
-                </tbody>
-            </table>
 
             <!-- running timers -->
             <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;margin:14px 0 6px">⏱️ Активні таймери</div>
@@ -2176,21 +2134,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </tbody>
             </table>
 
-            <!-- recent closes -->
-            <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 6px">
-                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">📕 Останні закриття</div>
-                <button onclick="clearFuelFilterClosed(event)" style="font-size:0.68rem;padding:4px 10px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer">🗑️ Очистити</button>
-            </div>
-            <table class="tm-table" id="ff-closed-table">
-                <thead>
-                    <tr><th>Закрито</th><th>Символ</th><th>Side</th><th>Вхід</th><th>Вихід</th><th>PnL %</th><th>Причина</th><th>Режим</th></tr>
-                </thead>
-                <tbody id="ff-closed-tbody">
-                    <tr><td colspan="8" class="tm-empty-msg">Немає закритих угод</td></tr>
-                </tbody>
-            </table>
-            <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість рахується лише для відкритих позицій. Скан кожні 30с. Усі дані зберігаються в БД і відновлюються після перезапуску.
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:12px">
+                💡 Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість — із панелі "Потенціал LONG/SHORT". Позиції відкриваються в Trade Manager (real) або Test Mode (paper) залежно від їх тумблерів. Скан кожні 30с.
             </div>
         </div>
     </div>
@@ -2226,7 +2171,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </h3>
             <table class="tm-table" id="tm-shadow-open-table">
                 <thead>
-                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th><th>Opened by</th>
+                    <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
+                        <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
+                        <th>Opened by</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
@@ -2235,7 +2182,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Status</th><th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -2253,7 +2200,32 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             
         </div>
     </div>
-    
+
+    <!-- ===== TRADE ARCHIVE (for training) ===== -->
+    <div class="tm-panel" id="trade-archive-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Постійний архів усіх закритих угод зі знімком входу. Накопичується для майбутнього навчання бота відбору угод. Ніколи не очищається автоматично.">🗄️ Архів угод (для навчання)</span>
+                <label class="tm-toggle-mini" style="margin-left:6px" title="Увімкніть для збереження угод у постійний архів">
+                    <input type="checkbox" id="tm-archive-enabled" onchange="toggleTradeArchive()">
+                    <span class="slider"></span>
+                </label>
+                <span id="ta-status" style="font-size:0.7rem;color:#888">Вимкнено</span>
+            </div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <span id="ta-total" style="font-size:0.8rem;font-family:monospace;color:#4ade80;font-weight:700">—</span>
+                <span id="ta-breakdown" style="font-size:0.7rem;color:#8b93a7"></span>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button onclick="exportTradeArchive()" style="font-size:0.72rem;padding:5px 12px;border-radius:6px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#22c55e;cursor:pointer" title="Завантажити всі угоди у форматі JSON для аналізу">📥 Експорт JSON</button>
+                <button onclick="clearTradeArchive()" style="font-size:0.72rem;padding:5px 12px;border-radius:6px;border:1px solid rgba(248,113,113,0.4);background:rgba(248,113,113,0.1);color:#f87171;cursor:pointer">🗑️ Очистити архів</button>
+            </div>
+        </div>
+        <div id="ta-hint" style="font-size:0.66rem;color:#6b7280;margin-top:6px"></div>
+    </div>
+
     <!-- ===== TOP-100 OB RADAR ===== -->
     <!-- Variant B (scheduled scan): polls Binance Futures TOP-N USDT-perps
          every N minutes for newly-formed Order Blocks on the configured TF.
@@ -6543,11 +6515,10 @@ async function clearTradeArchive() {
 }
 
 // ========== Fuel Auto-Filter ==========
-let _ffPanelOpen = false;
 let _ffActiveSymbols = [];
 
 async function loadFuelFilterStatus() {
-    // Lightweight header refresh (always runs) + full table if panel open.
+    // Refresh fuel filter status + render tables
     try {
         const d = await fetch('/api/fuel-filter/state').then(r => r.json());
         if (!d || !d.ok) return;
@@ -6563,12 +6534,10 @@ async function loadFuelFilterStatus() {
         }
         const sumEl = document.getElementById('fuel-filter-summary');
         if (sumEl) {
-            const np = (d.positions || []).length;
             const nt = (d.timers || []).length;
-            const mode = s.mode === 'real' ? '💰 real' : '📝 paper';
-            sumEl.textContent = `(${mode} · позицій: ${np} · таймерів: ${nt})`;
+            sumEl.textContent = `(таймерів: ${nt})`;
         }
-        if (_ffPanelOpen) renderFuelFilter(d);
+        renderFuelFilter(d);
     } catch (e) { /* non-fatal */ }
 }
 
@@ -6584,35 +6553,6 @@ function renderFuelFilter(d) {
     setIf('ff-duration', s.duration_minutes);
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
-    setIf('ff-mode', s.mode);
-    setIf('ff-maxpos', s.max_positions);
-
-    // positions
-    const pb = document.getElementById('ff-positions-tbody');
-    if (pb) {
-        const rows = d.positions || [];
-        if (!rows.length) {
-            pb.innerHTML = '<tr><td colspan="9" class="tm-empty-msg">Немає відкритих позицій</td></tr>';
-        } else {
-            pb.innerHTML = rows.map(p => {
-                const pnl = (p.pnl_pct != null) ? p.pnl_pct : 0;
-                const pnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#888';
-                const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(0) + '%' : '—';
-                const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
-                return `<tr>
-                    <td style="font-weight:600">${p.symbol}</td>
-                    <td style="color:${p.side === 'LONG' ? '#22c55e' : '#ef4444'}">${p.side}</td>
-                    <td style="font-family:monospace;font-size:0.74rem">${fmtNum(p.entry_price)}</td>
-                    <td style="font-family:monospace;font-size:0.74rem">${fmtNum(p.last_price)}</td>
-                    <td style="font-weight:700;color:${pnlColor}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
-                    <td style="color:${exhColor};font-size:0.74rem">${exh}</td>
-                    <td style="font-size:0.7rem;color:#8b93a7">${p.fuel_dir_at_entry != null ? p.fuel_dir_at_entry : '—'}</td>
-                    <td style="font-size:0.7rem;color:#888">${fmtAge(p.age_sec)}</td>
-                    <td style="font-size:0.7rem;color:${p.mode === 'real' ? '#fbbf24' : '#a5b4fc'}">${p.mode === 'real' ? 'REAL' : 'PAPER'}</td>
-                </tr>`;
-            }).join('');
-        }
-    }
 
     // timers
     const tb = document.getElementById('ff-timers-tbody');
@@ -6628,32 +6568,6 @@ function renderFuelFilter(d) {
                     <td style="color:${t.dir === 'LONG' ? '#22c55e' : '#ef4444'}">${t.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
                     <td style="min-width:120px"><div style="background:rgba(255,255,255,0.08);border-radius:4px;height:10px;overflow:hidden"><div style="width:${prog}%;height:100%;background:${prog >= 100 ? '#4ade80' : '#facc15'}"></div></div><span style="font-size:0.62rem;color:#8b93a7">${prog}%</span></td>
-                </tr>`;
-            }).join('');
-        }
-    }
-
-    // closed
-    const cb = document.getElementById('ff-closed-tbody');
-    if (cb) {
-        const rows = d.closed || [];
-        if (!rows.length) {
-            cb.innerHTML = '<tr><td colspan="8" class="tm-empty-msg">Немає закритих угод</td></tr>';
-        } else {
-            cb.innerHTML = rows.map(c => {
-                const pnl = (c.pnl_pct != null) ? c.pnl_pct : 0;
-                const pnlColor = pnl > 0 ? '#22c55e' : pnl < 0 ? '#ef4444' : '#888';
-                const ts = c.closed_at ? new Date(c.closed_at * 1000).toLocaleString('uk-UA', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-                const reason = (c.reason || '').replace(/_/g, ' ');
-                return `<tr>
-                    <td style="font-size:0.68rem;color:#888">${ts}</td>
-                    <td style="font-weight:600">${c.symbol}</td>
-                    <td style="color:${c.side === 'LONG' ? '#22c55e' : '#ef4444'}">${c.side}</td>
-                    <td style="font-family:monospace;font-size:0.72rem">${fmtNum(c.entry_price)}</td>
-                    <td style="font-family:monospace;font-size:0.72rem">${fmtNum(c.exit_price)}</td>
-                    <td style="font-weight:700;color:${pnlColor}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
-                    <td style="font-size:0.68rem;color:#8b93a7">${reason}</td>
-                    <td style="font-size:0.68rem;color:${c.mode === 'real' ? '#fbbf24' : '#a5b4fc'}">${c.mode === 'real' ? 'REAL' : 'PAPER'}</td>
                 </tr>`;
             }).join('');
         }
@@ -6678,24 +6592,20 @@ function fmtAge(sec) {
     return h + 'г ' + (m % 60) + 'хв';
 }
 
-function toggleFuelFilterPanel() {
-    const body = document.getElementById('fuel-filter-body');
-    const chevron = document.getElementById('fuel-filter-chevron');
+function toggleFuelFilterSettings() {
+    const body = document.getElementById('ff-settings-body');
+    const chevron = document.getElementById('ff-settings-chevron');
     if (!body || !chevron) return;
     if (body.style.display === 'none') {
         body.style.display = '';
         chevron.textContent = '▼';
-        _ffPanelOpen = true;
-        loadFuelFilterStatus();  // full render on open
     } else {
         body.style.display = 'none';
         chevron.textContent = '▶';
-        _ffPanelOpen = false;
     }
 }
 
 async function onFuelFilterToggle(event) {
-    event.stopPropagation();
     const cb = document.getElementById('fuel-filter-toggle');
     if (!cb) return;
     try {
@@ -6715,8 +6625,6 @@ async function saveFuelFilterSettings() {
         duration_minutes: parseInt(document.getElementById('ff-duration').value || '5', 10),
         potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
         use_potential_exit: document.getElementById('ff-use-potential').checked,
-        mode: document.getElementById('ff-mode').value,
-        max_positions: parseInt(document.getElementById('ff-maxpos').value || '0', 10),
     };
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
@@ -6734,16 +6642,6 @@ async function saveFuelFilterSettings() {
     }
 }
 
-async function clearFuelFilterClosed(event) {
-    event.stopPropagation();
-    if (!confirm('Очистити історію закритих угод fuel-фільтра?')) return;
-    try {
-        await fetch('/api/fuel-filter/clear-closed', {method: 'POST'});
-        loadFuelFilterStatus();
-    } catch (e) {
-        alert('Помилка: ' + e);
-    }
-}
 
 async function loadDataSource() {
     const wrap = document.getElementById('sm-datasource');
@@ -6826,7 +6724,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -6846,12 +6744,16 @@ async function loadTMState() {
                 const badges =
                     (isExternal ? ' <span class="tm-ext-badge" title="Adopted from Bybit — opened outside TM. Full algorithm applies.">EXT</span>' : '') +
                     (manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this position">MANUAL</span>' : '');
+                // Exhaustion — only for fuel-filter positions
+                const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(0) + '%' : '—';
+                const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td><b>${p.symbol}</b>${badges}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
+                    <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
@@ -6905,7 +6807,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -6916,12 +6818,16 @@ async function loadTMState() {
                 // Realistic $ PnL for the paper trade (notional × price move).
                 const usd = (p.pnl_usd !== undefined && p.pnl_usd !== null)
                     ? `${pnlSign}$${Math.abs(p.pnl_usd).toFixed(2)}` : '';
+                // Exhaustion — only for fuel-filter positions
+                const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(0) + '%' : '—';
+                const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td><b>${p.symbol}</b>${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this paper position">MANUAL</span>' : ''}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
+                    <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
                     <td style="color:#888;font-size:0.72rem">${p.opened_by || '—'}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
