@@ -874,6 +874,44 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     color: #aaa;
     border-color: rgba(150, 150, 150, 0.4);
 }
+/* ❤️ Fuel Auto-Filter scan flag — same shape as TRD, pink accent.
+   active = this coin is in the FF scan-list (will be scanned). */
+.wl-ff-flag {
+    display: inline-block;
+    cursor: pointer;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 2px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    user-select: none;
+    border: 1px solid transparent;
+    transition: all 0.15s;
+}
+.wl-ff-flag.active {
+    background: rgba(244, 114, 182, 0.18);
+    color: #f9a8d4;
+    border-color: rgba(244, 114, 182, 0.4);
+}
+.wl-ff-flag.inactive {
+    color: #555;
+    border-color: rgba(100, 100, 100, 0.25);
+}
+.wl-ff-flag.active:hover {
+    background: rgba(244, 114, 182, 0.30);
+    color: #fbcfe8;
+}
+.wl-ff-flag.inactive:hover {
+    color: #aaa;
+    border-color: rgba(150, 150, 150, 0.4);
+}
+/* ❤️ marker shown when a coin currently has an OPEN fuel-filter position */
+.wl-ff-flag.holding {
+    background: rgba(244, 114, 182, 0.30);
+    color: #fbcfe8;
+    border-color: rgba(244, 114, 182, 0.6);
+}
 
 /* === Global LONG/SHORT direction gates — top of page ===
    Designed to be impossible to miss: a horizontal bar above settings
@@ -2127,15 +2165,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1;margin:14px 0 6px">⏱️ Активні таймери</div>
             <table class="tm-table" id="ff-timers-table">
                 <thead>
-                    <tr><th>Символ</th><th>Напрямок</th><th>Тримається</th><th>Прогрес</th></tr>
+                    <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Видно стан монети ДО відкриття.">Виснаженість</th><th>Тримається</th><th>Прогрес</th></tr>
                 </thead>
                 <tbody id="ff-timers-tbody">
-                    <tr><td colspan="4" class="tm-empty-msg">Немає активних таймерів</td></tr>
+                    <tr><td colspan="5" class="tm-empty-msg">Немає активних таймерів</td></tr>
                 </tbody>
             </table>
 
             <div style="font-size:0.66rem;color:#6b7280;margin-top:12px">
-                💡 Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість — із панелі "Потенціал LONG/SHORT". Позиції відкриваються в Trade Manager (real) або Test Mode (paper) залежно від їх тумблерів. Скан кожні 30с.
+                💡 Скануються лише монети з прапорцем <b style="color:#f9a8d4">FF</b> у WATCHLIST (щоб не навантажувати бота). Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість — із панелі "Потенціал LONG/SHORT". Позиції відкриваються в Trade Manager (real) або Test Mode (paper) залежно від їх тумблерів. Скан кожні 30с.
             </div>
         </div>
     </div>
@@ -2740,6 +2778,9 @@ async function loadWatchlist() {
         const list = d.watchlist || [];
         const tradeable = d.tradeable || [];
         tmTradeable = new Set(tradeable);
+        // Fuel Auto-Filter scan-list + currently-holding symbols for FF flag
+        ffScanList = new Set(d.fuel_scan_list || []);
+        _ffActiveSymbols = d.fuel_active_symbols || _ffActiveSymbols || [];
         // Stash OB states + filter metadata for renderWatchlist
         wlObFilterEnabled = !!d.ob_filter_enabled;
         wlObFilterTimeframe = d.ob_filter_timeframe || '1h';
@@ -2971,16 +3012,25 @@ function renderWatchlist(list) {
             srcHtml = `<span class="wl-src wl-src-manual" title="Додано вручну">M</span>`;
         }
         
-        // ❤ Fuel Auto-Filter marker — shown when this coin currently has an
-        // open fuel-filter position. Updated from loadFuelFilterStatus (30s).
-        let fuelHeartHtml = '';
-        if (typeof _ffActiveSymbols !== 'undefined' && _ffActiveSymbols.indexOf(sym) !== -1) {
-            fuelHeartHtml = `<span title="Активна угода Fuel Auto-Filter" style="margin-right:4px;font-size:0.8rem">❤️</span>`;
-        }
+        // ❤️ Fuel Auto-Filter "FF" flag — toggles whether this coin is in the
+        // FF scan-list (whitelist). When the coin currently HOLDS an open
+        // fuel-filter position we also show the ❤️ holding state on the flag.
+        const inScan = (typeof ffScanList !== 'undefined') && ffScanList.has(sym);
+        const isHolding = (typeof _ffActiveSymbols !== 'undefined')
+                          && _ffActiveSymbols.indexOf(sym) !== -1;
+        const ffClass = isHolding ? 'holding' : (inScan ? 'active' : 'inactive');
+        const ffLabel = isHolding ? '❤️FF' : 'FF';
+        const ffTitle = isHolding
+            ? '❤️ Відкрита угода Fuel Auto-Filter. Click щоб прибрати монету зі скан-списку.'
+            : (inScan
+                ? '✅ У скан-списку Fuel Auto-Filter — монета сканується. Click щоб прибрати.'
+                : '❌ Не сканується Fuel Auto-Filter. Click щоб додати монету до скан-списку.');
 
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${fuelHeartHtml}${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
+                <span class="wl-ff-flag ${ffClass}" data-sym="${sym}" title="${ffTitle}"
+                      onclick="event.stopPropagation();toggleFuelScan('${sym}')">${ffLabel}</span>
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
                 ${srcHtml}
@@ -5209,6 +5259,11 @@ async function updateStatus() {
 // Cached tradeable list (used by watchlist render)
 let tmTradeable = new Set();
 
+// Cached Fuel Auto-Filter scan-list (whitelist of coins FF scans). Populated
+// from /api/smc/state (fuel_scan_list) each watchlist load. Used by render-
+// Watchlist to draw the "FF" flag and by toggleFuelScan to flip it.
+let ffScanList = new Set();
+
 async function loadTMSettings() {
     try {
         const res = await fetch('/api/tm/settings');
@@ -6522,7 +6577,15 @@ async function loadFuelFilterStatus() {
     try {
         const d = await fetch('/api/fuel-filter/state').then(r => r.json());
         if (!d || !d.ok) return;
+        const prevActive = _ffActiveSymbols.join(',');
         _ffActiveSymbols = d.active_symbols || [];
+        if (Array.isArray(d.scan_list)) ffScanList = new Set(d.scan_list);
+        // Re-render watchlist if the holding set changed, so the ❤️FF marker
+        // on the flags stays current between watchlist polls.
+        if (_ffActiveSymbols.join(',') !== prevActive
+                && typeof wlSymbols !== 'undefined' && wlSymbols.length) {
+            renderWatchlist(wlSymbols);
+        }
         const s = d.settings || {};
         const toggle = document.getElementById('fuel-filter-toggle');
         if (toggle) toggle.checked = !!s.enabled;
@@ -6559,13 +6622,19 @@ function renderFuelFilter(d) {
     if (tb) {
         const rows = d.timers || [];
         if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="4" class="tm-empty-msg">Немає активних таймерів</td></tr>';
+            tb.innerHTML = '<tr><td colspan="5" class="tm-empty-msg">Немає активних таймерів</td></tr>';
         } else {
             tb.innerHTML = rows.map(t => {
                 const prog = t.progress_pct != null ? t.progress_pct : 0;
+                const exh = (t.exhaustion != null)
+                    ? Math.round(t.exhaustion) + '%' : '—';
+                const exhColor = (t.exhaustion != null && t.exhaustion >= 85)
+                    ? '#f87171' : (t.exhaustion != null && t.exhaustion >= 66
+                        ? '#facc15' : '#cbd5e1');
                 return `<tr>
                     <td style="font-weight:600">${t.symbol}</td>
                     <td style="color:${t.dir === 'LONG' ? '#22c55e' : '#ef4444'}">${t.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</td>
+                    <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
                     <td style="min-width:120px"><div style="background:rgba(255,255,255,0.08);border-radius:4px;height:10px;overflow:hidden"><div style="width:${prog}%;height:100%;background:${prog >= 100 ? '#4ade80' : '#facc15'}"></div></div><span style="font-size:0.62rem;color:#8b93a7">${prog}%</span></td>
                 </tr>`;
@@ -7164,6 +7233,39 @@ async function toggleTradeable(symbol) {
         }
     } catch (err) {
         alert('Tradeable toggle error: ' + err);
+    }
+}
+
+// Toggle whether a coin is in the Fuel Auto-Filter scan-list (whitelist).
+// Mirrors toggleTradeable. Only coins flagged here are scanned by FF, which
+// keeps load off the bot instead of scanning the whole watchlist.
+async function toggleFuelScan(symbol) {
+    const isCurrentlyOn = ffScanList.has(symbol);
+    try {
+        const res = await fetch('/api/fuel-filter/scan', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol, on: !isCurrentlyOn}),
+        });
+        const d = await res.json();
+        if (d.ok) {
+            ffScanList = new Set(d.scan_list || []);
+            // Update visual on the watchlist row
+            const flag = document.querySelector(`.wl-ff-flag[data-sym="${symbol}"]`);
+            if (flag) {
+                const holding = _ffActiveSymbols.indexOf(symbol) !== -1;
+                const on = ffScanList.has(symbol);
+                flag.className = 'wl-ff-flag ' + (holding ? 'holding' : (on ? 'active' : 'inactive'));
+                flag.textContent = holding ? '❤️FF' : 'FF';
+                flag.title = on
+                    ? '✅ У скан-списку Fuel Auto-Filter — монета сканується. Click щоб прибрати.'
+                    : '❌ Не сканується Fuel Auto-Filter. Click щоб додати монету до скан-списку.';
+            }
+        } else {
+            alert('FF toggle failed: ' + (d.reason || 'unknown'));
+        }
+    } catch (err) {
+        alert('FF scan toggle error: ' + err);
     }
 }
 
