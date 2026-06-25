@@ -6682,23 +6682,23 @@ function renderFuelFilter(d) {
                 full ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.04)',
                 'Скільки монет зі WATCHLIST реально відскановано Fuel Auto-Filter (мають дані палива) із загальної кількості у WATCHLIST'));
         }
-        // LONG exhaustion (green) - average across ALL coins moving LONG
-        const el = st.dir_exh_long;
+        // LONG exhaustion (green) - MAX among coins moving LONG
+        const el = st.max_exh_long;
         parts.push(chip(
             `🟢 LONG → 100%: ${el != null ? el.toFixed(1) + '%' : '—'}`
             + (st.exh_long_count ? ` (${st.exh_long_count})` : ''),
             '#86efac', 'rgba(34,197,94,0.12)',
-            `Наскільки вся сторона LONG наблизилась до 100% — середня виснаженість`
-            + ` по ВСІХ монетах, що зараз рухаються ВГОРУ`
+            `Як близько до 100% наблизилась сторона LONG — МАКСИМАЛЬНА виснаженість`
+            + ` серед монет, що зараз рухаються ВГОРУ`
             + (st.exh_long_count ? ` (${st.exh_long_count} монет)` : '')));
-        // SHORT exhaustion (red) - average across ALL coins moving SHORT
-        const es = st.dir_exh_short;
+        // SHORT exhaustion (red) - MAX among coins moving SHORT
+        const es = st.max_exh_short;
         parts.push(chip(
             `🔴 SHORT → 100%: ${es != null ? es.toFixed(1) + '%' : '—'}`
             + (st.exh_short_count ? ` (${st.exh_short_count})` : ''),
             '#fca5a5', 'rgba(239,68,68,0.12)',
-            `Наскільки вся сторона SHORT наблизилась до 100% — середня виснаженість`
-            + ` по ВСІХ монетах, що зараз рухаються ВНИЗ`
+            `Як близько до 100% наблизилась сторона SHORT — МАКСИМАЛЬНА виснаженість`
+            + ` серед монет, що зараз рухаються ВНИЗ`
             + (st.exh_short_count ? ` (${st.exh_short_count} монет)` : '')));
         statsEl.innerHTML = parts.join('');
     }

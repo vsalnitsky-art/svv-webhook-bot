@@ -656,21 +656,19 @@ class FuelFilterDaemon:
             watchlist = []
         watchlist = [s.upper() for s in watchlist]
 
-        # SCAN-LIST (whitelist): only scan coins the operator explicitly marked
-        # with the "FF" flag — keeps load off the bot instead of scanning every
-        # coin on the board. Empty list = scan nothing (pure opt-in). We still
-        # always manage coins we already opened (so an open position is never
-        # abandoned even if it's later un-flagged).
-        scan_list = set(self.get_scan_list())
-        scan_targets = [s for s in watchlist if s in scan_list]
+        # SCAN all watchlist coins for data/stats. FF flag still controls which
+        # coins can auto-open positions (checked later in the loop).
+        scan_targets = watchlist
         symbols = list(dict.fromkeys(
             scan_targets + list(self._fuel_managed.keys())))
 
-        # CRITICAL: register scanned symbols with the liq map so it scans them.
-        # Otherwise only BTC/ETH + UI-viewed coins have fuel data. We only
-        # register the small FF whitelist now (not the whole watchlist) — the
-        # whole point of the FF flag is to keep this set small.
+        # CRITICAL: register ALL watchlist symbols with liq-map so they all
+        # have fuel data. SMC scanner already does this every 60s, but we
+        # re-register here to be safe.
         self._register_with_liqmap(symbols)
+
+        # FF scan-list: which coins are allowed to auto-open (whitelist)
+        scan_list = set(self.get_scan_list())
 
         # Get TM settings to know which mode positions live in
         tm = self._get_tm() if self._get_tm else None
@@ -680,11 +678,11 @@ class FuelFilterDaemon:
         duration_sec = settings['duration_minutes'] * 60
         now = time.time()
 
-        # Aggregate scan-stats accumulators (for the panel header). Counted only
-        # over scan_targets (the watchlist coins FF actually scans).
+        # Aggregate scan-stats accumulators (for the panel header). Now covers
+        # ALL watchlist coins (not just FF-flagged), so user sees full picture.
         scan_set = set(scan_targets)
         _scanned_ok = 0
-        _sum_long = _sum_short = 0.0
+        _max_long = _max_short = None
         _cnt_long = _cnt_short = 0
 
         for symbol in symbols:
@@ -692,24 +690,23 @@ class FuelFilterDaemon:
             status = fuel.get('status') if fuel else None
             fuel_managed = symbol in self._fuel_managed
 
-            # --- accumulate panel scan stats (watchlist FF-scan targets only).
+            # --- accumulate panel scan stats (ALL watchlist coins now).
             # Runs before any branch/continue so every target is counted.
-            # The side indicator is decided by ALL coins MOVING that way, not by
-            # one coin: a coin's exhaustion only counts toward the side that its
-            # fuel direction (status) points to, and we average those. So the
-            # number is "how close to 100% the whole LONG/SHORT side is".
+            # Track MAXIMUM exhaustion for each side (how close the most exhausted
+            # coin got to 100%), filtering by status so LONG-moving coins contribute
+            # to LONG stat, SHORT-moving coins to SHORT stat.
             if symbol in scan_set:
                 if fuel and fuel.get('mark_price'):
                     _scanned_ok += 1
                 if status == 'LONG':
                     _el = self._exhaustion(symbol, 'LONG')
                     if _el is not None:
-                        _sum_long += _el
+                        _max_long = max(_max_long, _el) if _max_long is not None else _el
                         _cnt_long += 1
                 elif status == 'SHORT':
                     _es = self._exhaustion(symbol, 'SHORT')
                     if _es is not None:
-                        _sum_short += _es
+                        _max_short = max(_max_short, _es) if _max_short is not None else _es
                         _cnt_short += 1
 
             # ---- manage positions fuel filter opened ----
@@ -810,6 +807,15 @@ class FuelFilterDaemon:
 
             # ---- no position: run the timer ----
             if status in ('LONG', 'SHORT'):
+                # FF FLAG CHECK: only coins in scan_list can auto-open positions.
+                # All watchlist coins get scanned for data, but only flagged ones
+                # can start timers and auto-open.
+                if symbol not in scan_list:
+                    # Not FF-flagged → skip timer logic (but still collected stats above)
+                    if symbol in self._timers:
+                        self._timers.pop(symbol, None)
+                    continue
+
                 # WAIT check: if skip_wait_coins enabled and verdict is WAIT, reset timer
                 if settings.get('skip_wait_coins', False) and self._is_wait_verdict(symbol):
                     print(f"[FuelFilter] {symbol}: WAIT verdict — resetting timer")
@@ -863,10 +869,8 @@ class FuelFilterDaemon:
                 'targets': len(scan_targets),
                 'scanned': _scanned_ok,
                 'watchlist_total': len(watchlist),
-                'dir_exh_long': (round(_sum_long / _cnt_long, 1)
-                                 if _cnt_long else None),
-                'dir_exh_short': (round(_sum_short / _cnt_short, 1)
-                                  if _cnt_short else None),
+                'max_exh_long': (round(_max_long, 1) if _max_long is not None else None),
+                'max_exh_short': (round(_max_short, 1) if _max_short is not None else None),
                 'exh_long_count': _cnt_long,
                 'exh_short_count': _cnt_short,
             }
