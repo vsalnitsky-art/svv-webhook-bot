@@ -100,6 +100,10 @@ class FuelFilterDaemon:
         # verdict and panel-status so we call the (heavy) shared bias
         # computation at most once per symbol per BIAS_TTL window.
         self._bias_cache: Dict[str, Dict] = {}
+        # Aggregate scan stats for the panel header: how many scan-targets were
+        # scanned, watchlist size, and average move exhaustion (LONG/SHORT).
+        # Recomputed each tick.
+        self._scan_stats: Dict = {}
         self._last_tick_ts = 0
         self._load_state()
 
@@ -676,10 +680,32 @@ class FuelFilterDaemon:
         duration_sec = settings['duration_minutes'] * 60
         now = time.time()
 
+        # Aggregate scan-stats accumulators (for the panel header). Counted only
+        # over scan_targets (the watchlist coins FF actually scans).
+        scan_set = set(scan_targets)
+        _scanned_ok = 0
+        _sum_long = _sum_short = 0.0
+        _cnt_long = _cnt_short = 0
+
         for symbol in symbols:
             fuel = self._fuel_dir(symbol)
             status = fuel.get('status') if fuel else None
             fuel_managed = symbol in self._fuel_managed
+
+            # --- accumulate panel scan stats (watchlist FF-scan targets only).
+            # Runs before any branch/continue so every target is counted. Both
+            # sides read the cached _bias, so this is one bias-compute per coin.
+            if symbol in scan_set:
+                if fuel and fuel.get('mark_price'):
+                    _scanned_ok += 1
+                _el = self._exhaustion(symbol, 'LONG')
+                if _el is not None:
+                    _sum_long += _el
+                    _cnt_long += 1
+                _es = self._exhaustion(symbol, 'SHORT')
+                if _es is not None:
+                    _sum_short += _es
+                    _cnt_short += 1
 
             # ---- manage positions fuel filter opened ----
             if fuel_managed:
@@ -826,7 +852,19 @@ class FuelFilterDaemon:
                 if symbol in self._timers:
                     self._timers.pop(symbol, None)
 
+        # Store aggregate scan-stats for the panel header.
         with self._lock:
+            self._scan_stats = {
+                'targets': len(scan_targets),
+                'scanned': _scanned_ok,
+                'watchlist_total': len(watchlist),
+                'avg_exh_long': (round(_sum_long / _cnt_long, 1)
+                                 if _cnt_long else None),
+                'avg_exh_short': (round(_sum_short / _cnt_short, 1)
+                                  if _cnt_short else None),
+                'exh_long_count': _cnt_long,
+                'exh_short_count': _cnt_short,
+            }
             self._persist_state()
 
     # ------------------------------------------------------------------
@@ -873,6 +911,7 @@ class FuelFilterDaemon:
             'active_symbols': list(self._fuel_managed.keys()),
             'tracked_count': len(self._fuel_managed),
             'scan_list': scan_list,
+            'scan_stats': dict(self._scan_stats),
         }
 
     def active_symbols(self) -> List[str]:

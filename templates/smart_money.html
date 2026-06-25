@@ -1765,6 +1765,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span class="slider"></span>
             </label>
         </div>
+        <!-- scan stats: scanned count + aggregate LONG/SHORT exhaustion -->
+        <div id="ff-scan-stats" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:0.74rem"></div>
         <div id="fuel-filter-body" style="margin-top:12px">
             <!-- settings accordion (collapsed by default) -->
             <div style="margin-bottom:12px">
@@ -6659,6 +6661,43 @@ function renderFuelFilter(d) {
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-skip-wait', s.skip_wait_coins);
+
+    // scan stats: scanned count + aggregate LONG/SHORT exhaustion (color-coded)
+    const statsEl = document.getElementById('ff-scan-stats');
+    if (statsEl) {
+        const st = d.scan_stats || {};
+        const chip = (txt, color, bg, title) =>
+            `<span title="${title || ''}" style="display:inline-flex;align-items:center;gap:5px;`
+            + `padding:3px 9px;border-radius:11px;background:${bg};color:${color};`
+            + `font-weight:700;border:1px solid ${color}33">${txt}</span>`;
+        const parts = [];
+        // scanned X із Y (watchlist total)
+        if (st.watchlist_total != null) {
+            const scanned = st.scanned != null ? st.scanned : 0;
+            const total = st.watchlist_total;
+            const full = (scanned >= total && total > 0);
+            parts.push(chip(
+                `📡 Відскановано: ${scanned} із ${total}`,
+                full ? '#86efac' : '#cbd5e1',
+                full ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.04)',
+                'Скільки монет зі WATCHLIST реально відскановано Fuel Auto-Filter (мають дані палива) із загальної кількості у WATCHLIST'));
+        }
+        // aggregate LONG exhaustion (green)
+        const el = st.avg_exh_long;
+        parts.push(chip(
+            `🟢 LONG виснаж: ${el != null ? el.toFixed(1) + '%' : '—'}`,
+            '#86efac', 'rgba(34,197,94,0.12)',
+            `Середня виснаженість руху ВГОРУ по всіх відсканованих монетах`
+            + (st.exh_long_count ? ` (${st.exh_long_count} монет)` : '')));
+        // aggregate SHORT exhaustion (red)
+        const es = st.avg_exh_short;
+        parts.push(chip(
+            `🔴 SHORT виснаж: ${es != null ? es.toFixed(1) + '%' : '—'}`,
+            '#fca5a5', 'rgba(239,68,68,0.12)',
+            `Середня виснаженість руху ВНИЗ по всіх відсканованих монетах`
+            + (st.exh_short_count ? ` (${st.exh_short_count} монет)` : '')));
+        statsEl.innerHTML = parts.join('');
+    }
 
     // timers
     const tb = document.getElementById('ff-timers-tbody');
