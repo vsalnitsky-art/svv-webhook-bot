@@ -60,7 +60,8 @@ DEFAULT_SETTINGS = {
     'fixed_pct_balance': 2.0,        # % of balance (mode = fixed_pct)
     'risk_pct_balance': 1.0,         # max loss as % of balance (mode = risk_based)
     'leverage': 10,                  # 1-50 typically
-    
+    'max_open_positions': 10,        # max REAL positions; if exceeded → Test Mode (if on)
+
     # === Exit Rules — each toggleable ===
     'use_sl': True,                  # Stop Loss
     'sl_pct': 2.0,                   # %
@@ -426,7 +427,12 @@ class TradeManager:
                 self._settings['leverage'] = max(1, min(50, int(self._settings.get('leverage', 10))))
             except:
                 self._settings['leverage'] = 10
-            
+
+            try:
+                self._settings['max_open_positions'] = max(1, min(50, int(self._settings.get('max_open_positions', 10))))
+            except:
+                self._settings['max_open_positions'] = 10
+
             for k in ['fixed_usd_amount', 'fixed_pct_balance', 'risk_pct_balance',
                       'sl_pct', 'tp_pct', 'time_stop_hours',
                       'sl_vob_buffer_pct',
@@ -938,15 +944,15 @@ class TradeManager:
             return
 
         # === Real-money track ===
-        # Runs whenever TM is enabled. Gated by the tradeable list so only
-        # explicitly-allowed symbols ever hit the exchange.
+        # Runs whenever TM is enabled. Gated by the tradeable list AND max_open_positions.
+        # If limit reached: signal goes to paper track instead (if test_mode on).
         real_opened = False
-        if enabled:
+        at_limit = self._at_max_positions()
+
+        if enabled and not at_limit:
             if existing_real:
                 if existing_real['side'] == side:
                     # Same direction — already in this trend, no-op for real.
-                    # (Don't return — paper track below may still need to run
-                    #  for symbols where no shadow exists yet.)
                     real_opened = True
                 else:
                     # OPPOSITE direction — reverse: close + open
@@ -956,11 +962,7 @@ class TradeManager:
                         self._close_position(symbol, entry_price, reason='reverse_signal')
                     except Exception as e:
                         print(f"[TM] ❌ Reverse-close failed for {symbol}: {e}")
-                        # Bail out of the REAL track only — don't leave the user
-                        # with two positions or one stale position. Paper track
-                        # is independent and should not be affected by a real
-                        # exchange error, so we don't return here.
-                        real_opened = True  # treat as "real handled it" to avoid paper dup
+                        real_opened = True
                     else:
                         if self._is_tradeable(symbol):
                             self._open_position(symbol, side, entry_price, opened_by)
@@ -974,6 +976,10 @@ class TradeManager:
                     real_opened = True
                 else:
                     print(f"[TM] {symbol} not in tradeable list — signal ignored (real)")
+        elif enabled and at_limit:
+            # Max positions reached — log it but don't block paper track
+            print(f"[TM] ℹ️ Max positions ({self._settings.get('max_open_positions')}) reached, "
+                  f"{symbol} signal → Test Mode")
 
         # === Paper (shadow) track ===
         # Independent of the real track. Runs on EVERY qualified signal
@@ -3078,7 +3084,15 @@ class TradeManager:
             return symbol in tradeable
         except:
             return False
-    
+
+    def _at_max_positions(self) -> bool:
+        """Check if we've reached the max_open_positions limit for REAL trades.
+        Returns True if limit reached, False otherwise."""
+        max_pos = self._settings.get('max_open_positions', 10)
+        with self._lock:
+            current_count = len(self._positions)
+        return current_count >= max_pos
+
     # ============================================================
     # State / queries
     # ============================================================
@@ -3548,12 +3562,15 @@ class TradeManager:
         if side not in ('LONG', 'SHORT'):
             return {'ok': False, 'reason': f"side must be LONG or SHORT, got {side!r}"}
         
-        if not self.is_enabled():
-            return {'ok': False, 'reason': 'Trade Manager is disabled — '
-                                            'enable it in Settings first'}
-        if not self.bybit or not getattr(self.bybit, 'api_key', None):
-            return {'ok': False, 'reason': 'Bybit not configured (no API key)'}
-        
+        test_mode = self._settings.get('test_mode', True)
+
+        # Check max positions limit
+        at_limit = self._at_max_positions()
+        if at_limit and not test_mode:
+            return {'ok': False, 'reason':
+                    f'Max open positions ({self._settings.get("max_open_positions", 10)}) '
+                    f'reached. Enable Test Mode to open additional paper positions.'}
+
         with self._lock:
             if symbol in self._positions:
                 return {'ok': False, 'reason':
@@ -3563,33 +3580,52 @@ class TradeManager:
                 return {'ok': False, 'reason':
                         f'Symbol {symbol} has a paper (shadow) position. '
                         f'Close it first to avoid mixed real/paper state.'}
-        
-        # Fetch fresh price from market_data — more accurate than a stale
-        # Decision Center value
+
+        # Fetch fresh price
         entry_price = self._get_current_price(symbol)
         if not entry_price or entry_price <= 0:
             return {'ok': False, 'reason':
                     f'Could not fetch current price for {symbol}'}
-        
-        # Reuse the existing auto-open code path. opened_by='manual_ui'
-        # distinguishes these from CHoCH-driven opens for analytics.
-        # _open_position handles sizing, SL/TP, leverage, place_order,
-        # entry_score computation, position dict, persistence, notify.
-        try:
-            self._open_position(symbol, side, entry_price, opened_by='manual_ui', bypass_gates=bypass_gates)
-        except Exception as e:
-            return {'ok': False, 'reason': f'Open error: {e}'}
-        
-        # Confirm position landed (place_order may have silently failed; the
-        # _open_position helper returns nothing on failure and notifies).
-        with self._lock:
-            pos = self._positions.get(symbol)
-        if not pos:
+
+        # Decision: real or paper?
+        # If TM enabled AND (not at limit OR bypass requested by caller like FF):
+        #   open real. Otherwise if test_mode on: open shadow.
+        open_real = False
+        if self.is_enabled() and (not at_limit or bypass_gates):
+            if not self.bybit or not getattr(self.bybit, 'api_key', None):
+                return {'ok': False, 'reason': 'Bybit not configured (no API key)'}
+            open_real = True
+
+        if open_real:
+            try:
+                self._open_position(symbol, side, entry_price, opened_by='manual_ui',
+                                    bypass_gates=bypass_gates)
+            except Exception as e:
+                return {'ok': False, 'reason': f'Open error: {e}'}
+            with self._lock:
+                pos = self._positions.get(symbol)
+            if not pos:
+                return {'ok': False, 'reason':
+                        'Order placement failed — check Telegram/logs for details'}
+            return {'ok': True, 'position': dict(pos), 'entry_price': entry_price,
+                    'mode': 'real'}
+        elif test_mode:
+            # At limit, but test_mode is on → open shadow
+            try:
+                self._open_shadow(symbol, side, entry_price, opened_by='manual_ui_overflow')
+            except Exception as e:
+                return {'ok': False, 'reason': f'Shadow open error: {e}'}
+            with self._lock:
+                pos = self._shadow_positions.get(symbol)
+            if not pos:
+                return {'ok': False, 'reason': 'Shadow position creation failed'}
+            print(f"[TM] ℹ️ Max positions reached ({self._settings.get('max_open_positions')}), "
+                  f"opened {symbol} in Test Mode instead")
+            return {'ok': True, 'position': dict(pos), 'entry_price': entry_price,
+                    'mode': 'test', 'reason': 'Max positions limit reached'}
+        else:
             return {'ok': False, 'reason':
-                    'Order placement failed — check Telegram/logs for details'}
-        
-        return {'ok': True, 'position': dict(pos),
-                'entry_price': entry_price}
+                    f'TM disabled and max positions reached. Enable Test Mode or TM.'}
     
     @staticmethod
     def _pop_closed_match(lst: list, match: Dict):
