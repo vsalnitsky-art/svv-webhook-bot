@@ -312,6 +312,75 @@ class FuelFilterDaemon:
             result['fuel_status'] = None
         return result
 
+    def get_panel_status(self, symbol: str) -> Dict:
+        """Full FF decision-state for ONE symbol — used by the chart panel's
+        second status row. Heavier than get_coin_indicators (computes verdict +
+        exhaustion), but only ever called for the single currently-open symbol.
+
+        Returns everything the operator needs to understand WHY FF is or isn't
+        acting on this coin:
+          enabled         — FF master toggle
+          in_scan_list    — is this coin in FF's scan whitelist
+          fuel_status     — liq-fuel direction (the timer trigger): LONG/SHORT/None
+          exhaustion      — move exhaustion % for fuel-status side (entry gate)
+          max_exhaustion  — entry gate threshold
+          exhausted       — exhaustion > max (entry would be rejected)
+          verdict         — compute_bias verdict (LONG/SHORT/WAIT)
+          skip_wait       — skip_wait_coins setting
+          wait_blocked    — verdict==WAIT AND skip_wait (entry/position blocked)
+          timer           — {progress_pct, held_sec, dir} or None
+          holding         — FF currently manages an open position on this coin
+        """
+        symbol = (symbol or '').upper()
+        settings = self.get_settings()
+        out = {
+            'enabled': bool(settings.get('enabled', False)),
+            'in_scan_list': symbol in set(self.get_scan_list()),
+            'skip_wait': bool(settings.get('skip_wait_coins', False)),
+            'max_exhaustion': settings.get('max_exhaustion_pct', 75),
+        }
+        # Fuel direction (timer trigger)
+        try:
+            fuel_data = self._fuel_dir(symbol)
+            out['fuel_status'] = fuel_data.get('status') if fuel_data else None
+        except Exception:
+            out['fuel_status'] = None
+        # Exhaustion for the fuel-status side (entry gate input)
+        exh = None
+        try:
+            side = out.get('fuel_status')
+            if side in ('LONG', 'SHORT'):
+                exh = self._exhaustion(symbol, side)
+        except Exception:
+            exh = None
+        out['exhaustion'] = exh
+        out['exhausted'] = (exh is not None and exh > out['max_exhaustion'])
+        # Verdict (WAIT gate input) — uses wl=None (watchlist NOT considered)
+        try:
+            from web.flask_app import compute_bias
+            verdict_data = compute_bias(self._db, symbol, wl=None)
+            out['verdict'] = verdict_data.get('verdict', 'WAIT')
+        except Exception:
+            out['verdict'] = None
+        out['wait_blocked'] = (out['skip_wait'] and out.get('verdict') == 'WAIT')
+        # Timer / holding state
+        with self._lock:
+            holding = symbol in self._fuel_managed
+            t = self._timers.get(symbol)
+            duration_sec = settings['duration_minutes'] * 60
+            timer = None
+            if t and not holding:
+                held = time.time() - t.get('since', time.time())
+                timer = {
+                    'dir': t.get('dir'),
+                    'held_sec': int(held),
+                    'progress_pct': (round(min(100.0, held / duration_sec * 100.0), 1)
+                                     if duration_sec > 0 else 100.0),
+                }
+        out['holding'] = holding
+        out['timer'] = timer
+        return out
+
     def _exhaustion(self, symbol: str, side: str) -> Optional[float]:
         """Move exhaustion (0..100) for an OPEN position only. Uses the SAME
         data source as the dashboard's "Потенціал LONG/SHORT" panel (scanner's

@@ -1655,6 +1655,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-status-badge" id="sm-ctr-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-bias-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-health-badge" style="display:none !important"></span>
+                    <!-- ❤️ Fuel Auto-Filter status row — second line under the
+                         main badges. Shows the EXACT signals FF uses to decide:
+                         fuel direction (timer trigger), exhaustion (entry gate),
+                         verdict WAIT (skip gate), timer/holding state, scan flag.
+                         Populated by loadFuelPanelStatus() on symbol change +
+                         every FF poll. Hidden until a symbol is selected. -->
+                    <div id="sm-ff-status-row" style="margin-top:6px;display:none;
+                         font-size:0.72rem;line-height:1.5"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <button onclick="clearSignalsForCurrent()" id="sm-clear-signals-btn"
@@ -3538,7 +3546,12 @@ async function selectSymbol(sym) {
     document.querySelectorAll('.sm-wl-item').forEach(el => {
         el.classList.toggle('active', el.dataset.symbol === sym);
     });
+    // Hide the FF status row until fresh data for the new symbol arrives,
+    // so stale values from the previous coin don't linger.
+    const ffRow = document.getElementById('sm-ff-status-row');
+    if (ffRow) ffRow.style.display = 'none';
     await loadChart();
+    loadFuelPanelStatus();
 }
 
 // === Settings ===
@@ -4052,6 +4065,8 @@ function clearChart() {
     if (biasBadge) biasBadge.style.display = 'none';
     const healthBadge = document.getElementById('sm-health-badge');
     if (healthBadge) healthBadge.style.display = 'none';
+    const ffRow = document.getElementById('sm-ff-status-row');
+    if (ffRow) ffRow.style.display = 'none';
     // Hide unified Decision Center too
     const dec = document.getElementById('sm-decision');
     if (dec) dec.style.display = 'none';
@@ -6614,6 +6629,8 @@ async function loadFuelFilterStatus() {
             sumEl.textContent = `(таймерів: ${nt})`;
         }
         renderFuelFilter(d);
+        // Refresh the chart-panel FF status row for the open symbol
+        loadFuelPanelStatus();
     } catch (e) { /* non-fatal */ }
 }
 
@@ -6681,6 +6698,106 @@ function renderFuelFilter(d) {
                 </tr>` + (indHtml ? `<tr><td colspan="6" style="padding:3px 10px;background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,255,255,0.05)">${indHtml}</td></tr>` : '');
             }).join('');
         }
+    }
+}
+
+// ❤️ Fuel Auto-Filter chart-panel status row. Shows the EXACT signals FF
+// uses to act on the currently-open symbol, as a second line under the main
+// badges. Called on symbol change and on every FF poll.
+async function loadFuelPanelStatus() {
+    const row = document.getElementById('sm-ff-status-row');
+    if (!row || !currentSymbol) return;
+    try {
+        const d = await fetch('/api/fuel-filter/panel/' + encodeURIComponent(currentSymbol))
+                        .then(r => r.json());
+        if (!d || !d.ok) { row.style.display = 'none'; return; }
+
+        const chip = (txt, color, bg, title) =>
+            `<span title="${(title || '').replace(/"/g, '&quot;')}" style="display:inline-block;`
+            + `margin-right:6px;padding:2px 7px;border-radius:4px;font-weight:600;`
+            + `background:${bg};color:${color}">${txt}</span>`;
+
+        const parts = [];
+
+        // FF master + scan-list state for this coin
+        if (!d.enabled) {
+            parts.push(chip('❤️ FF: вимк', '#8b93a7', 'rgba(139,147,167,0.15)',
+                'Fuel Auto-Filter вимкнено глобально'));
+        } else if (!d.in_scan_list) {
+            parts.push(chip('❤️ FF: не в скані', '#fbbf24', 'rgba(251,191,36,0.15)',
+                'Монети немає у скан-листі FF — натисніть FF у вотчлисті щоб додати'));
+        } else {
+            parts.push(chip('❤️ FF: скан ✓', '#4ade80', 'rgba(34,197,94,0.15)',
+                'Монета у скан-листі FF — фільтр її обробляє'));
+        }
+
+        // Fuel direction — THE timer trigger
+        if (d.fuel_status === 'LONG') {
+            parts.push(chip('⚡ Паливо: 🟢 LONG', '#86efac', 'rgba(34,197,94,0.15)',
+                'Liq-паливо тягне вгору — таймер на LONG'));
+        } else if (d.fuel_status === 'SHORT') {
+            parts.push(chip('⚡ Паливо: 🔴 SHORT', '#fca5a5', 'rgba(239,68,68,0.15)',
+                'Liq-паливо тягне вниз — таймер на SHORT'));
+        } else {
+            parts.push(chip('⚡ Паливо: ⚪ нема', '#8b93a7', 'rgba(139,147,167,0.15)',
+                'Паливо збалансоване — напрямку немає, таймер не запускається'));
+        }
+
+        // Exhaustion vs entry gate
+        if (d.exhaustion != null) {
+            const ex = d.exhaustion.toFixed(1);
+            if (d.exhausted) {
+                parts.push(chip(`🔥 Виснаж: ${ex}% > ${d.max_exhaustion}%`, '#fca5a5',
+                    'rgba(239,68,68,0.15)',
+                    `Виснаженість ${ex}% перевищує поріг входу ${d.max_exhaustion}% — `
+                    + `вхід ЗАБЛОКОВАНО, таймер скидається`));
+            } else {
+                const c = d.exhaustion >= 66 ? '#facc15' : '#86efac';
+                const bg = d.exhaustion >= 66 ? 'rgba(250,204,21,0.15)' : 'rgba(34,197,94,0.15)';
+                parts.push(chip(`🔥 Виснаж: ${ex}% / ${d.max_exhaustion}%`, c, bg,
+                    `Виснаженість ${ex}% (поріг входу ${d.max_exhaustion}%) — у нормі`));
+            }
+        }
+
+        // Verdict — WAIT gate (watchlist NOT considered, wl=null)
+        if (d.verdict) {
+            if (d.verdict === 'WAIT') {
+                const blocked = d.wait_blocked;
+                parts.push(chip(`⏳ Вердикт: WAIT${blocked ? ' 🚫' : ''}`,
+                    blocked ? '#fca5a5' : '#fbbf24',
+                    blocked ? 'rgba(239,68,68,0.15)' : 'rgba(251,191,36,0.15)',
+                    blocked
+                        ? 'Вердикт WAIT + увімкнено "Ігнорувати WAIT" → вхід/позицію ЗАБЛОКОВАНО'
+                        : 'Вердикт WAIT (напрямок неясний). "Ігнорувати WAIT" вимкнено — не блокує'));
+            } else {
+                const isLong = d.verdict === 'LONG';
+                parts.push(chip(`⏳ Вердикт: ${isLong ? '🟢' : '🔴'} ${d.verdict}`,
+                    isLong ? '#86efac' : '#fca5a5',
+                    isLong ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+                    'Загальний вердикт compute_bias (watchlist НЕ враховується)'));
+            }
+        }
+
+        // Timer / holding state
+        if (d.holding) {
+            parts.push(chip('🎯 Позиція відкрита', '#c084fc', 'rgba(168,85,247,0.18)',
+                'FF тримає відкриту позицію по цій монеті'));
+        } else if (d.timer) {
+            const p = d.timer.progress_pct != null ? d.timer.progress_pct : 0;
+            const tdir = d.timer.dir === 'LONG' ? '🟢' : '🔴';
+            parts.push(chip(`⏱ Таймер: ${tdir} ${p}%`,
+                p >= 100 ? '#4ade80' : '#facc15',
+                'rgba(250,204,21,0.12)',
+                `Таймер ${d.timer.dir} — ${p}% до відкриття`));
+        } else {
+            parts.push(chip('⏱ Таймер: —', '#8b93a7', 'rgba(139,147,167,0.12)',
+                'Таймер не запущено'));
+        }
+
+        row.innerHTML = parts.join('');
+        row.style.display = 'block';
+    } catch (e) {
+        row.style.display = 'none';
     }
 }
 
