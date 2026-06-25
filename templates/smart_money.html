@@ -1906,8 +1906,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="tm-leverage" min="1" max="50" step="1" onchange="saveTMSettings()">
                             <span style="color:#888;font-size:0.75rem">x</span>
                         </div>
+                        <div class="tm-row">
+                            <label>Max Open Positions:
+                                <span class="tm-help" title="Максимальна кількість одночасно відкритих РЕАЛЬНИХ позицій. При досягненні ліміту нові сигнали автоматично відкриваються в Test Mode (якщо увімкнений). Дефолт: 10">?</span>
+                            </label>
+                            <input type="number" id="tm-max-positions" min="1" max="50" step="1" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.75rem">позицій</span>
+                        </div>
                     </div>
-                    
+
                     <!-- Exit Rules -->
                     <div class="sm-settings-section">
                         <h3>Exit Rules</h3>
@@ -5310,8 +5317,9 @@ async function loadTMSettings() {
         document.getElementById('tm-fixed-pct').value = s.fixed_pct_balance;
         document.getElementById('tm-risk-pct').value = s.risk_pct_balance;
         document.getElementById('tm-leverage').value = s.leverage;
+        document.getElementById('tm-max-positions').value = s.max_open_positions || 10;
         onTMSizingChange();
-        
+
         // Exit rules
         document.getElementById('tm-use-sl').checked = !!s.use_sl;
         document.getElementById('tm-sl-pct').value = s.sl_pct;
@@ -5654,6 +5662,7 @@ async function saveTMSettings() {
             fixed_pct_balance: parseFloat(document.getElementById('tm-fixed-pct').value) || 2,
             risk_pct_balance: parseFloat(document.getElementById('tm-risk-pct').value) || 1,
             leverage: parseInt(document.getElementById('tm-leverage').value) || 10,
+            max_open_positions: parseInt(document.getElementById('tm-max-positions').value) || 10,
             use_sl: document.getElementById('tm-use-sl').checked,
             sl_pct: parseFloat(document.getElementById('tm-sl-pct').value) || 2,
             sl_mode: document.getElementById('tm-sl-mode').value || 'pct',
@@ -6669,7 +6678,10 @@ function renderFuelFilter(d) {
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
                     <td style="min-width:120px"><div style="background:rgba(255,255,255,0.08);border-radius:4px;height:10px;overflow:hidden"><div style="width:${prog}%;height:100%;background:${prog >= 100 ? '#4ade80' : '#facc15'}"></div></div><span style="font-size:0.62rem;color:#8b93a7">${prog}%</span></td>
-                    <td><span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span></td>
+                    <td style="white-space:nowrap">
+                        <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
+                        <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
+                    </td>
                 </tr>`;
             }).join('');
         }
@@ -6762,6 +6774,27 @@ async function loadFuelPanelStatus() {
         row.style.display = 'block';
     } catch (e) {
         row.style.display = 'none';
+    }
+}
+
+async function forceOpenTimer(symbol) {
+    if (!confirm(`Відкрити позицію для ${symbol} зараз (без очікування таймера)?`)) return;
+    try {
+        const res = await fetch('/api/fuel-filter/force-open', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol})
+        });
+        const d = await res.json();
+        if (d.ok) {
+            loadFuelFilterStatus();
+            loadTMState();  // refresh TM/Test tables to show new position
+            if (d.reason) alert('✓ ' + d.reason);
+        } else {
+            alert('Помилка: ' + (d.reason || 'невідома'));
+        }
+    } catch (e) {
+        alert('Помилка запиту: ' + e);
     }
 }
 

@@ -272,18 +272,17 @@ class FuelFilterDaemon:
             return None
 
     def _bias(self, symbol: str) -> Dict:
-        """Cached shared-bias computation (the SAME function that powers the
-        dashboard's verdict board + "Потенціал LONG/SHORT" panel). All FF
-        consumers (exhaustion, verdict, panel-status) go through here so the
-        numbers FF shows/uses are byte-for-byte the panel's numbers — no
-        independent re-computation that could drift. wl=None on purpose:
-        watchlist consensus is intentionally NOT considered by FF."""
+        """Cached FF-specific bias computation. Uses compute_bias_for_ff —
+        a SOFTER variant that issues LONG/SHORT more readily than the strict
+        dashboard version. This reduces the time FF spends in WAIT state.
+        All FF consumers (exhaustion, verdict, panel-status) go through here
+        so the numbers are consistent."""
         now = time.time()
         c = self._bias_cache.get(symbol)
         if c and (now - c.get('ts', 0)) < BIAS_TTL:
             return c.get('data') or {}
-        from web.flask_app import compute_bias
-        data = compute_bias(self._db, symbol, wl=None) or {}
+        from web.flask_app import compute_bias_for_ff
+        data = compute_bias_for_ff(self._db, symbol) or {}
         self._bias_cache[symbol] = {'ts': now, 'data': data}
         return data
 
@@ -872,6 +871,61 @@ class FuelFilterDaemon:
                 print(f"[FuelFilter] Timer deleted: {symbol}")
                 return True
             return False
+
+    def force_open_timer(self, symbol: str) -> Dict:
+        """Manually trigger position open for a running timer, bypassing the
+        duration requirement (progress % doesn't matter).
+
+        Returns: {'ok': bool, 'reason': str, 'opened': bool}
+        """
+        symbol = symbol.upper()
+        settings = self.get_settings()
+        if not settings.get('enabled'):
+            return {'ok': False, 'reason': 'Fuel Auto-Filter is disabled'}
+
+        with self._lock:
+            timer = self._timers.get(symbol)
+
+        if not timer:
+            return {'ok': False, 'reason': f'No active timer for {symbol}'}
+
+        # Check if already holding a position
+        if symbol in self._fuel_managed:
+            return {'ok': False, 'reason': f'Already holding position for {symbol}'}
+
+        # Get current fuel status
+        try:
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if lm is None:
+                return {'ok': False, 'reason': 'Liquidation map not available'}
+
+            try:
+                prof = self._db.get_setting('liqmap_decay_profile', 'tori')
+            except Exception:
+                prof = 'tori'
+
+            state = lm.get_state(symbol, lookback_hours=24, profile=prof)
+            fuel_dir = state.get('fuel_direction')
+            if not fuel_dir:
+                return {'ok': False, 'reason': 'No fuel direction available'}
+
+            # Force open using timer's side
+            side = timer['side']
+            opened = self._open(symbol, side, state, settings)
+
+            if opened:
+                # Remove timer since we opened successfully
+                with self._lock:
+                    self._timers.pop(symbol, None)
+                    self._persist_state()
+                return {'ok': True, 'reason': 'Position opened manually', 'opened': True}
+            else:
+                return {'ok': False, 'reason': 'Position open failed (check logs)', 'opened': False}
+
+        except Exception as e:
+            print(f"[FuelFilter] force_open_timer error for {symbol}: {e}")
+            return {'ok': False, 'reason': f'Error: {str(e)}'}
 
     def clear_all_timers(self) -> int:
         """Clear all timers. Returns count of timers cleared."""
