@@ -2723,19 +2723,6 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
-    @app.route('/api/fuel-filter/clear-closed', methods=['POST'])
-    def api_fuel_filter_clear_closed():
-        """Clear the recent-closes history (does not touch open positions)."""
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if not ff:
-                return jsonify({'ok': False, 'reason': 'not initialized'})
-            ff.clear_closed()
-            return jsonify({'ok': True})
-        except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e)})
-
     # ========== Database Admin ==========
 
     @app.route('/database')
@@ -4117,12 +4104,34 @@ def register_api_routes(app):
     
     @app.route('/api/tm/state')
     def api_tm_state():
-        """Return Trade Manager state: positions, closed trades, stats."""
+        """Return Trade Manager state: positions, closed trades, stats.
+        Merges exhaustion data from fuel filter for fuel-managed positions."""
         from detection.trade_manager import get_trade_manager
+        from detection.fuel_filter import get_fuel_filter
         tm = get_trade_manager()
         if not tm:
             return jsonify({'ok': False, 'reason': 'Not initialized'})
-        return jsonify(tm.get_state())
+
+        state = tm.get_state()
+
+        # Merge exhaustion from fuel filter into positions
+        try:
+            ff = get_fuel_filter()
+            if ff:
+                exh_map = ff.get_exhaustion_map()
+                # Merge into real positions
+                for pos in (state.get('positions') or []):
+                    if pos['symbol'] in exh_map:
+                        pos['exhaustion'] = exh_map[pos['symbol']]
+                # Merge into shadow positions
+                for pos in (state.get('shadow_positions') or []):
+                    if pos['symbol'] in exh_map:
+                        pos['exhaustion'] = exh_map[pos['symbol']]
+        except Exception as e:
+            # Non-fatal — just log and continue without exhaustion data
+            print(f"[Flask] fuel exhaustion merge error: {e}")
+
+        return jsonify(state)
     
     @app.route('/api/tm/settings', methods=['GET', 'POST'])
     def api_tm_settings():
