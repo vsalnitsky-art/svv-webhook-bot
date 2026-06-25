@@ -2760,6 +2760,24 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/force-open', methods=['POST'])
+    def api_fuel_filter_force_open():
+        """Manually trigger position open for an active timer, bypassing the
+        duration requirement. Body: {"symbol": "BTCUSDT"}."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            symbol = data.get('symbol', '')
+            if not symbol:
+                return jsonify({'ok': False, 'reason': 'symbol required'})
+            result = ff.force_open_timer(symbol.upper())
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/clear-timers', methods=['POST'])
     def api_fuel_filter_clear_timers():
         """Clear all timers."""
@@ -5818,3 +5836,177 @@ def compute_bias(db, symbol, wl=None):
             'reasons': reasons, 'price': price, 'move': move,
             'move_long': move_long, 'move_short': move_short,
             'ts': _t.time()}
+
+
+def compute_bias_for_ff(db, symbol):
+    """Лагідніша версія compute_bias спеціально для Fuel Auto-Filter.
+
+    Відмінності від звичайного compute_bias:
+    1. Не вимагає повної згоди всіх 3 голосів (forecast, fuel, watchlist)
+    2. Достатньо 2 з 3 співпадаючих голосів, або навіть 1 сильного
+    3. Нижчий поріг confidence (50 замість 60) для віддання вердикту
+    4. Більш толерантний до маніпуляції - не блокує LONG/SHORT за mpct < 70%
+    5. Якщо forecast 1H і 4H не співпадають, бере пріоритет 1H (коротший TF)
+
+    Це дозволяє FF відкривати позиції навіть коли основний алгоритм каже WAIT.
+    """
+    import time as _t
+    symbol = (symbol or 'BTCUSDT').upper().strip()
+    if symbol.endswith('.P'):
+        symbol = symbol[:-2]
+
+    comp = {}
+    reasons = []
+    fc_side = 0  # +1 long, -1 short, 0 none/disagree
+
+    # Forecast - м'якша логіка: якщо 1H і 4H не співпадають, беремо 1H
+    try:
+        from detection.forecast_engine import get_forecast_engine
+        fe = get_forecast_engine()
+        cached = fe.get(symbol) if fe else None
+        if cached:
+            f1 = cached.get('forecast_1h') or {}
+            f4 = cached.get('forecast_4h') or {}
+            s1, s4 = f1.get('side', 0), f4.get('side', 0)
+            c1, c4 = f1.get('confidence', 0), f4.get('confidence', 0)
+            comp['forecast'] = {
+                'f1_side': s1, 'f1_conf': c1,
+                'f4_side': s4, 'f4_conf': c4}
+
+            def _fc_line(tf, sd, cf):
+                if not sd or not cf:
+                    return ('wait', f"Forecast {tf}: нейтральний", 'wait')
+                d = 'LONG' if sd > 0 else 'SHORT'
+                return ('ok', f"Forecast {tf}: {d} {cf}%",
+                        'long' if sd > 0 else 'short')
+            reasons.append(_fc_line('1H', s1, c1))
+            reasons.append(_fc_line('4H', s4, c4))
+
+            # М'якша логіка: якщо обидва співпадають - супер. Якщо ні - беремо 1H
+            if s1 and s1 == s4:
+                fc_side = 1 if s1 > 0 else -1
+            elif s1 and c1 >= 50:  # пріоритет 1H якщо є впевненість
+                fc_side = 1 if s1 > 0 else -1
+            elif s4 and c4 >= 60:  # 4H тільки якщо дуже впевнений
+                fc_side = 1 if s4 > 0 else -1
+        else:
+            comp['forecast'] = None
+            # Для FF відсутність forecast не критична
+    except Exception:
+        comp['forecast'] = None
+
+    # Fuel - те саме
+    fuel_side = 0
+    try:
+        from detection.market_data import get_market_data
+        from detection.squeeze import calc_squeeze
+        from detection.liquidation_map.liquidation_map import get_liquidation_map
+        md = get_market_data()
+        kl = md.fetch_klines(symbol, interval='1h', limit=120) if md else None
+        sq = calc_squeeze(kl or [])
+        lm = get_liquidation_map()
+        fa = fb = 0.0
+        if lm is not None:
+            try:
+                prof = db.get_setting('liqmap_decay_profile', 'tori')
+            except Exception:
+                prof = 'tori'
+            lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
+            mark = lst.get('mark_price')
+            for lev in (lst.get('levels') or []):
+                if not mark:
+                    break
+                dist = abs(lev['price'] - mark) / mark * 100.0
+                if dist > 15:
+                    continue
+                w = lev['usd'] / (1.0 + dist / 2.0)
+                if lev['price'] > mark:
+                    fa += w
+                else:
+                    fb += w
+        den = fa + fb
+        fuel_dir = (fa - fb) / den if den > 0 else 0.0
+        comp['fuel'] = {'above_usd': round(fa, 0), 'below_usd': round(fb, 0),
+                        'dir': round(fuel_dir, 3),
+                        'squeeze_on': sq.get('squeeze_on', False),
+                        'band': sq.get('band', 'off')}
+        if den <= 0:
+            reasons.append(('wait', "Liq-палива немає даних"))
+        elif fuel_dir > 0.1:
+            fuel_side = 1
+            reasons.append(('ok', "Паливо зверху (тягне в LONG)", 'long'))
+        elif fuel_dir < -0.1:
+            fuel_side = -1
+            reasons.append(('ok', "Паливо знизу (тягне в SHORT)", 'short'))
+        else:
+            reasons.append(('wait', "Паливо збалансоване — напрямку немає"))
+    except Exception:
+        comp['fuel'] = None
+
+    # Book imbalance + маніпуляція - лагідніша перевірка
+    trust_ok = True
+    try:
+        from detection.orderbook_collector import (
+            fetch_aggregated_orderbook, compute_walls_buckets_v3)
+        snap = fetch_aggregated_orderbook(symbol)
+        walls = compute_walls_buckets_v3(snap) if snap else {}
+        imb = walls.get('imbalance_pct', 0) or 0
+        comp['imbalance_pct'] = round(imb, 1)
+        manip = walls.get('manipulation') or {}
+        mpct = manip.get('pct', 0)
+        comp['manipulation'] = {'pct': mpct,
+                                'low_sample': manip.get('low_sample', False)}
+        # М'якше: тільки при дуже високій маніпуляції (≥70%) блокуємо
+        if not manip.get('low_sample') and mpct >= 70:
+            trust_ok = False
+            reasons.append(('warn', f"Маніпуляція {mpct:.0f}% — книзі не вірити"))
+    except Exception:
+        comp['imbalance_pct'] = None
+        comp['manipulation'] = None
+
+    # Watchlist - НЕ беремо до уваги для FF (за дизайном)
+    comp['watchlist'] = None
+    wl_side = 0
+
+    # Вердикт - М'ЯКІША ЛОГІКА
+    verdict, confidence = 'WAIT', 0
+    # Два головних голоси: forecast та fuel (watchlist виключений)
+    dir_votes = [v for v in (fc_side, fuel_side) if v != 0]
+
+    if len(dir_votes) >= 2 and all(v == dir_votes[0] for v in dir_votes):
+        # Обидва співпадають - сильний сигнал
+        side = dir_votes[0]
+        confidence = 70  # вища впевненість при згоді
+        # Imbalance в тому ж напрямку
+        imb = comp.get('imbalance_pct') or 0
+        if (side > 0 and imb > 0) or (side < 0 and imb < 0):
+            confidence += 10
+        if not trust_ok:
+            confidence -= 20  # м'якше покарання за маніпуляцію
+        confidence = max(0, min(100, confidence))
+        if confidence >= 50:  # НИЖЧИЙ ПОРІГ для FF
+            verdict = 'LONG' if side > 0 else 'SHORT'
+        else:
+            verdict = 'WAIT'
+    elif len(dir_votes) == 1:
+        # Один голос - слабший, але може бути достатній
+        side = dir_votes[0]
+        # Перевіримо, чи це fuel (сильніший для FF)
+        if dir_votes[0] == fuel_side and abs(comp.get('fuel', {}).get('dir', 0)) > 0.15:
+            # Сильний fuel сам по собі може дати зелене світло
+            confidence = 55
+            imb = comp.get('imbalance_pct') or 0
+            if (side > 0 and imb > 0) or (side < 0 and imb < 0):
+                confidence += 5
+            if not trust_ok:
+                confidence -= 15
+            confidence = max(0, min(100, confidence))
+            if confidence >= 50:
+                verdict = 'LONG' if side > 0 else 'SHORT'
+        else:
+            # Один голос без fuel - WAIT
+            verdict = 'WAIT'
+
+    return {'ok': True, 'symbol': symbol, 'verdict': verdict,
+            'confidence': confidence, 'components': comp,
+            'reasons': reasons, 'ts': _t.time()}
