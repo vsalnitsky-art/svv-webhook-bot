@@ -19,6 +19,12 @@ Safety / exchange-friendliness:
   • Fuel direction is read from the *cached* liquidation map state
     (refreshed by its own daemon every 60 s) — this module makes ZERO extra
     exchange calls to compute fuel.
+  • IMPORTANT: the liq-map daemon only tracks BACKGROUND_SYMBOLS (BTC/ETH)
+    plus symbols requested on-demand in the last 30 min. So each tick we
+    call lm.request_symbol() for every WATCHLIST coin — this is what makes
+    the daemon actually scan ALL watchlist coins (not just the ones a user
+    happens to be viewing in the UI). First-seen coins need ~1-2 liq-map
+    ticks (≤2 min) before fuel data becomes meaningful.
   • Exhaustion ("Потенціал") needs klines, so it is computed ONLY for coins
     that already have an OPEN fuel position (a handful at most), never for
     the whole watchlist. Results are cached per-symbol with a short TTL.
@@ -30,12 +36,12 @@ Persistence / recovery:
     Trade Manager persists its book. On boot the daemon restores everything
     so timers and positions survive restarts/redeploys.
 
-Execution modes (DB-persisted `mode`):
-  • 'paper' (default) — virtual book only, PnL marked to live price. No real
-    orders, zero risk while the strategy is validated.
-  • 'real'            — delegates the actual open/close to the existing
-    TradeManager (manual_open / close) so all real-order logic stays in one
-    place; this module only decides WHEN.
+Execution modes:
+  • Positions are opened via Trade Manager (real Bybit) or Test Mode (paper)
+    based on their toggle states — this filter doesn't maintain its own mode.
+  • If TM is enabled → real position via manual_open()
+  • If Test Mode is enabled → paper position via _open_shadow()
+  • If both are on, real TM takes precedence.
 """
 
 import time
@@ -56,8 +62,6 @@ DEFAULT_SETTINGS = {
     'duration_minutes': 5,        # status must hold this long before open
     'potential_threshold_pct': 95,  # exhaustion ≥ this → close
     'use_potential_exit': True,   # toggle the exhaustion exit on/off
-    'mode': 'paper',              # 'paper' | 'real'
-    'max_positions': 0,           # 0 = unlimited
 }
 
 
@@ -96,8 +100,9 @@ class FuelFilterDaemon:
             1, min(100, int(s.get('potential_threshold_pct', 95) or 95)))
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['enabled'] = bool(s.get('enabled', False))
-        s['mode'] = 'real' if str(s.get('mode', 'paper')).lower() == 'real' else 'paper'
-        s['max_positions'] = max(0, int(s.get('max_positions', 0) or 0))
+        # Remove obsolete keys
+        s.pop('mode', None)
+        s.pop('max_positions', None)
         return s
 
     def update_settings(self, patch: Dict) -> Dict:
@@ -164,18 +169,32 @@ class FuelFilterDaemon:
         try:
             from detection.liquidation_map.liquidation_map import get_liquidation_map
             lm = get_liquidation_map()
-            if lm is None:
-                return None
-            try:
-                prof = self._db.get_setting('liqmap_decay_profile', 'tori')
-            except Exception:
-                prof = 'tori'
-            lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
-            mark = lst.get('mark_price')
+            mark = None
+            lst = None
+            if lm:
+                try:
+                    prof = self._db.get_setting('liqmap_decay_profile', 'tori')
+                except Exception:
+                    prof = 'tori'
+                lst = lm.get_state(symbol, lookback_hours=24, profile=prof)
+                mark = lst.get('mark_price') if lst else None
+
+            # Fallback: if liquidation map doesn't have mark_price, get it from market_data
             if not mark:
+                try:
+                    from detection.market_data import get_market_data
+                    md = get_market_data()
+                    if md:
+                        ticker = md.get_ticker(symbol)
+                        mark = ticker.get('last') if ticker else None
+                except Exception:
+                    pass
+
+            if not mark or mark <= 0:
                 return None
+
             fa = fb = 0.0
-            for lev in (lst.get('levels') or []):
+            for lev in (lst.get('levels') or []) if lst else []:
                 dist = abs(lev['price'] - mark) / mark * 100.0
                 if dist > 15:
                     continue
@@ -201,25 +220,39 @@ class FuelFilterDaemon:
             return None
 
     def _exhaustion(self, symbol: str, side: str) -> Optional[float]:
-        """Move exhaustion (0..100) for an OPEN position only. Cached with a
-        short TTL so we fetch klines at most every EXHAUSTION_TTL seconds per
-        coin. Returns None on insufficient data."""
+        """Move exhaustion (0..100) for an OPEN position only. Uses the SAME
+        data source as the dashboard's "Потенціал LONG/SHORT" panel (scanner's
+        cached klines) so percentages match. Cached with a short TTL. Returns
+        None on insufficient data."""
         now = time.time()
         c = self._exh_cache.get(symbol)
         if c and c.get('side') == side and (now - c.get('ts', 0)) < EXHAUSTION_TTL:
             return c.get('exhaustion')
         try:
-            from detection.market_data import get_market_data
             from detection.move_potential import analyze_move_potential
-            md = get_market_data()
-            kl = md.fetch_klines(symbol, interval='15m', limit=200) if md else None
+            # Use scanner's cached klines (same source as dashboard panel)
+            mp_klines = None
             bars_per_day = 96
-            if not kl or len(kl) < 96:
-                kl = md.fetch_klines(symbol, interval='1h', limit=200) if md else None
-                bars_per_day = 24
-            if not kl or len(kl) < 20:
+            try:
+                from detection.smc_scanner import get_smc_scanner
+                _sc = get_smc_scanner()
+                if _sc:
+                    mp_klines = _sc._get_cached_klines(symbol)
+            except Exception:
+                pass
+            # Fallback to 1h klines if scanner cache unavailable
+            if not mp_klines or len(mp_klines) < 20:
+                try:
+                    from detection.market_data import get_market_data
+                    md = get_market_data()
+                    if md:
+                        mp_klines = md.fetch_klines(symbol, interval='1h', limit=200)
+                        bars_per_day = 24
+                except Exception:
+                    pass
+            if not mp_klines or len(mp_klines) < 20:
                 return None
-            mp = analyze_move_potential(side=side, klines=kl,
+            mp = analyze_move_potential(side=side, klines=mp_klines,
                                         bars_per_day=bars_per_day)
             exh = mp.get('exhaustion') if mp and mp.get('ok') else None
             self._exh_cache[symbol] = {'ts': now, 'exhaustion': exh, 'side': side}
@@ -232,10 +265,30 @@ class FuelFilterDaemon:
     # open / close (paper native, real delegated to TradeManager)
     # ------------------------------------------------------------------
     def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict):
-        mode = settings.get('mode', 'paper')
+        """Open position via Trade Manager (real) or Test Mode (paper) based on
+        their toggle states. No local 'mode' setting — positions are delegated
+        to the existing TM/Test Mode infrastructure."""
         entry_price = fuel.get('mark_price')
         if not entry_price or entry_price <= 0:
             return
+
+        tm = self._get_tm() if self._get_tm else None
+        if not tm:
+            print(f"[FuelFilter] no TradeManager available — skip {symbol}")
+            return
+
+        # Check which mode is active (TM real or Test Mode paper)
+        tm_enabled = tm.is_enabled() if hasattr(tm, 'is_enabled') and callable(tm.is_enabled) else False
+        test_enabled = tm.is_test_mode_enabled() if hasattr(tm, 'is_test_mode_enabled') and callable(tm.is_test_mode_enabled) else False
+
+        if not tm_enabled and not test_enabled:
+            print(f"[FuelFilter] neither TM nor Test Mode enabled — skip {symbol}")
+            return
+
+        # Prefer real TM if both are on
+        is_real = tm_enabled
+        mode = 'real' if is_real else 'paper'
+
         pos = {
             'symbol': symbol,
             'side': side,
@@ -243,29 +296,35 @@ class FuelFilterDaemon:
             'opened_at': time.time(),
             'fuel_dir_at_entry': fuel.get('dir'),
             'mode': mode,
-            'is_paper': mode != 'real',
+            'is_paper': not is_real,
             'last_price': entry_price,
             'pnl_pct': 0.0,
             'exhaustion': None,
         }
-        if mode == 'real':
-            tm = self._get_tm() if self._get_tm else None
-            if not tm:
-                print(f"[FuelFilter] real mode but no TradeManager — skip {symbol}")
-                return
-            try:
+
+        try:
+            if is_real:
+                # Real position via TM
                 res = tm.manual_open(symbol, side)
-            except Exception as e:
-                print(f"[FuelFilter] real open error {symbol}: {e}")
-                return
-            if not res or not res.get('ok'):
-                reason = (res or {}).get('reason', 'unknown')
-                print(f"[FuelFilter] real open rejected {symbol}: {reason}")
-                return
-            rp = res.get('entry_price') or res.get('position', {}).get('entry_price')
-            if rp:
-                pos['entry_price'] = rp
-                pos['last_price'] = rp
+                if not res or not res.get('ok'):
+                    reason = (res or {}).get('reason', 'unknown')
+                    print(f"[FuelFilter] real open rejected {symbol}: {reason}")
+                    return
+                rp = res.get('entry_price') or res.get('position', {}).get('entry_price')
+                if rp:
+                    pos['entry_price'] = rp
+                    pos['last_price'] = rp
+            else:
+                # Paper position via Test Mode (shadow)
+                if hasattr(tm, '_open_shadow') and callable(tm._open_shadow):
+                    tm._open_shadow(symbol, side, entry_price, source='fuel_filter')
+                else:
+                    print(f"[FuelFilter] Test Mode enabled but _open_shadow not available")
+                    return
+        except Exception as e:
+            print(f"[FuelFilter] open error {symbol} ({mode}): {e}")
+            return
+
         with self._lock:
             self._positions[symbol] = pos
             self._persist_state()
@@ -325,6 +384,27 @@ class FuelFilterDaemon:
                 print(f"[FuelFilter] tick error: {e}")
             self._stop.wait(CYCLE_SECS)
 
+    def _register_with_liqmap(self, symbols: List[str]):
+        """Register every watchlist symbol with the liquidation-map daemon so
+        it actually SCANS them. This is the root fix for "not all WATCHLIST
+        coins scanned": the liq map only tracks BACKGROUND_SYMBOLS (BTC/ETH)
+        plus on-demand symbols requested in the last 30 min. Without this call,
+        coins nobody is actively viewing in the UI have zero OI data, so
+        fuel_dir is always neutral and they never trigger. We re-request every
+        tick (30 s) which keeps them well inside the 30-min on-demand TTL."""
+        try:
+            from detection.liquidation_map.liquidation_map import get_liquidation_map
+            lm = get_liquidation_map()
+            if not lm:
+                return
+            for s in symbols:
+                try:
+                    lm.request_symbol(s)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[FuelFilter] liqmap register error: {e}")
+
     def _tick(self):
         settings = self.get_settings()
         self._last_tick_ts = time.time()
@@ -338,6 +418,10 @@ class FuelFilterDaemon:
         # position even if its coin drops off the watchlist)
         symbols = list(dict.fromkeys(
             [s.upper() for s in watchlist] + list(self._positions.keys())))
+
+        # CRITICAL: register all symbols with the liq map so it scans them.
+        # Otherwise only BTC/ETH + UI-viewed coins have fuel data.
+        self._register_with_liqmap(symbols)
 
         duration_sec = settings['duration_minutes'] * 60
         now = time.time()
@@ -386,10 +470,6 @@ class FuelFilterDaemon:
                     continue
                 held = now - t.get('since', now)
                 if held >= duration_sec:
-                    # capacity check
-                    maxp = settings['max_positions']
-                    if maxp and len(self._positions) >= maxp:
-                        continue
                     self._open(symbol, status, fuel, settings)
             else:
                 # status off → reset any running timer
