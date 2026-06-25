@@ -296,7 +296,23 @@ def create_app():
                 )
             except Exception as e:
                 print(f"[APP] Failed to start Auto-gate: {e}")
-        
+
+        if not _auto_started.get('fuel_filter'):
+            _auto_started['fuel_filter'] = True
+            try:
+                from detection.fuel_filter import init_fuel_filter
+                from detection.trade_manager import get_trade_manager
+                def _fuel_watchlist():
+                    raw = get_db().get_setting('ctr_watchlist', '') or ''
+                    return [s.strip().upper() for s in raw.split(',') if s.strip()]
+                init_fuel_filter(
+                    db=get_db(),
+                    get_trade_manager=get_trade_manager,
+                    get_watchlist=_fuel_watchlist,
+                )
+            except Exception as e:
+                print(f"[APP] Failed to start Fuel Filter: {e}")
+
         if not _auto_started.get('tickr_opp'):
             _auto_started['tickr_opp'] = True
             try:
@@ -2664,52 +2680,59 @@ def register_api_routes(app):
                       else 'Archive disabled — trades only in Recent Closed list'
         })
 
-    # ========== Blocked Trades (V2 Quality Gate rejections) ==========
+    # ========== Fuel Auto-Filter (liquidation-fuel timed entries) ==========
 
-    @app.route('/api/blocked-trades/list')
-    def api_blocked_trades_list():
-        """Get list of blocked trades with optional filters.
-        Query params:
-          ?limit=100 (default 100)
-          &is_paper=true|false (optional, None = all)
-          &symbol=BTCUSDT (optional)
-        """
+    @app.route('/api/fuel-filter/state')
+    def api_fuel_filter_state():
+        """Live snapshot: settings + timers + open positions + recent closes."""
         try:
-            limit = int(request.args.get('limit', 100))
-            is_paper_str = request.args.get('is_paper')
-            is_paper = None
-            if is_paper_str == 'true':
-                is_paper = True
-            elif is_paper_str == 'false':
-                is_paper = False
-            symbol = request.args.get('symbol')
-            db = get_db()
-            trades = db.get_blocked_trades(limit=limit, is_paper=is_paper, symbol=symbol)
-            return jsonify({'ok': True, 'trades': trades})
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify(ff.get_state())
         except Exception as e:
-            return jsonify({'ok': False, 'reason': str(e), 'trades': []})
+            return jsonify({'ok': False, 'reason': str(e)})
 
-    @app.route('/api/blocked-trades/stats')
-    def api_blocked_trades_stats():
-        """Get stats about blocked trades (total, real, paper counts)."""
+    @app.route('/api/fuel-filter/settings', methods=['POST'])
+    def api_fuel_filter_settings():
+        """Update settings. Body may include any of: enabled, duration_minutes,
+        potential_threshold_pct, use_potential_exit, mode, max_positions."""
         try:
-            db = get_db()
-            stats = db.get_blocked_trades_stats()
-            return jsonify(stats)
-        except Exception as e:
-            return jsonify({'ok': False, 'total': 0, 'real': 0, 'paper': 0})
-
-    @app.route('/api/blocked-trades/clear', methods=['POST'])
-    def api_blocked_trades_clear():
-        """Clear blocked trades. DESTRUCTIVE.
-        Body: {"scope": "all"|"real"|"paper"}."""
-        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
             data = request.get_json(silent=True) or {}
-            scope = data.get('scope', 'all')
-            is_paper = None if scope == 'all' else (scope == 'paper')
-            db = get_db()
-            removed = db.clear_blocked_trades(is_paper=is_paper)
-            return jsonify({'ok': True, 'removed': removed, 'scope': scope})
+            settings = ff.update_settings(data)
+            return jsonify({'ok': True, 'settings': settings})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/toggle', methods=['POST'])
+    def api_fuel_filter_toggle():
+        """Enable/disable the filter. Body: {"enabled": true|false}."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            ff.set_enabled(bool(data.get('enabled', False)))
+            return jsonify({'ok': True, 'settings': ff.get_settings()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/clear-closed', methods=['POST'])
+    def api_fuel_filter_clear_closed():
+        """Clear the recent-closes history (does not touch open positions)."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            ff.clear_closed()
+            return jsonify({'ok': True})
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
@@ -3007,10 +3030,6 @@ def register_api_routes(app):
                 ag.set_mode(str(body['mode']))
             if 'close_on_wait' in body:
                 ag.set_close_on_wait(bool(body['close_on_wait']))
-            if 'trend_alert' in body:
-                ag.set_trend_alert(bool(body['trend_alert']))
-            if 'trend_alert_1h' in body:
-                ag.set_trend_alert_1h(bool(body['trend_alert_1h']))
             if 'wait_hysteresis' in body:
                 ag.set_wait_hysteresis(body['wait_hysteresis'])
             if 'symbol' in body and body['symbol']:
@@ -5695,50 +5714,8 @@ def compute_bias(db, symbol, wl=None):
         move_long = None
         move_short = None
 
-    # Reversal-pressure index — how much pressure has built for a reversal
-    # AGAINST the current 4H/1H trend. Pulls max signal from Bybit (klines +
-    # funding + OI + long/short ratio); degrades gracefully if a source is
-    # unavailable. NOT a probability — a weighted index of reversal conditions.
-    reversal = None       # 4H (primary)
-    reversal_1h = None    # 1H (faster horizon)
-    try:
-        from detection.reversal_pressure import analyze_reversal_pressure
-        from detection import exchange_router as xr
-        rev_side = verdict if verdict in ('LONG', 'SHORT') else mp_side
-        # Shared extra signals (funding + L/S are TF-agnostic; OI per TF)
-        fr, _ = xr.get_funding_rate(symbol)
-        lp = None
-        try:
-            from detection.market_sentiment import get_sentiment
-            sent = get_sentiment('bybit')
-            if sent and sent.get('ok'):
-                lp = sent.get('long_pct')
-        except Exception:
-            lp = None
-
-        def _rev_for(interval, oi_interval, limit, tf_label):
-            k, src_k = xr.get_klines(symbol, interval=interval, limit=limit)
-            if not k or len(k) < 30:
-                return None
-            oi_hist, _ = xr.get_open_interest(symbol, interval=oi_interval, limit=12)
-            r = analyze_reversal_pressure(
-                side=rev_side, klines_4h=k,
-                funding_rate=fr, oi_history=oi_hist, long_pct=lp,
-                tf_label=tf_label)
-            if r and r.get('ok'):
-                r['data_source'] = src_k
-            return r
-
-        # 4H — Binance/Bybit preferred via router
-        reversal = _rev_for("240", "4h", 200, "4H")
-        # 1H — faster horizon, same calculation
-        reversal_1h = _rev_for("60", "1h", 200, "1H")
-    except Exception as e:
-        reversal = None
-        reversal_1h = None
-
     return {'ok': True, 'symbol': symbol, 'verdict': verdict,
             'confidence': confidence, 'components': comp,
             'reasons': reasons, 'price': price, 'move': move,
             'move_long': move_long, 'move_short': move_short,
-            'reversal': reversal, 'reversal_1h': reversal_1h, 'ts': _t.time()}
+            'ts': _t.time()}
