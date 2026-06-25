@@ -303,8 +303,12 @@ def create_app():
                 from detection.fuel_filter import init_fuel_filter
                 from detection.trade_manager import get_trade_manager
                 def _fuel_watchlist():
-                    raw = get_db().get_setting('ctr_watchlist', '') or ''
-                    return [s.strip().upper() for s in raw.split(',') if s.strip()]
+                    # Use SMC watchlist (main watchlist), not legacy ctr_watchlist
+                    from detection.smc_scanner import get_smc_scanner
+                    smc = get_smc_scanner()
+                    if smc:
+                        return [s.upper() for s in smc.get_watchlist()]
+                    return []
                 init_fuel_filter(
                     db=get_db(),
                     get_trade_manager=get_trade_manager,
