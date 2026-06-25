@@ -35,7 +35,7 @@
 
 .sm-layout {
     display: grid;
-    grid-template-columns: 240px 1fr;
+    grid-template-columns: 280px 1fr;
     gap: 12px;
     height: 640px;
     min-height: 600px;
@@ -906,11 +906,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     color: #aaa;
     border-color: rgba(150, 150, 150, 0.4);
 }
-/* ❤️ marker shown when a coin currently has an OPEN fuel-filter position */
+/* Green marker shown when a coin currently has an OPEN fuel-filter position */
 .wl-ff-flag.holding {
-    background: rgba(244, 114, 182, 0.30);
-    color: #fbcfe8;
-    border-color: rgba(244, 114, 182, 0.6);
+    background: rgba(34, 197, 94, 0.25);
+    color: #4ade80;
+    border-color: rgba(34, 197, 94, 0.5);
+    font-weight: 800;
 }
 
 /* === Global LONG/SHORT direction gates — top of page ===
@@ -2148,12 +2149,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості (%)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Не відкривати угоду якщо виснаженість вище цього порога">Макс. виснаженість входу (%)</label>
+                            <input type="number" id="ff-max-exhaustion" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості виходу (%)</label>
                             <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                         </div>
                         <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
                                 <input type="checkbox" id="ff-use-potential"> Вихід за виснаженістю
+                            </label>
+                        </div>
+                        <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоди по монетах у стані WAIT (невизначений напрямок)">
+                                <input type="checkbox" id="ff-skip-wait"> Ігнорувати WAIT монети
                             </label>
                         </div>
                         <button onclick="saveFuelFilterSettings()" style="font-size:0.72rem;padding:6px 14px;border-radius:6px;border:1px solid rgba(74,222,128,0.4);background:rgba(74,222,128,0.1);color:#4ade80;cursor:pointer">💾 Зберегти</button>
@@ -3019,9 +3029,9 @@ function renderWatchlist(list) {
         const isHolding = (typeof _ffActiveSymbols !== 'undefined')
                           && _ffActiveSymbols.indexOf(sym) !== -1;
         const ffClass = isHolding ? 'holding' : (inScan ? 'active' : 'inactive');
-        const ffLabel = isHolding ? '❤️FF' : 'FF';
+        const ffLabel = 'FF';
         const ffTitle = isHolding
-            ? '❤️ Відкрита угода Fuel Auto-Filter. Click щоб прибрати монету зі скан-списку.'
+            ? '✅ Відкрита угода Fuel Auto-Filter. Click щоб прибрати монету зі скан-списку.'
             : (inScan
                 ? '✅ У скан-списку Fuel Auto-Filter — монета сканується. Click щоб прибрати.'
                 : '❌ Не сканується Fuel Auto-Filter. Click щоб додати монету до скан-списку.');
@@ -6580,8 +6590,8 @@ async function loadFuelFilterStatus() {
         const prevActive = _ffActiveSymbols.join(',');
         _ffActiveSymbols = d.active_symbols || [];
         if (Array.isArray(d.scan_list)) ffScanList = new Set(d.scan_list);
-        // Re-render watchlist if the holding set changed, so the ❤️FF marker
-        // on the flags stays current between watchlist polls.
+        // Re-render watchlist if the holding set changed, so the FF button color
+        // (green when holding) stays current between watchlist polls.
         if (_ffActiveSymbols.join(',') !== prevActive
                 && typeof wlSymbols !== 'undefined' && wlSymbols.length) {
             renderWatchlist(wlSymbols);
@@ -6614,8 +6624,10 @@ function renderFuelFilter(d) {
         }
     };
     setIf('ff-duration', s.duration_minutes);
+    setIf('ff-max-exhaustion', s.max_exhaustion_pct);
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
+    setIf('ff-skip-wait', s.skip_wait_coins);
 
     // timers
     const tb = document.getElementById('ff-timers-tbody');
@@ -6627,7 +6639,7 @@ function renderFuelFilter(d) {
             tb.innerHTML = rows.map(t => {
                 const prog = t.progress_pct != null ? t.progress_pct : 0;
                 const exh = (t.exhaustion != null)
-                    ? Math.round(t.exhaustion) + '%' : '—';
+                    ? t.exhaustion.toFixed(1) + '%' : '—';
                 const exhColor = (t.exhaustion != null && t.exhaustion >= 85)
                     ? '#f87171' : (t.exhaustion != null && t.exhaustion >= 66
                         ? '#facc15' : '#cbd5e1');
@@ -6692,8 +6704,10 @@ async function onFuelFilterToggle(event) {
 async function saveFuelFilterSettings() {
     const payload = {
         duration_minutes: parseInt(document.getElementById('ff-duration').value || '5', 10),
+        max_exhaustion_pct: parseInt(document.getElementById('ff-max-exhaustion').value || '75', 10),
         potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
         use_potential_exit: document.getElementById('ff-use-potential').checked,
+        skip_wait_coins: document.getElementById('ff-skip-wait').checked,
     };
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
@@ -7256,7 +7270,7 @@ async function toggleFuelScan(symbol) {
                 const holding = _ffActiveSymbols.indexOf(symbol) !== -1;
                 const on = ffScanList.has(symbol);
                 flag.className = 'wl-ff-flag ' + (holding ? 'holding' : (on ? 'active' : 'inactive'));
-                flag.textContent = holding ? '❤️FF' : 'FF';
+                flag.textContent = 'FF';
                 flag.title = on
                     ? '✅ У скан-списку Fuel Auto-Filter — монета сканується. Click щоб прибрати.'
                     : '❌ Не сканується Fuel Auto-Filter. Click щоб додати монету до скан-списку.';
