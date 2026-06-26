@@ -275,7 +275,18 @@ class TradeManager:
         self._settings = self._load_settings()
         self._positions: Dict[str, Dict] = {}     # symbol → position dict
         self._closed_trades: List[Dict] = []
-        
+
+        # Live exchange-truth snapshot of open positions, keyed by symbol.
+        # Populated from Bybit on every reconcile tick (and refreshed on-demand
+        # by get_state when stale). Holds the EXACT exchange values — avgPrice,
+        # markPrice, unrealisedPnl, size, leverage, liqPrice — so the UI shows
+        # reality instead of our own approximation. {symbol: {...}} + timestamp.
+        self._live_positions: Dict[str, Dict] = {}
+        self._live_positions_at: float = 0.0
+        # Throttle for on-demand refresh from get_state so frequent UI polls
+        # don't hammer the Bybit API. Refresh at most once per this interval.
+        self._live_refresh_min_interval: float = 3.0
+
         # Shadow (paper) positions — tracked when test_mode=True even if TM is
         # disabled. Used to validate exit rules without real Bybit orders.
         self._shadow_positions: Dict[str, Dict] = {}
@@ -2088,8 +2099,16 @@ class TradeManager:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
         self._persist_positions()
         self._persist_closed_trades()
+        # Replace our last-price approximation with the exchange's real
+        # avg exit price + realized PnL (net of fees). External closes are the
+        # worst offenders since we only detected them on a reconcile tick.
+        self._apply_exchange_close_truth(symbol, closed, pos['side'])
+        entry = closed['entry_price']
+        exit_price = closed['exit_price']
+        pnl_pct = closed['pnl_pct']
+        pnl_usd = closed['pnl_usd']
         self._archive_closed(closed, pos, is_paper=False)
-        
+
         sign = '+' if pnl_pct >= 0 else ''
         print(f"[TM] 🔄 External close detected for {symbol}: "
               f"{sign}{pnl_pct:.2f}% (gone from Bybit, reason={reason})")
@@ -2099,9 +2118,82 @@ class TradeManager:
             f"PnL: {sign}{pnl_pct:.2f}% ({sign}${pnl_usd:.2f})"
         )
     
+    def _apply_exchange_close_truth(self, symbol: str, closed: Dict,
+                                    side: str) -> bool:
+        """Overwrite a just-recorded closed trade with the REAL figures from
+        Bybit's closed-PnL endpoint: actual avg entry/exit price and realized
+        PnL (already net of trading fees + funding). Replaces our own
+        last-price-based approximation so the UI/stats match the exchange exactly.
+
+        `closed` is the dict already appended to self._closed_trades — we mutate
+        it in place and re-persist. Returns True if real data was applied.
+
+        Bybit settles the closed-PnL record a beat after the reduce-only fill,
+        so we retry a few times with a short backoff. On total failure we keep
+        our approximation (clearly better than nothing) and flag it.
+        """
+        if not self.bybit or not hasattr(self.bybit, 'get_closed_pnl'):
+            closed['pnl_source'] = 'approx'
+            return False
+
+        # The closing order side on Bybit is the OPPOSITE of the position side.
+        want_close_side = 'Sell' if side == 'LONG' else 'Buy'
+        our_qty = float(closed.get('remaining_qty_at_close')
+                        or closed.get('qty') or 0)
+
+        record = None
+        for attempt in range(4):  # ~0.5 + 1 + 2 ≈ 3.5s worst case
+            recs = self.bybit.get_closed_pnl(symbol, limit=10)
+            if recs:
+                # Newest first. Pick the most recent record matching the close
+                # side; prefer one whose qty is close to ours (handles a symbol
+                # that was opened/closed several times).
+                candidates = [r for r in recs
+                              if r.get('side') == want_close_side
+                              and r.get('avg_exit_price', 0) > 0]
+                if candidates:
+                    if our_qty > 0:
+                        record = min(
+                            candidates,
+                            key=lambda r: abs(r.get('qty', 0) - our_qty))
+                    else:
+                        record = candidates[0]
+                    break
+            if attempt < 3:
+                time.sleep(0.5 * (attempt + 1))
+
+        if not record:
+            closed['pnl_source'] = 'approx'
+            print(f"[TM] ⚠️ closed-PnL not available for {symbol}; "
+                  f"kept approximation")
+            return False
+
+        entry = record['avg_entry_price'] or closed.get('entry_price')
+        exit_p = record['avg_exit_price']
+        pnl_usd = record['closed_pnl']
+        if entry and entry > 0:
+            if side == 'LONG':
+                pnl_pct = (exit_p - entry) / entry * 100
+            else:
+                pnl_pct = (entry - exit_p) / entry * 100
+        else:
+            pnl_pct = closed.get('pnl_pct', 0)
+
+        with self._lock:
+            closed['entry_price'] = entry
+            closed['exit_price'] = exit_p
+            closed['pnl_usd'] = round(pnl_usd, 4)
+            closed['pnl_pct'] = round(pnl_pct, 4)
+            closed['pnl_source'] = 'exchange'
+            closed['exchange_order_id'] = record.get('order_id')
+        self._persist_closed_trades()
+        print(f"[TM] ✅ Exchange truth for {symbol}: entry={entry} "
+              f"exit={exit_p} realizedPnL=${pnl_usd:.4f} ({pnl_pct:+.2f}%)")
+        return True
+
     def _adopt_external_position(self, bybit_pos: Dict) -> bool:
         """Adopt a position that exists on Bybit but not in TM's view.
-        
+
         Happens in three scenarios:
           1. User opened a position MANUALLY on Bybit while TM is running
           2. Position pre-existed from before TM was activated
@@ -2222,7 +2314,14 @@ class TradeManager:
             print("[TM] Reconcile: skipped close pass (Bybit fetch not ok)")
         
         live_by_symbol = {p['symbol']: p for p in live if p.get('symbol')}
-        
+
+        # Cache the exchange-truth snapshot so get_state() can render the open
+        # positions exactly as they are on Bybit (only when the fetch was clean
+        # — a partial page must not wipe the cache to empty).
+        if ok:
+            self._live_positions = live_by_symbol
+            self._live_positions_at = time.time()
+
         with self._lock:
             tm_symbols = set(self._positions.keys())
         live_symbols = set(live_by_symbol.keys())
@@ -2398,10 +2497,14 @@ class TradeManager:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
         self._persist_positions()
         self._persist_closed_trades()
+        # Replace our last-price approximation with the exchange's real avg
+        # exit price + realized PnL (net of fees/funding) so the record matches
+        # Bybit exactly. Falls back to the approximation if unavailable.
+        self._apply_exchange_close_truth(symbol, closed, pos['side'])
         self._archive_closed(closed, pos, is_paper=False)
-        
+
         self._notify_close(closed)
-    
+
     def _partial_close(self, symbol: str, pct: float, exit_price: float, reason: str):
         """Close a percentage of remaining qty."""
         with self._lock:
@@ -3178,21 +3281,79 @@ class TradeManager:
             print(f"[TM] hold-score error for {sym}: {e}")
             return None
 
+    def _refresh_live_positions(self, force: bool = False):
+        """Pull a fresh exchange-truth snapshot of open positions from Bybit,
+        throttled so frequent UI polls don't hammer the API. The reconcile loop
+        also refreshes this cache on its own cadence; this keeps it current
+        between reconcile ticks so the UI never shows stale exchange numbers.
+        """
+        if not self.bybit or not self._positions:
+            return
+        now = time.time()
+        if not force and (now - self._live_positions_at) < self._live_refresh_min_interval:
+            return
+        try:
+            if hasattr(self.bybit, 'get_positions_checked'):
+                live, ok = self.bybit.get_positions_checked()
+            else:
+                live, ok = (self.bybit.get_positions() or []), True
+            if ok:
+                self._live_positions = {p['symbol']: p for p in live
+                                        if p.get('symbol')}
+                self._live_positions_at = now
+        except Exception as e:
+            print(f"[TM] live positions refresh error: {e}")
+
     def get_state(self) -> Dict:
+        # Refresh the exchange-truth snapshot (throttled) BEFORE taking the lock
+        # so open-position figures match Bybit exactly, not our approximation.
+        self._refresh_live_positions()
         with self._lock:
             positions = []
             for sym, pos in self._positions.items():
-                current = self._get_current_price(sym) or pos['entry_price']
-                entry = pos['entry_price']
+                live = self._live_positions.get(sym)
+                # Exchange truth wins: entry = Bybit avgPrice, qty = Bybit size,
+                # current = Bybit markPrice, PnL = Bybit unrealisedPnl. We only
+                # fall back to our own values when the live snapshot is missing
+                # (e.g. API down) — never invent numbers.
+                if live and live.get('entry_price', 0) > 0:
+                    entry = live['entry_price']
+                    live_qty = live.get('size') or pos.get('qty')
+                    mark = live.get('mark_price') or 0
+                    current = mark if mark > 0 else (
+                        self._get_current_price(sym) or entry)
+                    unreal = live.get('unrealized_pnl')
+                else:
+                    entry = pos['entry_price']
+                    live_qty = pos.get('qty')
+                    current = self._get_current_price(sym) or entry
+                    unreal = None
                 if pos['side'] == 'LONG':
                     pnl_pct = (current - entry) / entry * 100
                 else:
                     pnl_pct = (entry - current) / entry * 100
+                synced = bool(live and live.get('entry_price', 0) > 0)
                 pos_dict = {
                     **pos,
+                    'entry_price': entry,
+                    'qty': live_qty,
                     'current_price': current,
                     'pnl_pct': round(pnl_pct, 3),
+                    # Source flag the UI reads to show a ⇄ "synced with Bybit"
+                    # marker. 'bybit' = exchange-truth, 'approx' = our fallback.
+                    'pnl_source': 'bybit' if synced else 'approx',
                 }
+                if unreal is not None:
+                    pos_dict['pnl_usd'] = round(unreal, 4)
+                if synced:
+                    # Exchange size is the truth for the displayed qty too —
+                    # the UI prefers remaining_qty, so keep it in sync.
+                    pos_dict['remaining_qty'] = live_qty
+                if live:
+                    pos_dict['mark_price'] = live.get('mark_price')
+                    pos_dict['liq_price'] = live.get('liq_price')
+                    pos_dict['leverage'] = live.get('leverage')
+                    pos_dict['position_value'] = live.get('position_value')
                 # Attach Health Score (None when feature disabled)
                 health = self._compute_health(pos, is_shadow=False)
                 if health is not None:

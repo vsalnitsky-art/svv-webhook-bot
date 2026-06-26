@@ -522,6 +522,49 @@ class BybitConnector:
             reduce_only=True
         )
 
+    def get_closed_pnl(self, symbol: str, limit: int = 5) -> List[Dict]:
+        """Отримати реальні записи закритого PnL із Bybit (/v5/position/closed-pnl).
+
+        Повертає фактичні дані біржі по щойно закритих позиціях: середню ціну
+        входу/виходу, realized PnL (вже з урахуванням комісій), кількість.
+        Найновіший запис — перший у списку. Використовується після закриття,
+        щоб переписати наш приблизний розрахунок справжніми цифрами біржі.
+
+        Кожен елемент:
+          {'symbol', 'side', 'qty', 'avg_entry_price', 'avg_exit_price',
+           'closed_pnl', 'order_id', 'created_time' (ms), 'updated_time' (ms)}
+
+        Повертає [] при відсутності ключа/помилці — викликач має зберегти
+        власний розрахунок як фолбек, а не показувати порожнечу.
+        """
+        if not self.api_key:
+            return []
+        try:
+            response = self.session.get_closed_pnl(
+                category="linear", symbol=symbol, limit=limit)
+            result = self._handle_response(response)
+            if result is None:
+                return []
+            out = []
+            for r in (result.get('list') or []):
+                out.append({
+                    'symbol': r.get('symbol'),
+                    # Bybit side тут — напрямок ОРДЕРА ЗАКРИТТЯ (протилежний
+                    # до напрямку позиції): Buy = закриття SHORT, Sell = закриття LONG.
+                    'side': r.get('side'),
+                    'qty': self._safe_float(r.get('qty')),
+                    'avg_entry_price': self._safe_float(r.get('avgEntryPrice')),
+                    'avg_exit_price': self._safe_float(r.get('avgExitPrice')),
+                    'closed_pnl': self._safe_float(r.get('closedPnl')),
+                    'order_id': r.get('orderId'),
+                    'created_time': int(r.get('createdTime') or 0),
+                    'updated_time': int(r.get('updatedTime') or 0),
+                })
+            return out
+        except Exception as e:
+            print(f"[BYBIT] get_closed_pnl error for {symbol}: {e}")
+            return []
+
 
 # ===== Singleton =====
 _connector: Optional[BybitConnector] = None
