@@ -17,6 +17,8 @@ ENTRY_THRESHOLD = -1.0
 WATCH_DAYS = 5
 DB_KEY = 'funding_watchlist'
 DB_KEY_THRESHOLD = 'funding_entry_threshold'  # user-tunable entry threshold (%)
+DB_KEY_MIN_VOLUME = 'funding_min_volume_usd'  # user-tunable min 24h turnover (USD)
+MIN_VOLUME_USD = 0.0          # default: 0 = volume filter off
 TREND_WINDOW = 30           # 30 scans × 1min = 30 min trend
 
 
@@ -40,6 +42,11 @@ class FundingMonitor:
         # default ENTRY_THRESHOLD on first run / read error.
         self._entry_threshold: float = ENTRY_THRESHOLD
         self._load_threshold()
+        # Minimum 24h turnover (USD) for a coin to enter the watchlist. Lets the
+        # user filter out illiquid coins where extreme funding is noise rather
+        # than a tradeable squeeze. 0 = filter off. Tunable from the UI header.
+        self._min_volume: float = MIN_VOLUME_USD
+        self._load_min_volume()
         self._load_watchlist()
 
     def _load_threshold(self):
@@ -72,6 +79,34 @@ class FundingMonitor:
             except Exception as e:
                 print(f"[FUNDING] threshold save error: {e}")
         print(f"[FUNDING] entry threshold set to {v}%")
+        return v
+
+    def _load_min_volume(self):
+        """Restore the user-set min 24h volume from DB (default MIN_VOLUME_USD)."""
+        if not self.db:
+            return
+        try:
+            raw = self.db.get_setting(DB_KEY_MIN_VOLUME, None)
+            if raw is not None:
+                self._min_volume = max(0.0, float(raw))
+        except Exception as e:
+            print(f"[FUNDING] min volume load error: {e}")
+
+    def set_min_volume(self, value) -> float:
+        """Set and persist the minimum 24h turnover (USD) for watchlist entry.
+        0 disables the filter. Returns the value actually applied."""
+        try:
+            v = max(0.0, float(value))
+        except (ValueError, TypeError):
+            return self._min_volume
+        with self._lock:
+            self._min_volume = v
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_MIN_VOLUME, v)
+            except Exception as e:
+                print(f"[FUNDING] min volume save error: {e}")
+        print(f"[FUNDING] min 24h volume set to ${v:,.0f}")
         return v
 
     def _load_watchlist(self):
@@ -168,22 +203,31 @@ class FundingMonitor:
                 try:
                     rate = float(t.get('fundingRate', '0'))
                     price = float(t.get('lastPrice', '0'))
+                    # turnover24h = 24h quote volume in USDT (USD). Best
+                    # "large volume" proxy on Bybit v5 linear tickers.
+                    volume = float(t.get('turnover24h', '0') or 0)
                 except (ValueError, TypeError):
                     continue
-                rates[symbol] = {'rate': rate, 'price': price}
+                rates[symbol] = {'rate': rate, 'price': price, 'volume': volume}
 
             self._total_coins = len(rates)
             threshold = self._entry_threshold / 100
+            min_vol = self._min_volume
             new_added = 0
             expired_count = 0
 
             with self._lock:
                 for symbol, data in rates.items():
-                    if symbol not in self._watchlist and data['rate'] <= threshold:
+                    # Entry requires BOTH: funding ≤ threshold AND (when the
+                    # volume filter is on) 24h turnover ≥ min volume.
+                    if (symbol not in self._watchlist
+                            and data['rate'] <= threshold
+                            and (min_vol <= 0 or data['volume'] >= min_vol)):
                         self._watchlist[symbol] = {
                             'first_seen': now_str,
                             'trigger_rate': round(data['rate'] * 100, 4),
                             'price_at_trigger': data['price'],
+                            'volume': data['volume'],
                             'alerted': False,
                             'manual': False,
                             'rates': [],
@@ -194,6 +238,7 @@ class FundingMonitor:
                     coin = self._watchlist[symbol]
                     if symbol in rates:
                         r = rates[symbol]
+                        coin['volume'] = r['volume']   # keep live 24h volume
                         coin['rates'].append({
                             't': now_str,
                             'r': round(r['rate'] * 100, 4),
@@ -314,6 +359,7 @@ class FundingMonitor:
                     'manual': data.get('manual', False),
                     'funding_trend': ft,
                     'price_trend': pt,
+                    'volume': data.get('volume', 0),
                 })
 
             coins.sort(key=lambda x: (not x['is_priority'], x['current_rate']))
@@ -326,6 +372,7 @@ class FundingMonitor:
                 'running': self._running,
                 'threshold': abs(self._entry_threshold),
                 'threshold_raw': self._entry_threshold,
+                'min_volume': self._min_volume,
                 'watch_days': WATCH_DAYS,
             }
 
@@ -368,13 +415,15 @@ class FundingMonitor:
             
             rate = float(found.get('fundingRate', '0'))
             price = float(found.get('lastPrice', '0'))
+            volume = float(found.get('turnover24h', '0') or 0)
             now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')
-            
+
             with self._lock:
                 self._watchlist[symbol] = {
                     'first_seen': now_str,
                     'trigger_rate': round(rate * 100, 4),
                     'price_at_trigger': price,
+                    'volume': volume,
                     'alerted': False,
                     'manual': True,
                     'rates': [{

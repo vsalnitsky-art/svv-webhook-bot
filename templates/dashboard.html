@@ -221,6 +221,14 @@
                            style="width:62px;padding:3px 6px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
                     %
                 </label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.75rem;color:#aaa"
+                       title="Мінімальний 24h обсяг (turnover, млн USD) для входу в трекінг. Відсіює неліквідні монети, де екстремальний funding — це шум. 0 = фільтр вимкнено.">
+                    Vol ≥
+                    <input type="number" id="funding-volume-input" step="1" min="0" placeholder="0"
+                           onchange="saveFundingVolume(this.value)"
+                           style="width:58px;padding:3px 6px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
+                    M$
+                </label>
                 <label class="fr-toggle" title="Enable/disable scanner">
                     <input type="checkbox" id="funding-toggle" onchange="toggleFunding(this.checked)">
                     <span class="fr-toggle-slider"></span>
@@ -2698,7 +2706,7 @@ async function loadFunding() {
             contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Entry: ≤ -${d.threshold}%<br>No extreme funding detected yet.</div>`;
         } else {
             let html = `<table class="funding-table">
-                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol Signal</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
+                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol 24h</th><th>Vol Signal</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
             
             for (const c of coins) {
                 const curClass = c.current_rate < 0 ? 'negative' : 'positive';
@@ -2754,6 +2762,7 @@ async function loadFunding() {
                     <td class="fr-rate negative" style="font-weight:700">${c.min_rate.toFixed(3)}%</td>
                     <td style="color:${depthColor};font-size:0.75rem;font-weight:600">${depthStr}</td>
                     <td><span style="color:#aaa;font-size:0.75rem">${priceStr}</span> <span class="fr-rate ${pClass}" style="font-size:0.75rem">${pSign}${c.price_change.toFixed(2)}%${pTrend}</span></td>
+                    <td style="font-size:0.75rem;color:${(c.volume||0) >= 100e6 ? '#4caf50' : (c.volume||0) >= 10e6 ? '#ffa500' : '#888'}">${fmtFundingVol(c.volume)}</td>
                     <td>${sigHtml}</td>
                     <td style="color:${fTrendColor};font-size:0.75rem">${fTrend}</td>
                     <td style="color:#888">${tracked}</td>
@@ -2766,11 +2775,16 @@ async function loadFunding() {
         
         metaEl.textContent = `Scan #${d.scan_count} | ${d.total_coins} coins scanned | ${d.total_tracked} tracked | Entry: ≤ -${d.threshold}% | Watch: ${d.watch_days}d`;
 
-        // Keep the header threshold field in sync (don't clobber while the
-        // user is editing it).
+        // Keep the header filter fields in sync (don't clobber while the
+        // user is editing them).
         const thrEl = document.getElementById('funding-threshold-input');
         if (thrEl && document.activeElement !== thrEl) {
             thrEl.value = (d.threshold_raw != null) ? d.threshold_raw : -Math.abs(d.threshold);
+        }
+        const volEl = document.getElementById('funding-volume-input');
+        if (volEl && document.activeElement !== volEl) {
+            // Stored in USD; display in millions.
+            volEl.value = d.min_volume ? Math.round(d.min_volume / 1e6) : 0;
         }
 
     } catch (err) {
@@ -2795,6 +2809,35 @@ async function saveFundingThreshold(val) {
         }
     } catch (e) {
         console.warn('saveFundingThreshold failed:', e);
+    }
+}
+
+function fmtFundingVol(v) {
+    v = Number(v) || 0;
+    if (v <= 0) return '—';
+    if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return (v / 1e6).toFixed(0) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+    return v.toFixed(0);
+}
+
+async function saveFundingVolume(val) {
+    const millions = parseFloat(val);
+    if (isNaN(millions) || millions < 0) return;
+    try {
+        const r = await fetch('/api/funding/threshold', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({min_volume: millions * 1e6}),   // M$ → USD
+        });
+        const d = await r.json();
+        if (d.ok) {
+            const volEl = document.getElementById('funding-volume-input');
+            if (volEl) volEl.value = d.min_volume ? Math.round(d.min_volume / 1e6) : 0;
+            loadFunding();
+        }
+    } catch (e) {
+        console.warn('saveFundingVolume failed:', e);
     }
 }
 
