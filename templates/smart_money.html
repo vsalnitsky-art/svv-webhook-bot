@@ -6455,8 +6455,8 @@ async function loadBias() {
                     <span class="sm-bias-mini-label">Watchlist консенсус · ${srcLbl} (${w.total} монет)</span>
                     <label class="sm-bias-auto" style="margin:0" title="Враховувати Watchlist консенсус при розрахунку вердикту. Коли вимкнено — вердикт базується тільки на forecast + liq-fuel.">
                         <input type="checkbox" id="sm-use-wl-consensus" onchange="toggleWatchlistConsensus(this.checked)" ${useWatchlistConsensus ? 'checked' : ''}>
-                        <span class="sm-bias-auto-slider" style="width:28px;height:14px"></span>
-                        <span class="sm-bias-auto-label" style="font-size:0.7rem">Використовувати</span>
+                        <span class="sm-bias-auto-slider"></span>
+                        <span class="sm-bias-auto-label">Використовувати</span>
                     </label>
                 </div>
                 <div class="sm-bias-mini-bar"><div class="sm-bias-mini-l" style="width:${w.long_pct}%"></div><div class="sm-bias-mini-s" style="width:${w.short_pct}%"></div></div>
