@@ -31,6 +31,12 @@ class BybitConnector:
         # for 5 minutes to avoid hammering the API on every UI poll.
         self._perp_symbols_cache: Optional[set] = None
         self._perp_symbols_cached_at: float = 0.0
+
+        # Last order-placement error (retCode/retMsg or exception text). Set by
+        # place_order on failure, read by callers so the UI can show the REAL
+        # exchange reason ("Qty invalid", "insufficient balance", ...) instead
+        # of a generic "order failed". Cleared on the next successful order.
+        self._last_order_error: Optional[str] = None
     
     def reload_keys(self) -> bool:
         """Re-read API keys from config (after UI save) and rebuild HTTP session.
@@ -426,9 +432,10 @@ class BybitConnector:
                 params["takeProfit"] = str(take_profit)
             
             response = self.session.place_order(**params)
-            result = self._handle_response(response)
-            
-            if result:
+            ret_code = response.get('retCode')
+            if ret_code == 0:
+                result = response.get('result') or {}
+                self._last_order_error = None
                 return {
                     'order_id': result.get('orderId'),
                     'symbol': symbol,
@@ -436,12 +443,19 @@ class BybitConnector:
                     'qty': qty,
                     'order_type': order_type
                 }
+            # Capture the exchange's real rejection reason so the caller can
+            # show it to the user instead of a generic failure.
+            msg = f"Bybit {ret_code}: {response.get('retMsg')}"
+            print(f"[BYBIT ERROR] place_order rejected — {msg}")
+            self._last_order_error = msg
             return None
         except InvalidRequestError as e:
             print(f"[BYBIT] Invalid request: {e}")
+            self._last_order_error = f"Invalid request: {e}"
             return None
         except Exception as e:
             print(f"[BYBIT] place_order error: {e}")
+            self._last_order_error = str(e)
             return None
     
     def cancel_order(self, symbol: str, order_id: str) -> bool:
