@@ -73,11 +73,12 @@ _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 
 DEFAULT_SETTINGS = {
     'enabled': False,
-    'duration_minutes': 5,        # status must hold this long before open
+    'duration_minutes': 5,        # min duration to show in table (threshold filter)
     'potential_threshold_pct': 95,  # exhaustion ≥ this → close
     'use_potential_exit': True,   # toggle the exhaustion exit on/off
-    'max_exhaustion_pct': 75,     # don't open if exhaustion > this (entry filter)
-    'skip_wait_coins': False,     # don't open if coin verdict is WAIT
+    'max_exhaustion_pct': 75,     # (legacy) not used for auto-open anymore
+    'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
+    'manage_open_positions': True,  # if True, FF closes positions it opened
 }
 
 
@@ -710,7 +711,8 @@ class FuelFilterDaemon:
                         _cnt_short += 1
 
             # ---- manage positions fuel filter opened ----
-            if fuel_managed:
+            # Only if manage_open_positions is enabled (can be toggled off)
+            if fuel_managed and settings.get('manage_open_positions', True):
                 track = self._fuel_managed[symbol]
                 side = track['side']
                 is_real = track.get('mode') == 'real'
@@ -807,18 +809,11 @@ class FuelFilterDaemon:
 
             # ---- no position: run the timer ----
             if status in ('LONG', 'SHORT'):
-                # FF FLAG CHECK: only coins in scan_list can auto-open positions.
-                # All watchlist coins get scanned for data, but only flagged ones
-                # can start timers and auto-open.
+                # FF FLAG CHECK: timer runs only for FF-flagged coins.
+                # All watchlist coins get scanned for stats, but only flagged ones
+                # get timers (and show in the table).
                 if symbol not in scan_list:
                     # Not FF-flagged → skip timer logic (but still collected stats above)
-                    if symbol in self._timers:
-                        self._timers.pop(symbol, None)
-                    continue
-
-                # WAIT check: if skip_wait_coins enabled and verdict is WAIT, reset timer
-                if settings.get('skip_wait_coins', False) and self._is_wait_verdict(symbol):
-                    print(f"[FuelFilter] {symbol}: WAIT verdict — resetting timer")
                     if symbol in self._timers:
                         self._timers.pop(symbol, None)
                     continue
@@ -828,36 +823,15 @@ class FuelFilterDaemon:
                     # new status (or direction flip) → (re)start timer
                     self._timers[symbol] = {'dir': status, 'since': now}
                     t = self._timers[symbol]
-                # Exhaustion for the timer row — lets the operator SEE the
-                # coin's state (how much room is left) BEFORE a position opens.
+                # Exhaustion for the timer row — shows how much room is left.
                 exh = self._exhaustion(symbol, status)
                 if exh is not None:
                     t['exhaustion'] = exh
 
-                # ENTRY EXHAUSTION GATE: if exhaustion already exceeds the max
-                # entry threshold, the position can NEVER open (it would be
-                # rejected in _open). Running the timer is pointless and confusing
-                # ("100% exhaustion but still counting"). Reset it so the coin is
-                # not shown as a running timer. It restarts fresh if exhaustion
-                # later drops back below the threshold.
-                max_exh = settings.get('max_exhaustion_pct', 75)
-                if exh is not None and exh > max_exh:
-                    print(f"[FuelFilter] {symbol}: exhaustion {exh:.1f}% > {max_exh}% "
-                          f"— resetting timer (too exhausted to enter)")
-                    self._timers.pop(symbol, None)
-                    continue
-
-                held = now - t.get('since', now)
-                if held >= duration_sec:
-                    opened = self._open(symbol, status, fuel, settings)
-                    if not opened:
-                        # Open failed/rejected (e.g. qty below minOrderQty for
-                        # high-priced coins like BTC/ETH, gated, exhausted).
-                        # Reset the timer so we retry once per DURATION window
-                        # instead of hammering the same failing open every cycle
-                        # (which floods the log). It restarts fresh and, if the
-                        # blocking condition clears, opens on the next cycle.
-                        self._timers.pop(symbol, None)
+                # NEW STRATEGY: timer runs continuously while fuel exists.
+                # No auto-open. Table shows only timers held >= duration_minutes
+                # (filtering happens in get_state). Timer keeps running until
+                # fuel disappears (status becomes None/'WAIT').
             else:
                 # status off → reset any running timer
                 if symbol in self._timers:
@@ -893,7 +867,8 @@ class FuelFilterDaemon:
 
     def get_state(self) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
-        Actual position data lives in TM/Test Mode and is shown in their tables."""
+        NEW STRATEGY: shows only timers held >= duration_minutes (threshold).
+        No auto-open. Position management (close) is optional via setting."""
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
@@ -903,12 +878,14 @@ class FuelFilterDaemon:
                 if sym in self._fuel_managed:
                     continue  # already opened, don't show timer
                 held = now - t.get('since', now)
+                # FILTER: only show timers that exceeded the threshold
+                if held < duration_sec:
+                    continue
                 timers.append({
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
                     'exhaustion': t.get('exhaustion'),
-                    'progress_pct': (round(min(100.0, held / duration_sec * 100.0), 1)
-                                     if duration_sec > 0 else 100.0),
+                    # progress_pct removed - no longer needed
                 })
             scan_list = self.get_scan_list()
         return {
