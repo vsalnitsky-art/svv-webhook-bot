@@ -6066,6 +6066,7 @@ function renderEntryScoreBreakdown(breakdown) {
 
 let smartDirectionEnabled = false;
 let smartDirectionMode = 'smart';  // 'simple' | 'smart'
+let useWatchlistConsensus = true;  // whether to include watchlist consensus in verdict calculation
 let biasSymbol = 'BTCUSDT';
 
 function applyBiasSymbol() {
@@ -6144,6 +6145,17 @@ function setWaitHysteresis(n) {
     fetch('/api/sm/auto-gate', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({wait_hysteresis: v}),
+    }).catch(() => {});
+}
+
+function toggleWatchlistConsensus(on) {
+    useWatchlistConsensus = on;
+    fetch('/api/sm/auto-gate', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({use_watchlist_consensus: on}),
+    }).then(() => {
+        // Refresh bias immediately to reflect the change
+        loadBias();
     }).catch(() => {});
 }
 
@@ -6424,7 +6436,14 @@ async function loadBias() {
                 ? `<span class="sm-bias-reason ${wlReason[0]}" style="margin-top:4px${wlReason[2] === 'long' ? ';color:#4ade80' : wlReason[2] === 'short' ? ';color:#f87171' : ''}">${icons[wlReason[0]]||'•'} ${wlReason[1]}</span>`
                 : '';
             extra += `<div class="sm-bias-mini">
-                <span class="sm-bias-mini-label">Watchlist консенсус · ${srcLbl} (${w.total} монет)</span>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                    <span class="sm-bias-mini-label">Watchlist консенсус · ${srcLbl} (${w.total} монет)</span>
+                    <label class="sm-bias-auto" style="margin:0" title="Враховувати Watchlist консенсус при розрахунку вердикту. Коли вимкнено — вердикт базується тільки на forecast + liq-fuel.">
+                        <input type="checkbox" id="sm-use-wl-consensus" onchange="toggleWatchlistConsensus(this.checked)" ${useWatchlistConsensus ? 'checked' : ''}>
+                        <span class="sm-bias-auto-slider" style="width:28px;height:14px"></span>
+                        <span class="sm-bias-auto-label" style="font-size:0.7rem">Використовувати</span>
+                    </label>
+                </div>
                 <div class="sm-bias-mini-bar"><div class="sm-bias-mini-l" style="width:${w.long_pct}%"></div><div class="sm-bias-mini-s" style="width:${w.short_pct}%"></div></div>
                 <span class="sm-bias-mini-val">${w.n_long}↑ LONG / ${w.n_short}↓ SHORT / ${w.n_flat}• flat</span>
                 ${wlNote}
@@ -7572,6 +7591,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!d || !d.ok) return;
         smartDirectionEnabled = !!d.enabled;
         smartDirectionMode = d.mode || 'smart';
+        useWatchlistConsensus = (d.use_watchlist_consensus !== false);  // default true
         const ag = document.getElementById('sm-bias-auto');
         if (ag) ag.checked = smartDirectionEnabled;
         const modeSelect = document.getElementById('sm-bias-auto-mode');

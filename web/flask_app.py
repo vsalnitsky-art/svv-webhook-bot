@@ -3124,8 +3124,18 @@ def register_api_routes(app):
                 if sym.endswith('.P'):
                     sym = sym[:-2]
                 get_db().set_setting('sm_bias_symbol', sym)
-            return jsonify({'ok': True, **ag.status()})
-        return jsonify({'ok': True, **ag.status()})
+            if 'use_watchlist_consensus' in body:
+                get_db().set_setting('sm_use_watchlist_consensus',
+                                     'true' if bool(body['use_watchlist_consensus']) else 'false')
+            status = ag.status()
+            # Add watchlist consensus toggle state to status
+            status['use_watchlist_consensus'] = str(get_db().get_setting(
+                'sm_use_watchlist_consensus', 'true')).lower() in ('true', '1')
+            return jsonify({'ok': True, **status})
+        status = ag.status()
+        status['use_watchlist_consensus'] = str(get_db().get_setting(
+            'sm_use_watchlist_consensus', 'true')).lower() in ('true', '1')
+        return jsonify({'ok': True, **status})
     
     @app.route('/api/sentiment')
     def api_sentiment():
@@ -5749,7 +5759,12 @@ def compute_bias(db, symbol, wl=None):
     # --- Verdict ---
     verdict, confidence = 'WAIT', 0
     # Three directional votes: forecast, liq-fuel, watchlist consensus.
-    dir_votes = [v for v in (fc_side, fuel_side, wl_side) if v != 0]
+    # Watchlist consensus can be toggled off via sm_use_watchlist_consensus.
+    use_wl = str(db.get_setting('sm_use_watchlist_consensus', 'true')).lower() in ('true', '1')
+    votes_pool = [fc_side, fuel_side]
+    if use_wl:
+        votes_pool.append(wl_side)
+    dir_votes = [v for v in votes_pool if v != 0]
     agree = dir_votes and all(v == dir_votes[0] for v in dir_votes)
     if agree and len(dir_votes) >= 1:
         side = dir_votes[0]
