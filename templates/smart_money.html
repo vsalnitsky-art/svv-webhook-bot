@@ -1986,7 +1986,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <span class="tm-help" title="Закриває LONG позицію коли приходить CHoCH bear (зміна структури ринку проти позиції), і навпаки. Це ключовий SMC exit — вихід при зміні структури">?</span>
                             </label>
                         </div>
-                        
+
+                        <div class="tm-row">
+                            <label>
+                                <input type="checkbox" id="tm-use-reverse-signal" onchange="saveTMSettings()">
+                                Reverse on opposite signal
+                                <span class="tm-help" title="Коли приходить ПОВНИЙ протилежний сигнал входу (а не лише CHoCH), позиція перевертається: закривається поточна (reason «Протилежний сигнал входу») і відкривається протилежна. Це ОКРЕМО від «Reverse SMC (CHoCH only)». За замовчуванням ВИМКНЕНО — тоді при протилежному сигналі позиція просто тримається.">?</span>
+                            </label>
+                        </div>
+
                         <div class="tm-row">
                             <label>
                                 <input type="checkbox" id="tm-use-forecast-close" onchange="saveTMSettings()">
@@ -5355,6 +5363,7 @@ async function loadTMSettings() {
         document.getElementById('tm-use-tp').checked = !!s.use_tp;
         document.getElementById('tm-tp-pct').value = s.tp_pct;
         document.getElementById('tm-use-reverse').checked = !!s.use_reverse_smc;
+        document.getElementById('tm-use-reverse-signal').checked = !!s.use_reverse_signal;
         document.getElementById('tm-use-forecast-close').checked = !!s.use_forecast_1h_close;
         document.getElementById('tm-use-opposite-ob-exit').checked = !!s.use_opposite_ob_exit;
         // Validate TF before assigning to <select> — fall back to 15m for
@@ -5694,6 +5703,7 @@ async function saveTMSettings() {
             use_tp: document.getElementById('tm-use-tp').checked,
             tp_pct: parseFloat(document.getElementById('tm-tp-pct').value) || 5,
             use_reverse_smc: document.getElementById('tm-use-reverse').checked,
+            use_reverse_signal: document.getElementById('tm-use-reverse-signal').checked,
             use_forecast_1h_close: document.getElementById('tm-use-forecast-close').checked,
             use_opposite_ob_exit: document.getElementById('tm-use-opposite-ob-exit').checked,
             opposite_ob_exit_timeframe: document.getElementById('tm-opposite-ob-exit-tf').value || '15m',
