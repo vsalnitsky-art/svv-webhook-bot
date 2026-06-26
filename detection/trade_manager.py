@@ -144,7 +144,15 @@ DEFAULT_SETTINGS = {
     # through settings.
     'allow_long_entries': True,
     'allow_short_entries': True,
-    
+
+    # === Fuel Auto-Filter confirmation gate ===
+    # When ON, a trade is only opened if the SAME coin with the SAME direction
+    # is currently present in the ❤️ Fuel Auto-Filter table (i.e. its fuel has
+    # held for the configured threshold). If the coin+direction is NOT in the
+    # FF table, the open is IGNORED. This makes FF a mandatory confirmation
+    # for every entry. Default ON.
+    'require_fuel_confirm': True,
+
     # === Telegram notification toggles ===
     # Independently control Telegram alerts for real positions vs paper trades.
     # SMC scanner always sends its own signal alerts — these toggles control
@@ -476,6 +484,7 @@ class TradeManager:
                       'use_forecast_1h_close', 'use_opposite_ob_exit',
                       'test_mode',
                       'allow_long_entries', 'allow_short_entries',
+                      'require_fuel_confirm',
                       'telegram_alerts', 'test_telegram_alerts',
                       'use_bos_partials', 'trailing_after_bos_2',
                       'health_score_enabled',
@@ -1936,7 +1945,23 @@ class TradeManager:
         if not bypass_gates and not self._side_allowed(side):
             print(f"[TM] 🚫 REAL {side} entries disabled — {symbol} not opened")
             return
-        
+
+        # === Fuel Auto-Filter confirmation gate ===
+        # When enabled, only open if the same coin+direction is present in the
+        # ❤️ Fuel Auto-Filter table (sustained fuel). FF's own force-opens
+        # (bypass_gates) skip this — they originate from the table itself.
+        if not bypass_gates and self._settings.get('require_fuel_confirm', True):
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                ff = get_fuel_filter()
+                if ff is None or not ff.is_in_table(symbol, side):
+                    print(f"[TM] 🚫 Fuel-confirm gate: {symbol} {side} not in "
+                          f"❤️ Fuel Auto-Filter table — open ignored")
+                    return
+            except Exception as e:
+                print(f"[TM] Fuel-confirm gate error for {symbol}: {e} — open ignored")
+                return
+
         # Calculate size
         try:
             qty = self._calculate_qty(symbol, entry_price)
@@ -2489,7 +2514,22 @@ class TradeManager:
         if not bypass_gates and not self._side_allowed(side):
             print(f"[TM] 🚫 SHADOW {side} entries disabled — {symbol} not opened")
             return
-        
+
+        # === Fuel Auto-Filter confirmation gate (same as real) ===
+        # Paper trades must pass the same FF-table confirmation so the test view
+        # mirrors what a real deployment would do.
+        if not bypass_gates and self._settings.get('require_fuel_confirm', True):
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                ff = get_fuel_filter()
+                if ff is None or not ff.is_in_table(symbol, side):
+                    print(f"[TM] 🚫 Fuel-confirm gate: {symbol} {side} not in "
+                          f"❤️ Fuel Auto-Filter table — SHADOW open ignored")
+                    return
+            except Exception as e:
+                print(f"[TM] Fuel-confirm gate error (shadow) for {symbol}: {e} — open ignored")
+                return
+
         # Compute unified Decision Center verdict — same shape as real open
         decision = None
         try:
@@ -3613,9 +3653,13 @@ class TradeManager:
             return {'ok': True, 'position': dict(pos), 'entry_price': entry_price,
                     'mode': 'real'}
         elif test_mode:
-            # At limit, but test_mode is on → open shadow
+            # At limit, but test_mode is on → open shadow.
+            # Pass bypass_gates so FF force-opens (and any explicit manual
+            # bypass) skip the directional + fuel-confirm gates on the paper
+            # path too, matching the real path above.
             try:
-                self._open_shadow(symbol, side, entry_price, opened_by='manual_ui_overflow')
+                self._open_shadow(symbol, side, entry_price, opened_by='manual_ui_overflow',
+                                  bypass_gates=bypass_gates)
             except Exception as e:
                 return {'ok': False, 'reason': f'Shadow open error: {e}'}
             with self._lock:

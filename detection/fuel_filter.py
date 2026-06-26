@@ -906,6 +906,26 @@ class FuelFilterDaemon:
         with self._lock:
             return list(self._fuel_managed.keys())
 
+    def is_in_table(self, symbol: str, side: str) -> bool:
+        """Return True if `symbol` with direction `side` is currently shown in
+        the ❤️ Fuel Auto-Filter table (i.e. its fuel timer has held for at least
+        the configured `duration_minutes` threshold). Used as a confirmation gate
+        for trade opens: a trade is only allowed if its coin+direction shows
+        sustained fuel here."""
+        symbol = (symbol or '').upper().strip()
+        side = (side or '').upper().strip()
+        with self._lock:
+            settings = self.get_settings()
+            duration_sec = settings.get('duration_minutes', 5) * 60
+            now = time.time()
+            t = self._timers.get(symbol)
+            if not t:
+                return False
+            if t.get('dir') != side:
+                return False
+            held = now - t.get('since', now)
+            return held >= duration_sec
+
     def get_exhaustion_map(self) -> Dict[str, float]:
         """Get exhaustion values for all fuel-managed positions (for UI merge).
         Returns {symbol: exhaustion_pct, ...}."""
