@@ -86,7 +86,8 @@ DEFAULT_SETTINGS = {
     'tp_pct': 5.0,                   # %
     
     'use_reverse_smc': True,         # Close on opposite CHoCH
-    
+    'use_reverse_signal': False,     # Flip position on opposite QUALIFIED signal (off by default)
+
     'use_htf_flip': True,            # Close when HTF trend flips against us
     
     'use_time_stop': False,          # Close after N hours regardless
@@ -490,7 +491,8 @@ class TradeManager:
             self._settings['be_commission_buffer_pct'] = max(0.0, min(1.0,
                 float(self._settings.get('be_commission_buffer_pct', 0.12))))
             
-            for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_htf_flip',
+            for k in ['use_sl', 'use_tp', 'use_reverse_smc', 'use_reverse_signal',
+                      'use_htf_flip',
                       'use_time_stop', 'use_trailing', 'use_be',
                       'use_forecast_1h_close', 'use_opposite_ob_exit',
                       'test_mode',
@@ -943,63 +945,93 @@ class TradeManager:
         
         The reverse path runs in BOTH real and shadow modes so paper-trading
         produces the same trade history as a live deployment would.
+
+        Returns a status dict the SMC scanner uses to place the correct chart
+        marker and surface the real reason (never None):
+          {'real_opened': bool, 'shadow_opened': bool,
+           'status': 'opened'|'rejected'|'duplicate',
+           'reason': str, 'is_paper': bool}
         """
         s = self._settings
         enabled = self.is_enabled()
         test_mode = s.get('test_mode', True)
-        
+        # Auto-reverse on an opposite QUALIFIED entry signal (close + reopen the
+        # other way). This is SEPARATE from the "Reverse SMC (CHoCH only)" exit
+        # rule (use_reverse_smc), which only CLOSES on an opposite CHoCH. OFF by
+        # default so disabling the Exit Rules actually holds the position instead
+        # of flipping it on the next opposite signal.
+        allow_reverse = bool(s.get('use_reverse_signal', False))
+
         with self._lock:
             existing_real = self._positions.get(symbol)
             existing_shadow = self._shadow_positions.get(symbol)
-        
+
         # === Manual mode gate ===
         # If the user has locked this symbol into manual mode on EITHER
         # real or shadow track, ignore new signals entirely — no open, no
         # reverse. The operator wants to manage this trade by hand.
         if existing_real and existing_real.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (real) — signal ignored")
-            return
+            return {'status': 'duplicate', 'reason': 'manual mode (real) — signal ignored'}
         if existing_shadow and existing_shadow.get('manual_mode'):
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
-            return
+            return {'status': 'duplicate', 'reason': 'manual mode (shadow) — signal ignored'}
 
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list AND max_open_positions.
         # If limit reached: signal goes to paper track instead (if test_mode on).
         real_opened = False
+        real_reason = ''
         at_limit = self._at_max_positions()
 
         if enabled and not at_limit:
             if existing_real:
                 if existing_real['side'] == side:
-                    # Same direction — already in this trend, no-op for real.
-                    real_opened = True
+                    # Same direction — already in this trend, no new trade.
+                    return {'real_opened': False, 'status': 'duplicate',
+                            'reason': f'already holding {side} (real) — no new trade'}
                 else:
-                    # OPPOSITE direction — reverse: close + open
+                    # OPPOSITE direction — flip only if auto-reverse is enabled.
+                    if not allow_reverse:
+                        print(f"[TM] {symbol}: opposite signal but reverse-on-signal "
+                              f"OFF — holding {existing_real['side']}")
+                        return {'status': 'duplicate', 'reason':
+                                f'opposite signal, but "Reverse on opposite signal" '
+                                f'is OFF — holding {existing_real["side"]} position'}
                     print(f"[TM] 🔄 Reverse signal for {symbol}: "
                           f"closing {existing_real['side']} → opening {side}")
                     try:
                         self._close_position(symbol, entry_price, reason='reverse_signal')
                     except Exception as e:
                         print(f"[TM] ❌ Reverse-close failed for {symbol}: {e}")
-                        real_opened = True
-                    else:
-                        if self._is_tradeable(symbol):
-                            self._open_position(symbol, side, entry_price, opened_by)
+                        return {'real_opened': False, 'status': 'rejected',
+                                'reason': f'reverse-close failed: {e}'}
+                    if self._is_tradeable(symbol):
+                        res = self._open_position(symbol, side, entry_price, opened_by) or {}
+                        if res.get('ok'):
                             real_opened = True
                         else:
-                            print(f"[TM] {symbol} not in tradeable list — reverse-open skipped")
+                            real_reason = res.get('reason', 'reverse-open blocked')
+                    else:
+                        real_reason = f'{symbol} not in tradeable list (reverse-open skipped)'
             else:
                 # No existing real position
                 if self._is_tradeable(symbol):
-                    self._open_position(symbol, side, entry_price, opened_by)
-                    real_opened = True
+                    res = self._open_position(symbol, side, entry_price, opened_by) or {}
+                    if res.get('ok'):
+                        real_opened = True
+                    else:
+                        real_reason = res.get('reason', 'open blocked')
                 else:
-                    print(f"[TM] {symbol} not in tradeable list — signal ignored (real)")
+                    real_reason = f'{symbol} not in tradeable list (real)'
         elif enabled and at_limit:
             # Max positions reached — log it but don't block paper track
-            print(f"[TM] ℹ️ Max positions ({self._settings.get('max_open_positions')}) reached, "
-                  f"{symbol} signal → Test Mode")
+            real_reason = (f'max open positions '
+                           f'({self._settings.get("max_open_positions", 10)}) reached')
+            print(f"[TM] ℹ️ {real_reason}, {symbol} signal → Test Mode")
+
+        if real_opened:
+            return {'real_opened': True, 'status': 'opened', 'is_paper': False}
 
         # === Paper (shadow) track ===
         # Independent of the real track. Runs on EVERY qualified signal
@@ -1012,18 +1044,36 @@ class TradeManager:
         if test_mode and not real_opened:
             if existing_shadow:
                 if existing_shadow['side'] == side:
-                    return  # already in this trend on paper
-                # OPPOSITE direction — same reverse semantics for paper trades
+                    return {'status': 'duplicate',
+                            'reason': f'already holding {side} (paper) — no new trade'}
+                # OPPOSITE direction — flip only if auto-reverse is enabled.
+                if not allow_reverse:
+                    return {'status': 'duplicate', 'reason':
+                            f'opposite signal, but "Reverse on opposite signal" is '
+                            f'OFF — holding {existing_shadow["side"]} paper position'}
                 print(f"[TM] 🔄 [TEST] Reverse signal for {symbol}: "
                       f"closing {existing_shadow['side']} → opening {side}")
                 try:
                     self._close_shadow(symbol, entry_price, reason='reverse_signal')
                 except Exception as e:
                     print(f"[TM] ❌ [TEST] Reverse-close-shadow failed for {symbol}: {e}")
-                    return
-                self._open_shadow(symbol, side, entry_price, opened_by)
-                return
-            self._open_shadow(symbol, side, entry_price, opened_by)
+                    return {'status': 'rejected', 'reason': f'[TEST] reverse-close failed: {e}'}
+                res = self._open_shadow(symbol, side, entry_price, opened_by) or {}
+                if res.get('ok'):
+                    return {'shadow_opened': True, 'status': 'opened', 'is_paper': True}
+                return {'shadow_opened': False, 'status': 'rejected', 'is_paper': True,
+                        'reason': res.get('reason', 'shadow reverse-open blocked')}
+            res = self._open_shadow(symbol, side, entry_price, opened_by) or {}
+            if res.get('ok'):
+                return {'shadow_opened': True, 'status': 'opened', 'is_paper': True}
+            return {'shadow_opened': False, 'status': 'rejected', 'is_paper': True,
+                    'reason': res.get('reason', 'shadow open blocked')}
+
+        # Neither track acted — report why so the marker isn't "unknown".
+        if not enabled and not test_mode:
+            real_reason = real_reason or 'TM is disabled and Test Mode is off — nothing to open'
+        return {'real_opened': False, 'shadow_opened': False, 'status': 'rejected',
+                'reason': real_reason or 'signal not actioned'}
     
     def on_choch_event(self, symbol: str, direction: str, level: float, bar_t):
         """Called by SMC scanner for EVERY CHoCH detected (regardless of dedup/HTF).
@@ -2636,6 +2686,11 @@ class TradeManager:
         """Open a paper-trading position. No Bybit calls.
 
         bypass_gates: If True, ignore LONG/SHORT entry gates (used by Fuel Auto-Filter).
+
+        Returns a structured result like _open_position:
+          {'ok': True}                    — shadow opened
+          {'ok': False, 'reason': <str>}  — blocked, with why
+        so on_signal can surface the real reason to the chart marker.
         """
         # === Global directional gate (same toggle as real) ===
         # Test mode shadows respect the same LONG/SHORT master gate so the
@@ -2644,7 +2699,8 @@ class TradeManager:
         # EXCEPT: when bypass_gates=True (Fuel Auto-Filter), always allow.
         if not bypass_gates and not self._side_allowed(side):
             print(f"[TM] 🚫 SHADOW {side} entries disabled — {symbol} not opened")
-            return
+            return {'ok': False, 'reason':
+                    f'{side} entries are disabled (master {side} toggle OFF)'}
 
         # === Fuel Auto-Filter confirmation gate (same as real) ===
         # Paper trades must pass the same FF-table confirmation so the test view
@@ -2656,10 +2712,13 @@ class TradeManager:
                 if ff is None or not ff.is_in_table(symbol, side):
                     print(f"[TM] 🚫 Fuel-confirm gate: {symbol} {side} not in "
                           f"❤️ Fuel Auto-Filter table — SHADOW open ignored")
-                    return
+                    return {'ok': False, 'reason':
+                            f'{symbol} {side} is not in the ❤️ Fuel Auto-Filter '
+                            f'table yet (paper). Wait for it, or turn off '
+                            f'"❤️ Підтвердження від Fuel Auto-Filter".'}
             except Exception as e:
                 print(f"[TM] Fuel-confirm gate error (shadow) for {symbol}: {e} — open ignored")
-                return
+                return {'ok': False, 'reason': f'Fuel-confirm gate error: {e}'}
 
         # Compute unified Decision Center verdict — same shape as real open
         decision = None
@@ -2715,7 +2774,8 @@ class TradeManager:
         )
         self._notify(msg, is_test=True)
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
-    
+        return {'ok': True}
+
     def _format_last_ob_telegram(self, symbol: str) -> str:
         """Render a one-line Order Block status for Telegram OPEN messages.
         
