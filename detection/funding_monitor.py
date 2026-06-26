@@ -113,6 +113,12 @@ class FundingMonitor:
         print(f"[FUNDING] min 24h volume set to ${v:,.0f}")
         return v
 
+    def get_symbols(self) -> List[str]:
+        """Lightweight list of currently tracked symbols (for cross-module use,
+        e.g. feeding the Fuel Auto-Filter). Cheap — no per-coin computation."""
+        with self._lock:
+            return list(self._watchlist.keys())
+
     def trigger_rescan(self):
         """Run a scan immediately (background thread) so UI filter changes take
         effect within seconds instead of waiting for the next cycle."""
