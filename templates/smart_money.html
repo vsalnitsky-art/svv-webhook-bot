@@ -2842,6 +2842,9 @@ async function loadWatchlist() {
 // without an extra round-trip. Updated on every loadWatchlist call.
 let wlSymbols = [];   // current watchlist symbols (for filter-consensus)
 let wlSources = {};   // {symbol: 'manual'|'tickr'} — how each was added
+let wlTrends = {};    // {symbol: 1|-1|0} — trend dot per coin (the colored circles).
+                      // 1=LONG/green, -1=SHORT/red, 0=flat. Always available
+                      // from SMC state regardless of which filters are on.
 let wlObFilterEnabled = false;
 let wlObFilterTimeframe = '1h';
 let wlObStates = {};
@@ -5258,6 +5261,8 @@ async function updateStatus() {
         
         // Update trend dots for all watchlist items
         const trends = d.trends || {};
+        wlTrends = trends;   // stash globally so the bias consensus can count
+                             // the colored circles when no filter is active
         for (const sym of (d.watchlist || [])) {
             const dot = document.getElementById('dot-' + sym);
             if (dot) {
@@ -6252,8 +6257,9 @@ async function applyAutoGate(verdict) {
 // without it are out of the tally. Returns query params for the bias
 // call, or '' when no filter is active (backend then uses scanner score).
 function biasWatchlistParams() {
-    let src = '', dirOf = null;
-    // OB-filter takes precedence if enabled; else Volumized; else none.
+    let src = '', dirOf = null, countFlat = false;
+    // OB-filter takes precedence if enabled; else Volumized; else the trend
+    // dots (the colored circles) which are ALWAYS available from SMC state.
     if (wlObFilterEnabled) {
         src = 'ob';
         dirOf = (sym) => {
@@ -6269,13 +6275,22 @@ function biasWatchlistParams() {
             return (vt === 'LONG' || vt === 'SHORT') ? vt : null;
         };
     } else {
-        return '';   // no filter → backend falls back to scanner scores
+        // NO FILTER → count the colored circles (trend dots). Each coin's
+        // dot is green (LONG, t=1), red (SHORT, t=-1) or grey (flat, t=0).
+        // This keeps the Watchlist consensus working even with all filters off.
+        src = 'dots';
+        countFlat = true;
+        dirOf = (sym) => {
+            const t = wlTrends[sym] || 0;
+            return t === 1 ? 'LONG' : t === -1 ? 'SHORT' : 'FLAT';
+        };
     }
     let nLong = 0, nShort = 0, nFlat = 0;
     for (const sym of wlSymbols) {
         const d = dirOf(sym);
         if (d === 'LONG') nLong++;
         else if (d === 'SHORT') nShort++;
+        else if (countFlat && d === 'FLAT') nFlat++;
         // coins without the active marker are NOT counted (out of tally)
     }
     return `&wl_src=${src}&wl_long=${nLong}&wl_short=${nShort}&wl_flat=${nFlat}`;

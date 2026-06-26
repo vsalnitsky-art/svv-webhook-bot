@@ -5685,7 +5685,8 @@ def compute_bias(db, symbol, wl=None):
             n_flat = int(wl.get('n_flat', 0))
             total = n_long + n_short + n_flat
             src_label = {'ob': '★ OB-фільтр',
-                         'vol': '▲ Volumized'}.get(wl_src, wl_src)
+                         'vol': '▲ Volumized',
+                         'dots': '⬤ Статус монет'}.get(wl_src, wl_src)
             if total > 0:
                 long_share = round(n_long / total * 100, 0)
                 short_share = round(n_short / total * 100, 0)
