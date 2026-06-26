@@ -1165,7 +1165,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         user-select:none; }
     .sm-bias-auto input { display:none; }
     .sm-bias-auto-slider { width:34px; height:18px; border-radius:9px;
-        background:rgba(255,255,255,0.15); position:relative; transition:background .2s; }
+        background:rgba(255,255,255,0.15); position:relative; transition:background .2s;
+        display:inline-block; flex:0 0 auto; vertical-align:middle; box-sizing:border-box; }
     .sm-bias-auto-slider::after { content:''; position:absolute; top:2px; left:2px;
         width:14px; height:14px; border-radius:50%; background:#fff; transition:transform .2s; }
     .sm-bias-auto input:checked + .sm-bias-auto-slider { background:#a855f7; }
@@ -2842,9 +2843,14 @@ async function loadWatchlist() {
 // without an extra round-trip. Updated on every loadWatchlist call.
 let wlSymbols = [];   // current watchlist symbols (for filter-consensus)
 let wlSources = {};   // {symbol: 'manual'|'tickr'} — how each was added
-let wlTrends = {};    // {symbol: 1|-1|0} — trend dot per coin (the colored circles).
+let wlTrends = (() => {   // {symbol: 1|-1|0} — trend dot per coin (the colored circles).
                       // 1=LONG/green, -1=SHORT/red, 0=flat. Always available
                       // from SMC state regardless of which filters are on.
+                      // Seeded from localStorage so the consensus has an instant
+                      // value on a fresh page load before the first poll lands.
+    try { return JSON.parse(localStorage.getItem('wlTrends') || '{}') || {}; }
+    catch (e) { return {}; }
+})();
 let wlObFilterEnabled = false;
 let wlObFilterTimeframe = '1h';
 let wlObStates = {};
@@ -5263,6 +5269,7 @@ async function updateStatus() {
         const trends = d.trends || {};
         wlTrends = trends;   // stash globally so the bias consensus can count
                              // the colored circles when no filter is active
+        try { localStorage.setItem('wlTrends', JSON.stringify(trends)); } catch (e) {}
         for (const sym of (d.watchlist || [])) {
             const dot = document.getElementById('dot-' + sym);
             if (dot) {
