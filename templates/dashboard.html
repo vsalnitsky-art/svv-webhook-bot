@@ -213,6 +213,14 @@
         <div class="section-header">
             <h2>💰 Funding Rate Scanner</h2>
             <div style="display:flex;align-items:center;gap:6px">
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.75rem;color:#aaa"
+                       title="Поріг входу: монета береться в трекінг, якщо funding ≤ цього значення (%). Має бути від'ємним (напр. -0.3). Діапазон: -0.001 … -5.">
+                    Entry ≤
+                    <input type="number" id="funding-threshold-input" step="0.01" max="-0.001" min="-5"
+                           onchange="saveFundingThreshold(this.value)"
+                           style="width:62px;padding:3px 6px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
+                    %
+                </label>
                 <label class="fr-toggle" title="Enable/disable scanner">
                     <input type="checkbox" id="funding-toggle" onchange="toggleFunding(this.checked)">
                     <span class="fr-toggle-slider"></span>
@@ -2757,9 +2765,36 @@ async function loadFunding() {
         }
         
         metaEl.textContent = `Scan #${d.scan_count} | ${d.total_coins} coins scanned | ${d.total_tracked} tracked | Entry: ≤ -${d.threshold}% | Watch: ${d.watch_days}d`;
-        
+
+        // Keep the header threshold field in sync (don't clobber while the
+        // user is editing it).
+        const thrEl = document.getElementById('funding-threshold-input');
+        if (thrEl && document.activeElement !== thrEl) {
+            thrEl.value = (d.threshold_raw != null) ? d.threshold_raw : -Math.abs(d.threshold);
+        }
+
     } catch (err) {
         document.getElementById('funding-status').textContent = '⚠️';
+    }
+}
+
+async function saveFundingThreshold(val) {
+    const v = parseFloat(val);
+    if (isNaN(v)) return;
+    try {
+        const r = await fetch('/api/funding/threshold', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({threshold: v}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            const thrEl = document.getElementById('funding-threshold-input');
+            if (thrEl) thrEl.value = d.threshold;   // reflect clamped value
+            loadFunding();   // re-scan view immediately with the new threshold
+        }
+    } catch (e) {
+        console.warn('saveFundingThreshold failed:', e);
     }
 }
 
