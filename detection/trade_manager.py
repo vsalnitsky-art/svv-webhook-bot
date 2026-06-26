@@ -1944,6 +1944,15 @@ class TradeManager:
         return snap
 
     def _open_position(self, symbol: str, side: str, entry_price: float, opened_by: str, bypass_gates: bool = False):
+        """Open a real position. Returns a structured result so callers can
+        surface the EXACT reason instead of a generic "order failed":
+          {'ok': True}                      — position opened
+          {'ok': False, 'reason': <str>}    — blocked/failed, with why
+
+        Signal-flow callers ignore the return; manual_open relays the reason
+        to the UI so the user sees what actually happened (gate vs sizing vs
+        exchange rejection) rather than "check logs".
+        """
         s = self._settings
 
         # === Global directional gate ===
@@ -1955,7 +1964,9 @@ class TradeManager:
         # EXCEPT: when bypass_gates=True (Fuel Auto-Filter), always allow.
         if not bypass_gates and not self._side_allowed(side):
             print(f"[TM] 🚫 REAL {side} entries disabled — {symbol} not opened")
-            return
+            return {'ok': False, 'reason':
+                    f'{side} entries are disabled (master {side} toggle is OFF). '
+                    f'Enable {side} to open this trade.'}
 
         # === Fuel Auto-Filter confirmation gate ===
         # When enabled, only open if the same coin+direction is present in the
@@ -1968,33 +1979,42 @@ class TradeManager:
                 if ff is None or not ff.is_in_table(symbol, side):
                     print(f"[TM] 🚫 Fuel-confirm gate: {symbol} {side} not in "
                           f"❤️ Fuel Auto-Filter table — open ignored")
-                    return
+                    return {'ok': False, 'reason':
+                            f'{symbol} {side} is not in the ❤️ Fuel Auto-Filter '
+                            f'table yet (fuel must hold past the duration '
+                            f'threshold). Wait for it to appear, or turn off '
+                            f'"❤️ Підтвердження від Fuel Auto-Filter" in TM '
+                            f'settings to open manually.'}
             except Exception as e:
                 print(f"[TM] Fuel-confirm gate error for {symbol}: {e} — open ignored")
-                return
+                return {'ok': False, 'reason':
+                        f'Fuel-confirm gate error: {e}'}
 
         # Calculate size
         try:
             qty = self._calculate_qty(symbol, entry_price)
         except Exception as e:
             self._notify(f"❌ Sizing error for {symbol}: {e}")
-            return
-        
+            return {'ok': False, 'reason': f'Position sizing error: {e}'}
+
         if qty <= 0:
             print(f"[TM] {symbol}: zero quantity calculated, skipping")
-            return
-        
+            return {'ok': False, 'reason':
+                    f'Calculated quantity is 0 for {symbol}. Check Position '
+                    f'Sizing (USD amount / leverage) — it may be below the '
+                    f'minimum order size for this symbol.'}
+
         # Calculate SL / TP prices
         sl_price = self._calc_sl_price(side, entry_price, symbol) if s.get('use_sl') else None
         tp_price = self._calc_tp_price(side, entry_price) if s.get('use_tp') else None
-        
+
         # Set leverage on Bybit
         leverage = s.get('leverage', 10)
         try:
             self.bybit.set_leverage(symbol, leverage)
         except Exception as e:
             print(f"[TM] Leverage set warn for {symbol}: {e}")
-        
+
         # Place order
         bybit_side = 'Buy' if side == 'LONG' else 'Sell'
         try:
@@ -2008,11 +2028,18 @@ class TradeManager:
             )
         except Exception as e:
             self._notify(f"❌ Failed to open {side} {symbol}: {e}")
-            return
-        
+            return {'ok': False, 'reason': f'Bybit order error: {e}'}
+
         if not result:
-            self._notify(f"❌ Order rejected for {symbol} {side}")
-            return
+            # Surface the exchange's actual rejection reason when available.
+            exch_err = getattr(self.bybit, '_last_order_error', None)
+            self._notify(f"❌ Order rejected for {symbol} {side}: {exch_err or 'unknown'}")
+            return {'ok': False, 'reason':
+                    (f'Bybit rejected the {side} order for {symbol} (qty={qty}): '
+                     f'{exch_err}') if exch_err else
+                    (f'Bybit rejected the {side} order for {symbol} (qty={qty}). '
+                     f'Check API key permissions, margin/balance, and that the '
+                     f'symbol is tradeable. See Telegram/logs.')}
         
         order_id = result.get('order_id', '')
         # Compute the unified Decision Center verdict — the same object
@@ -2050,7 +2077,8 @@ class TradeManager:
         self._persist_positions()
 
         self._notify_open(position)
-    
+        return {'ok': True}
+
     def _close_externally(self, symbol: str, exit_price: float, reason: str = 'external_close'):
         """Bookkeeping-only close for positions that vanished from Bybit
         without TM's involvement (closed manually, hit a Bybit-side SL/TP,
@@ -3802,15 +3830,19 @@ class TradeManager:
 
         if open_real:
             try:
-                self._open_position(symbol, side, entry_price, opened_by='manual_ui',
-                                    bypass_gates=bypass_gates)
+                res = self._open_position(symbol, side, entry_price,
+                                          opened_by='manual_ui',
+                                          bypass_gates=bypass_gates)
             except Exception as e:
                 return {'ok': False, 'reason': f'Open error: {e}'}
             with self._lock:
                 pos = self._positions.get(symbol)
             if not pos:
+                # Surface the EXACT reason _open_position reported (gate /
+                # sizing / exchange rejection) instead of a generic message.
+                reason = (res or {}).get('reason') if isinstance(res, dict) else None
                 return {'ok': False, 'reason':
-                        'Order placement failed — check Telegram/logs for details'}
+                        reason or 'Order placement failed — check Telegram/logs for details'}
             return {'ok': True, 'position': dict(pos), 'entry_price': entry_price,
                     'mode': 'real'}
         elif test_mode:
