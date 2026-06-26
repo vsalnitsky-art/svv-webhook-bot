@@ -79,6 +79,7 @@ DB_KEY_SETTINGS = 'smc_settings'
 DB_KEY_STATE = 'smc_last_events'   # tracks last seen event per symbol
 DB_KEY_SIGNALS_PREFIX = 'smc_signals_'   # per-symbol: smc_signals_BTCUSDT, etc.
 DB_KEY_DEDUP_STATE = 'smc_dedup_state_v1'  # authoritative per-symbol dedup gate state
+DB_KEY_TRENDS_STATE = 'smc_trends_state_v1'  # last-known trend dot per symbol (restart cache)
 SIGNALS_PERSIST_LIMIT = 50         # max signals stored per symbol
 
 DEFAULT_SETTINGS = {
@@ -367,6 +368,15 @@ class SMCScanner:
         # Seeded from the most recent persisted signal marker at startup, so
         # dedup state survives restarts.
         self._last_signal_dir: Dict[str, str] = {}
+
+        # Last-known trend dot per symbol — {symbol: 1|-1|0}. Persisted to DB
+        # after every scan and reloaded at startup so the watchlist consensus
+        # (and the colored circles) have an INSTANT value right after a restart
+        # instead of all-flat until the first full scan of 40+ coins finishes
+        # (which can take a while). get_state() falls back to this whenever a
+        # symbol hasn't been freshly scanned yet this run.
+        self._trends_persisted: Dict[str, int] = {}
+        self._load_trends_state()
         
         self._scan_count = 0
         self._errors = 0
@@ -669,6 +679,40 @@ class SMCScanner:
             return True
         return False
     
+    def _persist_trends_state(self, trends: Dict[str, int]):
+        """Save the latest trend-dot snapshot to DB so it survives restarts.
+        Called at the end of each scan cycle. Only non-flat (±1) entries are
+        worth keeping — a flat (0) reads the same as 'no data' on reload, so
+        dropping them keeps the blob small.
+        """
+        if not self.db:
+            return
+        try:
+            snapshot = {k: int(v) for k, v in trends.items() if v in (1, -1)}
+            self._trends_persisted = snapshot
+            self.db.set_setting(DB_KEY_TRENDS_STATE, snapshot)
+        except Exception as e:
+            print(f"[SMC] trends state persist error: {e}")
+
+    def _load_trends_state(self):
+        """Restore the last-known trend dots from DB at startup, so the
+        watchlist consensus has an immediate (stale-but-useful) value before
+        the first full scan completes. Overwritten per-symbol as fresh scans
+        land.
+        """
+        if not self.db:
+            return
+        try:
+            stored = self.db.get_setting(DB_KEY_TRENDS_STATE, None)
+            if isinstance(stored, dict):
+                self._trends_persisted = {
+                    k: int(v) for k, v in stored.items() if int(v) in (1, -1)
+                }
+                print(f"[SMC] Restored {len(self._trends_persisted)} cached "
+                      f"trend dots from last run")
+        except Exception as e:
+            print(f"[SMC] trends state load error: {e}")
+
     def _persist_signals(self, symbol: str):
         """Save signal markers for one symbol to DB."""
         if not self.db:
@@ -1564,6 +1608,16 @@ class SMCScanner:
                     print(f"[SMC] {symbol} scan error: {e}")
                 self._errors += 1
         
+        # Snapshot the freshly-computed trend dots to DB so they survive a
+        # restart and the watchlist consensus has an instant value next run.
+        try:
+            with self._lock:
+                fresh_trends = self._build_trends(use_restart_fallback=False)
+            self._persist_trends_state(fresh_trends)
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[SMC] trends snapshot error: {e}")
+
         if self._scan_count <= 2 or self._scan_count % 30 == 0:
             print(f"[SMC] Scan #{self._scan_count}: {len(self._watchlist)} symbols, errors={self._errors}")
     
@@ -2834,34 +2888,56 @@ class SMCScanner:
             'updated_at': int(time.time()),
         }
     
+    def _build_trends(self, use_restart_fallback: bool = True) -> Dict[str, int]:
+        """Compute the per-symbol trend dot map ({symbol: 1|-1|0}).
+
+        When the HTF filter is active and a symbol has a clear HTF bias, the
+        dot reflects the HTF direction (matches the chart and the alerts).
+        Otherwise it falls back to the internal-structure trend from the live
+        scan cache.
+
+        When use_restart_fallback is True (UI/state path), symbols that haven't
+        been freshly scanned yet this run reuse the trend persisted from the
+        previous run, so the watchlist consensus has an immediate value after a
+        restart instead of all-flat. When False (persistence path), only freshly
+        computed values are returned so we never re-persist stale data as fresh.
+
+        Caller must hold self._lock.
+        """
+        htf_settings = self.get_htf_settings()
+        htf_active = htf_settings.get('enabled', False)
+        trends = {}
+        for sym in self._watchlist:
+            effective = 0
+            if htf_active:
+                bias = self._htf_cache.get(sym, {}).get('bias', 'neutral')
+                if bias == 'bull':
+                    effective = 1
+                elif bias == 'bear':
+                    effective = -1
+                # neutral → fall through to internal trend
+            scanned = sym in self._cache
+            if effective == 0:
+                c = self._cache.get(sym)
+                if c:
+                    try:
+                        effective = c.get('analysis', {}).get('internal', {}).get('trend', 0)
+                    except:
+                        effective = 0
+            if effective == 0 and not scanned and use_restart_fallback:
+                effective = self._trends_persisted.get(sym, 0)
+            trends[sym] = effective
+        return trends
+
     def get_state(self) -> Dict:
         with self._lock:
             htf_settings = self.get_htf_settings()
             htf_active = htf_settings.get('enabled', False)
-            
-            # Build per-symbol trend map
-            # When HTF filter is active and that symbol has a clear HTF bias,
-            # the watchlist dot reflects the HTF direction (matches what user
-            # sees on the chart and what alerts will fire on).
-            trends = {}
-            for sym in self._watchlist:
-                effective = 0
-                if htf_active:
-                    bias = self._htf_cache.get(sym, {}).get('bias', 'neutral')
-                    if bias == 'bull':
-                        effective = 1
-                    elif bias == 'bear':
-                        effective = -1
-                    # neutral → fall through to internal trend
-                if effective == 0:
-                    c = self._cache.get(sym)
-                    if c:
-                        try:
-                            effective = c.get('analysis', {}).get('internal', {}).get('trend', 0)
-                        except:
-                            effective = 0
-                trends[sym] = effective
-            
+
+            # Build per-symbol trend map (with restart fallback so the
+            # watchlist consensus is populated immediately after a restart).
+            trends = self._build_trends(use_restart_fallback=True)
+
             # Per-symbol HTF biases
             htf_biases = {sym: dict(b) for sym, b in self._htf_cache.items()}
             
