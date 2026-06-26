@@ -1838,40 +1838,44 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             
             <div class="tm-row" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:4px;padding:10px;margin-bottom:10px">
-                <div style="display:flex;flex-direction:column;gap:12px">
-                    <label>
-                        <input type="checkbox" id="tm-telegram-alerts" onchange="saveTMSettings()">
-                        📨 Send Telegram alerts (real positions)
-                        <span class="tm-help" title="Коли увімкнено, Trade Manager відправляє повідомлення в Telegram про відкриття/закриття реальних угод. Якщо вимкнено — угоди виконуються тихо (SMC scanner все одно надсилає свої власні сигнальні алерти).">?</span>
-                    </label>
+                <div style="display:flex;flex-direction:column;gap:10px">
+                    <!-- Row 1: Fuel confirm + Telegram alerts -->
+                    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+                        <label style="display:flex;align-items:center;gap:6px;flex:1 1 auto">
+                            <input type="checkbox" id="tm-require-fuel-confirm" onchange="saveTMSettings()">
+                            <span>❤️ Підтвердження від Fuel Auto-Filter</span>
+                            <span class="tm-help" title="Коли увімкнено: угода відкривається ТІЛЬКИ якщо та сама монета з тим самим напрямком присутня в таблиці ❤️ Fuel Auto-Filter (тобто паливо тримається понад поріг). Якщо монети+напрямку немає в таблиці — відкриття ігнорується. Це робить FF обов'язковим підтвердженням для кожного входу. За замовчуванням УВІМКНЕНО.">?</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;flex:1 1 auto">
+                            <input type="checkbox" id="tm-telegram-alerts" onchange="saveTMSettings()">
+                            📨 Send Telegram alerts (real positions)
+                            <span class="tm-help" title="Коли увімкнено, Trade Manager відправляє повідомлення в Telegram про відкриття/закриття реальних угод. Якщо вимкнено — угоди виконуються тихо (SMC scanner все одно надсилає свої власні сигнальні алерти).">?</span>
+                        </label>
+                    </div>
 
-                    <label style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                        <span>🔄 Bybit sync interval:</span>
-                        <input type="number" id="tm-reconcile-interval"
-                               min="5" max="300" step="1"
-                               style="width:70px"
-                               oninput="updateReconcileInfo(this.value)"
-                               onchange="saveTMSettings()">
-                        <span style="color:#888;font-size:0.78rem">seconds</span>
-                        <span class="tm-help" title="Як часто бот синхронізується з Bybit для:&#10;• Прийняття у керування ручно-відкритих позицій (adopt)&#10;• Виявлення ручних закриттів / Bybit-SL/TP / ліквідацій&#10;&#10;Рекомендовано: 10-15s — швидка реакція, низьке навантаження на API.&#10;Min 5s, max 300s. Округлюється до tick 10s.&#10;Bybit ліміт: 5-10 req/sec, ми використовуємо ~0.1 req/sec.">?</span>
-                        <span id="tm-reconcile-info" style="color:#888;font-size:0.74rem;font-style:italic"></span>
-                    </label>
-
-                    <label style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                        <span>📊 Max Open Positions:</span>
-                        <input type="number" id="tm-max-positions"
-                               min="1" max="50" step="1"
-                               style="width:70px"
-                               onchange="saveTMSettings()">
-                        <span style="color:#888;font-size:0.78rem">позицій</span>
-                        <span class="tm-help" title="Максимальна кількість одночасно відкритих РЕАЛЬНИХ позицій на Bybit. При досягненні ліміту нові сигнали (та ручні відкриття) автоматично йдуть у 🧪 Test Mode (якщо тумблер Test Mode увімкнений). Дефолт: 10.">?</span>
-                    </label>
-
-                    <label style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                        <input type="checkbox" id="tm-require-fuel-confirm" onchange="saveTMSettings()">
-                        <span>❤️ Підтвердження від Fuel Auto-Filter</span>
-                        <span class="tm-help" title="Коли увімкнено: угода відкривається ТІЛЬКИ якщо та сама монета з тим самим напрямком присутня в таблиці ❤️ Fuel Auto-Filter (тобто паливо тримається понад поріг). Якщо монети+напрямку немає в таблиці — відкриття ігнорується. Це робить FF обов'язковим підтвердженням для кожного входу. За замовчуванням УВІМКНЕНО.">?</span>
-                    </label>
+                    <!-- Row 2: Max positions + Bybit sync -->
+                    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+                        <label style="display:flex;align-items:center;gap:10px;flex:1 1 auto">
+                            <span>📊 Max Open Positions:</span>
+                            <input type="number" id="tm-max-positions"
+                                   min="1" max="50" step="1"
+                                   style="width:70px"
+                                   onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.78rem">позицій</span>
+                            <span class="tm-help" title="Максимальна кількість одночасно відкритих РЕАЛЬНИХ позицій на Bybit. При досягненні ліміту нові сигнали (та ручні відкриття) автоматично йдуть у 🧪 Test Mode (якщо тумблер Test Mode увімкнений). Дефолт: 10.">?</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:10px;flex:1 1 auto">
+                            <span>🔄 Bybit sync interval:</span>
+                            <input type="number" id="tm-reconcile-interval"
+                                   min="5" max="300" step="1"
+                                   style="width:70px"
+                                   oninput="updateReconcileInfo(this.value)"
+                                   onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.78rem">seconds</span>
+                            <span class="tm-help" title="Як часто бот синхронізується з Bybit для:&#10;• Прийняття у керування ручно-відкритих позицій (adopt)&#10;• Виявлення ручних закриттів / Bybit-SL/TP / ліквідацій&#10;&#10;Рекомендовано: 10-15s — швидка реакція, низьке навантаження на API.&#10;Min 5s, max 300s. Округлюється до tick 10s.&#10;Bybit ліміт: 5-10 req/sec, ми використовуємо ~0.1 req/sec.">?</span>
+                            <span id="tm-reconcile-info" style="color:#888;font-size:0.74rem;font-style:italic"></span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
