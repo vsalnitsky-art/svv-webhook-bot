@@ -16,6 +16,7 @@ SCAN_INTERVAL = 60          # 1 minute
 ENTRY_THRESHOLD = -1.0
 WATCH_DAYS = 5
 DB_KEY = 'funding_watchlist'
+DB_KEY_THRESHOLD = 'funding_entry_threshold'  # user-tunable entry threshold (%)
 TREND_WINDOW = 30           # 30 scans × 1min = 30 min trend
 
 
@@ -34,7 +35,44 @@ class FundingMonitor:
         self._total_coins: int = 0
         self._errors: int = 0
         self._alerted: set = set()
+        # Entry threshold (%, negative). User-tunable from the UI header and
+        # persisted in DB so it survives restarts. Falls back to the module
+        # default ENTRY_THRESHOLD on first run / read error.
+        self._entry_threshold: float = ENTRY_THRESHOLD
+        self._load_threshold()
         self._load_watchlist()
+
+    def _load_threshold(self):
+        """Restore the user-set entry threshold from DB (default ENTRY_THRESHOLD)."""
+        if not self.db:
+            return
+        try:
+            raw = self.db.get_setting(DB_KEY_THRESHOLD, None)
+            if raw is not None:
+                self._entry_threshold = float(raw)
+        except Exception as e:
+            print(f"[FUNDING] threshold load error: {e}")
+
+    def set_entry_threshold(self, value: float) -> float:
+        """Set and persist the entry threshold (%). Clamped to a sane negative
+        range so the scanner stays meaningful (funding entries are negative).
+        Returns the value actually applied."""
+        try:
+            v = float(value)
+        except (ValueError, TypeError):
+            return self._entry_threshold
+        # Keep it negative and within a realistic band: 0 down to -5%.
+        v = max(-5.0, min(-0.001, v))
+        v = round(v, 4)
+        with self._lock:
+            self._entry_threshold = v
+        if self.db:
+            try:
+                self.db.set_setting(DB_KEY_THRESHOLD, v)
+            except Exception as e:
+                print(f"[FUNDING] threshold save error: {e}")
+        print(f"[FUNDING] entry threshold set to {v}%")
+        return v
 
     def _load_watchlist(self):
         if not self.db:
@@ -70,7 +108,7 @@ class FundingMonitor:
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="FundingMonitor")
         self._thread.start()
-        print(f"[FUNDING] Started: every {self.scan_interval}s, entry: {ENTRY_THRESHOLD}%, "
+        print(f"[FUNDING] Started: every {self.scan_interval}s, entry: {self._entry_threshold}%, "
               f"watch: {WATCH_DAYS}d, tracked: {len(self._watchlist)}")
 
     def stop(self):
@@ -135,7 +173,7 @@ class FundingMonitor:
                 rates[symbol] = {'rate': rate, 'price': price}
 
             self._total_coins = len(rates)
-            threshold = ENTRY_THRESHOLD / 100
+            threshold = self._entry_threshold / 100
             new_added = 0
             expired_count = 0
 
@@ -286,7 +324,8 @@ class FundingMonitor:
                 'total_coins': self._total_coins,
                 'errors': self._errors,
                 'running': self._running,
-                'threshold': abs(ENTRY_THRESHOLD),
+                'threshold': abs(self._entry_threshold),
+                'threshold_raw': self._entry_threshold,
                 'watch_days': WATCH_DAYS,
             }
 

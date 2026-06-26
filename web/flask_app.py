@@ -2541,7 +2541,21 @@ def register_api_routes(app):
         enabled = bool(data.get('enabled', True))
         fm.set_enabled(enabled)
         return jsonify({'ok': True, 'enabled': fm.is_enabled(), 'running': fm._running})
-    
+
+    @app.route('/api/funding/threshold', methods=['GET', 'POST'])
+    def api_funding_threshold():
+        """Get or set the Funding Scanner entry threshold (%, negative).
+        Coins whose funding rate ≤ this value get tracked."""
+        from detection.funding_monitor import get_funding_monitor
+        fm = get_funding_monitor()
+        if not fm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        if request.method == 'GET':
+            return jsonify({'ok': True, 'threshold': fm._entry_threshold})
+        data = request.get_json() or {}
+        applied = fm.set_entry_threshold(data.get('threshold'))
+        return jsonify({'ok': True, 'threshold': applied})
+
     @app.route('/api/liqmap/power', methods=['GET', 'POST'])
     def api_liqmap_power():
         """Full on/off switch for the 💧 Liquidity Map module. Persisted
