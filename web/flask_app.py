@@ -2559,6 +2559,9 @@ def register_api_routes(app):
             fm.set_entry_threshold(data.get('threshold'))
         if 'min_volume' in data:
             fm.set_min_volume(data.get('min_volume'))
+        # Apply the new filters immediately instead of waiting for the next
+        # scan cycle (~5 min), so the user sees results right away.
+        fm.trigger_rescan()
         return jsonify({'ok': True, 'threshold': fm._entry_threshold,
                         'min_volume': fm._min_volume})
 
