@@ -1865,6 +1865,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <span style="color:#888;font-size:0.78rem">позицій</span>
                         <span class="tm-help" title="Максимальна кількість одночасно відкритих РЕАЛЬНИХ позицій на Bybit. При досягненні ліміту нові сигнали (та ручні відкриття) автоматично йдуть у 🧪 Test Mode (якщо тумблер Test Mode увімкнений). Дефолт: 10.">?</span>
                     </label>
+
+                    <label style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                        <input type="checkbox" id="tm-require-fuel-confirm" onchange="saveTMSettings()">
+                        <span>❤️ Підтвердження від Fuel Auto-Filter</span>
+                        <span class="tm-help" title="Коли увімкнено: угода відкривається ТІЛЬКИ якщо та сама монета з тим самим напрямком присутня в таблиці ❤️ Fuel Auto-Filter (тобто паливо тримається понад поріг). Якщо монети+напрямку немає в таблиці — відкриття ігнорується. Це робить FF обов'язковим підтвердженням для кожного входу. За замовчуванням УВІМКНЕНО.">?</span>
+                    </label>
                 </div>
             </div>
 
@@ -5318,6 +5324,7 @@ async function loadTMSettings() {
         document.getElementById('tm-risk-pct').value = s.risk_pct_balance;
         document.getElementById('tm-leverage').value = s.leverage;
         document.getElementById('tm-max-positions').value = s.max_open_positions || 10;
+        document.getElementById('tm-require-fuel-confirm').checked = (s.require_fuel_confirm !== false);  // default true
         onTMSizingChange();
 
         // Exit rules
@@ -5663,6 +5670,7 @@ async function saveTMSettings() {
             risk_pct_balance: parseFloat(document.getElementById('tm-risk-pct').value) || 1,
             leverage: parseInt(document.getElementById('tm-leverage').value) || 10,
             max_open_positions: parseInt(document.getElementById('tm-max-positions').value) || 10,
+            require_fuel_confirm: document.getElementById('tm-require-fuel-confirm').checked,
             use_sl: document.getElementById('tm-use-sl').checked,
             sl_pct: parseFloat(document.getElementById('tm-sl-pct').value) || 2,
             sl_mode: document.getElementById('tm-sl-mode').value || 'pct',
