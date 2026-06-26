@@ -105,8 +105,27 @@ class FuelFilterDaemon:
         # scanned, watchlist size, and average move exhaustion (LONG/SHORT).
         # Recomputed each tick.
         self._scan_stats: Dict = {}
+        # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
+        # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
+        # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
+        self._funding_syms: set = set()
         self._last_tick_ts = 0
         self._load_state()
+
+    def _get_funding_symbols(self) -> List[str]:
+        """Tracked coins from the 💰 Funding Rate Scanner — but only while that
+        module is enabled and running. Returns [] otherwise. These are merged
+        into fuel scanning for monitoring only."""
+        try:
+            from detection.funding_monitor import get_funding_monitor
+            fm = get_funding_monitor()
+            if not fm or not fm.is_enabled() or not getattr(fm, '_running', False):
+                return []
+            if hasattr(fm, 'get_symbols'):
+                return [s.upper() for s in fm.get_symbols()]
+            return []
+        except Exception:
+            return []
 
     # ------------------------------------------------------------------
     # settings (DB-persisted JSON)
@@ -657,19 +676,29 @@ class FuelFilterDaemon:
             watchlist = []
         watchlist = [s.upper() for s in watchlist]
 
+        # Pull in coins from the 💰 Funding Rate Scanner (when enabled). They are
+        # monitored for fuel exactly like watchlist coins, shown in the ❤️ table
+        # flagged distinctly, but never auto-opened/managed.
+        funding_syms = self._get_funding_symbols()
+        with self._lock:
+            self._funding_syms = set(funding_syms)
+
         # SCAN all watchlist coins for data/stats. FF flag still controls which
         # coins can auto-open positions (checked later in the loop).
-        scan_targets = watchlist
+        scan_targets = list(dict.fromkeys(watchlist + funding_syms))
         symbols = list(dict.fromkeys(
             scan_targets + list(self._fuel_managed.keys())))
 
-        # CRITICAL: register ALL watchlist symbols with liq-map so they all
-        # have fuel data. SMC scanner already does this every 60s, but we
-        # re-register here to be safe.
+        # CRITICAL: register ALL symbols with liq-map so they all have fuel data.
+        # SMC scanner already does this for the watchlist every 60s, but funding
+        # coins may be outside the watchlist — re-register here so they too get
+        # liq-map coverage.
         self._register_with_liqmap(symbols)
 
-        # FF scan-list: which coins are allowed to auto-open (whitelist)
-        scan_list = set(self.get_scan_list())
+        # FF scan-list: which coins get a fuel timer (+ show in the table).
+        # Funding-scanner coins are added so they get monitored, but they stay
+        # monitor-only (the timer branch never auto-opens).
+        scan_list = set(self.get_scan_list()) | set(funding_syms)
 
         # Get TM settings to know which mode positions live in
         tm = self._get_tm() if self._get_tm else None
@@ -837,6 +866,16 @@ class FuelFilterDaemon:
                 if symbol in self._timers:
                     self._timers.pop(symbol, None)
 
+        # Drop orphaned timers for symbols that are no longer eligible for a
+        # timer (e.g. a funding coin after the 💰 scanner is turned off, or a
+        # coin removed from the watchlist / scan-list). Without this their row
+        # would linger in the ❤️ table forever since the loop above never visits
+        # symbols outside `symbols`.
+        with self._lock:
+            for sym in list(self._timers.keys()):
+                if sym not in scan_list and sym not in self._fuel_managed:
+                    self._timers.pop(sym, None)
+
         # Store aggregate scan-stats for the panel header.
         with self._lock:
             self._scan_stats = {
@@ -885,6 +924,9 @@ class FuelFilterDaemon:
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
                     'exhaustion': t.get('exhaustion'),
+                    # Flag rows that come from the 💰 Funding Rate Scanner so the
+                    # UI can distinguish them (monitor-only).
+                    'funding': sym in self._funding_syms,
                     # progress_pct removed - no longer needed
                 })
             scan_list = self.get_scan_list()
