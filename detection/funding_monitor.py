@@ -47,6 +47,10 @@ class FundingMonitor:
         # than a tradeable squeeze. 0 = filter off. Tunable from the UI header.
         self._min_volume: float = MIN_VOLUME_USD
         self._load_min_volume()
+        # Guards against overlapping scans (daemon cycle vs. manual rescan
+        # triggered by a UI filter change). Non-blocking: if one is running,
+        # the other skips this round.
+        self._scan_lock = threading.Lock()
         self._load_watchlist()
 
     def _load_threshold(self):
@@ -108,6 +112,16 @@ class FundingMonitor:
                 print(f"[FUNDING] min volume save error: {e}")
         print(f"[FUNDING] min 24h volume set to ${v:,.0f}")
         return v
+
+    def trigger_rescan(self):
+        """Run a scan immediately (background thread) so UI filter changes take
+        effect within seconds instead of waiting for the next cycle."""
+        def _run():
+            try:
+                self._scan()
+            except Exception as e:
+                print(f"[FUNDING] manual rescan error: {e}")
+        threading.Thread(target=_run, daemon=True, name="FundingRescan").start()
 
     def _load_watchlist(self):
         if not self.db:
@@ -187,6 +201,15 @@ class FundingMonitor:
     def _scan(self):
         if not self.bybit:
             return
+        # Skip if a scan (daemon or manual rescan) is already running.
+        if not self._scan_lock.acquire(blocking=False):
+            return
+        try:
+            self._scan_body()
+        finally:
+            self._scan_lock.release()
+
+    def _scan_body(self):
         try:
             tickers = self.bybit.get_tickers(category='linear')
             if not tickers:
@@ -262,6 +285,18 @@ class FundingMonitor:
                     del self._watchlist[s]
                     self._alerted.discard(s)
                 expired_count = len(expired)
+
+                # Volume prune: drop AUTO-tracked coins that no longer meet the
+                # min-volume filter, so raising "Vol ≥" immediately trims the
+                # list to liquid coins. Manually-added coins are kept regardless.
+                if min_vol > 0:
+                    low_vol = [s for s, c in self._watchlist.items()
+                               if not c.get('manual')
+                               and c.get('volume', 0) < min_vol]
+                    for s in low_vol:
+                        del self._watchlist[s]
+                        self._alerted.discard(s)
+                    expired_count += len(low_vol)
 
             self._save_watchlist()
 
