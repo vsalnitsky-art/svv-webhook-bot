@@ -1777,12 +1777,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div id="ff-settings-body" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)">
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин статус палива має триматись безперервно перед відкриттям">Тривалість статусу (хв)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна тривалість палива (хв) щоб монета з'явилась у таблиці">Поріг показу (хв)</label>
                             <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
-                        </div>
-                        <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Не відкривати угоду якщо виснаженість вище цього порога">Макс. виснаженість входу (%)</label>
-                            <input type="number" id="ff-max-exhaustion" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості виходу (%)</label>
@@ -1794,8 +1790,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Не відкривати угоди по монетах у стані WAIT (невизначений напрямок)">
-                                <input type="checkbox" id="ff-skip-wait" onchange="saveFuelFilterSettings()"> Ігнорувати WAIT монети
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Чи керувати FF відкритими угодами (закривати їх за умовами)">
+                                <input type="checkbox" id="ff-manage-positions" onchange="saveFuelFilterSettings()"> Контроль відкритих угод
                             </label>
                         </div>
                     </div>
@@ -1809,7 +1805,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
             <table class="tm-table" id="ff-timers-table">
                 <thead>
-                    <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Видно стан монети ДО відкриття.">Виснаженість</th><th>Тримається</th><th>Прогрес</th><th>Дії</th></tr>
+                    <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th>Тримається</th><th>Дії</th></tr>
                 </thead>
                 <tbody id="ff-timers-tbody">
                     <tr><td colspan="6" class="tm-empty-msg">Немає активних таймерів</td></tr>
@@ -6657,10 +6653,9 @@ function renderFuelFilter(d) {
         }
     };
     setIf('ff-duration', s.duration_minutes);
-    setIf('ff-max-exhaustion', s.max_exhaustion_pct);
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
-    setIf('ff-skip-wait', s.skip_wait_coins);
+    setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
 
     // scan stats: scanned count + aggregate LONG/SHORT exhaustion (color-coded)
     const statsEl = document.getElementById('ff-scan-stats');
@@ -6706,23 +6701,29 @@ function renderFuelFilter(d) {
     // timers
     const tb = document.getElementById('ff-timers-tbody');
     if (tb) {
-        const rows = d.timers || [];
+        let rows = d.timers || [];
         if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">Немає активних таймерів</td></tr>';
+            tb.innerHTML = '<tr><td colspan="5" class="tm-empty-msg">Немає активних таймерів</td></tr>';
         } else {
+            // BTCUSDT always first if present, highlighted
+            const btcIdx = rows.findIndex(r => r.symbol === 'BTCUSDT');
+            if (btcIdx > 0) {
+                const btc = rows.splice(btcIdx, 1)[0];
+                rows.unshift(btc);
+            }
             tb.innerHTML = rows.map(t => {
-                const prog = t.progress_pct != null ? t.progress_pct : 0;
+                const isBTC = (t.symbol === 'BTCUSDT');
                 const exh = (t.exhaustion != null)
                     ? t.exhaustion.toFixed(1) + '%' : '—';
                 const exhColor = (t.exhaustion != null && t.exhaustion >= 85)
                     ? '#f87171' : (t.exhaustion != null && t.exhaustion >= 66
                         ? '#facc15' : '#cbd5e1');
-                return `<tr>
-                    <td style="font-weight:600">${t.symbol}</td>
+                const rowStyle = isBTC ? 'background:rgba(250,204,21,0.12);border-left:3px solid #facc15' : '';
+                return `<tr style="${rowStyle}">
+                    <td style="font-weight:600${isBTC ? ';color:#facc15' : ''}">${t.symbol}</td>
                     <td style="color:${t.dir === 'LONG' ? '#22c55e' : '#ef4444'}">${t.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</td>
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
-                    <td style="min-width:120px"><div style="background:rgba(255,255,255,0.08);border-radius:4px;height:10px;overflow:hidden"><div style="width:${prog}%;height:100%;background:${prog >= 100 ? '#4ade80' : '#facc15'}"></div></div><span style="font-size:0.62rem;color:#8b93a7">${prog}%</span></td>
                     <td style="white-space:nowrap">
                         <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
                         <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
@@ -6929,10 +6930,9 @@ async function onFuelFilterToggle(event) {
 async function saveFuelFilterSettings() {
     const payload = {
         duration_minutes: parseInt(document.getElementById('ff-duration').value || '5', 10),
-        max_exhaustion_pct: parseInt(document.getElementById('ff-max-exhaustion').value || '75', 10),
         potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
         use_potential_exit: document.getElementById('ff-use-potential').checked,
-        skip_wait_coins: document.getElementById('ff-skip-wait').checked,
+        manage_open_positions: document.getElementById('ff-manage-positions').checked,
     };
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
