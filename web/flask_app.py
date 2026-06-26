@@ -2544,17 +2544,23 @@ def register_api_routes(app):
 
     @app.route('/api/funding/threshold', methods=['GET', 'POST'])
     def api_funding_threshold():
-        """Get or set the Funding Scanner entry threshold (%, negative).
-        Coins whose funding rate ≤ this value get tracked."""
+        """Get or set the Funding Scanner entry filters: entry threshold
+        (%, negative) and minimum 24h volume (USD, 0 = off). Coins are tracked
+        only when funding ≤ threshold AND 24h turnover ≥ min volume."""
         from detection.funding_monitor import get_funding_monitor
         fm = get_funding_monitor()
         if not fm:
             return jsonify({'ok': False, 'reason': 'Not initialized'})
         if request.method == 'GET':
-            return jsonify({'ok': True, 'threshold': fm._entry_threshold})
+            return jsonify({'ok': True, 'threshold': fm._entry_threshold,
+                            'min_volume': fm._min_volume})
         data = request.get_json() or {}
-        applied = fm.set_entry_threshold(data.get('threshold'))
-        return jsonify({'ok': True, 'threshold': applied})
+        if 'threshold' in data:
+            fm.set_entry_threshold(data.get('threshold'))
+        if 'min_volume' in data:
+            fm.set_min_volume(data.get('min_volume'))
+        return jsonify({'ok': True, 'threshold': fm._entry_threshold,
+                        'min_volume': fm._min_volume})
 
     @app.route('/api/liqmap/power', methods=['GET', 'POST'])
     def api_liqmap_power():
