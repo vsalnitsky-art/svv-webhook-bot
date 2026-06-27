@@ -2177,25 +2177,53 @@ class TradeManager:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
         self._persist_positions()
         self._persist_closed_trades()
-        # Replace our last-price approximation with the exchange's real
-        # avg exit price + realized PnL (net of fees). External closes are the
-        # worst offenders since we only detected them on a reconcile tick.
-        self._apply_exchange_close_truth(symbol, closed, pos['side'])
-        entry = closed['entry_price']
-        exit_price = closed['exit_price']
-        pnl_pct = closed['pnl_pct']
-        pnl_usd = closed['pnl_usd']
-        self._archive_closed(closed, pos, is_paper=False)
-
-        sign = '+' if pnl_pct >= 0 else ''
-        print(f"[TM] 🔄 External close detected for {symbol}: "
-              f"{sign}{pnl_pct:.2f}% (gone from Bybit, reason={reason})")
-        self._notify(
-            f"🔄 External close: {symbol} {pos['side']}\n"
-            f"Entry: {self._fmt_price(entry)} → Exit: {self._fmt_price(exit_price)}\n"
-            f"PnL: {sign}{pnl_pct:.2f}% ({sign}${pnl_usd:.2f})"
-        )
+        # Finalize in the background: fetch the exchange's real avg exit price +
+        # realized PnL (net of fees), archive, then notify with the corrected
+        # numbers. External closes are the worst offenders for stale prices, so
+        # the notify is intentionally sent AFTER the truth fetch.
+        _side = pos['side']
+        def _ext_notify(c):
+            _sign = '+' if c.get('pnl_pct', 0) >= 0 else ''
+            print(f"[TM] 🔄 External close detected for {symbol}: "
+                  f"{_sign}{c.get('pnl_pct', 0):.2f}% (gone from Bybit, reason={reason})")
+            self._notify(
+                f"🔄 External close: {symbol} {_side}\n"
+                f"Entry: {self._fmt_price(c.get('entry_price'))} → "
+                f"Exit: {self._fmt_price(c.get('exit_price'))}\n"
+                f"PnL: {_sign}{c.get('pnl_pct', 0):.2f}% "
+                f"({_sign}${c.get('pnl_usd', 0):.2f})"
+            )
+        self._finalize_close_async(symbol, closed, _side, pos,
+                                   notify_fn=_ext_notify)
     
+    def _finalize_close_async(self, symbol: str, closed: Dict, side: str,
+                              pos: Dict, notify_fn=None):
+        """Run the post-close bookkeeping in a BACKGROUND thread so it never
+        delays the actual close (the reduce-only order was already sent) nor
+        blocks the monitor loop from checking other positions' SL/TP while we
+        wait for Bybit to settle the closed-PnL record.
+
+        Order in the worker: fetch real PnL → archive → notify. The Recent
+        Closed Trades table already shows the approximation instantly; this
+        updates it to exchange-truth a few seconds later.
+        """
+        def _run():
+            try:
+                self._apply_exchange_close_truth(symbol, closed, side)
+            except Exception as e:
+                print(f"[TM] close-truth async error {symbol}: {e}")
+            try:
+                self._archive_closed(closed, pos, is_paper=False)
+            except Exception as e:
+                print(f"[TM] archive async error {symbol}: {e}")
+            if notify_fn:
+                try:
+                    notify_fn(closed)
+                except Exception as e:
+                    print(f"[TM] close-notify async error {symbol}: {e}")
+        threading.Thread(target=_run, daemon=True,
+                         name=f"close-finalize-{symbol}").start()
+
     def _apply_exchange_close_truth(self, symbol: str, closed: Dict,
                                     side: str) -> bool:
         """Overwrite a just-recorded closed trade with the REAL figures from
@@ -2585,13 +2613,12 @@ class TradeManager:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
         self._persist_positions()
         self._persist_closed_trades()
-        # Replace our last-price approximation with the exchange's real avg
-        # exit price + realized PnL (net of fees/funding) so the record matches
-        # Bybit exactly. Falls back to the approximation if unavailable.
-        self._apply_exchange_close_truth(symbol, closed, pos['side'])
-        self._archive_closed(closed, pos, is_paper=False)
-
-        self._notify_close(closed)
+        # The reduce-only close order already went out above — finalize in the
+        # background (real-PnL fetch + archive + notify) so it NEVER delays the
+        # close or stalls the monitor loop. The table shows the approximation
+        # instantly, then updates to exchange-truth when the record settles.
+        self._finalize_close_async(symbol, closed, pos['side'], pos,
+                                   notify_fn=self._notify_close)
 
     def _partial_close(self, symbol: str, pct: float, exit_price: float, reason: str):
         """Close a percentage of remaining qty."""
