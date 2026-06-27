@@ -622,7 +622,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 /* ❤️ Fuel Auto-Filter timers: fixed-height scroll area with sticky header so
    rows coming/going don't make the whole panel jump. */
 .ff-timers-scroll {
-    max-height: 340px;
+    max-height: 680px;
     overflow-y: auto;
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 8px;
@@ -632,8 +632,22 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .ff-timers-scroll thead th {
     position: sticky;
     top: 0;
-    z-index: 2;
+    z-index: 3;
     background: #141a24;
+    box-sizing: border-box;
+    height: 28px;
+}
+/* Pinned BTC row — sticks right under the header, stays put while the rest
+   of the list scrolls. Opaque background so scrolled rows don't bleed through
+   (kept on :hover too). */
+.ff-timers-scroll tr.ff-btc-pinned td,
+.ff-timers-scroll tr.ff-btc-pinned:hover td {
+    position: sticky;
+    top: 28px;
+    z-index: 2;
+    background-color: #141a24;
+    background-image: linear-gradient(90deg, rgba(250,204,21,0.16), rgba(250,204,21,0.03));
+    border-bottom: 1px solid rgba(250,204,21,0.25);
 }
 .ff-timers-scroll::-webkit-scrollbar { width: 8px; }
 .ff-timers-scroll::-webkit-scrollbar-thumb {
@@ -6822,7 +6836,7 @@ function renderFuelFilter(d) {
                 // anchor/reference.
                 const cellFont = isBTC ? 'font-size:0.92rem;' : '';
                 const symColor = isBTC ? ';color:#facc15' : (isFunding ? ';color:#6ee7b7' : '');
-                return `<tr style="${rowStyle}">
+                return `<tr class="${isBTC ? 'ff-btc-pinned' : ''}" style="${rowStyle}">
                     <td style="font-weight:${isBTC ? 800 : 600};${cellFont}${symColor}">${t.symbol}${isBTC ? ' 📌' : ''}${fundingBadge}</td>
                     <td style="${cellFont}">${dirHtml}</td>
                     <td style="font-size:${isBTC ? '0.86rem' : '0.74rem'};color:${exhColor};font-weight:600">${exh}</td>
