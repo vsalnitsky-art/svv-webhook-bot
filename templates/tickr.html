@@ -177,6 +177,41 @@
     </div>
 </div>
 
+<!-- FF-optimized pick → Fuel Auto-Filter -->
+<div class="tk-section" style="border:1px solid rgba(34,197,94,0.35)">
+    <h3 style="font-size:0.9rem;color:#34d399;margin:0 0 4px">❤️ FF-добірка → Fuel Auto-Filter</h3>
+    <div class="tk-stat">
+        Окремий відбір під <b>❤️ Fuel Auto-Filter</b>: високі пороги ліквідності
+        (OI ≥ $10M, Vol ≥ $30M), посилений ваговий OI-накоп, послаблене стиснення —
+        бо паливо рахується з OI. Список можна редагувати (видаляти монети ✕), тоді
+        залити у WATCHLIST з позначкою <b>📡 Tickr</b> (дублікати пропускаються;
+        кнопки <b>FF</b> + <b>TRD</b> вмикаються автоматично).
+    </div>
+    <div class="tk-row" style="margin-bottom:8px;margin-top:8px">
+        <div class="tk-field" style="flex:1;min-width:220px">
+            <label>ПОРІГ SCORE · <span id="ffopp-score-val">60</span></label>
+            <input type="range" id="ffopp-score" min="40" max="90" step="1" value="60"
+                   oninput="document.getElementById('ffopp-score-val').textContent=this.value">
+        </div>
+        <button class="tk-btn warm" id="ffopp-scan-btn" onclick="ffOppScan()">❤️ Сформувати список</button>
+        <button class="tk-btn alt" onclick="oppCaptureBaseline()" title="Спільна база OI зі сканером вище — для OI-прискорення">📌 База OI</button>
+    </div>
+    <div class="tk-stat" id="ffopp-stat">Натисни «Сформувати список».</div>
+    <div class="tk-scroll">
+        <table class="tk-table">
+            <thead><tr>
+                <th>#</th><th>Symbol</th><th>Opportunity</th><th>OI накоп.</th>
+                <th>Стиснення</th><th>Приплив</th><th>Funding</th><th>Vol 24h</th><th>OI</th><th></th>
+            </tr></thead>
+            <tbody id="ffopp-tbody"><tr><td colspan="10" style="color:#667;padding:16px">— ще не сформовано —</td></tr></tbody>
+        </table>
+    </div>
+    <div class="tk-row" style="margin-top:10px">
+        <button class="tk-btn warm" id="ffopp-load" onclick="ffOppLoad()" disabled>📡 Залити у WATCHLIST (FF+TRD)</button>
+        <button class="tk-btn" onclick="ffOppClear()" title="Прибрати з WATCHLIST усі монети з позначкою 📡 Tickr">🗑️ Видалити всі 📡 Tickr з WATCHLIST</button>
+    </div>
+</div>
+
 <!-- Continuous Tickr→Watchlist auto-pipeline -->
 <div class="tk-section">
     <h3 style="font-size:0.9rem;color:#86efac;margin:0 0 4px">
@@ -537,6 +572,92 @@ async function oppPush(replace) {
     const stat = document.getElementById('opp-stat');
     stat.textContent = d.ok
         ? `✅ Watchlist: +${(d.added||[]).length} додано${replace ? `, −${(d.removed||[]).length} прибрано` : ''} (всього ${(d.watchlist||[]).length})`
+        : '❌ ' + (d.reason || 'fail');
+}
+
+// ===== ❤️ FF-добірка → Fuel Auto-Filter =====
+let ffOppRows = null;
+
+async function ffOppScan() {
+    const btn = document.getElementById('ffopp-scan-btn');
+    const stat = document.getElementById('ffopp-stat');
+    btn.disabled = true; stat.textContent = 'Формування FF-добірки…';
+    try {
+        const minScore = parseFloat(document.getElementById('ffopp-score').value);
+        const res = await fetch('/api/tickr/opportunity/ff-scan', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({min_score: minScore}),
+        });
+        const d = await res.json();
+        if (!d.ok) { stat.textContent = '❌ ' + (d.reason || 'fail'); return; }
+        ffOppRows = d.symbols;
+        ffOppRender();
+        const hasBase = (d.symbols || []).some(r => r.has_baseline);
+        stat.textContent = `❤️ ${d.count_in} монет → ${d.count_passed} пройшли гейти → ${(d.symbols||[]).length} ≥ ${d.min_score}`
+            + (hasBase ? '' : ' · ⚠ OI-база не збережена (OI-score нейтральний)');
+    } catch (e) { stat.textContent = '❌ ' + e; }
+    finally { btn.disabled = false; }
+}
+
+function ffOppRender() {
+    const tb = document.getElementById('ffopp-tbody');
+    const rows = ffOppRows || [];
+    const loadBtn = document.getElementById('ffopp-load');
+    if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="10" style="color:#667;padding:16px">— список порожній —</td></tr>';
+        if (loadBtn) loadBtn.disabled = true;
+        return;
+    }
+    if (loadBtn) loadBtn.disabled = false;
+    tb.innerHTML = rows.map((r, i) => {
+        const sc = r.opportunity;
+        const scCol = sc >= 66 ? '#4ade80' : sc >= 45 ? '#fbbf24' : '#f87171';
+        const fundCol = r.funding >= 0 ? '#4ade80' : '#f87171';
+        return `<tr>
+            <td>${i+1}</td>
+            <td><b>${r.symbol}</b></td>
+            <td style="color:${scCol};font-weight:700">${sc}</td>
+            <td>${oppBar(r.oi_accel)}${r.has_baseline ? '' : '<span style="color:#667;font-size:0.7rem"> n/a</span>'}</td>
+            <td>${oppBar(r.compression)}</td>
+            <td>${oppBar(r.vol_spike)}</td>
+            <td style="color:${fundCol}">${(r.funding*100).toFixed(3)}%</td>
+            <td>${tkFmtUsd(r.vol_usd)}</td>
+            <td>${tkFmtUsd(r.oi_usd)}</td>
+            <td><span onclick="ffOppRemove('${r.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.95rem" title="Прибрати зі списку">✕</span></td>
+        </tr>`;
+    }).join('');
+}
+
+function ffOppRemove(sym) {
+    if (!ffOppRows) return;
+    ffOppRows = ffOppRows.filter(r => r.symbol !== sym);
+    ffOppRender();
+    document.getElementById('ffopp-stat').textContent = `Список відредаговано: ${ffOppRows.length} монет.`;
+}
+
+async function ffOppLoad() {
+    if (!ffOppRows || !ffOppRows.length) return;
+    const symbols = ffOppRows.map(r => r.symbol);
+    if (!confirm(`Залити ${symbols.length} монет у WATCHLIST (позначка 📡 Tickr, FF+TRD увімкнені, дублікати пропускаються)?`)) return;
+    const res = await fetch('/api/tickr/opportunity/ff-to-watchlist', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbols}),
+    });
+    const d = await res.json();
+    const stat = document.getElementById('ffopp-stat');
+    if (!d.ok) { stat.textContent = '❌ ' + (d.reason || 'fail'); return; }
+    stat.textContent = `✅ Залито +${(d.added||[]).length} (📡 Tickr · FF+TRD)`
+        + `, дублікатів пропущено: ${(d.already||[]).length}`
+        + ((d.skipped||[]).length ? `, не вдалось: ${d.skipped.length}` : '');
+}
+
+async function ffOppClear() {
+    if (!confirm('Прибрати з WATCHLIST усі монети з позначкою 📡 Tickr (tickr_ff)?')) return;
+    const res = await fetch('/api/tickr/opportunity/ff-clear-watchlist', {method: 'POST'});
+    const d = await res.json();
+    const stat = document.getElementById('ffopp-stat');
+    stat.textContent = d.ok
+        ? `🗑️ Прибрано ${(d.removed||[]).length} монет із позначкою 📡 Tickr.`
         : '❌ ' + (d.reason || 'fail');
 }
 
