@@ -6782,27 +6782,24 @@ function renderFuelFilter(d) {
                 const exhColor = (t.exhaustion != null && t.exhaustion >= 85)
                     ? '#f87171' : (t.exhaustion != null && t.exhaustion >= 66
                         ? '#facc15' : '#cbd5e1');
-                // BTC highlight wins the row tint; otherwise funding coins get a
-                // distinct emerald/money tint so they stand out as monitor-only.
+                // Smooth full-row gradient tints (no ragged left borders).
+                // BTC highlight wins; otherwise funding-only coins get a soft
+                // emerald wash so they read as a distinct group, not torn lines.
                 const rowStyle = isBTC
-                    ? 'background:rgba(250,204,21,0.12);border-left:3px solid #facc15'
+                    ? 'background:linear-gradient(90deg,rgba(250,204,21,0.16),rgba(250,204,21,0.02))'
                     : (isFunding
-                        ? 'background:rgba(16,185,129,0.08);border-left:3px solid #10b981'
+                        ? 'background:linear-gradient(90deg,rgba(16,185,129,0.13),rgba(16,185,129,0.015))'
                         : '');
                 const fundingBadge = isFunding
-                    ? ' <span title="З 💰 Funding Rate Scanner — лише моніторинг палива" style="font-size:0.7rem;color:#34d399">💰</span>'
+                    ? ' <span title="З 💰 Funding Rate Scanner (поза WATCHLIST)" style="font-size:0.7rem;color:#34d399">💰</span>'
                     : '';
-                // Funding coins are monitor-only: no force-open ▶ (nothing should
-                // be traded with them). Delete ✕ stays so the user can hide a row.
-                const openBtn = isFunding ? ''
-                    : `<span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>`;
                 return `<tr style="${rowStyle}">
-                    <td style="font-weight:600${isBTC ? ';color:#facc15' : ''}">${t.symbol}${fundingBadge}</td>
+                    <td style="font-weight:600${isBTC ? ';color:#facc15' : (isFunding ? ';color:#6ee7b7' : '')}">${t.symbol}${fundingBadge}</td>
                     <td style="color:${t.dir === 'LONG' ? '#22c55e' : '#ef4444'}">${t.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</td>
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
                     <td style="white-space:nowrap">
-                        ${openBtn}
+                        <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
                         <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
                     </td>
                 </tr>`;

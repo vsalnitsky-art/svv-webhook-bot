@@ -677,11 +677,14 @@ class FuelFilterDaemon:
         watchlist = [s.upper() for s in watchlist]
 
         # Pull in coins from the 💰 Funding Rate Scanner (when enabled). They are
-        # monitored for fuel exactly like watchlist coins, shown in the ❤️ table
-        # flagged distinctly, but never auto-opened/managed.
+        # monitored for fuel exactly like watchlist coins and fully actionable
+        # (force-open, exhaustion-exit, position management). The 💰 badge marks
+        # ONLY coins that are NOT already in the SMC watchlist — a coin present
+        # in the watchlist is treated as a normal watchlist coin (no badge).
         funding_syms = self._get_funding_symbols()
+        watchlist_set = set(watchlist)
         with self._lock:
-            self._funding_syms = set(funding_syms)
+            self._funding_syms = set(funding_syms) - watchlist_set
 
         # SCAN all watchlist coins for data/stats. FF flag still controls which
         # coins can auto-open positions (checked later in the loop).
