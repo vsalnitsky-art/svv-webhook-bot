@@ -2219,26 +2219,36 @@ class TradeManager:
         our_qty = float(closed.get('remaining_qty_at_close')
                         or closed.get('qty') or 0)
 
+        # CRITICAL: only accept a closed-PnL record that belongs to THIS close,
+        # i.e. whose Bybit timestamp is at/after the moment we closed. Right
+        # after the reduce-only fill Bybit may not have settled the new record
+        # yet — if a PREVIOUS trade on this same symbol exists, get_closed_pnl
+        # returns that stale record. Grabbing it would overwrite the real PnL
+        # with an old trade's numbers (e.g. +2% becomes +0.11%). We use a small
+        # negative buffer for clock skew, and keep retrying until the fresh
+        # record appears (or fall back to our approximation).
+        closed_at = float(closed.get('closed_at') or time.time())
+        min_ts_ms = int((closed_at - 30) * 1000)
+
         record = None
-        for attempt in range(4):  # ~0.5 + 1 + 2 ≈ 3.5s worst case
+        for attempt in range(5):  # ~0.6 + 1.2 + 1.8 + 2.4 ≈ 6s worst case
             recs = self.bybit.get_closed_pnl(symbol, limit=10)
             if recs:
-                # Newest first. Pick the most recent record matching the close
-                # side; prefer one whose qty is close to ours (handles a symbol
-                # that was opened/closed several times).
-                candidates = [r for r in recs
-                              if r.get('side') == want_close_side
-                              and r.get('avg_exit_price', 0) > 0]
-                if candidates:
+                # Newest first. Keep only FRESH records (this close, not a
+                # previous trade) matching the close side.
+                fresh = [r for r in recs
+                         if r.get('side') == want_close_side
+                         and r.get('avg_exit_price', 0) > 0
+                         and int(r.get('updated_time') or r.get('created_time') or 0) >= min_ts_ms]
+                if fresh:
                     if our_qty > 0:
                         record = min(
-                            candidates,
-                            key=lambda r: abs(r.get('qty', 0) - our_qty))
+                            fresh, key=lambda r: abs(r.get('qty', 0) - our_qty))
                     else:
-                        record = candidates[0]
+                        record = fresh[0]
                     break
-            if attempt < 3:
-                time.sleep(0.5 * (attempt + 1))
+            if attempt < 4:
+                time.sleep(0.6 * (attempt + 1))
 
         if not record:
             closed['pnl_source'] = 'approx'
