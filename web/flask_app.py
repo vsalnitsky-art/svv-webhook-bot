@@ -3324,7 +3324,94 @@ def register_api_routes(app):
                 print(f"[Tickr→WL] add {sym} error: {e}")
         return jsonify({'ok': True, 'added': added, 'removed': removed,
                         'watchlist': s.get_watchlist()})
-    
+
+    @app.route('/api/tickr/opportunity/ff-scan', methods=['POST'])
+    def api_tickr_opp_ff_scan():
+        """FF-optimized opportunity scan — a separate selection tuned for the
+        ❤️ Fuel Auto-Filter (high liquidity floors, OI-accel weighted heavy,
+        compression de-emphasised). Body: {min_score?:float}. Returns the
+        ranked candidates above min_score (default 60)."""
+        from detection import tickr_core
+        import json as _json
+        data = request.get_json() or {}
+        try:
+            min_score = float(data.get('min_score', 60))
+        except (ValueError, TypeError):
+            min_score = 60.0
+        raw = get_db().get_setting('tickr_opp_oi_baseline', '')
+        oi_baseline = {}
+        if raw:
+            try:
+                oi_baseline = _json.loads(raw).get('oi', {})
+            except Exception:
+                oi_baseline = {}
+        res = tickr_core.opportunity_scan(
+            exchange='bybit', params=dict(tickr_core.FF_OPP_PARAMS),
+            oi_baseline=oi_baseline)
+        if not res.get('ok'):
+            return jsonify(res)
+        syms = [r for r in res.get('symbols', [])
+                if r.get('opportunity', 0) >= min_score]
+        return jsonify({'ok': True, 'min_score': min_score,
+                        'count_in': res.get('count_in', 0),
+                        'count_passed': res.get('count_passed', 0),
+                        'symbols': syms, 'params': res.get('params'),
+                        'fetched_at': res.get('fetched_at')})
+
+    @app.route('/api/tickr/opportunity/ff-to-watchlist', methods=['POST'])
+    def api_tickr_opp_ff_to_watchlist():
+        """Load the FF-pick list into the SMC watchlist tagged source='tickr_ff'.
+        Skips coins already in the watchlist (any source). Each newly-added coin
+        gets its FF flag and TRD (tradeable) enabled by default.
+        Body: {symbols:[...]}. Returns {added, skipped, already}."""
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'SMC scanner not initialized'})
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+        except Exception:
+            ff = None
+        data = request.get_json() or {}
+        symbols = [str(x).upper().strip() for x in (data.get('symbols') or []) if x]
+        existing = set(s.get_watchlist())
+        added, already, skipped = [], [], []
+        for sym in symbols:
+            if sym in existing:
+                already.append(sym)        # duplicate — do not load
+                continue
+            r = s.add_symbol(sym, source='tickr_ff')
+            if r.get('ok'):
+                added.append(sym)
+                existing.add(sym)
+                # Default-enable FF scan flag + TRD (tradeable) for the coin.
+                try:
+                    if ff:
+                        ff.set_scan(sym, True)
+                except Exception as e:
+                    print(f"[Tickr-FF→WL] FF flag {sym} error: {e}")
+                try:
+                    s.set_tradeable(sym, True)
+                except Exception as e:
+                    print(f"[Tickr-FF→WL] TRD {sym} error: {e}")
+            else:
+                skipped.append(sym)
+        return jsonify({'ok': True, 'added': added, 'already': already,
+                        'skipped': skipped, 'watchlist': s.get_watchlist()})
+
+    @app.route('/api/tickr/opportunity/ff-clear-watchlist', methods=['POST'])
+    def api_tickr_opp_ff_clear_watchlist():
+        """Remove EVERY coin tagged source='tickr_ff' from the SMC watchlist
+        (their FF flag + tradeable are cleaned up by remove_symbol)."""
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'SMC scanner not initialized'})
+        removed = s.remove_by_source('tickr_ff')
+        return jsonify({'ok': True, 'removed': removed,
+                        'watchlist': s.get_watchlist()})
+
     @app.route('/api/tickr/opportunity/auto', methods=['GET', 'POST'])
     def api_tickr_opp_auto():
         """Get/set the continuous Tickr→Watchlist auto-pipeline.
