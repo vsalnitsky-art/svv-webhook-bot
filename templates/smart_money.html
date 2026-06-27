@@ -6827,9 +6827,19 @@ function renderFuelFilter(d) {
                     : (isFunding
                         ? 'background:rgba(16,185,129,0.13)'
                         : '');
-                const fundingBadge = isFunding
-                    ? ' <span title="З 💰 Funding Rate Scanner (поза WATCHLIST)" style="font-size:0.7rem;color:#34d399">💰</span>'
-                    : '';
+                // Origin marker BEFORE the symbol — where the coin came from:
+                //   💰 Funding Rate Scanner · 📡 Tickr-FF · T Tickr-auto · M manual
+                let srcSym, srcTitle, srcColor;
+                if (isFunding) {
+                    srcSym = '💰'; srcColor = '#34d399';
+                    srcTitle = 'З 💰 Funding Rate Scanner (поза WATCHLIST)';
+                } else {
+                    const src = (typeof wlSources !== 'undefined' && wlSources[t.symbol]) || 'manual';
+                    if (src === 'tickr_ff') { srcSym = '📡'; srcColor = '#34d399'; srcTitle = 'FF-добірка із 📡 Tickr'; }
+                    else if (src === 'tickr') { srcSym = 'T'; srcColor = '#60a5fa'; srcTitle = 'Авто-список 📡 Tickr'; }
+                    else { srcSym = 'M'; srcColor = '#94a3b8'; srcTitle = 'Додано вручну у WATCHLIST'; }
+                }
+                const srcBadge = `<span title="${srcTitle}" style="display:inline-block;min-width:16px;text-align:center;font-size:0.66rem;font-weight:700;color:${srcColor};margin-right:5px">${srcSym}</span>`;
                 // Direction — handle the no-fuel (neutral) state, esp. for the
                 // permanently-pinned BTC row.
                 const dirHtml = t.dir === 'LONG'
@@ -6843,7 +6853,7 @@ function renderFuelFilter(d) {
                 const cellFont = isBTC ? 'font-size:0.92rem;' : '';
                 const symColor = isBTC ? ';color:#facc15' : (isFunding ? ';color:#6ee7b7' : '');
                 return `<tr class="${isBTC ? 'ff-btc-pinned' : ''}" style="${rowStyle}">
-                    <td style="font-weight:${isBTC ? 800 : 600};${cellFont}${symColor}">${t.symbol}${isBTC ? ' 📌' : ''}${fundingBadge}</td>
+                    <td style="font-weight:${isBTC ? 800 : 600};${cellFont}${symColor}">${srcBadge}${t.symbol}${isBTC ? ' 📌' : ''}</td>
                     <td style="${cellFont}">${dirHtml}</td>
                     <td style="font-size:${isBTC ? '0.86rem' : '0.74rem'};color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:${isBTC ? '0.86rem' : '0.74rem'};color:#cbd5e1">${heldHtml}</td>
