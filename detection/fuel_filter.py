@@ -109,6 +109,8 @@ class FuelFilterDaemon:
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
         self._funding_syms: set = set()
+        # Latest BTC fuel snapshot — pinned permanently at the top of the table.
+        self._btc_state: Dict = {}
         self._last_tick_ts = 0
         self._load_state()
 
@@ -688,9 +690,10 @@ class FuelFilterDaemon:
 
         # SCAN all watchlist coins for data/stats. FF flag still controls which
         # coins can auto-open positions (checked later in the loop).
+        # BTCUSDT is ALWAYS scanned + pinned in the table (see _btc_state).
         scan_targets = list(dict.fromkeys(watchlist + funding_syms))
         symbols = list(dict.fromkeys(
-            scan_targets + list(self._fuel_managed.keys())))
+            ['BTCUSDT'] + scan_targets + list(self._fuel_managed.keys())))
 
         # CRITICAL: register ALL symbols with liq-map so they all have fuel data.
         # SMC scanner already does this for the watchlist every 60s, but funding
@@ -699,9 +702,9 @@ class FuelFilterDaemon:
         self._register_with_liqmap(symbols)
 
         # FF scan-list: which coins get a fuel timer (+ show in the table).
-        # Funding-scanner coins are added so they get monitored, but they stay
-        # monitor-only (the timer branch never auto-opens).
-        scan_list = set(self.get_scan_list()) | set(funding_syms)
+        # Funding-scanner coins are added so they get monitored; BTCUSDT is
+        # always included so its timer/held value is tracked for the pinned row.
+        scan_list = set(self.get_scan_list()) | set(funding_syms) | {'BTCUSDT'}
 
         # Get TM settings to know which mode positions live in
         tm = self._get_tm() if self._get_tm else None
@@ -722,6 +725,22 @@ class FuelFilterDaemon:
             fuel = self._fuel_dir(symbol)
             status = fuel.get('status') if fuel else None
             fuel_managed = symbol in self._fuel_managed
+
+            # Snapshot BTC state every tick so the table can pin a permanent
+            # BTC row regardless of whether its timer has held past the
+            # threshold (or exists at all).
+            if symbol == 'BTCUSDT':
+                _bt = self._timers.get('BTCUSDT')
+                _bheld = int(now - _bt['since']) if _bt and _bt.get('since') else 0
+                _bexh = (self._exhaustion('BTCUSDT', status)
+                         if status in ('LONG', 'SHORT') else None)
+                with self._lock:
+                    self._btc_state = {
+                        'dir': status,
+                        'exhaustion': _bexh,
+                        'held_sec': _bheld,
+                        'managed': fuel_managed,
+                    }
 
             # --- accumulate panel scan stats (ALL watchlist coins now).
             # Runs before any branch/continue so every target is counted.
@@ -917,6 +936,8 @@ class FuelFilterDaemon:
             now = time.time()
             timers = []
             for sym, t in self._timers.items():
+                if sym == 'BTCUSDT':
+                    continue  # pinned separately, always shown
                 if sym in self._fuel_managed:
                     continue  # already opened, don't show timer
                 held = now - t.get('since', now)
@@ -932,13 +953,26 @@ class FuelFilterDaemon:
                     'funding': sym in self._funding_syms,
                     # progress_pct removed - no longer needed
                 })
+            sorted_timers = sorted(timers, key=lambda x: -x['held_sec'])
+            # Pin BTC permanently at the top — always present regardless of
+            # whether its fuel timer held past the threshold.
+            bs = self._btc_state or {}
+            btc_row = {
+                'symbol': 'BTCUSDT',
+                'dir': bs.get('dir'),
+                'held_sec': bs.get('held_sec', 0),
+                'exhaustion': bs.get('exhaustion'),
+                'funding': False,
+                'pinned': True,
+            }
+            all_timers = [btc_row] + sorted_timers
             scan_list = self.get_scan_list()
         return {
             'ok': True,
             'settings': settings,
             'running': bool(self._thread and self._thread.is_alive()),
             'last_tick_ts': self._last_tick_ts,
-            'timers': sorted(timers, key=lambda x: -x['held_sec']),
+            'timers': all_timers,
             'active_symbols': list(self._fuel_managed.keys()),
             'tracked_count': len(self._fuel_managed),
             'scan_list': scan_list,

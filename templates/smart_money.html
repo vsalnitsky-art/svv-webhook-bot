@@ -619,6 +619,27 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     letter-spacing: 0.04em;
 }
 .tm-table tr:hover td { background: rgba(255,255,255,0.02); }
+/* ❤️ Fuel Auto-Filter timers: fixed-height scroll area with sticky header so
+   rows coming/going don't make the whole panel jump. */
+.ff-timers-scroll {
+    max-height: 340px;
+    overflow-y: auto;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    margin-top: 8px;
+}
+.ff-timers-scroll .tm-table { margin-top: 0; }
+.ff-timers-scroll thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #141a24;
+}
+.ff-timers-scroll::-webkit-scrollbar { width: 8px; }
+.ff-timers-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.12); border-radius: 4px;
+}
+.ff-timers-scroll::-webkit-scrollbar-track { background: transparent; }
 .tm-pnl-pos { color: #4ade80; }
 .tm-pnl-neg { color: #ef4444; }
 .tm-side-long { color: #4ade80; font-weight: 600; }
@@ -1804,14 +1825,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">⏱️ Активні таймери</div>
                 <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всі таймери">🗑️ Очистити всі</button>
             </div>
-            <table class="tm-table" id="ff-timers-table">
-                <thead>
-                    <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th>Тримається</th><th>Дії</th></tr>
-                </thead>
-                <tbody id="ff-timers-tbody">
-                    <tr><td colspan="6" class="tm-empty-msg">Немає активних таймерів</td></tr>
-                </tbody>
-            </table>
+            <div class="ff-timers-scroll">
+                <table class="tm-table" id="ff-timers-table">
+                    <thead>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th>Тримається</th><th>Дії</th></tr>
+                    </thead>
+                    <tbody id="ff-timers-tbody">
+                        <tr><td colspan="6" class="tm-empty-msg">Немає активних таймерів</td></tr>
+                    </tbody>
+                </table>
+            </div>
 
             <div style="font-size:0.66rem;color:#6b7280;margin-top:12px">
                 💡 Скануються лише монети з прапорцем <b style="color:#f9a8d4">FF</b> у WATCHLIST (щоб не навантажувати бота). Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість — із панелі "Потенціал LONG/SHORT". Позиції відкриваються в Trade Manager (real) або Test Mode (paper) залежно від їх тумблерів. Скан кожні 30с.
@@ -6768,12 +6791,6 @@ function renderFuelFilter(d) {
         if (!rows.length) {
             tb.innerHTML = '<tr><td colspan="5" class="tm-empty-msg">Немає активних таймерів</td></tr>';
         } else {
-            // BTCUSDT always first if present, highlighted
-            const btcIdx = rows.findIndex(r => r.symbol === 'BTCUSDT');
-            if (btcIdx > 0) {
-                const btc = rows.splice(btcIdx, 1)[0];
-                rows.unshift(btc);
-            }
             tb.innerHTML = rows.map(t => {
                 const isBTC = (t.symbol === 'BTCUSDT');
                 const isFunding = !!t.funding;
@@ -6793,11 +6810,23 @@ function renderFuelFilter(d) {
                 const fundingBadge = isFunding
                     ? ' <span title="З 💰 Funding Rate Scanner (поза WATCHLIST)" style="font-size:0.7rem;color:#34d399">💰</span>'
                     : '';
+                // Direction — handle the no-fuel (neutral) state, esp. for the
+                // permanently-pinned BTC row.
+                const dirHtml = t.dir === 'LONG'
+                    ? '<span style="color:#22c55e">🟢 LONG</span>'
+                    : (t.dir === 'SHORT'
+                        ? '<span style="color:#ef4444">🔴 SHORT</span>'
+                        : '<span style="color:#8b93a7">⚪ —</span>');
+                const heldHtml = t.dir ? fmtAge(t.held_sec) : '—';
+                // Pinned BTC row: slightly larger font so it stands out as the
+                // anchor/reference.
+                const cellFont = isBTC ? 'font-size:0.92rem;' : '';
+                const symColor = isBTC ? ';color:#facc15' : (isFunding ? ';color:#6ee7b7' : '');
                 return `<tr style="${rowStyle}">
-                    <td style="font-weight:600${isBTC ? ';color:#facc15' : (isFunding ? ';color:#6ee7b7' : '')}">${t.symbol}${fundingBadge}</td>
-                    <td style="color:${t.dir === 'LONG' ? '#22c55e' : '#ef4444'}">${t.dir === 'LONG' ? '🟢 LONG' : '🔴 SHORT'}</td>
-                    <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
-                    <td style="font-size:0.74rem;color:#cbd5e1">${fmtAge(t.held_sec)}</td>
+                    <td style="font-weight:${isBTC ? 800 : 600};${cellFont}${symColor}">${t.symbol}${isBTC ? ' 📌' : ''}${fundingBadge}</td>
+                    <td style="${cellFont}">${dirHtml}</td>
+                    <td style="font-size:${isBTC ? '0.86rem' : '0.74rem'};color:${exhColor};font-weight:600">${exh}</td>
+                    <td style="font-size:${isBTC ? '0.86rem' : '0.74rem'};color:#cbd5e1">${heldHtml}</td>
                     <td style="white-space:nowrap">
                         <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
                         <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
