@@ -645,8 +645,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     position: sticky;
     top: 28px;
     z-index: 2;
-    background-color: #141a24;
-    background-image: linear-gradient(90deg, rgba(250,204,21,0.16), rgba(250,204,21,0.03));
+    background-color: #36331e;   /* solid gold tint, full width (no gradient) */
     border-bottom: 1px solid rgba(250,204,21,0.25);
 }
 .ff-timers-scroll::-webkit-scrollbar { width: 8px; }
@@ -6813,13 +6812,13 @@ function renderFuelFilter(d) {
                 const exhColor = (t.exhaustion != null && t.exhaustion >= 85)
                     ? '#f87171' : (t.exhaustion != null && t.exhaustion >= 66
                         ? '#facc15' : '#cbd5e1');
-                // Smooth full-row gradient tints (no ragged left borders).
-                // BTC highlight wins; otherwise funding-only coins get a soft
-                // emerald wash so they read as a distinct group, not torn lines.
+                // Solid full-width tints (no gradient). BTC's tint is applied
+                // via the .ff-btc-pinned CSS (sticky); funding-only coins get a
+                // uniform emerald wash across the whole row.
                 const rowStyle = isBTC
-                    ? 'background:linear-gradient(90deg,rgba(250,204,21,0.16),rgba(250,204,21,0.02))'
+                    ? ''
                     : (isFunding
-                        ? 'background:linear-gradient(90deg,rgba(16,185,129,0.13),rgba(16,185,129,0.015))'
+                        ? 'background:rgba(16,185,129,0.13)'
                         : '');
                 const fundingBadge = isFunding
                     ? ' <span title="З 💰 Funding Rate Scanner (поза WATCHLIST)" style="font-size:0.7rem;color:#34d399">💰</span>'
