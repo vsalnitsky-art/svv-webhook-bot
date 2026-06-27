@@ -535,6 +535,25 @@ OPP_DEFAULTS = {
     'top_n': 20,
 }
 
+# FF-optimized preset: a separate "coiled-spring for the Fuel Auto-Filter"
+# selection. FF reads liq-fuel off OPEN INTEREST, so candidates must have real
+# depth (reliable fuel) and enough turnover (clean fills) — NOT the tiny coins
+# the default coiled-spring score over-ranks. So: much higher liquidity floors,
+# OI-acceleration weighted heavier (rising OI = fuel building), compression
+# de-emphasised (a breakout-timing metric, not a fuel metric). Liquid coins
+# score lower on this scale, so the firing threshold should be lower too.
+FF_OPP_PARAMS = {
+    'min_vol_usd': 30_000_000,    # liquid enough for clean fills
+    'min_oi_usd': 10_000_000,     # real swap depth → reliable liq-fuel
+    'max_funding_abs': 0.001,     # extreme funding = crowded → drop
+    'max_change_abs': 25.0,       # already ran >25% in 24h = late → drop
+    'w_oi_accel': 45,             # rising OI = fuel accumulating (heaviest)
+    'w_compression': 15,          # breakout metric — less relevant to fuel
+    'w_vol_spike': 20,            # money arriving
+    'w_funding_room': 20,         # neutral funding = room to move
+    'top_n': 60,
+}
+
 
 def opportunity_scan(exchange: str = 'bybit', params: dict = None,
                      oi_baseline: dict = None) -> dict:

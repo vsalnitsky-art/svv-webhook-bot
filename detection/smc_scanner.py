@@ -447,7 +447,9 @@ class SMCScanner:
 
     def _set_symbol_source(self, symbol: str, source: str):
         src = self._get_sources()
-        src[symbol] = source if source in ('manual', 'tickr') else 'manual'
+        # 'tickr_ff' = the FF-optimized Tickr pick (user-managed, no auto-TTL/
+        # eviction — those only touch plain 'tickr').
+        src[symbol] = source if source in ('manual', 'tickr', 'tickr_ff') else 'manual'
         if self.db:
             try:
                 self.db.set_setting(DB_KEY_WATCHLIST_SOURCES, src)
@@ -470,6 +472,24 @@ class SMCScanner:
         with self._lock:
             src = self._get_sources()
             return {s: src.get(s, 'manual') for s in self._watchlist}
+
+    def symbols_by_source(self, source: str) -> List[str]:
+        """Watchlist symbols currently tagged with the given source."""
+        with self._lock:
+            src = self._get_sources()
+            return [s for s in self._watchlist if src.get(s, 'manual') == source]
+
+    def remove_by_source(self, source: str) -> list:
+        """Remove every watchlist coin tagged with `source`. Returns removed
+        symbols. Used to clear the whole 📡 Tickr-FF batch at once."""
+        targets = self.symbols_by_source(source)
+        removed = []
+        for sym in targets:
+            if self.remove_symbol(sym).get('ok'):
+                removed.append(sym)
+        if removed:
+            print(f"[SMC] Removed {len(removed)} '{source}' coins: {removed}")
+        return removed
 
     # ---- Tickr auto-pipeline metadata (added_ts + opportunity score) ----
 
