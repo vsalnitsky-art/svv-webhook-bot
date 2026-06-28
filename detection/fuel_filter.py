@@ -1006,8 +1006,6 @@ class FuelFilterDaemon:
             now = time.time()
             timers = []
             for sym, t in self._timers.items():
-                if sym == 'BTCUSDT':
-                    continue  # pinned separately, always shown
                 if sym in self._fuel_managed:
                     continue  # already opened, don't show timer
                 if sym in self._anomalies:
@@ -1025,19 +1023,10 @@ class FuelFilterDaemon:
                     'funding': sym in self._funding_syms,
                     # progress_pct removed - no longer needed
                 })
-            sorted_timers = sorted(timers, key=lambda x: -x['held_sec'])
-            # Pin BTC permanently at the top — always present regardless of
-            # whether its fuel timer held past the threshold.
+            # BTC is now a normal row (its dedicated visual lives in the
+            # START/STOP banner). No pinning.
+            all_timers = sorted(timers, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
-            btc_row = {
-                'symbol': 'BTCUSDT',
-                'dir': bs.get('dir'),
-                'held_sec': bs.get('held_sec', 0),
-                'exhaustion': bs.get('exhaustion'),
-                'funding': False,
-                'pinned': True,
-            }
-            all_timers = [btc_row] + sorted_timers
             scan_list = self.get_scan_list()
             # BTC START/STOP signal: a progress that counts up while BTC holds
             # ММ, reaching START at start_signal_minutes; STOP when no BTC timer.
