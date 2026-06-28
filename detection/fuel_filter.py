@@ -80,6 +80,7 @@ DEFAULT_SETTINGS = {
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
     'manage_open_positions': True,  # if True, FF closes positions it opened
     'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
+    'start_signal_minutes': 5,      # BTC ММ held ≥ this → START signal (else STOP)
 }
 
 
@@ -1038,6 +1039,27 @@ class FuelFilterDaemon:
             }
             all_timers = [btc_row] + sorted_timers
             scan_list = self.get_scan_list()
+            # BTC START/STOP signal: a progress that counts up while BTC holds
+            # ММ, reaching START at start_signal_minutes; STOP when no BTC timer.
+            ssm = float(settings.get('start_signal_minutes', 5) or 5)
+            period_sec = ssm * 60
+            b_dir = bs.get('dir')
+            b_held = bs.get('held_sec', 0) or 0
+            has_btc = b_dir in ('LONG', 'SHORT')
+            if not has_btc:
+                btc_status, btc_prog = 'STOP', 0
+            elif b_held >= period_sec:
+                btc_status, btc_prog = 'START', 100
+            else:
+                btc_status = 'COUNTING'
+                btc_prog = round(b_held / period_sec * 100, 1) if period_sec else 0
+            btc_start = {
+                'status': btc_status,
+                'progress': btc_prog,
+                'held_sec': int(b_held),
+                'period_sec': int(period_sec),
+                'dir': b_dir,
+            }
             # Anomalies — own table. Live "held" while still holding fuel,
             # frozen at end otherwise.
             anomalies = []
@@ -1068,6 +1090,7 @@ class FuelFilterDaemon:
             'running': bool(self._thread and self._thread.is_alive()),
             'last_tick_ts': self._last_tick_ts,
             'timers': all_timers,
+            'btc_start': btc_start,
             'anomalies': anomalies,
             'active_symbols': list(self._fuel_managed.keys()),
             'tracked_count': len(self._fuel_managed),
