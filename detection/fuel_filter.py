@@ -802,15 +802,16 @@ class FuelFilterDaemon:
                         pass
 
                 # --- SYNC: if the position no longer exists in TM (user closed
-                # it manually, or it was never actually opened), drop our marker
-                # so the timer can run again. Prevents "ghost" tracked symbols
-                # that hide the timer but have no real position. ---
+                # it manually, hit a TM SL/TP, etc.), drop our managed marker —
+                # but KEEP the timer. If ММ is still present, the next tick's
+                # normal timer logic continues it (preserving the continuous
+                # duration → the coin can land in the anomalies table). If ММ has
+                # actually ended, that same normal logic resets/pops it. ---
                 if not self._tm_has_position(symbol, is_real):
                     print(f"[FuelFilter] {symbol}: tracked but no TM position — "
-                          f"dropping marker")
+                          f"dropping marker (timer kept while ММ holds)")
                     with self._lock:
                         self._fuel_managed.pop(symbol, None)
-                    self._timers.pop(symbol, None)
                     continue
 
                 # Compute exhaustion (for UI display + exit condition)
@@ -911,7 +912,7 @@ class FuelFilterDaemon:
                 # Such coins move to their OWN table (excluded from the FF table
                 # in get_state), survive fuel loss, and are user-deleted only.
                 held = now - t.get('since', now)
-                if held >= anomaly_sec:
+                if held >= anomaly_sec and symbol not in self._fuel_managed:
                     a = self._anomalies.get(symbol)
                     if not a:
                         self._anomalies[symbol] = {
@@ -952,7 +953,8 @@ class FuelFilterDaemon:
             # always moves to the anomalies table (and out of the FF table).
             for sym, t in self._timers.items():
                 held = now - t.get('since', now)
-                if held >= anomaly_sec and sym not in self._anomalies:
+                if (held >= anomaly_sec and sym not in self._anomalies
+                        and sym not in self._fuel_managed):
                     self._anomalies[sym] = {
                         'symbol': sym, 'dir': t.get('dir'),
                         'started_at': t.get('since', now),
@@ -1288,9 +1290,12 @@ class FuelFilterDaemon:
             return {'ok': False, 'reason': f'Помилка: {str(e)}'}
 
         if opened:
-            # Remove timer since we opened successfully
+            # KEEP the timer running. The position lives in _fuel_managed (so the
+            # FF table hides this row, and anomaly-recording skips it while open),
+            # but the timer's `since` is preserved — so the continuous ММ duration
+            # survives open → close and the coin can still reach the anomalies
+            # table later if its ММ never actually ended.
             with self._lock:
-                self._timers.pop(symbol, None)
                 self._persist_state()
             return {'ok': True, 'reason': f'Позицію {side} відкрито вручну', 'opened': True}
         else:
