@@ -1866,19 +1866,48 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                     </div>
+                    <!-- 🚀 BTC-START auto-engine settings -->
+                    <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
+                        <div style="font-size:0.7rem;font-weight:700;color:#cbd5e1;margin-bottom:8px">🚀 Автодвигун за сигналом BTC START</div>
+                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Як часто (сек) движок сканує й відкриває кошик при START">Скан движка (сек)</label>
+                                <input type="number" id="ff-engine-scan" min="5" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                            </div>
+                            <div>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Брати монети з таблиці ⏱️ Активні таймери">
+                                    <input type="checkbox" id="ff-engine-timers" onchange="saveFuelFilterSettings()"> ⏱️ Активні таймери
+                                </label>
+                            </div>
+                            <div>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Брати монети з таблиці 🜂 Аномальні монети">
+                                    <input type="checkbox" id="ff-engine-anomalies" onchange="saveFuelFilterSettings()"> 🜂 Аномальні монети
+                                </label>
+                            </div>
+                            <div>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Брати також монети з позначкою 💰 Funding (за замовчуванням ні)">
+                                    <input type="checkbox" id="ff-engine-funding" onchange="saveFuelFilterSettings()"> 💰 Брати funding-монети
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <!-- BTC START/STOP signal — counts up while BTC holds ММ -->
             <div id="ff-btc-start-banner" style="display:flex;align-items:center;gap:14px;margin:12px 0 4px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
-                <span style="font-weight:800;font-size:0.95rem;color:#f7931a;white-space:nowrap">₿ BTCUSDT</span>
-                <span id="ff-btc-start-dir" style="font-weight:700;font-size:0.85rem;white-space:nowrap">—</span>
+                <span style="font-weight:800;font-size:1.05rem;color:#f7931a;white-space:nowrap">₿ BTCUSDT</span>
+                <span id="ff-btc-start-dir" style="font-weight:800;font-size:1.05rem;white-space:nowrap">—</span>
                 <div style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
                     <div id="ff-btc-progress-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
                     <span id="ff-btc-progress-label" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
                 </div>
                 <span id="ff-btc-flip" class="ff-flip" style="white-space:nowrap"></span>
                 <span id="ff-btc-start-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
+                <label class="tm-toggle-switch" title="Автодвигун: при START відкривати кошик монет з обраних таблиць у напрямку BTC (за замовчуванням вимкнено)">
+                    <input type="checkbox" id="ff-engine-toggle" onchange="onEngineToggle(event)">
+                    <span class="slider"></span>
+                </label>
             </div>
 
             <!-- running timers -->
@@ -6848,6 +6877,11 @@ function renderFuelFilter(d) {
     const anomSub = document.getElementById('ff-anomaly-hours-sub');
     if (anomSub) anomSub.textContent = anomHrs;
     setIf('ff-start-minutes', s.start_signal_minutes != null ? s.start_signal_minutes : 5);
+    setIf('ff-engine-scan', s.start_engine_scan_secs != null ? s.start_engine_scan_secs : 15);
+    setIf('ff-engine-timers', s.start_engine_use_timers !== false);     // default true
+    setIf('ff-engine-anomalies', s.start_engine_use_anomalies !== false); // default true
+    setIf('ff-engine-funding', !!s.start_engine_include_funding);
+    setIf('ff-engine-toggle', !!s.start_engine_enabled);
 
     // scan stats: scanned count + aggregate LONG/SHORT exhaustion (color-coded)
     const statsEl = document.getElementById('ff-scan-stats');
@@ -7303,6 +7337,21 @@ async function onFuelFilterToggle(event) {
     }
 }
 
+async function onEngineToggle(event) {
+    const cb = document.getElementById('ff-engine-toggle');
+    if (!cb) return;
+    try {
+        await fetch('/api/fuel-filter/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({start_engine_enabled: cb.checked})
+        });
+        loadFuelFilterStatus();
+    } catch (e) {
+        alert('Помилка перемикання движка: ' + e);
+    }
+}
+
 async function saveFuelFilterSettings() {
     const payload = {
         duration_minutes: parseInt(document.getElementById('ff-duration').value || '5', 10),
@@ -7311,6 +7360,10 @@ async function saveFuelFilterSettings() {
         manage_open_positions: document.getElementById('ff-manage-positions').checked,
         anomaly_hours: parseInt(document.getElementById('ff-anomaly-hours').value || '10', 10),
         start_signal_minutes: parseInt(document.getElementById('ff-start-minutes').value || '5', 10),
+        start_engine_scan_secs: parseInt(document.getElementById('ff-engine-scan').value || '15', 10),
+        start_engine_use_timers: document.getElementById('ff-engine-timers').checked,
+        start_engine_use_anomalies: document.getElementById('ff-engine-anomalies').checked,
+        start_engine_include_funding: document.getElementById('ff-engine-funding').checked,
     };
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
