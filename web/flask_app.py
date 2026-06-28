@@ -2818,6 +2818,34 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/anomaly/delete', methods=['POST'])
+    def api_fuel_filter_anomaly_delete():
+        """Remove one coin from the anomalies table. Body: {"symbol": "..."}."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            data = request.get_json(silent=True) or {}
+            symbol = data.get('symbol', '')
+            deleted = ff.delete_anomaly(symbol)
+            return jsonify({'ok': True, 'deleted': deleted, 'symbol': symbol.upper()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/anomaly/clear', methods=['POST'])
+    def api_fuel_filter_anomaly_clear():
+        """Clear the whole anomalies table."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            count = ff.clear_anomalies()
+            return jsonify({'ok': True, 'cleared': count})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/indicators/<symbol>')
     def api_fuel_filter_indicators(symbol):
         """Return key indicators for a symbol (forecast 1H/4H, fuel direction).
