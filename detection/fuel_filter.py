@@ -1047,7 +1047,8 @@ class FuelFilterDaemon:
         # ММ direction matches the BTC banner direction — opening against it
         # would just be flip-closed by the manage branch (needless churn).
         dur = float(s.get('duration_minutes', 5)) * 60
-        cands = set()
+        # {symbol: held_sec} so we can OPEN from the smallest timer to the largest.
+        cand_held = {}
         with self._lock:
             if s.get('start_engine_use_timers', True):
                 for sym, t in self._timers.items():
@@ -1055,20 +1056,24 @@ class FuelFilterDaemon:
                         continue
                     if t.get('dir') != direction:
                         continue
-                    if (now - t.get('since', now)) >= dur:
-                        cands.add(sym)
+                    h = now - t.get('since', now)
+                    if h >= dur:
+                        cand_held[sym] = h
             if s.get('start_engine_use_anomalies', True):
                 for sym, a in self._anomalies.items():
                     if (a.get('holding') and a.get('dir') == direction
                             and sym not in self._fuel_managed):
-                        cands.add(sym)
+                        at = self._timers.get(sym)
+                        cand_held[sym] = (now - at.get('since', now)) if at \
+                            else float(a.get('last_held_sec', 0))
             funding = set(self._funding_syms)
         if not s.get('start_engine_include_funding', False):
-            cands = {c for c in cands if c not in funding}
-        if not cands:
+            cand_held = {c: h for c, h in cand_held.items() if c not in funding}
+        if not cand_held:
             return
 
-        for sym in cands:
+        # Open in ascending timer order: smallest held first → largest.
+        for sym, _held in sorted(cand_held.items(), key=lambda kv: kv[1]):
             if sym in self._fuel_managed:
                 continue   # already managed (no duplicate)
             # Skip if TM already holds this coin (real OR paper) — don't dup.
