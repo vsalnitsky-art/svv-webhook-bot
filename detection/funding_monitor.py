@@ -304,6 +304,22 @@ class FundingMonitor:
                         self._alerted.discard(s)
                     expired_count += len(low_vol)
 
+                # Funding-threshold prune: drop AUTO-tracked coins whose entry
+                # (trigger) funding never actually met the current threshold —
+                # e.g. coins added when the threshold was looser. Keeps the table
+                # consistent with the "Entry ≤ X%" parameter. trigger_rate is in
+                # PERCENT (e.g. -1.044), threshold in percent too. A coin belongs
+                # only if it once hit ≤ threshold, i.e. trigger_rate ≤ threshold.
+                # Manually-added coins (✋) are never pruned.
+                thr_pct = self._entry_threshold
+                off_thr = [s for s, c in self._watchlist.items()
+                           if not c.get('manual')
+                           and float(c.get('trigger_rate', 0)) > thr_pct]
+                for s in off_thr:
+                    del self._watchlist[s]
+                    self._alerted.discard(s)
+                expired_count += len(off_thr)
+
             self._save_watchlist()
 
             if self._scan_count <= 2 or self._scan_count % 12 == 0 or new_added > 0:
