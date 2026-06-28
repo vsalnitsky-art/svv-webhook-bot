@@ -87,6 +87,7 @@ DEFAULT_SETTINGS = {
     'start_engine_use_timers': True,      # source: ⏱️ active timers table
     'start_engine_scan_secs': 15,         # engine scan cadence (sec)
     'start_engine_include_funding': False,# include 💰 funding-marked coins
+    'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
 }
 
 
@@ -118,6 +119,10 @@ class FuelFilterDaemon:
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
         self._funding_syms: set = set()
+        # {symbol: current funding %} for funding-sourced coins (UI display).
+        self._funding_rates: Dict[str, float] = {}
+        # Last BTC START/STOP state we sent a Telegram alert for (None until set).
+        self._btc_start_last_alert: Optional[str] = None
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
         self._btc_state: Dict = {}
         # Anomalies: coins that held fuel longer than anomaly_hours. Own table,
@@ -141,6 +146,17 @@ class FuelFilterDaemon:
             return []
         except Exception:
             return []
+
+    def _get_funding_rates(self) -> Dict[str, float]:
+        """{SYMBOL: current funding %} from the 💰 Funding Rate Scanner."""
+        try:
+            from detection.funding_monitor import get_funding_monitor
+            fm = get_funding_monitor()
+            if fm and hasattr(fm, 'get_rates'):
+                return {str(k).upper(): v for k, v in fm.get_rates().items()}
+        except Exception:
+            pass
+        return {}
 
     # ------------------------------------------------------------------
     # settings (DB-persisted JSON)
@@ -704,8 +720,10 @@ class FuelFilterDaemon:
         # in the watchlist is treated as a normal watchlist coin (no badge).
         funding_syms = self._get_funding_symbols()
         watchlist_set = set(watchlist)
+        funding_rates = self._get_funding_rates()
         with self._lock:
             self._funding_syms = set(funding_syms) - watchlist_set
+            self._funding_rates = funding_rates
 
         # SCAN all watchlist coins for data/stats. FF flag still controls which
         # coins can auto-open positions (checked later in the loop).
@@ -990,6 +1008,53 @@ class FuelFilterDaemon:
             }
             self._persist_state()
 
+        # BTC START/STOP Telegram alert on state change (independent of engine).
+        try:
+            self._btc_start_alert(settings, now)
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[FuelFilter] BTC alert error: {e}")
+
+    def _btc_start_alert(self, s: Dict, now: float):
+        """Send a Telegram message when BTC flips START↔STOP (if enabled).
+        Only START and STOP are alerted (COUNTING is intermediate)."""
+        if not s.get('start_signal_tg_alerts', False):
+            return
+        btc_t = self._timers.get('BTCUSDT')
+        period = float(s.get('start_signal_minutes', 5) or 5) * 60
+        direction = None
+        if btc_t and btc_t.get('dir') in ('LONG', 'SHORT'):
+            direction = btc_t['dir']
+            held = now - btc_t.get('since', now)
+            state = 'START' if held >= period else 'COUNTING'
+        else:
+            state = 'STOP'
+        alertable = state if state in ('START', 'STOP') else None
+        if not alertable:
+            return
+        prev = self._btc_start_last_alert
+        if prev is None:
+            # First observation — record without alerting (avoid startup spam).
+            self._btc_start_last_alert = alertable
+            return
+        if alertable == prev:
+            return
+        self._btc_start_last_alert = alertable
+        tm = self._get_tm() if self._get_tm else None
+        notifier = getattr(tm, 'notifier', None) if tm else None
+        if not notifier:
+            return
+        if alertable == 'START':
+            d = '🟢 LONG' if direction == 'LONG' else ('🔴 SHORT' if direction == 'SHORT' else '')
+            msg = f"🟢 <b>BTCUSDT START</b> {d}"
+        else:
+            msg = "⛔ <b>BTCUSDT STOP</b>"
+        try:
+            notifier.send_message(msg)
+            print(f"[FuelFilter] BTC TG alert sent: {alertable}")
+        except Exception as e:
+            print(f"[FuelFilter] BTC TG send error: {e}")
+
     # ------------------------------------------------------------------
     # public API for the dashboard
     # ------------------------------------------------------------------
@@ -1110,13 +1175,15 @@ class FuelFilterDaemon:
                 # FILTER: only show timers that exceeded the threshold
                 if held < duration_sec:
                     continue
+                is_fund = sym in self._funding_syms
                 timers.append({
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
                     'exhaustion': t.get('exhaustion'),
                     # Flag rows that come from the 💰 Funding Rate Scanner so the
-                    # UI can distinguish them (monitor-only).
-                    'funding': sym in self._funding_syms,
+                    # UI can distinguish them, plus their current funding %.
+                    'funding': is_fund,
+                    'funding_rate': self._funding_rates.get(sym) if is_fund else None,
                     # progress_pct removed - no longer needed
                 })
             # BTC is now a normal row (its dedicated visual lives in the

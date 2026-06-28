@@ -119,6 +119,20 @@ class FundingMonitor:
         with self._lock:
             return list(self._watchlist.keys())
 
+    def get_rates(self) -> Dict[str, float]:
+        """{symbol: current funding rate (%)} for tracked coins — latest sample,
+        falling back to the trigger rate. Used by the FF table to show the live
+        funding of funding-sourced coins."""
+        out = {}
+        with self._lock:
+            for sym, c in self._watchlist.items():
+                rs = c.get('rates') or []
+                if rs:
+                    out[sym] = rs[-1].get('r')
+                elif c.get('trigger_rate') is not None:
+                    out[sym] = c.get('trigger_rate')
+        return out
+
     def trigger_rescan(self):
         """Run a scan immediately (background thread) so UI filter changes take
         effect within seconds instead of waiting for the next cycle."""
