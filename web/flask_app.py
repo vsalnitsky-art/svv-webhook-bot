@@ -5767,12 +5767,12 @@ def compute_bias(db, symbol, wl=None):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "Паливо зверху (тягне в LONG)", 'long'))
+            reasons.append(('ok', "ММ зверху (тягне в LONG)", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "Паливо знизу (тягне в SHORT)", 'short'))
+            reasons.append(('ok', "ММ знизу (тягне в SHORT)", 'short'))
         else:
-            reasons.append(('wait', "Паливо збалансоване — напрямку немає"))
+            reasons.append(('wait', "ММ збалансований — напрямку немає"))
     except Exception:
         comp['fuel'] = None
         reasons.append(('wait', "Squeeze/fuel недоступний"))
@@ -6110,12 +6110,12 @@ def compute_bias_for_ff(db, symbol):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "Паливо зверху (тягне в LONG)", 'long'))
+            reasons.append(('ok', "ММ зверху (тягне в LONG)", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "Паливо знизу (тягне в SHORT)", 'short'))
+            reasons.append(('ok', "ММ знизу (тягне в SHORT)", 'short'))
         else:
-            reasons.append(('wait', "Паливо збалансоване — напрямку немає"))
+            reasons.append(('wait', "ММ збалансований — напрямку немає"))
     except Exception:
         comp['fuel'] = None
 

@@ -5116,7 +5116,7 @@ async function liqmapLoadPressure() {
                         sqDir.style.display = '';
                         sqDir.textContent = '⇄ FUEL BALANCED';
                         sqDir.className = 'liqmap-sq-dir sq-flat';
-                        sqDir.title = `Паливо збалансоване: ${fuelTxt} ` +
+                        sqDir.title = `ММ збалансований: ${fuelTxt} ` +
                                       `(дистанційно зважене) — вердикту немає`;
                     }
                 } else {
@@ -5127,7 +5127,7 @@ async function liqmapLoadPressure() {
                             ? '↑ squeeze вгору (shorts)' : '↓ squeeze вниз (longs)';
                         sqDir.className = 'liqmap-sq-dir ' +
                             (sq.squeeze_dir === 'long' ? 'sq-long' : 'sq-short');
-                        sqDir.title = `Паливо: ${fuelTxt}` +
+                        sqDir.title = `ММ: ${fuelTxt}` +
                                       ` (дистанційно зважене) · ` + sqDir.textContent;
                     }
                 }

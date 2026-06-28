@@ -1835,6 +1835,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-anomaly-hours" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин таймер BTCUSDT має тривати, щоб зʼявився сигнал START (інакше STOP)">START-сигнал BTC (хв)</label>
+                            <input type="number" id="ff-start-minutes" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </div>
+                        <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
                                 <input type="checkbox" id="ff-use-potential" onchange="saveFuelFilterSettings()"> Вихід за виснаженістю
                             </label>
@@ -1846,6 +1850,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- BTC START/STOP signal — counts up while BTC holds ММ -->
+            <div id="ff-btc-start-banner" style="display:flex;align-items:center;gap:12px;margin:12px 0 4px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
+                <span style="font-weight:800;font-size:0.95rem;color:#f7931a;white-space:nowrap">₿ BTCUSDT</span>
+                <div style="flex:1;min-width:120px;height:16px;border-radius:8px;background:rgba(255,255,255,0.08);overflow:hidden;position:relative">
+                    <div id="ff-btc-progress-bar" style="height:100%;width:0%;border-radius:8px;background:#facc15;transition:width 0.4s linear"></div>
+                    <span id="ff-btc-progress-label" class="ff-timer" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:0.64rem;font-weight:700;color:#e5e7eb;text-shadow:0 0 3px #000"></span>
+                </div>
+                <span id="ff-btc-start-status" style="font-weight:800;font-size:1rem;padding:4px 16px;border-radius:6px;letter-spacing:1px;white-space:nowrap">—</span>
             </div>
 
             <!-- running timers -->
@@ -6789,6 +6803,15 @@ async function loadFuelFilterStatus() {
 
 function renderFuelFilter(d) {
     const s = d.settings || {};
+    // BTC START/STOP banner — refresh from state, then let the global ticker
+    // keep the progress filling smoothly.
+    const bsg = d.btc_start || {};
+    btcStartState = {
+        hasTimer: (bsg.dir === 'LONG' || bsg.dir === 'SHORT'),
+        since: Math.floor(Date.now() / 1000) - (bsg.held_sec || 0),
+        period: bsg.period_sec || 300,
+    };
+    updateBtcStartBanner();
     // settings inputs (don't clobber while focused)
     const setIf = (id, val) => {
         const el = document.getElementById(id);
@@ -6804,6 +6827,7 @@ function renderFuelFilter(d) {
     setIf('ff-anomaly-hours', anomHrs);
     const anomSub = document.getElementById('ff-anomaly-hours-sub');
     if (anomSub) anomSub.textContent = anomHrs;
+    setIf('ff-start-minutes', s.start_signal_minutes != null ? s.start_signal_minutes : 5);
 
     // scan stats: scanned count + aggregate LONG/SHORT exhaustion (color-coded)
     const statsEl = document.getElementById('ff-scan-stats');
@@ -7162,8 +7186,48 @@ function fmtTimer(sec) {
     return d > 0 ? `${d}д ${hms}` : hms;
 }
 
+// BTC START/STOP state, driven from FF state and ticked live.
+let btcStartState = { hasTimer: false, since: 0, period: 300 };
+
+function updateBtcStartBanner() {
+    const bar = document.getElementById('ff-btc-progress-bar');
+    const lab = document.getElementById('ff-btc-progress-label');
+    const st = document.getElementById('ff-btc-start-status');
+    if (!bar || !st) return;
+    const s = btcStartState;
+    if (!s.hasTimer) {
+        // No BTC timer → STOP (bright red).
+        bar.style.width = '0%'; bar.style.background = '#ef4444';
+        if (lab) lab.textContent = '';
+        st.textContent = '⛔ STOP';
+        st.style.background = '#ef4444'; st.style.color = '#fff';
+        st.style.boxShadow = '0 0 12px rgba(239,68,68,0.7)';
+        return;
+    }
+    const nowS = Math.floor(Date.now() / 1000);
+    const elapsed = Math.max(0, nowS - s.since);
+    const pct = s.period > 0 ? Math.min(100, elapsed / s.period * 100) : 0;
+    bar.style.width = pct.toFixed(1) + '%';
+    if (pct >= 100) {
+        // Progress complete → START (bright green).
+        bar.style.background = '#22c55e';
+        if (lab) lab.textContent = '';
+        st.textContent = '🟢 START';
+        st.style.background = '#22c55e'; st.style.color = '#06210f';
+        st.style.boxShadow = '0 0 14px rgba(34,197,94,0.8)';
+    } else {
+        // Counting up to the threshold.
+        bar.style.background = '#facc15';
+        if (lab) lab.textContent = fmtTimer(elapsed) + ' / ' + fmtTimer(s.period);
+        st.textContent = '⏳ ' + Math.floor(pct) + '%';
+        st.style.background = 'rgba(250,204,21,0.16)'; st.style.color = '#facc15';
+        st.style.boxShadow = 'none';
+    }
+}
+
 // One global 1s ticker that advances every live timer cell (those carrying a
-// data-since = unix start). Ended/static cells (no data-since) are left frozen.
+// data-since = unix start) and the BTC START/STOP progress. Ended/static cells
+// (no data-since) are left frozen.
 if (!window._ffTimerTick) {
     window._ffTimerTick = setInterval(() => {
         const nowS = Math.floor(Date.now() / 1000);
@@ -7171,6 +7235,7 @@ if (!window._ffTimerTick) {
             const since = parseInt(el.getAttribute('data-since'), 10);
             if (!isNaN(since)) el.textContent = fmtTimer(nowS - since);
         });
+        updateBtcStartBanner();
     }, 1000);
 }
 
@@ -7209,6 +7274,7 @@ async function saveFuelFilterSettings() {
         use_potential_exit: document.getElementById('ff-use-potential').checked,
         manage_open_positions: document.getElementById('ff-manage-positions').checked,
         anomaly_hours: parseInt(document.getElementById('ff-anomaly-hours').value || '10', 10),
+        start_signal_minutes: parseInt(document.getElementById('ff-start-minutes').value || '5', 10),
     };
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
