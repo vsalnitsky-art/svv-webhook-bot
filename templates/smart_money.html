@@ -1904,6 +1904,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
                 <span id="ff-btc-flip" class="ff-flip" style="white-space:nowrap"></span>
                 <span id="ff-btc-start-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:#9aa3b5;cursor:pointer;white-space:nowrap" title="Сповіщення в Telegram при зміні стану START/STOP по BTCUSDT">
+                    <input type="checkbox" id="ff-btc-tg-toggle" onchange="onBtcTgToggle(event)" style="cursor:pointer">📨
+                </label>
                 <label class="tm-toggle-switch" title="Автодвигун: при START відкривати кошик монет з обраних таблиць у напрямку BTC (за замовчуванням вимкнено)">
                     <input type="checkbox" id="ff-engine-toggle" onchange="onEngineToggle(event)">
                     <span class="slider"></span>
@@ -6888,6 +6891,11 @@ function renderFuelFilter(d) {
             && (Date.now() - (window._ffEngineToggleAt || 0)) > 5000) {
         _engTgl.checked = !!s.start_engine_enabled;
     }
+    const _btcTg = document.getElementById('ff-btc-tg-toggle');
+    if (_btcTg && document.activeElement !== _btcTg
+            && (Date.now() - (window._ffBtcTgToggleAt || 0)) > 5000) {
+        _btcTg.checked = !!s.start_signal_tg_alerts;
+    }
 
     // scan stats: scanned count + aggregate LONG/SHORT exhaustion (color-coded)
     const statsEl = document.getElementById('ff-scan-stats');
@@ -6968,8 +6976,12 @@ function renderFuelFilter(d) {
                     ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`
                     : '<span class="ff-timer">—</span>';
                 const symColor = isFunding ? ';color:#6ee7b7' : '';
+                // Current funding for 💰 funding-sourced coins.
+                const fundLbl = (isFunding && t.funding_rate != null)
+                    ? ` <span title="Поточний funding" style="font-size:0.66rem;font-weight:700;color:${t.funding_rate >= 0 ? '#4ade80' : '#f87171'}">${t.funding_rate >= 0 ? '+' : ''}${Number(t.funding_rate).toFixed(3)}%</span>`
+                    : '';
                 return `<tr style="${rowStyle}">
-                    <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span></td>
+                    <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span>${fundLbl}</td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
@@ -7340,6 +7352,21 @@ async function onFuelFilterToggle(event) {
         loadFuelFilterStatus();
     } catch (e) {
         alert('Помилка перемикання: ' + e);
+    }
+}
+
+async function onBtcTgToggle(event) {
+    const cb = document.getElementById('ff-btc-tg-toggle');
+    if (!cb) return;
+    window._ffBtcTgToggleAt = Date.now();
+    try {
+        await fetch('/api/fuel-filter/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({start_signal_tg_alerts: cb.checked})
+        });
+    } catch (e) {
+        alert('Помилка перемикання TG-оповіщень: ' + e);
     }
 }
 
