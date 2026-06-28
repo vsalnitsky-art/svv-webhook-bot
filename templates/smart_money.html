@@ -653,6 +653,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     background: rgba(255,255,255,0.12); border-radius: 4px;
 }
 .ff-timers-scroll::-webkit-scrollbar-track { background: transparent; }
+.ff-timer {
+    font-family: 'Consolas', 'SF Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
 .tm-pnl-pos { color: #4ade80; }
 .tm-pnl-neg { color: #ef4444; }
 .tm-side-long { color: #4ade80; font-weight: 600; }
@@ -1796,7 +1802,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     <div class="tm-panel" id="fuel-filter-panel" style="margin-top:14px;padding:12px 16px;border:1px solid rgba(255,255,255,0.07);border-radius:8px;background:rgba(255,255,255,0.02)">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Автофільтр: коли по монеті зі WATCHLIST статус «Паливо зверху/знизу» тримається задану кількість хвилин — відкриває угоду в напрямку палива. Закриває при зміні статусу або досягненні виснаженості. Позиції відображаються в Trade Manager або Test Mode.">❤️ Fuel Auto-Filter</span>
+                <span style="font-size:0.85rem;font-weight:700;color:#cbd5e1" title="Автофільтр: коли по монеті зі WATCHLIST статус «ММ зверху/знизу» тримається задану кількість хвилин — відкриває угоду в напрямку ММ. Закриває при зміні статусу або досягненні виснаженості. Позиції відображаються в Trade Manager або Test Mode.">❤️ Fuel Auto-Filter</span>
                 <span id="fuel-filter-status" style="font-size:0.8rem;font-family:monospace;font-weight:700;color:#8b93a7">—</span>
                 <span id="fuel-filter-summary" style="font-size:0.7rem;color:#8b93a7"></span>
             </div>
@@ -1825,7 +1831,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки годин паливо має триматись, щоб монета пішла у таблицю 🜂 Аномальні монети">Поріг аномалії (год)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки годин ММ має триматись, щоб монета пішла у таблицю 🜂 Аномальні монети">Поріг аномалії (год)</label>
                             <input type="number" id="ff-anomaly-hours" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
@@ -1859,14 +1865,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
 
             <div style="font-size:0.66rem;color:#6b7280;margin-top:12px">
-                💡 Скануються лише монети з прапорцем <b style="color:#f9a8d4">FF</b> у WATCHLIST (щоб не навантажувати бота). Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість — із панелі "Потенціал LONG/SHORT". Позиції відкриваються в Trade Manager (real) або Test Mode (paper) залежно від їх тумблерів. Скан кожні 30с.
+                💡 Скануються лише монети з прапорцем <b style="color:#f9a8d4">FF</b> у WATCHLIST (щоб не навантажувати бота). ММ читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість — із панелі "Потенціал LONG/SHORT". Позиції відкриваються в Trade Manager (real) або Test Mode (paper) залежно від їх тумблерів. Скан кожні 30с.
             </div>
 
             <!-- 🜂 Anomalous coins (held fuel longer than anomaly_hours) -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
                 <div style="font-size:0.78rem;font-weight:700;color:#fbbf24">
                     🜂 Аномальні монети
-                    <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— тримали «Паливо» довше за <span id="ff-anomaly-hours-sub">10</span>г</span>
+                    <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— тримали «ММ» довше за <span id="ff-anomaly-hours-sub">10</span>г</span>
                 </div>
                 <button onclick="clearAnomalies()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю таблицю аномалій">🗑️ Очистити всі</button>
             </div>
@@ -1874,7 +1880,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="ff-anomaly-table">
                     <thead>
                         <tr>
-                            <th>Символ</th><th>Напрямок</th><th>Паливо</th>
+                            <th>Символ</th><th>Напрямок</th><th>ММ</th>
                             <th>Тримається</th>
                             <th>Старт (час · ціна)</th>
                             <th>Кінець (час · ціна)</th>
@@ -1887,7 +1893,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </table>
             </div>
             <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
-                💡 Монета сюди потрапляє, коли «Паливо» тримається довше за поріг (нижче в налаштуваннях). Коли паливо зникає — монета НЕ видаляється автоматично (фіксується час і ціна завершення); прибираєш вручну (✕ або «Очистити всі»). Такі монети не дублюються в таблиці вище.
+                💡 Монета сюди потрапляє, коли «ММ» тримається довше за поріг (нижче в налаштуваннях). Коли ММ зникає — монета НЕ видаляється автоматично (фіксується час і ціна завершення); прибираєш вручну (✕ або «Очистити всі»). Такі монети не дублюються в таблиці вище.
             </div>
         </div>
     </div>
@@ -1917,7 +1923,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <label style="display:flex;align-items:center;gap:6px;flex:1 1 auto">
                             <input type="checkbox" id="tm-require-fuel-confirm" onchange="saveTMSettings()">
                             <span>❤️ Підтвердження від Fuel Auto-Filter</span>
-                            <span class="tm-help" title="Коли увімкнено: угода відкривається ТІЛЬКИ якщо та сама монета з тим самим напрямком присутня в таблиці ❤️ Fuel Auto-Filter (тобто паливо тримається понад поріг). Якщо монети+напрямку немає в таблиці — відкриття ігнорується. Це робить FF обов'язковим підтвердженням для кожного входу. За замовчуванням УВІМКНЕНО.">?</span>
+                            <span class="tm-help" title="Коли увімкнено: угода відкривається ТІЛЬКИ якщо та сама монета з тим самим напрямком присутня в таблиці ❤️ Fuel Auto-Filter (тобто ММ тримається понад поріг). Якщо монети+напрямку немає в таблиці — відкриття ігнорується. Це робить FF обов'язковим підтвердженням для кожного входу. За замовчуванням УВІМКНЕНО.">?</span>
                         </label>
                         <label style="display:flex;align-items:center;gap:6px;flex:1 1 auto">
                             <input type="checkbox" id="tm-telegram-alerts" onchange="saveTMSettings()">
@@ -6883,7 +6889,9 @@ function renderFuelFilter(d) {
                     : (t.dir === 'SHORT'
                         ? '<span style="color:#ef4444">🔴 SHORT</span>'
                         : '<span style="color:#8b93a7">⚪ —</span>');
-                const heldHtml = t.dir ? fmtAge(t.held_sec) : '—';
+                const heldHtml = t.dir
+                    ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`
+                    : '<span class="ff-timer">—</span>';
                 // Pinned BTC row: slightly larger font so it stands out as the
                 // anchor/reference.
                 const cellFont = isBTC ? 'font-size:0.92rem;' : '';
@@ -6924,11 +6932,14 @@ function renderFuelFilter(d) {
                     ? '<span style="color:#667">— триває —</span>'
                     : `${fmtTimeFull(a.ended_at)} · ${a.end_price != null ? fmtPriceJS(a.end_price) : '—'}`;
                 const rowBg = a.holding ? 'background:rgba(16,185,129,0.06)' : 'background:rgba(239,68,68,0.05)';
+                const heldCell = a.holding
+                    ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (a.held_sec||0)}">${fmtTimer(a.held_sec)}</span>`
+                    : `<span class="ff-timer">${fmtTimer(a.held_sec)}</span>`;
                 return `<tr style="${rowBg}">
                     <td style="font-weight:600">${a.funding ? '<span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' : ''}<span>${a.symbol}</span></td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.74rem">${fuelHtml}</td>
-                    <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${fmtAge(a.held_sec)}</td>
+                    <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td style="font-size:0.72rem;color:#9aa3b5">${startTxt}</td>
                     <td style="font-size:0.72rem;color:#9aa3b5">${endTxt}</td>
                     <td><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити з таблиці аномалій">✕</span></td>
@@ -6988,14 +6999,14 @@ async function loadFuelPanelStatus() {
 
         // Fuel direction — THE timer trigger
         if (d.fuel_status === 'LONG') {
-            parts.push(chip('⚡ Паливо: 🟢 LONG', '#86efac', 'rgba(34,197,94,0.15)',
-                'Liq-паливо тягне вгору — таймер на LONG'));
+            parts.push(chip('⚡ ММ: 🟢 LONG', '#86efac', 'rgba(34,197,94,0.15)',
+                'ММ тягне вгору — таймер на LONG'));
         } else if (d.fuel_status === 'SHORT') {
-            parts.push(chip('⚡ Паливо: 🔴 SHORT', '#fca5a5', 'rgba(239,68,68,0.15)',
-                'Liq-паливо тягне вниз — таймер на SHORT'));
+            parts.push(chip('⚡ ММ: 🔴 SHORT', '#fca5a5', 'rgba(239,68,68,0.15)',
+                'ММ тягне вниз — таймер на SHORT'));
         } else {
-            parts.push(chip('⚡ Паливо: ⚪ нема', '#8b93a7', 'rgba(139,147,167,0.15)',
-                'Паливо збалансоване — напрямку немає, таймер не запускається'));
+            parts.push(chip('⚡ ММ: ⚪ нема', '#8b93a7', 'rgba(139,147,167,0.15)',
+                'ММ збалансований — напрямку немає, таймер не запускається'));
         }
 
         // Exhaustion vs entry gate
@@ -7136,6 +7147,31 @@ function fmtAge(sec) {
     if (d < 7) return d + 'д ' + (h % 24) + 'г';
     const w = Math.floor(d / 7);
     return w + 'т ' + (d % 7) + 'д';
+}
+
+// Digital, fixed-width timer: "HH:MM:SS" (or "Nд HH:MM:SS" past a day) so the
+// "Тримається" column stays perfectly aligned (monospace + tabular nums).
+function fmtTimer(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    const p = n => String(n).padStart(2, '0');
+    const hms = `${p(h)}:${p(m)}:${p(s)}`;
+    return d > 0 ? `${d}д ${hms}` : hms;
+}
+
+// One global 1s ticker that advances every live timer cell (those carrying a
+// data-since = unix start). Ended/static cells (no data-since) are left frozen.
+if (!window._ffTimerTick) {
+    window._ffTimerTick = setInterval(() => {
+        const nowS = Math.floor(Date.now() / 1000);
+        document.querySelectorAll('.ff-timer[data-since]').forEach(el => {
+            const since = parseInt(el.getAttribute('data-since'), 10);
+            if (!isNaN(since)) el.textContent = fmtTimer(nowS - since);
+        });
+    }, 1000);
 }
 
 function toggleFuelFilterSettings() {
