@@ -1032,8 +1032,16 @@ class FuelFilterDaemon:
             # ММ, reaching START at start_signal_minutes; STOP when no BTC timer.
             ssm = float(settings.get('start_signal_minutes', 5) or 5)
             period_sec = ssm * 60
-            b_dir = bs.get('dir')
-            b_held = bs.get('held_sec', 0) or 0
+            # Read BTC held DIRECTLY from the live timer (same source the table
+            # row uses) so the banner and the table never disagree. _btc_state
+            # is only a per-tick snapshot and can lag by up to a scan cycle.
+            btc_t = self._timers.get('BTCUSDT')
+            if btc_t and btc_t.get('dir') in ('LONG', 'SHORT'):
+                b_dir = btc_t.get('dir')
+                b_held = now - btc_t.get('since', now)
+            else:
+                b_dir = None
+                b_held = 0
             has_btc = b_dir in ('LONG', 'SHORT')
             if not has_btc:
                 btc_status, btc_prog = 'STOP', 0

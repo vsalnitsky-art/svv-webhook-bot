@@ -659,6 +659,23 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     letter-spacing: 0.5px;
     white-space: nowrap;
 }
+/* Flip-clock style digital timer for the BTC banner */
+.ff-flip { display: inline-flex; align-items: center; gap: 2px; }
+.ff-flip .fd {
+    display: inline-block; min-width: 0.95em; padding: 3px 4px 4px;
+    background: linear-gradient(#323a4a, #1b212c);
+    border-radius: 4px;
+    font-family: 'Consolas', 'SF Mono', monospace; font-variant-numeric: tabular-nums;
+    font-weight: 800; font-size: 1.25rem; line-height: 1; color: #eef2f8;
+    text-align: center; box-shadow: 0 1px 2px rgba(0,0,0,0.55);
+    position: relative; overflow: hidden;
+}
+.ff-flip .fd::after {  /* the classic flip seam */
+    content: ''; position: absolute; left: 0; right: 0; top: 50%;
+    height: 1px; background: rgba(0,0,0,0.5);
+}
+.ff-flip .fs { font-weight: 800; font-size: 1.1rem; color: #6b7280; padding: 0 1px; }
+.ff-flip .fday { font-size: 0.9rem; color: #facc15; font-weight: 800; margin-right: 3px; }
 .tm-pnl-pos { color: #4ade80; }
 .tm-pnl-neg { color: #ef4444; }
 .tm-side-long { color: #4ade80; font-weight: 600; }
@@ -1853,14 +1870,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
 
             <!-- BTC START/STOP signal — counts up while BTC holds ММ -->
-            <div id="ff-btc-start-banner" style="display:flex;align-items:center;gap:12px;margin:12px 0 4px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
+            <div id="ff-btc-start-banner" style="display:flex;align-items:center;gap:14px;margin:12px 0 4px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
                 <span style="font-weight:800;font-size:0.95rem;color:#f7931a;white-space:nowrap">₿ BTCUSDT</span>
                 <span id="ff-btc-start-dir" style="font-weight:700;font-size:0.85rem;white-space:nowrap">—</span>
-                <div style="flex:1;min-width:140px;height:24px;border-radius:9px;background:rgba(255,255,255,0.08);overflow:hidden;position:relative">
-                    <div id="ff-btc-progress-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear"></div>
-                    <span id="ff-btc-progress-label" class="ff-timer" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:0.95rem;font-weight:800;color:#e5e7eb;text-shadow:0 0 4px #000,0 0 2px #000"></span>
+                <div style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
+                    <div id="ff-btc-progress-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
+                    <span id="ff-btc-progress-label" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
                 </div>
-                <span id="ff-btc-start-status" style="font-weight:800;font-size:1rem;padding:4px 16px;border-radius:6px;letter-spacing:1px;white-space:nowrap">—</span>
+                <span id="ff-btc-flip" class="ff-flip" style="white-space:nowrap"></span>
+                <span id="ff-btc-start-status" style="font-weight:800;font-size:1.05rem;padding:3px 14px;border-radius:6px;letter-spacing:1px;white-space:nowrap;background:transparent">—</span>
             </div>
 
             <!-- running timers -->
@@ -7176,6 +7194,23 @@ function fmtTimer(sec) {
     return d > 0 ? `${d}д ${hms}` : hms;
 }
 
+// Flip-clock style HTML for the digital timer: each digit in its own tile with
+// a seam line, ":" separators, optional day prefix.
+function flipTimerHTML(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    const p = n => String(n).padStart(2, '0');
+    const tiles = str => str.split('').map(ch => `<span class="fd">${ch}</span>`).join('');
+    const sep = '<span class="fs">:</span>';
+    let html = '';
+    if (d > 0) html += `<span class="fday">${d}д</span>`;
+    html += tiles(p(h)) + sep + tiles(p(m)) + sep + tiles(p(s));
+    return html;
+}
+
 // BTC START/STOP state, driven from FF state and ticked live.
 let btcStartState = { hasTimer: false, since: 0, period: 300 };
 
@@ -7184,6 +7219,7 @@ function updateBtcStartBanner() {
     const lab = document.getElementById('ff-btc-progress-label');
     const st = document.getElementById('ff-btc-start-status');
     const dirEl = document.getElementById('ff-btc-start-dir');
+    const flip = document.getElementById('ff-btc-flip');
     if (!bar || !st) return;
     const s = btcStartState;
     // Direction the BTC timer started in (coloured); neutral → WAIT.
@@ -7193,32 +7229,34 @@ function updateBtcStartBanner() {
         else { dirEl.textContent = '⚪ WAIT'; dirEl.style.color = '#8b93a7'; }
     }
     if (!s.hasTimer) {
-        // No BTC timer → STOP (bright red).
-        bar.style.width = '0%'; bar.style.background = '#ef4444';
+        // No BTC timer → STOP. Subtle badge, bright RED text (not a red button).
+        bar.style.width = '0%'; bar.style.background = 'rgba(255,255,255,0.10)';
         if (lab) lab.textContent = '';
+        if (flip) flip.innerHTML = flipTimerHTML(0);
         st.textContent = '⛔ STOP';
-        st.style.background = '#ef4444'; st.style.color = '#fff';
-        st.style.boxShadow = '0 0 12px rgba(239,68,68,0.7)';
+        st.style.background = 'rgba(239,68,68,0.12)'; st.style.color = '#f87171';
+        st.style.boxShadow = 'none';
         return;
     }
     const nowS = Math.floor(Date.now() / 1000);
     const elapsed = Math.max(0, nowS - s.since);
     const pct = s.period > 0 ? Math.min(100, elapsed / s.period * 100) : 0;
     bar.style.width = pct.toFixed(1) + '%';
+    if (flip) flip.innerHTML = flipTimerHTML(elapsed);   // live flip timer
     if (pct >= 100) {
-        // Progress complete → START (bright green). Keep counting the running
-        // timer in the bar label so the field isn't empty.
-        bar.style.background = '#22c55e';
-        if (lab) lab.textContent = fmtTimer(elapsed);
+        // Progress complete → START. Green TURNED OFF on the bar (neutral fill);
+        // only the badge text is bright green.
+        bar.style.background = 'rgba(255,255,255,0.14)';
+        if (lab) lab.textContent = '';
         st.textContent = '🟢 START';
-        st.style.background = '#22c55e'; st.style.color = '#06210f';
-        st.style.boxShadow = '0 0 14px rgba(34,197,94,0.8)';
+        st.style.background = 'rgba(34,197,94,0.12)'; st.style.color = '#22c55e';
+        st.style.boxShadow = 'none';
     } else {
-        // Counting up to the threshold.
+        // Counting up to the threshold — amber bar + % inside.
         bar.style.background = '#facc15';
-        if (lab) lab.textContent = fmtTimer(elapsed) + ' / ' + fmtTimer(s.period);
-        st.textContent = '⏳ ' + Math.floor(pct) + '%';
-        st.style.background = 'rgba(250,204,21,0.16)'; st.style.color = '#facc15';
+        if (lab) lab.textContent = Math.floor(pct) + '%';
+        st.textContent = '⏳';
+        st.style.background = 'rgba(250,204,21,0.12)'; st.style.color = '#facc15';
         st.style.boxShadow = 'none';
     }
 }
