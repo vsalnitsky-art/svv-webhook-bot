@@ -6881,7 +6881,13 @@ function renderFuelFilter(d) {
     setIf('ff-engine-timers', s.start_engine_use_timers !== false);     // default true
     setIf('ff-engine-anomalies', s.start_engine_use_anomalies !== false); // default true
     setIf('ff-engine-funding', !!s.start_engine_include_funding);
-    setIf('ff-engine-toggle', !!s.start_engine_enabled);
+    // Engine toggle: don't let a poll revert it within 5s of a user click
+    // (avoids the "toggle jumps back" flicker from a stale in-flight GET).
+    const _engTgl = document.getElementById('ff-engine-toggle');
+    if (_engTgl && document.activeElement !== _engTgl
+            && (Date.now() - (window._ffEngineToggleAt || 0)) > 5000) {
+        _engTgl.checked = !!s.start_engine_enabled;
+    }
 
     // scan stats: scanned count + aggregate LONG/SHORT exhaustion (color-coded)
     const statsEl = document.getElementById('ff-scan-stats');
@@ -7340,6 +7346,9 @@ async function onFuelFilterToggle(event) {
 async function onEngineToggle(event) {
     const cb = document.getElementById('ff-engine-toggle');
     if (!cb) return;
+    // Suppress the next few polls from clobbering the just-clicked state — an
+    // in-flight GET that started before this save would otherwise revert it.
+    window._ffEngineToggleAt = Date.now();
     try {
         await fetch('/api/fuel-filter/settings', {
             method: 'POST',
