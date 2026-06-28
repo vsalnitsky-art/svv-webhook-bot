@@ -81,6 +81,12 @@ DEFAULT_SETTINGS = {
     'manage_open_positions': True,  # if True, FF closes positions it opened
     'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
     'start_signal_minutes': 5,      # BTC ММ held ≥ this → START signal (else STOP)
+    # ── BTC-START auto-engine (banner toggle) ──
+    'start_engine_enabled': False,        # master: auto-open basket on BTC START
+    'start_engine_use_anomalies': True,   # source: 🜂 anomalies table
+    'start_engine_use_timers': True,      # source: ⏱️ active timers table
+    'start_engine_scan_secs': 15,         # engine scan cadence (sec)
+    'start_engine_include_funding': False,# include 💰 funding-marked coins
 }
 
 
@@ -91,6 +97,7 @@ class FuelFilterDaemon:
         self._get_tm = get_trade_manager
         self._get_watchlist = get_watchlist
         self._thread: Optional[threading.Thread] = None
+        self._engine_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
         # live state (restored from DB on boot)
@@ -991,10 +998,92 @@ class FuelFilterDaemon:
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name='fuel-filter')
         self._thread.start()
+        # Auto-engine loop (BTC-START basket opener) — separate cadence.
+        if not (self._engine_thread and self._engine_thread.is_alive()):
+            self._engine_thread = threading.Thread(target=self._run_engine,
+                                                   daemon=True, name='fuel-engine')
+            self._engine_thread.start()
         print("[FuelFilter] daemon started")
 
     def stop(self):
         self._stop.set()
+
+    # ------------------------------------------------------------------
+    # BTC-START auto-engine: when ON and BTC banner == START, open the basket
+    # of coins from the chosen tables (anomalies / active timers) in the BANNER
+    # direction, via FF._open (→ _fuel_managed → exhaustion-exit + control).
+    # ------------------------------------------------------------------
+    def _run_engine(self):
+        self._stop.wait(15)
+        while not self._stop.is_set():
+            try:
+                self._engine_tick()
+            except Exception as e:
+                print(f"[FF-Engine] tick error: {e}")
+            secs = 15
+            try:
+                secs = max(5, int(self.get_settings().get('start_engine_scan_secs', 15)))
+            except Exception:
+                pass
+            self._stop.wait(secs)
+
+    def _engine_tick(self):
+        s = self.get_settings()
+        if not s.get('start_engine_enabled') or not s.get('enabled'):
+            return
+        now = time.time()
+        # BTC banner must be START (BTC ММ held ≥ start_signal_minutes).
+        btc_t = self._timers.get('BTCUSDT')
+        if not btc_t or btc_t.get('dir') not in ('LONG', 'SHORT'):
+            return
+        period = float(s.get('start_signal_minutes', 5) or 5) * 60
+        if (now - btc_t.get('since', now)) < period:
+            return
+        direction = btc_t['dir']     # open the basket in the BANNER direction
+
+        # Gather candidates from the chosen source tables. Only coins whose own
+        # ММ direction matches the BTC banner direction — opening against it
+        # would just be flip-closed by the manage branch (needless churn).
+        dur = float(s.get('duration_minutes', 5)) * 60
+        cands = set()
+        with self._lock:
+            if s.get('start_engine_use_timers', True):
+                for sym, t in self._timers.items():
+                    if sym == 'BTCUSDT' or sym in self._fuel_managed or sym in self._anomalies:
+                        continue
+                    if t.get('dir') != direction:
+                        continue
+                    if (now - t.get('since', now)) >= dur:
+                        cands.add(sym)
+            if s.get('start_engine_use_anomalies', True):
+                for sym, a in self._anomalies.items():
+                    if (a.get('holding') and a.get('dir') == direction
+                            and sym not in self._fuel_managed):
+                        cands.add(sym)
+            funding = set(self._funding_syms)
+        if not s.get('start_engine_include_funding', False):
+            cands = {c for c in cands if c not in funding}
+        if not cands:
+            return
+
+        for sym in cands:
+            if sym in self._fuel_managed:
+                continue   # already managed (no duplicate)
+            # Skip if TM already holds this coin (real OR paper) — don't dup.
+            if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+                continue
+            fuel = self._fuel_dir(sym)
+            if not fuel or not fuel.get('mark_price'):
+                continue
+            try:
+                # _open routes through TM (bypass gates, like Alerts but ignoring
+                # the LONG/SHORT master + SMC filters) AND registers the position
+                # in _fuel_managed so exhaustion-exit + control manage it.
+                opened = self._open(sym, direction, fuel, s)
+                if opened:
+                    print(f"[FF-Engine] opened {direction} {sym} (BTC START)")
+            except Exception as e:
+                print(f"[FF-Engine] open error {sym}: {e}")
 
     def get_state(self) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
