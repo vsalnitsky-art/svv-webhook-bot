@@ -938,6 +938,23 @@ class FuelFilterDaemon:
                 if sym not in scan_list and sym not in self._fuel_managed:
                     self._timers.pop(sym, None)
 
+            # Safety net: record an anomaly for ANY timer past the threshold —
+            # even symbols the main loop didn't visit this tick (e.g. FF-flagged
+            # but out of the current watchlist). This guarantees a long-held coin
+            # always moves to the anomalies table (and out of the FF table).
+            for sym, t in self._timers.items():
+                held = now - t.get('since', now)
+                if held >= anomaly_sec and sym not in self._anomalies:
+                    self._anomalies[sym] = {
+                        'symbol': sym, 'dir': t.get('dir'),
+                        'started_at': t.get('since', now),
+                        'start_price': t.get('start_price'),
+                        'holding': True,
+                        'last_price': t.get('start_price'),
+                        'last_held_sec': int(held),
+                        'ended_at': None, 'end_price': None,
+                    }
+
             # Anomaly end-detection: an anomaly still flagged "holding" but with
             # no active timer means its fuel just ended — freeze end time/price
             # but KEEP the row (user deletes it). Done after timer cleanup so
