@@ -304,17 +304,24 @@ class FundingMonitor:
                         self._alerted.discard(s)
                     expired_count += len(low_vol)
 
-                # Funding-threshold prune: drop AUTO-tracked coins whose entry
-                # (trigger) funding never actually met the current threshold —
-                # e.g. coins added when the threshold was looser. Keeps the table
-                # consistent with the "Entry ≤ X%" parameter. trigger_rate is in
-                # PERCENT (e.g. -1.044), threshold in percent too. A coin belongs
-                # only if it once hit ≤ threshold, i.e. trigger_rate ≤ threshold.
+                # Funding-threshold prune: drop AUTO-tracked coins whose CURRENT
+                # funding no longer meets the threshold. The filter is LIVE — a
+                # coin stays only while its funding is ≤ "Entry ≤ X%" right now;
+                # once funding recovers above the threshold it leaves. `threshold`
+                # is decimal (e.g. -0.01); current funding comes from this tick's
+                # ticker, falling back to the last recorded rate (% → decimal).
                 # Manually-added coins (✋) are never pruned.
-                thr_pct = self._entry_threshold
-                off_thr = [s for s, c in self._watchlist.items()
-                           if not c.get('manual')
-                           and float(c.get('trigger_rate', 0)) > thr_pct]
+                off_thr = []
+                for s, c in self._watchlist.items():
+                    if c.get('manual'):
+                        continue
+                    if s in rates:
+                        cur = rates[s]['rate']            # decimal, fresh
+                    else:
+                        rs = c.get('rates') or []
+                        cur = (rs[-1]['r'] / 100.0) if rs else None
+                    if cur is not None and cur > threshold:
+                        off_thr.append(s)
                 for s in off_thr:
                     del self._watchlist[s]
                     self._alerted.discard(s)
