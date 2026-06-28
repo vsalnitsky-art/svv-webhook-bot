@@ -1825,6 +1825,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки годин паливо має триматись, щоб монета пішла у таблицю 🜂 Аномальні монети">Поріг аномалії (год)</label>
+                            <input type="number" id="ff-anomaly-hours" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </div>
+                        <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
                                 <input type="checkbox" id="ff-use-potential" onchange="saveFuelFilterSettings()"> Вихід за виснаженістю
                             </label>
@@ -1856,6 +1860,34 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <div style="font-size:0.66rem;color:#6b7280;margin-top:12px">
                 💡 Скануються лише монети з прапорцем <b style="color:#f9a8d4">FF</b> у WATCHLIST (щоб не навантажувати бота). Паливо читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість — із панелі "Потенціал LONG/SHORT". Позиції відкриваються в Trade Manager (real) або Test Mode (paper) залежно від їх тумблерів. Скан кожні 30с.
+            </div>
+
+            <!-- 🜂 Anomalous coins (held fuel longer than anomaly_hours) -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
+                <div style="font-size:0.78rem;font-weight:700;color:#fbbf24">
+                    🜂 Аномальні монети
+                    <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— тримали «Паливо» довше за <span id="ff-anomaly-hours-sub">10</span>г</span>
+                </div>
+                <button onclick="clearAnomalies()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю таблицю аномалій">🗑️ Очистити всі</button>
+            </div>
+            <div class="ff-timers-scroll" style="max-height:420px">
+                <table class="tm-table" id="ff-anomaly-table">
+                    <thead>
+                        <tr>
+                            <th>Символ</th><th>Напрямок</th><th>Паливо</th>
+                            <th>Тримається</th>
+                            <th>Старт (час · ціна)</th>
+                            <th>Кінець (час · ціна)</th>
+                            <th>Дії</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ff-anomaly-tbody">
+                        <tr><td colspan="7" class="tm-empty-msg">Немає аномальних монет</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div style="font-size:0.66rem;color:#6b7280;margin-top:8px">
+                💡 Монета сюди потрапляє, коли «Паливо» тримається довше за поріг (нижче в налаштуваннях). Коли паливо зникає — монета НЕ видаляється автоматично (фіксується час і ціна завершення); прибираєш вручну (✕ або «Очистити всі»). Такі монети не дублюються в таблиці вище.
             </div>
         </div>
     </div>
@@ -6762,6 +6794,10 @@ function renderFuelFilter(d) {
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
+    const anomHrs = (s.anomaly_hours != null ? s.anomaly_hours : 10);
+    setIf('ff-anomaly-hours', anomHrs);
+    const anomSub = document.getElementById('ff-anomaly-hours-sub');
+    if (anomSub) anomSub.textContent = anomHrs;
 
     // scan stats: scanned count + aggregate LONG/SHORT exhaustion (color-coded)
     const statsEl = document.getElementById('ff-scan-stats');
@@ -6865,6 +6901,71 @@ function renderFuelFilter(d) {
             }).join('');
         }
     }
+
+    // ── 🜂 Anomalies table ──
+    const atb = document.getElementById('ff-anomaly-tbody');
+    if (atb) {
+        const arows = d.anomalies || [];
+        if (!arows.length) {
+            atb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">Немає аномальних монет</td></tr>';
+        } else {
+            atb.innerHTML = arows.map(a => {
+                const dirHtml = a.dir === 'LONG'
+                    ? '<span style="color:#22c55e">🟢 LONG</span>'
+                    : (a.dir === 'SHORT'
+                        ? '<span style="color:#ef4444">🔴 SHORT</span>'
+                        : '<span style="color:#8b93a7">⚪ —</span>');
+                // Fuel status: still holding vs ended.
+                const fuelHtml = a.holding
+                    ? '<span style="color:#34d399;font-weight:700">⚡ тримає</span>'
+                    : '<span style="color:#f87171;font-weight:700">⛔ завершено</span>';
+                const startTxt = `${fmtTimeFull(a.started_at)} · ${a.start_price != null ? fmtPriceJS(a.start_price) : '—'}`;
+                const endTxt = a.holding
+                    ? '<span style="color:#667">— триває —</span>'
+                    : `${fmtTimeFull(a.ended_at)} · ${a.end_price != null ? fmtPriceJS(a.end_price) : '—'}`;
+                const rowBg = a.holding ? 'background:rgba(16,185,129,0.06)' : 'background:rgba(239,68,68,0.05)';
+                return `<tr style="${rowBg}">
+                    <td style="font-weight:600">${a.funding ? '<span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' : ''}<span>${a.symbol}</span></td>
+                    <td>${dirHtml}</td>
+                    <td style="font-size:0.74rem">${fuelHtml}</td>
+                    <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${fmtAge(a.held_sec)}</td>
+                    <td style="font-size:0.72rem;color:#9aa3b5">${startTxt}</td>
+                    <td style="font-size:0.72rem;color:#9aa3b5">${endTxt}</td>
+                    <td><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити з таблиці аномалій">✕</span></td>
+                </tr>`;
+            }).join('');
+        }
+    }
+}
+
+// Full timestamp (date + time) from a unix-seconds value, for the anomalies
+// table start/end columns.
+function fmtTimeFull(unix) {
+    if (!unix) return '—';
+    const dt = new Date(unix * 1000);
+    const dd = String(dt.getDate()).padStart(2, '0');
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const hh = String(dt.getHours()).padStart(2, '0');
+    const mi = String(dt.getMinutes()).padStart(2, '0');
+    return `${dd}.${mm} ${hh}:${mi}`;
+}
+
+async function deleteAnomaly(symbol) {
+    try {
+        await fetch('/api/fuel-filter/anomaly/delete', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol}),
+        });
+        loadFuelFilterStatus();
+    } catch (e) { console.warn('deleteAnomaly failed:', e); }
+}
+
+async function clearAnomalies() {
+    if (!confirm('Очистити всю таблицю аномальних монет?')) return;
+    try {
+        await fetch('/api/fuel-filter/anomaly/clear', {method: 'POST'});
+        loadFuelFilterStatus();
+    } catch (e) { console.warn('clearAnomalies failed:', e); }
 }
 
 // ❤️ Fuel Auto-Filter chart-panel status row. Shows the EXACT signals FF
@@ -7029,7 +7130,12 @@ function fmtAge(sec) {
     const m = Math.floor(sec / 60), s = sec % 60;
     if (m < 60) return m + 'хв ' + s + 'с';
     const h = Math.floor(m / 60);
-    return h + 'г ' + (m % 60) + 'хв';
+    // Roll up into days / weeks for long-held timers (readable form).
+    if (h < 24) return h + 'г ' + (m % 60) + 'хв';
+    const d = Math.floor(h / 24);
+    if (d < 7) return d + 'д ' + (h % 24) + 'г';
+    const w = Math.floor(d / 7);
+    return w + 'т ' + (d % 7) + 'д';
 }
 
 function toggleFuelFilterSettings() {
@@ -7066,6 +7172,7 @@ async function saveFuelFilterSettings() {
         potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
         use_potential_exit: document.getElementById('ff-use-potential').checked,
         manage_open_positions: document.getElementById('ff-manage-positions').checked,
+        anomaly_hours: parseInt(document.getElementById('ff-anomaly-hours').value || '10', 10),
     };
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
