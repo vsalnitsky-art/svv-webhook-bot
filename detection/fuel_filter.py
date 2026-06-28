@@ -79,6 +79,7 @@ DEFAULT_SETTINGS = {
     'max_exhaustion_pct': 75,     # (legacy) not used for auto-open anymore
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
     'manage_open_positions': True,  # if True, FF closes positions it opened
+    'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
 }
 
 
@@ -111,6 +112,10 @@ class FuelFilterDaemon:
         self._funding_syms: set = set()
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
         self._btc_state: Dict = {}
+        # Anomalies: coins that held fuel longer than anomaly_hours. Own table,
+        # survive fuel loss, user-deleted only. {symbol: {dir, started_at,
+        # start_price, holding, last_price, last_held_sec, ended_at, end_price}}
+        self._anomalies: Dict[str, Dict] = {}
         self._last_tick_ts = 0
         self._load_state()
 
@@ -230,15 +235,21 @@ class FuelFilterDaemon:
         if isinstance(st, dict):
             self._timers = st.get('timers', {}) or {}
             self._fuel_managed = st.get('fuel_managed', {}) or {}
-            if self._fuel_managed:
+            # Anomalies: coins that held fuel longer than anomaly_hours. They
+            # live in their OWN table, persist across fuel loss, and are removed
+            # only by the user (manual delete / clear). {symbol: {...}}
+            self._anomalies = st.get('anomalies', {}) or {}
+            if self._fuel_managed or self._anomalies:
                 print(f"[FuelFilter] restored {len(self._fuel_managed)} tracked "
-                      f"position(s), {len(self._timers)} timer(s) from DB")
+                      f"position(s), {len(self._timers)} timer(s), "
+                      f"{len(self._anomalies)} anomaly(ies) from DB")
 
     def _persist_state(self):
         try:
             self._db.set_setting(_DB_STATE, {
                 'timers': self._timers,
                 'fuel_managed': self._fuel_managed,
+                'anomalies': self._anomalies,
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -712,6 +723,7 @@ class FuelFilterDaemon:
         tm_enabled = tm_settings.get('enabled', False)
 
         duration_sec = settings['duration_minutes'] * 60
+        anomaly_sec = float(settings.get('anomaly_hours', 10)) * 3600
         now = time.time()
 
         # Aggregate scan-stats accumulators (for the panel header). Now covers
@@ -869,10 +881,13 @@ class FuelFilterDaemon:
                         self._timers.pop(symbol, None)
                     continue
 
+                _mk = fuel.get('mark_price') if fuel else None
                 t = self._timers.get(symbol)
                 if not t or t.get('dir') != status:
-                    # new status (or direction flip) → (re)start timer
-                    self._timers[symbol] = {'dir': status, 'since': now}
+                    # new status (or direction flip) → (re)start timer.
+                    # Capture the price at timer start (for the anomaly table).
+                    self._timers[symbol] = {'dir': status, 'since': now,
+                                            'start_price': _mk}
                     t = self._timers[symbol]
                 # Exhaustion for the timer row — shows how much room is left.
                 exh = self._exhaustion(symbol, status)
@@ -883,6 +898,31 @@ class FuelFilterDaemon:
                 # No auto-open. Table shows only timers held >= duration_minutes
                 # (filtering happens in get_state). Timer keeps running until
                 # fuel disappears (status becomes None/'WAIT').
+
+                # ── Anomaly tracking: fuel held longer than anomaly_hours ──
+                # Such coins move to their OWN table (excluded from the FF table
+                # in get_state), survive fuel loss, and are user-deleted only.
+                held = now - t.get('since', now)
+                if held >= anomaly_sec:
+                    a = self._anomalies.get(symbol)
+                    if not a:
+                        self._anomalies[symbol] = {
+                            'symbol': symbol, 'dir': status,
+                            'started_at': t.get('since', now),
+                            'start_price': t.get('start_price') or _mk,
+                            'holding': True,
+                            'last_price': _mk, 'last_held_sec': int(held),
+                            'ended_at': None, 'end_price': None,
+                        }
+                    else:
+                        a['holding'] = True
+                        a['dir'] = status
+                        if _mk:
+                            a['last_price'] = _mk
+                        a['last_held_sec'] = int(held)
+                        # Fuel came back after an earlier end → clear end marks.
+                        a['ended_at'] = None
+                        a['end_price'] = None
             else:
                 # status off → reset any running timer
                 if symbol in self._timers:
@@ -897,6 +937,18 @@ class FuelFilterDaemon:
             for sym in list(self._timers.keys()):
                 if sym not in scan_list and sym not in self._fuel_managed:
                     self._timers.pop(sym, None)
+
+            # Anomaly end-detection: an anomaly still flagged "holding" but with
+            # no active timer means its fuel just ended — freeze end time/price
+            # but KEEP the row (user deletes it). Done after timer cleanup so
+            # the timer set is final.
+            active_timers = set(self._timers.keys())
+            for sym, a in self._anomalies.items():
+                if a.get('holding') and sym not in active_timers:
+                    a['holding'] = False
+                    if not a.get('ended_at'):
+                        a['ended_at'] = now
+                        a['end_price'] = a.get('last_price')
 
         # Store aggregate scan-stats for the panel header.
         with self._lock:
@@ -940,6 +992,8 @@ class FuelFilterDaemon:
                     continue  # pinned separately, always shown
                 if sym in self._fuel_managed:
                     continue  # already opened, don't show timer
+                if sym in self._anomalies:
+                    continue  # moved to the anomalies table — hide here
                 held = now - t.get('since', now)
                 # FILTER: only show timers that exceeded the threshold
                 if held < duration_sec:
@@ -967,12 +1021,37 @@ class FuelFilterDaemon:
             }
             all_timers = [btc_row] + sorted_timers
             scan_list = self.get_scan_list()
+            # Anomalies — own table. Live "held" while still holding fuel,
+            # frozen at end otherwise.
+            anomalies = []
+            for sym, a in self._anomalies.items():
+                holding = bool(a.get('holding'))
+                if holding:
+                    t = self._timers.get(sym)
+                    held = int(now - t.get('since', a.get('started_at', now))) \
+                        if t else int(a.get('last_held_sec', 0))
+                else:
+                    held = int(a.get('last_held_sec', 0))
+                anomalies.append({
+                    'symbol': sym,
+                    'dir': a.get('dir'),
+                    'holding': holding,
+                    'held_sec': held,
+                    'started_at': a.get('started_at'),
+                    'start_price': a.get('start_price'),
+                    'ended_at': a.get('ended_at'),
+                    'end_price': a.get('end_price'),
+                    'current_price': a.get('last_price'),
+                    'funding': sym in self._funding_syms,
+                })
+            anomalies.sort(key=lambda x: -x['held_sec'])
         return {
             'ok': True,
             'settings': settings,
             'running': bool(self._thread and self._thread.is_alive()),
             'last_tick_ts': self._last_tick_ts,
             'timers': all_timers,
+            'anomalies': anomalies,
             'active_symbols': list(self._fuel_managed.keys()),
             'tracked_count': len(self._fuel_managed),
             'scan_list': scan_list,
@@ -1101,6 +1180,26 @@ class FuelFilterDaemon:
             self._timers.clear()
             self._persist_state()
             print(f"[FuelFilter] Cleared {count} timers")
+            return count
+
+    def delete_anomaly(self, symbol: str) -> bool:
+        """Remove ONE coin from the anomalies table (user action)."""
+        symbol = (symbol or '').upper()
+        with self._lock:
+            if symbol in self._anomalies:
+                self._anomalies.pop(symbol, None)
+                self._persist_state()
+                print(f"[FuelFilter] Anomaly deleted: {symbol}")
+                return True
+            return False
+
+    def clear_anomalies(self) -> int:
+        """Clear the whole anomalies table. Returns count removed."""
+        with self._lock:
+            count = len(self._anomalies)
+            self._anomalies.clear()
+            self._persist_state()
+            print(f"[FuelFilter] Cleared {count} anomalies")
             return count
 
 
