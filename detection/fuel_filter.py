@@ -510,11 +510,16 @@ class FuelFilterDaemon:
     # ------------------------------------------------------------------
     # open / close (pure delegation to TradeManager)
     # ------------------------------------------------------------------
-    def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict):
+    def _open(self, symbol: str, side: str, fuel: Dict, settings: Dict,
+              opened_by: Optional[str] = None):
         """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
-        tables based on toggle states."""
+        tables based on toggle states.
+
+        opened_by: optional label stored on the position's "Opened by" field
+        (e.g. the candle-confirm attempt the auto-engine opened on). When None,
+        TM uses its default ('manual_ui')."""
         print(f"[FuelFilter] _open CALLED for {symbol} {side} (timer reached 100%)")
 
         entry_price = fuel.get('mark_price')
@@ -569,7 +574,8 @@ class FuelFilterDaemon:
                     # Real position via TM — bypass LONG/SHORT gates
                     # Fuel Filter operates independently from manual trade signals
                     print(f"[FuelFilter] {symbol}: calling tm.manual_open({symbol}, {side}, bypass_gates=True)")
-                    res = tm.manual_open(symbol, side, bypass_gates=True)
+                    res = tm.manual_open(symbol, side, bypass_gates=True,
+                                         opened_by=opened_by)
                     print(f"[FuelFilter] {symbol}: manual_open returned: {res}")
                     if not res or not res.get('ok'):
                         reason = (res or {}).get('reason', 'unknown')
@@ -590,8 +596,9 @@ class FuelFilterDaemon:
                     # Paper position via Test Mode (shadow) — bypass LONG/SHORT gates
                     # Fuel Filter operates independently from manual trade signals
                     if hasattr(tm, '_open_shadow') and callable(tm._open_shadow):
-                        print(f"[FuelFilter] {symbol}: calling tm._open_shadow({symbol}, {side}, {entry_price}, 'fuel_filter', bypass_gates=True)")
-                        tm._open_shadow(symbol, side, entry_price, 'fuel_filter', bypass_gates=True)
+                        sh_tag = opened_by or 'fuel_filter'
+                        print(f"[FuelFilter] {symbol}: calling tm._open_shadow({symbol}, {side}, {entry_price}, {sh_tag!r}, bypass_gates=True)")
+                        tm._open_shadow(symbol, side, entry_price, sh_tag, bypass_gates=True)
                         print(f"[FuelFilter] {symbol}: _open_shadow call completed")
                     else:
                         print(f"[FuelFilter] {symbol}: Test Mode enabled but _open_shadow not available")
@@ -1390,10 +1397,15 @@ class FuelFilterDaemon:
                 # _open routes through TM (bypass gates, like Alerts but ignoring
                 # the LONG/SHORT master + SMC filters) AND registers the position
                 # in _fuel_managed so exhaustion-exit + control manage it.
-                opened = self._open(sym, direction, fuel, s)
+                # The "Opened by" field records which candle-confirm attempt the
+                # engine opened on (failed checks bump _engine_attempts; opening
+                # on the first check is attempt #1).
+                attempt = self._engine_attempts.get(sym, 0) + 1
+                opened = self._open(sym, direction, fuel, s,
+                                    opened_by=f"🕯️ FF спроба {attempt}")
                 if opened:
                     self._engine_attempts.pop(sym, None)   # opened → reset
-                    print(f"[FF-Engine] opened {direction} {sym} (BTC START)")
+                    print(f"[FF-Engine] opened {direction} {sym} (BTC START, спроба {attempt})")
             except Exception as e:
                 print(f"[FF-Engine] open error {sym}: {e}")
 

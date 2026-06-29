@@ -1292,6 +1292,11 @@ class TradeManager:
         Falls back to '<base>' alone when no decision is available.
         """
         parts = [opened_by]
+        # Auto-engine trades (candle-confirm) label the "Opened by" field with
+        # the attempt they opened on (🕯️) — the user asked for the attempt
+        # number there INSTEAD of the 🧠 verdict, so skip the brain suffix.
+        if opened_by and str(opened_by).startswith('🕯️'):
+            return opened_by
         if entry_score:
             headline = entry_score.get('headline')
             verdict = entry_score.get('verdict', '')
@@ -3860,7 +3865,8 @@ class TradeManager:
               f"new signals/auto-exits {'ignored' if enabled else 'active'}")
         return {'ok': True, 'position': updated, 'manual_mode': bool(enabled)}
     
-    def manual_open(self, symbol: str, side: str, bypass_gates: bool = False) -> Dict:
+    def manual_open(self, symbol: str, side: str, bypass_gates: bool = False,
+                    opened_by: Optional[str] = None) -> Dict:
         """User-initiated position open from the Decision Center panel.
 
         Uses Position Sizing settings from TM (sizing_mode, fixed_usd_amount,
@@ -3928,7 +3934,7 @@ class TradeManager:
         if open_real:
             try:
                 res = self._open_position(symbol, side, entry_price,
-                                          opened_by='manual_ui',
+                                          opened_by=(opened_by or 'manual_ui'),
                                           bypass_gates=bypass_gates)
             except Exception as e:
                 return {'ok': False, 'reason': f'Open error: {e}'}
@@ -3948,7 +3954,8 @@ class TradeManager:
             # bypass) skip the directional + fuel-confirm gates on the paper
             # path too, matching the real path above.
             try:
-                self._open_shadow(symbol, side, entry_price, opened_by='manual_ui_overflow',
+                self._open_shadow(symbol, side, entry_price,
+                                  opened_by=(opened_by or 'manual_ui_overflow'),
                                   bypass_gates=bypass_gates)
             except Exception as e:
                 return {'ok': False, 'reason': f'Shadow open error: {e}'}
