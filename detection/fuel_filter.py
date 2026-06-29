@@ -1091,18 +1091,16 @@ class FuelFilterDaemon:
                 print(f"[FuelFilter] funding exit TG send error: {e}")
 
     def _btc_status_text(self, s: Dict, now: float) -> str:
-        """Compact current ₿ BTCUSDT banner status for messages:
-        '₿ START 🟢 LONG' / '₿ ⏳ 🔴 SHORT' (counting) / '₿ STOP [dir]'."""
+        """Compact current ₿ BTCUSDT status for messages as a direction:
+        '₿ 🟢 LONG' / '₿ 🔴 SHORT' when START is active, else '₿ ⚪ WAIT'
+        (no confirmed start: counting, or no BTC timer)."""
         btc_t = self._timers.get('BTCUSDT')
         period = float(s.get('start_signal_minutes', 5) or 5) * 60
         if btc_t and btc_t.get('dir') in ('LONG', 'SHORT'):
-            d = btc_t['dir']
-            dt = '🟢 LONG' if d == 'LONG' else '🔴 SHORT'
             held = now - btc_t.get('since', now)
-            return f"₿ START {dt}" if held >= period else f"₿ ⏳ {dt}"
-        ld = self._btc_last_dir
-        ldt = (' 🟢 LONG' if ld == 'LONG' else (' 🔴 SHORT' if ld == 'SHORT' else ''))
-        return f"₿ STOP{ldt}"
+            if held >= period:
+                return '₿ 🟢 LONG' if btc_t['dir'] == 'LONG' else '₿ 🔴 SHORT'
+        return '₿ ⚪ WAIT'
 
     def _btc_start_alert(self, s: Dict, now: float):
         """Send a Telegram message when BTC flips START↔STOP (if enabled).
