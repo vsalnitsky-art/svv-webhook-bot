@@ -88,6 +88,7 @@ DEFAULT_SETTINGS = {
     'start_engine_scan_secs': 15,         # engine scan cadence (sec)
     'start_engine_include_funding': False,# include 💰 funding-marked coins
     'engine_candle_confirm': True,        # only open when candles confirm dir (2/3)
+    'engine_candle_tf': '5m',             # timeframe for the candle confirmation
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -127,6 +128,12 @@ class FuelFilterDaemon:
         self._funding_rates: Dict[str, float] = {}
         # {symbol: nextFundingTime ms} — countdown to next funding settlement.
         self._funding_next: Dict[str, int] = {}
+        # Short-TTL klines cache for candle confirmation at a custom TF:
+        # {(symbol, tf): (ts, klines)}.
+        self._candle_cache: Dict = {}
+        # {symbol: count} — how many times the engine tried to open this coin but
+        # the candle confirmation failed (it stayed in the table waiting).
+        self._engine_attempts: Dict[str, int] = {}
         # Last BTC START/STOP state we sent a Telegram alert for (None until set).
         self._btc_start_last_alert: Optional[str] = None
         # Last live BTC direction — reported in the STOP message.
@@ -1260,21 +1267,47 @@ class FuelFilterDaemon:
                 pass
             self._stop.wait(secs)
 
-    def _candle_confirms(self, symbol: str, side: str):
+    def _candle_klines(self, symbol: str, tf: str):
+        """Klines for candle confirmation at the configured TF. Uses the
+        scanner's cached klines for free when the TF matches the scanner's TF;
+        otherwise fetches a few bars via market_data with a short-TTL cache."""
+        tm = self._get_tm() if self._get_tm else None
+        scanner = getattr(tm, 'scanner', None) if tm else None
+        # Free path: scanner already holds klines at its own TF.
+        try:
+            if scanner and hasattr(scanner, 'get_timeframe') \
+                    and scanner.get_timeframe() == tf:
+                kl = scanner._get_cached_klines(symbol)
+                if kl:
+                    return kl
+        except Exception:
+            pass
+        # Custom TF → fetch (cached ~20s to avoid hammering on each engine tick).
+        now = time.time()
+        key = (symbol, tf)
+        c = self._candle_cache.get(key)
+        if c and (now - c[0]) < 20:
+            return c[1]
+        kl = None
+        try:
+            from detection.market_data import get_market_data
+            md = get_market_data()
+            if md:
+                kl = md.fetch_klines(symbol, limit=6, interval=tf)
+        except Exception:
+            kl = None
+        if kl:
+            self._candle_cache[key] = (now, kl)
+        return kl
+
+    def _candle_confirms(self, symbol: str, side: str, tf: str = '5m'):
         """Pre-entry candle confirmation: is recent price action moving in
-        `side`? Uses the last 3 CLOSED bars (momentum 2/3) from the scanner's
-        cached klines (close vs open per bar). Returns:
+        `side`? Uses the last 3 CLOSED bars (momentum 2/3) at the given TF
+        (close vs open per bar). Returns:
           True  — confirmed (≥2 of last 3 bars in the direction)
           False — against
           None  — no kline data yet (caller treats as not-confirmed → waits)."""
-        tm = self._get_tm() if self._get_tm else None
-        scanner = getattr(tm, 'scanner', None) if tm else None
-        if scanner is None or not hasattr(scanner, '_get_cached_klines'):
-            return None
-        try:
-            kl = scanner._get_cached_klines(symbol)
-        except Exception:
-            kl = None
+        kl = self._candle_klines(symbol, tf)
         if not kl or len(kl) < 4:
             return None
         last3 = kl[:-1][-3:]   # drop the still-forming bar, take last 3 closed
@@ -1291,14 +1324,17 @@ class FuelFilterDaemon:
     def _engine_tick(self):
         s = self.get_settings()
         if not s.get('start_engine_enabled') or not s.get('enabled'):
+            self._engine_attempts.clear()   # engine off → reset counters
             return
         now = time.time()
         # BTC banner must be START (BTC ММ held ≥ start_signal_minutes).
         btc_t = self._timers.get('BTCUSDT')
         if not btc_t or btc_t.get('dir') not in ('LONG', 'SHORT'):
+            self._engine_attempts.clear()   # not START → reset counters
             return
         period = float(s.get('start_signal_minutes', 5) or 5) * 60
         if (now - btc_t.get('since', now)) < period:
+            self._engine_attempts.clear()   # still counting, not START → reset
             return
         direction = btc_t['dir']     # open the basket in the BANNER direction
 
@@ -1343,9 +1379,12 @@ class FuelFilterDaemon:
                 continue
             # Candle confirmation: only open when recent candles move in the
             # BTC direction (≥2 of last 3 closed bars). If not confirmed (or no
-            # data yet), the coin stays in the table and we re-check next tick.
+            # data yet), the coin stays in the table, the attempts counter ticks,
+            # and we re-check next tick.
             if s.get('engine_candle_confirm', True):
-                if not self._candle_confirms(sym, direction):
+                if not self._candle_confirms(sym, direction,
+                                             s.get('engine_candle_tf', '5m')):
+                    self._engine_attempts[sym] = self._engine_attempts.get(sym, 0) + 1
                     continue
             try:
                 # _open routes through TM (bypass gates, like Alerts but ignoring
@@ -1353,9 +1392,16 @@ class FuelFilterDaemon:
                 # in _fuel_managed so exhaustion-exit + control manage it.
                 opened = self._open(sym, direction, fuel, s)
                 if opened:
+                    self._engine_attempts.pop(sym, None)   # opened → reset
                     print(f"[FF-Engine] opened {direction} {sym} (BTC START)")
             except Exception as e:
                 print(f"[FF-Engine] open error {sym}: {e}")
+
+        # Prune attempt counters for coins that are no longer candidates.
+        considered = set(cand_held)
+        for k in list(self._engine_attempts):
+            if k not in considered:
+                self._engine_attempts.pop(k, None)
 
     def get_state(self) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
@@ -1388,6 +1434,8 @@ class FuelFilterDaemon:
                     'funding': is_fund,
                     'funding_rate': self._funding_rates.get(sym) if is_fund else None,
                     'funding_next_ms': self._funding_next.get(sym) if is_fund else None,
+                    # how many times the engine waited on candle confirmation
+                    'engine_attempts': self._engine_attempts.get(sym, 0),
                     # progress_pct removed - no longer needed
                 })
             # BTC is now a normal row (its dedicated visual lives in the
