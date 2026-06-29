@@ -1932,10 +1932,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <label style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:#9aa3b5;cursor:pointer;white-space:nowrap" title="Сповіщення в Telegram при зміні стану START/STOP по BTCUSDT">
                     <input type="checkbox" id="ff-btc-tg-toggle" onchange="onBtcTgToggle(event)" style="cursor:pointer">📨
                 </label>
-                <label class="tm-toggle-switch" title="Автодвигун: при START відкривати кошик монет з обраних таблиць у напрямку BTC (за замовчуванням вимкнено)">
-                    <input type="checkbox" id="ff-engine-toggle" onchange="onEngineToggle(event)">
-                    <span class="slider"></span>
-                </label>
+                <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+                    <span style="font-size:0.58rem;font-weight:700;color:#f7931a;line-height:1">₿ START</span>
+                    <label class="tm-toggle-switch" title="Автодвигун (BTC): відкривати кошик монет з обраних таблиць ТІЛЬКИ при START по ₿ BTCUSDT, у напрямку BTC. Вмикання вимикає «Незалежний».">
+                        <input type="checkbox" id="ff-engine-toggle" onchange="onEngineToggle(event)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+                    <span style="font-size:0.58rem;font-weight:700;color:#34d399;line-height:1">∞ НЕЗАЛ.</span>
+                    <label class="tm-toggle-switch" title="Автодвигун (незалежний): відкривати угоду, щойно монета зʼявилась у таблиці, у її ВЛАСНОМУ напрямку ММ — БЕЗ залежності від ₿ BTCUSDT. Вмикання вимикає «BTC».">
+                        <input type="checkbox" id="ff-engine-indep-toggle" onchange="onEngineIndepToggle(event)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
             </div>
 
             <!-- running timers -->
@@ -6920,6 +6930,11 @@ function renderFuelFilter(d) {
             && (Date.now() - (window._ffEngineToggleAt || 0)) > 5000) {
         _engTgl.checked = !!s.start_engine_enabled;
     }
+    const _engIndep = document.getElementById('ff-engine-indep-toggle');
+    if (_engIndep && document.activeElement !== _engIndep
+            && (Date.now() - (window._ffEngineIndepToggleAt || 0)) > 5000) {
+        _engIndep.checked = !!s.start_engine_independent;
+    }
     const _btcTg = document.getElementById('ff-btc-tg-toggle');
     if (_btcTg && document.activeElement !== _btcTg
             && (Date.now() - (window._ffBtcTgToggleAt || 0)) > 5000) {
@@ -7425,9 +7440,14 @@ async function onBtcTgToggle(event) {
 async function onEngineToggle(event) {
     const cb = document.getElementById('ff-engine-toggle');
     if (!cb) return;
+    const indep = document.getElementById('ff-engine-indep-toggle');
+    // Mutually exclusive: turning BTC mode ON visually turns the independent
+    // one OFF right away (backend enforces this too).
+    if (cb.checked && indep) indep.checked = false;
     // Suppress the next few polls from clobbering the just-clicked state — an
     // in-flight GET that started before this save would otherwise revert it.
     window._ffEngineToggleAt = Date.now();
+    window._ffEngineIndepToggleAt = Date.now();
     try {
         await fetch('/api/fuel-filter/settings', {
             method: 'POST',
@@ -7437,6 +7457,27 @@ async function onEngineToggle(event) {
         loadFuelFilterStatus();
     } catch (e) {
         alert('Помилка перемикання движка: ' + e);
+    }
+}
+
+async function onEngineIndepToggle(event) {
+    const cb = document.getElementById('ff-engine-indep-toggle');
+    if (!cb) return;
+    const btc = document.getElementById('ff-engine-toggle');
+    // Mutually exclusive: turning the independent mode ON visually turns the
+    // BTC one OFF right away (backend enforces this too).
+    if (cb.checked && btc) btc.checked = false;
+    window._ffEngineToggleAt = Date.now();
+    window._ffEngineIndepToggleAt = Date.now();
+    try {
+        await fetch('/api/fuel-filter/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({start_engine_independent: cb.checked})
+        });
+        loadFuelFilterStatus();
+    } catch (e) {
+        alert('Помилка перемикання незалежного движка: ' + e);
     }
 }
 
