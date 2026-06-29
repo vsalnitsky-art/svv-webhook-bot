@@ -1375,7 +1375,7 @@ class FuelFilterDaemon:
             return
 
         # Open in ascending timer order: smallest held first → largest.
-        for sym, _held in sorted(cand_held.items(), key=lambda kv: kv[1]):
+        for sym, held in sorted(cand_held.items(), key=lambda kv: kv[1]):
             if sym in self._fuel_managed:
                 continue   # already managed (no duplicate)
             # Skip if TM already holds this coin (real OR paper) — don't dup.
@@ -1399,10 +1399,12 @@ class FuelFilterDaemon:
                 # in _fuel_managed so exhaustion-exit + control manage it.
                 # The "Opened by" field records which candle-confirm attempt the
                 # engine opened on (failed checks bump _engine_attempts; opening
-                # on the first check is attempt #1).
+                # on the first check is attempt #1) AND the coin's ММ timer value
+                # at the moment of opening.
                 attempt = self._engine_attempts.get(sym, 0) + 1
-                opened = self._open(sym, direction, fuel, s,
-                                    opened_by=f"🕯️ FF спроба {attempt}")
+                opened = self._open(
+                    sym, direction, fuel, s,
+                    opened_by=f"🕯️ FF спроба {attempt} · ⏱ {self._fmt_dur(held)}")
                 if opened:
                     self._engine_attempts.pop(sym, None)   # opened → reset
                     print(f"[FF-Engine] opened {direction} {sym} (BTC START, спроба {attempt})")
