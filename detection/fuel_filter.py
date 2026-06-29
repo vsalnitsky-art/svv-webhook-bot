@@ -1654,7 +1654,10 @@ class FuelFilterDaemon:
         with self._lock:
             if s.get('start_engine_use_timers', True):
                 for sym, t in self._timers.items():
-                    if sym == 'BTCUSDT' or sym in self._fuel_managed or sym in self._anomalies:
+                    # BTCUSDT is NOT excluded anymore — it trades on par with the
+                    # rest (it still also serves as the banner signal). Skip only
+                    # coins already managed or moved to the anomalies table.
+                    if sym in self._fuel_managed or sym in self._anomalies:
                         continue
                     cdir = t.get('dir')
                     if cdir not in ('LONG', 'SHORT'):
