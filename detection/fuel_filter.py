@@ -90,6 +90,7 @@ DEFAULT_SETTINGS = {
     'start_engine_include_funding': False,# include 💰 funding-marked coins
     'engine_candle_confirm': True,        # only open when candles confirm dir (2/3)
     'engine_candle_tf': '5m',             # timeframe for the candle confirmation
+    'engine_require_strong_hold': False,  # only open when SCORE=STRONG HOLD & dir matches
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -443,6 +444,36 @@ class FuelFilterDaemon:
         label, color = self._score_label(score)
         return {'score': int(round(score)), 'label': label, 'color': color,
                 'dir': live_dir, 'conflict': conflict}
+
+    def score_snapshot(self, symbol: str) -> Optional[str]:
+        """Compact, human SCORE string for `symbol` RIGHT NOW, e.g.
+        'STRONG HOLD 🟢▲ 79'. Usable from other modules (Trade Manager stamps
+        it on a position at open and at close). Returns None if it can't be
+        computed. Pulls held/dir/exhaustion from the live timer when present,
+        otherwise scores with held=0 and lets the score derive its own
+        direction from live price/fuel."""
+        try:
+            sym = (symbol or '').upper().strip()
+            if not sym:
+                return None
+            s = self.get_settings()
+            tf = s.get('engine_candle_tf', '5m')
+            with self._lock:
+                t = self._timers.get(sym)
+                if t:
+                    held = time.time() - t.get('since', time.time())
+                    tdir = t.get('dir') or 'LONG'
+                    exh = t.get('exhaustion')
+                else:
+                    held, tdir, exh = 0.0, 'LONG', None
+            dur = float(s.get('duration_minutes', 5) or 5) * 60
+            sc = self._timer_score_for(sym, tdir, held, exh, dur, tf)
+            arrow = '🟢▲' if sc.get('dir') == 'LONG' else (
+                '🔴▼' if sc.get('dir') == 'SHORT' else '')
+            warn = ' ⚠' if sc.get('conflict') else ''
+            return f"{sc['label']} {arrow} {sc['score']}{warn}".strip()
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
@@ -1592,6 +1623,13 @@ class FuelFilterDaemon:
                 if conf is False:
                     self._engine_attempts[sym] = self._engine_attempts.get(sym, 0) + 1
                     trace.append(f"{sym}:свічки-проти(сп{self._engine_attempts[sym]})")
+                    continue
+            # SCORE gate: only open when the coin's SCORE is STRONG HOLD AND its
+            # SCORE direction matches the candidate direction.
+            if s.get('engine_require_strong_hold', False):
+                sc = self._timer_score_for(sym, d, held, exh, dur, tf)
+                if sc.get('label') != 'STRONG HOLD' or sc.get('dir') != d:
+                    trace.append(f"{sym}:score={sc.get('label')}/{sc.get('dir')}≠STRONG·{d}")
                     continue
             try:
                 # _open routes through TM (bypass gates, like Alerts but ignoring
