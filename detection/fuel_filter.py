@@ -87,6 +87,7 @@ DEFAULT_SETTINGS = {
     'start_engine_use_timers': True,      # source: ⏱️ active timers table
     'start_engine_scan_secs': 15,         # engine scan cadence (sec)
     'start_engine_include_funding': False,# include 💰 funding-marked coins
+    'engine_candle_confirm': True,        # only open when candles confirm dir (2/3)
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -1259,6 +1260,34 @@ class FuelFilterDaemon:
                 pass
             self._stop.wait(secs)
 
+    def _candle_confirms(self, symbol: str, side: str):
+        """Pre-entry candle confirmation: is recent price action moving in
+        `side`? Uses the last 3 CLOSED bars (momentum 2/3) from the scanner's
+        cached klines (close vs open per bar). Returns:
+          True  — confirmed (≥2 of last 3 bars in the direction)
+          False — against
+          None  — no kline data yet (caller treats as not-confirmed → waits)."""
+        tm = self._get_tm() if self._get_tm else None
+        scanner = getattr(tm, 'scanner', None) if tm else None
+        if scanner is None or not hasattr(scanner, '_get_cached_klines'):
+            return None
+        try:
+            kl = scanner._get_cached_klines(symbol)
+        except Exception:
+            kl = None
+        if not kl or len(kl) < 4:
+            return None
+        last3 = kl[:-1][-3:]   # drop the still-forming bar, take last 3 closed
+        if len(last3) < 3:
+            return None
+        ups = sum(1 for k in last3 if float(k.get('p', 0)) > float(k.get('o', 0)))
+        downs = sum(1 for k in last3 if float(k.get('p', 0)) < float(k.get('o', 0)))
+        if side == 'LONG':
+            return ups >= 2
+        if side == 'SHORT':
+            return downs >= 2
+        return False
+
     def _engine_tick(self):
         s = self.get_settings()
         if not s.get('start_engine_enabled') or not s.get('enabled'):
@@ -1312,6 +1341,12 @@ class FuelFilterDaemon:
             fuel = self._fuel_dir(sym)
             if not fuel or not fuel.get('mark_price'):
                 continue
+            # Candle confirmation: only open when recent candles move in the
+            # BTC direction (≥2 of last 3 closed bars). If not confirmed (or no
+            # data yet), the coin stays in the table and we re-check next tick.
+            if s.get('engine_candle_confirm', True):
+                if not self._candle_confirms(sym, direction):
+                    continue
             try:
                 # _open routes through TM (bypass gates, like Alerts but ignoring
                 # the LONG/SHORT master + SMC filters) AND registers the position
