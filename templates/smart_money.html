@@ -6991,8 +6991,12 @@ function renderFuelFilter(d) {
                 const fundLbl = (isFunding && t.funding_rate != null)
                     ? ` <span title="Поточний funding" style="font-size:0.66rem;font-weight:700;color:${t.funding_rate >= 0 ? '#4ade80' : '#f87171'}">${t.funding_rate >= 0 ? '+' : ''}${Number(t.funding_rate).toFixed(3)}%</span>`
                     : '';
+                // Countdown to the next funding settlement (live-ticking).
+                const fundNext = (isFunding && t.funding_next_ms)
+                    ? ` <span class="ff-fundnext" data-next="${t.funding_next_ms}" title="До наступного нарахування funding" style="font-size:0.64rem;color:#9aa3b5">⏳ ${fmtFundLeft(t.funding_next_ms)}</span>`
+                    : '';
                 return `<tr style="${rowStyle}">
-                    <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span>${fundLbl}</td>
+                    <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span>${fundLbl}${fundNext}</td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
@@ -7257,6 +7261,16 @@ function fmtTimer(sec) {
     return d > 0 ? `${d}д ${hms}` : hms;
 }
 
+// "time left until funding" from a nextFundingTime (ms) → "Hг MMхв" / "Mхв SSс".
+function fmtFundLeft(nextMs) {
+    let sec = Math.floor((Number(nextMs) || 0) / 1000 - Date.now() / 1000);
+    if (sec <= 0) return '0с';
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    if (h) return `${h}г ${String(m).padStart(2,'0')}хв`;
+    if (m) return `${m}хв ${String(s).padStart(2,'0')}с`;
+    return `${s}с`;
+}
+
 // Flip-clock style HTML for the digital timer: each digit in its own tile with
 // a seam line, ":" separators, optional day prefix.
 function flipTimerHTML(sec) {
@@ -7333,6 +7347,10 @@ if (!window._ffTimerTick) {
         document.querySelectorAll('.ff-timer[data-since]').forEach(el => {
             const since = parseInt(el.getAttribute('data-since'), 10);
             if (!isNaN(since)) el.textContent = fmtTimer(nowS - since);
+        });
+        document.querySelectorAll('.ff-fundnext[data-next]').forEach(el => {
+            const nx = parseInt(el.getAttribute('data-next'), 10);
+            if (!isNaN(nx)) el.textContent = '⏳ ' + fmtFundLeft(nx);
         });
         updateBtcStartBanner();
     }, 1000);
