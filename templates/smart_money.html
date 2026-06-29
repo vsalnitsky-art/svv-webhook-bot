@@ -6910,8 +6910,12 @@ function renderFuelFilter(d) {
         dir: bsg.dir || null,
     };
     updateBtcStartBanner();
-    // settings inputs (don't clobber while focused)
+    // settings inputs — don't clobber while focused, and don't clobber for a
+    // few seconds after a save (a stale in-flight GET must not revert a control
+    // the user just changed — the #1 cause of "toggles don't stick").
+    const _justSaved = (Date.now() - (window._ffSettingsSavedAt || 0)) < 6000;
     const setIf = (id, val) => {
+        if (_justSaved) return;
         const el = document.getElementById(id);
         if (el && document.activeElement !== el) {
             if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
@@ -7513,6 +7517,10 @@ async function onEngineIndepToggle(event) {
 }
 
 async function saveFuelFilterSettings() {
+    // Mark the form as just-saved so an in-flight poll (whose GET started
+    // before this save committed) can't re-apply stale server values and
+    // revert the control the user just changed.
+    window._ffSettingsSavedAt = Date.now();
     const payload = {
         duration_minutes: parseInt(document.getElementById('ff-duration').value || '5', 10),
         potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
