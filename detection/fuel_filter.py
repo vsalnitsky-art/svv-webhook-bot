@@ -1026,41 +1026,73 @@ class FuelFilterDaemon:
             if self._errors <= 5:
                 print(f"[FuelFilter] funding alert error: {e}")
 
+    @staticmethod
+    def _fmt_price(p) -> str:
+        """Compact price formatter for Telegram messages."""
+        try:
+            p = float(p)
+        except (TypeError, ValueError):
+            return '—'
+        if p <= 0:
+            return '—'
+        if p >= 100:
+            return f"{p:,.2f}"
+        if p >= 1:
+            return f"{p:.4f}"
+        return f"{p:.6g}"
+
     def _funding_alert(self, s: Dict, now: float):
-        """Telegram alert when a 💰 funding coin's timer crosses its show
-        threshold (funding_duration_minutes) — i.e. it enters the table. Sent
-        once per entry; re-armed when the coin leaves the table."""
+        """Telegram alerts for 💰 funding coins:
+          • ENTRY when the coin's timer crosses its show threshold
+            (funding_duration_minutes) — with direction, price and funding %;
+          • EXIT when its timer breaks (ММ ended) and it leaves the table.
+        Each fires once; re-armed on the opposite transition."""
         if not s.get('funding_tg_alerts', False):
             self._funding_alerted.clear()
             return
         fdur = float(s.get('funding_duration_minutes', 0) or 0) * 60
         tm = self._get_tm() if self._get_tm else None
         notifier = getattr(tm, 'notifier', None) if tm else None
-        current = set()
+        # Compute entries/exits under the lock; send Telegram outside it.
         with self._lock:
+            current = set()
             for sym in list(self._funding_syms):
                 if sym in self._fuel_managed or sym in self._anomalies:
                     continue
                 t = self._timers.get(sym)
-                if not t:
-                    continue
-                if (now - t.get('since', now)) < fdur:
+                if not t or (now - t.get('since', now)) < fdur:
                     continue
                 current.add(sym)
-                if sym in self._funding_alerted:
-                    continue
-                self._funding_alerted.add(sym)
-                if notifier:
-                    rate = self._funding_rates.get(sym)
-                    d = t.get('dir')
-                    dtxt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '')
-                    rtxt = (f" · funding {rate:+.3f}%" if rate is not None else '')
-                    try:
-                        notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{rtxt}")
-                    except Exception as e:
-                        print(f"[FuelFilter] funding TG send error: {e}")
-        # Re-arm coins that left the table so a future entry alerts again.
-        self._funding_alerted &= current
+            new_entries = [(sym, self._timers[sym].get('dir')) for sym in current
+                           if sym not in self._funding_alerted]
+            # Exits: previously alerted but gone AND their timer actually ended
+            # (ММ break) — not just moved to a position / anomalies table.
+            left = [sym for sym in (self._funding_alerted - current)
+                    if sym not in self._timers]
+            self._funding_alerted = set(current)
+        if not notifier:
+            return
+        for sym, d in new_entries:
+            fuel = self._fuel_dir(sym)
+            price = fuel.get('mark_price') if fuel else None
+            rate = self._funding_rates.get(sym)
+            dtxt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '')
+            ptxt = (f" · {self._fmt_price(price)}" if price else '')
+            rtxt = (f" · funding {rate:+.3f}%" if rate is not None else '')
+            try:
+                notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{ptxt}{rtxt}")
+            except Exception as e:
+                print(f"[FuelFilter] funding TG send error: {e}")
+        for sym in left:
+            price = None
+            fuel = self._fuel_dir(sym)
+            if fuel:
+                price = fuel.get('mark_price')
+            ptxt = (f" · {self._fmt_price(price)}" if price else '')
+            try:
+                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід — ММ завершилось{ptxt}")
+            except Exception as e:
+                print(f"[FuelFilter] funding exit TG send error: {e}")
 
     def _btc_start_alert(self, s: Dict, now: float):
         """Send a Telegram message when BTC flips START↔STOP (if enabled).
