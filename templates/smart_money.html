@@ -1856,6 +1856,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-start-minutes" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Окремий поріг показу для 💰 funding-монет (хв). 0 = показувати одразу, щойно запустився таймер">Поріг показу funding (хв)</label>
+                            <input type="number" id="ff-funding-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </div>
+                        <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="📨 Сповіщати в Telegram, коли 💰 funding-монета зʼявляється в таблиці">
+                                <input type="checkbox" id="ff-funding-tg" onchange="saveFuelFilterSettings()"> 📨 TG про funding-монети
+                            </label>
+                        </div>
+                        <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
                                 <input type="checkbox" id="ff-use-potential" onchange="saveFuelFilterSettings()"> Вихід за виснаженістю
                             </label>
@@ -6884,6 +6893,8 @@ function renderFuelFilter(d) {
     setIf('ff-engine-timers', s.start_engine_use_timers !== false);     // default true
     setIf('ff-engine-anomalies', s.start_engine_use_anomalies !== false); // default true
     setIf('ff-engine-funding', !!s.start_engine_include_funding);
+    setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
+    setIf('ff-funding-tg', !!s.funding_tg_alerts);
     // Engine toggle: don't let a poll revert it within 5s of a user click
     // (avoids the "toggle jumps back" flicker from a stale in-flight GET).
     const _engTgl = document.getElementById('ff-engine-toggle');
@@ -7400,6 +7411,8 @@ async function saveFuelFilterSettings() {
         start_engine_use_timers: document.getElementById('ff-engine-timers').checked,
         start_engine_use_anomalies: document.getElementById('ff-engine-anomalies').checked,
         start_engine_include_funding: document.getElementById('ff-engine-funding').checked,
+        funding_duration_minutes: parseInt(document.getElementById('ff-funding-duration').value || '0', 10),
+        funding_tg_alerts: document.getElementById('ff-funding-tg').checked,
     };
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
