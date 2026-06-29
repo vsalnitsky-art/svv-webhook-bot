@@ -170,7 +170,15 @@ DEFAULT_SETTINGS = {
     # Bybit rate limit on get_positions is 5-10 req/s on UID; at 10s interval
     # we use ~0.1 req/s, very safe.
     'reconcile_interval_secs': 10,
-    
+
+    # === Trade archive (ML training dataset) ===
+    # When ON, every closed trade is also written to the long-term trade
+    # archive (for ML training / analytics), in addition to the capped
+    # Recent Closed list. Read in _finalize/close via settings['archive_trades'].
+    # MUST live here so update_settings() whitelists it and it persists —
+    # otherwise the /api/trade-archive/toggle write is silently dropped.
+    'archive_trades': False,
+
     # === BOS-N partial closes (after CHoCH+BOS opening) ===
     # The opening trade counts the entry-BOS as #1.
     # Subsequent same-direction BOS events are #2, #3, #4...
