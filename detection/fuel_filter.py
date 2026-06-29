@@ -83,6 +83,7 @@ DEFAULT_SETTINGS = {
     'start_signal_minutes': 5,      # BTC ММ held ≥ this → START signal (else STOP)
     # ── BTC-START auto-engine (banner toggle) ──
     'start_engine_enabled': False,        # master: auto-open basket on BTC START
+    'start_engine_independent': False,    # auto-open independent of BTC (own dir)
     'start_engine_use_anomalies': True,   # source: 🜂 anomalies table
     'start_engine_use_timers': True,      # source: ⏱️ active timers table
     'start_engine_scan_secs': 15,         # engine scan cadence (sec)
@@ -217,6 +218,16 @@ class FuelFilterDaemon:
             for k in DEFAULT_SETTINGS:
                 if k in patch:
                     s[k] = patch[k]
+            # The two engine-mode toggles are mutually exclusive: turning one ON
+            # forces the other OFF. Both may be OFF (engine idle). When a patch
+            # tries to enable both, the BTC mode wins by convention.
+            if patch.get('start_engine_enabled') is True:
+                s['start_engine_independent'] = False
+            elif patch.get('start_engine_independent') is True:
+                s['start_engine_enabled'] = False
+            # Safety net: never persist both ON.
+            if s.get('start_engine_enabled') and s.get('start_engine_independent'):
+                s['start_engine_independent'] = False
         try:
             self._db.set_setting(_DB_SETTINGS, s)
         except Exception as e:
@@ -291,10 +302,19 @@ class FuelFilterDaemon:
             # live in their OWN table, persist across fuel loss, and are removed
             # only by the user (manual delete / clear). {symbol: {...}}
             self._anomalies = st.get('anomalies', {}) or {}
-            if self._fuel_managed or self._anomalies:
+            # Candle-confirm attempt counters per coin — restored so the
+            # "🕯️ Спроби" column and the "Opened by" attempt number survive
+            # a bot restart instead of resetting to 0.
+            ea = st.get('engine_attempts', {}) or {}
+            if isinstance(ea, dict):
+                self._engine_attempts = {str(k).upper(): int(v)
+                                         for k, v in ea.items()
+                                         if str(v).lstrip('-').isdigit()}
+            if self._fuel_managed or self._anomalies or self._engine_attempts:
                 print(f"[FuelFilter] restored {len(self._fuel_managed)} tracked "
                       f"position(s), {len(self._timers)} timer(s), "
-                      f"{len(self._anomalies)} anomaly(ies) from DB")
+                      f"{len(self._anomalies)} anomaly(ies), "
+                      f"{len(self._engine_attempts)} attempt-counter(s) from DB")
 
     def _persist_state(self):
         try:
@@ -302,6 +322,7 @@ class FuelFilterDaemon:
                 'timers': self._timers,
                 'fuel_managed': self._fuel_managed,
                 'anomalies': self._anomalies,
+                'engine_attempts': self._engine_attempts,
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -1330,50 +1351,87 @@ class FuelFilterDaemon:
 
     def _engine_tick(self):
         s = self.get_settings()
-        if not s.get('start_engine_enabled') or not s.get('enabled'):
+        # Snapshot the attempt counters so we only hit the DB when they actually
+        # change this tick (they're persisted so the "🕯️ Спроби" column and the
+        # "Opened by" attempt number survive a bot restart).
+        _att_before = dict(self._engine_attempts)
+
+        def _persist_attempts_if_changed():
+            if self._engine_attempts != _att_before:
+                self._persist_state()
+
+        # Two mutually-exclusive engine modes (UI keeps them exclusive):
+        #   • BTC mode  (start_engine_enabled)     — open the basket only while
+        #     the ₿ BTCUSDT banner is START, all in the banner's direction.
+        #   • Indep mode(start_engine_independent) — open as soon as a coin
+        #     appears in the table, in the COIN's OWN ММ direction, with NO
+        #     dependency on BTC. Everything else (candle confirm, exhaustion,
+        #     exhaustion-exit management) works exactly as before.
+        # Both OFF → engine idle.
+        btc_mode = bool(s.get('start_engine_enabled'))
+        indep_mode = bool(s.get('start_engine_independent'))
+        if not s.get('enabled') or not (btc_mode or indep_mode):
             self._engine_attempts.clear()   # engine off → reset counters
+            _persist_attempts_if_changed()
             return
         now = time.time()
-        # BTC banner must be START (BTC ММ held ≥ start_signal_minutes).
-        btc_t = self._timers.get('BTCUSDT')
-        if not btc_t or btc_t.get('dir') not in ('LONG', 'SHORT'):
-            self._engine_attempts.clear()   # not START → reset counters
-            return
-        period = float(s.get('start_signal_minutes', 5) or 5) * 60
-        if (now - btc_t.get('since', now)) < period:
-            self._engine_attempts.clear()   # still counting, not START → reset
-            return
-        direction = btc_t['dir']     # open the basket in the BANNER direction
 
-        # Gather candidates from the chosen source tables. Only coins whose own
-        # ММ direction matches the BTC banner direction — opening against it
-        # would just be flip-closed by the manage branch (needless churn).
+        btc_dir = None
+        if btc_mode:
+            # BTC banner must be START (BTC ММ held ≥ start_signal_minutes).
+            btc_t = self._timers.get('BTCUSDT')
+            if not btc_t or btc_t.get('dir') not in ('LONG', 'SHORT'):
+                self._engine_attempts.clear()   # not START → reset counters
+                _persist_attempts_if_changed()
+                return
+            period = float(s.get('start_signal_minutes', 5) or 5) * 60
+            if (now - btc_t.get('since', now)) < period:
+                self._engine_attempts.clear()   # still counting → reset
+                _persist_attempts_if_changed()
+                return
+            btc_dir = btc_t['dir']           # the basket direction in BTC mode
+
+        # Gather candidates as {symbol: (held_sec, dir)}. In BTC mode only coins
+        # whose own ММ matches the banner direction qualify; in indep mode EVERY
+        # coin qualifies and opens in its own ММ direction.
         dur = float(s.get('duration_minutes', 5)) * 60
-        # {symbol: held_sec} so we can OPEN from the smallest timer to the largest.
-        cand_held = {}
+        cand = {}
         with self._lock:
             if s.get('start_engine_use_timers', True):
                 for sym, t in self._timers.items():
                     if sym == 'BTCUSDT' or sym in self._fuel_managed or sym in self._anomalies:
                         continue
-                    if t.get('dir') != direction:
+                    cdir = t.get('dir')
+                    if cdir not in ('LONG', 'SHORT'):
+                        continue
+                    if btc_mode and cdir != btc_dir:
                         continue
                     h = now - t.get('since', now)
                     if h >= dur:
-                        cand_held[sym] = h
+                        cand[sym] = (h, cdir)
             if s.get('start_engine_use_anomalies', True):
                 for sym, a in self._anomalies.items():
-                    if (a.get('holding') and a.get('dir') == direction
-                            and sym not in self._fuel_managed):
-                        at = self._timers.get(sym)
-                        cand_held[sym] = (now - at.get('since', now)) if at \
-                            else float(a.get('last_held_sec', 0))
+                    if not a.get('holding') or sym in self._fuel_managed:
+                        continue
+                    cdir = a.get('dir')
+                    if cdir not in ('LONG', 'SHORT'):
+                        continue
+                    if btc_mode and cdir != btc_dir:
+                        continue
+                    at = self._timers.get(sym)
+                    held = (now - at.get('since', now)) if at \
+                        else float(a.get('last_held_sec', 0))
+                    cand[sym] = (held, cdir)
             funding = set(self._funding_syms)
         if not s.get('start_engine_include_funding', False):
-            cand_held = {c: h for c, h in cand_held.items() if c not in funding}
-        if not cand_held:
-            print(f"[FF-Engine] START {direction} (BTC {self._fmt_dur(now - btc_t.get('since', now))}) "
-                  f"· 0 кандидатів (немає монет з ММ у напрямку {direction})")
+            cand = {c: v for c, v in cand.items() if c not in funding}
+
+        mode_lbl = f"BTC-START {btc_dir}" if btc_mode else "НЕЗАЛЕЖНИЙ"
+        if not cand:
+            # No candidates → nothing to attempt; drop any stale counters.
+            self._engine_attempts.clear()
+            _persist_attempts_if_changed()
+            print(f"[FF-Engine] {mode_lbl} · 0 кандидатів")
             return
 
         max_exh = float(s.get('max_exhaustion_pct', 75) or 75)
@@ -1384,7 +1442,7 @@ class FuelFilterDaemon:
         trace = []
 
         # Open in ascending timer order: smallest held first → largest.
-        for sym, held in sorted(cand_held.items(), key=lambda kv: kv[1]):
+        for sym, (held, d) in sorted(cand.items(), key=lambda kv: kv[1][0]):
             if sym in self._fuel_managed:
                 trace.append(f"{sym}:managed")
                 continue   # already managed (no duplicate)
@@ -1399,18 +1457,18 @@ class FuelFilterDaemon:
             # Exhaustion gate (same as _open) — surfaced HERE so it's visible and
             # does NOT silently waste a candle check. Too-exhausted coins are
             # skipped without counting an attempt (the move is just too far gone).
-            exh = self._exhaustion(sym, direction)
+            exh = self._exhaustion(sym, d)
             if exh is not None and exh > max_exh:
                 trace.append(f"{sym}:виснаж{exh:.0f}%>{max_exh:.0f}%")
                 continue
             # Candle confirmation: only open when recent candles move in the
-            # BTC direction (≥2 of last 3 closed bars).
+            # coin's direction (≥2 of last 3 closed bars).
             #   True  → confirmed, open now
             #   False → candles AGAINST → count an attempt, wait for next bar
             #   None  → no kline data yet → do NOT count an attempt (it's not the
             #           coin's fault); just retry next tick.
             if confirm_on:
-                conf = self._candle_confirms(sym, direction, tf)
+                conf = self._candle_confirms(sym, d, tf)
                 if conf is None:
                     trace.append(f"{sym}:немає-свічок({tf})")
                     continue
@@ -1428,12 +1486,12 @@ class FuelFilterDaemon:
                 # at the moment of opening.
                 attempt = self._engine_attempts.get(sym, 0) + 1
                 opened = self._open(
-                    sym, direction, fuel, s,
+                    sym, d, fuel, s,
                     opened_by=f"🕯️ FF спроба {attempt} · ⏱ {self._fmt_dur(held)}")
                 if opened:
                     self._engine_attempts.pop(sym, None)   # opened → reset
-                    trace.append(f"{sym}:✅ВІДКРИТО(сп{attempt})")
-                    print(f"[FF-Engine] opened {direction} {sym} (BTC START, спроба {attempt})")
+                    trace.append(f"{sym}:✅ВІДКРИТО {d}(сп{attempt})")
+                    print(f"[FF-Engine] opened {d} {sym} ({mode_lbl}, спроба {attempt})")
                 else:
                     trace.append(f"{sym}:_open-відхилив")
             except Exception as e:
@@ -1441,12 +1499,15 @@ class FuelFilterDaemon:
                 print(f"[FF-Engine] open error {sym}: {e}")
 
         # Prune attempt counters for coins that are no longer candidates.
-        considered = set(cand_held)
+        considered = set(cand)
         for k in list(self._engine_attempts):
             if k not in considered:
                 self._engine_attempts.pop(k, None)
 
-        print(f"[FF-Engine] START {direction} · {len(cand_held)} канд · "
+        # Persist the counters to DB if they changed this tick (survives restart).
+        _persist_attempts_if_changed()
+
+        print(f"[FF-Engine] {mode_lbl} · {len(cand)} канд · "
               f"свічки={'ON('+tf+')' if confirm_on else 'OFF'} · "
               + ' '.join(trace))
 
