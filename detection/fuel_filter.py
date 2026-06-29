@@ -88,6 +88,8 @@ DEFAULT_SETTINGS = {
     'start_engine_scan_secs': 15,         # engine scan cadence (sec)
     'start_engine_include_funding': False,# include 💰 funding-marked coins
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
+    'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
+    'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
 }
 
 
@@ -123,6 +125,8 @@ class FuelFilterDaemon:
         self._funding_rates: Dict[str, float] = {}
         # Last BTC START/STOP state we sent a Telegram alert for (None until set).
         self._btc_start_last_alert: Optional[str] = None
+        # Funding coins already TG-alerted as "entered the table" (alert once).
+        self._funding_alerted: set = set()
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
         self._btc_state: Dict = {}
         # Anomalies: coins that held fuel longer than anomaly_hours. Own table,
@@ -1015,6 +1019,49 @@ class FuelFilterDaemon:
             if self._errors <= 5:
                 print(f"[FuelFilter] BTC alert error: {e}")
 
+        # Telegram alert when a 💰 funding coin enters the table (once per entry).
+        try:
+            self._funding_alert(settings, now)
+        except Exception as e:
+            if self._errors <= 5:
+                print(f"[FuelFilter] funding alert error: {e}")
+
+    def _funding_alert(self, s: Dict, now: float):
+        """Telegram alert when a 💰 funding coin's timer crosses its show
+        threshold (funding_duration_minutes) — i.e. it enters the table. Sent
+        once per entry; re-armed when the coin leaves the table."""
+        if not s.get('funding_tg_alerts', False):
+            self._funding_alerted.clear()
+            return
+        fdur = float(s.get('funding_duration_minutes', 0) or 0) * 60
+        tm = self._get_tm() if self._get_tm else None
+        notifier = getattr(tm, 'notifier', None) if tm else None
+        current = set()
+        with self._lock:
+            for sym in list(self._funding_syms):
+                if sym in self._fuel_managed or sym in self._anomalies:
+                    continue
+                t = self._timers.get(sym)
+                if not t:
+                    continue
+                if (now - t.get('since', now)) < fdur:
+                    continue
+                current.add(sym)
+                if sym in self._funding_alerted:
+                    continue
+                self._funding_alerted.add(sym)
+                if notifier:
+                    rate = self._funding_rates.get(sym)
+                    d = t.get('dir')
+                    dtxt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '')
+                    rtxt = (f" · funding {rate:+.3f}%" if rate is not None else '')
+                    try:
+                        notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{rtxt}")
+                    except Exception as e:
+                        print(f"[FuelFilter] funding TG send error: {e}")
+        # Re-arm coins that left the table so a future entry alerts again.
+        self._funding_alerted &= current
+
     def _btc_start_alert(self, s: Dict, now: float):
         """Send a Telegram message when BTC flips START↔STOP (if enabled).
         Only START and STOP are alerted (COUNTING is intermediate)."""
@@ -1164,6 +1211,7 @@ class FuelFilterDaemon:
         with self._lock:
             settings = self.get_settings()
             duration_sec = settings['duration_minutes'] * 60
+            funding_dur = float(settings.get('funding_duration_minutes', 0) or 0) * 60
             now = time.time()
             timers = []
             for sym, t in self._timers.items():
@@ -1172,10 +1220,12 @@ class FuelFilterDaemon:
                 if sym in self._anomalies:
                     continue  # moved to the anomalies table — hide here
                 held = now - t.get('since', now)
-                # FILTER: only show timers that exceeded the threshold
-                if held < duration_sec:
-                    continue
                 is_fund = sym in self._funding_syms
+                # FILTER: 💰 funding coins use their OWN threshold
+                # (funding_duration_minutes); everyone else uses "Поріг показу".
+                thr = funding_dur if is_fund else duration_sec
+                if held < thr:
+                    continue
                 timers.append({
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
