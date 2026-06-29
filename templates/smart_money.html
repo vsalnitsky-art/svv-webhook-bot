@@ -1848,7 +1848,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку ММ (EMA, хв). Більше = плавніший, менш дьорганий напрямок таймера/банера/SCORE, але пізніша реакція. 0 = без часового згладжування (лишається лише гістерезис). Орієнтири: 15 ≈ як було, 45 ≈ спокійно, 90 ≈ дуже інертно.">Згладжування напрямку (хв)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку ММ для МОНЕТ (EMA+гістерезис, хв). 0 = ВИМКНЕНО (сире паливо, без затримки — за замовчуванням). Більше = плавніший, менш дьорганий напрямок монет, але пізніша реакція. Орієнтири: 0 = миттєво, 30 ≈ спокійно, 45–90 ≈ інертно. (На банер НЕ впливає — банер іде за вердиктом головного вікна.)">Згладжування напрямку монет (хв)</label>
                             <input type="number" id="ff-smoothing-min" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
@@ -6921,7 +6921,7 @@ function renderFuelFilter(d) {
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
-    setIf('ff-smoothing-min', s.direction_smoothing_min != null ? s.direction_smoothing_min : 45);
+    setIf('ff-smoothing-min', s.direction_smoothing_min != null ? s.direction_smoothing_min : 0);
     const anomHrs = (s.anomaly_hours != null ? s.anomaly_hours : 10);
     setIf('ff-anomaly-hours', anomHrs);
     const anomSub = document.getElementById('ff-anomaly-hours-sub');
@@ -7519,7 +7519,7 @@ async function saveFuelFilterSettings() {
         use_potential_exit: document.getElementById('ff-use-potential').checked,
         manage_open_positions: document.getElementById('ff-manage-positions').checked,
         anomaly_hours: parseInt(document.getElementById('ff-anomaly-hours').value || '10', 10),
-        direction_smoothing_min: parseInt(document.getElementById('ff-smoothing-min').value || '45', 10),
+        direction_smoothing_min: parseInt(document.getElementById('ff-smoothing-min').value || '0', 10),
         start_signal_minutes: parseInt(document.getElementById('ff-start-minutes').value || '5', 10),
         start_engine_scan_secs: parseInt(document.getElementById('ff-engine-scan').value || '15', 10),
         start_engine_use_timers: document.getElementById('ff-engine-timers').checked,
