@@ -344,46 +344,69 @@ class FuelFilterDaemon:
         return ('EXHAUSTED', '#ef4444')          # red
 
     def _timer_score_for(self, symbol, direction, held_sec, exhaustion, dur_sec):
-        """Per-coin hold quality, blending three CHEAP cached signals:
-          • room   (45%) — 1 − exhaustion: how much of the move is left.
-          • hold   (30%) — how long ММ has held vs the show threshold
-                           (saturates at ~3× → longer hold = more conviction).
-          • fuel   (25%) — magnitude of the liq-fuel imbalance ALIGNED with the
-                           timer direction (fuel flipping against → 0).
-        Returns {score:int, label:str, color:str}."""
-        if exhaustion is None:
-            room = 0.5
-        else:
-            try:
-                room = max(0.0, min(1.0, (100.0 - float(exhaustion)) / 100.0))
-            except (TypeError, ValueError):
-                room = 0.5
-        ratio = (held_sec / dur_sec) if dur_sec and dur_sec > 0 else 1.0
-        hold = max(0.0, min(1.0, ratio / 3.0))
-        fmag = 0.0
+        """Per-coin hold quality + its OWN live direction.
+
+        The SCORE is not a copy of the timer direction: it determines the
+        direction IN THE MOMENT from the current liq-fuel imbalance
+        (`_fuel_dir`), so if ММ has started flipping the SCORE arrow can
+        disagree with the (slower) timer direction. It falls back to the timer
+        direction only when the live fuel is neutral / unavailable.
+
+        Magnitude blends three CHEAP cached signals, all relative to that
+        live direction:
+          • room (45%) — 1 − exhaustion (how much of the move is left)
+          • hold (30%) — ММ hold duration vs the show threshold (saturates ~3×)
+          • fuel (25%) — liq-fuel imbalance magnitude aligned with the direction
+        Returns {score:int, label:str, color:str, dir:str}."""
+        # 1) Live direction from current fuel (independent of the timer).
+        live_dir = direction
+        signed = None
         try:
             fd = self._fuel_dir(symbol)
-            if fd and fd.get('dir') is not None:
-                signed = float(fd['dir'])
-                aligned = signed if direction == 'LONG' else -signed
-                fmag = max(0.0, min(1.0, aligned / 0.5))
+            if fd:
+                if fd.get('status') in ('LONG', 'SHORT'):
+                    live_dir = fd['status']
+                if fd.get('dir') is not None:
+                    signed = float(fd['dir'])
         except Exception:
-            fmag = 0.0
+            pass
+
+        # 2) Exhaustion (room) for the LIVE direction. Reuse the row's value
+        #    when it matches the timer; recompute when the live dir differs.
+        ex = exhaustion
+        if live_dir != direction:
+            try:
+                ex = self._exhaustion(symbol, live_dir)
+            except Exception:
+                ex = exhaustion
+        try:
+            exf = float(ex) if ex is not None else None
+        except (TypeError, ValueError):
+            exf = None
+        room = 0.5 if exf is None else max(0.0, min(1.0, (100.0 - exf) / 100.0))
+
+        # 3) Hold conviction.
+        ratio = (held_sec / dur_sec) if dur_sec and dur_sec > 0 else 1.0
+        hold = max(0.0, min(1.0, ratio / 3.0))
+
+        # 4) Fuel magnitude aligned with the live direction.
+        fmag = 0.0
+        if signed is not None:
+            aligned = signed if live_dir == 'LONG' else -signed
+            fmag = max(0.0, min(1.0, aligned / 0.5))
+
         score = 100.0 * (0.45 * room + 0.30 * hold + 0.25 * fmag)
         # Exhaustion override: the whole FF concept exits on exhaustion, so a
         # nearly-spent move must NOT read as a healthy hold no matter how long
         # it has held. Cap the score hard when exhaustion is high.
-        try:
-            ex = float(exhaustion) if exhaustion is not None else None
-        except (TypeError, ValueError):
-            ex = None
-        if ex is not None:
-            if ex >= 90:
+        if exf is not None:
+            if exf >= 90:
                 score = min(score, 22)    # → EXHAUSTED
-            elif ex >= 80:
+            elif exf >= 80:
                 score = min(score, 38)    # → WEAK
         label, color = self._score_label(score)
-        return {'score': int(round(score)), 'label': label, 'color': color}
+        return {'score': int(round(score)), 'label': label,
+                'color': color, 'dir': live_dir}
 
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
