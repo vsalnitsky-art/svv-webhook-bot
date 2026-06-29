@@ -1056,8 +1056,7 @@ class FuelFilterDaemon:
                     dtxt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '')
                     rtxt = (f" · funding {rate:+.3f}%" if rate is not None else '')
                     try:
-                        notifier.send_message(
-                            f"💰 <b>{sym}</b> у таблиці ❤️ Fuel Auto-Filter {dtxt}{rtxt}")
+                        notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{rtxt}")
                     except Exception as e:
                         print(f"[FuelFilter] funding TG send error: {e}")
         # Re-arm coins that left the table so a future entry alerts again.
