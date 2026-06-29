@@ -291,10 +291,19 @@ class FuelFilterDaemon:
             # live in their OWN table, persist across fuel loss, and are removed
             # only by the user (manual delete / clear). {symbol: {...}}
             self._anomalies = st.get('anomalies', {}) or {}
-            if self._fuel_managed or self._anomalies:
+            # Candle-confirm attempt counters per coin — restored so the
+            # "🕯️ Спроби" column and the "Opened by" attempt number survive
+            # a bot restart instead of resetting to 0.
+            ea = st.get('engine_attempts', {}) or {}
+            if isinstance(ea, dict):
+                self._engine_attempts = {str(k).upper(): int(v)
+                                         for k, v in ea.items()
+                                         if str(v).lstrip('-').isdigit()}
+            if self._fuel_managed or self._anomalies or self._engine_attempts:
                 print(f"[FuelFilter] restored {len(self._fuel_managed)} tracked "
                       f"position(s), {len(self._timers)} timer(s), "
-                      f"{len(self._anomalies)} anomaly(ies) from DB")
+                      f"{len(self._anomalies)} anomaly(ies), "
+                      f"{len(self._engine_attempts)} attempt-counter(s) from DB")
 
     def _persist_state(self):
         try:
@@ -302,6 +311,7 @@ class FuelFilterDaemon:
                 'timers': self._timers,
                 'fuel_managed': self._fuel_managed,
                 'anomalies': self._anomalies,
+                'engine_attempts': self._engine_attempts,
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -1330,18 +1340,30 @@ class FuelFilterDaemon:
 
     def _engine_tick(self):
         s = self.get_settings()
+        # Snapshot the attempt counters so we only hit the DB when they actually
+        # change this tick (they're persisted so the "🕯️ Спроби" column and the
+        # "Opened by" attempt number survive a bot restart).
+        _att_before = dict(self._engine_attempts)
+
+        def _persist_attempts_if_changed():
+            if self._engine_attempts != _att_before:
+                self._persist_state()
+
         if not s.get('start_engine_enabled') or not s.get('enabled'):
             self._engine_attempts.clear()   # engine off → reset counters
+            _persist_attempts_if_changed()
             return
         now = time.time()
         # BTC banner must be START (BTC ММ held ≥ start_signal_minutes).
         btc_t = self._timers.get('BTCUSDT')
         if not btc_t or btc_t.get('dir') not in ('LONG', 'SHORT'):
             self._engine_attempts.clear()   # not START → reset counters
+            _persist_attempts_if_changed()
             return
         period = float(s.get('start_signal_minutes', 5) or 5) * 60
         if (now - btc_t.get('since', now)) < period:
             self._engine_attempts.clear()   # still counting, not START → reset
+            _persist_attempts_if_changed()
             return
         direction = btc_t['dir']     # open the basket in the BANNER direction
 
@@ -1372,6 +1394,9 @@ class FuelFilterDaemon:
         if not s.get('start_engine_include_funding', False):
             cand_held = {c: h for c, h in cand_held.items() if c not in funding}
         if not cand_held:
+            # No candidates → nothing to attempt; drop any stale counters.
+            self._engine_attempts.clear()
+            _persist_attempts_if_changed()
             print(f"[FF-Engine] START {direction} (BTC {self._fmt_dur(now - btc_t.get('since', now))}) "
                   f"· 0 кандидатів (немає монет з ММ у напрямку {direction})")
             return
@@ -1445,6 +1470,9 @@ class FuelFilterDaemon:
         for k in list(self._engine_attempts):
             if k not in considered:
                 self._engine_attempts.pop(k, None)
+
+        # Persist the counters to DB if they changed this tick (survives restart).
+        _persist_attempts_if_changed()
 
         print(f"[FF-Engine] START {direction} · {len(cand_held)} канд · "
               f"свічки={'ON('+tf+')' if confirm_on else 'OFF'} · "
