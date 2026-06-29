@@ -1848,6 +1848,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку ММ (EMA, хв). Більше = плавніший, менш дьорганий напрямок таймера/банера/SCORE, але пізніша реакція. 0 = без часового згладжування (лишається лише гістерезис). Орієнтири: 15 ≈ як було, 45 ≈ спокійно, 90 ≈ дуже інертно.">Згладжування напрямку (хв)</label>
+                            <input type="number" id="ff-smoothing-min" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </div>
+                        <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки годин ММ має триматись, щоб монета пішла у таблицю 🜂 Аномальні монети">Поріг аномалії (год)</label>
                             <input type="number" id="ff-anomaly-hours" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
@@ -1900,7 +1904,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </div>
                             <div>
                                 <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли свічки підтверджують напрямок (≥2 з 3 останніх закритих свічок). Монета лишається в таблиці, поки свічки не співпадуть.">
-                                    <input type="checkbox" id="ff-engine-candle" onchange="saveFuelFilterSettings()"> 🕯️ Підтвердження свічкою (2/3)
+                                    <input type="checkbox" id="ff-engine-candle" onchange="saveFuelFilterSettings()"> 🕯️ Підтвердження свічкою (2/2)
                                 </label>
                             </div>
                             <div>
@@ -6917,6 +6921,7 @@ function renderFuelFilter(d) {
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
+    setIf('ff-smoothing-min', s.direction_smoothing_min != null ? s.direction_smoothing_min : 45);
     const anomHrs = (s.anomaly_hours != null ? s.anomaly_hours : 10);
     setIf('ff-anomaly-hours', anomHrs);
     const anomSub = document.getElementById('ff-anomaly-hours-sub');
@@ -7514,6 +7519,7 @@ async function saveFuelFilterSettings() {
         use_potential_exit: document.getElementById('ff-use-potential').checked,
         manage_open_positions: document.getElementById('ff-manage-positions').checked,
         anomaly_hours: parseInt(document.getElementById('ff-anomaly-hours').value || '10', 10),
+        direction_smoothing_min: parseInt(document.getElementById('ff-smoothing-min').value || '45', 10),
         start_signal_minutes: parseInt(document.getElementById('ff-start-minutes').value || '5', 10),
         start_engine_scan_secs: parseInt(document.getElementById('ff-engine-scan').value || '15', 10),
         start_engine_use_timers: document.getElementById('ff-engine-timers').checked,
