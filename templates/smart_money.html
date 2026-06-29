@@ -1898,6 +1898,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                     <input type="checkbox" id="ff-engine-funding" onchange="saveFuelFilterSettings()"> 💰 Брати funding-монети
                                 </label>
                             </div>
+                            <div>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли свічки підтверджують напрямок (≥2 з 3 останніх закритих свічок). Монета лишається в таблиці, поки свічки не співпадуть.">
+                                    <input type="checkbox" id="ff-engine-candle" onchange="saveFuelFilterSettings()"> 🕯️ Підтвердження свічкою (2/3)
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -6893,6 +6898,7 @@ function renderFuelFilter(d) {
     setIf('ff-engine-timers', s.start_engine_use_timers !== false);     // default true
     setIf('ff-engine-anomalies', s.start_engine_use_anomalies !== false); // default true
     setIf('ff-engine-funding', !!s.start_engine_include_funding);
+    setIf('ff-engine-candle', s.engine_candle_confirm !== false);   // default true
     setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
     setIf('ff-funding-tg', !!s.funding_tg_alerts);
     // Engine toggle: don't let a poll revert it within 5s of a user click
@@ -7429,6 +7435,7 @@ async function saveFuelFilterSettings() {
         start_engine_use_timers: document.getElementById('ff-engine-timers').checked,
         start_engine_use_anomalies: document.getElementById('ff-engine-anomalies').checked,
         start_engine_include_funding: document.getElementById('ff-engine-funding').checked,
+        engine_candle_confirm: document.getElementById('ff-engine-candle').checked,
         funding_duration_minutes: parseInt(document.getElementById('ff-funding-duration').value || '0', 10),
         funding_tg_alerts: document.getElementById('ff-funding-tg').checked,
     };
