@@ -7033,9 +7033,14 @@ function renderFuelFilter(d) {
                     ? `<span title="Спроб відкрити (свічка не підтвердила)" style="font-weight:700;color:${att >= 10 ? '#f87171' : att >= 4 ? '#facc15' : '#9aa3b5'}">${att}</span>`
                     : '<span style="color:#555">—</span>';
                 // SCORE — per-coin hold verdict (STRONG HOLD / HOLD / NEUTRAL / WEAK / EXHAUSTED).
+                // The score is direction-aware (computed for the coin's own ММ
+                // direction), so the badge carries that direction explicitly.
                 const sc = t.score || null;
+                const scDir = t.dir === 'LONG'
+                    ? ' <span style="opacity:.95">🟢↑</span>'
+                    : (t.dir === 'SHORT' ? ' <span style="opacity:.95">🔴↓</span>' : '');
                 const scoreHtml = (sc && sc.label)
-                    ? `<span title="Оцінка утримання ${sc.score}/100" style="display:inline-block;padding:2px 7px;border-radius:5px;font-size:0.62rem;font-weight:800;letter-spacing:0.4px;color:#fff;background:${sc.color}">${sc.label}</span><span style="font-size:0.6rem;color:#8b93a7;margin-left:5px">${sc.score}</span>`
+                    ? `<span title="Оцінка утримання ${sc.score}/100 у напрямку ${t.dir || '—'}" style="display:inline-block;padding:2px 7px;border-radius:5px;font-size:0.62rem;font-weight:800;letter-spacing:0.4px;color:#fff;background:${sc.color}">${sc.label}${scDir}</span><span style="font-size:0.6rem;color:#8b93a7;margin-left:5px">${sc.score}</span>`
                     : '<span style="color:#555">—</span>';
                 return `<tr style="${rowStyle}">
                     <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span>${fundLbl}${fundNext}</td>
