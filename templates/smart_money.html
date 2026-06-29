@@ -2389,11 +2389,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
-                        <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
-                        <th>Status</th><th>Action</th></tr>
+                        <th title="SCORE монети з ❤️ Fuel Auto-Filter — той самий, що в ⏱️ Активні таймери: STRONG HOLD / HOLD / NEUTRAL / WEAK / EXHAUSTED + напрямок 🟢▲/🔴▼ (⚠ = паливо проти ціни).">SCORE</th>
+                        <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -2451,11 +2451,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, paper позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
-                        <th title="SMC Hold-Confidence: наскільки структура Smart Money підтримує утримання угоди в її напрямку (0–100). Наведіть для деталей.">SCORE</th>
-                        <th>Status</th><th></th></tr>
+                        <th title="SCORE монети з ❤️ Fuel Auto-Filter — той самий, що в ⏱️ Активні таймери: STRONG HOLD / HOLD / NEUTRAL / WEAK / EXHAUSTED + напрямок 🟢▲/🔴▼ (⚠ = паливо проти ціни).">SCORE</th>
+                        <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -6165,6 +6165,21 @@ function decisionRecap(es) {
     return '';
 }
 
+// Fuel Auto-Filter SCORE badge — IDENTICAL to the ⏱️ Active Timers SCORE cell.
+// sc = {score,label,color,dir,conflict}. Used by the timers table AND the open
+// positions tables (real + paper) so they all render the same verdict.
+function ffScoreBadgeHTML(sc) {
+    if (!sc || !sc.label) return '<span style="color:#555">—</span>';
+    const scd = sc.dir || null;
+    const scDir = scd === 'LONG'
+        ? '<span style="font-size:0.78rem;margin-right:5px">🟢<span style="color:#22c55e;font-weight:900">▲</span></span>'
+        : (scd === 'SHORT' ? '<span style="font-size:0.78rem;margin-right:5px">🔴<span style="color:#ef4444;font-weight:900">▼</span></span>' : '');
+    const scWarn = sc.conflict
+        ? '<span title="Конфлікт: паливо й рух ціни в різні боки" style="margin-left:4px">⚠️</span>'
+        : '';
+    return `${scDir}<span title="Оцінка утримання ${sc.score}/100 у напрямку ${sc.dir || '—'}${sc.conflict ? ' · ⚠ паливо проти ціни' : ''}" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:${sc.color}22;border:1px solid ${sc.color};font-weight:800;font-size:0.74rem;color:${sc.color}">${sc.score}<span style="font-size:0.6rem;letter-spacing:0.3px">${sc.label}</span></span>${scWarn}`;
+}
+
 // Combined Status badge — shows the position's Decision-Center headline
 // captured at open time (e.g. "LONG 78%") plus an indicator of live health.
 // Replaces the previous two-column setup (Entry Score badge + Health badge)
@@ -7049,23 +7064,9 @@ function renderFuelFilter(d) {
                 const attHtml = att > 0
                     ? `<span title="Спроб відкрити (свічка не підтвердила)" style="font-weight:700;color:${att >= 10 ? '#f87171' : att >= 4 ? '#facc15' : '#9aa3b5'}">${att}</span>`
                     : '<span style="color:#555">—</span>';
-                // SCORE — per-coin hold verdict (STRONG HOLD / HOLD / NEUTRAL / WEAK / EXHAUSTED).
-                // The score determines its OWN live direction (sc.dir), shown as a
-                // SEPARATE 🟢▲ / 🔴▼ marker BEFORE the coloured verdict badge.
-                const sc = t.score || null;
-                const scd = (sc && sc.dir) || null;
-                const scDir = scd === 'LONG'
-                    ? '<span style="font-size:0.78rem;margin-right:5px">🟢<span style="color:#22c55e;font-weight:900">▲</span></span>'
-                    : (scd === 'SHORT' ? '<span style="font-size:0.78rem;margin-right:5px">🔴<span style="color:#ef4444;font-weight:900">▼</span></span>' : '');
-                // ⚠ when liq-fuel bias and live price action disagree.
-                const scWarn = (sc && sc.conflict)
-                    ? '<span title="Конфлікт: паливо й рух ціни в різні боки" style="margin-left:4px">⚠️</span>'
-                    : '';
-                // Outline-pill badge: NUMBER then LABEL, 1px coloured border on a
-                // translucent wash (matches the open-positions Hold-Score style).
-                const scoreHtml = (sc && sc.label)
-                    ? `${scDir}<span title="Оцінка утримання ${sc.score}/100 у напрямку ${sc.dir || '—'}${sc.conflict ? ' · ⚠ паливо проти ціни' : ''}" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:${sc.color}22;border:1px solid ${sc.color};font-weight:800;font-size:0.74rem;color:${sc.color}">${sc.score}<span style="font-size:0.6rem;letter-spacing:0.3px">${sc.label}</span></span>${scWarn}`
-                    : '<span style="color:#555">—</span>';
+                // SCORE — per-coin hold verdict (shared badge with the open
+                // positions tables).
+                const scoreHtml = ffScoreBadgeHTML(t.score);
                 return `<tr style="${rowStyle}">
                     <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span>${fundLbl}${fundNext}</td>
                     <td>${dirHtml}</td>
@@ -7637,7 +7638,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7671,8 +7672,7 @@ async function loadTMState() {
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
                     ${breakevenCloseCellHTML(p, false)}
-                    ${holdScoreCellHTML(p.hold)}
-                    <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
+                    <td>${ffScoreBadgeHTML(p.ff_score)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');
@@ -7720,7 +7720,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="14" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7745,8 +7745,7 @@ async function loadTMState() {
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
-                    ${holdScoreCellHTML(p.hold)}
-                    <td>${statusBadgeHTML(p.entry_score, p.health)}</td>
+                    <td>${ffScoreBadgeHTML(p.ff_score)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');

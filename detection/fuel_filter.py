@@ -481,13 +481,12 @@ class FuelFilterDaemon:
         return {'score': int(round(score)), 'label': label, 'color': color,
                 'dir': live_dir, 'conflict': conflict}
 
-    def score_snapshot(self, symbol: str) -> Optional[str]:
-        """Compact, human SCORE string for `symbol` RIGHT NOW, e.g.
-        'STRONG HOLD 🟢▲ 79'. Usable from other modules (Trade Manager stamps
-        it on a position at open and at close). Returns None if it can't be
-        computed. Pulls held/dir/exhaustion from the live timer when present,
-        otherwise scores with held=0 and lets the score derive its own
-        direction from live price/fuel."""
+    def score_dict(self, symbol: str) -> Optional[Dict]:
+        """Full SCORE verdict dict for `symbol` RIGHT NOW — same shape the
+        ⏱️ Active Timers rows carry ({score,label,color,dir,conflict}) — so the
+        open-positions tables (real + paper) can render the IDENTICAL badge.
+        Pulls held/dir/exhaustion from the live timer when present, else scores
+        with held=0 and lets the score derive its own live direction."""
         try:
             sym = (symbol or '').upper().strip()
             if not sym:
@@ -503,13 +502,20 @@ class FuelFilterDaemon:
                 else:
                     held, tdir, exh = 0.0, 'LONG', None
             dur = float(s.get('duration_minutes', 5) or 5) * 60
-            sc = self._timer_score_for(sym, tdir, held, exh, dur, tf)
-            arrow = '🟢▲' if sc.get('dir') == 'LONG' else (
-                '🔴▼' if sc.get('dir') == 'SHORT' else '')
-            warn = ' ⚠' if sc.get('conflict') else ''
-            return f"{sc['label']} {arrow} {sc['score']}{warn}".strip()
+            return self._timer_score_for(sym, tdir, held, exh, dur, tf)
         except Exception:
             return None
+
+    def score_snapshot(self, symbol: str) -> Optional[str]:
+        """Compact, human SCORE string for `symbol` RIGHT NOW, e.g.
+        'STRONG HOLD 🟢▲ 79'. Used to stamp a position at open and at close."""
+        sc = self.score_dict(symbol)
+        if not sc:
+            return None
+        arrow = '🟢▲' if sc.get('dir') == 'LONG' else (
+            '🔴▼' if sc.get('dir') == 'SHORT' else '')
+        warn = ' ⚠' if sc.get('conflict') else ''
+        return f"{sc['label']} {arrow} {sc['score']}{warn}".strip()
 
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
