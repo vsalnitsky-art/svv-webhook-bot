@@ -2124,6 +2124,10 @@ class TradeManager:
             # Decision Center verdict (headline, recommended, verdict, etc.).
             position['entry_score'] = decision
 
+        # FF SCORE verdict at open (STRONG HOLD 🟢▲ 79) — stamped so the close
+        # recap can show "SCORE: <at open> → <at close>".
+        position['ff_score_open'] = self._ff_score_snapshot(symbol)
+
         # Full pre-trade snapshot for the entry-quality backtest dataset.
         # Captured ONCE at open — decision + move-potential + hold score —
         # so we can later test which signals predicted good vs bad trades.
@@ -2384,7 +2388,8 @@ class TradeManager:
         # Mark as adopted so UI can show a badge and analytics can
         # distinguish this trade's outcome from TM-initiated trades.
         pos['external'] = True
-        
+        pos['ff_score_open'] = self._ff_score_snapshot(symbol)
+
         with self._lock:
             self._positions[symbol] = pos
             self._pos_state[symbol] = self._fresh_pos_state()
@@ -2504,6 +2509,18 @@ class TradeManager:
             'live_count': len(live_symbols),
         }
     
+    @staticmethod
+    def _ff_score_snapshot(symbol: str) -> Optional[str]:
+        """Fetch the Fuel Auto-Filter SCORE verdict string for `symbol` right
+        now (e.g. 'STRONG HOLD 🟢▲ 79'), or None. Used to stamp a position at
+        open and at close so the close recap can show the SCORE journey."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            return ff.score_snapshot(symbol) if ff else None
+        except Exception:
+            return None
+
     def _build_reason_detail(self, symbol: str, pos: Dict, reason: str,
                              pnl_pct: float, is_shadow: bool = False) -> str:
         """Compose a human-readable, information-rich close reason.
@@ -2555,20 +2572,27 @@ class TradeManager:
         # peak never contradicts the realised result.
         state = (self._shadow_pos_state if is_shadow else self._pos_state).get(symbol, {})
         peak = state.get('peak_pnl_pct')
-        peak = max(peak if peak is not None else 0.0, pnl_pct)
-        if peak > 0:
-            # How much of the peak we gave back by exit
-            give_back = peak - pnl_pct
-            if give_back > 0.1:
-                parts.append(f'пік +{peak:.2f}% (віддано {give_back:.2f}%)')
-            else:
-                parts.append(f'пік +{peak:.2f}%')
+        # ALWAYS show the peak/give-back line for EVERY trade — even losers that
+        # never went green (peak then is just the best level reached, clamped to
+        # the final PnL so it never contradicts the result). Signed so a trade
+        # that never profited reads e.g. 'пік -0.30%'.
+        peak = max(peak if peak is not None else pnl_pct, pnl_pct)
+        give_back = peak - pnl_pct
+        if give_back > 0.1:
+            parts.append(f'пік {peak:+.2f}% (віддано {give_back:.2f}%)')
+        else:
+            parts.append(f'пік {peak:+.2f}%')
 
-        # 4. SMC context at close (from the hold-confidence cache, if fresh)
-        cached = self._hold_cache.get(symbol)
-        hold = cached[1] if cached and cached[1] else None
-        if hold and hold.get('ok'):
-            parts.append(f"SMC {int(hold['score'])}/100 {hold['verdict']}")
+        # 4. SCORE at open → at close (replaces the old entry-decision recap).
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            sc_close = ff.score_snapshot(symbol) if ff else None
+        except Exception:
+            sc_close = None
+        sc_open = pos.get('ff_score_open')
+        if sc_open or sc_close:
+            parts.append(f"SCORE: {sc_open or '—'} → {sc_close or '—'}")
 
         return ' · '.join(str(p) for p in parts if p)
 
@@ -2801,6 +2825,8 @@ class TradeManager:
         }
         if decision is not None:
             pos['entry_score'] = decision
+        # FF SCORE verdict at open (for the close recap "SCORE: open → close").
+        pos['ff_score_open'] = self._ff_score_snapshot(symbol)
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
