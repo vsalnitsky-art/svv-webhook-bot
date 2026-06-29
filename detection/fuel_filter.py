@@ -79,7 +79,7 @@ DEFAULT_SETTINGS = {
     'max_exhaustion_pct': 75,     # (legacy) not used for auto-open anymore
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
     'manage_open_positions': True,  # if True, FF closes positions it opened
-    'direction_smoothing_min': 45,  # EMA window (min) that smooths ММ direction
+    'direction_smoothing_min': 0,   # EMA window (min) for ММ direction; 0 = OFF (raw)
     'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
     'start_signal_minutes': 5,      # BTC ММ held ≥ this → START signal (else STOP)
     # ── BTC-START auto-engine (banner toggle) ──
@@ -151,6 +151,11 @@ class FuelFilterDaemon:
         self._funding_alerted: set = set()
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
         self._btc_state: Dict = {}
+        # BTC banner direction = the 🎯 Smart Money Concepts main-window verdict
+        # (compute_bias), NOT liq-fuel. Held timer counts how long that verdict
+        # has stayed LONG/SHORT. Refreshed once per scan cycle in _tick.
+        self._btc_verdict_dir: Optional[str] = None   # 'LONG'/'SHORT'/None(WAIT)
+        self._btc_verdict_since: float = 0.0
         # Anomalies: coins that held fuel longer than anomaly_hours. Own table,
         # survive fuel loss, user-deleted only. {symbol: {dir, started_at,
         # start_price, holding, last_price, last_held_sec, ended_at, end_price}}
@@ -331,6 +336,12 @@ class FuelFilterDaemon:
             if isinstance(hy, dict):
                 self._fuel_hyst = {str(k).upper(): (v if v in ('LONG', 'SHORT') else None)
                                    for k, v in hy.items()}
+            bvd = st.get('btc_verdict_dir')
+            self._btc_verdict_dir = bvd if bvd in ('LONG', 'SHORT') else None
+            try:
+                self._btc_verdict_since = float(st.get('btc_verdict_since') or 0.0)
+            except (TypeError, ValueError):
+                self._btc_verdict_since = 0.0
             if self._fuel_managed or self._anomalies or self._engine_attempts:
                 print(f"[FuelFilter] restored {len(self._fuel_managed)} tracked "
                       f"position(s), {len(self._timers)} timer(s), "
@@ -346,6 +357,8 @@ class FuelFilterDaemon:
                 'engine_attempts': self._engine_attempts,
                 'fuel_ema': self._fuel_ema,
                 'fuel_hyst': self._fuel_hyst,
+                'btc_verdict_dir': self._btc_verdict_dir,
+                'btc_verdict_since': self._btc_verdict_since,
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -571,8 +584,14 @@ class FuelFilterDaemon:
             return None
         raw = fd.get('dir', 0.0)
         sym = (symbol or '').upper()
+        W = float(self.get_settings().get('direction_smoothing_min', 0) or 0)
+        if W <= 0:
+            # Smoothing OFF → raw fuel, instant (no lag, matches the source the
+            # main window reads). This is the default.
+            return {'dir': raw, 'mark_price': fd.get('mark_price'),
+                    'status': fd.get('status'), 'raw_dir': raw,
+                    'raw_status': fd.get('status')}
         if update:
-            W = float(self.get_settings().get('direction_smoothing_min', 45) or 0)
             N = max(1.0, W * 60.0 / CYCLE_SECS)      # samples in the window
             alpha = 2.0 / (N + 1.0)                   # EMA smoothing factor
             prev = self._fuel_ema.get(sym)
@@ -597,6 +616,25 @@ class FuelFilterDaemon:
                 else fd.get('status')
         return {'dir': round(ema, 3), 'mark_price': fd.get('mark_price'),
                 'status': status, 'raw_dir': raw, 'raw_status': fd.get('status')}
+
+    def _update_btc_verdict(self):
+        """Refresh the BTC banner direction from the MAIN-WINDOW verdict
+        (compute_bias — exactly what 🎯 Smart Money Concepts shows), so the
+        banner is 1:1 with the main window instead of raw liq-fuel. Resets the
+        held timer whenever the verdict direction changes. Called once per cycle."""
+        try:
+            from web.flask_app import compute_bias
+            d = compute_bias(self._db, 'BTCUSDT', None)
+            v = (d or {}).get('verdict')
+            vdir = v if v in ('LONG', 'SHORT') else None
+        except Exception as e:
+            print(f"[FuelFilter] BTC verdict calc error: {e}")
+            return
+        now = time.time()
+        if vdir != self._btc_verdict_dir:
+            self._btc_verdict_dir = vdir
+            self._btc_verdict_since = now if vdir else 0.0
+            self._persist_state()
 
     def _bias(self, symbol: str) -> Dict:
         """Cached FF-specific bias computation. Uses compute_bias_for_ff —
@@ -974,6 +1012,8 @@ class FuelFilterDaemon:
         self._last_tick_ts = time.time()
         if not settings.get('enabled'):
             return
+        # Refresh the BTC banner verdict (main-window compute_bias) once a cycle.
+        self._update_btc_verdict()
         try:
             watchlist = self._get_watchlist() or []
         except Exception:
@@ -1395,12 +1435,12 @@ class FuelFilterDaemon:
         """Compact current ₿ BTCUSDT status for messages as a direction:
         '₿ 🟢 LONG' / '₿ 🔴 SHORT' when START is active, else '₿ ⚪ WAIT'
         (no confirmed start: counting, or no BTC timer)."""
-        btc_t = self._timers.get('BTCUSDT')
         period = float(s.get('start_signal_minutes', 5) or 5) * 60
-        if btc_t and btc_t.get('dir') in ('LONG', 'SHORT'):
-            held = now - btc_t.get('since', now)
+        vdir = self._btc_verdict_dir
+        if vdir in ('LONG', 'SHORT') and self._btc_verdict_since:
+            held = now - self._btc_verdict_since
             if held >= period:
-                return '₿ 🟢 LONG' if btc_t['dir'] == 'LONG' else '₿ 🔴 SHORT'
+                return '₿ 🟢 LONG' if vdir == 'LONG' else '₿ 🔴 SHORT'
         return '₿ ⚪ WAIT'
 
     def _btc_start_alert(self, s: Dict, now: float):
@@ -1408,12 +1448,11 @@ class FuelFilterDaemon:
         Only START and STOP are alerted (COUNTING is intermediate)."""
         if not s.get('start_signal_tg_alerts', False):
             return
-        btc_t = self._timers.get('BTCUSDT')
         period = float(s.get('start_signal_minutes', 5) or 5) * 60
         direction = None
-        if btc_t and btc_t.get('dir') in ('LONG', 'SHORT'):
-            direction = btc_t['dir']
-            held = now - btc_t.get('since', now)
+        if self._btc_verdict_dir in ('LONG', 'SHORT') and self._btc_verdict_since:
+            direction = self._btc_verdict_dir
+            held = now - self._btc_verdict_since
             state = 'START' if held >= period else 'COUNTING'
             # Remember the live direction so a later STOP can report which side
             # it stopped on (at STOP time there's no timer/direction left).
@@ -1592,18 +1631,20 @@ class FuelFilterDaemon:
 
         btc_dir = None
         if btc_mode:
-            # BTC banner must be START (BTC ММ held ≥ start_signal_minutes).
-            btc_t = self._timers.get('BTCUSDT')
-            if not btc_t or btc_t.get('dir') not in ('LONG', 'SHORT'):
-                self._engine_attempts.clear()   # not START → reset counters
+            # Banner = main-window verdict; START when that verdict has held
+            # LONG/SHORT for ≥ start_signal_minutes. The engine opens the basket
+            # in the VERDICT direction (1:1 with the banner / main window).
+            vdir = self._btc_verdict_dir
+            if vdir not in ('LONG', 'SHORT') or not self._btc_verdict_since:
+                self._engine_attempts.clear()   # WAIT → reset counters
                 _persist_attempts_if_changed()
                 return
             period = float(s.get('start_signal_minutes', 5) or 5) * 60
-            if (now - btc_t.get('since', now)) < period:
+            if (now - self._btc_verdict_since) < period:
                 self._engine_attempts.clear()   # still counting → reset
                 _persist_attempts_if_changed()
                 return
-            btc_dir = btc_t['dir']           # the basket direction in BTC mode
+            btc_dir = vdir                   # the basket direction in BTC mode
 
         # Gather candidates as {symbol: (held_sec, dir)}. In BTC mode only coins
         # whose own ММ matches the banner direction qualify; in indep mode EVERY
@@ -1776,17 +1817,15 @@ class FuelFilterDaemon:
             all_timers = sorted(timers, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
             scan_list = self.get_scan_list()
-            # BTC START/STOP signal: a progress that counts up while BTC holds
-            # ММ, reaching START at start_signal_minutes; STOP when no BTC timer.
+            # BTC START/STOP signal: progress counts up while the MAIN-WINDOW
+            # verdict (compute_bias) holds LONG/SHORT, reaching START at
+            # start_signal_minutes; STOP when the verdict is WAIT/None. The
+            # banner is therefore 1:1 with 🎯 Smart Money Concepts (NOT liq-fuel).
             ssm = float(settings.get('start_signal_minutes', 5) or 5)
             period_sec = ssm * 60
-            # Read BTC held DIRECTLY from the live timer (same source the table
-            # row uses) so the banner and the table never disagree. _btc_state
-            # is only a per-tick snapshot and can lag by up to a scan cycle.
-            btc_t = self._timers.get('BTCUSDT')
-            if btc_t and btc_t.get('dir') in ('LONG', 'SHORT'):
-                b_dir = btc_t.get('dir')
-                b_held = now - btc_t.get('since', now)
+            b_dir = self._btc_verdict_dir
+            if b_dir in ('LONG', 'SHORT') and self._btc_verdict_since:
+                b_held = now - self._btc_verdict_since
             else:
                 b_dir = None
                 b_held = 0
