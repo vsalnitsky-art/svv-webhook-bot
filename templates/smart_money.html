@@ -7037,8 +7037,8 @@ function renderFuelFilter(d) {
                 // direction), so the badge carries that direction explicitly.
                 const sc = t.score || null;
                 const scDir = t.dir === 'LONG'
-                    ? ' <span style="opacity:.95">🟢↑</span>'
-                    : (t.dir === 'SHORT' ? ' <span style="opacity:.95">🔴↓</span>' : '');
+                    ? ' <span style="font-size:0.66rem">🟢</span><span style="color:#fff;font-size:0.72rem">▲</span>'
+                    : (t.dir === 'SHORT' ? ' <span style="font-size:0.66rem">🔴</span><span style="color:#fff;font-size:0.72rem">▼</span>' : '');
                 const scoreHtml = (sc && sc.label)
                     ? `<span title="Оцінка утримання ${sc.score}/100 у напрямку ${t.dir || '—'}" style="display:inline-block;padding:2px 7px;border-radius:5px;font-size:0.62rem;font-weight:800;letter-spacing:0.4px;color:#fff;background:${sc.color}">${sc.label}${scDir}</span><span style="font-size:0.6rem;color:#8b93a7;margin-left:5px">${sc.score}</span>`
                     : '<span style="color:#555">—</span>';
