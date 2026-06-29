@@ -133,6 +133,14 @@ class FundingMonitor:
                     out[sym] = c.get('trigger_rate')
         return out
 
+    def get_next_funding(self) -> Dict[str, int]:
+        """{symbol: nextFundingTime (ms)} for tracked coins — for the
+        'time left until funding' countdown."""
+        with self._lock:
+            return {sym: int(c.get('next_funding') or 0)
+                    for sym, c in self._watchlist.items()
+                    if c.get('next_funding')}
+
     def trigger_rescan(self):
         """Run a scan immediately (background thread) so UI filter changes take
         effect within seconds instead of waiting for the next cycle."""
@@ -249,9 +257,13 @@ class FundingMonitor:
                     # turnover24h = 24h quote volume in USDT (USD). Best
                     # "large volume" proxy on Bybit v5 linear tickers.
                     volume = float(t.get('turnover24h', '0') or 0)
+                    # nextFundingTime = ms timestamp of the next funding
+                    # settlement → lets us show "time left until funding".
+                    next_funding = int(float(t.get('nextFundingTime') or 0))
                 except (ValueError, TypeError):
                     continue
-                rates[symbol] = {'rate': rate, 'price': price, 'volume': volume}
+                rates[symbol] = {'rate': rate, 'price': price, 'volume': volume,
+                                 'next_funding': next_funding}
 
             self._total_coins = len(rates)
             threshold = self._entry_threshold / 100
@@ -271,6 +283,7 @@ class FundingMonitor:
                             'trigger_rate': round(data['rate'] * 100, 4),
                             'price_at_trigger': data['price'],
                             'volume': data['volume'],
+                            'next_funding': data.get('next_funding', 0),
                             'alerted': False,
                             'manual': False,
                             'rates': [],
@@ -282,6 +295,7 @@ class FundingMonitor:
                     if symbol in rates:
                         r = rates[symbol]
                         coin['volume'] = r['volume']   # keep live 24h volume
+                        coin['next_funding'] = r.get('next_funding', 0)
                         coin['rates'].append({
                             't': now_str,
                             'r': round(r['rate'] * 100, 4),
@@ -438,6 +452,7 @@ class FundingMonitor:
                     'funding_trend': ft,
                     'price_trend': pt,
                     'volume': data.get('volume', 0),
+                    'next_funding': data.get('next_funding', 0),
                 })
 
             coins.sort(key=lambda x: (not x['is_priority'], x['current_rate']))
