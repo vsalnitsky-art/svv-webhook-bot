@@ -1372,26 +1372,51 @@ class FuelFilterDaemon:
         if not s.get('start_engine_include_funding', False):
             cand_held = {c: h for c, h in cand_held.items() if c not in funding}
         if not cand_held:
+            print(f"[FF-Engine] START {direction} (BTC {self._fmt_dur(now - btc_t.get('since', now))}) "
+                  f"· 0 кандидатів (немає монет з ММ у напрямку {direction})")
             return
+
+        max_exh = float(s.get('max_exhaustion_pct', 75) or 75)
+        confirm_on = s.get('engine_candle_confirm', True)
+        tf = s.get('engine_candle_tf', '5m')
+        # Per-candidate decision trace so the engine is NOT a black box: every
+        # tick prints exactly why each coin did/didn't open.
+        trace = []
 
         # Open in ascending timer order: smallest held first → largest.
         for sym, held in sorted(cand_held.items(), key=lambda kv: kv[1]):
             if sym in self._fuel_managed:
+                trace.append(f"{sym}:managed")
                 continue   # already managed (no duplicate)
             # Skip if TM already holds this coin (real OR paper) — don't dup.
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
+                trace.append(f"{sym}:вже-в-угодах")
                 continue
             fuel = self._fuel_dir(sym)
             if not fuel or not fuel.get('mark_price'):
+                trace.append(f"{sym}:немає-ціни/ММ")
+                continue
+            # Exhaustion gate (same as _open) — surfaced HERE so it's visible and
+            # does NOT silently waste a candle check. Too-exhausted coins are
+            # skipped without counting an attempt (the move is just too far gone).
+            exh = self._exhaustion(sym, direction)
+            if exh is not None and exh > max_exh:
+                trace.append(f"{sym}:виснаж{exh:.0f}%>{max_exh:.0f}%")
                 continue
             # Candle confirmation: only open when recent candles move in the
-            # BTC direction (≥2 of last 3 closed bars). If not confirmed (or no
-            # data yet), the coin stays in the table, the attempts counter ticks,
-            # and we re-check next tick.
-            if s.get('engine_candle_confirm', True):
-                if not self._candle_confirms(sym, direction,
-                                             s.get('engine_candle_tf', '5m')):
+            # BTC direction (≥2 of last 3 closed bars).
+            #   True  → confirmed, open now
+            #   False → candles AGAINST → count an attempt, wait for next bar
+            #   None  → no kline data yet → do NOT count an attempt (it's not the
+            #           coin's fault); just retry next tick.
+            if confirm_on:
+                conf = self._candle_confirms(sym, direction, tf)
+                if conf is None:
+                    trace.append(f"{sym}:немає-свічок({tf})")
+                    continue
+                if conf is False:
                     self._engine_attempts[sym] = self._engine_attempts.get(sym, 0) + 1
+                    trace.append(f"{sym}:свічки-проти(сп{self._engine_attempts[sym]})")
                     continue
             try:
                 # _open routes through TM (bypass gates, like Alerts but ignoring
@@ -1407,8 +1432,12 @@ class FuelFilterDaemon:
                     opened_by=f"🕯️ FF спроба {attempt} · ⏱ {self._fmt_dur(held)}")
                 if opened:
                     self._engine_attempts.pop(sym, None)   # opened → reset
+                    trace.append(f"{sym}:✅ВІДКРИТО(сп{attempt})")
                     print(f"[FF-Engine] opened {direction} {sym} (BTC START, спроба {attempt})")
+                else:
+                    trace.append(f"{sym}:_open-відхилив")
             except Exception as e:
+                trace.append(f"{sym}:помилка")
                 print(f"[FF-Engine] open error {sym}: {e}")
 
         # Prune attempt counters for coins that are no longer candidates.
@@ -1416,6 +1445,10 @@ class FuelFilterDaemon:
         for k in list(self._engine_attempts):
             if k not in considered:
                 self._engine_attempts.pop(k, None)
+
+        print(f"[FF-Engine] START {direction} · {len(cand_held)} канд · "
+              f"свічки={'ON('+tf+')' if confirm_on else 'OFF'} · "
+              + ' '.join(trace))
 
     def get_state(self) -> Dict:
         """Snapshot for the UI: settings + live timers + active tracking.
