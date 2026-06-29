@@ -2521,6 +2521,18 @@ class TradeManager:
         except Exception:
             return None
 
+    @staticmethod
+    def _ff_score_dict(symbol: str) -> Optional[Dict]:
+        """Live Fuel Auto-Filter SCORE verdict dict ({score,label,color,dir,
+        conflict}) for `symbol` — same shape the ⏱️ Active Timers rows carry, so
+        the open-positions tables render the IDENTICAL badge."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            return ff.score_dict(symbol) if ff else None
+        except Exception:
+            return None
+
     def _build_reason_detail(self, symbol: str, pos: Dict, reason: str,
                              pnl_pct: float, is_shadow: bool = False) -> str:
         """Compose a human-readable, information-rich close reason.
@@ -3526,6 +3538,8 @@ class TradeManager:
                 hold = self._compute_hold_score(pos_dict)
                 if hold is not None:
                     pos_dict['hold'] = hold
+                # FF SCORE verdict (same badge as ⏱️ Active Timers)
+                pos_dict['ff_score'] = self._ff_score_dict(sym)
                 positions.append(pos_dict)
             
             closed = list(self._closed_trades[-50:])
@@ -3556,6 +3570,8 @@ class TradeManager:
                 hold = self._compute_hold_score(pos_dict)
                 if hold is not None:
                     pos_dict['hold'] = hold
+                # FF SCORE verdict (same badge as ⏱️ Active Timers)
+                pos_dict['ff_score'] = self._ff_score_dict(sym)
                 shadow_positions.append(pos_dict)
             shadow_closed = list(self._shadow_closed[-50:])
             
