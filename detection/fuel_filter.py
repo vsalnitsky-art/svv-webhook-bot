@@ -124,6 +124,8 @@ class FuelFilterDaemon:
         self._funding_syms: set = set()
         # {symbol: current funding %} for funding-sourced coins (UI display).
         self._funding_rates: Dict[str, float] = {}
+        # {symbol: nextFundingTime ms} — countdown to next funding settlement.
+        self._funding_next: Dict[str, int] = {}
         # Last BTC START/STOP state we sent a Telegram alert for (None until set).
         self._btc_start_last_alert: Optional[str] = None
         # Last live BTC direction — reported in the STOP message.
@@ -161,6 +163,17 @@ class FuelFilterDaemon:
             fm = get_funding_monitor()
             if fm and hasattr(fm, 'get_rates'):
                 return {str(k).upper(): v for k, v in fm.get_rates().items()}
+        except Exception:
+            pass
+        return {}
+
+    def _get_funding_next(self) -> Dict[str, int]:
+        """{SYMBOL: nextFundingTime ms} from the 💰 Funding Rate Scanner."""
+        try:
+            from detection.funding_monitor import get_funding_monitor
+            fm = get_funding_monitor()
+            if fm and hasattr(fm, 'get_next_funding'):
+                return {str(k).upper(): int(v) for k, v in fm.get_next_funding().items()}
         except Exception:
             pass
         return {}
@@ -728,9 +741,11 @@ class FuelFilterDaemon:
         funding_syms = self._get_funding_symbols()
         watchlist_set = set(watchlist)
         funding_rates = self._get_funding_rates()
+        funding_next = self._get_funding_next()
         with self._lock:
             self._funding_syms = set(funding_syms) - watchlist_set
             self._funding_rates = funding_rates
+            self._funding_next = funding_next
 
         # SCAN all watchlist coins for data/stats. FF flag still controls which
         # coins can auto-open positions (checked later in the loop).
@@ -1020,6 +1035,17 @@ class FuelFilterDaemon:
         # a threshold crossing instead of waiting for the next 30s scan tick.
 
     @staticmethod
+    def _fmt_dur(sec) -> str:
+        """Compact duration: 'Hг MMхв' / 'Mхв SSс' / 'Sс'."""
+        sec = max(0, int(sec))
+        h, m, s = sec // 3600, (sec % 3600) // 60, sec % 60
+        if h:
+            return f"{h}г {m:02d}хв"
+        if m:
+            return f"{m}хв {s:02d}с"
+        return f"{s}с"
+
+    @staticmethod
     def _fmt_price(p) -> str:
         """Compact price formatter for Telegram messages."""
         try:
@@ -1081,25 +1107,37 @@ class FuelFilterDaemon:
             return
         btc_line = self._btc_status_text(s, now)   # current ₿ status
 
-        def _line2(sym):
+        def _line2(sym, d=None):
             rate = self._funding_rates.get(sym)
             rtxt = (f"funding {rate:+.3f}% · " if rate is not None else '')
-            return f"{rtxt}{btc_line}"
+            etxt = ''
+            if d in ('LONG', 'SHORT'):
+                exh = self._exhaustion(sym, d)
+                if exh is not None:
+                    etxt = f"🔥 {exh:.1f}% · "
+            nf = self._funding_next.get(sym)
+            ntxt = ''
+            if nf:
+                rem = int(nf / 1000 - now)
+                if rem > 0:
+                    ntxt = f" · ⏳ {self._fmt_dur(rem)} до funding"
+            return f"{rtxt}{etxt}{btc_line}{ntxt}"
 
         for sym in new_entries:
             d = dir_of.get(sym)
             dtxt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '')
             ptxt = (f" · {self._fmt_price(price_of.get(sym))}" if price_of.get(sym) else '')
             try:
-                notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{ptxt}\n{_line2(sym)}")
+                notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{ptxt}\n{_line2(sym, d)}")
             except Exception as e:
                 print(f"[FuelFilter] funding TG send error: {e}")
         for sym in left:
             fuel = self._fuel_dir(sym)
             price = fuel.get('mark_price') if fuel else None
+            d = fuel.get('status') if fuel else None
             ptxt = (f" · {self._fmt_price(price)}" if price else '')
             try:
-                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід{ptxt}\n{_line2(sym)}")
+                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід{ptxt}\n{_line2(sym, d)}")
             except Exception as e:
                 print(f"[FuelFilter] funding exit TG send error: {e}")
 
@@ -1314,6 +1352,7 @@ class FuelFilterDaemon:
                     # UI can distinguish them, plus their current funding %.
                     'funding': is_fund,
                     'funding_rate': self._funding_rates.get(sym) if is_fund else None,
+                    'funding_next_ms': self._funding_next.get(sym) if is_fund else None,
                     # progress_pct removed - no longer needed
                 })
             # BTC is now a normal row (its dedicated visual lives in the

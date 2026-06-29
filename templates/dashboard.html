@@ -2706,7 +2706,7 @@ async function loadFunding() {
             contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Entry: ≤ -${d.threshold}%<br>No extreme funding detected yet.</div>`;
         } else {
             let html = `<table class="funding-table">
-                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol 24h</th><th>Vol Signal</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
+                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol 24h</th><th>До funding</th><th>Vol Signal</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
             
             for (const c of coins) {
                 const curClass = c.current_rate < 0 ? 'negative' : 'positive';
@@ -2763,6 +2763,7 @@ async function loadFunding() {
                     <td style="color:${depthColor};font-size:0.75rem;font-weight:600">${depthStr}</td>
                     <td><span style="color:#aaa;font-size:0.75rem">${priceStr}</span> <span class="fr-rate ${pClass}" style="font-size:0.75rem">${pSign}${c.price_change.toFixed(2)}%${pTrend}</span></td>
                     <td style="font-size:0.75rem;color:${(c.volume||0) >= 100e6 ? '#4caf50' : (c.volume||0) >= 10e6 ? '#ffa500' : '#888'}">${fmtFundingVol(c.volume)}</td>
+                    <td style="font-size:0.75rem;color:#9aa3b5">${c.next_funding ? `<span class="fr-fundnext" data-next="${c.next_funding}">⏳ ${fmtFundLeft(c.next_funding)}</span>` : '—'}</td>
                     <td>${sigHtml}</td>
                     <td style="color:${fTrendColor};font-size:0.75rem">${fTrend}</td>
                     <td style="color:#888">${tracked}</td>
@@ -2810,6 +2811,25 @@ async function saveFundingThreshold(val) {
     } catch (e) {
         console.warn('saveFundingThreshold failed:', e);
     }
+}
+
+// "time left until funding" from nextFundingTime (ms).
+function fmtFundLeft(nextMs) {
+    let sec = Math.floor((Number(nextMs) || 0) / 1000 - Date.now() / 1000);
+    if (sec <= 0) return '0с';
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    if (h) return `${h}г ${String(m).padStart(2,'0')}хв`;
+    if (m) return `${m}хв ${String(s).padStart(2,'0')}с`;
+    return `${s}с`;
+}
+// 1s ticker for the funding countdown cells.
+if (!window._frFundTick) {
+    window._frFundTick = setInterval(() => {
+        document.querySelectorAll('.fr-fundnext[data-next]').forEach(el => {
+            const nx = parseInt(el.getAttribute('data-next'), 10);
+            if (!isNaN(nx)) el.textContent = '⏳ ' + fmtFundLeft(nx);
+        });
+    }, 1000);
 }
 
 function fmtFundingVol(v) {
