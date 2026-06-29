@@ -1065,6 +1065,7 @@ class FuelFilterDaemon:
             self._funding_alerted = set(current)
         if not notifier:
             return
+        btc_txt = ' · ' + self._btc_status_text(s, now)   # current ₿ status
         for sym, d in new_entries:
             fuel = self._fuel_dir(sym)
             price = fuel.get('mark_price') if fuel else None
@@ -1073,7 +1074,7 @@ class FuelFilterDaemon:
             ptxt = (f" · {self._fmt_price(price)}" if price else '')
             rtxt = (f" · funding {rate:+.3f}%" if rate is not None else '')
             try:
-                notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{ptxt}{rtxt}")
+                notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{ptxt}{rtxt}{btc_txt}")
             except Exception as e:
                 print(f"[FuelFilter] funding TG send error: {e}")
         for sym in left:
@@ -1085,9 +1086,23 @@ class FuelFilterDaemon:
             ptxt = (f" · {self._fmt_price(price)}" if price else '')
             rtxt = (f" · funding {rate:+.3f}%" if rate is not None else '')
             try:
-                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід{ptxt}{rtxt}")
+                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід{ptxt}{rtxt}{btc_txt}")
             except Exception as e:
                 print(f"[FuelFilter] funding exit TG send error: {e}")
+
+    def _btc_status_text(self, s: Dict, now: float) -> str:
+        """Compact current ₿ BTCUSDT banner status for messages:
+        '₿ START 🟢 LONG' / '₿ ⏳ 🔴 SHORT' (counting) / '₿ STOP [dir]'."""
+        btc_t = self._timers.get('BTCUSDT')
+        period = float(s.get('start_signal_minutes', 5) or 5) * 60
+        if btc_t and btc_t.get('dir') in ('LONG', 'SHORT'):
+            d = btc_t['dir']
+            dt = '🟢 LONG' if d == 'LONG' else '🔴 SHORT'
+            held = now - btc_t.get('since', now)
+            return f"₿ START {dt}" if held >= period else f"₿ ⏳ {dt}"
+        ld = self._btc_last_dir
+        ldt = (' 🟢 LONG' if ld == 'LONG' else (' 🔴 SHORT' if ld == 'SHORT' else ''))
+        return f"₿ STOP{ldt}"
 
     def _btc_start_alert(self, s: Dict, now: float):
         """Send a Telegram message when BTC flips START↔STOP (if enabled).
