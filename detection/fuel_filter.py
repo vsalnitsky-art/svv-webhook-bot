@@ -101,6 +101,7 @@ class FuelFilterDaemon:
         self._get_watchlist = get_watchlist
         self._thread: Optional[threading.Thread] = None
         self._engine_thread: Optional[threading.Thread] = None
+        self._alert_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
         # live state (restored from DB on boot)
@@ -125,6 +126,8 @@ class FuelFilterDaemon:
         self._funding_rates: Dict[str, float] = {}
         # Last BTC START/STOP state we sent a Telegram alert for (None until set).
         self._btc_start_last_alert: Optional[str] = None
+        # Last live BTC direction — reported in the STOP message.
+        self._btc_last_dir: Optional[str] = None
         # Funding coins already TG-alerted as "entered the table" (alert once).
         self._funding_alerted: set = set()
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
@@ -1012,19 +1015,9 @@ class FuelFilterDaemon:
             }
             self._persist_state()
 
-        # BTC START/STOP Telegram alert on state change (independent of engine).
-        try:
-            self._btc_start_alert(settings, now)
-        except Exception as e:
-            if self._errors <= 5:
-                print(f"[FuelFilter] BTC alert error: {e}")
-
-        # Telegram alert when a 💰 funding coin enters the table (once per entry).
-        try:
-            self._funding_alert(settings, now)
-        except Exception as e:
-            if self._errors <= 5:
-                print(f"[FuelFilter] funding alert error: {e}")
+        # NOTE: BTC START/STOP and funding entry/exit Telegram alerts run in a
+        # dedicated fast loop (_run_alerts, ~3s) so they fire near-instantly on
+        # a threshold crossing instead of waiting for the next 30s scan tick.
 
     @staticmethod
     def _fmt_price(p) -> str:
@@ -1088,9 +1081,11 @@ class FuelFilterDaemon:
             fuel = self._fuel_dir(sym)
             if fuel:
                 price = fuel.get('mark_price')
+            rate = self._funding_rates.get(sym)
             ptxt = (f" · {self._fmt_price(price)}" if price else '')
+            rtxt = (f" · funding {rate:+.3f}%" if rate is not None else '')
             try:
-                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід — ММ завершилось{ptxt}")
+                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід{ptxt}{rtxt}")
             except Exception as e:
                 print(f"[FuelFilter] funding exit TG send error: {e}")
 
@@ -1106,6 +1101,9 @@ class FuelFilterDaemon:
             direction = btc_t['dir']
             held = now - btc_t.get('since', now)
             state = 'START' if held >= period else 'COUNTING'
+            # Remember the live direction so a later STOP can report which side
+            # it stopped on (at STOP time there's no timer/direction left).
+            self._btc_last_dir = direction
         else:
             state = 'STOP'
         alertable = state if state in ('START', 'STOP') else None
@@ -1123,11 +1121,13 @@ class FuelFilterDaemon:
         notifier = getattr(tm, 'notifier', None) if tm else None
         if not notifier:
             return
+        def _dtxt(dd):
+            return '🟢 LONG' if dd == 'LONG' else ('🔴 SHORT' if dd == 'SHORT' else '')
         if alertable == 'START':
-            d = '🟢 LONG' if direction == 'LONG' else ('🔴 SHORT' if direction == 'SHORT' else '')
-            msg = f"🟢 <b>BTCUSDT START</b> {d}"
+            msg = f"🟢 <b>BTCUSDT START</b> {_dtxt(direction)}"
         else:
-            msg = "⛔ <b>BTCUSDT STOP</b>"
+            # STOP — show the direction it was running in before stopping.
+            msg = f"⛔ <b>BTCUSDT STOP</b> {_dtxt(self._btc_last_dir)}".rstrip()
         try:
             notifier.send_message(msg)
             print(f"[FuelFilter] BTC TG alert sent: {alertable}")
@@ -1149,10 +1149,32 @@ class FuelFilterDaemon:
             self._engine_thread = threading.Thread(target=self._run_engine,
                                                    daemon=True, name='fuel-engine')
             self._engine_thread.start()
+        # Fast alert loop — near-instant Telegram on threshold crossings.
+        if not (self._alert_thread and self._alert_thread.is_alive()):
+            self._alert_thread = threading.Thread(target=self._run_alerts,
+                                                  daemon=True, name='fuel-alerts')
+            self._alert_thread.start()
         print("[FuelFilter] daemon started")
 
     def stop(self):
         self._stop.set()
+
+    def _run_alerts(self):
+        """Fire BTC START/STOP and funding entry/exit Telegram alerts on a fast
+        cadence (~3s) so they're near-instant — instead of waiting up to a full
+        30s scan tick. Reads the live timer state (since is fixed; held grows),
+        so threshold crossings are detected within seconds."""
+        self._stop.wait(8)
+        while not self._stop.is_set():
+            try:
+                s = self.get_settings()
+                if s.get('enabled'):
+                    now = time.time()
+                    self._btc_start_alert(s, now)
+                    self._funding_alert(s, now)
+            except Exception as e:
+                print(f"[FuelFilter] alert loop error: {e}")
+            self._stop.wait(3)
 
     # ------------------------------------------------------------------
     # BTC-START auto-engine: when ON and BTC banner == START, open the basket
