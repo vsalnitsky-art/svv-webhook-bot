@@ -1903,6 +1903,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                     <input type="checkbox" id="ff-engine-candle" onchange="saveFuelFilterSettings()"> 🕯️ Підтвердження свічкою (2/3)
                                 </label>
                             </div>
+                            <div>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Таймфрейм свічок для підтвердження напрямку">TF свічки</label>
+                                <select id="ff-engine-candle-tf" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                                    <option value="1m">1m</option>
+                                    <option value="3m">3m</option>
+                                    <option value="5m">5m</option>
+                                    <option value="15m">15m</option>
+                                    <option value="30m">30m</option>
+                                    <option value="1h">1h</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1935,7 +1946,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th>Тримається</th><th>Дії</th></tr>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th>Тримається</th><th title="Скільки разів движок намагався відкрити, але свічка не підтвердила напрямок">🕯️ Спроби</th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="6" class="tm-empty-msg">Немає активних таймерів</td></tr>
@@ -6899,6 +6910,7 @@ function renderFuelFilter(d) {
     setIf('ff-engine-anomalies', s.start_engine_use_anomalies !== false); // default true
     setIf('ff-engine-funding', !!s.start_engine_include_funding);
     setIf('ff-engine-candle', s.engine_candle_confirm !== false);   // default true
+    setIf('ff-engine-candle-tf', s.engine_candle_tf || '5m');
     setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
     setIf('ff-funding-tg', !!s.funding_tg_alerts);
     // Engine toggle: don't let a poll revert it within 5s of a user click
@@ -6960,7 +6972,7 @@ function renderFuelFilter(d) {
     if (tb) {
         let rows = d.timers || [];
         if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="5" class="tm-empty-msg">Немає активних таймерів</td></tr>';
+            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">Немає активних таймерів</td></tr>';
         } else {
             tb.innerHTML = rows.map(t => {
                 const isFunding = !!t.funding;
@@ -7001,11 +7013,16 @@ function renderFuelFilter(d) {
                 const fundNext = (isFunding && t.funding_next_ms)
                     ? ` <span class="ff-fundnext" data-next="${t.funding_next_ms}" title="До наступного нарахування funding" style="font-size:0.64rem;color:#9aa3b5">⏳ ${fmtFundLeft(t.funding_next_ms)}</span>`
                     : '';
+                const att = t.engine_attempts || 0;
+                const attHtml = att > 0
+                    ? `<span title="Спроб відкрити (свічка не підтвердила)" style="font-weight:700;color:${att >= 10 ? '#f87171' : att >= 4 ? '#facc15' : '#9aa3b5'}">${att}</span>`
+                    : '<span style="color:#555">—</span>';
                 return `<tr style="${rowStyle}">
                     <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span>${fundLbl}${fundNext}</td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
+                    <td style="font-size:0.74rem;text-align:center">${attHtml}</td>
                     <td style="white-space:nowrap">
                         <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
                         <span onclick="deleteTimer('${t.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити таймер">✕</span>
@@ -7436,6 +7453,7 @@ async function saveFuelFilterSettings() {
         start_engine_use_anomalies: document.getElementById('ff-engine-anomalies').checked,
         start_engine_include_funding: document.getElementById('ff-engine-funding').checked,
         engine_candle_confirm: document.getElementById('ff-engine-candle').checked,
+        engine_candle_tf: document.getElementById('ff-engine-candle-tf').value || '5m',
         funding_duration_minutes: parseInt(document.getElementById('ff-funding-duration').value || '0', 10),
         funding_tg_alerts: document.getElementById('ff-funding-tg').checked,
     };
