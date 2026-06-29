@@ -79,6 +79,7 @@ DEFAULT_SETTINGS = {
     'max_exhaustion_pct': 75,     # (legacy) not used for auto-open anymore
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
     'manage_open_positions': True,  # if True, FF closes positions it opened
+    'direction_smoothing_min': 45,  # EMA window (min) that smooths ММ direction
     'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
     'start_signal_minutes': 5,      # BTC ММ held ≥ this → START signal (else STOP)
     # ── BTC-START auto-engine (banner toggle) ──
@@ -88,7 +89,7 @@ DEFAULT_SETTINGS = {
     'start_engine_use_timers': True,      # source: ⏱️ active timers table
     'start_engine_scan_secs': 15,         # engine scan cadence (sec)
     'start_engine_include_funding': False,# include 💰 funding-marked coins
-    'engine_candle_confirm': True,        # only open when candles confirm dir (2/3)
+    'engine_candle_confirm': True,        # only open when candles confirm dir (2/2)
     'engine_candle_tf': '5m',             # timeframe for the candle confirmation
     'engine_require_strong_hold': False,  # only open when SCORE=STRONG HOLD & dir matches
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
@@ -136,6 +137,12 @@ class FuelFilterDaemon:
         # {symbol: count} — how many times the engine tried to open this coin but
         # the candle confirmation failed (it stayed in the table waiting).
         self._engine_attempts: Dict[str, int] = {}
+        # Direction smoothing state (anti-twitch): EMA of the raw liq-fuel
+        # imbalance per symbol, plus the hysteresis direction latch. Advanced
+        # ONCE per scan cycle in _tick; everyone else reads it. Persisted so
+        # smoothing survives a restart instead of snapping back to raw.
+        self._fuel_ema: Dict[str, float] = {}
+        self._fuel_hyst: Dict[str, Optional[str]] = {}  # sym → 'LONG'/'SHORT'/None
         # Last BTC START/STOP state we sent a Telegram alert for (None until set).
         self._btc_start_last_alert: Optional[str] = None
         # Last live BTC direction — reported in the STOP message.
@@ -208,6 +215,11 @@ class FuelFilterDaemon:
         s['use_potential_exit'] = bool(s.get('use_potential_exit', True))
         s['skip_wait_coins'] = bool(s.get('skip_wait_coins', False))
         s['enabled'] = bool(s.get('enabled', False))
+        try:
+            s['direction_smoothing_min'] = max(0, min(600,
+                int(s.get('direction_smoothing_min', 45))))
+        except (TypeError, ValueError):
+            s['direction_smoothing_min'] = 45
         # Remove obsolete keys
         s.pop('mode', None)
         s.pop('max_positions', None)
@@ -311,6 +323,14 @@ class FuelFilterDaemon:
                 self._engine_attempts = {str(k).upper(): int(v)
                                          for k, v in ea.items()
                                          if str(v).lstrip('-').isdigit()}
+            # Direction-smoothing state.
+            em = st.get('fuel_ema', {}) or {}
+            if isinstance(em, dict):
+                self._fuel_ema = {str(k).upper(): float(v) for k, v in em.items()}
+            hy = st.get('fuel_hyst', {}) or {}
+            if isinstance(hy, dict):
+                self._fuel_hyst = {str(k).upper(): (v if v in ('LONG', 'SHORT') else None)
+                                   for k, v in hy.items()}
             if self._fuel_managed or self._anomalies or self._engine_attempts:
                 print(f"[FuelFilter] restored {len(self._fuel_managed)} tracked "
                       f"position(s), {len(self._timers)} timer(s), "
@@ -324,6 +344,8 @@ class FuelFilterDaemon:
                 'fuel_managed': self._fuel_managed,
                 'anomalies': self._anomalies,
                 'engine_attempts': self._engine_attempts,
+                'fuel_ema': self._fuel_ema,
+                'fuel_hyst': self._fuel_hyst,
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -345,24 +367,25 @@ class FuelFilterDaemon:
         return ('EXHAUSTED', '#ef4444')          # red
 
     def _candle_momentum(self, symbol, tf='5m'):
-        """LIVE price direction from the last 3 closed candles (close vs open).
-        Returns (dir, strength): dir ∈ {'LONG','SHORT',None}, strength ∈ {0,⅔,1}.
+        """LIVE price direction from the last 2 closed candles (close vs open).
+        Returns (dir, strength): dir ∈ {'LONG','SHORT',None}, strength ∈ {0,1}.
+        Both bars must agree (15m × 2 = ~30-min impulse); a split → neutral.
         Uses the cached kline helper (no extra exchange load on a warm cache)."""
         try:
             kl = self._candle_klines(symbol, tf)
         except Exception:
             kl = None
-        if not kl or len(kl) < 4:
+        if not kl or len(kl) < 3:
             return (None, 0.0)
-        last3 = kl[:-1][-3:]
-        if len(last3) < 3:
+        last2 = kl[:-1][-2:]
+        if len(last2) < 2:
             return (None, 0.0)
-        ups = sum(1 for k in last3 if float(k.get('p', 0)) > float(k.get('o', 0)))
-        downs = sum(1 for k in last3 if float(k.get('p', 0)) < float(k.get('o', 0)))
-        if ups > downs:
-            return ('LONG', ups / 3.0)
-        if downs > ups:
-            return ('SHORT', downs / 3.0)
+        ups = sum(1 for k in last2 if float(k.get('p', 0)) > float(k.get('o', 0)))
+        downs = sum(1 for k in last2 if float(k.get('p', 0)) < float(k.get('o', 0)))
+        if ups == 2:
+            return ('LONG', 1.0)
+        if downs == 2:
+            return ('SHORT', 1.0)
         return (None, 0.0)
 
     def _timer_score_for(self, symbol, direction, held_sec, exhaustion,
@@ -384,11 +407,11 @@ class FuelFilterDaemon:
         When fuel bias and price momentum DISAGREE the score is hard-capped
         (→ WEAK at best) and `conflict` is set, because the ММ setup is being
         violated by price. Returns {score,label,color,dir,conflict}."""
-        # Fuel bias (where liquidity sits).
+        # Fuel bias (where liquidity sits) — SMOOTHED + hysteresis, read-only.
         fuel_dir = None
         signed = None
         try:
-            fd = self._fuel_dir(symbol)
+            fd = self._fuel_dir_smoothed(symbol)
             if fd:
                 if fd.get('status') in ('LONG', 'SHORT'):
                     fuel_dir = fd['status']
@@ -535,6 +558,46 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] fuel calc error {symbol}: {e}")
             return None
 
+    def _fuel_dir_smoothed(self, symbol: str, update: bool = False) -> Optional[Dict]:
+        """Anti-twitch wrapper over _fuel_dir. Returns the SAME shape but with a
+        time-smoothed `dir` (EMA over `direction_smoothing_min`) and a hysteresis
+        `status` (enter ±0.15 / exit <±0.05, sticky in between).
+
+        update=True  → advance the EMA + hysteresis latch (call ONCE per scan
+                       cycle, from _tick). update=False → read-only (UI/score).
+        `raw_dir`/`raw_status` carry the instantaneous values for reference."""
+        fd = self._fuel_dir(symbol)
+        if not fd:
+            return None
+        raw = fd.get('dir', 0.0)
+        sym = (symbol or '').upper()
+        if update:
+            W = float(self.get_settings().get('direction_smoothing_min', 45) or 0)
+            N = max(1.0, W * 60.0 / CYCLE_SECS)      # samples in the window
+            alpha = 2.0 / (N + 1.0)                   # EMA smoothing factor
+            prev = self._fuel_ema.get(sym)
+            ema = raw if prev is None else (alpha * raw + (1.0 - alpha) * prev)
+            self._fuel_ema[sym] = ema
+            # Hysteresis latch on the SMOOTHED value.
+            cur = self._fuel_hyst.get(sym)
+            if ema > 0.15:
+                cur = 'LONG'
+            elif ema < -0.15:
+                cur = 'SHORT'
+            elif abs(ema) < 0.05:
+                cur = None
+            # else: keep the current latch (sticky 0.05..0.15 zone)
+            self._fuel_hyst[sym] = cur
+            status = cur
+        else:
+            ema = self._fuel_ema.get(sym, raw)
+            # Read the latch; if smoothing hasn't initialised yet, fall back to
+            # the raw status so a fresh coin is still usable immediately.
+            status = self._fuel_hyst.get(sym) if sym in self._fuel_hyst \
+                else fd.get('status')
+        return {'dir': round(ema, 3), 'mark_price': fd.get('mark_price'),
+                'status': status, 'raw_dir': raw, 'raw_status': fd.get('status')}
+
     def _bias(self, symbol: str) -> Dict:
         """Cached FF-specific bias computation. Uses compute_bias_for_ff —
         a SOFTER variant that issues LONG/SHORT more readily than the strict
@@ -585,9 +648,9 @@ class FuelFilterDaemon:
         except Exception:
             result['forecast_1h'] = None
             result['forecast_4h'] = None
-        # --- Fuel direction ---
+        # --- Fuel direction (smoothed + hysteresis, read-only) ---
         try:
-            fuel_data = self._fuel_dir(symbol)
+            fuel_data = self._fuel_dir_smoothed(symbol)
             result['fuel_status'] = fuel_data.get('status') if fuel_data else None
         except Exception:
             result['fuel_status'] = None
@@ -620,9 +683,9 @@ class FuelFilterDaemon:
             'skip_wait': bool(settings.get('skip_wait_coins', False)),
             'max_exhaustion': settings.get('max_exhaustion_pct', 75),
         }
-        # Fuel direction (timer trigger)
+        # Fuel direction (timer trigger) — smoothed + hysteresis, read-only
         try:
-            fuel_data = self._fuel_dir(symbol)
+            fuel_data = self._fuel_dir_smoothed(symbol)
             out['fuel_status'] = fuel_data.get('status') if fuel_data else None
         except Exception:
             out['fuel_status'] = None
@@ -966,7 +1029,10 @@ class FuelFilterDaemon:
         _cnt_long = _cnt_short = 0
 
         for symbol in symbols:
-            fuel = self._fuel_dir(symbol)
+            # update=True: advance the EMA + hysteresis latch ONCE per cycle.
+            # `status` is therefore the SMOOTHED direction that drives timers,
+            # the BTC banner and (read-only) the SCORE.
+            fuel = self._fuel_dir_smoothed(symbol, update=True)
             status = fuel.get('status') if fuel else None
             fuel_managed = symbol in self._fuel_managed
 
@@ -1273,7 +1339,7 @@ class FuelFilterDaemon:
         # Live membership: in the table only if ММ still holds the direction.
         current, dir_of, price_of = set(), {}, {}
         for sym, d in candidates:
-            fuel = self._fuel_dir(sym)
+            fuel = self._fuel_dir_smoothed(sym)
             # A clear opposite/neutral reading (with data) means ММ ended →
             # not in the table. A data gap (fuel is None) keeps it (no flapping).
             if fuel is not None and fuel.get('status') != d:
@@ -1316,7 +1382,7 @@ class FuelFilterDaemon:
             except Exception as e:
                 print(f"[FuelFilter] funding TG send error: {e}")
         for sym in left:
-            fuel = self._fuel_dir(sym)
+            fuel = self._fuel_dir_smoothed(sym)
             price = fuel.get('mark_price') if fuel else None
             d = fuel.get('status') if fuel else None
             ptxt = (f" · {self._fmt_price(price)}" if price else '')
@@ -1478,19 +1544,19 @@ class FuelFilterDaemon:
 
     def _candle_confirms(self, symbol: str, side: str, tf: str = '5m'):
         """Pre-entry candle confirmation: is recent price action moving in
-        `side`? Uses the last 3 CLOSED bars (momentum 2/3) at the given TF
-        (close vs open per bar). Returns:
-          True  — confirmed (≥2 of last 3 bars in the direction)
-          False — against
+        `side`? Uses the last 2 CLOSED bars at the given TF — BOTH must move in
+        the direction (15m × 2 = ~30-min impulse window). Returns:
+          True  — confirmed (both last 2 closed bars in the direction)
+          False — against / mixed
           None  — no kline data yet (caller treats as not-confirmed → waits)."""
         kl = self._candle_klines(symbol, tf)
-        if not kl or len(kl) < 4:
+        if not kl or len(kl) < 3:
             return None
-        last3 = kl[:-1][-3:]   # drop the still-forming bar, take last 3 closed
-        if len(last3) < 3:
+        last2 = kl[:-1][-2:]   # drop the still-forming bar, take last 2 closed
+        if len(last2) < 2:
             return None
-        ups = sum(1 for k in last3 if float(k.get('p', 0)) > float(k.get('o', 0)))
-        downs = sum(1 for k in last3 if float(k.get('p', 0)) < float(k.get('o', 0)))
+        ups = sum(1 for k in last2 if float(k.get('p', 0)) > float(k.get('o', 0)))
+        downs = sum(1 for k in last2 if float(k.get('p', 0)) < float(k.get('o', 0)))
         if side == 'LONG':
             return ups >= 2
         if side == 'SHORT':
@@ -1598,7 +1664,7 @@ class FuelFilterDaemon:
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
                 trace.append(f"{sym}:вже-в-угодах")
                 continue
-            fuel = self._fuel_dir(sym)
+            fuel = self._fuel_dir_smoothed(sym)
             if not fuel or not fuel.get('mark_price'):
                 trace.append(f"{sym}:немає-ціни/ММ")
                 continue
@@ -1852,10 +1918,10 @@ class FuelFilterDaemon:
         if side not in ('LONG', 'SHORT'):
             return {'ok': False, 'reason': f'Таймер {symbol} без напрямку'}
 
-        # Use the SAME fuel helper the tick loop uses. It returns
-        # {dir, mark_price, status} and has its own market_data fallback for
-        # mark_price, so even with neutral/faded fuel we still get a price.
-        fuel = self._fuel_dir(symbol)
+        # Use the SAME fuel helper the tick loop uses (smoothed, read-only). It
+        # returns {dir, mark_price, status} and has its own market_data fallback
+        # for mark_price, so even with neutral/faded fuel we still get a price.
+        fuel = self._fuel_dir_smoothed(symbol)
         if not fuel or not fuel.get('mark_price'):
             # Last-ditch: try a direct price fetch so a liq-map gap doesn't
             # block a manual open the user explicitly asked for.
