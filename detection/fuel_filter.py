@@ -343,47 +343,106 @@ class FuelFilterDaemon:
             return ('WEAK', '#f97316')           # orange
         return ('EXHAUSTED', '#ef4444')          # red
 
-    def _timer_score_for(self, symbol, direction, held_sec, exhaustion, dur_sec):
-        """Per-coin hold quality, blending three CHEAP cached signals:
-          • room   (45%) — 1 − exhaustion: how much of the move is left.
-          • hold   (30%) — how long ММ has held vs the show threshold
-                           (saturates at ~3× → longer hold = more conviction).
-          • fuel   (25%) — magnitude of the liq-fuel imbalance ALIGNED with the
-                           timer direction (fuel flipping against → 0).
-        Returns {score:int, label:str, color:str}."""
-        if exhaustion is None:
-            room = 0.5
-        else:
-            try:
-                room = max(0.0, min(1.0, (100.0 - float(exhaustion)) / 100.0))
-            except (TypeError, ValueError):
-                room = 0.5
-        ratio = (held_sec / dur_sec) if dur_sec and dur_sec > 0 else 1.0
-        hold = max(0.0, min(1.0, ratio / 3.0))
-        fmag = 0.0
+    def _candle_momentum(self, symbol, tf='5m'):
+        """LIVE price direction from the last 3 closed candles (close vs open).
+        Returns (dir, strength): dir ∈ {'LONG','SHORT',None}, strength ∈ {0,⅔,1}.
+        Uses the cached kline helper (no extra exchange load on a warm cache)."""
+        try:
+            kl = self._candle_klines(symbol, tf)
+        except Exception:
+            kl = None
+        if not kl or len(kl) < 4:
+            return (None, 0.0)
+        last3 = kl[:-1][-3:]
+        if len(last3) < 3:
+            return (None, 0.0)
+        ups = sum(1 for k in last3 if float(k.get('p', 0)) > float(k.get('o', 0)))
+        downs = sum(1 for k in last3 if float(k.get('p', 0)) < float(k.get('o', 0)))
+        if ups > downs:
+            return ('LONG', ups / 3.0)
+        if downs > ups:
+            return ('SHORT', downs / 3.0)
+        return (None, 0.0)
+
+    def _timer_score_for(self, symbol, direction, held_sec, exhaustion,
+                         dur_sec, tf='5m'):
+        """Per-coin hold quality + its OWN live direction.
+
+        CRITICAL: the displayed direction follows ACTUAL PRICE ACTION (recent
+        candles), NOT just the liq-fuel bias. Fuel tells where liquidity is
+        stacked; price tells where the coin is going RIGHT NOW. If a coin is
+        dumping while fuel is long-biased, the SCORE must say SHORT (and flag a
+        conflict) — not 'STRONG HOLD 🟢'. Direction priority:
+            price momentum → fuel status → timer direction.
+
+        Magnitude blends, all relative to that live direction:
+          • room     (30%) — 1 − exhaustion (how much of the move is left)
+          • hold     (15%) — ММ hold duration vs the show threshold (~3× sat.)
+          • fuel     (25%) — liq-fuel imbalance aligned with the direction
+          • momentum (30%) — candle momentum aligned with the direction
+        When fuel bias and price momentum DISAGREE the score is hard-capped
+        (→ WEAK at best) and `conflict` is set, because the ММ setup is being
+        violated by price. Returns {score,label,color,dir,conflict}."""
+        # Fuel bias (where liquidity sits).
+        fuel_dir = None
+        signed = None
         try:
             fd = self._fuel_dir(symbol)
-            if fd and fd.get('dir') is not None:
-                signed = float(fd['dir'])
-                aligned = signed if direction == 'LONG' else -signed
-                fmag = max(0.0, min(1.0, aligned / 0.5))
+            if fd:
+                if fd.get('status') in ('LONG', 'SHORT'):
+                    fuel_dir = fd['status']
+                if fd.get('dir') is not None:
+                    signed = float(fd['dir'])
         except Exception:
-            fmag = 0.0
-        score = 100.0 * (0.45 * room + 0.30 * hold + 0.25 * fmag)
-        # Exhaustion override: the whole FF concept exits on exhaustion, so a
-        # nearly-spent move must NOT read as a healthy hold no matter how long
-        # it has held. Cap the score hard when exhaustion is high.
+            pass
+
+        # Price momentum (what the coin is actually doing now).
+        price_dir, pstrength = self._candle_momentum(symbol, tf)
+
+        # Displayed direction: price action wins, then fuel, then timer.
+        live_dir = price_dir or fuel_dir or direction
+        conflict = bool(fuel_dir and price_dir and fuel_dir != price_dir)
+
+        # Exhaustion (room) for the live direction.
+        ex = exhaustion
+        if live_dir != direction:
+            try:
+                ex = self._exhaustion(symbol, live_dir)
+            except Exception:
+                ex = exhaustion
         try:
-            ex = float(exhaustion) if exhaustion is not None else None
+            exf = float(ex) if ex is not None else None
         except (TypeError, ValueError):
-            ex = None
-        if ex is not None:
-            if ex >= 90:
+            exf = None
+        room = 0.5 if exf is None else max(0.0, min(1.0, (100.0 - exf) / 100.0))
+
+        # Hold conviction.
+        ratio = (held_sec / dur_sec) if dur_sec and dur_sec > 0 else 1.0
+        hold = max(0.0, min(1.0, ratio / 3.0))
+
+        # Fuel magnitude aligned with the live direction (against → 0).
+        fmag = 0.0
+        if signed is not None:
+            aligned = signed if live_dir == 'LONG' else -signed
+            fmag = max(0.0, min(1.0, aligned / 0.5))
+
+        # Momentum aligned with the live direction.
+        mom = pstrength if (price_dir and price_dir == live_dir) else 0.0
+
+        score = 100.0 * (0.30 * room + 0.15 * hold + 0.25 * fmag + 0.30 * mom)
+
+        # Conflict: price is fighting the fuel setup → not a healthy hold.
+        if conflict:
+            score = min(score, 38)        # → WEAK at best
+        # Exhaustion override (FF exits on exhaustion).
+        if exf is not None:
+            if exf >= 90:
                 score = min(score, 22)    # → EXHAUSTED
-            elif ex >= 80:
+            elif exf >= 80:
                 score = min(score, 38)    # → WEAK
         label, color = self._score_label(score)
-        return {'score': int(round(score)), 'label': label, 'color': color}
+        return {'score': int(round(score)), 'label': label, 'color': color,
+                'dir': live_dir, 'conflict': conflict}
 
     # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
@@ -1597,7 +1656,8 @@ class FuelFilterDaemon:
                     'exhaustion': t.get('exhaustion'),
                     # Per-coin hold SCORE verdict (STRONG HOLD / HOLD / …).
                     'score': self._timer_score_for(
-                        sym, t.get('dir'), held, t.get('exhaustion'), thr),
+                        sym, t.get('dir'), held, t.get('exhaustion'), thr,
+                        settings.get('engine_candle_tf', '5m')),
                     # Flag rows that come from the 💰 Funding Rate Scanner so the
                     # UI can distinguish them, plus their current funding %.
                     'funding': is_fund,
