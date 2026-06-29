@@ -328,6 +328,64 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] state persist error: {e}")
 
     # ------------------------------------------------------------------
+    # per-coin SCORE for the active-timers table
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _score_label(score: float):
+        """Map a 0..100 hold-score to a (label, color) verdict."""
+        if score >= 78:
+            return ('STRONG HOLD', '#16a34a')   # green
+        if score >= 60:
+            return ('HOLD', '#84cc16')           # lime
+        if score >= 45:
+            return ('NEUTRAL', '#eab308')        # amber
+        if score >= 30:
+            return ('WEAK', '#f97316')           # orange
+        return ('EXHAUSTED', '#ef4444')          # red
+
+    def _timer_score_for(self, symbol, direction, held_sec, exhaustion, dur_sec):
+        """Per-coin hold quality, blending three CHEAP cached signals:
+          • room   (45%) — 1 − exhaustion: how much of the move is left.
+          • hold   (30%) — how long ММ has held vs the show threshold
+                           (saturates at ~3× → longer hold = more conviction).
+          • fuel   (25%) — magnitude of the liq-fuel imbalance ALIGNED with the
+                           timer direction (fuel flipping against → 0).
+        Returns {score:int, label:str, color:str}."""
+        if exhaustion is None:
+            room = 0.5
+        else:
+            try:
+                room = max(0.0, min(1.0, (100.0 - float(exhaustion)) / 100.0))
+            except (TypeError, ValueError):
+                room = 0.5
+        ratio = (held_sec / dur_sec) if dur_sec and dur_sec > 0 else 1.0
+        hold = max(0.0, min(1.0, ratio / 3.0))
+        fmag = 0.0
+        try:
+            fd = self._fuel_dir(symbol)
+            if fd and fd.get('dir') is not None:
+                signed = float(fd['dir'])
+                aligned = signed if direction == 'LONG' else -signed
+                fmag = max(0.0, min(1.0, aligned / 0.5))
+        except Exception:
+            fmag = 0.0
+        score = 100.0 * (0.45 * room + 0.30 * hold + 0.25 * fmag)
+        # Exhaustion override: the whole FF concept exits on exhaustion, so a
+        # nearly-spent move must NOT read as a healthy hold no matter how long
+        # it has held. Cap the score hard when exhaustion is high.
+        try:
+            ex = float(exhaustion) if exhaustion is not None else None
+        except (TypeError, ValueError):
+            ex = None
+        if ex is not None:
+            if ex >= 90:
+                score = min(score, 22)    # → EXHAUSTED
+            elif ex >= 80:
+                score = min(score, 38)    # → WEAK
+        label, color = self._score_label(score)
+        return {'score': int(round(score)), 'label': label, 'color': color}
+
+    # ------------------------------------------------------------------
     # fuel / exhaustion measurement (cached sources only)
     # ------------------------------------------------------------------
     def _fuel_dir(self, symbol: str) -> Optional[Dict]:
@@ -1537,6 +1595,9 @@ class FuelFilterDaemon:
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
                     'exhaustion': t.get('exhaustion'),
+                    # Per-coin hold SCORE verdict (STRONG HOLD / HOLD / …).
+                    'score': self._timer_score_for(
+                        sym, t.get('dir'), held, t.get('exhaustion'), thr),
                     # Flag rows that come from the 💰 Funding Rate Scanner so the
                     # UI can distinguish them, plus their current funding %.
                     'funding': is_fund,
