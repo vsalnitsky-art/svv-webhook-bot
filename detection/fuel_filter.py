@@ -123,6 +123,11 @@ class FuelFilterDaemon:
         # scanned, watchlist size, and average move exhaustion (LONG/SHORT).
         # Recomputed each tick.
         self._scan_stats: Dict = {}
+        # Pre-computed SCORE verdicts {sym: dict}, refreshed in the background
+        # _tick so the UI endpoints (FF state + TM state) read them instantly
+        # instead of doing per-row liq-map / kline-fetch work in the request
+        # path (that made the page slow to open).
+        self._score_cache: Dict[str, Dict] = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -486,11 +491,20 @@ class FuelFilterDaemon:
         ⏱️ Active Timers rows carry ({score,label,color,dir,conflict}) — so the
         open-positions tables (real + paper) can render the IDENTICAL badge.
         Pulls held/dir/exhaustion from the live timer when present, else scores
-        with held=0 and lets the score derive its own live direction."""
+        with held=0 and lets the score derive its own live direction.
+
+        Prefers the background score cache (fast, no per-call liq-map/kline work)
+        so TM's get_state — called on every UI poll — stays cheap. Only falls
+        back to a live compute for symbols not in the cache (e.g. manual
+        positions FF doesn't scan), which are few."""
         try:
             sym = (symbol or '').upper().strip()
             if not sym:
                 return None
+            with self._lock:
+                cached = self._score_cache.get(sym)
+            if cached:
+                return cached
             s = self.get_settings()
             tf = s.get('engine_candle_tf', '5m')
             with self._lock:
@@ -1326,9 +1340,47 @@ class FuelFilterDaemon:
             }
             self._persist_state()
 
+        # Pre-compute SCORE verdicts for the rows the UI will show (+ managed
+        # positions + BTC) HERE, in the background, so get_state / TM state
+        # don't do liq-map + kline work per row on every poll.
+        self._refresh_score_cache(settings)
+
         # NOTE: BTC START/STOP and funding entry/exit Telegram alerts run in a
         # dedicated fast loop (_run_alerts, ~3s) so they fire near-instantly on
         # a threshold crossing instead of waiting for the next 30s scan tick.
+
+    def _refresh_score_cache(self, settings: Dict):
+        """Background SCORE computation. Scores only the symbols that will be
+        displayed (timers past their show threshold) plus managed positions and
+        BTC — bounded work, off the request path. The kline fetches inside
+        _candle_momentum warm the 20s cache here, so the UI never blocks on them."""
+        try:
+            dur = float(settings.get('duration_minutes', 5) or 0) * 60
+            fdur = float(settings.get('funding_duration_minutes', 0) or 0) * 60
+            tf = settings.get('engine_candle_tf', '5m')
+            now = time.time()
+            with self._lock:
+                timers = list(self._timers.items())
+                managed = set(self._fuel_managed)
+                funding = set(self._funding_syms)
+            cache = {}
+            for sym, t in timers:
+                held = now - t.get('since', now)
+                thr = fdur if sym in funding else dur
+                # only the rows the UI shows (+ managed positions + BTC)
+                if held < thr and sym not in managed and sym != 'BTCUSDT':
+                    continue
+                try:
+                    sc = self._timer_score_for(sym, t.get('dir'), held,
+                                               t.get('exhaustion'), thr, tf)
+                    if sc:
+                        cache[sym] = sc
+                except Exception:
+                    pass
+            with self._lock:
+                self._score_cache = cache
+        except Exception as e:
+            print(f"[FuelFilter] score cache error: {e}")
 
     @staticmethod
     def _fmt_dur(sec) -> str:
@@ -1808,10 +1860,10 @@ class FuelFilterDaemon:
                     'symbol': sym, 'dir': t.get('dir'),
                     'held_sec': int(held),
                     'exhaustion': t.get('exhaustion'),
-                    # Per-coin hold SCORE verdict (STRONG HOLD / HOLD / …).
-                    'score': self._timer_score_for(
-                        sym, t.get('dir'), held, t.get('exhaustion'), thr,
-                        settings.get('engine_candle_tf', '5m')),
+                    # Per-coin hold SCORE verdict — read from the background
+                    # cache (computed in _tick) so this endpoint never does
+                    # liq-map / kline work per row.
+                    'score': self._score_cache.get(sym),
                     # Flag rows that come from the 💰 Funding Rate Scanner so the
                     # UI can distinguish them, plus their current funding %.
                     'funding': is_fund,
