@@ -297,13 +297,18 @@ class FuelFilterDaemon:
     # ❤️ FF "база" — intercepted coins waiting to open
     # ------------------------------------------------------------------
     def intercept(self, symbol: str, side: str) -> bool:
-        """Catch a coin the main LONG/SHORT flow would have opened. While FF is
-        on, the coin is queued here (direction = signal side, self-overwriting on
-        re-entry) instead of opening; the engine opens it later on ₿ START when
-        its fuel matches. Returns True if queued."""
+        """Catch a coin the main LONG/SHORT flow would have opened. We ONLY
+        accumulate FRESH signals whose direction matches an ENABLED main button
+        (LONG button on → only LONG signals queue, and vice versa). Direction
+        self-overwrites on re-entry. The engine opens it later on ₿ START when
+        its fuel matches. Returns True if queued, False if dropped."""
         sym = (symbol or '').upper().strip()
         side = (side or '').upper().strip()
         if not sym or side not in ('LONG', 'SHORT'):
+            return False
+        # Direction gate: the matching main button must be ON.
+        allow_long, allow_short = self._entry_gates()
+        if (side == 'LONG' and not allow_long) or (side == 'SHORT' and not allow_short):
             return False
         with self._lock:
             prev = self._pending.get(sym) or {}
@@ -739,6 +744,19 @@ class FuelFilterDaemon:
         if vdir != self._btc_verdict_dir:
             self._btc_verdict_dir = vdir
             self._btc_verdict_since = now if vdir else 0.0
+            # On a NEW ММ (Паливо) direction, purge the now-stale OPPOSITE
+            # entries from the queue so it always accumulates fresh data in the
+            # current direction (ММ→SHORT clears old LONG, and vice versa).
+            if vdir in ('LONG', 'SHORT'):
+                opp = 'SHORT' if vdir == 'LONG' else 'LONG'
+                with self._lock:
+                    drop = [s for s, v in self._pending.items()
+                            if v.get('dir') == opp]
+                    for s in drop:
+                        self._pending.pop(s, None)
+                    if drop:
+                        print(f"[FuelFilter] ММ→{vdir}: purged {len(drop)} "
+                              f"{opp} queue entr(ies)")
             self._persist_state()
 
     def _bias(self, symbol: str) -> Dict:
@@ -1888,6 +1906,7 @@ class FuelFilterDaemon:
             'tracked_count': len(self._fuel_managed),
             'scan_list': [],   # retired (FF no longer scans the WATCHLIST)
             'pending_count': len(self._pending),
+            'entry_gates': {'long': allow_long, 'short': allow_short},
             'scan_stats': dict(self._scan_stats),
         }
 
