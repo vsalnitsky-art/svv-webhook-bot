@@ -2389,11 +2389,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
-                        <th title="SCORE монети з ❤️ Fuel Auto-Filter — той самий, що в ⏱️ Активні таймери: STRONG HOLD / HOLD / NEUTRAL / WEAK / EXHAUSTED + напрямок 🟢▲/🔴▼ (⚠ = паливо проти ціни).">SCORE</th>
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -2451,11 +2450,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, paper позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
-                        <th title="SCORE монети з ❤️ Fuel Auto-Filter — той самий, що в ⏱️ Активні таймери: STRONG HOLD / HOLD / NEUTRAL / WEAK / EXHAUSTED + напрямок 🟢▲/🔴▼ (⚠ = паливо проти ціни).">SCORE</th>
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -7638,7 +7636,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7672,7 +7670,6 @@ async function loadTMState() {
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
                     ${breakevenCloseCellHTML(p, false)}
-                    <td>${ffScoreBadgeHTML(p.ff_score)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');
@@ -7720,7 +7717,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7745,7 +7742,6 @@ async function loadTMState() {
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
-                    <td>${ffScoreBadgeHTML(p.ff_score)}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');
