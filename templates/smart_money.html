@@ -5545,21 +5545,8 @@ async function loadTMSettings() {
         // "explicitly off". The visual state (active class) reflects the
         // saved server state; tooltips on each button are already wired
         // statically in the HTML.
-        const longOn = s.allow_long_entries !== false;
-        const shortOn = s.allow_short_entries !== false;
-        const longBtn = document.getElementById('sm-allow-long-btn');
-        const shortBtn = document.getElementById('sm-allow-short-btn');
-        if (longBtn) {
-            longBtn.classList.toggle('active', longOn);
-            const st = document.getElementById('sm-allow-long-state');
-            if (st) st.textContent = longOn ? 'ON' : 'OFF';
-        }
-        if (shortBtn) {
-            shortBtn.classList.toggle('active', shortOn);
-            const st = document.getElementById('sm-allow-short-state');
-            if (st) st.textContent = shortOn ? 'ON' : 'OFF';
-        }
-        
+        syncSideGateButtons(s);
+
         // BOS-N
         document.getElementById('tm-use-bos-partials').checked = !!s.use_bos_partials;
         document.getElementById('tm-bos2-pct').value = s.bos_2_close_pct;
@@ -5763,6 +5750,33 @@ async function onTMToggle() {
 // real and shadow opens. We update the UI optimistically then POST; if
 // the POST fails we revert the visual state and alert the user so they
 // don't think the toggle stuck when it didn't.
+// Single source of truth for the LONG/SHORT direction buttons. The actual
+// gate lives in TM settings (allow_long_entries / allow_short_entries) and is
+// rewritten at runtime by Smart Direction (AutoGate). The buttons MUST mirror
+// that backing value, not a stale click — otherwise the UI shows "ON" while the
+// code treats it as OFF. Called on first load AND on every poll so visual and
+// under-the-hood states are always identical.
+function syncSideGateButtons(s) {
+    if (!s) return;
+    // Don't clobber the optimistic flip during the brief save window right
+    // after a manual click (the POST may not have landed yet).
+    if (window._sideGateSavedAt && (Date.now() - window._sideGateSavedAt) < 2500) return;
+    const longOn = s.allow_long_entries !== false;
+    const shortOn = s.allow_short_entries !== false;
+    const longBtn = document.getElementById('sm-allow-long-btn');
+    const shortBtn = document.getElementById('sm-allow-short-btn');
+    if (longBtn) {
+        longBtn.classList.toggle('active', longOn);
+        const st = document.getElementById('sm-allow-long-state');
+        if (st) st.textContent = longOn ? 'ON' : 'OFF';
+    }
+    if (shortBtn) {
+        shortBtn.classList.toggle('active', shortOn);
+        const st = document.getElementById('sm-allow-short-state');
+        if (st) st.textContent = shortOn ? 'ON' : 'OFF';
+    }
+}
+
 async function toggleSideGate(side) {
     const btnId = side === 'LONG' ? 'sm-allow-long-btn' : 'sm-allow-short-btn';
     const stateId = side === 'LONG' ? 'sm-allow-long-state' : 'sm-allow-short-state';
@@ -5792,7 +5806,10 @@ async function toggleSideGate(side) {
     // Optimistic UI flip
     btn.classList.toggle('active', newActive);
     if (stateEl) stateEl.textContent = newActive ? 'ON' : 'OFF';
-    
+    // Protect this optimistic flip from being reverted by an in-flight poll
+    // before the POST lands. After the window, the real backing state wins.
+    window._sideGateSavedAt = Date.now();
+
     // Persist — only the two keys to keep the POST minimal
     const payload = {};
     if (side === 'LONG') payload.allow_long_entries = newActive;
@@ -7550,6 +7567,11 @@ async function loadTMState() {
         // own fetch. Refreshed every time the TM state is loaded.
         window._tmEnabled = !!(d.settings && d.settings.enabled);
         window._tmSettings = d.settings || {};
+        // Keep the LONG/SHORT direction buttons in sync with the REAL backing
+        // gate on every poll — Smart Direction (AutoGate) rewrites these at
+        // runtime, so the buttons must follow the actual saved state, not a
+        // stale click. This is what makes visual == under-the-hood.
+        syncSideGateButtons(d.settings);
         // Re-evaluate manual entry buttons if a decision is already loaded
         // (TM state changed → button enable/disable state may need update)
         if (window._lastDecision && typeof updateManualEntryButtons === 'function') {
