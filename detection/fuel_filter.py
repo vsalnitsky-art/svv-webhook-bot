@@ -71,6 +71,31 @@ _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
 _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 
+# ─── DEBUG: queue (❤️ Черга на вхід) removal operations ───
+# Every place that REMOVES a coin from _pending is numbered and guarded. While
+# an op is BLOCKED (False) the removal is logged but NOT executed, so the coin
+# stays in the queue. We re-enable them ONE AT A TIME to find which op wrongly
+# drops coins. Flip a value to True to allow that op.
+#   1 = position closed (_close)
+#   2 = engine opened the trade (_engine_tick success)
+#   3 = engine: TM already holds the coin (_engine_tick)
+#   4 = ММ-flip purge of opposite-direction entries (_update_btc_verdict)
+#   5 = manual delete ✕ (delete_timer)
+#   6 = manual "Очистити всі" (clear_all_timers)
+#   7 = remove_pending()
+#   8 = clear_pending()
+#   9 = manual force-open (force_open_timer success)
+_QUEUE_OPS_ALLOWED = {1: False, 2: False, 3: False, 4: False, 5: False,
+                      6: False, 7: False, 8: False, 9: False}
+
+
+def _q_allowed(op: int) -> bool:
+    """True if queue-removal op #op is currently allowed (debug gate)."""
+    if _QUEUE_OPS_ALLOWED.get(op, True):
+        return True
+    print(f"[FF-QUEUE] op#{op} BLOCKED — removal suppressed (coin kept in queue)")
+    return False
+
 DEFAULT_SETTINGS = {
     'enabled': False,
     'duration_minutes': 5,        # min duration to show in table (threshold filter)
@@ -336,6 +361,8 @@ class FuelFilterDaemon:
 
     def remove_pending(self, symbol: str) -> bool:
         """Drop a coin from the waiting base (user ✕)."""
+        if not _q_allowed(7):   # OP 7: remove_pending
+            return False
         sym = (symbol or '').upper().strip()
         with self._lock:
             existed = self._pending.pop(sym, None) is not None
@@ -344,6 +371,8 @@ class FuelFilterDaemon:
         return existed
 
     def clear_pending(self) -> int:
+        if not _q_allowed(8):   # OP 8: clear_pending
+            return 0
         with self._lock:
             n = len(self._pending)
             self._pending = {}
@@ -759,7 +788,7 @@ class FuelFilterDaemon:
             self._btc_verdict_since = now if vdir else 0.0
             # On a NEW ММ (Паливо) direction, purge the now-stale OPPOSITE
             # entries from the queue (ММ→SHORT clears old LONG, and vice versa).
-            if vdir in ('LONG', 'SHORT'):
+            if vdir in ('LONG', 'SHORT') and _q_allowed(4):   # OP 4: ММ-flip purge
                 opp = 'SHORT' if vdir == 'LONG' else 'LONG'
                 with self._lock:
                     drop = [s for s, v in self._pending.items()
@@ -1103,7 +1132,8 @@ class FuelFilterDaemon:
         with self._lock:
             self._fuel_managed.pop(symbol, None)
             self._timers.pop(symbol, None)
-            self._pending.pop(symbol, None)
+            if _q_allowed(1):   # OP 1: remove from queue on position close
+                self._pending.pop(symbol, None)
             self._persist_state()
         print(f"[FuelFilter] CLOSE trigger {symbol} reason={reason}")
 
@@ -1759,8 +1789,9 @@ class FuelFilterDaemon:
             # Skip if TM already holds this coin (real OR paper) — don't dup.
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
                 trace.append(f"{sym}:вже-в-угодах")
-                with self._lock:
-                    self._pending.pop(sym, None)
+                if _q_allowed(3):   # OP 3: TM already holds the coin
+                    with self._lock:
+                        self._pending.pop(sym, None)
                 continue
             fuel = self._fuel_dir_smoothed(sym)
             if not fuel or not fuel.get('mark_price'):
@@ -1804,7 +1835,8 @@ class FuelFilterDaemon:
                     with self._lock:
                         self._timers[sym] = {'dir': d, 'since': now,
                                              'start_price': fuel.get('mark_price')}
-                        self._pending.pop(sym, None)
+                        if _q_allowed(2):   # OP 2: engine opened the trade
+                            self._pending.pop(sym, None)
                     self._engine_attempts.pop(sym, None)   # opened → reset
                     trace.append(f"{sym}:✅ВІДКРИТО {d}")
                     print(f"[FF-Engine] opened {d} {sym} ({mode_lbl}, exh="
@@ -1973,7 +2005,9 @@ class FuelFilterDaemon:
         a running timer. Returns True if anything was removed."""
         symbol = symbol.upper()
         with self._lock:
-            removed = (self._pending.pop(symbol, None) is not None)
+            removed = False
+            if _q_allowed(5):   # OP 5: manual delete ✕
+                removed = (self._pending.pop(symbol, None) is not None)
             if symbol in self._timers:
                 self._timers.pop(symbol)
                 removed = True
@@ -2041,7 +2075,8 @@ class FuelFilterDaemon:
             with self._lock:
                 self._timers[symbol] = {'dir': side, 'since': time.time(),
                                         'start_price': fuel.get('mark_price')}
-                self._pending.pop(symbol, None)
+                if _q_allowed(9):   # OP 9: manual force-open
+                    self._pending.pop(symbol, None)
                 self._persist_state()
             return {'ok': True, 'reason': f'Позицію {side} відкрито вручну', 'opened': True}
         else:
@@ -2053,8 +2088,10 @@ class FuelFilterDaemon:
     def clear_all_timers(self) -> int:
         """Clear the whole FF table — waiting base + any timers."""
         with self._lock:
-            count = len(self._pending) + len(self._timers)
-            self._pending.clear()
+            count = len(self._timers)
+            if _q_allowed(6):   # OP 6: manual "Очистити всі"
+                count += len(self._pending)
+                self._pending.clear()
             self._timers.clear()
             self._persist_state()
             print(f"[FuelFilter] Cleared {count} timers")
