@@ -1946,11 +1946,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
                             <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
+                            <th title="24-годинний обсяг торгів (USD)">Vol 24h</th>
                             <th>Дії</th>
                         </tr>
                     </thead>
                     <tbody id="ff-anomaly-tbody">
-                        <tr><td colspan="6" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
+                        <tr><td colspan="7" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -7054,12 +7055,20 @@ function renderFuelFilter(d) {
                 const cdTxt = a.funding_next_ms
                     ? `<span class="ff-fundnext" data-next="${a.funding_next_ms}" style="font-size:0.66rem;color:#9aa3b5">⏳ ${fmtFundLeft(a.funding_next_ms)}</span>`
                     : '';
+                // 24h volume (USD), compact.
+                const v = a.vol24h;
+                const volTxt = (v != null && v > 0)
+                    ? (v >= 1e9 ? '$' + (v/1e9).toFixed(2) + 'B'
+                       : v >= 1e6 ? '$' + (v/1e6).toFixed(1) + 'M'
+                       : v >= 1e3 ? '$' + (v/1e3).toFixed(0) + 'K' : '$' + v.toFixed(0))
+                    : '<span style="color:#667">—</span>';
                 return `<tr style="background:rgba(16,185,129,0.06)">
                     <td style="font-weight:600"><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span><span>${a.symbol}</span></td>
                     <td>${dirHtml}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td style="min-width:160px">${progHtml}</td>
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}</td>
+                    <td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">${volTxt}</td>
                     <td><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕</span></td>
                 </tr>`;
             }).join('');

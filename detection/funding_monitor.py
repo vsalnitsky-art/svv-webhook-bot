@@ -133,6 +133,12 @@ class FundingMonitor:
                     out[sym] = c.get('trigger_rate')
         return out
 
+    def get_volumes(self) -> Dict[str, float]:
+        """{symbol: 24h quote volume (USD)} for tracked coins."""
+        with self._lock:
+            return {sym: float(c.get('volume') or 0)
+                    for sym, c in self._watchlist.items()}
+
     def get_next_funding(self) -> Dict[str, int]:
         """{symbol: nextFundingTime (ms)} for tracked coins — for the
         'time left until funding' countdown."""
