@@ -786,21 +786,26 @@ class FuelFilterDaemon:
             d = compute_bias(self._db, 'BTCUSDT', None)
             fuel = ((d or {}).get('components') or {}).get('fuel') or {}
             fdir = fuel.get('dir')
-            # HYSTERESIS on the BTC ММ direction so it does NOT flicker on noise.
-            # Without this the raw ±0.1 threshold flips LONG↔SHORT↔None on tiny
-            # changes, and every flip ran the OP-4 queue purge — which silently
-            # evicted opposite-direction coins (the "монета зникла" bug).
+            # The banner MUST mirror the MAIN-WINDOW ММ label 1:1. compute_bias
+            # marks BTC fuel: dir > +0.1 → "ММ зверху (LONG)", dir < -0.1 →
+            # "ММ знизу (SHORT)", and |dir| ≤ 0.1 → "ММ збалансований —
+            # напрямку немає". So we use the SAME ±0.1 threshold (FUEL_*_THR)
+            # and go NEUTRAL (no direction → STOP, timer reset) whenever the
+            # main window says balanced. (Earlier this carried an extra
+            # ±0.15/±0.05 hysteresis with a 0.05–0.15 "sticky" zone — that made
+            # the banner keep showing SHORT/LONG and counting to START while the
+            # main window already read "збалансований". Removed so the two never
+            # disagree.) A true data gap (no number) keeps the previous value so
+            # a transient compute_bias failure doesn't blank the banner.
             prev = self._btc_verdict_dir
             if fdir is None:
                 vdir = prev                 # data gap → keep previous, don't flip
-            elif fdir > 0.15:
-                vdir = 'LONG'               # firmly above → LONG
-            elif fdir < -0.15:
-                vdir = 'SHORT'              # firmly below → SHORT
-            elif abs(fdir) < 0.05:
-                vdir = None                 # firmly neutral → WAIT
+            elif fdir > FUEL_LONG_THR:      # > +0.1 → LONG (як головне вікно)
+                vdir = 'LONG'
+            elif fdir < FUEL_SHORT_THR:     # < -0.1 → SHORT
+                vdir = 'SHORT'
             else:
-                vdir = prev                 # 0.05..0.15 grey zone → sticky
+                vdir = None                 # |dir| ≤ 0.1 → збалансований → WAIT
         except Exception as e:
             print(f"[FuelFilter] BTC ММ calc error: {e}")
             return
