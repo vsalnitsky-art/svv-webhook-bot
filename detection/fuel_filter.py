@@ -136,6 +136,8 @@ class FuelFilterDaemon:
         self._funding_rates: Dict[str, float] = {}
         # {symbol: nextFundingTime ms} — countdown to next funding settlement.
         self._funding_next: Dict[str, int] = {}
+        # {symbol: 24h volume USD} for funding-sourced coins (UI display).
+        self._funding_vols: Dict[str, float] = {}
         # Short-TTL klines cache for candle confirmation at a custom TF:
         # {(symbol, tf): (ts, klines)}.
         self._candle_cache: Dict = {}
@@ -209,6 +211,17 @@ class FuelFilterDaemon:
             fm = get_funding_monitor()
             if fm and hasattr(fm, 'get_next_funding'):
                 return {str(k).upper(): int(v) for k, v in fm.get_next_funding().items()}
+        except Exception:
+            pass
+        return {}
+
+    def _get_funding_volumes(self) -> Dict[str, float]:
+        """{SYMBOL: 24h volume (USD)} from the 💰 Funding Rate Scanner."""
+        try:
+            from detection.funding_monitor import get_funding_monitor
+            fm = get_funding_monitor()
+            if fm and hasattr(fm, 'get_volumes'):
+                return {str(k).upper(): float(v) for k, v in fm.get_volumes().items()}
         except Exception:
             pass
         return {}
@@ -1144,6 +1157,7 @@ class FuelFilterDaemon:
             self._funding_syms = set(funding_syms)
             self._funding_rates = self._get_funding_rates()
             self._funding_next = self._get_funding_next()
+            self._funding_vols = self._get_funding_volumes()
             managed = list(self._fuel_managed.keys())
             pending = list(self._pending.keys())
 
@@ -1290,6 +1304,7 @@ class FuelFilterDaemon:
                 mark = fuel.get('mark_price') if fuel else None
                 rate = self._funding_rates.get(sym)
                 nf = self._funding_next.get(sym)
+                vol = self._funding_vols.get(sym)
                 a = self._anomalies.get(sym)
                 if status in ('LONG', 'SHORT'):
                     if not a or not a.get('holding'):
@@ -1299,6 +1314,7 @@ class FuelFilterDaemon:
                             'last_price': mark, 'last_held_sec': 0,
                             'funding': True, 'rate': rate, 'prev_rate': rate,
                             'next_funding': nf, 'entry_threshold': thr,
+                            'vol24h': vol,
                         }
                         self._notify_funding(notifier, sym, status, mark, btc_line,
                                              settings, now, entered=True)
@@ -1312,18 +1328,26 @@ class FuelFilterDaemon:
                         a['rate'] = rate
                         a['next_funding'] = nf
                         a['entry_threshold'] = thr
+                        a['vol24h'] = vol
                         a['funding'] = True
                 else:
-                    # Fuel gone → coin leaves the table immediately.
+                    # Fuel ended → exit alert + remove the row.
                     if a is not None:
                         if a.get('holding'):
                             self._notify_funding(notifier, sym, a.get('dir'),
                                                  a.get('last_price'), btc_line,
                                                  settings, now, entered=False)
                         self._anomalies.pop(sym, None)
-            # Drop any funding row whose coin is no longer in the scanner.
+            # A funding coin that LEFT the scanner while still holding fuel must
+            # ALSO fire an exit alert (this path used to remove it silently —
+            # the missing "вихід" message).
             for sym in list(self._anomalies.keys()):
-                if self._anomalies[sym].get('funding') and sym not in funding:
+                a = self._anomalies[sym]
+                if a.get('funding') and sym not in funding:
+                    if a.get('holding'):
+                        self._notify_funding(notifier, sym, a.get('dir'),
+                                             a.get('last_price'), btc_line,
+                                             settings, now, entered=False)
                     self._anomalies.pop(sym, None)
             self._persist_state()
 
@@ -1888,6 +1912,7 @@ class FuelFilterDaemon:
                     'funding_prev_rate': a.get('prev_rate'),
                     'funding_next_ms': a.get('next_funding'),
                     'entry_threshold': a.get('entry_threshold'),
+                    'vol24h': a.get('vol24h'),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])
         return {
