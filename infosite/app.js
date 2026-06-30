@@ -1,13 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────────
-//  SVV Bot — інфо-панель. ТІЛЬКИ читає JSON API бота й малює таблиці.
+//  SVV Bot — інфо-панель. ТІЛЬКИ читає JSON API бота й малює дані.
 //  Жодних дій, що змінюють стан бота (ніяких POST).
+//
+//  Адреси API бота, які використовує сайт (усі — read-only GET):
+//    /api/health             — живий бот чи ні
+//    /api/stats              — головна інфопанель (угоди, баланс, win rate)
+//    /api/fuel-filter/state  — банер ₿ BTC + 💰 funding-таблиця + статус демона
 // ─────────────────────────────────────────────────────────────────────────
 
 (function () {
   "use strict";
 
   var CFG = window.INFOSITE_CONFIG || {};
-  var BASE = (CFG.BOT_API_BASE || "").replace(/\/+$/, "");
+  // Порожній BOT_API_BASE → той самий домен, з якого відкрито сайт.
+  var BASE = (CFG.BOT_API_BASE || "").replace(/\/+$/, "") || window.location.origin;
   var REFRESH = CFG.REFRESH_MS || 5000;
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -62,24 +68,9 @@
     return String(n);
   }
 
-  function pnlCell(pct, usdt) {
-    if (pct == null && usdt == null) return '<span class="muted">—</span>';
-    var cls = (Number(pct) >= 0) ? "pnl-pos" : "pnl-neg";
-    var txt = (pct != null ? fmtPct(pct, 2) : "");
-    if (usdt != null) txt += " (" + (Number(usdt) >= 0 ? "+" : "") + Number(usdt).toFixed(2) + "$)";
-    return '<span class="' + cls + '">' + esc(txt) + "</span>";
-  }
-
-  function fmtPrice(v) {
+  function fmtUsd(v, digits) {
     if (v == null || isNaN(v)) return "—";
-    var n = Number(v);
-    return n >= 100 ? n.toFixed(2) : n.toPrecision(5);
-  }
-
-  function rows(tbodySel, html, colspan, emptyText) {
-    var tb = $(tbodySel + " tbody");
-    if (!tb) return;
-    tb.innerHTML = html || ('<tr><td colspan="' + colspan + '" class="muted">' + esc(emptyText) + "</td></tr>");
+    return (Number(v) >= 0 ? "" : "-") + "$" + Math.abs(Number(v)).toFixed(digits == null ? 2 : digits);
   }
 
   function setConn(state, text) {
@@ -88,7 +79,50 @@
     el.textContent = "● " + text;
   }
 
-  // ── renderers ──────────────────────────────────────────────────────────────
+  // ── головна інфопанель ─────────────────────────────────────────────────────
+  function tile(label, valueHtml, cls) {
+    return '<div class="tile">' +
+      '<div class="tile-val ' + (cls || "") + '">' + valueHtml + "</div>" +
+      '<div class="tile-lbl">' + esc(label) + "</div>" +
+    "</div>";
+  }
+
+  function renderOverview(stats, health, ffRunning, lastTick) {
+    var d = (stats && stats.data) || {};
+    var ts = d.trade_stats || {};
+    var alive = !!(health && health.status === "ok");
+
+    var pnl = ts.total_pnl;
+    var pnlCls = (pnl == null) ? "" : (Number(pnl) >= 0 ? "pnl-pos" : "pnl-neg");
+
+    var tickTxt = "—";
+    if (lastTick) {
+      var ago = Math.floor(Date.now() / 1000 - lastTick);
+      tickTxt = (ago >= 0 && ago < 86400) ? fmtDur(ago) + " тому" : "—";
+    }
+
+    var html =
+      tile("Бот", alive
+        ? '<span class="pnl-pos">● онлайн</span>'
+        : '<span class="pnl-neg">● офлайн</span>') +
+      tile("Стратегія FF", ffRunning
+        ? '<span class="pnl-pos">працює</span>'
+        : '<span class="muted">стоп</span>') +
+      tile("Останній цикл", '<span class="small">' + esc(tickTxt) + "</span>") +
+      tile("Баланс (paper)", fmtUsd(d.paper_balance)) +
+      tile("Win rate", fmtPct(ts.win_rate)) +
+      tile("Total PnL", fmtUsd(pnl), pnlCls) +
+      tile("Profit factor", ts.profit_factor != null ? Number(ts.profit_factor).toFixed(2) : "—") +
+      tile("Угод (30д)", (ts.total_trades != null ? ts.total_trades : "—") +
+        ' <span class="small muted">(' + (ts.winning_trades || 0) + "W/" + (ts.losing_trades || 0) + "L)</span>") +
+      tile("Відкрито зараз", d.open_trades != null ? d.open_trades : "—") +
+      tile("Sleepers", (d.ready_sleepers != null ? d.ready_sleepers : "—") +
+        ' <span class="small muted">/ ' + (d.sleeper_count != null ? d.sleeper_count : "—") + " готових</span>");
+
+    $("#overview").innerHTML = html;
+  }
+
+  // ── ₿ BTC / двигун ─────────────────────────────────────────────────────────
   function renderBtc(b) {
     b = b || {};
     var cls = "btc-count", label = "COUNTING";
@@ -105,25 +139,16 @@
       "</div>";
   }
 
-  function renderQueue(timers) {
-    timers = timers || [];
-    $("#queue-count").textContent = timers.length;
-    var html = timers.map(function (t) {
-      return "<tr>" +
-        "<td><b>" + esc(t.symbol) + "</b></td>" +
-        "<td>" + dirCell(t.dir) + "</td>" +
-        "<td>" + (t.exhaustion != null ? fmtPct(t.exhaustion) : '<span class="muted">—</span>') + "</td>" +
-        "<td>" + fmtDur(t.held_sec) + "</td>" +
-        "<td>" + (t.engine_attempts || 0) + "</td>" +
-      "</tr>";
-    }).join("");
-    rows("#queue-table", html, 5, "черга порожня");
-  }
-
+  // ── 💰 Funding ───────────────────────────────────────────────────────────────
   function renderFunding(rowsArr) {
     rowsArr = rowsArr || [];
     $("#funding-count").textContent = rowsArr.length;
-    var html = rowsArr.map(function (a) {
+    var tb = $("#funding-table tbody");
+    if (!rowsArr.length) {
+      tb.innerHTML = '<tr><td colspan="7" class="muted">немає funding-монет</td></tr>';
+      return;
+    }
+    tb.innerHTML = rowsArr.map(function (a) {
       var trend = '<span class="muted">—</span>';
       if (a.funding_rate != null && a.funding_prev_rate != null) {
         trend = (a.funding_rate >= a.funding_prev_rate)
@@ -140,65 +165,25 @@
         "<td>" + fmtDur(a.held_sec) + "</td>" +
       "</tr>";
     }).join("");
-    rows("#funding-table", html, 7, "немає funding-монет");
-  }
-
-  function renderOpen(trades) {
-    trades = trades || [];
-    $("#open-count").textContent = trades.length;
-    var now = Date.now();
-    var html = trades.map(function (t) {
-      var held = t.entry_time ? (now - Date.parse(t.entry_time)) / 1000 : 0;
-      var tag = t.is_paper ? '<span class="tag-paper">paper</span>' : '<span class="tag-real">real</span>';
-      return "<tr>" +
-        "<td><b>" + esc(t.symbol) + "</b></td>" +
-        "<td>" + dirCell(t.direction) + "</td>" +
-        "<td>" + fmtPrice(t.entry_price) + "</td>" +
-        "<td>" + fmtDur(held) + "</td>" +
-        "<td>" + pnlCell(t.pnl_percent, t.pnl_usdt) + "</td>" +
-        "<td>" + tag + "</td>" +
-      "</tr>";
-    }).join("");
-    rows("#open-table", html, 6, "немає відкритих угод");
-  }
-
-  function renderClosed(trades) {
-    trades = trades || [];
-    var html = trades.map(function (t) {
-      return "<tr>" +
-        "<td><b>" + esc(t.symbol) + "</b></td>" +
-        "<td>" + dirCell(t.direction) + "</td>" +
-        "<td>" + fmtPrice(t.entry_price) + "</td>" +
-        "<td>" + fmtPrice(t.exit_price) + "</td>" +
-        "<td>" + pnlCell(t.pnl_percent, t.pnl_usdt) + "</td>" +
-        '<td class="muted">' + esc(t.exit_reason || "—") + "</td>" +
-      "</tr>";
-    }).join("");
-    rows("#closed-table", html, 6, "немає закритих угод");
   }
 
   // ── poll loop ──────────────────────────────────────────────────────────────
   function refresh() {
-    var jobs = [
-      api("/api/fuel-filter/state").then(function (st) {
-        renderBtc(st.btc_start);
-        renderQueue(st.timers);
-        renderFunding(st.anomalies);
-        return true;
-      }),
-      api("/api/trades?status=OPEN&limit=50").then(function (r) {
-        renderOpen((r && r.data) || []);
-        return true;
-      }),
-      api("/api/trades?status=CLOSED&limit=20").then(function (r) {
-        renderClosed((r && r.data) || []);
-        return true;
-      }),
-    ];
+    var ff = api("/api/fuel-filter/state").catch(function () { return null; });
+    var stats = api("/api/stats").catch(function () { return null; });
+    var health = api("/api/health").catch(function () { return null; });
 
-    Promise.allSettled(jobs).then(function (res) {
-      var ok = res.some(function (x) { return x.status === "fulfilled"; });
-      if (ok) {
+    Promise.all([ff, stats, health]).then(function (res) {
+      var st = res[0], stat = res[1], hp = res[2];
+
+      if (st) {
+        renderBtc(st.btc_start);
+        renderFunding(st.anomalies);
+      }
+      renderOverview(stat, hp, st ? st.running : false, st ? st.last_tick_ts : null);
+
+      var anyOk = st || stat || hp;
+      if (anyOk) {
         setConn("ok", "онлайн");
         $("#last-update").textContent = "оновлено: " + new Date().toLocaleTimeString("uk-UA");
       } else {

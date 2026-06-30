@@ -82,6 +82,22 @@ th, td {
 th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
 tbody tr:last-child td { border-bottom: none; }
 
+/* головна інфопанель — плитки */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.tile {
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.tile-val { font-size: 20px; font-weight: 800; line-height: 1.2; }
+.tile-lbl { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.small { font-size: 13px; font-weight: 600; }
+
 .muted { color: var(--muted); }
 .dir-long  { color: var(--long);  font-weight: 700; }
 .dir-short { color: var(--short); font-weight: 700; }

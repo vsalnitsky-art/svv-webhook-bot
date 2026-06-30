@@ -41,17 +41,19 @@ python -m http.server 8080
 # відкрий http://127.0.0.1:8080
 ```
 
-## ⚠️ CORS (якщо бот на іншому домені)
+## CORS
 
-Браузер заблокує запити з сайту на API бота, якщо домени різні й бот не
-віддає заголовок `Access-Control-Allow-Origin`. Варіанти:
-1. Віддавати сайт із того самого домену, що й бота (`BOT_API_BASE: ""`) — CORS не потрібен.
-2. Або увімкнути CORS на боці бота для GET-маршрутів `/api/*`.
+CORS для read-only `GET /api/*` **вже увімкнено на боці бота** (заголовок
+`Access-Control-Allow-Origin: *` лише для безпечних GET/HEAD/OPTIONS). Тож сайт
+можна тримати й на окремому домені. Якщо сайт віддає сам бот — лиши
+`BOT_API_BASE: ""`, тоді запити йдуть на той самий домен.
 
 ## Які дані показує
 
-- `GET /api/fuel-filter/state` → банер ₿ BTC, ❤️ черга на вхід, 💰 funding-монети.
-- `GET /api/trades?status=OPEN` → відкриті угоди.
-- `GET /api/trades?status=CLOSED` → останні закриті угоди.
+- `GET /api/health` → живий бот чи ні.
+- `GET /api/stats` → 🤖 головна інфопанель: баланс, win rate, total PnL,
+  profit factor, кількість угод, відкриті позиції, sleepers.
+- `GET /api/fuel-filter/state` → ₿ банер BTC/двигуна + 💰 funding-монети +
+  статус демона FF.
 
 Тільки GET. Сайт ніколи не викликає POST-маршрути бота.
