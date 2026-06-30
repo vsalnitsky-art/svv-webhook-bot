@@ -1,0 +1,84 @@
+# CLAUDE.md — пам'ять проєкту svv-webhook-bot
+
+> Цей файл Claude Code читає АВТОМАТИЧНО на старті кожної сесії.
+> Він — єдиний міст контексту між різними чатами (сесії НЕ діляться пам'яттю).
+> Тримай його актуальним: коротко, фактологічно, без води.
+
+## Що це за проєкт
+
+Крипто-трейдинг бот (Bybit/ф'ючерси) зі Smart-Money-логікою. Працює як
+веб-застосунок Flask + кілька фонових daemon-потоків. Відповіді користувачу —
+**українською**.
+
+## Як запускати
+
+- Точка входу: `main_bot.py` (для gunicorn: `gunicorn main_bot:app`).
+- Flask-фабрика: `web/flask_app.py` → `create_app()`; об'єкт `app`.
+- Локально dev: `python web/flask_app.py` → `0.0.0.0:5000`.
+- Прод-порт береться з env `PORT` (дефолт 10000), хост через `RENDER_EXTERNAL_URL`.
+- Перевірка синтаксису після правок: `python -m py_compile <файл>`.
+
+## Архітектура (головне)
+
+- **`web/flask_app.py`** — усі HTTP-маршрути та JSON API. Великий файл (~5600 рядків).
+- **`detection/fuel_filter.py`** — ядро стратегії «FF» (liquidation-fuel + черга на
+  вхід + двигун відкриття). Daemon-клас `FuelFilterDaemon`. Синглтон:
+  `get_fuel_filter()`, ініт `init_fuel_filter(...)`. Стан читається через
+  `ff.get_state()`.
+- **`detection/trade_manager.py`** — відкриття/закриття позицій, перехоплення
+  сигналів у чергу FF, формування Reason.
+- **`detection/funding_monitor.py`** — сканер funding-ставок (окрема таблиця 💰).
+- **`detection/smc_scanner.py` / `smc_analyzer.py`** — детекція CHoCH / CHoCH+BOS
+  (TF 15m). ТІЛЬКИ свіжий CHoCH/CHoCH+BOS за напрямком увімкненої кнопки потрапляє
+  в чергу FF.
+- **`storage/db_operations.py`** — шар БД. `get_db()`, методи
+  `db.get_setting(key, default)` / `db.set_setting(key, value)` (значення —
+  JSON-серіалізовні).
+- **`templates/smart_money.html`** — головна UI-сторінка стратегії FF.
+
+## Ключові конвенції стратегії FF (не зламати!)
+
+- **Черга `_pending` ЕФЕМЕРНА.** Вона НЕ відновлюється з БД на старті (раніше це
+  тягло старий мотлох типу AAVEUSDT без свіжого сигналу). Монета входить у чергу
+  ЛИШЕ зі свіжого CHoCH/CHoCH+BOS цієї сесії, за напрямком увімкненої кнопки.
+- Паливо (ММ-напрямок) рахується для монет у черзі; на BTC START двигун відкриває
+  угоду, якщо паливо співпадає з напрямком сигналу.
+- 9 операцій видалення з черги пронумеровані й керуються `_QUEUE_OPS_ALLOWED`
+  (всі зараз `True` = ввімкнені). Це debug-гейти — не чіпати без причини.
+- Банер ₿ BTCUSDT = ММ-напрямок із головного вікна (compute_bias
+  `components.fuel.dir`), не загальний вердикт.
+
+## БД-ключі (storage)
+
+- `fuel_filter_settings` — налаштування FF.
+- `fuel_filter_state` — JSON-блоб стану: timers, fuel_managed, anomalies(=funding),
+  engine_attempts, fuel_ema, fuel_hyst, btc_verdict_dir/since. (`pending` більше
+  НЕ відновлюється навіть якщо лежить у блобі.)
+- `fuel_filter_scan_list` — дозволені для сканування символи.
+
+## Основні JSON API (read-only — для інфо-сайту)
+
+- `GET /api/fuel-filter/state` → весь стан FF (`ff.get_state()`): черга, таймери,
+  funding-таблиця, банер BTC, статуси. **Головне джерело для інфо-сайту.**
+- `GET /api/stats`, `GET /api/trades`, `GET /api/signals`, `GET /api/sleepers`,
+  `GET /api/orderblocks`, `GET /api/health`.
+- `GET /api/scheduler/status`, `GET /api/events`.
+- Сторінки: `/` (головна), `/smart-money` (FF), `/tickr`, `/trades`, `/settings`.
+
+> Маршрути, що ЗМІНЮЮТЬ стан (POST: toggle, scan, delete-timer, force-open,
+> settings, trade/close…) — інфо-сайту НЕ потрібні й не повинні викликатись.
+
+## Git / деплой (важливо для кожної сесії)
+
+- Робоча гілка: `claude/analyze-project-01Gopju9D7AHv4pgvetccBeB`. Розробляти й
+  комітити сюди.
+- **PUSH ЗАБЛОКОВАНИЙ:** git-relay повертає 403 (egress-політика середовища). Це
+  НЕ мережевий збій — retry не допомагає, обходити заборонено. Зміни віддаються
+  користувачу архівом (tar.gz) або через `git bundle`, він пушить локально.
+- Не створювати PR без явного прохання.
+
+## Окрема сесія для інфо-сайту
+
+Інфо-сайт розробляється в ОКРЕМОМУ чаті. Бриф: див. `INFO_SITE.md`.
+Принцип «в парі»: бот пише стан → інфо-сайт лише ЧИТАЄ його через JSON API.
+Жодного спільного коду, жодних кнопок керування на інфо-сайті.
