@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVV Bot — Інфо-панель</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📊 SVV Bot — Інформаційна панель</div>
+    <div id="conn" class="conn conn--wait">● підключення…</div>
+  </header>
+
+  <main class="wrap">
+
+    <!-- ₿ BTC / двигун -->
+    <section class="card" id="btc-card">
+      <h2>₿ Статус BTC / двигуна</h2>
+      <div id="btc-body" class="btc-body">
+        <div class="muted">завантаження…</div>
+      </div>
+    </section>
+
+    <!-- ❤️ Черга на вхід -->
+    <section class="card">
+      <h2>❤️ Черга на вхід <span id="queue-count" class="pill">0</span></h2>
+      <div class="table-scroll">
+        <table id="queue-table">
+          <thead>
+            <tr><th>Символ</th><th>Напрямок</th><th>Виснаженість</th><th>Очікує</th><th>Спроби</th></tr>
+          </thead>
+          <tbody><tr><td colspan="5" class="muted">завантаження…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Відкриті угоди -->
+    <section class="card">
+      <h2>📈 Відкриті угоди <span id="open-count" class="pill">0</span></h2>
+      <div class="table-scroll">
+        <table id="open-table">
+          <thead>
+            <tr><th>Символ</th><th>Напрямок</th><th>Вхід</th><th>Тримається</th><th>PnL</th><th>Тип</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="muted">завантаження…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 💰 Funding -->
+    <section class="card">
+      <h2>💰 Funding-монети <span id="funding-count" class="pill">0</span></h2>
+      <div class="table-scroll">
+        <table id="funding-table">
+          <thead>
+            <tr><th>Символ</th><th>Напрямок</th><th>Funding</th><th>До виплати</th><th>Тренд</th><th>Vol 24h</th><th>Тримається</th></tr>
+          </thead>
+          <tbody><tr><td colspan="7" class="muted">завантаження…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Історія закритих -->
+    <section class="card">
+      <h2>📕 Останні закриті угоди</h2>
+      <div class="table-scroll">
+        <table id="closed-table">
+          <thead>
+            <tr><th>Символ</th><th>Напрямок</th><th>Вхід</th><th>Вихід</th><th>PnL</th><th>Reason</th></tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="muted">завантаження…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <span id="last-update" class="muted">—</span>
+    <span class="muted">read-only · дані з API бота</span>
+  </footer>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
