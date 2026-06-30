@@ -6924,7 +6924,10 @@ function renderFuelFilter(d) {
     const statsEl = document.getElementById('ff-scan-stats');
     if (statsEl) {
         const st = d.scan_stats || {};
-        const pend = (st.pending != null) ? st.pending : 0;
+        // Count what's actually SHOWN in the queue (button-filtered) so the
+        // header never claims coins that aren't visible on the table.
+        const pend = (d.pending_visible != null) ? d.pending_visible
+                     : ((st.pending != null) ? st.pending : 0);
         const mgd = (st.managed != null) ? st.managed : 0;
         statsEl.innerHTML =
             `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;`

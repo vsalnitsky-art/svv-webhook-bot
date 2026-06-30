@@ -757,10 +757,17 @@ class FuelFilterDaemon:
         if vdir != self._btc_verdict_dir:
             self._btc_verdict_dir = vdir
             self._btc_verdict_since = now if vdir else 0.0
-            # NOTE: we DON'T purge queue entries on an ММ flip anymore — a coin
-            # that's in the queue with its own direction must WAIT there until
-            # its OWN fuel appears (→ opens) or the user removes it. The banner
-            # ММ only triggers the ₿ START scan; it no longer evicts coins.
+            # On a NEW ММ (Паливо) direction, purge the now-stale OPPOSITE
+            # entries from the queue (ММ→SHORT clears old LONG, and vice versa).
+            if vdir in ('LONG', 'SHORT'):
+                opp = 'SHORT' if vdir == 'LONG' else 'LONG'
+                with self._lock:
+                    drop = [s for s, v in self._pending.items()
+                            if v.get('dir') == opp]
+                    for s in drop:
+                        self._pending.pop(s, None)
+                    if drop:
+                        print(f"[FuelFilter] ММ→{vdir}: purged {len(drop)} {opp} queue")
             self._persist_state()
 
     def _bias(self, symbol: str) -> Dict:
@@ -1718,13 +1725,17 @@ class FuelFilterDaemon:
                 _persist_attempts_if_changed()
                 return
 
-        # Candidates = the whole waiting base (the button already gated INTAKE;
-        # a queued coin waits here until ITS OWN fuel appears in its direction).
+        # Candidates = waiting base, filtered by the MAIN LONG/SHORT buttons.
+        allow_long, allow_short = self._entry_gates()
         cand = {}   # sym -> (waited_sec, signal_dir)
         with self._lock:
             for sym, info in self._pending.items():
                 d = info.get('dir')
                 if d not in ('LONG', 'SHORT'):
+                    continue
+                if d == 'LONG' and not allow_long:
+                    continue
+                if d == 'SHORT' and not allow_short:
                     continue
                 cand[sym] = (now - info.get('added_at', now), d)
 
@@ -1732,7 +1743,7 @@ class FuelFilterDaemon:
         if not cand:
             self._engine_attempts.clear()
             _persist_attempts_if_changed()
-            print(f"[FF-Engine] {mode_lbl} · 0 кандидатів у черзі")
+            print(f"[FF-Engine] {mode_lbl} · 0 кандидатів (кнопки L={allow_long} S={allow_short})")
             return
 
         dur = float(s.get('duration_minutes', 5)) * 60
@@ -1826,16 +1837,23 @@ class FuelFilterDaemon:
             duration_sec = settings['duration_minutes'] * 60
             funding_dur = float(settings.get('funding_duration_minutes', 0) or 0) * 60
             now = time.time()
-            # NEW STRATEGY: the table = the waiting BASE (_pending). A coin
-            # that's been intercepted (its direction was allowed by the button
-            # AT INTAKE) STAYS here and waits — it only leaves when its own fuel
-            # appears (→ opens) or the user removes it. So display is NOT
-            # button-filtered (that was making coins vanish on a button/ММ flip).
+            # The table = the waiting BASE (_pending), filtered by the MAIN
+            # LONG/SHORT buttons (so it only shows coins of the enabled
+            # direction). `visible_pending` counts EXACTLY these rows so the
+            # header "У черзі: N" always equals what's on screen (no coins
+            # "standing" off-screen while the counter ticks).
+            allow_long, allow_short = self._entry_gates()
+            visible_pending = 0
             timers = []
             for sym, info in self._pending.items():
                 if sym in self._fuel_managed:
                     continue  # already opened
                 d = info.get('dir')
+                if d == 'LONG' and not allow_long:
+                    continue
+                if d == 'SHORT' and not allow_short:
+                    continue
+                visible_pending += 1
                 waited = now - info.get('added_at', now)
                 timers.append({
                     'symbol': sym, 'dir': d,
@@ -1912,6 +1930,7 @@ class FuelFilterDaemon:
             'tracked_count': len(self._fuel_managed),
             'scan_list': [],   # retired (FF no longer scans the WATCHLIST)
             'pending_count': len(self._pending),
+            'pending_visible': visible_pending,   # rows actually shown (= header)
             'scan_stats': dict(self._scan_stats),
         }
 
