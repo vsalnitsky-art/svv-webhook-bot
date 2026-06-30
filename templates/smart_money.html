@@ -1840,37 +1840,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div id="ff-settings-body" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)">
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна тривалість палива (хв) щоб монета з'явилась у таблиці">Поріг показу (хв)</label>
-                            <input type="number" id="ff-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
-                        </div>
-                        <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="При якій виснаженості (%) закривати угоду">Поріг виснаженості виходу (%)</label>
-                            <input type="number" id="ff-potential" min="1" max="100" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
-                        </div>
-                        <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку ММ для МОНЕТ (EMA+гістерезис, хв). 0 = ВИМКНЕНО (сире паливо, без затримки — за замовчуванням). Більше = плавніший, менш дьорганий напрямок монет, але пізніша реакція. Орієнтири: 0 = миттєво, 30 ≈ спокійно, 45–90 ≈ інертно. (На банер НЕ впливає — банер іде за вердиктом головного вікна.)">Згладжування напрямку монет (хв)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку ММ для МОНЕТ (EMA+гістерезис, хв). 0 = ВИМКНЕНО (сире паливо, без затримки).">Згладжування напрямку монет (хв)</label>
                             <input type="number" id="ff-smoothing-min" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки годин ММ має триматись, щоб монета пішла у таблицю 🜂 Аномальні монети">Поріг аномалії (год)</label>
-                            <input type="number" id="ff-anomaly-hours" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
-                        </div>
-                        <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин таймер BTCUSDT має тривати, щоб зʼявився сигнал START (інакше STOP)">START-сигнал BTC (хв)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Скільки хвилин ММ BTCUSDT має тривати, щоб зʼявився сигнал START (інакше STOP)">START-сигнал BTC (хв)</label>
                             <input type="number" id="ff-start-minutes" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Окремий поріг показу для 💰 funding-монет (хв). 0 = показувати одразу, щойно запустився таймер">Поріг показу funding (хв)</label>
-                            <input type="number" id="ff-funding-duration" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
-                        </div>
-                        <div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="📨 Сповіщати в Telegram, коли 💰 funding-монета зʼявляється в таблиці">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="📨 Сповіщати в Telegram про 💰 funding-монети (вхід/вихід)">
                                 <input type="checkbox" id="ff-funding-tg" onchange="saveFuelFilterSettings()"> 📨 TG про funding-монети
-                            </label>
-                        </div>
-                        <div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати угоду при досягненні порога виснаженості">
-                                <input type="checkbox" id="ff-use-potential" onchange="saveFuelFilterSettings()"> Вихід за виснаженістю
                             </label>
                         </div>
                         <div>
@@ -1883,30 +1862,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
                         <div style="font-size:0.7rem;font-weight:700;color:#cbd5e1;margin-bottom:8px">🚀 Автодвигун за сигналом BTC START</div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
-                            <div>
-                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Як часто (сек) движок сканує й відкриває кошик при START">Скан движка (сек)</label>
-                                <input type="number" id="ff-engine-scan" min="5" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
-                            </div>
-                            <div>
-                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Брати монети з таблиці ⏱️ Активні таймери">
-                                    <input type="checkbox" id="ff-engine-timers" onchange="saveFuelFilterSettings()"> ⏱️ Активні таймери
-                                </label>
-                            </div>
-                            <div>
-                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Брати монети з таблиці 🜂 Аномальні монети">
-                                    <input type="checkbox" id="ff-engine-anomalies" onchange="saveFuelFilterSettings()"> 🜂 Аномальні монети
-                                </label>
-                            </div>
-                            <div>
-                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Брати також монети з позначкою 💰 Funding (за замовчуванням ні)">
-                                    <input type="checkbox" id="ff-engine-funding" onchange="saveFuelFilterSettings()"> 💰 Брати funding-монети
-                                </label>
-                            </div>
-                            <div>
-                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли свічки підтверджують напрямок (≥2 з 3 останніх закритих свічок). Монета лишається в таблиці, поки свічки не співпадуть.">
-                                    <input type="checkbox" id="ff-engine-candle" onchange="saveFuelFilterSettings()"> 🕯️ Підтвердження свічкою (2/2)
-                                </label>
-                            </div>
                             <div>
                                 <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = STRONG HOLD і напрямок SCORE збігається з колонкою «Напрямок».">
                                     <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише STRONG HOLD (SCORE = напрямок)
@@ -1959,7 +1914,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
-                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">⏱️ Активні таймери <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— черга монет (перехоплені з ЛОНГ/ШОРТ), чекають ₿ START + ММ</span></div>
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">❤️ Черга на вхід <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— монети, перехоплені з ЛОНГ/ШОРТ; чекають ₿ START + ММ у напрямку</span></div>
                 <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю чергу">🗑️ Очистити всі</button>
             </div>
             <div class="ff-timers-scroll">
@@ -1989,15 +1944,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <table class="tm-table" id="ff-anomaly-table">
                     <thead>
                         <tr>
-                            <th>Символ</th><th>Напрямок</th><th>ММ</th>
+                            <th>Символ</th><th>Напрямок</th>
                             <th>Тримається</th>
-                            <th>Старт (час · ціна)</th>
-                            <th>Кінець (час · ціна)</th>
+                            <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
+                            <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
                             <th>Дії</th>
                         </tr>
                     </thead>
                     <tbody id="ff-anomaly-tbody">
-                        <tr><td colspan="7" class="tm-empty-msg">Немає аномальних монет</td></tr>
+                        <tr><td colspan="6" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -6962,41 +6917,12 @@ function renderFuelFilter(d) {
     const statsEl = document.getElementById('ff-scan-stats');
     if (statsEl) {
         const st = d.scan_stats || {};
-        const chip = (txt, color, bg, title) =>
-            `<span title="${title || ''}" style="display:inline-flex;align-items:center;gap:5px;`
-            + `padding:3px 9px;border-radius:11px;background:${bg};color:${color};`
-            + `font-weight:700;border:1px solid ${color}33">${txt}</span>`;
-        const parts = [];
-        // scanned X із Y (watchlist total)
-        if (st.watchlist_total != null) {
-            const scanned = st.scanned != null ? st.scanned : 0;
-            const total = st.watchlist_total;
-            const full = (scanned >= total && total > 0);
-            parts.push(chip(
-                `📡 Відскановано: ${scanned} із ${total}`,
-                full ? '#86efac' : '#cbd5e1',
-                full ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.04)',
-                'Скільки монет зі WATCHLIST реально відскановано Fuel Auto-Filter (мають дані палива) із загальної кількості у WATCHLIST'));
-        }
-        // LONG exhaustion (green) - MAX among coins moving LONG
-        const el = st.max_exh_long;
-        parts.push(chip(
-            `🟢 LONG → 100%: ${el != null ? el.toFixed(1) + '%' : '—'}`
-            + (st.exh_long_count ? ` (${st.exh_long_count})` : ''),
-            '#86efac', 'rgba(34,197,94,0.12)',
-            `Як близько до 100% наблизилась сторона LONG — МАКСИМАЛЬНА виснаженість`
-            + ` серед монет, що зараз рухаються ВГОРУ`
-            + (st.exh_long_count ? ` (${st.exh_long_count} монет)` : '')));
-        // SHORT exhaustion (red) - MAX among coins moving SHORT
-        const es = st.max_exh_short;
-        parts.push(chip(
-            `🔴 SHORT → 100%: ${es != null ? es.toFixed(1) + '%' : '—'}`
-            + (st.exh_short_count ? ` (${st.exh_short_count})` : ''),
-            '#fca5a5', 'rgba(239,68,68,0.12)',
-            `Як близько до 100% наблизилась сторона SHORT — МАКСИМАЛЬНА виснаженість`
-            + ` серед монет, що зараз рухаються ВНИЗ`
-            + (st.exh_short_count ? ` (${st.exh_short_count} монет)` : '')));
-        statsEl.innerHTML = parts.join('');
+        const pend = (st.pending != null) ? st.pending : 0;
+        const mgd = (st.managed != null) ? st.managed : 0;
+        statsEl.innerHTML =
+            `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;`
+            + `border-radius:11px;background:rgba(255,255,255,0.04);color:#cbd5e1;`
+            + `font-weight:700;border:1px solid #ffffff22">❤️ У черзі: ${pend} · відкрито: ${mgd}</span>`;
     }
 
     // timers
@@ -7068,12 +6994,12 @@ function renderFuelFilter(d) {
         }
     }
 
-    // ── 🜂 Anomalies table ──
+    // ── 💰 Funding table (coins from the 💰 scanner currently holding ММ) ──
     const atb = document.getElementById('ff-anomaly-tbody');
     if (atb) {
         const arows = d.anomalies || [];
         if (!arows.length) {
-            atb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">Немає аномальних монет</td></tr>';
+            atb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">Немає монет з ММ із 💰 Funding Rate Scanner</td></tr>';
         } else {
             atb.innerHTML = arows.map(a => {
                 const dirHtml = a.dir === 'LONG'
@@ -7081,26 +7007,41 @@ function renderFuelFilter(d) {
                     : (a.dir === 'SHORT'
                         ? '<span style="color:#ef4444">🔴 SHORT</span>'
                         : '<span style="color:#8b93a7">⚪ —</span>');
-                // Fuel status: still holding vs ended.
-                const fuelHtml = a.holding
-                    ? '<span style="color:#34d399;font-weight:700">⚡ тримає</span>'
-                    : '<span style="color:#f87171;font-weight:700">⛔ завершено</span>';
-                const startTxt = `${fmtTimeFull(a.started_at)} · ${a.start_price != null ? fmtPriceJS(a.start_price) : '—'}`;
-                const endTxt = a.holding
-                    ? '<span style="color:#667">— триває —</span>'
-                    : `${fmtTimeFull(a.ended_at)} · ${a.end_price != null ? fmtPriceJS(a.end_price) : '—'}`;
-                const rowBg = a.holding ? 'background:rgba(16,185,129,0.06)' : 'background:rgba(239,68,68,0.05)';
-                const heldCell = a.holding
-                    ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (a.held_sec||0)}">${fmtTimer(a.held_sec)}</span>`
-                    : `<span class="ff-timer">${fmtTimer(a.held_sec)}</span>`;
-                return `<tr style="${rowBg}">
-                    <td style="font-weight:600">${a.funding ? '<span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span>' : ''}<span>${a.symbol}</span></td>
+                const heldCell = `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (a.held_sec||0)}">${fmtTimer(a.held_sec)}</span>`;
+                // Progress: entry threshold (e.g. −1%) → −4%. Deeper = fuller.
+                const entry = (a.entry_threshold != null) ? a.entry_threshold : -1;
+                const END = -4;
+                const cur = (a.funding_rate != null) ? a.funding_rate : entry;
+                let fill = (entry - END) !== 0 ? (cur - entry) / (END - entry) : 0;
+                fill = Math.max(0, Math.min(1, fill));
+                // Trend vs previous sample.
+                const prev = a.funding_prev_rate;
+                let arrow = '';
+                if (prev != null && a.funding_rate != null) {
+                    if (a.funding_rate < prev - 0.0005) arrow = '<span style="color:#f87171">↓ глибше</span>';
+                    else if (a.funding_rate > prev + 0.0005) arrow = '<span style="color:#4ade80">↑ слабшає</span>';
+                    else arrow = '<span style="color:#8b93a7">→</span>';
+                }
+                const progHtml =
+                    `<div style="display:flex;align-items:center;gap:6px">`
+                    + `<div style="flex:1;min-width:90px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);overflow:hidden">`
+                    + `<div style="height:100%;width:${(fill*100).toFixed(0)}%;background:#34d399;border-radius:6px"></div></div>`
+                    + `<span style="font-size:0.6rem;color:#8b93a7;white-space:nowrap">${entry}%→${END}%</span>`
+                    + (arrow ? ` <span style="font-size:0.62rem;white-space:nowrap">${arrow}</span>` : '')
+                    + `</div>`;
+                const rateTxt = (a.funding_rate != null)
+                    ? `<span style="font-weight:700;color:${a.funding_rate < 0 ? '#f87171' : '#4ade80'}">${a.funding_rate >= 0 ? '+' : ''}${Number(a.funding_rate).toFixed(3)}%</span>`
+                    : '<span style="color:#667">—</span>';
+                const cdTxt = a.funding_next_ms
+                    ? `<span class="ff-fundnext" data-next="${a.funding_next_ms}" style="font-size:0.66rem;color:#9aa3b5">⏳ ${fmtFundLeft(a.funding_next_ms)}</span>`
+                    : '';
+                return `<tr style="background:rgba(16,185,129,0.06)">
+                    <td style="font-weight:600"><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span><span>${a.symbol}</span></td>
                     <td>${dirHtml}</td>
-                    <td style="font-size:0.74rem">${fuelHtml}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
-                    <td style="font-size:0.72rem;color:#9aa3b5">${startTxt}</td>
-                    <td style="font-size:0.72rem;color:#9aa3b5">${endTxt}</td>
-                    <td><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Видалити з таблиці аномалій">✕</span></td>
+                    <td style="min-width:160px">${progHtml}</td>
+                    <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}</td>
+                    <td><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕</span></td>
                 </tr>`;
             }).join('');
         }
@@ -7507,24 +7448,18 @@ async function saveFuelFilterSettings() {
     // before this save committed) can't re-apply stale server values and
     // revert the control the user just changed.
     window._ffSettingsSavedAt = Date.now();
+    // Only the controls that still exist in the (trimmed) FF settings panel.
+    const _v = (id, dflt) => { const e = document.getElementById(id); return e ? e.value : dflt; };
+    const _c = (id) => { const e = document.getElementById(id); return e ? e.checked : undefined; };
     const payload = {
-        duration_minutes: parseInt(document.getElementById('ff-duration').value || '5', 10),
-        potential_threshold_pct: parseInt(document.getElementById('ff-potential').value || '95', 10),
-        use_potential_exit: document.getElementById('ff-use-potential').checked,
-        manage_open_positions: document.getElementById('ff-manage-positions').checked,
-        anomaly_hours: parseInt(document.getElementById('ff-anomaly-hours').value || '10', 10),
-        direction_smoothing_min: parseInt(document.getElementById('ff-smoothing-min').value || '0', 10),
-        start_signal_minutes: parseInt(document.getElementById('ff-start-minutes').value || '5', 10),
-        start_engine_scan_secs: parseInt(document.getElementById('ff-engine-scan').value || '15', 10),
-        start_engine_use_timers: document.getElementById('ff-engine-timers').checked,
-        start_engine_use_anomalies: document.getElementById('ff-engine-anomalies').checked,
-        start_engine_include_funding: document.getElementById('ff-engine-funding').checked,
-        engine_candle_confirm: document.getElementById('ff-engine-candle').checked,
-        engine_candle_tf: document.getElementById('ff-engine-candle-tf').value || '5m',
-        engine_require_strong_hold: document.getElementById('ff-engine-stronghold').checked,
-        funding_duration_minutes: parseInt(document.getElementById('ff-funding-duration').value || '0', 10),
-        funding_tg_alerts: document.getElementById('ff-funding-tg').checked,
+        manage_open_positions: _c('ff-manage-positions'),
+        direction_smoothing_min: parseInt(_v('ff-smoothing-min', '0') || '0', 10),
+        start_signal_minutes: parseInt(_v('ff-start-minutes', '5') || '5', 10),
+        engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',
+        engine_require_strong_hold: _c('ff-engine-stronghold'),
+        funding_tg_alerts: _c('ff-funding-tg'),
     };
+    Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
     try {
         const r = await (await fetch('/api/fuel-filter/settings', {
             method: 'POST',
