@@ -985,6 +985,23 @@ class TradeManager:
             print(f"[TM] {symbol} in manual mode (shadow) — signal ignored")
             return {'status': 'duplicate', 'reason': 'manual mode (shadow) — signal ignored'}
 
+        # === Fuel Auto-Filter interception ===
+        # While FF is ON, every coin the main flow would open is QUEUED in the
+        # ❤️ FF base instead of opening now. FF opens it later, on ₿ START, when
+        # its live fuel matches the signal direction. (FF's own opens use
+        # bypass_gates and never reach here.)
+        if not (existing_real or existing_shadow):
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                ff = get_fuel_filter()
+                if ff and ff.is_enabled():
+                    ff.intercept(symbol, side)
+                    return {'status': 'queued', 'is_paper': False,
+                            'reason': 'queued in ❤️ Fuel Auto-Filter '
+                                      '(waiting ₿ START + fuel)'}
+            except Exception as e:
+                print(f"[TM] FF intercept error for {symbol}: {e}")
+
         # === Real-money track ===
         # Runs whenever TM is enabled. Gated by the tradeable list AND max_open_positions.
         # If limit reached: signal goes to paper track instead (if test_mode on).
@@ -2031,27 +2048,10 @@ class TradeManager:
                     f'{side} entries are disabled (master {side} toggle is OFF). '
                     f'Enable {side} to open this trade.'}
 
-        # === Fuel Auto-Filter confirmation gate ===
-        # When enabled, only open if the same coin+direction is present in the
-        # ❤️ Fuel Auto-Filter table (sustained fuel). FF's own force-opens
-        # (bypass_gates) skip this — they originate from the table itself.
-        if not bypass_gates and self._settings.get('require_fuel_confirm', True):
-            try:
-                from detection.fuel_filter import get_fuel_filter
-                ff = get_fuel_filter()
-                if ff is None or not ff.is_in_table(symbol, side):
-                    print(f"[TM] 🚫 Fuel-confirm gate: {symbol} {side} not in "
-                          f"❤️ Fuel Auto-Filter table — open ignored")
-                    return {'ok': False, 'reason':
-                            f'{symbol} {side} is not in the ❤️ Fuel Auto-Filter '
-                            f'table yet (fuel must hold past the duration '
-                            f'threshold). Wait for it to appear, or turn off '
-                            f'"❤️ Підтвердження від Fuel Auto-Filter" in TM '
-                            f'settings to open manually.'}
-            except Exception as e:
-                print(f"[TM] Fuel-confirm gate error for {symbol}: {e} — open ignored")
-                return {'ok': False, 'reason':
-                        f'Fuel-confirm gate error: {e}'}
+        # NOTE: the old "Fuel Auto-Filter confirmation gate" (require_fuel_confirm)
+        # is retired — the new strategy INTERCEPTS opens up front (on_signal /
+        # manual_open queue the coin in FF), so by the time we reach here the
+        # open is either FF's own (bypass_gates) or FF is disabled. No pull-gate.
 
         # Calculate size
         try:
@@ -3939,7 +3939,22 @@ class TradeManager:
         side = (side or '').upper().strip()
         if side not in ('LONG', 'SHORT'):
             return {'ok': False, 'reason': f"side must be LONG or SHORT, got {side!r}"}
-        
+
+        # === Fuel Auto-Filter interception ===
+        # A manual LONG/SHORT click is also queued in the ❤️ FF base while FF is
+        # on (bypass_gates=True means this IS FF opening — don't re-intercept).
+        if not bypass_gates:
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                ff = get_fuel_filter()
+                if ff and ff.is_enabled():
+                    ff.intercept(symbol, side)
+                    return {'ok': True, 'queued': True,
+                            'reason': f'{symbol} {side} → черга ❤️ Fuel Auto-Filter '
+                                      f'(чекає ₿ START + паливо)'}
+            except Exception as e:
+                print(f"[TM] FF intercept error (manual) for {symbol}: {e}")
+
         test_mode = self._settings.get('test_mode', True)
 
         # Check max positions limit

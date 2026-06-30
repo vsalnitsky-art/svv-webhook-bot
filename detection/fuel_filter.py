@@ -161,10 +161,18 @@ class FuelFilterDaemon:
         # has stayed LONG/SHORT. Refreshed once per scan cycle in _tick.
         self._btc_verdict_dir: Optional[str] = None   # 'LONG'/'SHORT'/None(WAIT)
         self._btc_verdict_since: float = 0.0
-        # Anomalies: coins that held fuel longer than anomaly_hours. Own table,
-        # survive fuel loss, user-deleted only. {symbol: {dir, started_at,
-        # start_price, holding, last_price, last_held_sec, ended_at, end_price}}
+        # 💰 Funding fuel table (repurposed from the old anomalies storage):
+        # coins from the 💰 Funding Rate Scanner that currently show fuel. Same
+        # dict shape so the existing table/endpoints keep working. {symbol:
+        # {dir, started_at, start_price, holding, last_price, last_held_sec,
+        # ended_at, end_price}}
         self._anomalies: Dict[str, Dict] = {}
+        # ❤️ FF "база" — intercepted coins WAITING to open. Populated by
+        # intercept() (every coin the main LONG/SHORT flow would open while FF
+        # is on), direction = the signal side (self-overwrites on re-entry).
+        # On ₿ START the engine fuel-checks these and opens the matching ones.
+        # {symbol: {dir, added_at}}. Persisted.
+        self._pending: Dict[str, Dict] = {}
         self._last_tick_ts = 0
         self._load_state()
 
@@ -274,6 +282,56 @@ class FuelFilterDaemon:
                 print(f"[FuelFilter] immediate tick error: {e}")
 
     # ------------------------------------------------------------------
+    # ❤️ FF "база" — intercepted coins waiting to open
+    # ------------------------------------------------------------------
+    def intercept(self, symbol: str, side: str) -> bool:
+        """Catch a coin the main LONG/SHORT flow would have opened. While FF is
+        on, the coin is queued here (direction = signal side, self-overwriting on
+        re-entry) instead of opening; the engine opens it later on ₿ START when
+        its fuel matches. Returns True if queued."""
+        sym = (symbol or '').upper().strip()
+        side = (side or '').upper().strip()
+        if not sym or side not in ('LONG', 'SHORT'):
+            return False
+        with self._lock:
+            prev = self._pending.get(sym) or {}
+            self._pending[sym] = {
+                'dir': side,
+                'added_at': prev.get('added_at') if (prev.get('dir') == side and prev.get('added_at'))
+                            else time.time(),
+            }
+            self._persist_state()
+        print(f"[FuelFilter] intercepted {sym} {side} → queued in ❤️ FF")
+        return True
+
+    def remove_pending(self, symbol: str) -> bool:
+        """Drop a coin from the waiting base (user ✕)."""
+        sym = (symbol or '').upper().strip()
+        with self._lock:
+            existed = self._pending.pop(sym, None) is not None
+            if existed:
+                self._persist_state()
+        return existed
+
+    def clear_pending(self) -> int:
+        with self._lock:
+            n = len(self._pending)
+            self._pending = {}
+            self._persist_state()
+        return n
+
+    def _entry_gates(self) -> tuple:
+        """(allow_long, allow_short) from TM's main directional buttons — used
+        both to FILTER the FF table display and to select open candidates."""
+        try:
+            tm = self._get_tm() if self._get_tm else None
+            ts = tm.get_settings() if tm and hasattr(tm, 'get_settings') else {}
+            return (bool(ts.get('allow_long_entries', True)),
+                    bool(ts.get('allow_short_entries', True)))
+        except Exception:
+            return (True, True)
+
+    # ------------------------------------------------------------------
     # scan-list (whitelist) — which WATCHLIST coins FF is allowed to scan.
     # Lets the operator pick a handful of coins instead of hammering every
     # coin on the board (load control). Empty list = scan NOTHING (opt-in).
@@ -341,6 +399,10 @@ class FuelFilterDaemon:
             if isinstance(hy, dict):
                 self._fuel_hyst = {str(k).upper(): (v if v in ('LONG', 'SHORT') else None)
                                    for k, v in hy.items()}
+            pend = st.get('pending', {}) or {}
+            if isinstance(pend, dict):
+                self._pending = {str(k).upper(): v for k, v in pend.items()
+                                 if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
             bvd = st.get('btc_verdict_dir')
             self._btc_verdict_dir = bvd if bvd in ('LONG', 'SHORT') else None
             try:
@@ -364,6 +426,7 @@ class FuelFilterDaemon:
                 'fuel_hyst': self._fuel_hyst,
                 'btc_verdict_dir': self._btc_verdict_dir,
                 'btc_verdict_since': self._btc_verdict_since,
+                'pending': self._pending,
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -484,7 +547,7 @@ class FuelFilterDaemon:
                 score = min(score, 38)    # → WEAK
         label, color = self._score_label(score)
         return {'score': int(round(score)), 'label': label, 'color': color,
-                'dir': live_dir, 'conflict': conflict}
+                'dir': live_dir, 'conflict': conflict, 'exh': exf}
 
     def score_dict(self, symbol: str) -> Optional[Dict]:
         """Full SCORE verdict dict for `symbol` RIGHT NOW — same shape the
@@ -998,9 +1061,12 @@ class FuelFilterDaemon:
             import traceback
             traceback.print_exc()
 
-        # Remove fuel tracking
+        # Remove fuel tracking. NEW STRATEGY: the timer = position lifetime, so
+        # it is reset (popped) on close. The coin is gone from the base too.
         with self._lock:
             self._fuel_managed.pop(symbol, None)
+            self._timers.pop(symbol, None)
+            self._pending.pop(symbol, None)
             self._persist_state()
         print(f"[FuelFilter] CLOSE trigger {symbol} reason={reason}")
 
@@ -1042,357 +1108,242 @@ class FuelFilterDaemon:
         self._last_tick_ts = time.time()
         if not settings.get('enabled'):
             return
-        # Refresh the BTC banner verdict (main-window compute_bias) once a cycle.
+        # BTC banner direction = main-window ММ indicator (compute_bias fuel).
         self._update_btc_verdict()
-        try:
-            watchlist = self._get_watchlist() or []
-        except Exception:
-            watchlist = []
-        watchlist = [s.upper() for s in watchlist]
-
-        # Pull in coins from the 💰 Funding Rate Scanner (when enabled). They are
-        # monitored for fuel exactly like watchlist coins and fully actionable
-        # (force-open, exhaustion-exit, position management). The 💰 badge marks
-        # ONLY coins that are NOT already in the SMC watchlist — a coin present
-        # in the watchlist is treated as a normal watchlist coin (no badge).
-        funding_syms = self._get_funding_symbols()
-        watchlist_set = set(watchlist)
-        funding_rates = self._get_funding_rates()
-        funding_next = self._get_funding_next()
-        with self._lock:
-            self._funding_syms = set(funding_syms) - watchlist_set
-            self._funding_rates = funding_rates
-            self._funding_next = funding_next
-
-        # SCAN all watchlist coins for data/stats. FF flag still controls which
-        # coins can auto-open positions (checked later in the loop).
-        # BTCUSDT is ALWAYS scanned + pinned in the table (see _btc_state).
-        scan_targets = list(dict.fromkeys(watchlist + funding_syms))
-        symbols = list(dict.fromkeys(
-            ['BTCUSDT'] + scan_targets + list(self._fuel_managed.keys())))
-
-        # CRITICAL: register ALL symbols with liq-map so they all have fuel data.
-        # SMC scanner already does this for the watchlist every 60s, but funding
-        # coins may be outside the watchlist — re-register here so they too get
-        # liq-map coverage.
-        self._register_with_liqmap(symbols)
-
-        # FF scan-list: which coins get a fuel timer (+ show in the table).
-        # Funding-scanner coins are added so they get monitored; BTCUSDT is
-        # always included so its timer/held value is tracked for the pinned row.
-        scan_list = set(self.get_scan_list()) | set(funding_syms) | {'BTCUSDT'}
-
-        # Get TM settings to know which mode positions live in
-        tm = self._get_tm() if self._get_tm else None
-        tm_settings = tm.get_settings() if tm and hasattr(tm, 'get_settings') else {}
-        tm_enabled = tm_settings.get('enabled', False)
-
-        duration_sec = settings['duration_minutes'] * 60
-        anomaly_sec = float(settings.get('anomaly_hours', 10)) * 3600
         now = time.time()
 
-        # Aggregate scan-stats accumulators (for the panel header). Now covers
-        # ALL watchlist coins (not just FF-flagged), so user sees full picture.
-        scan_set = set(scan_targets)
-        _scanned_ok = 0
-        _max_long = _max_short = None
-        _cnt_long = _cnt_short = 0
-
-        for symbol in symbols:
-            # update=True: advance the EMA + hysteresis latch ONCE per cycle.
-            # `status` is therefore the SMOOTHED direction that drives timers,
-            # the BTC banner and (read-only) the SCORE.
-            fuel = self._fuel_dir_smoothed(symbol, update=True)
-            status = fuel.get('status') if fuel else None
-            fuel_managed = symbol in self._fuel_managed
-
-            # Snapshot BTC state every tick so the table can pin a permanent
-            # BTC row regardless of whether its timer has held past the
-            # threshold (or exists at all).
-            if symbol == 'BTCUSDT':
-                _bt = self._timers.get('BTCUSDT')
-                _bheld = int(now - _bt['since']) if _bt and _bt.get('since') else 0
-                _bexh = (self._exhaustion('BTCUSDT', status)
-                         if status in ('LONG', 'SHORT') else None)
-                with self._lock:
-                    self._btc_state = {
-                        'dir': status,
-                        'exhaustion': _bexh,
-                        'held_sec': _bheld,
-                        'managed': fuel_managed,
-                    }
-
-            # --- accumulate panel scan stats (ALL watchlist coins now).
-            # Runs before any branch/continue so every target is counted.
-            # Track MAXIMUM exhaustion for each side (how close the most exhausted
-            # coin got to 100%), filtering by status so LONG-moving coins contribute
-            # to LONG stat, SHORT-moving coins to SHORT stat.
-            if symbol in scan_set:
-                if fuel and fuel.get('mark_price'):
-                    _scanned_ok += 1
-                if status == 'LONG':
-                    _el = self._exhaustion(symbol, 'LONG')
-                    if _el is not None:
-                        _max_long = max(_max_long, _el) if _max_long is not None else _el
-                        _cnt_long += 1
-                elif status == 'SHORT':
-                    _es = self._exhaustion(symbol, 'SHORT')
-                    if _es is not None:
-                        _max_short = max(_max_short, _es) if _max_short is not None else _es
-                        _cnt_short += 1
-
-            # ---- manage positions fuel filter opened ----
-            # Only if manage_open_positions is enabled (can be toggled off)
-            if fuel_managed and settings.get('manage_open_positions', True):
-                track = self._fuel_managed[symbol]
-                side = track['side']
-                is_real = track.get('mode') == 'real'
-                opposite = 'SHORT' if side == 'LONG' else 'LONG'
-                mark = fuel.get('mark_price') if fuel else None
-
-                # If no mark price available, try to get current price
-                if not mark:
-                    try:
-                        from detection.market_data import get_market_data
-                        md = get_market_data()
-                        if md:
-                            ticker = md.get_ticker(symbol)
-                            mark = ticker.get('last') if ticker else None
-                    except Exception:
-                        pass
-
-                # --- SYNC: if the position no longer exists in TM (user closed
-                # it manually, hit a TM SL/TP, etc.), drop our managed marker —
-                # but KEEP the timer. If ММ is still present, the next tick's
-                # normal timer logic continues it (preserving the continuous
-                # duration → the coin can land in the anomalies table). If ММ has
-                # actually ended, that same normal logic resets/pops it. ---
-                if not self._tm_has_position(symbol, is_real):
-                    print(f"[FuelFilter] {symbol}: tracked but no TM position — "
-                          f"dropping marker (timer kept while ММ holds)")
-                    with self._lock:
-                        self._fuel_managed.pop(symbol, None)
-                    continue
-
-                # Compute exhaustion (for UI display + exit condition)
-                exh = self._exhaustion(symbol, side)
-                if exh is not None:
-                    with self._lock:
-                        track['exhaustion'] = exh
-
-                # MIN-HOLD GRACE: don't run ANY auto-exit for the first
-                # MIN_HOLD_AFTER_OPEN_SEC after opening. A manual force-open
-                # uses the timer's side even if fuel currently points the other
-                # way; without this the flip exit below would close it on the
-                # very next tick. UI display (exhaustion) is already updated above.
-                opened_at = track.get('opened_at', 0)
-                if opened_at and (now - opened_at) < MIN_HOLD_AFTER_OPEN_SEC:
-                    with self._lock:
-                        self._persist_state()
-                    continue
-
-                # exit 1a: CLEAR FLIP to the opposite side → close immediately.
-                # This is a genuine reversal, not a data gap.
-                if status == opposite:
-                    self._close(symbol, mark or 0.0, reason='fuel_flipped',
-                                is_real=is_real)
-                    self._timers.pop(symbol, None)
-                    continue
-
-                # exit 1a-WAIT: WAIT verdict → close position immediately and clear timer
-                # WAIT means unclear direction, position should not be held
-                if settings.get('skip_wait_coins', False) and self._is_wait_verdict(symbol):
-                    print(f"[FuelFilter] {symbol}: WAIT verdict detected — closing position")
-                    self._close(symbol, mark or 0.0, reason='wait_verdict',
-                                is_real=is_real)
-                    self._timers.pop(symbol, None)
-                    continue
-
-                # exit 1b: FUEL FADE (status neutral/None) → only close after a
-                # sustained grace period. Transient gaps must NOT close us.
-                if status != side:
-                    faded_since = track.get('faded_since')
-                    if not faded_since:
-                        with self._lock:
-                            track['faded_since'] = now
-                        # first observed fade — keep position, wait it out
-                    elif (now - faded_since) >= FUEL_FADE_GRACE_SEC:
-                        self._close(symbol, mark or 0.0, reason='fuel_faded',
-                                    is_real=is_real)
-                        self._timers.pop(symbol, None)
-                        continue
-                    # else: still inside grace window — hold
-                else:
-                    # fuel back to our side → reset the fade timer
-                    if track.get('faded_since'):
-                        with self._lock:
-                            track.pop('faded_since', None)
-
-                # exit 2: exhaustion reached (optional)
-                if settings['use_potential_exit'] and exh is not None:
-                    if exh >= settings['potential_threshold_pct']:
-                        self._close(symbol, mark or 0.0, reason='potential_reached', is_real=is_real)
-                        self._timers.pop(symbol, None)
-                        continue
-
-                with self._lock:
-                    self._persist_state()
-                continue
-
-            # ---- no position: run the timer ----
-            if status in ('LONG', 'SHORT'):
-                # FF FLAG CHECK: timer runs only for FF-flagged coins.
-                # All watchlist coins get scanned for stats, but only flagged ones
-                # get timers (and show in the table).
-                if symbol not in scan_list:
-                    # Not FF-flagged → skip timer logic (but still collected stats above)
-                    if symbol in self._timers:
-                        self._timers.pop(symbol, None)
-                    continue
-
-                _mk = fuel.get('mark_price') if fuel else None
-                t = self._timers.get(symbol)
-                if not t or t.get('dir') != status:
-                    # new status (or direction flip) → (re)start timer.
-                    # Capture the price at timer start (for the anomaly table).
-                    # Preserve the funding origin across a restart so the 💰
-                    # ticker isn't lost on a direction flip.
-                    prev_ff = bool(t.get('from_funding')) if t else False
-                    self._timers[symbol] = {'dir': status, 'since': now,
-                                            'start_price': _mk,
-                                            'from_funding': prev_ff}
-                    t = self._timers[symbol]
-                # Sticky funding origin: once a coin entered via the 💰 Funding
-                # Rate Scanner, it keeps its 💰 ticker while its timer lives —
-                # even after it leaves the scanner list (no more switching to
-                # the 'manual' badge).
-                if symbol in self._funding_syms:
-                    t['from_funding'] = True
-                # Exhaustion for the timer row — shows how much room is left.
-                exh = self._exhaustion(symbol, status)
-                if exh is not None:
-                    t['exhaustion'] = exh
-
-                # NEW STRATEGY: timer runs continuously while fuel exists.
-                # No auto-open. Table shows only timers held >= duration_minutes
-                # (filtering happens in get_state). Timer keeps running until
-                # fuel disappears (status becomes None/'WAIT').
-
-                # ── Anomaly tracking: fuel held longer than anomaly_hours ──
-                # Such coins move to their OWN table (excluded from the FF table
-                # in get_state), survive fuel loss, and are user-deleted only.
-                held = now - t.get('since', now)
-                if held >= anomaly_sec and symbol not in self._fuel_managed:
-                    a = self._anomalies.get(symbol)
-                    if not a:
-                        self._anomalies[symbol] = {
-                            'symbol': symbol, 'dir': status,
-                            'started_at': t.get('since', now),
-                            'start_price': t.get('start_price') or _mk,
-                            'holding': True,
-                            'last_price': _mk, 'last_held_sec': int(held),
-                            'ended_at': None, 'end_price': None,
-                        }
-                    else:
-                        a['holding'] = True
-                        a['dir'] = status
-                        if _mk:
-                            a['last_price'] = _mk
-                        a['last_held_sec'] = int(held)
-                        # Fuel came back after an earlier end → clear end marks.
-                        a['ended_at'] = None
-                        a['end_price'] = None
-            else:
-                # status off → reset any running timer
-                if symbol in self._timers:
-                    self._timers.pop(symbol, None)
-
-        # Drop orphaned timers for symbols that are no longer eligible for a
-        # timer (e.g. a funding coin after the 💰 scanner is turned off, or a
-        # coin removed from the watchlist / scan-list). Without this their row
-        # would linger in the ❤️ table forever since the loop above never visits
-        # symbols outside `symbols`.
+        # 💰 Funding scanner membership / rates — it has its OWN table now.
+        funding_syms = self._get_funding_symbols()
         with self._lock:
-            for sym in list(self._timers.keys()):
-                if sym not in scan_list and sym not in self._fuel_managed:
-                    self._timers.pop(sym, None)
+            self._funding_syms = set(funding_syms)
+            self._funding_rates = self._get_funding_rates()
+            self._funding_next = self._get_funding_next()
+            managed = list(self._fuel_managed.keys())
+            pending = list(self._pending.keys())
 
-            # Safety net: record an anomaly for ANY timer past the threshold —
-            # even symbols the main loop didn't visit this tick (e.g. FF-flagged
-            # but out of the current watchlist). This guarantees a long-held coin
-            # always moves to the anomalies table (and out of the FF table).
-            for sym, t in self._timers.items():
-                held = now - t.get('since', now)
-                if (held >= anomaly_sec and sym not in self._anomalies
-                        and sym not in self._fuel_managed):
-                    self._anomalies[sym] = {
-                        'symbol': sym, 'dir': t.get('dir'),
-                        'started_at': t.get('since', now),
-                        'start_price': t.get('start_price'),
-                        'holding': True,
-                        'last_price': t.get('start_price'),
-                        'last_held_sec': int(held),
-                        'ended_at': None, 'end_price': None,
-                    }
+        # NEW STRATEGY: fuel is computed ONLY for the few relevant coins —
+        # open FF positions + the waiting base (_pending) + funding-scanner
+        # coins + BTC. No more whole-WATCHLIST scan.
+        relevant = list(dict.fromkeys(
+            ['BTCUSDT'] + managed + pending + list(funding_syms)))
+        self._register_with_liqmap(relevant)
 
-            # Anomaly end-detection: an anomaly still flagged "holding" but with
-            # no active timer means its fuel just ended — freeze end time/price
-            # but KEEP the row (user deletes it). Done after timer cleanup so
-            # the timer set is final.
-            active_timers = set(self._timers.keys())
-            for sym, a in self._anomalies.items():
-                if a.get('holding') and sym not in active_timers:
-                    a['holding'] = False
-                    if not a.get('ended_at'):
-                        a['ended_at'] = now
-                        a['end_price'] = a.get('last_price')
+        # Advance EMA + read fuel once per cycle for each relevant coin.
+        fuels = {}
+        for sym in relevant:
+            fuels[sym] = self._fuel_dir_smoothed(sym, update=True)
 
-        # Store aggregate scan-stats for the panel header.
+        # BTC table-row snapshot (fuel-based, like the other coins).
+        bfuel = fuels.get('BTCUSDT')
+        bstatus = bfuel.get('status') if bfuel else None
+        with self._lock:
+            self._btc_state = {
+                'dir': bstatus,
+                'exhaustion': (self._exhaustion('BTCUSDT', bstatus)
+                               if bstatus in ('LONG', 'SHORT') else None),
+                'held_sec': 0,
+                'managed': 'BTCUSDT' in self._fuel_managed,
+            }
+
+        # Manage open FF positions (exit rules).
+        if settings.get('manage_open_positions', True):
+            for sym in managed:
+                try:
+                    self._manage_position(sym, settings, now, fuels.get(sym))
+                except Exception as e:
+                    print(f"[FuelFilter] manage error {sym}: {e}")
+
+        # 💰 Funding fuel table — its OWN scan (separate from the base).
+        try:
+            self._scan_funding(settings, now, fuels)
+        except Exception as e:
+            print(f"[FuelFilter] funding scan error: {e}")
+
+        # Header stats (now only over the relevant set).
         with self._lock:
             self._scan_stats = {
-                'targets': len(scan_targets),
-                'scanned': _scanned_ok,
-                'watchlist_total': len(watchlist),
-                'max_exh_long': (round(_max_long, 1) if _max_long is not None else None),
-                'max_exh_short': (round(_max_short, 1) if _max_short is not None else None),
-                'exh_long_count': _cnt_long,
-                'exh_short_count': _cnt_short,
+                'targets': len(pending),
+                'scanned': sum(1 for f in fuels.values() if f and f.get('mark_price')),
+                'pending': len(pending),
+                'managed': len(managed),
             }
             self._persist_state()
 
-        # Pre-compute SCORE verdicts for the rows the UI will show (+ managed
-        # positions + BTC) HERE, in the background, so get_state / TM state
-        # don't do liq-map + kline work per row on every poll.
+        # Background SCORE cache (pending + managed) — keeps the UI fast.
         self._refresh_score_cache(settings)
 
-        # NOTE: BTC START/STOP and funding entry/exit Telegram alerts run in a
-        # dedicated fast loop (_run_alerts, ~3s) so they fire near-instantly on
-        # a threshold crossing instead of waiting for the next 30s scan tick.
+    def _manage_position(self, symbol, settings, now, fuel):
+        """Run the exit rules for one open FF-managed position. Extracted from
+        the old per-symbol tick loop; behaviour unchanged. The timer is popped
+        by _close on exit."""
+        with self._lock:
+            track = self._fuel_managed.get(symbol)
+        if not track:
+            return
+        side = track['side']
+        is_real = track.get('mode') == 'real'
+        opposite = 'SHORT' if side == 'LONG' else 'LONG'
+        status = fuel.get('status') if fuel else None
+        mark = fuel.get('mark_price') if fuel else None
+        if not mark:
+            try:
+                from detection.market_data import get_market_data
+                md = get_market_data()
+                if md:
+                    tk = md.get_ticker(symbol)
+                    mark = tk.get('last') if tk else None
+            except Exception:
+                pass
+
+        # Position vanished in TM (manual close / SL / TP) → drop marker + timer.
+        if not self._tm_has_position(symbol, is_real):
+            with self._lock:
+                self._fuel_managed.pop(symbol, None)
+                self._timers.pop(symbol, None)
+            return
+
+        exh = self._exhaustion(symbol, side)
+        with self._lock:
+            if exh is not None:
+                track['exhaustion'] = exh
+                t = self._timers.get(symbol)
+                if t is not None:
+                    t['exhaustion'] = exh
+
+        opened_at = track.get('opened_at', 0)
+        if opened_at and (now - opened_at) < MIN_HOLD_AFTER_OPEN_SEC:
+            return
+
+        # exit: clear flip to the opposite side.
+        if status == opposite:
+            self._close(symbol, mark or 0.0, reason='fuel_flipped', is_real=is_real)
+            return
+        # exit: WAIT verdict (optional).
+        if settings.get('skip_wait_coins', False) and self._is_wait_verdict(symbol):
+            self._close(symbol, mark or 0.0, reason='wait_verdict', is_real=is_real)
+            return
+        # exit: fuel fade (sustained), with grace.
+        if status != side:
+            faded = track.get('faded_since')
+            if not faded:
+                with self._lock:
+                    track['faded_since'] = now
+            elif (now - faded) >= FUEL_FADE_GRACE_SEC:
+                self._close(symbol, mark or 0.0, reason='fuel_faded', is_real=is_real)
+                return
+        else:
+            if track.get('faded_since'):
+                with self._lock:
+                    track.pop('faded_since', None)
+        # exit: exhaustion reached (optional).
+        if settings.get('use_potential_exit') and exh is not None \
+                and exh >= settings.get('potential_threshold_pct', 95):
+            self._close(symbol, mark or 0.0, reason='potential_reached', is_real=is_real)
+            return
+        with self._lock:
+            self._persist_state()
+
+    def _scan_funding(self, settings, now, fuels):
+        """💰 Funding fuel table (own scan): for each 💰 Funding Rate Scanner
+        coin, track when it shows fuel. Holding coins fill the table; on fuel
+        end the row is frozen (user-deleted). Telegram entry/exit alerts fire
+        on transitions when funding_tg_alerts is on. Stored in self._anomalies
+        (repurposed) so the existing table + delete endpoints keep working."""
+        funding = list(self._funding_syms)
+        notifier = None
+        if settings.get('funding_tg_alerts', False):
+            tm = self._get_tm() if self._get_tm else None
+            notifier = getattr(tm, 'notifier', None) if tm else None
+        btc_line = self._btc_status_text(settings, now)
+        with self._lock:
+            for sym in funding:
+                fuel = fuels.get(sym) or self._fuel_dir_smoothed(sym)
+                status = fuel.get('status') if fuel else None
+                mark = fuel.get('mark_price') if fuel else None
+                a = self._anomalies.get(sym)
+                if status in ('LONG', 'SHORT'):
+                    if not a or not a.get('holding'):
+                        self._anomalies[sym] = {
+                            'symbol': sym, 'dir': status, 'started_at': now,
+                            'start_price': mark, 'holding': True,
+                            'last_price': mark, 'last_held_sec': 0,
+                            'ended_at': None, 'end_price': None,
+                            'funding': True,
+                        }
+                        self._notify_funding(notifier, sym, status, mark, btc_line,
+                                             settings, now, entered=True)
+                    else:
+                        a['holding'] = True
+                        a['dir'] = status
+                        if mark:
+                            a['last_price'] = mark
+                        a['last_held_sec'] = int(now - a.get('started_at', now))
+                        a['ended_at'] = None
+                        a['end_price'] = None
+                        a['funding'] = True
+                else:
+                    if a and a.get('holding'):
+                        a['holding'] = False
+                        a['ended_at'] = now
+                        a['end_price'] = a.get('last_price')
+                        self._notify_funding(notifier, sym, a.get('dir'),
+                                             a.get('last_price'), btc_line,
+                                             settings, now, entered=False)
+            # Drop funding rows whose coin left the scanner AND isn't holding.
+            fset = set(funding)
+            for sym in list(self._anomalies.keys()):
+                a = self._anomalies[sym]
+                if a.get('funding') and sym not in fset and not a.get('holding'):
+                    self._anomalies.pop(sym, None)
+            self._persist_state()
+
+    def _notify_funding(self, notifier, sym, d, price, btc_line, settings, now, entered):
+        if not notifier:
+            return
+        try:
+            rate = self._funding_rates.get(sym)
+            rtxt = (f"funding {rate:+.3f}% · " if rate is not None else '')
+            etxt = ''
+            if d in ('LONG', 'SHORT'):
+                exh = self._exhaustion(sym, d)
+                if exh is not None:
+                    etxt = f"🔥 {exh:.1f}% · "
+            line2 = f"{rtxt}{etxt}{btc_line}"
+            if entered:
+                dtxt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '')
+                ptxt = (f" · {self._fmt_price(price)}" if price else '')
+                notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{ptxt}\n{line2}")
+            else:
+                ptxt = (f" · {self._fmt_price(price)}" if price else '')
+                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід{ptxt}\n{line2}")
+        except Exception as e:
+            print(f"[FuelFilter] funding TG error {sym}: {e}")
+
 
     def _refresh_score_cache(self, settings: Dict):
-        """Background SCORE computation. Scores only the symbols that will be
-        displayed (timers past their show threshold) plus managed positions and
-        BTC — bounded work, off the request path. The kline fetches inside
-        _candle_momentum warm the 20s cache here, so the UI never blocks on them."""
+        """Background SCORE computation for the displayed rows — the waiting
+        base (_pending) + open FF positions (_timers) + funding-fuel coins —
+        off the request path so the UI never blocks on liq-map/kline work."""
         try:
             dur = float(settings.get('duration_minutes', 5) or 0) * 60
-            fdur = float(settings.get('funding_duration_minutes', 0) or 0) * 60
             tf = settings.get('engine_candle_tf', '5m')
             now = time.time()
             with self._lock:
-                timers = list(self._timers.items())
-                managed = set(self._fuel_managed)
-                funding = set(self._funding_syms)
-            cache = {}
+                pending = list(self._pending.items())   # (sym, {dir, added_at})
+                timers = list(self._timers.items())      # open positions
+                anomalies = [(s, a.get('dir')) for s, a in self._anomalies.items()]
+            # symbol -> (dir, held_sec)
+            targets = {}
+            for sym, info in pending:
+                targets[sym] = (info.get('dir'), 0.0)   # waiting → no fuel-hold
             for sym, t in timers:
-                held = now - t.get('since', now)
-                thr = fdur if sym in funding else dur
-                # only the rows the UI shows (+ managed positions + BTC)
-                if held < thr and sym not in managed and sym != 'BTCUSDT':
-                    continue
+                targets[sym] = (t.get('dir'), now - t.get('since', now))
+            for sym, d in anomalies:
+                targets.setdefault(sym, (d, 0.0))
+            cache = {}
+            for sym, (d, held) in targets.items():
                 try:
-                    sc = self._timer_score_for(sym, t.get('dir'), held,
-                                               t.get('exhaustion'), thr, tf)
+                    sc = self._timer_score_for(sym, d, held, None, dur, tf)
                     if sc:
                         cache[sym] = sc
                 except Exception:
@@ -1602,7 +1553,9 @@ class FuelFilterDaemon:
                 if s.get('enabled'):
                     now = time.time()
                     self._btc_start_alert(s, now)
-                    self._funding_alert(s, now)
+                    # Funding entry/exit TG now fires from _scan_funding on
+                    # transitions (the old _funding_alert membership-rescan is
+                    # retired together with the watchlist scan).
             except Exception as e:
                 print(f"[FuelFilter] alert loop error: {e}")
             self._stop.wait(3)
@@ -1691,14 +1644,15 @@ class FuelFilterDaemon:
             if self._engine_attempts != _att_before:
                 self._persist_state()
 
-        # Two mutually-exclusive engine modes (UI keeps them exclusive):
-        #   • BTC mode  (start_engine_enabled)     — open the basket only while
-        #     the ₿ BTCUSDT banner is START, all in the banner's direction.
-        #   • Indep mode(start_engine_independent) — open as soon as a coin
-        #     appears in the table, in the COIN's OWN ММ direction, with NO
-        #     dependency on BTC. Everything else (candle confirm, exhaustion,
-        #     exhaustion-exit management) works exactly as before.
-        # Both OFF → engine idle.
+        # NEW STRATEGY: candidates come from the intercepted base (_pending),
+        # NOT from a watchlist scan. Two mutually-exclusive modes:
+        #   • BTC mode  (start_engine_enabled)     — only act while ₿ BTCUSDT is
+        #     START (its ММ held ≥ start_signal_minutes); the trigger, not a
+        #     direction filter.
+        #   • Indep mode(start_engine_independent) — act immediately, no BTC.
+        # In BOTH: which coins are eligible is decided by the MAIN LONG/SHORT
+        # buttons, and a coin opens only when its live fuel matches its OWN
+        # signal direction. Both OFF → engine idle.
         btc_mode = bool(s.get('start_engine_enabled'))
         indep_mode = bool(s.get('start_engine_independent'))
         if not s.get('enabled') or not (btc_mode or indep_mode):
@@ -1707,88 +1661,63 @@ class FuelFilterDaemon:
             return
         now = time.time()
 
-        btc_dir = None
         if btc_mode:
-            # Banner = main-window verdict; START when that verdict has held
-            # LONG/SHORT for ≥ start_signal_minutes. The engine opens the basket
-            # in the VERDICT direction (1:1 with the banner / main window).
-            vdir = self._btc_verdict_dir
-            if vdir not in ('LONG', 'SHORT') or not self._btc_verdict_since:
-                self._engine_attempts.clear()   # WAIT → reset counters
+            # ₿ START gate: BTC ММ must have held a direction ≥ threshold.
+            if self._btc_verdict_dir not in ('LONG', 'SHORT') or not self._btc_verdict_since:
+                self._engine_attempts.clear()
                 _persist_attempts_if_changed()
                 return
             period = float(s.get('start_signal_minutes', 5) or 5) * 60
             if (now - self._btc_verdict_since) < period:
-                self._engine_attempts.clear()   # still counting → reset
+                self._engine_attempts.clear()
                 _persist_attempts_if_changed()
                 return
-            btc_dir = vdir                   # the basket direction in BTC mode
 
-        # Gather candidates as {symbol: (held_sec, dir)}. In BTC mode only coins
-        # whose own ММ matches the banner direction qualify; in indep mode EVERY
-        # coin qualifies and opens in its own ММ direction.
-        dur = float(s.get('duration_minutes', 5)) * 60
-        cand = {}
+        # Candidates = waiting base, filtered by the MAIN LONG/SHORT buttons.
+        allow_long, allow_short = self._entry_gates()
+        cand = {}   # sym -> (waited_sec, signal_dir)
         with self._lock:
-            if s.get('start_engine_use_timers', True):
-                for sym, t in self._timers.items():
-                    # BTCUSDT is NOT excluded anymore — it trades on par with the
-                    # rest (it still also serves as the banner signal). Skip only
-                    # coins already managed or moved to the anomalies table.
-                    if sym in self._fuel_managed or sym in self._anomalies:
-                        continue
-                    cdir = t.get('dir')
-                    if cdir not in ('LONG', 'SHORT'):
-                        continue
-                    if btc_mode and cdir != btc_dir:
-                        continue
-                    h = now - t.get('since', now)
-                    if h >= dur:
-                        cand[sym] = (h, cdir)
-            if s.get('start_engine_use_anomalies', True):
-                for sym, a in self._anomalies.items():
-                    if not a.get('holding') or sym in self._fuel_managed:
-                        continue
-                    cdir = a.get('dir')
-                    if cdir not in ('LONG', 'SHORT'):
-                        continue
-                    if btc_mode and cdir != btc_dir:
-                        continue
-                    at = self._timers.get(sym)
-                    held = (now - at.get('since', now)) if at \
-                        else float(a.get('last_held_sec', 0))
-                    cand[sym] = (held, cdir)
-            funding = set(self._funding_syms)
-        if not s.get('start_engine_include_funding', False):
-            cand = {c: v for c, v in cand.items() if c not in funding}
+            for sym, info in self._pending.items():
+                d = info.get('dir')
+                if d not in ('LONG', 'SHORT'):
+                    continue
+                if d == 'LONG' and not allow_long:
+                    continue
+                if d == 'SHORT' and not allow_short:
+                    continue
+                cand[sym] = (now - info.get('added_at', now), d)
 
-        mode_lbl = f"BTC-START {btc_dir}" if btc_mode else "НЕЗАЛЕЖНИЙ"
+        mode_lbl = "BTC-START" if btc_mode else "НЕЗАЛЕЖНИЙ"
         if not cand:
-            # No candidates → nothing to attempt; drop any stale counters.
             self._engine_attempts.clear()
             _persist_attempts_if_changed()
-            print(f"[FF-Engine] {mode_lbl} · 0 кандидатів")
+            print(f"[FF-Engine] {mode_lbl} · 0 кандидатів у базі (кнопки L={allow_long} S={allow_short})")
             return
 
+        dur = float(s.get('duration_minutes', 5)) * 60
         max_exh = float(s.get('max_exhaustion_pct', 75) or 75)
         confirm_on = s.get('engine_candle_confirm', True)
         tf = s.get('engine_candle_tf', '5m')
-        # Per-candidate decision trace so the engine is NOT a black box: every
-        # tick prints exactly why each coin did/didn't open.
         trace = []
 
-        # Open in ascending timer order: smallest held first → largest.
-        for sym, (held, d) in sorted(cand.items(), key=lambda kv: kv[1][0]):
+        # Open oldest-waiting first.
+        for sym, (held, d) in sorted(cand.items(), key=lambda kv: -kv[1][0]):
             if sym in self._fuel_managed:
                 trace.append(f"{sym}:managed")
                 continue   # already managed (no duplicate)
             # Skip if TM already holds this coin (real OR paper) — don't dup.
             if self._tm_has_position(sym, True) or self._tm_has_position(sym, False):
                 trace.append(f"{sym}:вже-в-угодах")
+                with self._lock:
+                    self._pending.pop(sym, None)
                 continue
             fuel = self._fuel_dir_smoothed(sym)
             if not fuel or not fuel.get('mark_price'):
-                trace.append(f"{sym}:немає-ціни/ММ")
+                trace.append(f"{sym}:немає-ціни")
+                continue
+            # GATE: fuel must be present AND match the signal direction.
+            if fuel.get('status') != d:
+                trace.append(f"{sym}:паливо≠{d}({fuel.get('status')})")
                 continue
             # Exhaustion gate (same as _open) — surfaced HERE so it's visible and
             # does NOT silently waste a candle check. Too-exhausted coins are
@@ -1830,8 +1759,14 @@ class FuelFilterDaemon:
                 attempt = self._engine_attempts.get(sym, 0) + 1
                 opened = self._open(
                     sym, d, fuel, s,
-                    opened_by=f"🕯️ FF спроба {attempt} · ⏱ {self._fmt_dur(held)}")
+                    opened_by=f"🕯️ FF спроба {attempt} · ⏳ {self._fmt_dur(held)}")
                 if opened:
+                    # Timer starts NOW (at open) and runs while the position is
+                    # open; _close resets it. Coin leaves the waiting base.
+                    with self._lock:
+                        self._timers[sym] = {'dir': d, 'since': now,
+                                             'start_price': fuel.get('mark_price')}
+                        self._pending.pop(sym, None)
                     self._engine_attempts.pop(sym, None)   # opened → reset
                     trace.append(f"{sym}:✅ВІДКРИТО {d}(сп{attempt})")
                     print(f"[FF-Engine] opened {d} {sym} ({mode_lbl}, спроба {attempt})")
@@ -1863,45 +1798,35 @@ class FuelFilterDaemon:
             duration_sec = settings['duration_minutes'] * 60
             funding_dur = float(settings.get('funding_duration_minutes', 0) or 0) * 60
             now = time.time()
+            # NEW STRATEGY: the table = the waiting BASE (_pending) — coins
+            # intercepted from the main LONG/SHORT flow, waiting for ₿ START +
+            # fuel. Filtered by the MAIN LONG/SHORT buttons (both off → empty).
+            allow_long, allow_short = self._entry_gates()
             timers = []
-            for sym, t in self._timers.items():
+            for sym, info in self._pending.items():
                 if sym in self._fuel_managed:
-                    continue  # already opened, don't show timer
-                if sym in self._anomalies:
-                    continue  # moved to the anomalies table — hide here
-                held = now - t.get('since', now)
-                # STICKY origin: a coin that entered via the 💰 Funding Rate
-                # Scanner keeps its 💰 ticker while its timer lives, even after
-                # it drops out of the scanner list.
-                is_fund = bool(t.get('from_funding')) or (sym in self._funding_syms)
-                live_fund = sym in self._funding_syms   # currently in the scanner
-                # FILTER: 💰 funding coins use their OWN threshold
-                # (funding_duration_minutes); everyone else uses "Поріг показу".
-                thr = funding_dur if is_fund else duration_sec
-                if held < thr:
+                    continue  # already opened
+                d = info.get('dir')
+                if d == 'LONG' and not allow_long:
                     continue
+                if d == 'SHORT' and not allow_short:
+                    continue
+                waited = now - info.get('added_at', now)
                 timers.append({
-                    'symbol': sym, 'dir': t.get('dir'),
-                    'held_sec': int(held),
-                    'exhaustion': t.get('exhaustion'),
-                    # Per-coin hold SCORE verdict — read from the background
-                    # cache (computed in _tick) so this endpoint never does
-                    # liq-map / kline work per row.
+                    'symbol': sym, 'dir': d,
+                    # No timer while waiting — it starts at open. Show how long
+                    # the coin has been queued instead.
+                    'held_sec': int(waited),
+                    'waiting': True,
+                    'exhaustion': (self._score_cache.get(sym) or {}).get('_exh'),
                     'score': self._score_cache.get(sym),
-                    # 💰 origin badge stays sticky; the live funding rate/countdown
-                    # only show while the coin is still in the scanner.
-                    'funding': is_fund,
-                    'funding_rate': self._funding_rates.get(sym) if live_fund else None,
-                    'funding_next_ms': self._funding_next.get(sym) if live_fund else None,
-                    # how many times the engine waited on candle confirmation
+                    'funding': False,
+                    'funding_rate': None,
+                    'funding_next_ms': None,
                     'engine_attempts': self._engine_attempts.get(sym, 0),
-                    # progress_pct removed - no longer needed
                 })
-            # BTC is now a normal row (its dedicated visual lives in the
-            # START/STOP banner). No pinning.
             all_timers = sorted(timers, key=lambda x: -x['held_sec'])
             bs = self._btc_state or {}
-            scan_list = self.get_scan_list()
             # BTC START/STOP signal: progress counts up while the MAIN-WINDOW
             # verdict (compute_bias) holds LONG/SHORT, reaching START at
             # start_signal_minutes; STOP when the verdict is WAIT/None. The
@@ -1963,7 +1888,8 @@ class FuelFilterDaemon:
             'anomalies': anomalies,
             'active_symbols': list(self._fuel_managed.keys()),
             'tracked_count': len(self._fuel_managed),
-            'scan_list': scan_list,
+            'scan_list': [],   # retired (FF no longer scans the WATCHLIST)
+            'pending_count': len(self._pending),
             'scan_stats': dict(self._scan_stats),
         }
 
@@ -2002,15 +1928,18 @@ class FuelFilterDaemon:
                     if track.get('exhaustion') is not None}
 
     def delete_timer(self, symbol: str) -> bool:
-        """Delete a specific timer. Returns True if deleted, False if not found."""
+        """Remove a coin from the FF table — the waiting base (_pending) and/or
+        a running timer. Returns True if anything was removed."""
         symbol = symbol.upper()
         with self._lock:
+            removed = (self._pending.pop(symbol, None) is not None)
             if symbol in self._timers:
                 self._timers.pop(symbol)
+                removed = True
+            if removed:
                 self._persist_state()
-                print(f"[FuelFilter] Timer deleted: {symbol}")
-                return True
-            return False
+                print(f"[FuelFilter] removed from FF table: {symbol}")
+            return removed
 
     def force_open_timer(self, symbol: str) -> Dict:
         """Manually trigger position open for a running timer, bypassing the
@@ -2025,22 +1954,18 @@ class FuelFilterDaemon:
 
         with self._lock:
             timer = self._timers.get(symbol)
-
-        if not timer:
-            return {'ok': False, 'reason': f'No active timer for {symbol}'}
+            pend = self._pending.get(symbol)
 
         # Check if already holding a position
         if symbol in self._fuel_managed:
             return {'ok': False, 'reason': f'Already holding position for {symbol}'}
 
-        # Direction comes from the timer (set when the timer started). For a
-        # manual force-open we don't require fuel to STILL point that way —
-        # the operator explicitly wants in. We only need a valid entry price.
-        # NOTE: timers store the direction under 'dir' (see tick loop /
-        # get_state), NOT 'side' — reading 'side' raised KeyError: 'side'.
-        side = timer.get('dir')
+        # Direction comes from the waiting base (signal side) or, if already
+        # opened-and-timing, from the timer. Force-open ignores the ₿ START /
+        # fuel gate — the operator explicitly wants in.
+        side = (pend or {}).get('dir') or (timer or {}).get('dir')
         if side not in ('LONG', 'SHORT'):
-            return {'ok': False, 'reason': f'Таймер {symbol} без напрямку'}
+            return {'ok': False, 'reason': f'{symbol} не у черзі FF'}
 
         # Use the SAME fuel helper the tick loop uses (smoothed, read-only). It
         # returns {dir, mark_price, status} and has its own market_data fallback
@@ -2071,12 +1996,11 @@ class FuelFilterDaemon:
             return {'ok': False, 'reason': f'Помилка: {str(e)}'}
 
         if opened:
-            # KEEP the timer running. The position lives in _fuel_managed (so the
-            # FF table hides this row, and anomaly-recording skips it while open),
-            # but the timer's `since` is preserved — so the continuous ММ duration
-            # survives open → close and the coin can still reach the anomalies
-            # table later if its ММ never actually ended.
+            # Timer starts now (position lifetime); coin leaves the waiting base.
             with self._lock:
+                self._timers[symbol] = {'dir': side, 'since': time.time(),
+                                        'start_price': fuel.get('mark_price')}
+                self._pending.pop(symbol, None)
                 self._persist_state()
             return {'ok': True, 'reason': f'Позицію {side} відкрито вручну', 'opened': True}
         else:
@@ -2086,9 +2010,10 @@ class FuelFilterDaemon:
                     'reason': 'Відкриття відхилено (виснаженість/вердикт/розмір — див. лог)'}
 
     def clear_all_timers(self) -> int:
-        """Clear all timers. Returns count of timers cleared."""
+        """Clear the whole FF table — waiting base + any timers."""
         with self._lock:
-            count = len(self._timers)
+            count = len(self._pending) + len(self._timers)
+            self._pending.clear()
             self._timers.clear()
             self._persist_state()
             print(f"[FuelFilter] Cleared {count} timers")

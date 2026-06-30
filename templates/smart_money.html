@@ -1957,15 +1957,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
             </div>
 
-            <!-- running timers -->
+            <!-- ❤️ FF base: intercepted coins waiting for ₿ START + fuel -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 6px">
-                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">⏱️ Активні таймери</div>
-                <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всі таймери">🗑️ Очистити всі</button>
+                <div style="font-size:0.74rem;font-weight:700;color:#cbd5e1">⏱️ Активні таймери <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— черга монет (перехоплені з ЛОНГ/ШОРТ), чекають ₿ START + ММ</span></div>
+                <button onclick="clearAllTimers()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю чергу">🗑️ Очистити всі</button>
             </div>
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th>Тримається</th><th title="Скільки разів движок намагався відкрити, але свічка не підтвердила напрямок">🕯️ Спроби</th><th title="Оцінка утримання ММ по монеті: запас ходу (1−виснаженість) + тривалість утримання + сила ММ у напрямку. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th title="Скільки часу монета вже чекає в черзі">Очікує</th><th title="Скільки разів движок намагався відкрити, але свічка не підтвердила напрямок">🕯️ Спроби</th><th title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="7" class="tm-empty-msg">Немає активних таймерів</td></tr>
@@ -1974,16 +1974,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </div>
 
             <div style="font-size:0.66rem;color:#6b7280;margin-top:12px">
-                💡 Скануються лише монети з прапорцем <b style="color:#f9a8d4">FF</b> у WATCHLIST (щоб не навантажувати бота). ММ читається з кешованої liq-карти (без зайвих запитів до біржі). Виснаженість — із панелі "Потенціал LONG/SHORT". Позиції відкриваються в Trade Manager (real) або Test Mode (paper) залежно від їх тумблерів. Скан кожні 30с.
+                💡 Таблиця наповнюється <b>перехопленням</b>: коли FF увімкнено, монети, які основні кнопки ЛОНГ/ШОРТ відправляють на відкриття, стають у чергу тут (а не відкриваються одразу). Показ фільтрується кнопками ЛОНГ/ШОРТ (обидві вимкнені → порожньо). На ₿ START скануємо «ММ» лише по цих монетах і відкриваємо ту, де ММ збігається з напрямком. Паливо рахується ЛИШЕ для монет цієї таблиці — WATCHLIST більше не сканується.
             </div>
 
-            <!-- 🜂 Anomalous coins (held fuel longer than anomaly_hours) -->
+            <!-- 💰 Funding-fuel coins (own scan over the 💰 Funding Rate Scanner) -->
             <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
-                <div style="font-size:0.78rem;font-weight:700;color:#fbbf24">
-                    🜂 Аномальні монети
-                    <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— тримали «ММ» довше за <span id="ff-anomaly-hours-sub">10</span>г</span>
+                <div style="font-size:0.78rem;font-weight:700;color:#34d399">
+                    💰 Funding — ММ по монетах
+                    <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— окремий скан монет із 💰 Funding Rate Scanner на появу «ММ»</span>
                 </div>
-                <button onclick="clearAnomalies()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити всю таблицю аномалій">🗑️ Очистити всі</button>
+                <button onclick="clearAnomalies()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити таблицю Funding">🗑️ Очистити всі</button>
             </div>
             <div class="ff-timers-scroll" style="max-height:420px">
                 <table class="tm-table" id="ff-anomaly-table">
@@ -3255,25 +3255,12 @@ function renderWatchlist(list) {
             srcHtml = `<span class="wl-src wl-src-manual" title="Додано вручну">M</span>`;
         }
         
-        // ❤️ Fuel Auto-Filter "FF" flag — toggles whether this coin is in the
-        // FF scan-list (whitelist). When the coin currently HOLDS an open
-        // fuel-filter position we also show the ❤️ holding state on the flag.
-        const inScan = (typeof ffScanList !== 'undefined') && ffScanList.has(sym);
-        const isHolding = (typeof _ffActiveSymbols !== 'undefined')
-                          && _ffActiveSymbols.indexOf(sym) !== -1;
-        const ffClass = isHolding ? 'holding' : (inScan ? 'active' : 'inactive');
-        const ffLabel = 'FF';
-        const ffTitle = isHolding
-            ? '✅ Відкрита угода Fuel Auto-Filter. Click щоб прибрати монету зі скан-списку.'
-            : (inScan
-                ? '✅ У скан-списку Fuel Auto-Filter — монета сканується. Click щоб прибрати.'
-                : '❌ Не сканується Fuel Auto-Filter. Click щоб додати монету до скан-списку.');
+        // (❤️ FF scan-flag removed — FF no longer scans the WATCHLIST. The FF
+        // table is now fed by intercepting the main LONG/SHORT open flow.)
 
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
             <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
             <span style="display:flex;align-items:center;gap:4px">
-                <span class="wl-ff-flag ${ffClass}" data-sym="${sym}" title="${ffTitle}"
-                      onclick="event.stopPropagation();toggleFuelScan('${sym}')">${ffLabel}</span>
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
                 ${srcHtml}
