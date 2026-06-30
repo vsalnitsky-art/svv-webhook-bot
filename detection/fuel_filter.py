@@ -468,11 +468,16 @@ class FuelFilterDaemon:
                 self._btc_verdict_since = float(st.get('btc_verdict_since') or 0.0)
             except (TypeError, ValueError):
                 self._btc_verdict_since = 0.0
-            if self._fuel_managed or self._anomalies or self._engine_attempts:
-                print(f"[FuelFilter] restored {len(self._fuel_managed)} tracked "
-                      f"position(s), {len(self._timers)} timer(s), "
+            if (self._fuel_managed or self._anomalies or self._engine_attempts
+                    or self._pending or self._timers):
+                print(f"[FuelFilter] restored {len(self._pending)} queued, "
+                      f"{len(self._fuel_managed)} tracked position(s), "
+                      f"{len(self._timers)} timer(s), "
                       f"{len(self._anomalies)} anomaly(ies), "
                       f"{len(self._engine_attempts)} attempt-counter(s) from DB")
+                if self._pending:
+                    print(f"[FuelFilter] restored queue: "
+                          + ', '.join(f"{s}={v.get('dir')}" for s, v in self._pending.items()))
 
     def _persist_state(self):
         try:
@@ -771,14 +776,21 @@ class FuelFilterDaemon:
             d = compute_bias(self._db, 'BTCUSDT', None)
             fuel = ((d or {}).get('components') or {}).get('fuel') or {}
             fdir = fuel.get('dir')
+            # HYSTERESIS on the BTC ММ direction so it does NOT flicker on noise.
+            # Without this the raw ±0.1 threshold flips LONG↔SHORT↔None on tiny
+            # changes, and every flip ran the OP-4 queue purge — which silently
+            # evicted opposite-direction coins (the "монета зникла" bug).
+            prev = self._btc_verdict_dir
             if fdir is None:
-                vdir = None
-            elif fdir > 0.1:
-                vdir = 'LONG'
-            elif fdir < -0.1:
-                vdir = 'SHORT'
+                vdir = prev                 # data gap → keep previous, don't flip
+            elif fdir > 0.15:
+                vdir = 'LONG'               # firmly above → LONG
+            elif fdir < -0.15:
+                vdir = 'SHORT'              # firmly below → SHORT
+            elif abs(fdir) < 0.05:
+                vdir = None                 # firmly neutral → WAIT
             else:
-                vdir = None
+                vdir = prev                 # 0.05..0.15 grey zone → sticky
         except Exception as e:
             print(f"[FuelFilter] BTC ММ calc error: {e}")
             return
