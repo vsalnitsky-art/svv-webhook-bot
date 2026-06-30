@@ -1716,7 +1716,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span class="sm-status-badge" id="sm-htf-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-forecast-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-forecast4h-badge" style="display:none !important"></span>
-                    <span class="sm-status-badge" id="sm-ctr-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-bias-badge" style="display:none !important"></span>
                     <span class="sm-status-badge" id="sm-health-badge" style="display:none !important"></span>
                     <!-- ❤️ Fuel Auto-Filter status row — second line under the
@@ -1725,8 +1724,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          verdict WAIT (skip gate), timer/holding state, scan flag.
                          Populated by loadFuelPanelStatus() on symbol change +
                          every FF poll. Hidden until a symbol is selected. -->
-                    <div id="sm-ff-status-row" style="margin-top:6px;display:none;
-                         font-size:0.72rem;line-height:1.5;min-height:22px"></div>
+                    <!-- Second line: CTR badge + FF status (ММ / Виснаж / Вердикт
+                         / Таймер). One flex row with a stable min-height so it
+                         never collapses and jerks the chart below. -->
+                    <div style="margin-top:6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:22px">
+                        <span class="sm-status-badge" id="sm-ctr-badge" style="display:none"></span>
+                        <span id="sm-ff-status-row" style="font-size:0.72rem;line-height:1.5"></span>
+                    </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <button onclick="clearSignalsForCurrent()" id="sm-clear-signals-btn"
@@ -7146,14 +7150,19 @@ async function loadFuelPanelStatus() {
             }
         }
 
-        // Holding state (⏱ Таймер chip removed — not needed)
-        if (d.holding) {
+        // ⏱ Таймер — ONLY when there is a live FF trade with a running timer.
+        if (d.holding && d.timer) {
+            const held = d.timer.held_sec != null ? fmtTimer(d.timer.held_sec) : '—';
+            const tdir = d.timer.dir === 'LONG' ? '🟢' : d.timer.dir === 'SHORT' ? '🔴' : '';
+            parts.push(chip(`🎯 Угода · ⏱ ${tdir} ${held}`, '#c084fc',
+                'rgba(168,85,247,0.18)',
+                `FF тримає угоду ${d.timer.dir || ''} — таймер ${held}`));
+        } else if (d.holding) {
             parts.push(chip('🎯 Позиція відкрита', '#c084fc', 'rgba(168,85,247,0.18)',
                 'FF тримає відкриту позицію по цій монеті'));
         }
 
         row.innerHTML = parts.join('');
-        row.style.display = 'block';
     } catch (e) {
         // Keep the last content on error — no collapse, no jump.
     }

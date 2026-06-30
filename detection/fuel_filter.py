@@ -866,20 +866,16 @@ class FuelFilterDaemon:
         except Exception:
             out['verdict'] = None
         out['wait_blocked'] = (out['skip_wait'] and out.get('verdict') == 'WAIT')
-        # Timer / holding state
+        # Timer / holding state. NEW STRATEGY: a timer exists only for an OPEN
+        # FF position (starts at open, runs while the position is open). Return
+        # it so the panel can show '⏱ Таймер' ONLY when there is a live trade.
         with self._lock:
             holding = symbol in self._fuel_managed
             t = self._timers.get(symbol)
-            duration_sec = settings['duration_minutes'] * 60
             timer = None
-            if t and not holding:
+            if t:
                 held = time.time() - t.get('since', time.time())
-                timer = {
-                    'dir': t.get('dir'),
-                    'held_sec': int(held),
-                    'progress_pct': (round(min(100.0, held / duration_sec * 100.0), 1)
-                                     if duration_sec > 0 else 100.0),
-                }
+                timer = {'dir': t.get('dir'), 'held_sec': int(held)}
         out['holding'] = holding
         out['timer'] = timer
         return out
