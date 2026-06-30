@@ -26,7 +26,25 @@ def create_app():
     )
     
     app.secret_key = os.getenv('FLASK_SECRET_KEY', 'sleeper-ob-bot-secret-key-change-me')
-    
+
+    # ── CORS for the read-only info site ──────────────────────────────────
+    # The separate informational dashboard (infosite/) lives on another origin
+    # and only ever READS data via GET /api/*. Allow cross-origin reads for the
+    # API namespace so the browser doesn't block those fetches. This adds
+    # response headers only — it does NOT change any bot logic, and we keep it
+    # to safe methods (GET/HEAD/OPTIONS) so it can't enable cross-site writes.
+    @app.after_request
+    def _add_cors_headers(resp):
+        try:
+            if request.path.startswith('/api/') and request.method in ('GET', 'HEAD', 'OPTIONS'):
+                resp.headers['Access-Control-Allow-Origin'] = '*'
+                resp.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+                resp.headers['Access-Control-Allow-Headers'] = 'Accept, Content-Type'
+                resp.headers['Access-Control-Max-Age'] = '86400'
+        except Exception:
+            pass
+        return resp
+
     # Context processor for templates
     @app.context_processor
     def inject_now():
