@@ -1726,7 +1726,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          Populated by loadFuelPanelStatus() on symbol change +
                          every FF poll. Hidden until a symbol is selected. -->
                     <div id="sm-ff-status-row" style="margin-top:6px;display:none;
-                         font-size:0.72rem;line-height:1.5"></div>
+                         font-size:0.72rem;line-height:1.5;min-height:22px"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:10px">
                     <button onclick="clearSignalsForCurrent()" id="sm-clear-signals-btn"
@@ -7088,7 +7088,9 @@ async function loadFuelPanelStatus() {
     try {
         const d = await fetch('/api/fuel-filter/panel/' + encodeURIComponent(currentSymbol))
                         .then(r => r.json());
-        if (!d || !d.ok) { row.style.display = 'none'; return; }
+        // Don't collapse the row on a transient/empty response — that toggles
+        // its height and makes the chart below jump. Keep the last content.
+        if (!d || !d.ok) return;
 
         const chip = (txt, color, bg, title) =>
             `<span title="${(title || '').replace(/"/g, '&quot;')}" style="display:inline-block;`
@@ -7144,27 +7146,16 @@ async function loadFuelPanelStatus() {
             }
         }
 
-        // Timer / holding state
+        // Holding state (⏱ Таймер chip removed — not needed)
         if (d.holding) {
             parts.push(chip('🎯 Позиція відкрита', '#c084fc', 'rgba(168,85,247,0.18)',
                 'FF тримає відкриту позицію по цій монеті'));
-        } else if (d.timer) {
-            const held = d.timer.held_sec != null ? fmtAge(d.timer.held_sec) : '—';
-            const tdir = d.timer.dir === 'LONG' ? '🟢' : '🔴';
-            const p = d.timer.progress_pct != null ? d.timer.progress_pct : 0;
-            parts.push(chip(`⏱ Таймер: ${tdir} ${held}`,
-                p >= 100 ? '#4ade80' : '#facc15',
-                'rgba(250,204,21,0.12)',
-                `Таймер ${d.timer.dir} тримається ${held}`));
-        } else {
-            parts.push(chip('⏱ Таймер: —', '#8b93a7', 'rgba(139,147,167,0.12)',
-                'Таймер не запущено'));
         }
 
         row.innerHTML = parts.join('');
         row.style.display = 'block';
     } catch (e) {
-        row.style.display = 'none';
+        // Keep the last content on error — no collapse, no jump.
     }
 }
 
