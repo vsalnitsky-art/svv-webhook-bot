@@ -5687,6 +5687,20 @@ def compute_bias(db, symbol, wl=None):
     symbol = (symbol or 'BTCUSDT').upper().strip()
     if symbol.endswith('.P'):
         symbol = symbol[:-2]
+    # Short-TTL result cache. compute_bias is heavy (klines fetch for squeeze +
+    # forecast + liq-map + move-potential) and is hit by THREE consumers — the
+    # panel poll, the FF tick (BTCUSDT) and the auto-gate — so without this the
+    # same work runs several times within seconds and the panel feels slow to
+    # paint. Keyed by symbol + watchlist signature.
+    _wlsig = ''
+    if wl:
+        _wlsig = f"{wl.get('src','')}:{wl.get('n_long',0)}:{wl.get('n_short',0)}:{wl.get('n_flat',0)}"
+    _ck = (symbol, _wlsig)
+    _now = _t.time()
+    _cache = globals().setdefault('_BIAS_RESULT_CACHE', {})
+    _hit = _cache.get(_ck)
+    if _hit and (_now - _hit[0]) < 8.0:
+        return _hit[1]
     comp = {}
     reasons = []
     fc_side = 0  # +1 long, -1 short, 0 none/disagree
@@ -5997,11 +6011,13 @@ def compute_bias(db, symbol, wl=None):
         move_long = None
         move_short = None
 
-    return {'ok': True, 'symbol': symbol, 'verdict': verdict,
-            'confidence': confidence, 'components': comp,
-            'reasons': reasons, 'price': price, 'move': move,
-            'move_long': move_long, 'move_short': move_short,
-            'ts': _t.time()}
+    _result = {'ok': True, 'symbol': symbol, 'verdict': verdict,
+               'confidence': confidence, 'components': comp,
+               'reasons': reasons, 'price': price, 'move': move,
+               'move_long': move_long, 'move_short': move_short,
+               'ts': _t.time()}
+    _cache[_ck] = (_now, _result)
+    return _result
 
 
 def compute_bias_for_ff(db, symbol):
