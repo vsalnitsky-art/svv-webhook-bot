@@ -1317,10 +1317,10 @@ class TradeManager:
         Falls back to '<base>' alone when no decision is available.
         """
         parts = [opened_by]
-        # Auto-engine trades (candle-confirm) label the "Opened by" field with
-        # the attempt they opened on (🕯️) — the user asked for the attempt
-        # number there INSTEAD of the 🧠 verdict, so skip the brain suffix.
-        if opened_by and str(opened_by).startswith('🕯️'):
+        # FF auto-engine trades label "Opened by" with their own tag (🔥 entry
+        # exhaustion, or legacy 🕯️) — keep it as-is, no 🧠 verdict suffix.
+        if opened_by and (str(opened_by).startswith('🔥')
+                          or str(opened_by).startswith('🕯️')):
             return opened_by
         if entry_score:
             headline = entry_score.get('headline')
@@ -2124,9 +2124,10 @@ class TradeManager:
             # Decision Center verdict (headline, recommended, verdict, etc.).
             position['entry_score'] = decision
 
-        # FF SCORE verdict at open (STRONG HOLD 🟢▲ 79) — stamped so the close
-        # recap can show "SCORE: <at open> → <at close>".
+        # FF SCORE verdict + Exhaustion at open — stamped so the close recap can
+        # show "SCORE: open → close" and "Exhaust: open% → close%".
         position['ff_score_open'] = self._ff_score_snapshot(symbol)
+        position['ff_exh_open'] = self._ff_exhaustion(symbol, side)
 
         # Full pre-trade snapshot for the entry-quality backtest dataset.
         # Captured ONCE at open — decision + move-potential + hold score —
@@ -2522,6 +2523,18 @@ class TradeManager:
             return None
 
     @staticmethod
+    def _ff_exhaustion(symbol: str, side: str) -> Optional[float]:
+        """Move-exhaustion % for `symbol`/`side` from the Fuel Auto-Filter
+        (same value the panel shows). Used to stamp a position at open and at
+        close so the close recap can show the Exhaust journey."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            return ff._exhaustion(symbol, side) if ff else None
+        except Exception:
+            return None
+
+    @staticmethod
     def _ff_score_dict(symbol: str) -> Optional[Dict]:
         """Live Fuel Auto-Filter SCORE verdict dict ({score,label,color,dir,
         conflict}) for `symbol` — same shape the ⏱️ Active Timers rows carry, so
@@ -2595,7 +2608,14 @@ class TradeManager:
         else:
             parts.append(f'пік {peak:+.2f}%')
 
-        # 4. SCORE at open → at close (replaces the old entry-decision recap).
+        # 4. Exhaust at open → at close (the FF move-exhaustion journey).
+        exo = pos.get('ff_exh_open')
+        exc = self._ff_exhaustion(symbol, pos.get('side'))
+        if exo is not None or exc is not None:
+            _fmt = lambda x: f"{x:.1f}%" if x is not None else '—'
+            parts.append(f"🔥 Exhaust: {_fmt(exo)} → {_fmt(exc)}")
+
+        # 5. SCORE at open → at close.
         try:
             from detection.fuel_filter import get_fuel_filter
             ff = get_fuel_filter()
@@ -2837,8 +2857,9 @@ class TradeManager:
         }
         if decision is not None:
             pos['entry_score'] = decision
-        # FF SCORE verdict at open (for the close recap "SCORE: open → close").
+        # FF SCORE + Exhaustion at open (for the close recap journey).
         pos['ff_score_open'] = self._ff_score_snapshot(symbol)
+        pos['ff_exh_open'] = self._ff_exhaustion(symbol, side)
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
