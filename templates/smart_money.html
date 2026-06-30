@@ -1858,27 +1858,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 <input type="checkbox" id="ff-manage-positions" onchange="saveFuelFilterSettings()"> Контроль відкритих угод
                             </label>
                         </div>
-                    </div>
-                    <!-- 🚀 BTC-START auto-engine settings -->
-                    <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
-                        <div style="font-size:0.7rem;font-weight:700;color:#cbd5e1;margin-bottom:8px">🚀 Автодвигун за сигналом BTC START</div>
-                        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
-                            <div>
-                                <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = STRONG HOLD і напрямок SCORE збігається з колонкою «Напрямок».">
-                                    <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише STRONG HOLD (SCORE = напрямок)
-                                </label>
-                            </div>
-                            <div>
-                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Таймфрейм свічок для підтвердження напрямку">TF свічки</label>
-                                <select id="ff-engine-candle-tf" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
-                                    <option value="1m">1m</option>
-                                    <option value="3m">3m</option>
-                                    <option value="5m">5m</option>
-                                    <option value="15m">15m</option>
-                                    <option value="30m">30m</option>
-                                    <option value="1h">1h</option>
-                                </select>
-                            </div>
+                        <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = STRONG HOLD і напрямок SCORE збігається з колонкою «Напрямок».">
+                                <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише STRONG HOLD (SCORE = напрямок)
+                            </label>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Таймфрейм свічок для імпульсу SCORE">TF свічки</label>
+                            <select id="ff-engine-candle-tf" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                                <option value="1m">1m</option>
+                                <option value="3m">3m</option>
+                                <option value="5m">5m</option>
+                                <option value="15m">15m</option>
+                                <option value="30m">30m</option>
+                                <option value="1h">1h</option>
+                            </select>
                         </div>
                     </div>
                 </div>
@@ -6930,7 +6924,19 @@ function renderFuelFilter(d) {
     if (tb) {
         let rows = d.timers || [];
         if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">Черга порожня</td></tr>';
+            // Distinguish "queue truly empty" from "queued but hidden by the
+            // main LONG/SHORT button filter" — the #1 source of confusion.
+            const total = (d.scan_stats && d.scan_stats.pending) || d.pending_count || 0;
+            const g = d.entry_gates || {long:true, short:true};
+            let msg;
+            if (total > 0) {
+                msg = `${total} у черзі, але приховано фільтром кнопок `
+                    + `(LONG: ${g.long ? 'увімк' : 'вимк'} · SHORT: ${g.short ? 'увімк' : 'вимк'}) `
+                    + `— увімкни потрібну кнопку напрямку, щоб побачити їх`;
+            } else {
+                msg = 'Черга порожня';
+            }
+            tb.innerHTML = `<tr><td colspan="6" class="tm-empty-msg">${msg}</td></tr>`;
         } else {
             tb.innerHTML = rows.map(t => {
                 const isFunding = !!t.funding;
