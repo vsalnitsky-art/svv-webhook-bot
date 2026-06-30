@@ -1888,6 +1888,7 @@ class FuelFilterDaemon:
             'tracked_count': len(self._fuel_managed),
             'scan_list': [],   # retired (FF no longer scans the WATCHLIST)
             'pending_count': len(self._pending),
+            'entry_gates': {'long': allow_long, 'short': allow_short},
             'scan_stats': dict(self._scan_stats),
         }
 
