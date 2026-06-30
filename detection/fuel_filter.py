@@ -638,17 +638,27 @@ class FuelFilterDaemon:
                 'status': status, 'raw_dir': raw, 'raw_status': fd.get('status')}
 
     def _update_btc_verdict(self):
-        """Refresh the BTC banner direction from the MAIN-WINDOW verdict
-        (compute_bias — exactly what 🎯 Smart Money Concepts shows), so the
-        banner is 1:1 with the main window instead of raw liq-fuel. Resets the
-        held timer whenever the verdict direction changes. Called once per cycle."""
+        """Refresh the BTC banner direction from the MAIN-WINDOW ММ (liq-fuel)
+        indicator — the '✓ ММ зверху (тягне в LONG)' / '✓ ММ знизу (тягне в
+        SHORT)' line of 🎯 Smart Money Concepts, i.e. compute_bias's fuel
+        component (dir > +0.1 → LONG, < −0.1 → SHORT, else neutral). NOT the
+        overall verdict. Resets the held timer whenever that direction changes.
+        Called once per cycle."""
         try:
             from web.flask_app import compute_bias
             d = compute_bias(self._db, 'BTCUSDT', None)
-            v = (d or {}).get('verdict')
-            vdir = v if v in ('LONG', 'SHORT') else None
+            fuel = ((d or {}).get('components') or {}).get('fuel') or {}
+            fdir = fuel.get('dir')
+            if fdir is None:
+                vdir = None
+            elif fdir > 0.1:
+                vdir = 'LONG'
+            elif fdir < -0.1:
+                vdir = 'SHORT'
+            else:
+                vdir = None
         except Exception as e:
-            print(f"[FuelFilter] BTC verdict calc error: {e}")
+            print(f"[FuelFilter] BTC ММ calc error: {e}")
             return
         now = time.time()
         if vdir != self._btc_verdict_dir:
@@ -1245,9 +1255,19 @@ class FuelFilterDaemon:
                 if not t or t.get('dir') != status:
                     # new status (or direction flip) → (re)start timer.
                     # Capture the price at timer start (for the anomaly table).
+                    # Preserve the funding origin across a restart so the 💰
+                    # ticker isn't lost on a direction flip.
+                    prev_ff = bool(t.get('from_funding')) if t else False
                     self._timers[symbol] = {'dir': status, 'since': now,
-                                            'start_price': _mk}
+                                            'start_price': _mk,
+                                            'from_funding': prev_ff}
                     t = self._timers[symbol]
+                # Sticky funding origin: once a coin entered via the 💰 Funding
+                # Rate Scanner, it keeps its 💰 ticker while its timer lives —
+                # even after it leaves the scanner list (no more switching to
+                # the 'manual' badge).
+                if symbol in self._funding_syms:
+                    t['from_funding'] = True
                 # Exhaustion for the timer row — shows how much room is left.
                 exh = self._exhaustion(symbol, status)
                 if exh is not None:
@@ -1850,7 +1870,11 @@ class FuelFilterDaemon:
                 if sym in self._anomalies:
                     continue  # moved to the anomalies table — hide here
                 held = now - t.get('since', now)
-                is_fund = sym in self._funding_syms
+                # STICKY origin: a coin that entered via the 💰 Funding Rate
+                # Scanner keeps its 💰 ticker while its timer lives, even after
+                # it drops out of the scanner list.
+                is_fund = bool(t.get('from_funding')) or (sym in self._funding_syms)
+                live_fund = sym in self._funding_syms   # currently in the scanner
                 # FILTER: 💰 funding coins use their OWN threshold
                 # (funding_duration_minutes); everyone else uses "Поріг показу".
                 thr = funding_dur if is_fund else duration_sec
@@ -1864,11 +1888,11 @@ class FuelFilterDaemon:
                     # cache (computed in _tick) so this endpoint never does
                     # liq-map / kline work per row.
                     'score': self._score_cache.get(sym),
-                    # Flag rows that come from the 💰 Funding Rate Scanner so the
-                    # UI can distinguish them, plus their current funding %.
+                    # 💰 origin badge stays sticky; the live funding rate/countdown
+                    # only show while the coin is still in the scanner.
                     'funding': is_fund,
-                    'funding_rate': self._funding_rates.get(sym) if is_fund else None,
-                    'funding_next_ms': self._funding_next.get(sym) if is_fund else None,
+                    'funding_rate': self._funding_rates.get(sym) if live_fund else None,
+                    'funding_next_ms': self._funding_next.get(sym) if live_fund else None,
                     # how many times the engine waited on candle confirmation
                     'engine_attempts': self._engine_attempts.get(sym, 0),
                     # progress_pct removed - no longer needed
