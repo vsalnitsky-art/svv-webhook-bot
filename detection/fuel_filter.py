@@ -71,11 +71,14 @@ _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
 _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 
-# ─── DEBUG: queue (❤️ Черга на вхід) removal operations ───
-# Every place that REMOVES a coin from _pending is numbered and guarded. While
-# an op is BLOCKED (False) the removal is logged but NOT executed, so the coin
-# stays in the queue. We re-enable them ONE AT A TIME to find which op wrongly
-# drops coins. Flip a value to True to allow that op.
+# ─── queue (❤️ Черга на вхід) removal operations ───
+# Every place that REMOVES a coin from _pending is numbered and guarded. These
+# were temporarily frozen (all False) to diagnose coins vanishing from the
+# queue. The real culprit was the queue being RESTORED from the DB on boot
+# (stale coins like AAVEUSDT reappearing without a fresh signal) — now fixed by
+# making the queue ephemeral in _load_state. All removal ops are verified
+# correct, so they are re-enabled (True). Flip a value to False to re-freeze a
+# single op for future debugging.
 #   1 = position closed (_close)
 #   2 = engine opened the trade (_engine_tick success)
 #   3 = engine: TM already holds the coin (_engine_tick)
@@ -85,8 +88,8 @@ _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
 #   7 = remove_pending()
 #   8 = clear_pending()
 #   9 = manual force-open (force_open_timer success)
-_QUEUE_OPS_ALLOWED = {1: False, 2: False, 3: False, 4: False, 5: False,
-                      6: False, 7: False, 8: False, 9: False}
+_QUEUE_OPS_ALLOWED = {1: True, 2: True, 3: True, 4: True, 5: True,
+                      6: True, 7: True, 8: True, 9: True}
 
 
 def _q_allowed(op: int) -> bool:
