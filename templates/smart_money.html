@@ -2343,10 +2343,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
+                        <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -2404,10 +2405,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
                         <th title="Автоматичне закриття при беззбитку+комісія — коли увімкнено, paper позиція закриється при досягненні ціни входу + комісія біржі.">🎯 БЗ</th>
+                        <th title="Скільки часу угода відкрита (відлік від входу)">⏱ Таймер</th>
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -6935,19 +6937,7 @@ function renderFuelFilter(d) {
     if (tb) {
         let rows = d.timers || [];
         if (!rows.length) {
-            // Distinguish "queue truly empty" from "queued but hidden by the
-            // main LONG/SHORT button filter" — the #1 source of confusion.
-            const total = (d.scan_stats && d.scan_stats.pending) || d.pending_count || 0;
-            const g = d.entry_gates || {long:true, short:true};
-            let msg;
-            if (total > 0) {
-                msg = `${total} у черзі, але приховано фільтром кнопок `
-                    + `(LONG: ${g.long ? 'увімк' : 'вимк'} · SHORT: ${g.short ? 'увімк' : 'вимк'}) `
-                    + `— увімкни потрібну кнопку напрямку, щоб побачити їх`;
-            } else {
-                msg = 'Черга порожня';
-            }
-            tb.innerHTML = `<tr><td colspan="6" class="tm-empty-msg">${msg}</td></tr>`;
+            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">Черга порожня</td></tr>';
         } else {
             tb.innerHTML = rows.map(t => {
                 const isFunding = !!t.funding;
@@ -7030,9 +7020,10 @@ function renderFuelFilter(d) {
                 const prev = a.funding_prev_rate;
                 let arrow = '';
                 if (prev != null && a.funding_rate != null) {
-                    if (a.funding_rate < prev - 0.0005) arrow = '<span style="color:#f87171">↓ глибше</span>';
-                    else if (a.funding_rate > prev + 0.0005) arrow = '<span style="color:#4ade80">↑ слабшає</span>';
-                    else arrow = '<span style="color:#8b93a7">→</span>';
+                    // ← зменшується (funding more negative), → збільшується (less negative)
+                    if (a.funding_rate < prev - 0.0005) arrow = '<span style="color:#f87171">← зменшується</span>';
+                    else if (a.funding_rate > prev + 0.0005) arrow = '<span style="color:#4ade80">→ збільшується</span>';
+                    else arrow = '<span style="color:#8b93a7">— без змін</span>';
                 }
                 // FIXED-width bar so every coin's bar lines up in one column;
                 // the fill has a CSS transition so it visibly slides when the
@@ -7582,7 +7573,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7616,6 +7607,7 @@ async function loadTMState() {
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
                     ${breakevenCloseCellHTML(p, false)}
+                    <td style="font-size:0.74rem;color:#cbd5e1">${p.opened_at ? `<span class="ff-timer" data-since="${Math.floor(p.opened_at)}">${fmtTimer(Math.floor(Date.now()/1000) - Math.floor(p.opened_at))}</span>` : '—'}</td>
                     <td><button class="tm-close-btn" onclick="closeTMPosition('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');
@@ -7663,7 +7655,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="12" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7688,6 +7680,7 @@ async function loadTMState() {
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}
+                    <td style="font-size:0.74rem;color:#cbd5e1">${p.opened_at ? `<span class="ff-timer" data-since="${Math.floor(p.opened_at)}">${fmtTimer(Math.floor(Date.now()/1000) - Math.floor(p.opened_at))}</span>` : '—'}</td>
                     <td><button class="tm-close-btn" onclick="closeTMShadow('${p.symbol}')">Close</button></td>
                 </tr>`;
             }).join('');
