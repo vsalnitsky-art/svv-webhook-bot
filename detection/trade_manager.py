@@ -3538,8 +3538,6 @@ class TradeManager:
                 hold = self._compute_hold_score(pos_dict)
                 if hold is not None:
                     pos_dict['hold'] = hold
-                # FF SCORE verdict (same badge as ⏱️ Active Timers)
-                pos_dict['ff_score'] = self._ff_score_dict(sym)
                 positions.append(pos_dict)
             
             closed = list(self._closed_trades[-50:])
@@ -3570,8 +3568,6 @@ class TradeManager:
                 hold = self._compute_hold_score(pos_dict)
                 if hold is not None:
                     pos_dict['hold'] = hold
-                # FF SCORE verdict (same badge as ⏱️ Active Timers)
-                pos_dict['ff_score'] = self._ff_score_dict(sym)
                 shadow_positions.append(pos_dict)
             shadow_closed = list(self._shadow_closed[-50:])
             
