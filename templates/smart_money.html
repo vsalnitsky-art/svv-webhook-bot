@@ -1155,10 +1155,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     /* Bias board */
     .sm-bias { background:rgba(13,16,24,0.7); border:1px solid rgba(255,255,255,0.08);
         border-radius:14px; padding:16px 18px; margin:0 0 16px; }
-    .sm-bias-top { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    .sm-bias-top { display:flex; align-items:center; gap:12px; flex-wrap:nowrap; overflow-x:auto; }
     .sm-bias-verdict { font-size:1.8rem; font-weight:800; letter-spacing:1px;
         display:flex; align-items:center; gap:10px; }
-    .sm-bias-LONG { color:#4ade80; } .sm-bias-SHORT { color:#f87171; }
+    .sm-bias-LONG { color:#22ff88; text-shadow:0 0 10px rgba(34,255,136,0.55); }
+    .sm-bias-SHORT { color:#ff4d4d; text-shadow:0 0 10px rgba(255,77,77,0.55); }
     .sm-bias-WAIT { color:#9aa3b5; }
     .sm-bias-conf { font-family:monospace; font-size:0.85rem; color:#8b93a7; }
     .sm-bias-confbar { flex:1; min-width:120px; height:8px; border-radius:4px;
@@ -1885,8 +1886,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 
             <!-- BTC START/STOP signal — counts up while BTC holds ММ -->
             <div id="ff-btc-start-banner" style="display:flex;align-items:center;gap:14px;margin:12px 0 4px;padding:10px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02)">
-                <span style="font-weight:800;font-size:1.05rem;color:#f7931a;white-space:nowrap">₿ BTCUSDT</span>
-                <span id="ff-btc-start-dir" style="font-weight:800;font-size:1.05rem;white-space:nowrap">—</span>
+                <span style="font-weight:900;font-size:1.1rem;color:#ffb02e;text-shadow:0 0 9px rgba(247,147,26,0.6);white-space:nowrap">₿ BTCUSDT</span>
+                <span id="ff-btc-start-dir" style="font-weight:900;font-size:1.1rem;white-space:nowrap"></span>
                 <div style="flex:1;min-width:120px;height:18px;border-radius:9px;background:rgba(255,255,255,0.07);overflow:hidden;position:relative">
                     <div id="ff-btc-progress-bar" style="height:100%;width:0%;border-radius:9px;background:#facc15;transition:width 0.4s linear,background 0.3s"></div>
                     <span id="ff-btc-progress-label" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:0.66rem;font-weight:700;color:#cbd5e1;text-shadow:0 0 3px #000"></span>
@@ -1898,15 +1899,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
                 <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
                     <span style="font-size:0.58rem;font-weight:700;color:#f7931a;line-height:1">₿ START</span>
-                    <label class="tm-toggle-switch" title="Автодвигун (BTC): відкривати кошик монет з обраних таблиць ТІЛЬКИ при START по ₿ BTCUSDT, у напрямку BTC. Вмикання вимикає «Незалежний».">
+                    <label class="tm-toggle-switch" title="Автодвигун (BTC): на ₿ START скануємо чергу і відкриваємо монети, де ММ збігається з напрямком сигналу.">
                         <input type="checkbox" id="ff-engine-toggle" onchange="onEngineToggle(event)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-                    <span style="font-size:0.58rem;font-weight:700;color:#34d399;line-height:1">∞ НЕЗАЛ.</span>
-                    <label class="tm-toggle-switch" title="Автодвигун (незалежний): відкривати угоду, щойно монета зʼявилась у таблиці, у її ВЛАСНОМУ напрямку ММ — БЕЗ залежності від ₿ BTCUSDT. Вмикання вимикає «BTC».">
-                        <input type="checkbox" id="ff-engine-indep-toggle" onchange="onEngineIndepToggle(event)">
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -1920,10 +1914,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th title="Скільки часу монета вже чекає в черзі">Очікує</th><th title="Скільки разів движок намагався відкрити, але свічка не підтвердила напрямок">🕯️ Спроби</th><th title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th title="Скільки часу монета вже чекає в черзі">Очікує</th><th title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
-                        <tr><td colspan="7" class="tm-empty-msg">Немає активних таймерів</td></tr>
+                        <tr><td colspan="6" class="tm-empty-msg">Черга порожня</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -6574,7 +6568,7 @@ async function loadBias() {
         // consensus bar in the RIGHT column (not in the left reasons list),
         // so filter it out here. We tag it by the source label the backend
         // uses in that specific reason.
-        const wlSrcWords = ['OB-фільтр', 'Volumized', 'Watchlist'];
+        const wlSrcWords = ['OB-фільтр', 'Volumized', 'Watchlist', 'Статус монет'];
         const isWlReason = (text) => wlSrcWords.some(w => text.includes(w));
         // Color directional reasons by their side (3rd element): LONG green,
         // SHORT red — so "тягне в SHORT" isn't drawn in the OK-green that
@@ -6585,6 +6579,12 @@ async function loadBias() {
             .filter(r => !isWlReason(r[1]))
             .map(r => {
                 const [kind, text, dir] = r;
+                // The ММ (liq-fuel) line drives the ₿ banner — highlight it bright.
+                if (text.includes('ММ')) {
+                    const c = dir === 'long' ? '#22ff88' : dir === 'short' ? '#ff4d4d' : '#facc15';
+                    return `<div class="sm-bias-reason ${kind}" style="color:${c};font-weight:800;`
+                         + `text-shadow:0 0 8px ${c}66">${icons[kind] || '•'} ${text}</div>`;
+                }
                 return `<div class="sm-bias-reason ${kind}"${dirStyle(dir)}>${icons[kind] || '•'} ${text}</div>`;
             }).join('') || '<div class="sm-bias-reason wait">• немає сигналів</div>';
 
@@ -6930,7 +6930,7 @@ function renderFuelFilter(d) {
     if (tb) {
         let rows = d.timers || [];
         if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">Немає активних таймерів</td></tr>';
+            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">Черга порожня</td></tr>';
         } else {
             tb.innerHTML = rows.map(t => {
                 const isFunding = !!t.funding;
@@ -6971,10 +6971,6 @@ function renderFuelFilter(d) {
                 const fundNext = (isFunding && t.funding_next_ms)
                     ? ` <span class="ff-fundnext" data-next="${t.funding_next_ms}" title="До наступного нарахування funding" style="font-size:0.64rem;color:#9aa3b5">⏳ ${fmtFundLeft(t.funding_next_ms)}</span>`
                     : '';
-                const att = t.engine_attempts || 0;
-                const attHtml = att > 0
-                    ? `<span title="Спроб відкрити (свічка не підтвердила)" style="font-weight:700;color:${att >= 10 ? '#f87171' : att >= 4 ? '#facc15' : '#9aa3b5'}">${att}</span>`
-                    : '<span style="color:#555">—</span>';
                 // SCORE — per-coin hold verdict (shared badge with the open
                 // positions tables).
                 const scoreHtml = ffScoreBadgeHTML(t.score);
@@ -6983,7 +6979,6 @@ function renderFuelFilter(d) {
                     <td>${dirHtml}</td>
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
-                    <td style="font-size:0.74rem;text-align:center">${attHtml}</td>
                     <td style="white-space:nowrap">${scoreHtml}</td>
                     <td style="white-space:nowrap">
                         <span onclick="forceOpenTimer('${t.symbol}')" style="cursor:pointer;color:#4ade80;font-size:0.85rem;margin-right:10px" title="Відкрити зараз">▶</span>
@@ -7301,9 +7296,9 @@ function updateBtcStartBanner() {
     const s = btcStartState;
     // Direction the BTC timer started in (coloured); neutral → WAIT.
     if (dirEl) {
-        if (s.dir === 'LONG') { dirEl.textContent = '🟢 LONG'; dirEl.style.color = '#22c55e'; }
-        else if (s.dir === 'SHORT') { dirEl.textContent = '🔴 SHORT'; dirEl.style.color = '#ef4444'; }
-        else { dirEl.textContent = '⚪ WAIT'; dirEl.style.color = '#8b93a7'; }
+        if (s.dir === 'LONG') { dirEl.textContent = '🟢 LONG'; dirEl.style.color = '#22ff88'; dirEl.style.textShadow = '0 0 9px rgba(34,255,136,0.6)'; }
+        else if (s.dir === 'SHORT') { dirEl.textContent = '🔴 SHORT'; dirEl.style.color = '#ff4d4d'; dirEl.style.textShadow = '0 0 9px rgba(255,77,77,0.6)'; }
+        else { dirEl.textContent = '⚪ WAIT'; dirEl.style.color = '#9aa3b5'; dirEl.style.textShadow = 'none'; }
     }
     if (!s.hasTimer) {
         // No BTC timer → STOP. Subtle badge, bright RED text (not a red button).
@@ -7311,8 +7306,8 @@ function updateBtcStartBanner() {
         if (lab) lab.textContent = '';
         if (flip) flip.innerHTML = flipTimerHTML(0);
         st.textContent = '⛔ STOP';
-        st.style.background = 'rgba(239,68,68,0.12)'; st.style.color = '#f87171';
-        st.style.boxShadow = 'none';
+        st.style.background = 'rgba(239,68,68,0.12)'; st.style.color = '#ff4d4d';
+        st.style.textShadow = '0 0 9px rgba(255,77,77,0.6)'; st.style.boxShadow = 'none';
         return;
     }
     const nowS = Math.floor(Date.now() / 1000);
@@ -7326,15 +7321,15 @@ function updateBtcStartBanner() {
         bar.style.background = 'rgba(255,255,255,0.14)';
         if (lab) lab.textContent = '';
         st.textContent = '🟢 START';
-        st.style.background = 'rgba(34,197,94,0.12)'; st.style.color = '#22c55e';
-        st.style.boxShadow = 'none';
+        st.style.background = 'rgba(34,197,94,0.14)'; st.style.color = '#22ff88';
+        st.style.textShadow = '0 0 9px rgba(34,255,136,0.6)'; st.style.boxShadow = 'none';
     } else {
         // Counting up to the threshold — amber bar + % inside.
         bar.style.background = '#facc15';
         if (lab) lab.textContent = Math.floor(pct) + '%';
         st.textContent = '⏳';
         st.style.background = 'rgba(250,204,21,0.12)'; st.style.color = '#facc15';
-        st.style.boxShadow = 'none';
+        st.style.textShadow = 'none'; st.style.boxShadow = 'none';
     }
 }
 
