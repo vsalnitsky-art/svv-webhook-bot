@@ -436,8 +436,14 @@ class FuelFilterDaemon:
         except Exception:
             st = {}
         if isinstance(st, dict):
-            self._timers = st.get('timers', {}) or {}
             self._fuel_managed = st.get('fuel_managed', {}) or {}
+            # Timers belong to ACTIVE managed positions only. Drop any orphan
+            # timer left over from an old strategy / previous session whose coin
+            # is no longer a tracked position — otherwise the table shows ghost
+            # rows for coins that never fired a fresh signal this session.
+            _timers_raw = st.get('timers', {}) or {}
+            self._timers = {s: v for s, v in _timers_raw.items()
+                            if s in self._fuel_managed}
             # Anomalies: coins that held fuel longer than anomaly_hours. They
             # live in their OWN table, persist across fuel loss, and are removed
             # only by the user (manual delete / clear). {symbol: {...}}
@@ -458,10 +464,13 @@ class FuelFilterDaemon:
             if isinstance(hy, dict):
                 self._fuel_hyst = {str(k).upper(): (v if v in ('LONG', 'SHORT') else None)
                                    for k, v in hy.items()}
-            pend = st.get('pending', {}) or {}
-            if isinstance(pend, dict):
-                self._pending = {str(k).upper(): v for k, v in pend.items()
-                                 if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
+            # The entry queue is EPHEMERAL by design. We intentionally do NOT
+            # restore `_pending` from the DB: a coin only belongs in the queue
+            # if it fired a fresh CHoCH / CHoCH+BOS signal THIS session and was
+            # intercepted live. Restoring it dragged stale, unknown coins (e.g.
+            # AAVEUSDT) back into the queue on every boot even though they had
+            # no fresh signal. Start empty — only live signals fill the queue.
+            self._pending = {}
             bvd = st.get('btc_verdict_dir')
             self._btc_verdict_dir = bvd if bvd in ('LONG', 'SHORT') else None
             try:
@@ -469,15 +478,13 @@ class FuelFilterDaemon:
             except (TypeError, ValueError):
                 self._btc_verdict_since = 0.0
             if (self._fuel_managed or self._anomalies or self._engine_attempts
-                    or self._pending or self._timers):
-                print(f"[FuelFilter] restored {len(self._pending)} queued, "
+                    or self._timers):
+                print(f"[FuelFilter] restored queue 0 (ephemeral — fresh "
+                      f"signals only), "
                       f"{len(self._fuel_managed)} tracked position(s), "
                       f"{len(self._timers)} timer(s), "
                       f"{len(self._anomalies)} anomaly(ies), "
                       f"{len(self._engine_attempts)} attempt-counter(s) from DB")
-                if self._pending:
-                    print(f"[FuelFilter] restored queue: "
-                          + ', '.join(f"{s}={v.get('dir')}" for s, v in self._pending.items()))
 
     def _persist_state(self):
         try:
