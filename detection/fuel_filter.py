@@ -123,12 +123,6 @@ DEFAULT_SETTINGS = {
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
-    # 💰 Funding fuel sensitivity: a funding coin stays in the table only while
-    # the RAW (un-smoothed, no hysteresis lag) |fuel direction| ≥ this value.
-    # Higher = more sensitive ENDING (the row disappears sooner as fuel fades).
-    # 0.12 drops the coin a bit before the 0.10 entry level so a faded coin
-    # leaves promptly instead of lingering in the smoothed 0.05–0.15 sticky zone.
-    'funding_fuel_min': 0.12,
 }
 
 
@@ -297,11 +291,6 @@ class FuelFilterDaemon:
                 int(s.get('direction_smoothing_min', 45))))
         except (TypeError, ValueError):
             s['direction_smoothing_min'] = 45
-        try:
-            s['funding_fuel_min'] = max(0.0, min(1.0,
-                float(s.get('funding_fuel_min', 0.12))))
-        except (TypeError, ValueError):
-            s['funding_fuel_min'] = 0.12
         # Remove obsolete keys
         s.pop('mode', None)
         s.pop('max_positions', None)
@@ -1353,14 +1342,6 @@ class FuelFilterDaemon:
         transitions. Stored in self._anomalies (existing table/endpoints)."""
         funding = set(self._funding_syms)
         thr = self._get_funding_threshold()
-        # Funding ending sensitivity: use the RAW fuel direction (no EMA / no
-        # hysteresis lag) and a tunable cutoff, so a coin leaves the table as
-        # soon as its fuel fades instead of clinging via the smoothed sticky
-        # zone. Higher fmin → drops sooner (more sensitive ending).
-        try:
-            fmin = abs(float(settings.get('funding_fuel_min', 0.12) or 0.12))
-        except (TypeError, ValueError):
-            fmin = 0.12
         notifier = None
         if settings.get('funding_tg_alerts', False):
             tm = self._get_tm() if self._get_tm else None
@@ -1369,14 +1350,7 @@ class FuelFilterDaemon:
         with self._lock:
             for sym in funding:
                 fuel = fuels.get(sym) or self._fuel_dir_smoothed(sym)
-                # RAW fuel direction (instant) drives the funding hold/exit
-                # decision — NOT the smoothed `status` whose hysteresis kept
-                # faded coins on screen far too long.
-                raw = fuel.get('raw_dir') if fuel else None
-                if raw is not None and abs(raw) >= fmin:
-                    status = 'LONG' if raw > 0 else 'SHORT'
-                else:
-                    status = None
+                status = fuel.get('status') if fuel else None
                 mark = fuel.get('mark_price') if fuel else None
                 rate = self._funding_rates.get(sym)
                 nf = self._funding_next.get(sym)
