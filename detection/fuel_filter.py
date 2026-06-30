@@ -213,6 +213,18 @@ class FuelFilterDaemon:
             pass
         return {}
 
+    def _get_funding_threshold(self) -> float:
+        """The 💰 Funding Rate Scanner 'Entry ≤' threshold (negative %), used as
+        the START of the funding progress bar (entry → -4)."""
+        try:
+            from detection.funding_monitor import get_funding_monitor
+            fm = get_funding_monitor()
+            if fm is not None:
+                return float(getattr(fm, '_entry_threshold', -1.0))
+        except Exception:
+            pass
+        return -1.0
+
     # ------------------------------------------------------------------
     # settings (DB-persisted JSON)
     # ------------------------------------------------------------------
@@ -1245,11 +1257,13 @@ class FuelFilterDaemon:
 
     def _scan_funding(self, settings, now, fuels):
         """💰 Funding fuel table (own scan): for each 💰 Funding Rate Scanner
-        coin, track when it shows fuel. Holding coins fill the table; on fuel
-        end the row is frozen (user-deleted). Telegram entry/exit alerts fire
-        on transitions when funding_tg_alerts is on. Stored in self._anomalies
-        (repurposed) so the existing table + delete endpoints keep working."""
-        funding = list(self._funding_syms)
+        coin, show ONLY while it currently holds fuel (no fuel → row removed).
+        Stores the live funding rate, next-funding time, previous rate (for the
+        rising/falling trend) and the entry threshold so the UI can draw a
+        progress bar from 'Entry ≤' → −4%. Telegram entry/exit alerts on
+        transitions. Stored in self._anomalies (existing table/endpoints)."""
+        funding = set(self._funding_syms)
+        thr = self._get_funding_threshold()
         notifier = None
         if settings.get('funding_tg_alerts', False):
             tm = self._get_tm() if self._get_tm else None
@@ -1260,6 +1274,8 @@ class FuelFilterDaemon:
                 fuel = fuels.get(sym) or self._fuel_dir_smoothed(sym)
                 status = fuel.get('status') if fuel else None
                 mark = fuel.get('mark_price') if fuel else None
+                rate = self._funding_rates.get(sym)
+                nf = self._funding_next.get(sym)
                 a = self._anomalies.get(sym)
                 if status in ('LONG', 'SHORT'):
                     if not a or not a.get('holding'):
@@ -1267,8 +1283,8 @@ class FuelFilterDaemon:
                             'symbol': sym, 'dir': status, 'started_at': now,
                             'start_price': mark, 'holding': True,
                             'last_price': mark, 'last_held_sec': 0,
-                            'ended_at': None, 'end_price': None,
-                            'funding': True,
+                            'funding': True, 'rate': rate, 'prev_rate': rate,
+                            'next_funding': nf, 'entry_threshold': thr,
                         }
                         self._notify_funding(notifier, sym, status, mark, btc_line,
                                              settings, now, entered=True)
@@ -1278,22 +1294,22 @@ class FuelFilterDaemon:
                         if mark:
                             a['last_price'] = mark
                         a['last_held_sec'] = int(now - a.get('started_at', now))
-                        a['ended_at'] = None
-                        a['end_price'] = None
+                        a['prev_rate'] = a.get('rate')
+                        a['rate'] = rate
+                        a['next_funding'] = nf
+                        a['entry_threshold'] = thr
                         a['funding'] = True
                 else:
-                    if a and a.get('holding'):
-                        a['holding'] = False
-                        a['ended_at'] = now
-                        a['end_price'] = a.get('last_price')
-                        self._notify_funding(notifier, sym, a.get('dir'),
-                                             a.get('last_price'), btc_line,
-                                             settings, now, entered=False)
-            # Drop funding rows whose coin left the scanner AND isn't holding.
-            fset = set(funding)
+                    # Fuel gone → coin leaves the table immediately.
+                    if a is not None:
+                        if a.get('holding'):
+                            self._notify_funding(notifier, sym, a.get('dir'),
+                                                 a.get('last_price'), btc_line,
+                                                 settings, now, entered=False)
+                        self._anomalies.pop(sym, None)
+            # Drop any funding row whose coin is no longer in the scanner.
             for sym in list(self._anomalies.keys()):
-                a = self._anomalies[sym]
-                if a.get('funding') and sym not in fset and not a.get('holding'):
+                if self._anomalies[sym].get('funding') and sym not in funding:
                     self._anomalies.pop(sym, None)
             self._persist_state()
 
@@ -1696,7 +1712,6 @@ class FuelFilterDaemon:
 
         dur = float(s.get('duration_minutes', 5)) * 60
         max_exh = float(s.get('max_exhaustion_pct', 75) or 75)
-        confirm_on = s.get('engine_candle_confirm', True)
         tf = s.get('engine_candle_tf', '5m')
         trace = []
 
@@ -1726,21 +1741,8 @@ class FuelFilterDaemon:
             if exh is not None and exh > max_exh:
                 trace.append(f"{sym}:виснаж{exh:.0f}%>{max_exh:.0f}%")
                 continue
-            # Candle confirmation: only open when recent candles move in the
-            # coin's direction (≥2 of last 3 closed bars).
-            #   True  → confirmed, open now
-            #   False → candles AGAINST → count an attempt, wait for next bar
-            #   None  → no kline data yet → do NOT count an attempt (it's not the
-            #           coin's fault); just retry next tick.
-            if confirm_on:
-                conf = self._candle_confirms(sym, d, tf)
-                if conf is None:
-                    trace.append(f"{sym}:немає-свічок({tf})")
-                    continue
-                if conf is False:
-                    self._engine_attempts[sym] = self._engine_attempts.get(sym, 0) + 1
-                    trace.append(f"{sym}:свічки-проти(сп{self._engine_attempts[sym]})")
-                    continue
+            # (Candle-confirmation gate retired — opens trigger on the fuel↔
+            # direction match itself.)
             # SCORE gate: only open when the coin's SCORE is STRONG HOLD AND its
             # SCORE direction matches the candidate direction.
             if s.get('engine_require_strong_hold', False):
@@ -1786,7 +1788,7 @@ class FuelFilterDaemon:
         _persist_attempts_if_changed()
 
         print(f"[FF-Engine] {mode_lbl} · {len(cand)} канд · "
-              f"свічки={'ON('+tf+')' if confirm_on else 'OFF'} · "
+              f"паливо-гейт · "
               + ' '.join(trace))
 
     def get_state(self) -> Dict:
@@ -1854,28 +1856,24 @@ class FuelFilterDaemon:
                 'period_sec': int(period_sec),
                 'dir': b_dir,
             }
-            # Anomalies — own table. Live "held" while still holding fuel,
-            # frozen at end otherwise.
+            # 💰 Funding table — only coins currently holding fuel. Carries the
+            # live funding rate + next-funding time + trend (prev_rate) + the
+            # entry threshold so the UI can draw the entry→−4% progress bar.
             anomalies = []
             for sym, a in self._anomalies.items():
-                holding = bool(a.get('holding'))
-                if holding:
-                    t = self._timers.get(sym)
-                    held = int(now - t.get('since', a.get('started_at', now))) \
-                        if t else int(a.get('last_held_sec', 0))
-                else:
-                    held = int(a.get('last_held_sec', 0))
+                held = int(now - a.get('started_at', now))
                 anomalies.append({
                     'symbol': sym,
                     'dir': a.get('dir'),
-                    'holding': holding,
+                    'holding': True,
                     'held_sec': held,
-                    'started_at': a.get('started_at'),
                     'start_price': a.get('start_price'),
-                    'ended_at': a.get('ended_at'),
-                    'end_price': a.get('end_price'),
                     'current_price': a.get('last_price'),
-                    'funding': sym in self._funding_syms,
+                    'funding': True,
+                    'funding_rate': a.get('rate'),
+                    'funding_prev_rate': a.get('prev_rate'),
+                    'funding_next_ms': a.get('next_funding'),
+                    'entry_threshold': a.get('entry_threshold'),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])
         return {
