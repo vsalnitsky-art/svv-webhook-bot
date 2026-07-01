@@ -7596,8 +7596,8 @@ function ffExhCell(p) {
     const col = now >= 85 ? '#f87171' : (now >= 66 ? '#facc15' : '#34d399');
     let arrow = '';
     if (open != null) {
-        if (now > open + 0.1) arrow = '<span style="color:#f87171">↑ росте</span>';
-        else if (now < open - 0.1) arrow = '<span style="color:#4ade80">↓ падає</span>';
+        if (now > open + 0.1) arrow = '<span style="color:#4ade80">↑ росте</span>';
+        else if (now < open - 0.1) arrow = '<span style="color:#f87171">↓ падає</span>';
         else arrow = '<span style="color:#8b93a7">— без змін</span>';
     }
     const startLbl = (open != null) ? open.toFixed(0) : now.toFixed(0);
