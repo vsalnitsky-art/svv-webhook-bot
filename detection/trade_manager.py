@@ -2124,10 +2124,11 @@ class TradeManager:
             # Decision Center verdict (headline, recommended, verdict, etc.).
             position['entry_score'] = decision
 
-        # FF SCORE verdict + Exhaustion at open — stamped so the close recap can
-        # show "SCORE: open → close" and "Exhaust: open% → close%".
+        # FF SCORE verdict + Exhaustion at open — kept for analytics/back-compat.
         position['ff_score_open'] = self._ff_score_snapshot(symbol)
         position['ff_exh_open'] = self._ff_exhaustion(symbol, side)
+        # ММ (fuel) value at open — shown in the Reason detail.
+        position['ff_mm_open'] = self._ff_mm_snapshot(symbol)
 
         # Full pre-trade snapshot for the entry-quality backtest dataset.
         # Captured ONCE at open — decision + move-potential + hold score —
@@ -2390,6 +2391,7 @@ class TradeManager:
         # distinguish this trade's outcome from TM-initiated trades.
         pos['external'] = True
         pos['ff_score_open'] = self._ff_score_snapshot(symbol)
+        pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
 
         with self._lock:
             self._positions[symbol] = pos
@@ -2546,6 +2548,39 @@ class TradeManager:
         except Exception:
             return None
 
+    @staticmethod
+    def _ff_mm_snapshot(symbol: str) -> Optional[Dict]:
+        """ММ (fuel) strength+direction snapshot for `symbol` right now:
+        {'dir': 'LONG'|'SHORT'|None, 'str': int 0..100}. Stamped at open so the
+        reason detail can show the ММ value at the moment the trade opened."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return None
+            m = ff.get_fuel_strength_map().get(symbol.upper())
+            if not m:
+                return None
+            return {'dir': m.get('dir'), 'str': m.get('now')}
+        except Exception:
+            return None
+
+    @staticmethod
+    def _mm_band_word(strength) -> str:
+        """ММ strength band label (same bands as the UI): 0–10 немає,
+        10–30 слабке, 30–60 помітне, 60–100 сильне."""
+        try:
+            s = float(strength)
+        except (TypeError, ValueError):
+            return ''
+        if s < 10:
+            return 'немає'
+        if s < 30:
+            return 'слабке'
+        if s < 60:
+            return 'помітне'
+        return 'сильне'
+
     def _build_reason_detail(self, symbol: str, pos: Dict, reason: str,
                              pnl_pct: float, is_shadow: bool = False) -> str:
         """Compose a human-readable, information-rich close reason.
@@ -2608,23 +2643,15 @@ class TradeManager:
         else:
             parts.append(f'пік {peak:+.2f}%')
 
-        # 4. Exhaust at open → at close (the FF move-exhaustion journey).
-        exo = pos.get('ff_exh_open')
-        exc = self._ff_exhaustion(symbol, pos.get('side'))
-        if exo is not None or exc is not None:
-            _fmt = lambda x: f"{x:.1f}%" if x is not None else '—'
-            parts.append(f"🔥 Exhaust: {_fmt(exo)} → {_fmt(exc)}")
-
-        # 5. SCORE at open → at close.
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            sc_close = ff.score_snapshot(symbol) if ff else None
-        except Exception:
-            sc_close = None
-        sc_open = pos.get('ff_score_open')
-        if sc_open or sc_close:
-            parts.append(f"SCORE: {sc_open or '—'} → {sc_close or '—'}")
+        # 4. ММ (fuel) value at the MOMENT the trade opened — direction +
+        # strength% + band word (e.g. 'ММ на відкритті: LONG 66% помітне').
+        mm = pos.get('ff_mm_open')
+        if mm and mm.get('str') is not None:
+            _dir = mm.get('dir') or '—'
+            _str = mm.get('str')
+            _band = self._mm_band_word(_str)
+            _band_txt = f" {_band}" if _band else ''
+            parts.append(f"📊 ММ на відкритті: {_dir} {_str}%{_band_txt}")
 
         return ' · '.join(str(p) for p in parts if p)
 
@@ -2857,9 +2884,10 @@ class TradeManager:
         }
         if decision is not None:
             pos['entry_score'] = decision
-        # FF SCORE + Exhaustion at open (for the close recap journey).
+        # FF SCORE + Exhaustion at open (kept for analytics); ММ at open for Reason.
         pos['ff_score_open'] = self._ff_score_snapshot(symbol)
         pos['ff_exh_open'] = self._ff_exhaustion(symbol, side)
+        pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
         with self._lock:
             self._shadow_positions[symbol] = pos
             self._shadow_pos_state[symbol] = self._fresh_pos_state()
