@@ -146,7 +146,7 @@ DEFAULT_SETTINGS = {
     'ff_tg_on_entry': False,
     'ff_tg_on_exit': False,
     'ff_tg_entry_template': '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
-    'ff_tg_exit_template': '💰 {symbol} зникла з ММ · {reason}\n💲 {price} · ММ {fuel}%',
+    'ff_tg_exit_template': '☄️ {symbol} зникла з 📡 · {reason}\n💲 {price} · 📡 {fuel}%',
 }
 
 
