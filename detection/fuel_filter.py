@@ -1966,7 +1966,10 @@ class FuelFilterDaemon:
                     # the coin has been queued instead.
                     'held_sec': int(waited),
                     'waiting': True,
-                    'exhaustion': (self._score_cache.get(sym) or {}).get('_exh'),
+                    # Real move-exhaustion for the coin (0 fresh → 100 exhausted).
+                    # NB: the score dict stores it under 'exh' — the old '_exh'
+                    # key never existed, so this column always showed "—".
+                    'exhaustion': (self._score_cache.get(sym) or {}).get('exh'),
                     'score': self._score_cache.get(sym),
                     # Per-coin ММ (liq-fuel) direction for the ММ column —
                     # LONG / SHORT / None(=збалансований). The UI compares it

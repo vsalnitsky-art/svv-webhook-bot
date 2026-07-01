@@ -6993,14 +6993,14 @@ function renderFuelFilter(d) {
                 const mm = t.mm || null;
                 let mmHtml;
                 if (mm === 'LONG' || mm === 'SHORT') {
-                    const mmColor = mm === 'LONG' ? '#22c55e' : '#ef4444';
-                    const mmTxt = mm === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+                    // Only the colored dot (fuel direction) + the match mark.
+                    const mmDot = mm === 'LONG' ? '🟢' : '🔴';
                     const mark = (mm === t.dir)
                         ? '<span style="color:#22c55e;font-weight:800" title="Паливо співпадає з напрямком сигналу — готова відкритись на START">✓</span>'
                         : '<span style="color:#ef4444;font-weight:800" title="Паливо проти напрямку сигналу — на START не відкриється">✗</span>';
-                    mmHtml = `<span style="color:${mmColor};font-weight:600">${mmTxt}</span> ${mark}`;
+                    mmHtml = `${mmDot} ${mark}`;
                 } else {
-                    mmHtml = '<span style="color:#8b93a7" title="ММ збалансований — напрямку немає">⚪ —</span>';
+                    mmHtml = '<span style="color:#8b93a7" title="ММ збалансований — напрямку немає">⚪</span>';
                 }
                 const heldHtml = t.dir
                     ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`
