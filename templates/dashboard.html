@@ -22,6 +22,93 @@
         <span class="api-health-age" id="api-health-age"></span>
     </div>
 
+    <!-- Funding Rate Monitor -->
+    <div class="section funding-section">
+        <div class="section-header">
+            <h2>💰 Funding Rate Scanner</h2>
+            <div style="display:flex;align-items:center;gap:6px">
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.75rem;color:#aaa"
+                       title="Поріг входу: монета береться в трекінг, якщо funding ≤ цього значення (%). Має бути від'ємним (напр. -0.3). Діапазон: -0.001 … -5.">
+                    Entry ≤
+                    <input type="number" id="funding-threshold-input" step="0.01" max="-0.001" min="-5"
+                           onchange="saveFundingThreshold(this.value)"
+                           style="width:62px;padding:3px 6px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
+                    %
+                </label>
+                <label style="display:flex;align-items:center;gap:4px;font-size:0.75rem;color:#aaa"
+                       title="Мінімальний 24h обсяг (turnover, млн USD) для входу в трекінг. Відсіює неліквідні монети, де екстремальний funding — це шум. 0 = фільтр вимкнено.">
+                    Vol ≥
+                    <input type="number" id="funding-volume-input" step="1" min="0" placeholder="0"
+                           onchange="saveFundingVolume(this.value)"
+                           style="width:58px;padding:3px 6px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
+                    M$
+                </label>
+                <label class="fr-toggle" title="Enable/disable scanner">
+                    <input type="checkbox" id="funding-toggle" onchange="toggleFunding(this.checked)">
+                    <span class="fr-toggle-slider"></span>
+                </label>
+                <input type="text" id="funding-add-input" placeholder="DOGE, SOL..." style="width:100px;padding:3px 8px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
+                <button class="btn btn-sm" onclick="addFundingCoin()" style="padding:3px 10px;font-size:0.75rem;background:rgba(76,175,80,0.2);border:1px solid rgba(76,175,80,0.4);color:#4caf50;border-radius:4px;cursor:pointer">+ Add</button>
+                <span class="funding-status" id="funding-status">⏳</span>
+            </div>
+        </div>
+        <div id="funding-content">Loading...</div>
+        <div class="funding-meta" id="funding-meta"></div>
+        <!-- Coin detail chart -->
+        <div class="funding-chart-section" id="funding-chart-section" style="display:none">
+            <div class="funding-chart-header">
+                <span class="funding-chart-title" id="funding-chart-title">---</span>
+                <button class="fr-delete" onclick="closeFundingChart()" style="opacity:0.7">✕ Close</button>
+            </div>
+            <div class="funding-chart-wrap"><canvas id="funding-chart"></canvas></div>
+        </div>
+    </div>
+
+    <!-- Open Positions -->
+    <div class="section">
+        <div class="section-header">
+            <h2>📈 Open Positions</h2>
+            {% if open_trades %}
+            <button class="btn btn-danger btn-sm" onclick="closeAllTrades()">Close All</button>
+            {% endif %}
+        </div>
+
+        {% if open_trades %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Direction</th>
+                    <th>Entry</th>
+                    <th>Size</th>
+                    <th>P&L</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in open_trades %}
+                <tr>
+                    <td class="symbol">{{ t.symbol }}</td>
+                    <td>
+                        <span class="direction {{ t.direction|lower }}">{{ t.direction }}</span>
+                    </td>
+                    <td>${{ "%.4f"|format(t.entry_price) }}</td>
+                    <td>${{ "%.2f"|format(t.position_size) }}</td>
+                    <td class="{% if (t.pnl_usdt or 0) >= 0 %}positive{% else %}negative{% endif %}">
+                        ${{ "%.2f"|format(t.pnl_usdt or 0) }}
+                    </td>
+                    <td>
+                        <button class="btn btn-danger btn-xs" onclick="closeTrade({{ t.id }})">Close</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">No open positions</div>
+        {% endif %}
+    </div>
+
     <!-- Order Book Walls — real-time limit-order clusters from Binance Futures.
          Replaces the old OI-based "Liquidation Map" that was hard to read.
          Same section ID (liqmap-section) is reused so existing CSS still
@@ -208,48 +295,6 @@
         <div class="sv-meta" id="sv-meta"></div>
     </div>
 
-    <!-- Funding Rate Monitor -->
-    <div class="section funding-section">
-        <div class="section-header">
-            <h2>💰 Funding Rate Scanner</h2>
-            <div style="display:flex;align-items:center;gap:6px">
-                <label style="display:flex;align-items:center;gap:4px;font-size:0.75rem;color:#aaa"
-                       title="Поріг входу: монета береться в трекінг, якщо funding ≤ цього значення (%). Має бути від'ємним (напр. -0.3). Діапазон: -0.001 … -5.">
-                    Entry ≤
-                    <input type="number" id="funding-threshold-input" step="0.01" max="-0.001" min="-5"
-                           onchange="saveFundingThreshold(this.value)"
-                           style="width:62px;padding:3px 6px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
-                    %
-                </label>
-                <label style="display:flex;align-items:center;gap:4px;font-size:0.75rem;color:#aaa"
-                       title="Мінімальний 24h обсяг (turnover, млн USD) для входу в трекінг. Відсіює неліквідні монети, де екстремальний funding — це шум. 0 = фільтр вимкнено.">
-                    Vol ≥
-                    <input type="number" id="funding-volume-input" step="1" min="0" placeholder="0"
-                           onchange="saveFundingVolume(this.value)"
-                           style="width:58px;padding:3px 6px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
-                    M$
-                </label>
-                <label class="fr-toggle" title="Enable/disable scanner">
-                    <input type="checkbox" id="funding-toggle" onchange="toggleFunding(this.checked)">
-                    <span class="fr-toggle-slider"></span>
-                </label>
-                <input type="text" id="funding-add-input" placeholder="DOGE, SOL..." style="width:100px;padding:3px 8px;font-size:0.8rem;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#ddd;font-family:Consolas,monospace">
-                <button class="btn btn-sm" onclick="addFundingCoin()" style="padding:3px 10px;font-size:0.75rem;background:rgba(76,175,80,0.2);border:1px solid rgba(76,175,80,0.4);color:#4caf50;border-radius:4px;cursor:pointer">+ Add</button>
-                <span class="funding-status" id="funding-status">⏳</span>
-            </div>
-        </div>
-        <div id="funding-content">Loading...</div>
-        <div class="funding-meta" id="funding-meta"></div>
-        <!-- Coin detail chart -->
-        <div class="funding-chart-section" id="funding-chart-section" style="display:none">
-            <div class="funding-chart-header">
-                <span class="funding-chart-title" id="funding-chart-title">---</span>
-                <button class="fr-delete" onclick="closeFundingChart()" style="opacity:0.7">✕ Close</button>
-            </div>
-            <div class="funding-chart-wrap"><canvas id="funding-chart"></canvas></div>
-        </div>
-    </div>
-
     <!-- BTC Liquidity Map — Heatmap -->
     <div class="section liq-section">
         <div class="section-header">
@@ -402,51 +447,6 @@
         </table>
         {% else %}
         <div class="empty-state">No sleeper candidates yet. Run a scan to find them.</div>
-        {% endif %}
-    </div>
-
-    <!-- Open Positions -->
-    <div class="section">
-        <div class="section-header">
-            <h2>📈 Open Positions</h2>
-            {% if open_trades %}
-            <button class="btn btn-danger btn-sm" onclick="closeAllTrades()">Close All</button>
-            {% endif %}
-        </div>
-
-        {% if open_trades %}
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Symbol</th>
-                    <th>Direction</th>
-                    <th>Entry</th>
-                    <th>Size</th>
-                    <th>P&L</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for t in open_trades %}
-                <tr>
-                    <td class="symbol">{{ t.symbol }}</td>
-                    <td>
-                        <span class="direction {{ t.direction|lower }}">{{ t.direction }}</span>
-                    </td>
-                    <td>${{ "%.4f"|format(t.entry_price) }}</td>
-                    <td>${{ "%.2f"|format(t.position_size) }}</td>
-                    <td class="{% if (t.pnl_usdt or 0) >= 0 %}positive{% else %}negative{% endif %}">
-                        ${{ "%.2f"|format(t.pnl_usdt or 0) }}
-                    </td>
-                    <td>
-                        <button class="btn btn-danger btn-xs" onclick="closeTrade({{ t.id }})">Close</button>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="empty-state">No open positions</div>
         {% endif %}
     </div>
 
