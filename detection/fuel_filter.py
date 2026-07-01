@@ -104,7 +104,8 @@ DEFAULT_SETTINGS = {
     'duration_minutes': 5,        # min duration to show in table (threshold filter)
     'potential_threshold_pct': 95,  # exhaustion ≥ this → close
     'use_potential_exit': True,   # toggle the exhaustion exit on/off
-    'max_exhaustion_pct': 75,     # (legacy) not used for auto-open anymore
+    'max_exhaustion_pct': 75,     # engine/open GATE: skip a coin if its move is
+                                  # more exhausted than this % (0..100). Active.
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
     'manage_open_positions': True,  # if True, FF closes positions it opened
     'direction_smoothing_min': 0,   # EMA window (min) for ММ direction; 0 = OFF (raw)
@@ -593,9 +594,12 @@ class FuelFilterDaemon:
         live_dir = price_dir or fuel_dir or direction
         conflict = bool(fuel_dir and price_dir and fuel_dir != price_dir)
 
-        # Exhaustion (room) for the live direction.
+        # Exhaustion (room) for the live direction. Compute it whenever it
+        # wasn't supplied (the queue passes None) OR when the live direction
+        # differs from the signal — otherwise `exf` stayed None and the
+        # "Виснаженість" column always showed "—".
         ex = exhaustion
-        if live_dir != direction:
+        if ex is None or live_dir != direction:
             try:
                 ex = self._exhaustion(symbol, live_dir)
             except Exception:
