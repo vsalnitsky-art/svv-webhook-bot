@@ -131,6 +131,12 @@ DEFAULT_SETTINGS = {
     # A funding coin appears in the 💰 ММ table only if its ММ (fuel) STRENGTH
     # (|fuel dir|×100) ≥ this. 0 = off, 30 = помітне (≥30%), 60 = сильне (≥60%).
     'funding_min_mm_strength': 0,
+    # Anti-spam for funding-coin appear alerts:
+    #  cooldown — не слати повторну «появу» по монеті стільки хвилин;
+    #  hysteresis — монета «зникає» лише коли сила ММ впаде на стільки % НИЖЧЕ
+    #  порога входу (тремтіння рівно на межі не робить churn).
+    'funding_notify_cooldown_min': 30,
+    'funding_mm_hysteresis': 10,
     # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ ──
     # Replaces the old funding alert. Fires when a funding coin APPEARS
     # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 ММ table.
@@ -183,6 +189,9 @@ class FuelFilterDaemon:
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
         self._funding_syms: set = set()
+        # {symbol: ts of last funding "appear" TG} — anti-spam cooldown so a coin
+        # that flickers around the ММ-strength threshold isn't re-announced.
+        self._funding_notify_at: Dict[str, float] = {}
         # {symbol: current funding %} for funding-sourced coins (UI display).
         self._funding_rates: Dict[str, float] = {}
         # {symbol: nextFundingTime ms} — countdown to next funding settlement.
@@ -1435,6 +1444,17 @@ class FuelFilterDaemon:
                 fmin_mm = int(settings.get('funding_min_mm_strength', 0) or 0)
             except (TypeError, ValueError):
                 fmin_mm = 0
+            # Anti-spam knobs: hysteresis (keep-in-table threshold sits below the
+            # enter threshold) + per-coin re-announce cooldown.
+            try:
+                _hyst = max(0, int(settings.get('funding_mm_hysteresis', 0) or 0))
+            except (TypeError, ValueError):
+                _hyst = 0
+            try:
+                _cool_sec = max(0, int(settings.get('funding_notify_cooldown_min', 0) or 0)) * 60
+            except (TypeError, ValueError):
+                _cool_sec = 0
+            _keep_mm = max(0, fmin_mm - _hyst)   # lower bar to STAY in table
             for sym in funding:
                 fuel = fuels.get(sym) or self._fuel_dir_smoothed(sym)
                 status = fuel.get('status') if fuel else None
@@ -1445,9 +1465,13 @@ class FuelFilterDaemon:
                 a = self._anomalies.get(sym)
                 # Directional AND strong enough → in table; else treated as no-ММ.
                 _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0 if fuel else 0.0
-                if status in ('LONG', 'SHORT') and _strength >= fmin_mm:
-                    _mm = int(round(_strength))
-                    if not a or not a.get('holding'):
+                _mm = int(round(_strength))
+                _was_holding = bool(a and a.get('holding'))
+                # Enter needs full threshold; STAY only needs the (lower) keep
+                # threshold — that hysteresis stops boundary flicker.
+                _thr_now = _keep_mm if _was_holding else fmin_mm
+                if status in ('LONG', 'SHORT') and _strength >= _thr_now:
+                    if not _was_holding:
                         self._anomalies[sym] = {
                             'symbol': sym, 'dir': status, 'started_at': now,
                             'start_price': mark, 'holding': True,
@@ -1456,8 +1480,13 @@ class FuelFilterDaemon:
                             'next_funding': nf, 'entry_threshold': thr,
                             'vol24h': vol, 'mm_str': _mm,
                         }
-                        self._notify_funding(notifier, sym, status, mark, btc_line,
-                                             settings, now, entered=True, strength=_mm)
+                        # Cooldown: suppress the TG "appear" if this coin was
+                        # announced < cooldown ago (row still shows in the table).
+                        _last = self._funding_notify_at.get(sym, 0)
+                        if _cool_sec <= 0 or (now - _last) >= _cool_sec:
+                            self._notify_funding(notifier, sym, status, mark, btc_line,
+                                                 settings, now, entered=True, strength=_mm)
+                            self._funding_notify_at[sym] = now
                     else:
                         a['holding'] = True
                         a['dir'] = status
