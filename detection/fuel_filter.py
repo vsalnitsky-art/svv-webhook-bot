@@ -157,6 +157,11 @@ class FuelFilterDaemon:
         # instead of doing per-row liq-map / kline-fetch work in the request
         # path (that made the page slow to open).
         self._score_cache: Dict[str, Dict] = {}
+        # Fuel STRENGTH (0..100) per symbol — current cycle and previous cycle,
+        # so the UI can show the value + a rising/falling trend. Refreshed once
+        # per cycle in _refresh_score_cache (cheap; read by both tables).
+        self._fuel_str: Dict[str, int] = {}
+        self._fuel_str_prev: Dict[str, int] = {}
         # Symbols pulled in from the 💰 Funding Rate Scanner (when it's enabled).
         # They get fuel timers + a row in the ❤️ table, flagged distinctly, but
         # are MONITOR-ONLY (no auto-open / management). Refreshed each tick.
@@ -646,11 +651,15 @@ class FuelFilterDaemon:
             elif exf >= 80:
                 score = min(score, 38)    # → WEAK
         label, color = self._score_label(score)
+        # Fuel STRENGTH 0..100 = |fuel imbalance| × 100 (how lopsided the
+        # liquidity is). |dir| ≤ 0.1 (≤10%) → no direction; higher = stronger.
+        fuel_strength = int(round(abs(signed) * 100)) if signed is not None else None
         return {'score': int(round(score)), 'label': label, 'color': color,
                 'dir': live_dir, 'conflict': conflict, 'exh': exf,
                 # Per-coin ММ (liq-fuel) direction — shown in its own column in
                 # the ❤️ queue table. LONG / SHORT / None(=збалансований).
-                'fuel_dir': fuel_dir}
+                'fuel_dir': fuel_dir,
+                'fuel_strength': fuel_strength}
 
     def score_dict(self, symbol: str) -> Optional[Dict]:
         """Full SCORE verdict dict for `symbol` RIGHT NOW — same shape the
@@ -1503,8 +1512,14 @@ class FuelFilterDaemon:
                         cache[sym] = sc
                 except Exception:
                     pass
+            # Fuel-strength trend: snapshot this cycle's strengths and keep the
+            # previous cycle so the UI can draw a rising/falling arrow.
+            new_str = {s: sc.get('fuel_strength') for s, sc in cache.items()
+                       if sc.get('fuel_strength') is not None}
             with self._lock:
                 self._score_cache = cache
+                self._fuel_str_prev = self._fuel_str
+                self._fuel_str = new_str
         except Exception as e:
             print(f"[FuelFilter] score cache error: {e}")
 
@@ -1979,6 +1994,9 @@ class FuelFilterDaemon:
                     # LONG / SHORT / None(=збалансований). The UI compares it
                     # with `dir` (the signal side) to show ✓ збіг / ✗ проти.
                     'mm': (self._score_cache.get(sym) or {}).get('fuel_dir'),
+                    # Fuel STRENGTH 0..100 (+ previous cycle for the trend arrow).
+                    'mm_str': self._fuel_str.get(sym),
+                    'mm_str_prev': self._fuel_str_prev.get(sym),
                     'funding': False,
                     'funding_rate': None,
                     'funding_next_ms': None,
@@ -2087,6 +2105,21 @@ class FuelFilterDaemon:
             return {sym: track.get('exhaustion')
                     for sym, track in self._fuel_managed.items()
                     if track.get('exhaustion') is not None}
+
+    def get_fuel_strength_map(self) -> Dict[str, Dict]:
+        """Fuel STRENGTH (0..100) + previous-cycle value + direction, per symbol
+        we track (read from the pre-computed score cache — CHEAP, no per-request
+        compute). For the open-position tables' 'Паливо' column.
+        Returns {symbol: {'now': int, 'prev': int|None, 'dir': 'LONG'|'SHORT'|None}}."""
+        with self._lock:
+            out = {}
+            for sym, sc in self._score_cache.items():
+                st = sc.get('fuel_strength')
+                if st is not None:
+                    out[sym] = {'now': st,
+                                'prev': self._fuel_str_prev.get(sym),
+                                'dir': sc.get('fuel_dir')}
+            return out
 
     def delete_timer(self, symbol: str) -> bool:
         """Remove a coin from the FF table — the waiting base (_pending) and/or
