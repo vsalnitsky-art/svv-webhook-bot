@@ -138,8 +138,8 @@ DEFAULT_SETTINGS = {
     # {exhaustion} {reason} {btc}. Missing placeholders render as "—".
     'ff_tg_on_entry': False,
     'ff_tg_on_exit': False,
-    'ff_tg_entry_template': '💰 {symbol} зʼявилась у ММ · {dir}\n💲 {price} · funding {funding}% · паливо {fuel}%',
-    'ff_tg_exit_template': '💰 {symbol} зникла з ММ · {reason}\n💲 {price} · паливо {fuel}%',
+    'ff_tg_entry_template': '🚀 FF вхід {side} {symbol}\n💲 {price} · 🔥 виснаж {exhaustion}% · ММ {fuel}%',
+    'ff_tg_exit_template': '💰 {symbol} зникла з ММ · {reason}\n💲 {price} · ММ {fuel}%',
 }
 
 
@@ -1445,6 +1445,7 @@ class FuelFilterDaemon:
                 # Directional AND strong enough → in table; else treated as no-ММ.
                 _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0 if fuel else 0.0
                 if status in ('LONG', 'SHORT') and _strength >= fmin_mm:
+                    _mm = int(round(_strength))
                     if not a or not a.get('holding'):
                         self._anomalies[sym] = {
                             'symbol': sym, 'dir': status, 'started_at': now,
@@ -1452,10 +1453,10 @@ class FuelFilterDaemon:
                             'last_price': mark, 'last_held_sec': 0,
                             'funding': True, 'rate': rate, 'prev_rate': rate,
                             'next_funding': nf, 'entry_threshold': thr,
-                            'vol24h': vol,
+                            'vol24h': vol, 'mm_str': _mm,
                         }
                         self._notify_funding(notifier, sym, status, mark, btc_line,
-                                             settings, now, entered=True)
+                                             settings, now, entered=True, strength=_mm)
                     else:
                         a['holding'] = True
                         a['dir'] = status
@@ -1468,13 +1469,15 @@ class FuelFilterDaemon:
                         a['entry_threshold'] = thr
                         a['vol24h'] = vol
                         a['funding'] = True
+                        a['mm_str'] = _mm
                 else:
                     # Fuel ended → exit alert + remove the row.
                     if a is not None:
                         if a.get('holding'):
                             self._notify_funding(notifier, sym, a.get('dir'),
                                                  a.get('last_price'), btc_line,
-                                                 settings, now, entered=False)
+                                                 settings, now, entered=False,
+                                                 strength=a.get('mm_str'))
                         self._anomalies.pop(sym, None)
             # A funding coin that LEFT the scanner while still holding fuel must
             # ALSO fire an exit alert (this path used to remove it silently —
@@ -1485,16 +1488,24 @@ class FuelFilterDaemon:
                     if a.get('holding'):
                         self._notify_funding(notifier, sym, a.get('dir'),
                                              a.get('last_price'), btc_line,
-                                             settings, now, entered=False)
+                                             settings, now, entered=False,
+                                             strength=a.get('mm_str'))
                     self._anomalies.pop(sym, None)
             self._persist_state()
 
-    def _notify_funding(self, notifier, sym, d, price, btc_line, settings, now, entered):
+    def _notify_funding(self, notifier, sym, d, price, btc_line, settings, now,
+                        entered, strength=None):
         """Telegram alert when a 💰 funding coin APPEARS (entered=True) or
         DISAPPEARS (entered=False) from the 💰 ММ table. Gated by the user's
         ff_tg_on_entry / ff_tg_on_exit toggles and rendered from the editable
         templates. Placeholders: {symbol} {dir} {side} {price} {funding}
-        {fuel} {exhaustion} {reason} {btc} — missing → «—»."""
+        {fuel} {exhaustion} {reason} {btc} — missing → «—».
+
+        `strength` is the LIVE ММ strength (0..100) computed by the caller from
+        the current fuel direction. It is passed in because the background
+        score cache (self._fuel_str) usually has no entry yet at the exact
+        moment a coin first appears — which is why {fuel} used to render «—».
+        Falls back to the cache only when the caller could not supply it."""
         if not notifier:
             return
         if entered and not settings.get('ff_tg_on_entry'):
@@ -1503,7 +1514,10 @@ class FuelFilterDaemon:
             return
         try:
             rate = self._funding_rates.get(sym)
-            strength = self._fuel_str.get(sym)
+            if strength is None:
+                strength = self._fuel_str.get(sym)
+            if strength is not None:
+                strength = int(round(float(strength)))
             exh = self._exhaustion(sym, d) if d in ('LONG', 'SHORT') else None
             ctx = {
                 'symbol': sym,
