@@ -1980,15 +1980,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         </div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px">
                             <div style="flex:1;min-width:260px">
-                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон: поява монети</label>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон: поява монети <button type="button" onclick="ffResetTpl('entry')" style="margin-left:6px;font-size:0.6rem;padding:1px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#9ca3af;cursor:pointer" title="Скинути до стандартного тексту й зберегти">↩️ Стандартний</button></label>
                                 <textarea id="ff-tg-entry-tpl" rows="2" onchange="saveFuelFilterSettings()" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace;font-size:0.72rem;resize:vertical;box-sizing:border-box"></textarea>
                             </div>
                             <div style="flex:1;min-width:260px">
-                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон: зникнення монети</label>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон: зникнення монети <button type="button" onclick="ffResetTpl('exit')" style="margin-left:6px;font-size:0.6rem;padding:1px 6px;border-radius:4px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.05);color:#9ca3af;cursor:pointer" title="Скинути до стандартного тексту й зберегти">↩️ Стандартний</button></label>
                                 <textarea id="ff-tg-exit-tpl" rows="2" onchange="saveFuelFilterSettings()" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace;font-size:0.72rem;resize:vertical;box-sizing:border-box"></textarea>
                             </div>
                         </div>
-                        <div style="font-size:0.62rem;color:#7a8395;margin-top:5px">Плейсхолдери: <code>{symbol} {side} {dir} {price} {funding} {fuel} {exhaustion} {reason}</code> · <code>{fuel}</code> = сила ММ % · відсутні → «—»</div>
+                        <div style="font-size:0.62rem;color:#7a8395;margin-top:5px">Плейсхолдери: <code>{symbol} {side} {dir} {price} {funding} {funding_in} {fuel} {exhaustion} {reason}</code> · <code>{fuel}</code> = сила ММ %, <code>{funding}</code> = ставка %, <code>{funding_in}</code> = час до фандінгу · відсутні → «—»</div>
                     </div>
                 </div>
             </div>
@@ -7497,6 +7497,21 @@ function toggleFundingSettings() {
         body.style.display = 'none';
         chevron.textContent = '▶';
     }
+}
+
+// Default funding-TG templates (must match DEFAULT_SETTINGS in fuel_filter.py).
+// The saved DB template overrides the code default, so this button lets the
+// user re-apply the current standard text in one click.
+const FF_TPL_DEFAULTS = {
+    entry: '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
+    exit:  '💰 {symbol} зникла з ММ · {reason}\n💲 {price} · ММ {fuel}%',
+};
+function ffResetTpl(which) {
+    const id = which === 'exit' ? 'ff-tg-exit-tpl' : 'ff-tg-entry-tpl';
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = FF_TPL_DEFAULTS[which] || '';
+    saveFuelFilterSettings();
 }
 
 async function onFuelFilterToggle(event) {
