@@ -1918,10 +1918,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th title="Скільки часу монета вже чекає в черзі">Очікує</th><th title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="Напрямок ММ (палива) по монеті + збіг із сигналом: ✓ = паливо співпадає з напрямком (готова відкритись на START), ✗ = паливо проти сигналу, ⚪ = ММ збалансований (напрямку немає)">ММ</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th title="Скільки часу монета вже чекає в черзі">Очікує</th><th title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
-                        <tr><td colspan="6" class="tm-empty-msg">Черга порожня</td></tr>
+                        <tr><td colspan="7" class="tm-empty-msg">Черга порожня</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -6958,7 +6958,7 @@ function renderFuelFilter(d) {
     if (tb) {
         let rows = d.timers || [];
         if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="6" class="tm-empty-msg">Черга порожня</td></tr>';
+            tb.innerHTML = '<tr><td colspan="7" class="tm-empty-msg">Черга порожня</td></tr>';
         } else {
             tb.innerHTML = rows.map(t => {
                 const isFunding = !!t.funding;
@@ -6987,6 +6987,21 @@ function renderFuelFilter(d) {
                     : (t.dir === 'SHORT'
                         ? '<span style="color:#ef4444">🔴 SHORT</span>'
                         : '<span style="color:#8b93a7">⚪ —</span>');
+                // ММ (fuel) direction per coin + match with the signal side.
+                // ✓ = fuel matches the signal (ready to open on START),
+                // ✗ = fuel is against it, ⚪ = balanced (no ММ direction).
+                const mm = t.mm || null;
+                let mmHtml;
+                if (mm === 'LONG' || mm === 'SHORT') {
+                    const mmColor = mm === 'LONG' ? '#22c55e' : '#ef4444';
+                    const mmTxt = mm === 'LONG' ? '🟢 LONG' : '🔴 SHORT';
+                    const mark = (mm === t.dir)
+                        ? '<span style="color:#22c55e;font-weight:800" title="Паливо співпадає з напрямком сигналу — готова відкритись на START">✓</span>'
+                        : '<span style="color:#ef4444;font-weight:800" title="Паливо проти напрямку сигналу — на START не відкриється">✗</span>';
+                    mmHtml = `<span style="color:${mmColor};font-weight:600">${mmTxt}</span> ${mark}`;
+                } else {
+                    mmHtml = '<span style="color:#8b93a7" title="ММ збалансований — напрямку немає">⚪ —</span>';
+                }
                 const heldHtml = t.dir
                     ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`
                     : '<span class="ff-timer">—</span>';
@@ -7005,6 +7020,7 @@ function renderFuelFilter(d) {
                 return `<tr style="${rowStyle}">
                     <td style="font-weight:600${symColor}">${srcBadge}<span>${t.symbol}</span>${fundLbl}${fundNext}</td>
                     <td>${dirHtml}</td>
+                    <td style="white-space:nowrap;font-size:0.8rem">${mmHtml}</td>
                     <td style="font-size:0.74rem;color:${exhColor};font-weight:600">${exh}</td>
                     <td style="font-size:0.74rem;color:#cbd5e1">${heldHtml}</td>
                     <td style="white-space:nowrap">${scoreHtml}</td>

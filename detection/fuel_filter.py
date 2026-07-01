@@ -1968,6 +1968,10 @@ class FuelFilterDaemon:
                     'waiting': True,
                     'exhaustion': (self._score_cache.get(sym) or {}).get('_exh'),
                     'score': self._score_cache.get(sym),
+                    # Per-coin ММ (liq-fuel) direction for the ММ column —
+                    # LONG / SHORT / None(=збалансований). The UI compares it
+                    # with `dir` (the signal side) to show ✓ збіг / ✗ проти.
+                    'mm': (self._score_cache.get(sym) or {}).get('fuel_dir'),
                     'funding': False,
                     'funding_rate': None,
                     'funding_next_ms': None,
