@@ -2103,8 +2103,8 @@ class FuelFilterDaemon:
         # Persist the counters to DB if they changed this tick (survives restart).
         _persist_attempts_if_changed()
 
-        print(f"[FF-Engine] {mode_lbl} · {len(cand)} канд · "
-              f"паливо-гейт · "
+        print(f"[FF-Engine] {mode_lbl} · кнопки L={allow_long} S={allow_short} · "
+              f"{len(cand)} канд · паливо-гейт · "
               + ' '.join(trace))
 
     def get_state(self) -> Dict:
