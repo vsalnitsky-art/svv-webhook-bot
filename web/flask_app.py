@@ -2536,7 +2536,24 @@ def register_api_routes(app):
         fm = get_funding_monitor()
         if not fm:
             return jsonify({'running': False, 'coins': [], 'total_tracked': 0})
-        return jsonify(fm.get_watchlist())
+        data = fm.get_watchlist()
+        # Merge ММ (fuel) strength for coins FF currently tracks — CHEAP map
+        # from the score cache (no per-coin compute). Coins without ММ data
+        # simply won't carry mm_* fields (UI shows «—»).
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if ff:
+                str_map = ff.get_fuel_strength_map()
+                for c in (data.get('coins') or []):
+                    fs = str_map.get(c.get('symbol'))
+                    if fs:
+                        c['mm_dir'] = fs.get('dir')
+                        c['mm_str'] = fs.get('now')
+                        c['mm_str_prev'] = fs.get('prev')
+        except Exception as e:
+            print(f"[Flask] funding ММ merge error: {e}")
+        return jsonify(data)
     
     @app.route('/api/funding/remove/<symbol>', methods=['POST', 'DELETE'])
     def api_funding_remove(symbol):
