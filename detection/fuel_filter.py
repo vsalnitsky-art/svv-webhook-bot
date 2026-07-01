@@ -128,6 +128,9 @@ DEFAULT_SETTINGS = {
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
+    # A funding coin appears in the 💰 ММ table only if its ММ (fuel) STRENGTH
+    # (|fuel dir|×100) ≥ this. 0 = off, 30 = помітне (≥30%), 60 = сильне (≥60%).
+    'funding_min_mm_strength': 0,
     # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ ──
     # Replaces the old funding alert. Fires when a funding coin APPEARS
     # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 ММ table.
@@ -1425,6 +1428,12 @@ class FuelFilterDaemon:
             notifier = getattr(tm, 'notifier', None) if tm else None
         btc_line = self._btc_status_text(settings, now)
         with self._lock:
+            # ММ (fuel) strength filter: a coin enters the 💰 ММ table only if
+            # its strength (|fuel dir|×100) meets the selected minimum.
+            try:
+                fmin_mm = int(settings.get('funding_min_mm_strength', 0) or 0)
+            except (TypeError, ValueError):
+                fmin_mm = 0
             for sym in funding:
                 fuel = fuels.get(sym) or self._fuel_dir_smoothed(sym)
                 status = fuel.get('status') if fuel else None
@@ -1433,7 +1442,9 @@ class FuelFilterDaemon:
                 nf = self._funding_next.get(sym)
                 vol = self._funding_vols.get(sym)
                 a = self._anomalies.get(sym)
-                if status in ('LONG', 'SHORT'):
+                # Directional AND strong enough → in table; else treated as no-ММ.
+                _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0 if fuel else 0.0
+                if status in ('LONG', 'SHORT') and _strength >= fmin_mm:
                     if not a or not a.get('holding'):
                         self._anomalies[sym] = {
                             'symbol': sym, 'dir': status, 'started_at': now,
