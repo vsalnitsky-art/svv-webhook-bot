@@ -6477,32 +6477,15 @@ function onSmartDirectionModeChange() {
     }
 }
 
-// Apply the verdict to the side gates (only when Smart Direction is on).
-// The server-side loop does the heavy lifting — this is a no-op now;
-// the gates are driven by the background daemon. Legacy hook kept for compat.
+// Side gates are driven ENTIRELY by the server-side AutoGate daemon (works
+// 24/7, and it's the only writer for all modes: simple / smart / banner).
+// This front-end hook used to also push the RAW main-window verdict, which
+// fought the daemon — e.g. in 'banner' mode the daemon sets SHORT (banner
+// session) while this pushed WAIT→both-off, so the buttons flip-flopped.
+// It's now a TRUE no-op; the UI only REFLECTS the gates via
+// syncSideGateButtons on each tm/state poll.
 async function applyAutoGate(verdict) {
-    if (!smartDirectionEnabled) return;
-    let changed = false;
-    if (verdict === 'LONG') {
-        const a = await setSideGate('LONG', true);
-        const b = await setSideGate('SHORT', false);
-        changed = a || b;
-    } else if (verdict === 'SHORT') {
-        const a = await setSideGate('SHORT', true);
-        const b = await setSideGate('LONG', false);
-        changed = a || b;
-    } else {  // WAIT → both off
-        const a = await setSideGate('LONG', false);
-        const b = await setSideGate('SHORT', false);
-        changed = a || b;
-    }
-    const note = document.getElementById('sm-bias-autonote');
-    if (note && changed) {
-        const txt = verdict === 'WAIT'
-            ? 'обидва напрямки вимкнено (WAIT)'
-            : `застосовано ${verdict}`;
-        note.textContent = `🤖 Auto-gate: ${txt} о ${new Date().toLocaleTimeString()}`;
-    }
+    return;   // no-op — server daemon owns the gates (see comment above)
 }
 
 // Compute watchlist consensus from the ACTIVE filter marker (★ OB or
@@ -7517,7 +7500,7 @@ function toggleFundingSettings() {
 // user re-apply the current standard text in one click.
 const FF_TPL_DEFAULTS = {
     entry: '🚀 FF вхід {side} {symbol} ·💲 {price} ·\nММ {fuel}% фандінг {funding}% · 🔄 {funding_in}',
-    exit:  '💰 {symbol} зникла з ММ · {reason}\n💲 {price} · ММ {fuel}%',
+    exit:  '☄️ {symbol} зникла з 📡 · {reason}\n💲 {price} · 📡 {fuel}%',
 };
 function ffResetTpl(which) {
     const id = which === 'exit' ? 'ff-tg-exit-tpl' : 'ff-tg-entry-tpl';
