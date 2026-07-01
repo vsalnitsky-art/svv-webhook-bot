@@ -186,11 +186,16 @@ class FuelFilterDaemon:
         self._funding_alerted: set = set()
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
         self._btc_state: Dict = {}
-        # BTC banner direction = the 🎯 Smart Money Concepts main-window verdict
-        # (compute_bias), NOT liq-fuel. Held timer counts how long that verdict
-        # has stayed LONG/SHORT. Refreshed once per scan cycle in _tick.
-        self._btc_verdict_dir: Optional[str] = None   # 'LONG'/'SHORT'/None(WAIT)
-        self._btc_verdict_since: float = 0.0
+        # ── BTC ММ "session" ──────────────────────────────────────────────
+        # A session = a committed BTC ММ direction (LONG/SHORT). WAIT (ML
+        # балансований) is a PAUSE — it keeps the session, its start time and
+        # the queue. Only an OPPOSITE flip (LONG↔SHORT) ends the session, resets
+        # the timer and CLEARS the queue. `_btc_verdict_dir`/`_btc_verdict_since`
+        # hold the SESSION (not the live blip); `_btc_paused` is True while the
+        # live ML is WAIT inside a live session (banner shows "напрямок · пауза").
+        self._btc_verdict_dir: Optional[str] = None   # session dir 'LONG'/'SHORT'/None
+        self._btc_verdict_since: float = 0.0           # session start (persists through pause)
+        self._btc_paused: bool = False                 # live ML is WAIT within the session
         # 💰 Funding fuel table (repurposed from the old anomalies storage):
         # coins from the 💰 Funding Rate Scanner that currently show fuel. Same
         # dict shape so the existing table/endpoints keep working. {symbol:
@@ -467,23 +472,29 @@ class FuelFilterDaemon:
             if isinstance(hy, dict):
                 self._fuel_hyst = {str(k).upper(): (v if v in ('LONG', 'SHORT') else None)
                                    for k, v in hy.items()}
-            # The entry queue is EPHEMERAL by design. We intentionally do NOT
-            # restore `_pending` from the DB: a coin only belongs in the queue
-            # if it fired a fresh CHoCH / CHoCH+BOS signal THIS session and was
-            # intercepted live. Restoring it dragged stale, unknown coins (e.g.
-            # AAVEUSDT) back into the queue on every boot even though they had
-            # no fresh signal. Start empty — only live signals fill the queue.
-            self._pending = {}
+            # Restore the BTC ММ SESSION first (direction + start time).
             bvd = st.get('btc_verdict_dir')
             self._btc_verdict_dir = bvd if bvd in ('LONG', 'SHORT') else None
             try:
                 self._btc_verdict_since = float(st.get('btc_verdict_since') or 0.0)
             except (TypeError, ValueError):
                 self._btc_verdict_since = 0.0
+            self._btc_paused = False
+            # Restore the entry queue PER SESSION. We persist the queue now and
+            # bring it back on boot, tied to the session it belonged to. The
+            # session-flip logic in _update_btc_verdict handles staleness: on the
+            # first tick, if the live ММ is OPPOSITE the restored session, the
+            # queue is cleared (session mismatch → fresh start). If the ML is the
+            # same direction (or WAIT/pause), the queued coins are still valid and
+            # keep waiting. This replaces the old blanket-ephemeral behaviour.
+            pend = st.get('pending', {}) or {}
+            if isinstance(pend, dict):
+                self._pending = {str(k).upper(): v for k, v in pend.items()
+                                 if isinstance(v, dict) and v.get('dir') in ('LONG', 'SHORT')}
             if (self._fuel_managed or self._anomalies or self._engine_attempts
-                    or self._timers):
-                print(f"[FuelFilter] restored queue 0 (ephemeral — fresh "
-                      f"signals only), "
+                    or self._timers or self._pending):
+                print(f"[FuelFilter] restored {len(self._pending)} queued "
+                      f"(session={self._btc_verdict_dir or '—'}), "
                       f"{len(self._fuel_managed)} tracked position(s), "
                       f"{len(self._timers)} timer(s), "
                       f"{len(self._anomalies)} anomaly(ies), "
@@ -789,56 +800,73 @@ class FuelFilterDaemon:
                 'status': status, 'raw_dir': raw, 'raw_status': fd.get('status')}
 
     def _update_btc_verdict(self):
-        """Refresh the BTC banner direction from the MAIN-WINDOW ММ (liq-fuel)
-        indicator — the '✓ ММ зверху (тягне в LONG)' / '✓ ММ знизу (тягне в
-        SHORT)' line of 🎯 Smart Money Concepts, i.e. compute_bias's fuel
-        component (dir > +0.1 → LONG, < −0.1 → SHORT, else neutral). NOT the
-        overall verdict. Resets the held timer whenever that direction changes.
-        Called once per cycle."""
+        """BTC ММ *session* tracker (drives the ₿ banner + START engine + queue).
+
+        A SESSION = a committed BTC ММ direction. The live ММ comes from the
+        MAIN-WINDOW indicator (compute_bias fuel, ±0.1): dir > +0.1 → LONG,
+        < −0.1 → SHORT, |dir| ≤ 0.1 → WAIT (ML збалансований).
+
+        Session rules (per user's "сеанси"):
+          • WAIT / data gap → PAUSE: keep the session direction, keep its start
+            time (timer keeps counting), keep the queue. `_btc_paused = True`.
+          • Same direction (LONG→WAIT→LONG) → SAME session, resumes.
+          • OPPOSITE direction (LONG↔SHORT) → NEW session: reset the start time,
+            CLEAR the whole ❤️ queue, start counting the other way.
+        So the queue is cleared ONLY on a genuine session flip — never on a
+        transient WAIT. Called once per cycle."""
         try:
             from web.flask_app import compute_bias
             d = compute_bias(self._db, 'BTCUSDT', None)
             fuel = ((d or {}).get('components') or {}).get('fuel') or {}
             fdir = fuel.get('dir')
-            # The banner MUST mirror the MAIN-WINDOW ММ label 1:1. compute_bias
-            # marks BTC fuel: dir > +0.1 → "ММ зверху (LONG)", dir < -0.1 →
-            # "ММ знизу (SHORT)", and |dir| ≤ 0.1 → "ММ збалансований —
-            # напрямку немає". So we use the SAME ±0.1 threshold (FUEL_*_THR)
-            # and go NEUTRAL (no direction → STOP, timer reset) whenever the
-            # main window says balanced. (Earlier this carried an extra
-            # ±0.15/±0.05 hysteresis with a 0.05–0.15 "sticky" zone — that made
-            # the banner keep showing SHORT/LONG and counting to START while the
-            # main window already read "збалансований". Removed so the two never
-            # disagree.) A true data gap (no number) keeps the previous value so
-            # a transient compute_bias failure doesn't blank the banner.
-            prev = self._btc_verdict_dir
             if fdir is None:
-                vdir = prev                 # data gap → keep previous, don't flip
+                live = None                 # data gap → treat as WAIT (pause)
             elif fdir > FUEL_LONG_THR:      # > +0.1 → LONG (як головне вікно)
-                vdir = 'LONG'
+                live = 'LONG'
             elif fdir < FUEL_SHORT_THR:     # < -0.1 → SHORT
-                vdir = 'SHORT'
+                live = 'SHORT'
             else:
-                vdir = None                 # |dir| ≤ 0.1 → збалансований → WAIT
+                live = None                 # |dir| ≤ 0.1 → збалансований → WAIT
         except Exception as e:
             print(f"[FuelFilter] BTC ММ calc error: {e}")
             return
         now = time.time()
-        if vdir != self._btc_verdict_dir:
-            self._btc_verdict_dir = vdir
-            self._btc_verdict_since = now if vdir else 0.0
-            # On a NEW ММ (Паливо) direction, purge the now-stale OPPOSITE
-            # entries from the queue (ММ→SHORT clears old LONG, and vice versa).
-            if vdir in ('LONG', 'SHORT') and _q_allowed(4):   # OP 4: ММ-flip purge
-                opp = 'SHORT' if vdir == 'LONG' else 'LONG'
-                with self._lock:
-                    drop = [s for s, v in self._pending.items()
-                            if v.get('dir') == opp]
-                    for s in drop:
-                        self._pending.pop(s, None)
-                    if drop:
-                        print(f"[FuelFilter] ММ→{vdir}: purged {len(drop)} {opp} queue")
+        sess = self._btc_verdict_dir        # current session direction
+
+        # WAIT / balanced → pause the session (keep dir, timer, queue).
+        if live is None:
+            if not self._btc_paused and sess:
+                self._btc_paused = True
+                self._persist_state()
+            return
+
+        # No session yet → start one (nothing to clear).
+        if sess is None:
+            self._btc_verdict_dir = live
+            self._btc_verdict_since = now
+            self._btc_paused = False
             self._persist_state()
+            return
+
+        # Same direction → session continues (resume from pause if needed).
+        if live == sess:
+            if self._btc_paused:
+                self._btc_paused = False
+                self._persist_state()
+            return
+
+        # OPPOSITE direction → NEW session: reset timer + CLEAR the whole queue.
+        self._btc_verdict_dir = live
+        self._btc_verdict_since = now
+        self._btc_paused = False
+        if _q_allowed(4):   # OP 4: session flip → clear the queue
+            with self._lock:
+                n = len(self._pending)
+                self._pending = {}
+                self._engine_attempts.clear()
+            if n:
+                print(f"[FuelFilter] сеанс {sess}→{live}: чергу очищено ({n} монет)")
+        self._persist_state()
 
     def _bias(self, symbol: str) -> Dict:
         """Cached FF-specific bias computation. Uses compute_bias_for_ff —
@@ -1785,9 +1813,15 @@ class FuelFilterDaemon:
         now = time.time()
 
         if btc_mode:
-            # ₿ START gate: BTC ММ must have held a direction ≥ threshold.
+            # ₿ START gate: the SESSION must hold a direction ≥ threshold.
             if self._btc_verdict_dir not in ('LONG', 'SHORT') or not self._btc_verdict_since:
                 self._engine_attempts.clear()
+                _persist_attempts_if_changed()
+                return
+            # Do NOT open while the session is PAUSED (live ML is WAIT/balanced).
+            # The session, its timer and the queue stay alive — opening simply
+            # waits until the ML resumes the session direction.
+            if self._btc_paused:
                 _persist_attempts_if_changed()
                 return
             period = float(s.get('start_signal_minutes', 5) or 5) * 60
@@ -1947,6 +1981,9 @@ class FuelFilterDaemon:
             # banner is therefore 1:1 with 🎯 Smart Money Concepts (NOT liq-fuel).
             ssm = float(settings.get('start_signal_minutes', 5) or 5)
             period_sec = ssm * 60
+            # SESSION direction (persists through WAIT). The timer keeps counting
+            # through a pause, so START can still be reached while paused; the
+            # `paused` flag lets the banner show "напрямок · ⏸ пауза".
             b_dir = self._btc_verdict_dir
             if b_dir in ('LONG', 'SHORT') and self._btc_verdict_since:
                 b_held = now - self._btc_verdict_since
@@ -1967,6 +2004,7 @@ class FuelFilterDaemon:
                 'held_sec': int(b_held),
                 'period_sec': int(period_sec),
                 'dir': b_dir,
+                'paused': bool(self._btc_paused and has_btc),
             }
             # 💰 Funding table — only coins currently holding fuel. Carries the
             # live funding rate + next-funding time + trend (prev_rate) + the

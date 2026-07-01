@@ -6887,6 +6887,7 @@ function renderFuelFilter(d) {
         since: Math.floor(Date.now() / 1000) - (bsg.held_sec || 0),
         period: bsg.period_sec || 300,
         dir: bsg.dir || null,
+        paused: !!bsg.paused,   // ML тимчасово WAIT у межах сеансу
     };
     updateBtcStartBanner();
     // settings inputs — don't clobber while focused, and don't clobber for a
@@ -7355,6 +7356,16 @@ function updateBtcStartBanner() {
     const pct = s.period > 0 ? Math.min(100, elapsed / s.period * 100) : 0;
     bar.style.width = pct.toFixed(1) + '%';
     if (flip) flip.innerHTML = flipTimerHTML(elapsed);   // live flip timer
+    if (s.paused) {
+        // Session is alive (dir kept, timer keeps counting) but the live ML is
+        // WAIT — show it PAUSED. The engine does not open while paused.
+        bar.style.background = 'rgba(148,163,184,0.35)';
+        if (lab) lab.textContent = Math.floor(pct) + '%';
+        st.textContent = '⏸ ПАУЗА';
+        st.style.background = 'rgba(148,163,184,0.14)'; st.style.color = '#cbd5e1';
+        st.style.textShadow = 'none'; st.style.boxShadow = 'none';
+        return;
+    }
     if (pct >= 100) {
         // Progress complete → START. Green TURNED OFF on the bar (neutral fill);
         // only the badge text is bright green.
