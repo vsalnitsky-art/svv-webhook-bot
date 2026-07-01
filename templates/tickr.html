@@ -142,7 +142,10 @@
             <tbody id="tk-top-tbody"><tr><td colspan="9" style="color:#667;padding:16px">— ще не завантажено —</td></tr></tbody>
         </table>
     </div>
-    <div style="margin-top:8px"><button class="tk-btn" onclick="tkTopToTV()">📋 Top → TradingView watchlist</button></div>
+    <div style="margin-top:8px">
+        <button class="tk-btn" onclick="tkTopToTV()">📋 Top → TradingView watchlist</button>
+        <button class="tk-btn warm" onclick="tkTopToFF()" title="Залити показані найактивніші монети у ❤️ FF-добірку (WATCHLIST Smart Money, мітка 📡 Tickr, FF+TRD увімкнені)">💚 Top → ❤️ FF-добірка</button>
+    </div>
 </div>
 
 <!-- Opportunity Scanner -->
@@ -364,6 +367,37 @@ async function tkTopToTV() {
     document.getElementById('tk-tv-out').value = d.text || '';
     document.getElementById('tk-tv-section').style.display = '';
     document.getElementById('tk-tv-section').scrollIntoView({behavior:'smooth'});
+}
+
+// Push the currently-shown "Top Active" (most-traded futures) coins into the
+// ❤️ FF-добірка: they land in the Smart Money WATCHLIST tagged source='tickr_ff'
+// with FF scan + tradeable enabled (reuses the existing ff-to-watchlist endpoint).
+async function tkTopToFF() {
+    if (!tkTopRows || !tkTopRows.length) return;
+    const symbols = tkTopRows
+        .map(r => (typeof r === 'string' ? r : (r && r.symbol)))
+        .filter(Boolean);
+    if (!symbols.length) return;
+    if (!confirm(`Залити ${symbols.length} найактивніших монет у ❤️ FF-добірку `
+        + `(WATCHLIST Smart Money, мітка 📡 Tickr, FF+TRD увімкнені)?`)) return;
+    const stat = document.getElementById('tk-top-stat');
+    stat.textContent = '⏳ Заливаю у FF-добірку…';
+    try {
+        const res = await fetch('/api/tickr/opportunity/ff-to-watchlist', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbols}),
+        });
+        const d = await res.json();
+        if (d.ok) {
+            stat.textContent = `✅ FF-добірка: +${(d.added||[]).length} додано`
+                + `, вже було: ${(d.already||[]).length}`
+                + ((d.skipped && d.skipped.length) ? `, пропущено: ${d.skipped.length}` : '');
+        } else {
+            stat.textContent = '❌ ' + (d.reason || 'не вдалось');
+        }
+    } catch (e) {
+        stat.textContent = '❌ помилка: ' + e;
+    }
 }
 
 
