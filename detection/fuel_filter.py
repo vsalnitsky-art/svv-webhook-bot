@@ -1910,22 +1910,20 @@ class FuelFilterDaemon:
             duration_sec = settings['duration_minutes'] * 60
             funding_dur = float(settings.get('funding_duration_minutes', 0) or 0) * 60
             now = time.time()
-            # The table = the waiting BASE (_pending), filtered by the MAIN
-            # LONG/SHORT buttons (so it only shows coins of the enabled
-            # direction). `visible_pending` counts EXACTLY these rows so the
-            # header "У черзі: N" always equals what's on screen (no coins
-            # "standing" off-screen while the counter ticks).
-            allow_long, allow_short = self._entry_gates()
+            # The table = the waiting BASE (_pending). Show EVERY queued coin
+            # (that isn't already an open position), REGARDLESS of the current
+            # LONG/SHORT button state. Interception already gated entry by the
+            # enabled button at ADD time — re-filtering here by the live buttons
+            # made the WHOLE ❤️ queue vanish the moment the verdict flipped the
+            # buttons to WAIT (both off), wiping coins that legitimately waited.
+            # Buttons control OPENING (the engine), not visibility. The count
+            # equals the rows shown.
             visible_pending = 0
             timers = []
             for sym, info in self._pending.items():
                 if sym in self._fuel_managed:
                     continue  # already opened
                 d = info.get('dir')
-                if d == 'LONG' and not allow_long:
-                    continue
-                if d == 'SHORT' and not allow_short:
-                    continue
                 visible_pending += 1
                 waited = now - info.get('added_at', now)
                 timers.append({
