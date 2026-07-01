@@ -1455,14 +1455,28 @@ class FuelFilterDaemon:
             except (TypeError, ValueError):
                 _cool_sec = 0
             _keep_mm = max(0, fmin_mm - _hyst)   # lower bar to STAY in table
-            for sym in funding:
+            # Evaluate BOTH coins currently in the funding scanner AND coins
+            # already in the 💰 ММ table. A coin ENTERS only from the scanner,
+            # but once in, it STAYS as long as it has fuel and meets the ММ
+            # filter — even if it dropped out of the 💰 Funding Rate Scanner
+            # (funding normalised). It leaves ONLY when fuel is gone / ММ below
+            # the keep-threshold. This fixes "паливо зникло" firing at ММ 100%.
+            _in_table = {s for s, a in self._anomalies.items() if a.get('funding')}
+            for sym in (funding | _in_table):
+                in_scanner = sym in funding
                 fuel = fuels.get(sym) or self._fuel_dir_smoothed(sym)
                 status = fuel.get('status') if fuel else None
                 mark = fuel.get('mark_price') if fuel else None
-                rate = self._funding_rates.get(sym)
-                nf = self._funding_next.get(sym)
-                vol = self._funding_vols.get(sym)
+                # Funding rate/next: fresh from the scanner if still there, else
+                # keep the last-known values stored on the anomaly record.
                 a = self._anomalies.get(sym)
+                rate = self._funding_rates.get(sym)
+                if rate is None and a is not None:
+                    rate = a.get('rate')
+                nf = self._funding_next.get(sym)
+                if nf is None and a is not None:
+                    nf = a.get('next_funding')
+                vol = self._funding_vols.get(sym)
                 # Directional AND strong enough → in table; else treated as no-ММ.
                 _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0 if fuel else 0.0
                 _mm = int(round(_strength))
@@ -1470,7 +1484,10 @@ class FuelFilterDaemon:
                 # Enter needs full threshold; STAY only needs the (lower) keep
                 # threshold — that hysteresis stops boundary flicker.
                 _thr_now = _keep_mm if _was_holding else fmin_mm
-                if status in ('LONG', 'SHORT') and _strength >= _thr_now:
+                _qualifies = status in ('LONG', 'SHORT') and _strength >= _thr_now
+                # A fresh coin can only appear if it is in the scanner right now;
+                # a holding coin stays on fuel alone.
+                if _qualifies and (in_scanner or _was_holding):
                     if not _was_holding:
                         self._anomalies[sym] = {
                             'symbol': sym, 'dir': status, 'started_at': now,
@@ -1497,30 +1514,24 @@ class FuelFilterDaemon:
                         a['rate'] = rate
                         a['next_funding'] = nf
                         a['entry_threshold'] = thr
-                        a['vol24h'] = vol
+                        if vol is not None:
+                            a['vol24h'] = vol
                         a['funding'] = True
                         a['mm_str'] = _mm
                 else:
-                    # Fuel ended → exit alert + remove the row.
+                    # Leaves the table ONLY here: fuel gone or ММ below keep-thr.
                     if a is not None:
                         if a.get('holding'):
-                            self._notify_funding(notifier, sym, a.get('dir'),
-                                                 a.get('last_price'), btc_line,
-                                                 settings, now, entered=False,
-                                                 strength=a.get('mm_str'))
+                            _reason = ('паливо зникло'
+                                       if status not in ('LONG', 'SHORT')
+                                       else f'ММ {_mm}% нижче фільтра')
+                            self._notify_funding(
+                                notifier, sym, a.get('dir'),
+                                mark or a.get('last_price'), btc_line,
+                                settings, now, entered=False, strength=_mm,
+                                reason=_reason)
                         self._anomalies.pop(sym, None)
-            # A funding coin that LEFT the scanner while still holding fuel must
-            # ALSO fire an exit alert (this path used to remove it silently —
-            # the missing "вихід" message).
-            for sym in list(self._anomalies.keys()):
-                a = self._anomalies[sym]
-                if a.get('funding') and sym not in funding:
-                    if a.get('holding'):
-                        self._notify_funding(notifier, sym, a.get('dir'),
-                                             a.get('last_price'), btc_line,
-                                             settings, now, entered=False,
-                                             strength=a.get('mm_str'))
-                    self._anomalies.pop(sym, None)
+                        self._funding_notify_at.pop(sym, None)
             self._persist_state()
 
     @staticmethod
@@ -1541,7 +1552,7 @@ class FuelFilterDaemon:
             return '—'
 
     def _notify_funding(self, notifier, sym, d, price, btc_line, settings, now,
-                        entered, strength=None):
+                        entered, strength=None, reason=None):
         """Telegram alert when a 💰 funding coin APPEARS (entered=True) or
         DISAPPEARS (entered=False) from the 💰 ММ table. Gated by the user's
         ff_tg_on_entry / ff_tg_on_exit toggles and rendered from the editable
@@ -1561,22 +1572,33 @@ class FuelFilterDaemon:
             return
         try:
             rate = self._funding_rates.get(sym)
+            # rate from the scanner may be gone once a coin left it — fall back
+            # to the last-known value stored on the anomaly record.
+            if rate is None:
+                _a = self._anomalies.get(sym)
+                rate = _a.get('rate') if _a else None
             if strength is None:
                 strength = self._fuel_str.get(sym)
             if strength is not None:
                 strength = int(round(float(strength)))
             exh = self._exhaustion(sym, d) if d in ('LONG', 'SHORT') else None
+            _nf = self._funding_next.get(sym)
+            if _nf is None:
+                _a = self._anomalies.get(sym)
+                _nf = _a.get('next_funding') if _a else None
             ctx = {
                 'symbol': sym,
                 'dir': d or '—', 'side': d or '—',
                 'price': (self._fmt_price(price) if price else '—'),
-                # funding rate comes as a FRACTION (0.0001 = 0.01%) → show as %.
-                'funding': (f"{rate * 100:+.4f}" if rate is not None else '—'),
+                # get_rates() already returns funding in PERCENT (see
+                # funding_monitor: stored as rate*100) → do NOT scale again.
+                'funding': (f"{rate:+.4f}" if rate is not None else '—'),
                 # countdown to the next funding settlement (nextFundingTime ms).
-                'funding_in': self._fmt_funding_in(self._funding_next.get(sym), now),
+                'funding_in': self._fmt_funding_in(_nf, now),
                 'fuel': (str(strength) if strength is not None else '—'),
                 'exhaustion': (f"{exh:.0f}" if exh is not None else '—'),
-                'reason': ('зʼявилась у ММ' if entered else 'паливо зникло'),
+                'reason': (reason if reason is not None
+                           else ('зʼявилась у ММ' if entered else 'паливо зникло')),
                 'btc': (btc_line or ''),
             }
             tpl = (settings.get('ff_tg_entry_template') if entered
