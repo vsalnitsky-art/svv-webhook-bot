@@ -511,13 +511,13 @@ class FuelFilterDaemon:
     @staticmethod
     def _score_label(score: float):
         """Map a 0..100 hold-score to a (label, color) verdict."""
-        if score >= 78:
+        if score >= 72:
             return ('STRONG HOLD', '#16a34a')   # green
-        if score >= 60:
+        if score >= 55:
             return ('HOLD', '#84cc16')           # lime
-        if score >= 45:
+        if score >= 40:
             return ('NEUTRAL', '#eab308')        # amber
-        if score >= 30:
+        if score >= 25:
             return ('WEAK', '#f97316')           # orange
         return ('EXHAUSTED', '#ef4444')          # red
 
@@ -603,12 +603,23 @@ class FuelFilterDaemon:
         fmag = 0.0
         if signed is not None:
             aligned = signed if live_dir == 'LONG' else -signed
-            fmag = max(0.0, min(1.0, aligned / 0.5))
+            # /0.35 (was /0.5): the liq-fuel imbalance rarely reaches 0.5, so
+            # the harsher divisor kept this term tiny and dragged SCORE down.
+            fmag = max(0.0, min(1.0, aligned / 0.35))
 
         # Momentum aligned with the live direction.
         mom = pstrength if (price_dir and price_dir == live_dir) else 0.0
 
-        score = 100.0 * (0.30 * room + 0.15 * hold + 0.25 * fmag + 0.30 * mom)
+        # Weights. For a QUEUED coin (held_sec == 0) the 'hold' term is not
+        # meaningful yet — it would otherwise sit at 0 and drag every ❤️ queue
+        # SCORE down into WEAK/EXHAUSTED (capping the max at ~85). Redistribute
+        # its weight across the live components so the queue SCORE uses the full
+        # range and stays sensitive. Open positions (held>0) keep all four.
+        w_room, w_hold, w_fuel, w_mom = 0.30, 0.15, 0.25, 0.30
+        if not held_sec or held_sec <= 0:
+            _tw = w_room + w_fuel + w_mom
+            w_room, w_fuel, w_mom, w_hold = w_room / _tw, w_fuel / _tw, w_mom / _tw, 0.0
+        score = 100.0 * (w_room * room + w_hold * hold + w_fuel * fmag + w_mom * mom)
 
         # Conflict: price is fighting the fuel setup → not a healthy hold.
         if conflict:
@@ -621,7 +632,10 @@ class FuelFilterDaemon:
                 score = min(score, 38)    # → WEAK
         label, color = self._score_label(score)
         return {'score': int(round(score)), 'label': label, 'color': color,
-                'dir': live_dir, 'conflict': conflict, 'exh': exf}
+                'dir': live_dir, 'conflict': conflict, 'exh': exf,
+                # Per-coin ММ (liq-fuel) direction — shown in its own column in
+                # the ❤️ queue table. LONG / SHORT / None(=збалансований).
+                'fuel_dir': fuel_dir}
 
     def score_dict(self, symbol: str) -> Optional[Dict]:
         """Full SCORE verdict dict for `symbol` RIGHT NOW — same shape the
