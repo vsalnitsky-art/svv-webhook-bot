@@ -1859,11 +1859,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-start-minutes" min="1" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="📨 Сповіщати в Telegram про 💰 funding-монети (вхід/вихід)">
-                                <input type="checkbox" id="ff-funding-tg" onchange="saveFuelFilterSettings()"> 📨 TG про funding-монети
-                            </label>
-                        </div>
-                        <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Чи керувати FF відкритими угодами (закривати їх за умовами)">
                                 <input type="checkbox" id="ff-manage-positions" onchange="saveFuelFilterSettings()"> Контроль відкритих угод
                             </label>
@@ -1893,28 +1888,28 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
                     </div>
-                    <!-- 📨 Telegram про угоди FF: вхід/вихід окремо + шаблони -->
+                    <!-- 📨 Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
-                        <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">📨 Telegram про угоди FF (експеримент)</div>
+                        <div style="font-size:0.72rem;color:#8b93a7;margin-bottom:6px">📨 Telegram про 💰 funding-монети (поява / зникнення)</div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram при ВІДКРИТТІ угоди FF">
-                                <input type="checkbox" id="ff-tg-entry" onchange="saveFuelFilterSettings()"> ✅ TG на вхід
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли монета ЗʼЯВЛЯЄТЬСЯ у таблиці 💰 Funding — ММ по монетах">
+                                <input type="checkbox" id="ff-tg-entry" onchange="saveFuelFilterSettings()"> ✅ TG на появу
                             </label>
-                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram при ЗАКРИТТІ угоди FF">
-                                <input type="checkbox" id="ff-tg-exit" onchange="saveFuelFilterSettings()"> ⛔ TG на вихід
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Слати повідомлення в Telegram, коли монета ЗНИКАЄ з таблиці 💰 Funding — ММ по монетах">
+                                <input type="checkbox" id="ff-tg-exit" onchange="saveFuelFilterSettings()"> ⛔ TG на зникнення
                             </label>
                         </div>
                         <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:8px">
                             <div style="flex:1;min-width:260px">
-                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон повідомлення на вхід</label>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон: поява монети</label>
                                 <textarea id="ff-tg-entry-tpl" rows="2" onchange="saveFuelFilterSettings()" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace;font-size:0.72rem;resize:vertical;box-sizing:border-box"></textarea>
                             </div>
                             <div style="flex:1;min-width:260px">
-                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон повідомлення на вихід</label>
+                                <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px">Шаблон: зникнення монети</label>
                                 <textarea id="ff-tg-exit-tpl" rows="2" onchange="saveFuelFilterSettings()" style="width:100%;padding:6px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace;font-size:0.72rem;resize:vertical;box-sizing:border-box"></textarea>
                             </div>
                         </div>
-                        <div style="font-size:0.62rem;color:#7a8395;margin-top:5px">Плейсхолдери: <code>{symbol} {side} {price} {exhaustion} {fuel} {score} {reason}</code> · відсутні → «—»</div>
+                        <div style="font-size:0.62rem;color:#7a8395;margin-top:5px">Плейсхолдери: <code>{symbol} {dir} {price} {funding} {fuel} {exhaustion} {reason}</code> · відсутні → «—»</div>
                     </div>
                 </div>
             </div>
@@ -6954,7 +6949,6 @@ function renderFuelFilter(d) {
     setIf('ff-engine-stronghold', !!s.engine_require_strong_hold);
     setIf('ff-min-mm', String(s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0));
     setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
-    setIf('ff-funding-tg', !!s.funding_tg_alerts);
     setIf('ff-tg-entry', !!s.ff_tg_on_entry);
     setIf('ff-tg-exit', !!s.ff_tg_on_exit);
     setIf('ff-tg-entry-tpl', s.ff_tg_entry_template != null ? s.ff_tg_entry_template : '');
@@ -7552,7 +7546,6 @@ async function saveFuelFilterSettings() {
         engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',
         engine_require_strong_hold: _c('ff-engine-stronghold'),
         engine_min_mm_strength: parseInt(_v('ff-min-mm', '0') || '0', 10),
-        funding_tg_alerts: _c('ff-funding-tg'),
         ff_tg_on_entry: _c('ff-tg-entry'),
         ff_tg_on_exit: _c('ff-tg-exit'),
         ff_tg_entry_template: _v('ff-tg-entry-tpl', ''),

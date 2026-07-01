@@ -128,14 +128,15 @@ DEFAULT_SETTINGS = {
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
-    # ── Telegram сповіщення про угоди FF (вхід/вихід окремо) + шаблони ──
-    # Experimental: TG message when FF OPENS (entry) / CLOSES (exit) a position.
-    # Templates support {symbol} {side} {dir} {price} {exhaustion} {fuel}
-    # {score} {reason}. Missing placeholders render as "—".
+    # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ ──
+    # Replaces the old funding alert. Fires when a funding coin APPEARS
+    # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 ММ table.
+    # Templates support {symbol} {dir} {side} {price} {funding} {fuel}
+    # {exhaustion} {reason} {btc}. Missing placeholders render as "—".
     'ff_tg_on_entry': False,
     'ff_tg_on_exit': False,
-    'ff_tg_entry_template': '🚀 FF вхід {side} {symbol}\n💲 {price} · 🔥 виснаж {exhaustion}% · паливо {fuel}% · SCORE {score}',
-    'ff_tg_exit_template': '🔚 FF вихід {side} {symbol}\n💲 {price} · причина: {reason} · 🔥 виснаж {exhaustion}%',
+    'ff_tg_entry_template': '💰 {symbol} зʼявилась у ММ · {dir}\n💲 {price} · funding {funding}% · паливо {fuel}%',
+    'ff_tg_exit_template': '💰 {symbol} зникла з ММ · {reason}\n💲 {price} · паливо {fuel}%',
 }
 
 
@@ -1162,8 +1163,6 @@ class FuelFilterDaemon:
         exh_str = f"{exh:.1f}%" if exh is not None else 'N/A'
         print(f"[FuelFilter] OPEN SUCCESS: {mode} {side} {symbol} @ {entry_price} "
               f"(fuel {fuel.get('dir')}, exhaustion {exh_str})")
-        # Experimental Telegram entry alert (own toggle + template).
-        self._trade_tg('entry', symbol, side, entry_price, exh)
         return True
 
     def _tm_has_position(self, symbol: str, is_real: bool) -> bool:
@@ -1180,48 +1179,6 @@ class FuelFilterDaemon:
             return symbol in book
         except Exception:
             return False
-
-    def _trade_tg(self, kind: str, symbol: str, side: Optional[str],
-                  price, exh, reason: str = ''):
-        """Experimental Telegram alert on FF trade entry/exit, using the
-        user's editable template. kind='entry'|'exit'. Fires only if the
-        matching toggle is on. Placeholders: {symbol} {side} {dir} {price}
-        {exhaustion} {fuel} {score} {reason}."""
-        try:
-            s = self.get_settings()
-            if kind == 'entry' and not s.get('ff_tg_on_entry'):
-                return
-            if kind == 'exit' and not s.get('ff_tg_on_exit'):
-                return
-            tm = self._get_tm() if self._get_tm else None
-            notifier = getattr(tm, 'notifier', None) if tm else None
-            if not notifier:
-                return
-            sc = self._score_cache.get(symbol) or {}
-            strength = sc.get('fuel_strength')
-            ctx = {
-                'symbol': symbol,
-                'side': side or '—',
-                'dir': side or '—',
-                'price': (self._fmt_price(price) if price else '—'),
-                'exhaustion': (f"{float(exh):.0f}" if exh is not None else '—'),
-                'fuel': (str(strength) if strength is not None else '—'),
-                'score': (sc.get('label') or '—'),
-                'reason': reason or '—',
-            }
-            tpl = (s.get('ff_tg_entry_template') if kind == 'entry'
-                   else s.get('ff_tg_exit_template')) or ''
-
-            class _Safe(dict):
-                def __missing__(self, k):
-                    return '—'
-            try:
-                msg = str(tpl).format_map(_Safe(ctx))
-            except Exception:
-                msg = str(tpl)
-            notifier.send_message(msg)
-        except Exception as e:
-            print(f"[FuelFilter] trade TG error {symbol}: {e}")
 
     def _close(self, symbol: str, exit_price: float, reason: str, is_real: bool):
         """Trigger position close via TM. Removes fuel tracking.
@@ -1268,16 +1225,6 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] close error {symbol}: {e}")
             import traceback
             traceback.print_exc()
-
-        # Experimental Telegram exit alert (own toggle + template) — before we
-        # drop tracking, so we still know the side/exhaustion.
-        _side = (self._fuel_managed.get(symbol) or {}).get('side')
-        _exh = None
-        try:
-            _exh = self._exhaustion(symbol, _side) if _side else None
-        except Exception:
-            _exh = None
-        self._trade_tg('exit', symbol, _side, exit_price, _exh, reason=reason)
 
         # Remove fuel tracking. NEW STRATEGY: the timer = position lifetime, so
         # it is reset (popped) on close. The coin is gone from the base too.
@@ -1473,7 +1420,7 @@ class FuelFilterDaemon:
         funding = set(self._funding_syms)
         thr = self._get_funding_threshold()
         notifier = None
-        if settings.get('funding_tg_alerts', False):
+        if settings.get('ff_tg_on_entry') or settings.get('ff_tg_on_exit'):
             tm = self._get_tm() if self._get_tm else None
             notifier = getattr(tm, 'notifier', None) if tm else None
         btc_line = self._btc_status_text(settings, now)
@@ -1532,24 +1479,42 @@ class FuelFilterDaemon:
             self._persist_state()
 
     def _notify_funding(self, notifier, sym, d, price, btc_line, settings, now, entered):
+        """Telegram alert when a 💰 funding coin APPEARS (entered=True) or
+        DISAPPEARS (entered=False) from the 💰 ММ table. Gated by the user's
+        ff_tg_on_entry / ff_tg_on_exit toggles and rendered from the editable
+        templates. Placeholders: {symbol} {dir} {side} {price} {funding}
+        {fuel} {exhaustion} {reason} {btc} — missing → «—»."""
         if not notifier:
+            return
+        if entered and not settings.get('ff_tg_on_entry'):
+            return
+        if (not entered) and not settings.get('ff_tg_on_exit'):
             return
         try:
             rate = self._funding_rates.get(sym)
-            rtxt = (f"funding {rate:+.3f}% · " if rate is not None else '')
-            etxt = ''
-            if d in ('LONG', 'SHORT'):
-                exh = self._exhaustion(sym, d)
-                if exh is not None:
-                    etxt = f"🔥 {exh:.1f}% · "
-            line2 = f"{rtxt}{etxt}{btc_line}"
-            if entered:
-                dtxt = '🟢 LONG' if d == 'LONG' else ('🔴 SHORT' if d == 'SHORT' else '')
-                ptxt = (f" · {self._fmt_price(price)}" if price else '')
-                notifier.send_message(f"💰 <b>{sym}</b> {dtxt}{ptxt}\n{line2}")
-            else:
-                ptxt = (f" · {self._fmt_price(price)}" if price else '')
-                notifier.send_message(f"💰 <b>{sym}</b> ⛔ вихід{ptxt}\n{line2}")
+            strength = self._fuel_str.get(sym)
+            exh = self._exhaustion(sym, d) if d in ('LONG', 'SHORT') else None
+            ctx = {
+                'symbol': sym,
+                'dir': d or '—', 'side': d or '—',
+                'price': (self._fmt_price(price) if price else '—'),
+                'funding': (f"{rate:+.3f}" if rate is not None else '—'),
+                'fuel': (str(strength) if strength is not None else '—'),
+                'exhaustion': (f"{exh:.0f}" if exh is not None else '—'),
+                'reason': ('зʼявилась у ММ' if entered else 'паливо зникло'),
+                'btc': (btc_line or ''),
+            }
+            tpl = (settings.get('ff_tg_entry_template') if entered
+                   else settings.get('ff_tg_exit_template')) or ''
+
+            class _Safe(dict):
+                def __missing__(self, k):
+                    return '—'
+            try:
+                msg = str(tpl).format_map(_Safe(ctx))
+            except Exception:
+                msg = str(tpl)
+            notifier.send_message(msg)
         except Exception as e:
             print(f"[FuelFilter] funding TG error {sym}: {e}")
 
