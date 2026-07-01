@@ -60,18 +60,12 @@ def create_app():
     from web.diagnostic import diagnostic_bp
     app.register_blueprint(diagnostic_bp)
     
-    # Test Binance API connectivity on startup (для сканування)
-    try:
-        print("[APP] Testing Binance Futures API connectivity...")
-        from core.binance_connector import get_binance_connector
-        binance = get_binance_connector()
-        if binance.test_connection():
-            tickers = binance.get_tickers()
-            print(f"[APP] ✓ Binance Futures API working: {len(tickers)} tickers available")
-        else:
-            print("[APP] ⚠ Binance Futures API connection test failed")
-    except Exception as e:
-        print(f"[APP] ✗ Binance API test failed: {e}")
+    # Binance connectivity test SKIPPED on startup. The deploy IP is routinely
+    # rate-limited/banned by Binance (HTTP 418 / code -1003), and this blocking
+    # test (test_connection + get_tickers) only delayed boot for no benefit —
+    # the app uses Bybit as the live data source. The Binance connector still
+    # works on-demand elsewhere if/when Binance becomes reachable.
+    print("[APP] Binance startup connectivity test skipped (Bybit is the live source)")
     
     # Test Bybit API connectivity on startup (для торгівлі)
     try:
@@ -105,11 +99,13 @@ def create_app():
         except Exception as e:
             print(f"[APP] Failed to start scheduler: {e}")
     
-    # Auto-start CTR Scanner + Liquidity Map — use before_request to survive Gunicorn fork
+    # Auto-start CTR Scanner + Liquidity Map. Runs in a BACKGROUND THREAD kicked
+    # off on the first request (see _kick_bootstrap below) — NOT inline — so the
+    # worker answers immediately and Render's port probe never blocks on the
+    # ~12 daemons booting.
     _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False, 'apihealth': False}
-    
-    @app.before_request
-    def _maybe_auto_start():
+
+    def _bootstrap_daemons():
         # Volume Flow — always start
         if not _auto_started['volflow']:
             _auto_started['volflow'] = True
@@ -522,7 +518,26 @@ def create_app():
                     print("[APP] Volumized OB Radar initialized (disabled by setting)")
             except Exception as e:
                 print(f"[APP] Failed to init Volumized OB Radar: {e}")
-    
+
+    # Kick the daemon bootstrap ONCE, in a background thread, on the first
+    # request. Previously the bootstrap ran inline in a before_request, so the
+    # FIRST request (often Render's port probe) paid the full cost of starting
+    # ~12 daemons synchronously and could time out. Now the worker answers
+    # instantly and the daemons come up shortly after in the background.
+    _bootstrap_kicked = {'v': False}
+
+    @app.before_request
+    def _kick_bootstrap():
+        if _bootstrap_kicked['v']:
+            return
+        _bootstrap_kicked['v'] = True
+        try:
+            import threading as _th
+            _th.Thread(target=_bootstrap_daemons, daemon=True,
+                       name='daemon-bootstrap').start()
+        except Exception as e:
+            print(f"[APP] daemon bootstrap thread failed: {e}")
+
     return app
 
 
