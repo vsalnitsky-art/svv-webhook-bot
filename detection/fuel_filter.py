@@ -134,11 +134,12 @@ DEFAULT_SETTINGS = {
     # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ ──
     # Replaces the old funding alert. Fires when a funding coin APPEARS
     # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 ММ table.
-    # Templates support {symbol} {dir} {side} {price} {funding} {fuel}
-    # {exhaustion} {reason} {btc}. Missing placeholders render as "—".
+    # Templates support {symbol} {dir} {side} {price} {funding} {funding_in}
+    # {fuel} {exhaustion} {reason} {btc}. Missing placeholders render as "—".
+    # {funding} = ставка фандінгу у %, {funding_in} = час до наступного фандінгу.
     'ff_tg_on_entry': False,
     'ff_tg_on_exit': False,
-    'ff_tg_entry_template': '🚀 FF вхід {side} {symbol}\n💲 {price} · 🔥 виснаж {exhaustion}% · ММ {fuel}%',
+    'ff_tg_entry_template': '🚀 FF вхід {side} {symbol}\n💲 {price} · фандінг {funding}% · до фандінга {funding_in}\nММ {fuel}%',
     'ff_tg_exit_template': '💰 {symbol} зникла з ММ · {reason}\n💲 {price} · ММ {fuel}%',
 }
 
@@ -1493,6 +1494,23 @@ class FuelFilterDaemon:
                     self._anomalies.pop(sym, None)
             self._persist_state()
 
+    @staticmethod
+    def _fmt_funding_in(nf_ms, now) -> str:
+        """Human countdown to the next funding settlement.
+        nf_ms = nextFundingTime in ms; now = time.time() seconds.
+        → 'Nгод MMхв' / 'Nхв' / 'скоро' / '—'."""
+        try:
+            if not nf_ms:
+                return '—'
+            secs = int(int(nf_ms) / 1000 - now)
+            if secs <= 0:
+                return 'скоро'
+            h = secs // 3600
+            m = (secs % 3600) // 60
+            return f"{h}год {m:02d}хв" if h > 0 else f"{m}хв"
+        except (TypeError, ValueError):
+            return '—'
+
     def _notify_funding(self, notifier, sym, d, price, btc_line, settings, now,
                         entered, strength=None):
         """Telegram alert when a 💰 funding coin APPEARS (entered=True) or
@@ -1523,7 +1541,10 @@ class FuelFilterDaemon:
                 'symbol': sym,
                 'dir': d or '—', 'side': d or '—',
                 'price': (self._fmt_price(price) if price else '—'),
-                'funding': (f"{rate:+.3f}" if rate is not None else '—'),
+                # funding rate comes as a FRACTION (0.0001 = 0.01%) → show as %.
+                'funding': (f"{rate * 100:+.4f}" if rate is not None else '—'),
+                # countdown to the next funding settlement (nextFundingTime ms).
+                'funding_in': self._fmt_funding_in(self._funding_next.get(sym), now),
                 'fuel': (str(strength) if strength is not None else '—'),
                 'exhaustion': (f"{exh:.0f}" if exh is not None else '—'),
                 'reason': ('зʼявилась у ММ' if entered else 'паливо зникло'),
