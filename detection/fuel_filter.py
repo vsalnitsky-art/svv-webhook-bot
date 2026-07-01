@@ -121,6 +121,10 @@ DEFAULT_SETTINGS = {
     'engine_candle_confirm': True,        # only open when candles confirm dir (2/2)
     'engine_candle_tf': '5m',             # timeframe for the candle confirmation
     'engine_require_strong_hold': False,  # only open when SCORE=STRONG HOLD & dir matches
+    # Minimum ММ (fuel) STRENGTH % to OPEN a trade. 0 = off, 30 = помітне/
+    # середнє (≥30%), 60 = сильне (≥60%). The engine skips a coin whose fuel
+    # strength (|fuel dir|×100) is below this.
+    'engine_min_mm_strength': 0,
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -1961,6 +1965,17 @@ class FuelFilterDaemon:
             if fuel.get('status') != d:
                 trace.append(f"{sym}:паливо≠{d}({fuel.get('status')})")
                 continue
+            # GATE: minimum ММ (fuel) STRENGTH — |fuel dir|×100 ≥ setting.
+            _min_mm = 0
+            try:
+                _min_mm = int(s.get('engine_min_mm_strength', 0) or 0)
+            except (TypeError, ValueError):
+                _min_mm = 0
+            if _min_mm > 0:
+                _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0
+                if _strength < _min_mm:
+                    trace.append(f"{sym}:ММ{_strength:.0f}%<{_min_mm}%")
+                    continue
             # Exhaustion gate (same as _open) — surfaced HERE so it's visible and
             # does NOT silently waste a candle check. Too-exhausted coins are
             # skipped without counting an attempt (the move is just too far gone).
@@ -2122,6 +2137,11 @@ class FuelFilterDaemon:
                     'funding_next_ms': a.get('next_funding'),
                     'entry_threshold': a.get('entry_threshold'),
                     'vol24h': a.get('vol24h'),
+                    # ММ (fuel) direction + strength for the funding table's ММ
+                    # column (same widget as the queue / open positions).
+                    'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),
+                    'mm_str': self._fuel_str.get(sym),
+                    'mm_str_prev': self._fuel_str_prev.get(sym),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])
         return {
