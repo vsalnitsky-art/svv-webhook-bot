@@ -4392,19 +4392,31 @@ def register_api_routes(app):
 
         state = tm.get_state()
 
-        # Merge exhaustion from fuel filter into positions
+        # Merge move-exhaustion into positions. The 'Exhaust' column shows the
+        # journey entry→now→100%: `ff_exh_open` (stamped at open, already on the
+        # position) is the entry value, `exhaustion` is the LIVE current value.
+        # Compute current fresh per position (by its own side) so it ticks up/
+        # down live, falling back to the fuel-managed map if needed.
         try:
             ff = get_fuel_filter()
             if ff:
                 exh_map = ff.get_exhaustion_map()
-                # Merge into real positions
-                for pos in (state.get('positions') or []):
-                    if pos['symbol'] in exh_map:
-                        pos['exhaustion'] = exh_map[pos['symbol']]
-                # Merge into shadow positions
-                for pos in (state.get('shadow_positions') or []):
-                    if pos['symbol'] in exh_map:
-                        pos['exhaustion'] = exh_map[pos['symbol']]
+
+                def _merge_exh(plist):
+                    for pos in (plist or []):
+                        sym, side = pos.get('symbol'), pos.get('side')
+                        cur = None
+                        try:
+                            cur = ff._exhaustion(sym, side)
+                        except Exception:
+                            cur = None
+                        if cur is None:
+                            cur = exh_map.get(sym)
+                        if cur is not None:
+                            pos['exhaustion'] = cur
+
+                _merge_exh(state.get('positions'))
+                _merge_exh(state.get('shadow_positions'))
         except Exception as e:
             # Non-fatal — just log and continue without exhaustion data
             print(f"[Flask] fuel exhaustion merge error: {e}")
