@@ -5735,14 +5735,25 @@ def compute_bias(db, symbol, wl=None):
                 'f4_side': s4, 'f4_conf': f4.get('confidence', 0)}
             # Each timeframe gets its own reason line, coloured by ITS own
             # direction — 1H and 4H are independent levers now.
-            def _fc_line(tf, sd, cf):
+            # Show BOTH numbers: the REAL directional strength `pct`
+            # (sum/12·100, the true magnitude) and the coarse `confidence`
+            # tier (50/60/75/90). The two %-values are drawn in a distinct
+            # colour so they stand out from the green/red line; the reason
+            # text is rendered via innerHTML on the panel, so the spans apply.
+            _NUMC = '#67e8f9'  # distinct colour for the numeric values
+
+            def _fc_line(tf, sd, cf, pc):
                 if not sd or not cf:
                     return ('wait', f"Forecast {tf}: нейтральний", 'wait')
                 d = 'LONG' if sd > 0 else 'SHORT'
-                return ('ok', f"Forecast {tf}: {d} {cf}%",
+                strength = abs(int(pc or 0))
+                return ('ok',
+                        f'Forecast {tf}: {d} '
+                        f'<span style="color:{_NUMC};font-weight:700">{strength}%</span> '
+                        f'(впевненість <span style="color:{_NUMC};font-weight:700">{cf}%</span>)',
                         'long' if sd > 0 else 'short')
-            reasons.append(_fc_line('1H', s1, f1.get('confidence', 0)))
-            reasons.append(_fc_line('4H', s4, f4.get('confidence', 0)))
+            reasons.append(_fc_line('1H', s1, f1.get('confidence', 0), f1.get('pct', 0)))
+            reasons.append(_fc_line('4H', s4, f4.get('confidence', 0), f4.get('pct', 0)))
             if s1 and s1 == s4:
                 fc_side = 1 if s1 > 0 else -1
         else:
