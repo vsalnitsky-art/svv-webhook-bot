@@ -839,6 +839,16 @@ class FuelFilterDaemon:
         return {'dir': round(ema, 3), 'mark_price': fd.get('mark_price'),
                 'status': status, 'raw_dir': raw, 'raw_status': fd.get('status')}
 
+    def get_btc_session(self) -> Dict:
+        """The committed ₿ BTCUSDT session that the banner shows:
+        {'dir': 'LONG'|'SHORT'|None, 'paused': bool, 'since': float}.
+        Used by AutoGate 'banner' mode to mirror the banner onto the
+        LONG/SHORT direction buttons."""
+        with self._lock:
+            return {'dir': self._btc_verdict_dir,
+                    'paused': bool(self._btc_paused),
+                    'since': float(self._btc_verdict_since or 0.0)}
+
     def _update_btc_verdict(self):
         """BTC ММ *session* tracker (drives the ₿ banner + START engine + queue).
 

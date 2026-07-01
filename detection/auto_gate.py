@@ -79,9 +79,9 @@ class AutoGateDaemon:
         return (self._db.get_setting(_DB_MODE, 'simple') or 'simple').lower()
 
     def set_mode(self, mode: str):
-        """Set 'simple' or 'smart'. Changes take effect on next tick."""
+        """Set 'simple', 'smart' or 'banner'. Changes take effect on next tick."""
         m = (mode or 'simple').lower()
-        if m not in ('simple', 'smart'):
+        if m not in ('simple', 'smart', 'banner'):
             m = 'simple'
         self._db.set_setting(_DB_MODE, m)
         # Immediate apply if the gate is already running
@@ -141,6 +141,32 @@ class AutoGateDaemon:
             return
 
         mode = self.get_mode()
+        allow_long = allow_short = False
+        log_msg = ''
+
+        if mode == 'banner':
+            # Mirror the ₿ BTCUSDT banner (the committed FF session direction)
+            # straight onto the LONG/SHORT buttons — independent of the main
+            # window's WAIT verdict. This is what the user sees on the banner.
+            try:
+                from detection.fuel_filter import get_fuel_filter
+                ff = get_fuel_filter()
+                sess = ff.get_btc_session() if ff else None
+            except Exception as e:
+                print(f"[AutoGate] banner mode error: {e} — falling back to simple")
+                sess = None
+                mode = 'simple'
+            if mode == 'banner':
+                d = (sess or {}).get('dir')
+                if d == 'LONG':
+                    allow_long, allow_short = True, False
+                elif d == 'SHORT':
+                    allow_long, allow_short = False, True
+                else:
+                    allow_long, allow_short = False, False
+                _pz = (sess or {}).get('paused')
+                log_msg = f"banner: {d or 'WAIT'}{' ⏸' if _pz else ''}"
+
         if mode == 'smart' and verdict_data:
             try:
                 from detection.smart_direction import compute_smart_direction

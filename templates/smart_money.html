@@ -1302,9 +1302,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             </label>
             <select id="sm-bias-auto-mode" onchange="onSmartDirectionModeChange()"
                     style="display:none;padding:3px 6px;background:#1a1a1a;border:1px solid rgba(168,85,247,0.4);color:#c084fc;border-radius:4px;font-size:0.74rem;cursor:pointer"
-                    title="Simple — дзеркалить сирий вердикт 1:1 (LONG/SHORT/WAIT). Smart — враховує 4H тренд + виснаження, дозволяє ранній розворот (рекомендовано).">
+                    title="Simple — дзеркалить сирий вердикт 1:1 (LONG/SHORT/WAIT). Smart — враховує 4H тренд + виснаження, дозволяє ранній розворот. За банером ₿ — кнопки повторюють напрямок сеансу з банера ₿ BTCUSDT (працює навіть коли головне вікно у WAIT).">
                 <option value="simple">Simple</option>
                 <option value="smart">Smart (recommended)</option>
+                <option value="banner">За банером ₿</option>
             </select>
             <label class="sm-bias-auto" id="sm-bias-cow-wrap"
                    title="Закривати всі відкриті угоди при переході в WAIT (потрібен увімкнений Smart Direction).">
@@ -6453,7 +6454,9 @@ function toggleSmartDirection(on) {
         if (on) {
             const modeLabel = smartDirectionMode === 'smart'
                 ? 'Smart (враховує 4H виснаження, ловить розвороти)'
-                : 'Simple (дзеркалить сирий вердикт)';
+                : (smartDirectionMode === 'banner'
+                    ? 'За банером ₿ (кнопки = напрямок сеансу банера)'
+                    : 'Simple (дзеркалить сирий вердикт)');
             note.textContent = `🤖 Smart Direction увімкнено (режим: ${modeLabel}) — працює 24/7`;
         }
     }
@@ -8330,7 +8333,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (smartDirectionEnabled) {
                 const modeLabel = smartDirectionMode === 'smart'
                     ? 'Smart (враховує 4H виснаження, ловить розвороти)'
-                    : 'Simple (дзеркалить сирий вердикт)';
+                    : (smartDirectionMode === 'banner'
+                        ? 'За банером ₿ (кнопки = напрямок сеансу банера)'
+                        : 'Simple (дзеркалить сирий вердикт)');
                 note.textContent = `🤖 Smart Direction увімкнено (режим: ${modeLabel}) — працює 24/7`;
             }
         }
