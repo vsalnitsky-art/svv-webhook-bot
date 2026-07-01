@@ -2677,6 +2677,34 @@ setInterval(loadValidatorLog, 30000);
 // === Funding Rate Monitor (Watchlist) ===
 let fundingSignals = {};
 
+// ММ (fuel) strength band → {txt,col}: 0-10 немає / 10-30 слабке /
+// 30-60 помітне / 60-100 сильне.
+function fuelBand(now) {
+    if (now == null) return { txt: '', col: '#8b93a7' };
+    now = Number(now);
+    if (now < 10) return { txt: 'немає', col: '#8b93a7' };
+    if (now < 30) return { txt: 'слабке', col: '#eab308' };
+    if (now < 60) return { txt: 'помітне', col: '#84cc16' };
+    return { txt: 'сильне', col: '#22c55e' };
+}
+// ММ strength cell: dot · N% · trend arrow · mini-bar · band word (one line).
+function ffFuelCell(dir, now, prev) {
+    const dot = dir === 'LONG' ? '🟢' : (dir === 'SHORT' ? '🔴' : '⚪');
+    if (now == null) return `<span style="color:#8b93a7">${dot} —</span>`;
+    now = Number(now);
+    const col = now >= 60 ? '#22c55e' : (now >= 30 ? '#84cc16' : (now >= 10 ? '#eab308' : '#8b93a7'));
+    let arrow = '';
+    if (prev != null) {
+        if (now > prev + 1) arrow = '<span style="color:#4ade80">↑</span>';
+        else if (now < prev - 1) arrow = '<span style="color:#f87171">↓</span>';
+        else arrow = '<span style="color:#8b93a7">→</span>';
+    }
+    const w = Math.max(0, Math.min(100, now));
+    const b = fuelBand(now);
+    const bar = `<span style="display:inline-block;vertical-align:middle;height:6px;width:48px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
+    return `<span style="white-space:nowrap">${dot} <b style="color:${col}">${Math.round(now)}%</b> ${arrow} ${bar} <span style="color:${b.col};font-size:0.62rem;font-weight:600">${b.txt}</span></span>`;
+}
+
 async function loadFunding() {
     try {
         const [wlRes, sigRes] = await Promise.all([
@@ -2706,7 +2734,7 @@ async function loadFunding() {
             contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Entry: ≤ -${d.threshold}%<br>No extreme funding detected yet.</div>`;
         } else {
             let html = `<table class="funding-table">
-                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol 24h</th><th>До funding</th><th>Vol Signal</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
+                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol 24h</th><th>До funding</th><th>Vol Signal</th><th title="Сила палива (ММ): 0–100% + напрямок, тренд і рівень (немає/слабке/помітне/сильне)">ММ</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
             
             for (const c of coins) {
                 const curClass = c.current_rate < 0 ? 'negative' : 'positive';
@@ -2765,6 +2793,7 @@ async function loadFunding() {
                     <td style="font-size:0.75rem;color:${(c.volume||0) >= 100e6 ? '#4caf50' : (c.volume||0) >= 10e6 ? '#ffa500' : '#888'}">${fmtFundingVol(c.volume)}</td>
                     <td style="font-size:0.75rem;color:#9aa3b5">${c.next_funding ? `<span class="fr-fundnext" data-next="${c.next_funding}">⏳ ${fmtFundLeft(c.next_funding)}</span>` : '—'}</td>
                     <td>${sigHtml}</td>
+                    <td style="font-size:0.72rem">${ffFuelCell(c.mm_dir, c.mm_str, c.mm_str_prev)}</td>
                     <td style="color:${fTrendColor};font-size:0.75rem">${fTrend}</td>
                     <td style="color:#888">${tracked}</td>
                     <td><button class="fr-delete" onclick="event.stopPropagation();removeFundingCoin('${c.symbol}')">✕</button></td>
