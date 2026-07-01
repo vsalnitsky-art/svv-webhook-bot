@@ -3490,6 +3490,118 @@ def register_api_routes(app):
         return jsonify({'ok': True, 'removed': removed,
                         'watchlist': s.get_watchlist()})
 
+    # ---- ❤️ FF-добірка (staging list) ---------------------------------
+    # A persistent, editable staging list of coins collected from Tickr
+    # "Top Active" BEFORE they go into the SMC WATCHLIST. The user can review
+    # it, drop unwanted coins, then transfer the survivors into the watchlist
+    # (same rules as Tickr-FF: source='tickr_ff', FF scan + TRD on, skip dups)
+    # or just clear it. Stored under DB key 'ff_dobirka' as a JSON symbol list.
+    _FF_DOBIRKA_KEY = 'ff_dobirka'
+
+    def _ff_dobirka_load():
+        import json as _json
+        raw = get_db().get_setting(_FF_DOBIRKA_KEY, '')
+        try:
+            lst = _json.loads(raw) if raw else []
+        except Exception:
+            lst = []
+        return [str(x).upper().strip() for x in lst if x]
+
+    def _ff_dobirka_save(lst):
+        import json as _json
+        get_db().set_setting(_FF_DOBIRKA_KEY, _json.dumps(lst))
+
+    @app.route('/api/ff-dobirka', methods=['GET'])
+    def api_ff_dobirka_get():
+        """Current FF-добірка staging symbols."""
+        return jsonify({'ok': True, 'symbols': _ff_dobirka_load()})
+
+    @app.route('/api/ff-dobirka/add', methods=['POST'])
+    def api_ff_dobirka_add():
+        """Append symbols to the FF-добірка (dedup, order preserved)."""
+        data = request.get_json() or {}
+        syms = [str(x).upper().strip() for x in (data.get('symbols') or []) if x]
+        cur = _ff_dobirka_load()
+        seen = set(cur)
+        added, already = [], []
+        for sym in syms:
+            if sym in seen:
+                already.append(sym)
+            else:
+                cur.append(sym)
+                seen.add(sym)
+                added.append(sym)
+        _ff_dobirka_save(cur)
+        return jsonify({'ok': True, 'added': added, 'already': already,
+                        'symbols': cur})
+
+    @app.route('/api/ff-dobirka/remove', methods=['POST'])
+    def api_ff_dobirka_remove():
+        """Drop one symbol from the FF-добірка."""
+        data = request.get_json() or {}
+        sym = str(data.get('symbol', '')).upper().strip()
+        cur = [s for s in _ff_dobirka_load() if s != sym]
+        _ff_dobirka_save(cur)
+        return jsonify({'ok': True, 'symbols': cur})
+
+    @app.route('/api/ff-dobirka/clear', methods=['POST'])
+    def api_ff_dobirka_clear():
+        """Empty the FF-добірка staging list."""
+        _ff_dobirka_save([])
+        return jsonify({'ok': True, 'symbols': []})
+
+    @app.route('/api/ff-dobirka/to-watchlist', methods=['POST'])
+    def api_ff_dobirka_to_watchlist():
+        """Transfer the FF-добірка into the SMC watchlist using the same rules
+        as Tickr-FF (source='tickr_ff', FF scan + TRD enabled, skip coins
+        already in the watchlist). Clears the staging list unless keep=true.
+        Only the symbols passed in body.symbols are transferred if provided
+        (so per-coin selection is honoured); otherwise the whole добірка."""
+        from detection.smc_scanner import get_smc_scanner
+        s = get_smc_scanner()
+        if not s:
+            return jsonify({'ok': False, 'reason': 'SMC scanner not initialized'})
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+        except Exception:
+            ff = None
+        data = request.get_json() or {}
+        keep = bool(data.get('keep', False))
+        staging = _ff_dobirka_load()
+        req_syms = [str(x).upper().strip() for x in (data.get('symbols') or []) if x]
+        to_move = [s0 for s0 in staging if s0 in set(req_syms)] if req_syms else list(staging)
+        existing = set(s.get_watchlist())
+        added, already, skipped = [], [], []
+        for sym in to_move:
+            if sym in existing:
+                already.append(sym)
+                continue
+            r = s.add_symbol(sym, source='tickr_ff')
+            if r.get('ok'):
+                added.append(sym)
+                existing.add(sym)
+                try:
+                    if ff:
+                        ff.set_scan(sym, True)
+                except Exception as e:
+                    print(f"[FF-добірка→WL] FF flag {sym} error: {e}")
+                try:
+                    s.set_tradeable(sym, True)
+                except Exception as e:
+                    print(f"[FF-добірка→WL] TRD {sym} error: {e}")
+            else:
+                skipped.append(sym)
+        # Remove the moved coins from staging (unless keep=true keeps everything).
+        if not keep:
+            moved = set(added) | set(already)   # already-present count as handled
+            remaining = [s0 for s0 in staging if s0 not in moved]
+            _ff_dobirka_save(remaining)
+        return jsonify({'ok': True, 'added': added, 'already': already,
+                        'skipped': skipped, 'kept': keep,
+                        'symbols': _ff_dobirka_load(),
+                        'watchlist': s.get_watchlist()})
+
     @app.route('/api/tickr/opportunity/auto', methods=['GET', 'POST'])
     def api_tickr_opp_auto():
         """Get/set the continuous Tickr→Watchlist auto-pipeline.

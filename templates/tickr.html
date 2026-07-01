@@ -144,7 +144,29 @@
     </div>
     <div style="margin-top:8px">
         <button class="tk-btn" onclick="tkTopToTV()">📋 Top → TradingView watchlist</button>
-        <button class="tk-btn warm" onclick="tkTopToFF()" title="Залити показані найактивніші монети у ❤️ FF-добірку (WATCHLIST Smart Money, мітка 📡 Tickr, FF+TRD увімкнені)">💚 Top → ❤️ FF-добірка</button>
+        <button class="tk-btn warm" onclick="tkTopToFF()" title="Зібрати показані найактивніші монети у ❤️ FF-добірку (проміжний список нижче) — переглянути/відредагувати перед передачею у WATCHLIST">💚 Top → ❤️ FF-добірка</button>
+    </div>
+</div>
+
+<!-- ❤️ FF-добірка (staging list): review / edit / transfer to WATCHLIST -->
+<div class="tk-section" style="border:1px solid rgba(236,72,153,0.3)">
+    <h3 style="font-size:0.85rem;color:#f472b6;margin:0 0 4px">❤️ FF-добірка — <span id="ffdob-count">0</span> монет</h3>
+    <div class="tk-stat">
+        Проміжний список монет із «🔥 Top Active». Перегляньте, приберіть зайві (✕),
+        потім передайте у WATCHLIST Smart Money (мітка 📡 Tickr, FF+TRD увімкнені,
+        дублікати пропускаються) або очистіть.
+    </div>
+    <div class="tk-scroll" style="margin-top:8px;max-height:260px">
+        <table class="tk-table">
+            <thead><tr><th>#</th><th>Symbol</th><th style="text-align:right">Дія</th></tr></thead>
+            <tbody id="ffdob-tbody"><tr><td colspan="3" style="color:#667;padding:14px">— порожньо — сформуй список кнопкою «💚 Top → ❤️ FF-добірка» вище —</td></tr></tbody>
+        </table>
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="tk-btn" onclick="ffDobRefresh()">🔄 Оновити</button>
+        <button class="tk-btn warm" onclick="ffDobToWatchlist()" title="Передати всю FF-добірку у WATCHLIST Smart Money за FF-правилами">💚 Передати у WATCHLIST</button>
+        <button class="tk-btn alt" onclick="ffDobClear()" title="Очистити всю FF-добірку">🗑️ Очистити добірку</button>
+        <span class="tk-stat" id="ffdob-stat" style="margin:0"></span>
     </div>
 </div>
 
@@ -369,29 +391,99 @@ async function tkTopToTV() {
     document.getElementById('tk-tv-section').scrollIntoView({behavior:'smooth'});
 }
 
-// Push the currently-shown "Top Active" (most-traded futures) coins into the
-// ❤️ FF-добірка: they land in the Smart Money WATCHLIST tagged source='tickr_ff'
-// with FF scan + tradeable enabled (reuses the existing ff-to-watchlist endpoint).
+// Collect the currently-shown "Top Active" (most-traded futures) coins into the
+// ❤️ FF-добірка STAGING list (not the watchlist yet). The user then reviews it
+// below, drops unwanted coins, and only then transfers survivors → WATCHLIST.
 async function tkTopToFF() {
     if (!tkTopRows || !tkTopRows.length) return;
     const symbols = tkTopRows
         .map(r => (typeof r === 'string' ? r : (r && r.symbol)))
         .filter(Boolean);
     if (!symbols.length) return;
-    if (!confirm(`Залити ${symbols.length} найактивніших монет у ❤️ FF-добірку `
-        + `(WATCHLIST Smart Money, мітка 📡 Tickr, FF+TRD увімкнені)?`)) return;
     const stat = document.getElementById('tk-top-stat');
-    stat.textContent = '⏳ Заливаю у FF-добірку…';
+    stat.textContent = '⏳ Додаю у FF-добірку…';
     try {
-        const res = await fetch('/api/tickr/opportunity/ff-to-watchlist', {
+        const res = await fetch('/api/ff-dobirka/add', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({symbols}),
         });
         const d = await res.json();
         if (d.ok) {
             stat.textContent = `✅ FF-добірка: +${(d.added||[]).length} додано`
-                + `, вже було: ${(d.already||[]).length}`
+                + ((d.already && d.already.length) ? `, вже було: ${d.already.length}` : '')
+                + ` · всього ${(d.symbols||[]).length}`;
+            ffDobRender(d.symbols);
+        } else {
+            stat.textContent = '❌ ' + (d.reason || 'не вдалось');
+        }
+    } catch (e) {
+        stat.textContent = '❌ помилка: ' + e;
+    }
+}
+
+// ---- ❤️ FF-добірка (staging list): view / edit / transfer ----
+let ffDobList = [];
+
+function ffDobRender(symbols) {
+    ffDobList = symbols || [];
+    const tb = document.getElementById('ffdob-tbody');
+    const cnt = document.getElementById('ffdob-count');
+    if (cnt) cnt.textContent = ffDobList.length;
+    if (!tb) return;
+    if (!ffDobList.length) {
+        tb.innerHTML = '<tr><td colspan="3" style="color:#667;padding:14px">— порожньо — сформуй список кнопкою «💚 Top → ❤️ FF-добірка» вище —</td></tr>';
+        return;
+    }
+    tb.innerHTML = ffDobList.map((s, i) => `<tr>
+        <td>${i+1}</td>
+        <td><b>${s}</b></td>
+        <td style="text-align:right"><button class="tk-btn alt" style="padding:2px 8px;font-size:0.72rem"
+            onclick="ffDobRemove('${s}')" title="Видалити з добірки">✕</button></td>
+    </tr>`).join('');
+}
+
+async function ffDobRefresh() {
+    try {
+        const res = await fetch('/api/ff-dobirka');
+        const d = await res.json();
+        if (d.ok) ffDobRender(d.symbols);
+    } catch (e) { /* ignore */ }
+}
+
+async function ffDobRemove(sym) {
+    const res = await fetch('/api/ff-dobirka/remove', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({symbol: sym}),
+    });
+    const d = await res.json();
+    if (d.ok) ffDobRender(d.symbols);
+}
+
+async function ffDobClear() {
+    if (!ffDobList.length) return;
+    if (!confirm(`Очистити всю FF-добірку (${ffDobList.length})?`)) return;
+    const res = await fetch('/api/ff-dobirka/clear', {method: 'POST'});
+    const d = await res.json();
+    if (d.ok) ffDobRender(d.symbols);
+}
+
+async function ffDobToWatchlist() {
+    if (!ffDobList.length) return;
+    if (!confirm(`Передати ${ffDobList.length} монет із FF-добірки у WATCHLIST Smart Money `
+        + `(мітка 📡 Tickr, FF+TRD увімкнені, дублікати пропускаються)?`)) return;
+    const stat = document.getElementById('ffdob-stat');
+    stat.textContent = '⏳ Передаю у WATCHLIST…';
+    try {
+        const res = await fetch('/api/ff-dobirka/to-watchlist', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({}),   // whole добірка; staging cleared on success
+        });
+        const d = await res.json();
+        if (d.ok) {
+            stat.textContent = `✅ У WATCHLIST: +${(d.added||[]).length} додано`
+                + ((d.already && d.already.length) ? `, вже було: ${d.already.length}` : '')
                 + ((d.skipped && d.skipped.length) ? `, пропущено: ${d.skipped.length}` : '');
+            ffDobRender(d.symbols);
         } else {
             stat.textContent = '❌ ' + (d.reason || 'не вдалось');
         }
@@ -779,6 +871,8 @@ async function oppPipeLoad() {
 }
 
 document.addEventListener('DOMContentLoaded', oppPipeLoad);
+// Load any persisted ❤️ FF-добірка staging list on open.
+document.addEventListener('DOMContentLoaded', ffDobRefresh);
 // Refresh status + TTL countdown every 30s while the page is open.
 setInterval(oppPipeLoad, 30000);
 </script>
