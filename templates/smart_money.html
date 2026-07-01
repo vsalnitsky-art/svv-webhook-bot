@@ -753,6 +753,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     background: #fbbf24;
 }
 
+/* Fixed-width symbol name so EXT/MANUAL badges line up in a column
+   regardless of ticker length (HUSDT vs BEATUSDT). */
+.tm-sym-name {
+    display: inline-block;
+    min-width: 84px;
+    vertical-align: middle;
+}
+
 /* MANUAL badge inline next to symbol name in manual-mode rows */
 .tm-manual-badge {
     display: inline-block;
@@ -7665,23 +7673,33 @@ function fuelBand(now) {
 //   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
 function ffFuelCell(dir, now, prev) {
     const dot = dir === 'LONG' ? '🟢' : (dir === 'SHORT' ? '🔴' : '⚪');
-    if (now == null) return `<span style="color:#8b93a7">${dot} —</span>`;
+    // Fixed-width segments (inline-flex) so EVERY row lines up in a rigid grid
+    // and nothing shifts sideways when the numbers change:
+    //   [dot 16] [pct 40, right-aligned] [arrow 12] [bar 56] [band 56]
+    const dotSeg = `<span style="display:inline-block;width:16px;text-align:center;flex:none">${dot}</span>`;
+    if (now == null) {
+        return `<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">`
+            + `${dotSeg}<span style="display:inline-block;width:40px;text-align:right;color:#8b93a7;flex:none">—</span>`
+            + `</span>`;
+    }
     now = Number(now);
     // Strength colour: <10 none, 10-30 weak(amber), 30-60 mid(lime), 60+ strong(green)
     const col = now >= 60 ? '#22c55e' : (now >= 30 ? '#84cc16'
         : (now >= 10 ? '#eab308' : '#8b93a7'));
     // Trend vs previous cycle: ↑ strengthening (green) / ↓ weakening (red) / → flat.
-    let arrow = '';
+    let arrowChar = '', arrowCol = '#8b93a7', arrowTitle = '';
     if (prev != null) {
-        if (now > prev + 1) arrow = '<span style="color:#4ade80" title="сила росте">↑</span>';
-        else if (now < prev - 1) arrow = '<span style="color:#f87171" title="сила падає">↓</span>';
-        else arrow = '<span style="color:#8b93a7" title="без змін">→</span>';
+        if (now > prev + 1) { arrowChar = '↑'; arrowCol = '#4ade80'; arrowTitle = 'сила росте'; }
+        else if (now < prev - 1) { arrowChar = '↓'; arrowCol = '#f87171'; arrowTitle = 'сила падає'; }
+        else { arrowChar = '→'; arrowCol = '#8b93a7'; arrowTitle = 'без змін'; }
     }
     const w = Math.max(0, Math.min(100, now));
     const b = fuelBand(now);
-    // ONE line: dot · N% · arrow · inline mini-bar · band word (coloured, at end).
-    const bar = `<span style="display:inline-block;vertical-align:middle;height:6px;width:56px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
-    return `<span style="white-space:nowrap">${dot} <b style="color:${col}">${Math.round(now)}%</b> ${arrow} ${bar} <span style="color:${b.col};font-size:0.66rem;font-weight:600">${b.txt}</span></span>`;
+    const pctSeg = `<b style="display:inline-block;width:40px;text-align:right;color:${col};font-variant-numeric:tabular-nums;flex:none">${Math.round(now)}%</b>`;
+    const arrowSeg = `<span style="display:inline-block;width:12px;text-align:center;color:${arrowCol};flex:none" title="${arrowTitle}">${arrowChar}</span>`;
+    const barSeg = `<span style="display:inline-block;vertical-align:middle;height:6px;width:56px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;flex:none"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
+    const bandSeg = `<span style="display:inline-block;width:56px;text-align:left;color:${b.col};font-size:0.66rem;font-weight:600;flex:none">${b.txt}</span>`;
+    return `<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${dotSeg}${pctSeg}${arrowSeg}${barSeg}${bandSeg}</span>`;
 }
 
 async function loadTMState() {
@@ -7750,7 +7768,7 @@ async function loadTMState() {
                 const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(1) + '%' : '—';
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
-                    <td><b>${p.symbol}</b>${badges}</td>
+                    <td><b class="tm-sym-name">${p.symbol}</b>${badges}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
@@ -7824,7 +7842,7 @@ async function loadTMState() {
                 const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(1) + '%' : '—';
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
-                    <td><b>${p.symbol}</b>${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this paper position">MANUAL</span>' : ''}</td>
+                    <td><b class="tm-sym-name">${p.symbol}</b>${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this paper position">MANUAL</span>' : ''}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
