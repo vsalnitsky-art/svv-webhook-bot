@@ -2338,6 +2338,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
+                        <th title="Сила палива (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">Паливо</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
@@ -2347,7 +2348,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th>Action</th></tr>
                 </thead>
                 <tbody id="tm-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>
+                    <tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>
                 </tbody>
             </table>
             
@@ -2400,6 +2401,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
+                        <th title="Сила палива (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">Паливо</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
@@ -2408,7 +2410,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <th></th></tr>
                 </thead>
                 <tbody id="tm-shadow-open-tbody">
-                    <tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>
+                    <tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>
                 </tbody>
             </table>
             
@@ -6989,18 +6991,8 @@ function renderFuelFilter(d) {
                 // ММ (fuel) direction per coin + match with the signal side.
                 // ✓ = fuel matches the signal (ready to open on START),
                 // ✗ = fuel is against it, ⚪ = balanced (no ММ direction).
-                const mm = t.mm || null;
-                let mmHtml;
-                if (mm === 'LONG' || mm === 'SHORT') {
-                    // Only the colored fuel-direction dot (no ✓/✗ marks).
-                    const mmDot = mm === 'LONG' ? '🟢' : '🔴';
-                    const mmTitle = (mm === t.dir)
-                        ? 'Паливо співпадає з напрямком сигналу'
-                        : 'Паливо проти напрямку сигналу';
-                    mmHtml = `<span title="${mmTitle}">${mmDot}</span>`;
-                } else {
-                    mmHtml = '<span style="color:#8b93a7" title="ММ збалансований — напрямку немає">⚪</span>';
-                }
+                // ММ = fuel direction dot + strength 0..100% + mini-bar + trend.
+                const mmHtml = ffFuelCell(t.mm || null, t.mm_str, t.mm_str_prev);
                 const heldHtml = t.dir
                     ? `<span class="ff-timer" data-since="${Math.floor(Date.now()/1000) - (t.held_sec||0)}">${fmtTimer(t.held_sec)}</span>`
                     : '<span class="ff-timer">—</span>';
@@ -7582,33 +7574,27 @@ async function loadSentiment() {
     });
 }
 
-// Exhaust cell for open positions (real + paper) — rendered in the SAME style
-// as the 💰 funding progress: a fixed 130px bar with a pulsing end-cap, an
-// entry→END label and a rising/falling arrow. Here the journey is entry
-// (ff_exh_open, stamped at open) → now (live) → 100%. Bar fills to now%; the
-// arrow shows ↑ росте (rising toward 100 = worse, red) / ↓ падає (green).
-function ffExhCell(p) {
-    const now = (p.exhaustion != null) ? Number(p.exhaustion) : null;
-    const open = (p.ff_exh_open != null) ? Number(p.ff_exh_open) : null;
-    if (now == null && open == null) return '<span style="color:#8b93a7">—</span>';
-    if (now == null) return `<span style="color:#cbd5e1">${open.toFixed(0)}%</span>`;
-    const fillPct = Math.max(0, Math.min(100, now)).toFixed(1);
-    const col = now >= 85 ? '#f87171' : (now >= 66 ? '#facc15' : '#34d399');
+// Fuel STRENGTH cell (shared by the ❤️ queue ММ column and the open-positions
+// 'Паливо' column): coloured direction dot + strength 0..100% + mini-bar + a
+// rising/falling trend arrow (this cycle vs previous).
+//   dir: 'LONG'|'SHORT'|null(=balanced),  now/prev: 0..100 strength (or null)
+function ffFuelCell(dir, now, prev) {
+    const dot = dir === 'LONG' ? '🟢' : (dir === 'SHORT' ? '🔴' : '⚪');
+    if (now == null) return `<span style="color:#8b93a7">${dot} —</span>`;
+    now = Number(now);
+    // Strength colour: <10 none, 10-30 weak(amber), 30-60 mid(lime), 60+ strong(green)
+    const col = now >= 60 ? '#22c55e' : (now >= 30 ? '#84cc16'
+        : (now >= 10 ? '#eab308' : '#8b93a7'));
+    // Trend vs previous cycle: ↑ strengthening (green) / ↓ weakening (red) / → flat.
     let arrow = '';
-    if (open != null) {
-        if (now > open + 0.1) arrow = '<span style="color:#4ade80">↑ росте</span>';
-        else if (now < open - 0.1) arrow = '<span style="color:#f87171">↓ падає</span>';
-        else arrow = '<span style="color:#8b93a7">— без змін</span>';
+    if (prev != null) {
+        if (now > prev + 1) arrow = '<span style="color:#4ade80" title="сила росте">↑</span>';
+        else if (now < prev - 1) arrow = '<span style="color:#f87171" title="сила падає">↓</span>';
+        else arrow = '<span style="color:#8b93a7" title="без змін">→</span>';
     }
-    const startLbl = (open != null) ? open.toFixed(0) : now.toFixed(0);
-    return `<div style="display:flex;align-items:center;gap:6px">`
-        + `<div style="width:130px;flex:0 0 130px;height:12px;border-radius:6px;background:rgba(255,255,255,0.07);position:relative">`
-        + `<div style="height:100%;width:${fillPct}%;background:${col};border-radius:6px"></div>`
-        + `<span style="position:absolute;left:${fillPct}%;top:50%;width:9px;height:9px;margin-left:-5px;border-radius:50%;background:${col};box-shadow:0 0 7px ${col};animation:ff-fund-pulse 1s ease-in-out infinite"></span>`
-        + `</div>`
-        + `<span style="font-size:0.6rem;color:#8b93a7;white-space:nowrap;width:64px;display:inline-block">${startLbl}%→100%</span>`
-        + (arrow ? `<span style="font-size:0.62rem;white-space:nowrap;width:60px;display:inline-block">${arrow}</span>` : '<span style="width:60px;display:inline-block"></span>')
-        + `</div>`;
+    const w = Math.max(0, Math.min(100, now));
+    const bar = `<div style="height:5px;border-radius:3px;background:rgba(255,255,255,0.08);margin-top:3px;overflow:hidden;width:82px"><div style="height:100%;width:${w}%;background:${col}"></div></div>`;
+    return `<div style="white-space:nowrap">${dot} <b style="color:${col}">${Math.round(now)}%</b> ${arrow}</div>${bar}`;
 }
 
 async function loadTMState() {
@@ -7653,7 +7639,7 @@ async function loadTMState() {
         document.getElementById('tm-open-count').textContent = `(${positions.length})`;
         const openTbody = document.getElementById('tm-open-tbody');
         if (positions.length === 0) {
-            openTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No open positions</td></tr>';
+            openTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No open positions</td></tr>';
         } else {
             openTbody.innerHTML = positions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7673,14 +7659,17 @@ async function loadTMState() {
                 const badges =
                     (isExternal ? ' <span class="tm-ext-badge" title="Adopted from Bybit — opened outside TM. Full algorithm applies.">EXT</span>' : '') +
                     (manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this position">MANUAL</span>' : '');
-                // Exhaust journey: entry (ff_exh_open) → now → 100% (see ffExhCell).
+                // Exhaustion — simple % (only for fuel-filter positions).
+                const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(1) + '%' : '—';
+                const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td><b>${p.symbol}</b>${badges}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}${syncMark}</td>
-                    <td style="font-size:0.72rem;line-height:1.15">${ffExhCell(p)}</td>
+                    <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
+                    <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
                     <td>${(p.remaining_qty || p.qty).toPrecision(4)}</td>
                     ${manualSlTpCellsHTML(p, false)}
                     ${manualModeCellHTML(p, false)}
@@ -7733,7 +7722,7 @@ async function loadTMState() {
         // Open shadow positions
         const shadowOpenTbody = document.getElementById('tm-shadow-open-tbody');
         if (shadowPositions.length === 0) {
-            shadowOpenTbody.innerHTML = '<tr><td colspan="13" class="tm-empty-msg">No paper positions</td></tr>';
+            shadowOpenTbody.innerHTML = '<tr><td colspan="15" class="tm-empty-msg">No paper positions</td></tr>';
         } else {
             shadowOpenTbody.innerHTML = shadowPositions.map(p => {
                 const pnlClass = p.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -7744,14 +7733,17 @@ async function loadTMState() {
                 // Realistic $ PnL for the paper trade (notional × price move).
                 const usd = (p.pnl_usd !== undefined && p.pnl_usd !== null)
                     ? `${pnlSign}$${Math.abs(p.pnl_usd).toFixed(2)}` : '';
-                // Exhaust journey: entry (ff_exh_open) → now → 100% (see ffExhCell).
+                // Exhaustion — simple % (only for fuel-filter positions).
+                const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(1) + '%' : '—';
+                const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
                     <td><b>${p.symbol}</b>${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this paper position">MANUAL</span>' : ''}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
                     <td class="${pnlClass}">${pnlSign}${p.pnl_pct.toFixed(2)}%${usd ? ` (${usd})` : ''}</td>
-                    <td style="font-size:0.72rem;line-height:1.15">${ffExhCell(p)}</td>
+                    <td style="color:${exhColor};font-size:0.72rem">${exh}</td>
+                    <td style="font-size:0.72rem;line-height:1.15">${ffFuelCell(p.fuel_dir, p.fuel_str, p.fuel_str_prev)}</td>
                     ${manualSlTpCellsHTML(p, true)}
                     ${manualModeCellHTML(p, true)}
                     ${breakevenCloseCellHTML(p, true)}

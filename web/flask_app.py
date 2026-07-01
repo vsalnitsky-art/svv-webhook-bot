@@ -4419,12 +4419,18 @@ def register_api_routes(app):
             ff = get_fuel_filter()
             if ff:
                 exh_map = ff.get_exhaustion_map()
-                for pos in (state.get('positions') or []):
-                    if pos.get('symbol') in exh_map:
-                        pos['exhaustion'] = exh_map[pos['symbol']]
-                for pos in (state.get('shadow_positions') or []):
-                    if pos.get('symbol') in exh_map:
-                        pos['exhaustion'] = exh_map[pos['symbol']]
+                # Fuel STRENGTH (0..100 + prev + dir) — CHEAP map from the score
+                # cache; do NOT compute per position here (would block -w 1).
+                str_map = ff.get_fuel_strength_map()
+                for pos in ((state.get('positions') or []) + (state.get('shadow_positions') or [])):
+                    sym = pos.get('symbol')
+                    if sym in exh_map:
+                        pos['exhaustion'] = exh_map[sym]
+                    fs = str_map.get(sym)
+                    if fs:
+                        pos['fuel_str'] = fs.get('now')
+                        pos['fuel_str_prev'] = fs.get('prev')
+                        pos['fuel_dir'] = fs.get('dir')
         except Exception as e:
             # Non-fatal — just log and continue without exhaustion data
             print(f"[Flask] fuel exhaustion merge error: {e}")
