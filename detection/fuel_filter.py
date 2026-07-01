@@ -124,6 +124,14 @@ DEFAULT_SETTINGS = {
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
+    # ── Telegram сповіщення про угоди FF (вхід/вихід окремо) + шаблони ──
+    # Experimental: TG message when FF OPENS (entry) / CLOSES (exit) a position.
+    # Templates support {symbol} {side} {dir} {price} {exhaustion} {fuel}
+    # {score} {reason}. Missing placeholders render as "—".
+    'ff_tg_on_entry': False,
+    'ff_tg_on_exit': False,
+    'ff_tg_entry_template': '🚀 FF вхід {side} {symbol}\n💲 {price} · 🔥 виснаж {exhaustion}% · паливо {fuel}% · SCORE {score}',
+    'ff_tg_exit_template': '🔚 FF вихід {side} {symbol}\n💲 {price} · причина: {reason} · 🔥 виснаж {exhaustion}%',
 }
 
 
@@ -1150,6 +1158,8 @@ class FuelFilterDaemon:
         exh_str = f"{exh:.1f}%" if exh is not None else 'N/A'
         print(f"[FuelFilter] OPEN SUCCESS: {mode} {side} {symbol} @ {entry_price} "
               f"(fuel {fuel.get('dir')}, exhaustion {exh_str})")
+        # Experimental Telegram entry alert (own toggle + template).
+        self._trade_tg('entry', symbol, side, entry_price, exh)
         return True
 
     def _tm_has_position(self, symbol: str, is_real: bool) -> bool:
@@ -1166,6 +1176,48 @@ class FuelFilterDaemon:
             return symbol in book
         except Exception:
             return False
+
+    def _trade_tg(self, kind: str, symbol: str, side: Optional[str],
+                  price, exh, reason: str = ''):
+        """Experimental Telegram alert on FF trade entry/exit, using the
+        user's editable template. kind='entry'|'exit'. Fires only if the
+        matching toggle is on. Placeholders: {symbol} {side} {dir} {price}
+        {exhaustion} {fuel} {score} {reason}."""
+        try:
+            s = self.get_settings()
+            if kind == 'entry' and not s.get('ff_tg_on_entry'):
+                return
+            if kind == 'exit' and not s.get('ff_tg_on_exit'):
+                return
+            tm = self._get_tm() if self._get_tm else None
+            notifier = getattr(tm, 'notifier', None) if tm else None
+            if not notifier:
+                return
+            sc = self._score_cache.get(symbol) or {}
+            strength = sc.get('fuel_strength')
+            ctx = {
+                'symbol': symbol,
+                'side': side or '—',
+                'dir': side or '—',
+                'price': (self._fmt_price(price) if price else '—'),
+                'exhaustion': (f"{float(exh):.0f}" if exh is not None else '—'),
+                'fuel': (str(strength) if strength is not None else '—'),
+                'score': (sc.get('label') or '—'),
+                'reason': reason or '—',
+            }
+            tpl = (s.get('ff_tg_entry_template') if kind == 'entry'
+                   else s.get('ff_tg_exit_template')) or ''
+
+            class _Safe(dict):
+                def __missing__(self, k):
+                    return '—'
+            try:
+                msg = str(tpl).format_map(_Safe(ctx))
+            except Exception:
+                msg = str(tpl)
+            notifier.send_message(msg)
+        except Exception as e:
+            print(f"[FuelFilter] trade TG error {symbol}: {e}")
 
     def _close(self, symbol: str, exit_price: float, reason: str, is_real: bool):
         """Trigger position close via TM. Removes fuel tracking.
@@ -1212,6 +1264,16 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] close error {symbol}: {e}")
             import traceback
             traceback.print_exc()
+
+        # Experimental Telegram exit alert (own toggle + template) — before we
+        # drop tracking, so we still know the side/exhaustion.
+        _side = (self._fuel_managed.get(symbol) or {}).get('side')
+        _exh = None
+        try:
+            _exh = self._exhaustion(symbol, _side) if _side else None
+        except Exception:
+            _exh = None
+        self._trade_tg('exit', symbol, _side, exit_price, _exh, reason=reason)
 
         # Remove fuel tracking. NEW STRATEGY: the timer = position lifetime, so
         # it is reset (popped) on close. The coin is gone from the base too.
