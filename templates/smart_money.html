@@ -6889,6 +6889,7 @@ function renderFuelFilter(d) {
         period: bsg.period_sec || 300,
         dir: bsg.dir || null,
         paused: !!bsg.paused,   // ML тимчасово WAIT у межах сеансу
+        strength: (bsg.strength != null ? bsg.strength : 0),  // BTC fuel strength 0..100
     };
     updateBtcStartBanner();
     // settings inputs — don't clobber while focused, and don't clobber for a
@@ -7348,44 +7349,38 @@ function updateBtcStartBanner() {
         else if (s.dir === 'SHORT') { dirEl.textContent = '🔴 SHORT'; dirEl.style.color = '#ff4d4d'; dirEl.style.textShadow = '0 0 9px rgba(255,77,77,0.6)'; }
         else { dirEl.textContent = '⚪ WAIT'; dirEl.style.color = '#9aa3b5'; dirEl.style.textShadow = 'none'; }
     }
+    // ── Bar = BTC FUEL STRENGTH 0..100% (never empty), coloured by level ──
+    const str = Math.max(0, Math.min(100, Number(s.strength || 0)));
+    const scol = str >= 60 ? '#22c55e' : (str >= 30 ? '#84cc16'
+        : (str >= 10 ? '#eab308' : '#8b93a7'));
+    bar.style.width = str.toFixed(0) + '%';
+    bar.style.background = scol;
+    if (lab) lab.textContent = 'сила ' + Math.round(str) + '%';
+
+    // Status badge (session state) + flip timer. The countdown % moved into the
+    // badge since the bar now shows fuel strength, not the timer progress.
+    const nowS = Math.floor(Date.now() / 1000);
+    const elapsed = s.hasTimer ? Math.max(0, nowS - s.since) : 0;
+    if (flip) flip.innerHTML = flipTimerHTML(elapsed);
     if (!s.hasTimer) {
-        // No BTC timer → STOP. Subtle badge, bright RED text (not a red button).
-        bar.style.width = '0%'; bar.style.background = 'rgba(255,255,255,0.10)';
-        if (lab) lab.textContent = '';
-        if (flip) flip.innerHTML = flipTimerHTML(0);
         st.textContent = '⛔ STOP';
         st.style.background = 'rgba(239,68,68,0.12)'; st.style.color = '#ff4d4d';
         st.style.textShadow = '0 0 9px rgba(255,77,77,0.6)'; st.style.boxShadow = 'none';
         return;
     }
-    const nowS = Math.floor(Date.now() / 1000);
-    const elapsed = Math.max(0, nowS - s.since);
-    const pct = s.period > 0 ? Math.min(100, elapsed / s.period * 100) : 0;
-    bar.style.width = pct.toFixed(1) + '%';
-    if (flip) flip.innerHTML = flipTimerHTML(elapsed);   // live flip timer
     if (s.paused) {
-        // Session is alive (dir kept, timer keeps counting) but the live ML is
-        // WAIT — show it PAUSED. The engine does not open while paused.
-        bar.style.background = 'rgba(148,163,184,0.35)';
-        if (lab) lab.textContent = Math.floor(pct) + '%';
         st.textContent = '⏸ ПАУЗА';
         st.style.background = 'rgba(148,163,184,0.14)'; st.style.color = '#cbd5e1';
         st.style.textShadow = 'none'; st.style.boxShadow = 'none';
         return;
     }
+    const pct = s.period > 0 ? Math.min(100, elapsed / s.period * 100) : 0;
     if (pct >= 100) {
-        // Progress complete → START. Green TURNED OFF on the bar (neutral fill);
-        // only the badge text is bright green.
-        bar.style.background = 'rgba(255,255,255,0.14)';
-        if (lab) lab.textContent = '';
         st.textContent = '🟢 START';
         st.style.background = 'rgba(34,197,94,0.14)'; st.style.color = '#22ff88';
         st.style.textShadow = '0 0 9px rgba(34,255,136,0.6)'; st.style.boxShadow = 'none';
     } else {
-        // Counting up to the threshold — amber bar + % inside.
-        bar.style.background = '#facc15';
-        if (lab) lab.textContent = Math.floor(pct) + '%';
-        st.textContent = '⏳';
+        st.textContent = '⏳ ' + Math.floor(pct) + '%';
         st.style.background = 'rgba(250,204,21,0.12)'; st.style.color = '#facc15';
         st.style.textShadow = 'none'; st.style.boxShadow = 'none';
     }
@@ -7593,8 +7588,9 @@ function ffFuelCell(dir, now, prev) {
         else arrow = '<span style="color:#8b93a7" title="без змін">→</span>';
     }
     const w = Math.max(0, Math.min(100, now));
-    const bar = `<div style="height:5px;border-radius:3px;background:rgba(255,255,255,0.08);margin-top:3px;overflow:hidden;width:82px"><div style="height:100%;width:${w}%;background:${col}"></div></div>`;
-    return `<div style="white-space:nowrap">${dot} <b style="color:${col}">${Math.round(now)}%</b> ${arrow}</div>${bar}`;
+    // Everything on ONE line: dot · N% · arrow · inline mini-bar.
+    const bar = `<span style="display:inline-block;vertical-align:middle;height:6px;width:56px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden"><span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`;
+    return `<span style="white-space:nowrap">${dot} <b style="color:${col}">${Math.round(now)}%</b> ${arrow} ${bar}</span>`;
 }
 
 async function loadTMState() {

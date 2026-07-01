@@ -202,6 +202,7 @@ class FuelFilterDaemon:
         self._btc_verdict_dir: Optional[str] = None   # session dir 'LONG'/'SHORT'/None
         self._btc_verdict_since: float = 0.0           # session start (persists through pause)
         self._btc_paused: bool = False                 # live ML is WAIT within the session
+        self._btc_fuel_strength: int = 0               # BTC fuel strength 0..100 (banner bar)
         # 💰 Funding fuel table (repurposed from the old anomalies storage):
         # coins from the 💰 Funding Rate Scanner that currently show fuel. Same
         # dict shape so the existing table/endpoints keep working. {symbol:
@@ -832,6 +833,9 @@ class FuelFilterDaemon:
             d = compute_bias(self._db, 'BTCUSDT', None)
             fuel = ((d or {}).get('components') or {}).get('fuel') or {}
             fdir = fuel.get('dir')
+            # BTC fuel STRENGTH 0..100 (|imbalance|×100) — fills the ₿ banner bar.
+            if fdir is not None:
+                self._btc_fuel_strength = int(round(abs(fdir) * 100))
             if fdir is None:
                 live = None                 # data gap → treat as WAIT (pause)
             elif fdir > FUEL_LONG_THR:      # > +0.1 → LONG (як головне вікно)
@@ -2034,6 +2038,8 @@ class FuelFilterDaemon:
                 'period_sec': int(period_sec),
                 'dir': b_dir,
                 'paused': bool(self._btc_paused and has_btc),
+                # BTC fuel strength 0..100 — fills the banner bar (never empty).
+                'strength': int(self._btc_fuel_strength or 0),
             }
             # 💰 Funding table — only coins currently holding fuel. Carries the
             # live funding rate + next-funding time + trend (prev_rate) + the
