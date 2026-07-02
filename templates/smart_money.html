@@ -1860,7 +1860,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div id="ff-settings-body" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)">
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку ММ для МОНЕТ (EMA+гістерезис, хв). 0 = ВИМКНЕНО (сире паливо, без затримки).">Згладжування напрямку монет (хв)</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Згладжування напрямку ММ для МОНЕТ (EMA+гістерезис, хв). 0 = ВИМКНЕНО (сире бабло, без затримки).">Згладжування напрямку монет (хв)</label>
                             <input type="number" id="ff-smoothing-min" min="0" step="1" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
@@ -1878,10 +1878,18 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила ММ (палива) монети, щоб двигун відкрив угоду. Помітне ≥30%, Сильне ≥60%.">Мін. сила ММ для входу</label>
-                            <select id="ff-min-mm" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила ММ (бабла) для ЛОНГ-входу двигуна. Помітне ≥30%, Сильне ≥60%.">Мін. сила ММ · ЛОНГ</label>
+                            <select id="ff-min-mm-long" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(34,197,94,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="0">Без фільтра</option>
-                                <option value="30">≥ 30% (помітне)</option>
+                                <option value="30">≥ 30% (помірний)</option>
+                                <option value="60">≥ 60% (сильне)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила ММ (бабла) для ШОРТ-входу двигуна. Помітне ≥30%, Сильне ≥60%.">Мін. сила ММ · ШОРТ</label>
+                            <select id="ff-min-mm-short" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(239,68,68,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                                <option value="0">Без фільтра</option>
+                                <option value="30">≥ 30% (помірний)</option>
                                 <option value="60">≥ 60% (сильне)</option>
                             </select>
                         </div>
@@ -1930,7 +1938,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <div class="ff-timers-scroll">
                 <table class="tm-table" id="ff-timers-table">
                     <thead>
-                        <tr><th>Символ</th><th>Напрямок</th><th title="Сила палива (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помітне/сильне)">ММ</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th title="Скільки часу монета вже чекає в черзі">Очікує</th><th title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
+                        <tr><th>Символ</th><th>Напрямок</th><th title="Сила бабла (ММ) по монеті: 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне)">ММ</th><th title="Виснаженість руху — % вичерпання потенціалу (із панелі Потенціал LONG/SHORT)">Виснаженість</th><th title="Скільки часу монета вже чекає в черзі">Очікує</th><th title="Оцінка по монеті: запас ходу + сила ММ + імпульс свічок у напрямку сигналу. STRONG HOLD = найкраще.">SCORE</th><th>Дії</th></tr>
                     </thead>
                     <tbody id="ff-timers-tbody">
                         <tr><td colspan="7" class="tm-empty-msg">Черга порожня</td></tr>
@@ -1960,10 +1968,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <div id="ff-fund-settings-body" style="display:none;margin-top:8px;padding:10px 12px;border:1px solid rgba(255,255,255,0.06);border-radius:6px;background:rgba(255,255,255,0.015)">
                     <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Показувати в таблиці лише монети, чия сила ММ (палива) ≥ обраного порога. Помітне ≥30%, Сильне ≥60%.">Фільтр входу за силою ММ</label>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Показувати в таблиці лише монети, чия сила ММ (бабла) ≥ обраного порога. Помітне ≥30%, Сильне ≥60%.">Фільтр входу за силою ММ</label>
                             <select id="ff-funding-min-mm" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="0">Без фільтра</option>
-                                <option value="30">≥ 30% (помітне)</option>
+                                <option value="30">≥ 30% (помірний)</option>
                                 <option value="60">≥ 60% (сильне)</option>
                             </select>
                         </div>
@@ -2006,7 +2014,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <thead>
                         <tr>
                             <th>Символ</th><th>Напрямок</th>
-                            <th title="Сила палива (ММ): 0–100% + напрямок, тренд і рівень (немає/слабке/помітне/сильне)">ММ</th>
+                            <th title="Сила бабла (ММ): 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне)">ММ</th>
                             <th>Тримається</th>
                             <th title="Рух поточного funding від порогу «Entry ≤» до −4% (заповнення = глибше; стрілка = росте/падає)">Прогрес funding</th>
                             <th title="Поточний funding % і час до наступного нарахування">Funding · до виплати</th>
@@ -2402,7 +2410,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
-                        <th title="Сила палива (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
+                        <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
                         <th>Qty</th>
                         <th title="Manual SL — leave empty for none. Bot closes when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes when price crosses this level.">Manual TP</th>
@@ -2465,7 +2473,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <thead>
                     <tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Current</th><th>PnL</th>
                         <th title="Виснаженість руху — відсоток вичерпання потенціалу (із панелі Потенціал LONG/SHORT). Fuel-filter позиції показують цей показник.">Exhaust</th>
-                        <th title="Сила палива (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
+                        <th title="Сила бабла (ММ): наскільки однобоко розподілена ліквідність, 0–100% + напрямок і тренд (↑ росте / ↓ падає)">ММ</th>
                         <th title="Manual SL — leave empty for none. Bot closes paper position when price crosses this level.">Manual SL</th>
                         <th title="Manual TP — leave empty for none. Bot closes paper position when price crosses this level.">Manual TP</th>
                         <th title="Manual mode — when ON, automatic exits and new signals are bypassed for this paper position. Only Manual SL/TP and force-close apply.">✋ Manual</th>
@@ -6198,9 +6206,9 @@ function ffScoreBadgeHTML(sc) {
         ? '<span style="font-size:0.78rem;margin-right:5px">🟢<span style="color:#22c55e;font-weight:900">▲</span></span>'
         : (scd === 'SHORT' ? '<span style="font-size:0.78rem;margin-right:5px">🔴<span style="color:#ef4444;font-weight:900">▼</span></span>' : '');
     const scWarn = sc.conflict
-        ? '<span title="Конфлікт: паливо й рух ціни в різні боки" style="margin-left:4px">⚠️</span>'
+        ? '<span title="Конфлікт: бабло й рух ціни в різні боки" style="margin-left:4px">⚠️</span>'
         : '';
-    return `${scDir}<span title="Оцінка утримання ${sc.score}/100 у напрямку ${sc.dir || '—'}${sc.conflict ? ' · ⚠ паливо проти ціни' : ''}" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:${sc.color}22;border:1px solid ${sc.color};font-weight:800;font-size:0.74rem;color:${sc.color}">${sc.score}<span style="font-size:0.6rem;letter-spacing:0.3px">${sc.label}</span></span>${scWarn}`;
+    return `${scDir}<span title="Оцінка утримання ${sc.score}/100 у напрямку ${sc.dir || '—'}${sc.conflict ? ' · ⚠ бабло проти ціни' : ''}" style="display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:6px;background:${sc.color}22;border:1px solid ${sc.color};font-weight:800;font-size:0.74rem;color:${sc.color}">${sc.score}<span style="font-size:0.6rem;letter-spacing:0.3px">${sc.label}</span></span>${scWarn}`;
 }
 
 // Combined Status badge — shows the position's Decision-Center headline
@@ -6969,7 +6977,8 @@ function renderFuelFilter(d) {
     setIf('ff-engine-candle', s.engine_candle_confirm !== false);   // default true
     setIf('ff-engine-candle-tf', s.engine_candle_tf || '5m');
     setIf('ff-engine-stronghold', !!s.engine_require_strong_hold);
-    setIf('ff-min-mm', String(s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0));
+    setIf('ff-min-mm-long', String(s.engine_min_mm_strength_long != null ? s.engine_min_mm_strength_long : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
+    setIf('ff-min-mm-short', String(s.engine_min_mm_strength_short != null ? s.engine_min_mm_strength_short : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
@@ -7598,7 +7607,8 @@ async function saveFuelFilterSettings() {
         start_signal_minutes: parseInt(_v('ff-start-minutes', '5') || '5', 10),
         engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',
         engine_require_strong_hold: _c('ff-engine-stronghold'),
-        engine_min_mm_strength: parseInt(_v('ff-min-mm', '0') || '0', 10),
+        engine_min_mm_strength_long: parseInt(_v('ff-min-mm-long', '0') || '0', 10),
+        engine_min_mm_strength_short: parseInt(_v('ff-min-mm-short', '0') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
@@ -7670,13 +7680,13 @@ async function loadSentiment() {
 }
 
 // ММ (fuel) strength band → {txt, col}. 0-10 немає / 10-30 слабке /
-// 30-60 помітне / 60-100 сильне (colour-differentiated).
+// 30-60 помірний / 60-100 сильне (colour-differentiated).
 function fuelBand(now) {
     if (now == null) return { txt: '', col: '#8b93a7' };
     now = Number(now);
     if (now < 10) return { txt: 'немає', col: '#8b93a7' };
     if (now < 30) return { txt: 'слабке', col: '#eab308' };
-    if (now < 60) return { txt: 'помітне', col: '#84cc16' };
+    if (now < 60) return { txt: 'помірний', col: '#84cc16' };
     return { txt: 'сильне', col: '#22c55e' };
 }
 
