@@ -1878,8 +1878,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div>
-                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила ММ (палива) монети, щоб двигун відкрив угоду. Помітне ≥30%, Сильне ≥60%.">Мін. сила ММ для входу</label>
-                            <select id="ff-min-mm" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила ММ (палива) для ЛОНГ-входу двигуна. Помітне ≥30%, Сильне ≥60%.">Мін. сила ММ · ЛОНГ</label>
+                            <select id="ff-min-mm-long" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(34,197,94,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                                <option value="0">Без фільтра</option>
+                                <option value="30">≥ 30% (помітне)</option>
+                                <option value="60">≥ 60% (сильне)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна сила ММ (палива) для ШОРТ-входу двигуна. Помітне ≥30%, Сильне ≥60%.">Мін. сила ММ · ШОРТ</label>
+                            <select id="ff-min-mm-short" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(239,68,68,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="0">Без фільтра</option>
                                 <option value="30">≥ 30% (помітне)</option>
                                 <option value="60">≥ 60% (сильне)</option>
@@ -6969,7 +6977,8 @@ function renderFuelFilter(d) {
     setIf('ff-engine-candle', s.engine_candle_confirm !== false);   // default true
     setIf('ff-engine-candle-tf', s.engine_candle_tf || '5m');
     setIf('ff-engine-stronghold', !!s.engine_require_strong_hold);
-    setIf('ff-min-mm', String(s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0));
+    setIf('ff-min-mm-long', String(s.engine_min_mm_strength_long != null ? s.engine_min_mm_strength_long : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
+    setIf('ff-min-mm-short', String(s.engine_min_mm_strength_short != null ? s.engine_min_mm_strength_short : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
@@ -7598,7 +7607,8 @@ async function saveFuelFilterSettings() {
         start_signal_minutes: parseInt(_v('ff-start-minutes', '5') || '5', 10),
         engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',
         engine_require_strong_hold: _c('ff-engine-stronghold'),
-        engine_min_mm_strength: parseInt(_v('ff-min-mm', '0') || '0', 10),
+        engine_min_mm_strength_long: parseInt(_v('ff-min-mm-long', '0') || '0', 10),
+        engine_min_mm_strength_short: parseInt(_v('ff-min-mm-short', '0') || '0', 10),
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
