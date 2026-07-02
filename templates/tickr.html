@@ -60,7 +60,7 @@
             <label>БІРЖА</label>
             <select id="tk-exchange">
                 <option value="binance">Binance</option>
-                <option value="bybit">Bybit</option>
+                <option value="bybit" selected>Bybit</option>
                 <option value="mexc">MEXC</option>
                 <option value="bingx">BingX</option>
             </select>
@@ -68,8 +68,8 @@
         <div class="tk-field">
             <label>КАТЕГОРІЇ</label>
             <div class="tk-cats">
-                <label><input type="checkbox" class="tk-cat" value="spot" checked> spot</label>
-                <label><input type="checkbox" class="tk-cat" value="swap"> swap</label>
+                <label><input type="checkbox" class="tk-cat" value="spot"> spot</label>
+                <label><input type="checkbox" class="tk-cat" value="swap" checked> swap</label>
                 <label><input type="checkbox" class="tk-cat" value="usdt" checked> USDT</label>
                 <label><input type="checkbox" class="tk-cat" value="usdc"> USDC</label>
             </div>
@@ -126,7 +126,7 @@
         <div class="tk-field">
             <label>ТОП-N</label>
             <select id="tk-topn">
-                <option>10</option><option selected>20</option><option>50</option>
+                <option>10</option><option selected>20</option><option>30</option><option>50</option><option>75</option><option>100</option>
             </select>
         </div>
         <button class="tk-btn warm" id="tk-top-btn" onclick="tkTopActive()">Показати</button>
@@ -425,7 +425,8 @@ async function tkTopToFF() {
 let ffDobList = [];
 
 function ffDobRender(symbols) {
-    ffDobList = symbols || [];
+    // Show the добірка sorted alphabetically for easy scanning.
+    ffDobList = (symbols || []).slice().sort((a, b) => String(a).localeCompare(String(b)));
     const tb = document.getElementById('ffdob-tbody');
     const cnt = document.getElementById('ffdob-count');
     if (cnt) cnt.textContent = ffDobList.length;
