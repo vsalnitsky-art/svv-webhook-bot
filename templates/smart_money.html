@@ -3276,10 +3276,15 @@ function renderWatchlist(list) {
         // hand-picked coins.
         const srcKind = wlSources[sym] || 'manual';
         let srcHtml = '';
+        // Colour the coin NAME by source so hand-picked vs list-loaded coins
+        // are distinguishable at a glance.
+        let srcColor = '#fbbf24';   // manual → amber (hand-picked)
         if (srcKind === 'tickr_ff') {
             srcHtml = `<span class="wl-src wl-src-tickrff" title="Завантажено FF-добіркою із 📡 Tickr">📡</span>`;
+            srcColor = '#34d399';   // FF-добірка → green
         } else if (srcKind === 'tickr') {
             srcHtml = `<span class="wl-src wl-src-tickr" title="Додано списком із 📡 Tickr">T</span>`;
+            srcColor = '#60a5fa';   // Tickr list → blue
         } else {
             srcHtml = `<span class="wl-src wl-src-manual" title="Додано вручну">M</span>`;
         }
@@ -3288,7 +3293,7 @@ function renderWatchlist(list) {
         // table is now fed by intercepting the main LONG/SHORT open flow.)
 
         html += `<div class="sm-wl-item ${isActive}" data-symbol="${sym}" onclick="selectSymbol('${sym}')">
-            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span>${short}</span>
+            <span>${radarHtml}${obStarHtml}${volTrendHtml}${dedupHtml}<span class="trend-dot" id="dot-${sym}"></span><span style="color:${srcColor};font-weight:600">${short}</span></span>
             <span style="display:flex;align-items:center;gap:4px">
                 <span class="wl-trade-flag ${flagClass}" data-sym="${sym}" title="${flagTitle}"
                       onclick="event.stopPropagation();toggleTradeable('${sym}')">TRD</span>
