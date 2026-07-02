@@ -3581,9 +3581,12 @@ def register_api_routes(app):
             ff = None
         data = request.get_json() or {}
         keep = bool(data.get('keep', False))
-        staging = _ff_dobirka_load()
+        staging = [s0 for s0 in _ff_dobirka_load() if _ff_valid_sym(s0)]
         req_syms = [str(x).upper().strip() for x in (data.get('symbols') or []) if x]
         to_move = [s0 for s0 in staging if s0 in set(req_syms)] if req_syms else list(staging)
+        # Transfer in the SAME order the добірка is displayed: alphabetical,
+        # with number-prefixed symbols (1000PEPE…) pushed to the bottom.
+        to_move = sorted(to_move, key=lambda x: (x[:1].isdigit(), x))
         existing = set(s.get_watchlist())
         added, already, skipped = [], [], []
         for sym in to_move:

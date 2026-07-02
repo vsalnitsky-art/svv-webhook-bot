@@ -1788,46 +1788,52 @@ class FuelFilterDaemon:
         return '₿ ⚪ WAIT'
 
     def _btc_start_alert(self, s: Dict, now: float):
-        """Send a Telegram message when BTC flips START↔STOP (if enabled).
-        Only START and STOP are alerted (COUNTING is intermediate)."""
+        """Telegram message when the ₿ BTCUSDT banner state MEANINGFULLY
+        changes (if enabled). The state token is DIRECTION-AWARE:
+          START-LONG / START-SHORT — session active in that direction,
+          STOP — no session direction.
+        So a session FLIP (LONG↔SHORT) now fires an alert too (the old
+        START/STOP-only token stayed 'START' across a flip → silent). A WAIT
+        PAUSE keeps the last token (no spam, no false STOP)."""
         if not s.get('start_signal_tg_alerts', False):
             return
         period = float(s.get('start_signal_minutes', 5) or 5) * 60
-        direction = None
-        if self._btc_verdict_dir in ('LONG', 'SHORT') and self._btc_verdict_since:
-            direction = self._btc_verdict_dir
+        vdir = self._btc_verdict_dir
+        if vdir in ('LONG', 'SHORT') and self._btc_verdict_since:
+            # Remember direction so a later STOP can name the side it ran in.
+            self._btc_last_dir = vdir
+            if self._btc_paused:
+                return               # pause: hold last token, do not alert
             held = now - self._btc_verdict_since
-            state = 'START' if held >= period else 'COUNTING'
-            # Remember the live direction so a later STOP can report which side
-            # it stopped on (at STOP time there's no timer/direction left).
-            self._btc_last_dir = direction
+            if held < period:
+                return               # counting up — intermediate, no alert
+            token = f"START-{vdir}"
         else:
-            state = 'STOP'
-        alertable = state if state in ('START', 'STOP') else None
-        if not alertable:
-            return
+            token = "STOP"
         prev = self._btc_start_last_alert
         if prev is None:
             # First observation — record without alerting (avoid startup spam).
-            self._btc_start_last_alert = alertable
+            self._btc_start_last_alert = token
             return
-        if alertable == prev:
+        if token == prev:
             return
-        self._btc_start_last_alert = alertable
+        self._btc_start_last_alert = token
         tm = self._get_tm() if self._get_tm else None
         notifier = getattr(tm, 'notifier', None) if tm else None
         if not notifier:
             return
         def _dtxt(dd):
             return '🟢 LONG' if dd == 'LONG' else ('🔴 SHORT' if dd == 'SHORT' else '')
-        if alertable == 'START':
-            msg = f"🟢 <b>BTCUSDT START</b> {_dtxt(direction)}"
+        if token.startswith('START'):
+            _d = token.split('-', 1)[1]
+            _icon = '🟢' if _d == 'LONG' else '🔴'
+            msg = f"{_icon} <b>BTCUSDT START</b> {_dtxt(_d)}"
         else:
             # STOP — show the direction it was running in before stopping.
             msg = f"⛔ <b>BTCUSDT STOP</b> {_dtxt(self._btc_last_dir)}".rstrip()
         try:
             notifier.send_message(msg)
-            print(f"[FuelFilter] BTC TG alert sent: {alertable}")
+            print(f"[FuelFilter] BTC TG alert sent: {token}")
         except Exception as e:
             print(f"[FuelFilter] BTC TG send error: {e}")
 
