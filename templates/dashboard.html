@@ -2678,13 +2678,13 @@ setInterval(loadValidatorLog, 30000);
 let fundingSignals = {};
 
 // ММ (fuel) strength band → {txt,col}: 0-10 немає / 10-30 слабке /
-// 30-60 помітне / 60-100 сильне.
+// 30-60 помірний / 60-100 сильне.
 function fuelBand(now) {
     if (now == null) return { txt: '', col: '#8b93a7' };
     now = Number(now);
     if (now < 10) return { txt: 'немає', col: '#8b93a7' };
     if (now < 30) return { txt: 'слабке', col: '#eab308' };
-    if (now < 60) return { txt: 'помітне', col: '#84cc16' };
+    if (now < 60) return { txt: 'помірний', col: '#84cc16' };
     return { txt: 'сильне', col: '#22c55e' };
 }
 // ММ strength cell — fixed-width segments (inline-flex) so every row lines up
@@ -2744,7 +2744,7 @@ async function loadFunding() {
             contentEl.innerHTML = `<div class="funding-empty">Scanning ${d.total_coins} coins every 5 min. Entry: ≤ -${d.threshold}%<br>No extreme funding detected yet.</div>`;
         } else {
             let html = `<table class="funding-table">
-                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol 24h</th><th>До funding</th><th>Vol Signal</th><th title="Сила палива (ММ): 0–100% + напрямок, тренд і рівень (немає/слабке/помітне/сильне)">ММ</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
+                <tr><th>Coin</th><th>Trigger</th><th>Current</th><th>Deepest</th><th>Range</th><th>Price</th><th>Vol 24h</th><th>До funding</th><th>Vol Signal</th><th title="Сила бабла (ММ): 0–100% + напрямок, тренд і рівень (немає/слабке/помірний/сильне)">ММ</th><th>F-Trend</th><th>Tracked</th><th></th></tr>`;
             
             for (const c of coins) {
                 const curClass = c.current_rate < 0 ? 'negative' : 'positive';

@@ -122,7 +122,7 @@ DEFAULT_SETTINGS = {
     'engine_candle_tf': '5m',             # timeframe for the candle confirmation
     'engine_require_strong_hold': False,  # only open when SCORE=STRONG HOLD & dir matches
     # Minimum ММ (fuel) STRENGTH % to OPEN a trade — SEPARATE per direction.
-    # 0 = off, 30 = помітне (≥30%), 60 = сильне (≥60%). The engine skips a
+    # 0 = off, 30 = помірний (≥30%), 60 = сильне (≥60%). The engine skips a
     # candidate whose fuel strength (|fuel dir|×100) is below the threshold
     # for its direction. `engine_min_mm_strength` kept as legacy fallback.
     'engine_min_mm_strength': 0,
@@ -132,7 +132,7 @@ DEFAULT_SETTINGS = {
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
     # A funding coin appears in the 💰 ММ table only if its ММ (fuel) STRENGTH
-    # (|fuel dir|×100) ≥ this. 0 = off, 30 = помітне (≥30%), 60 = сильне (≥60%).
+    # (|fuel dir|×100) ≥ this. 0 = off, 30 = помірний (≥30%), 60 = сильне (≥60%).
     'funding_min_mm_strength': 0,
     # Anti-spam for funding-coin appear alerts:
     #  cooldown — не слати повторну «появу» по монеті стільки хвилин;
@@ -1535,7 +1535,7 @@ class FuelFilterDaemon:
                     # Leaves the table ONLY here: fuel gone or ММ below keep-thr.
                     if a is not None:
                         if a.get('holding'):
-                            _reason = ('паливо зникло'
+                            _reason = ('бабло зникло'
                                        if status not in ('LONG', 'SHORT')
                                        else f'ММ {_mm}% нижче фільтра')
                             self._notify_funding(
@@ -1611,7 +1611,7 @@ class FuelFilterDaemon:
                 'fuel': (str(strength) if strength is not None else '—'),
                 'exhaustion': (f"{exh:.0f}" if exh is not None else '—'),
                 'reason': (reason if reason is not None
-                           else ('зʼявилась у ММ' if entered else 'паливо зникло')),
+                           else ('зʼявилась у ММ' if entered else 'бабло зникло')),
                 'btc': (btc_line or ''),
             }
             tpl = (settings.get('ff_tg_entry_template') if entered

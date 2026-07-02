@@ -2568,7 +2568,7 @@ class TradeManager:
     @staticmethod
     def _mm_band_word(strength) -> str:
         """ММ strength band label (same bands as the UI): 0–10 немає,
-        10–30 слабке, 30–60 помітне, 60–100 сильне."""
+        10–30 слабке, 30–60 помірний, 60–100 сильне."""
         try:
             s = float(strength)
         except (TypeError, ValueError):
@@ -2578,7 +2578,7 @@ class TradeManager:
         if s < 30:
             return 'слабке'
         if s < 60:
-            return 'помітне'
+            return 'помірний'
         return 'сильне'
 
     def _build_reason_detail(self, symbol: str, pos: Dict, reason: str,
@@ -2644,7 +2644,7 @@ class TradeManager:
             parts.append(f'пік {peak:+.2f}%')
 
         # 4. ММ (fuel) value at the MOMENT the trade opened — direction +
-        # strength% + band word (e.g. 'ММ на відкритті: LONG 66% помітне').
+        # strength% + band word (e.g. 'ММ на відкритті: LONG 66% помірний').
         mm = pos.get('ff_mm_open')
         if mm and mm.get('str') is not None:
             _dir = mm.get('dir') or '—'
@@ -4000,7 +4000,7 @@ class TradeManager:
                     ff.intercept(symbol, side)
                     return {'ok': True, 'queued': True,
                             'reason': f'{symbol} {side} → черга ❤️ Fuel Auto-Filter '
-                                      f'(чекає ₿ START + паливо)'}
+                                      f'(чекає ₿ START + бабло)'}
             except Exception as e:
                 print(f"[TM] FF intercept error (manual) for {symbol}: {e}")
 
