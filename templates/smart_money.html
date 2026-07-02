@@ -1873,6 +1873,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </label>
                         </div>
                         <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Автозакриття відкритої угоди (реальної чи тестової), якщо сила ММ падає нижче цього %. 0 = вимкнено. Працює лише при увімкненому «Контроль відкритих угод».">Закрити при ММ &lt; %</label>
+                            <input type="number" id="ff-manage-close-mm" min="0" max="100" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(239,68,68,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
+                        </div>
+                        <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = STRONG HOLD і напрямок SCORE збігається з колонкою «Напрямок».">
                                 <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише STRONG HOLD (SCORE = напрямок)
                             </label>
@@ -3281,7 +3285,7 @@ function renderWatchlist(list) {
         let srcColor = '#fbbf24';   // manual → amber (hand-picked)
         if (srcKind === 'tickr_ff') {
             srcHtml = `<span class="wl-src wl-src-tickrff" title="Завантажено FF-добіркою із 📡 Tickr">📡</span>`;
-            srcColor = '#34d399';   // FF-добірка → green
+            srcColor = '#ffffff';   // FF-добірка → white
         } else if (srcKind === 'tickr') {
             srcHtml = `<span class="wl-src wl-src-tickr" title="Додано списком із 📡 Tickr">T</span>`;
             srcColor = '#60a5fa';   // Tickr list → blue
@@ -6969,6 +6973,7 @@ function renderFuelFilter(d) {
     setIf('ff-potential', s.potential_threshold_pct);
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
+    setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
     setIf('ff-smoothing-min', s.direction_smoothing_min != null ? s.direction_smoothing_min : 0);
     const anomHrs = (s.anomaly_hours != null ? s.anomaly_hours : 10);
     setIf('ff-anomaly-hours', anomHrs);
@@ -7608,6 +7613,7 @@ async function saveFuelFilterSettings() {
     const _c = (id) => { const e = document.getElementById(id); return e ? e.checked : undefined; };
     const payload = {
         manage_open_positions: _c('ff-manage-positions'),
+        manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
         direction_smoothing_min: parseInt(_v('ff-smoothing-min', '0') || '0', 10),
         start_signal_minutes: parseInt(_v('ff-start-minutes', '5') || '5', 10),
         engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',

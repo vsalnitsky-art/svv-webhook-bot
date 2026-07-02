@@ -2605,6 +2605,11 @@ class TradeManager:
             'opposite_ob_exit': 'Ціна вдарилась у протилежний Order Block',
             'external_close': 'Закрито поза ботом (на біржі)',
             'auto_gate_wait': 'Закрито авто-гейтом по WAIT (немає вирівнювання ТФ)',
+            'mm_below_min': 'ММ впало нижче порога закриття',
+            'fuel_flipped': 'ММ розвернулось у протилежний бік',
+            'fuel_faded': 'ММ згасло (втратило напрямок)',
+            'potential_reached': 'Досягнуто виснаженість руху',
+            'wait_verdict': 'Перехід у WAIT',
             'manual': 'Закрито вручну',
         }
         base = detail_map.get(reason)
@@ -4249,6 +4254,11 @@ class TradeManager:
             'manual_sl': '✋🛡 Manual SL',
             'manual_tp': '✋🎯 Manual TP',
             'external_close': '🔄 External Close (off-bot)',
+            'mm_below_min': '📉 ММ нижче порога',
+            'fuel_flipped': '🔄 ММ розворот',
+            'fuel_faded': '💨 ММ згасло',
+            'potential_reached': '🔥 Виснаженість',
+            'wait_verdict': '⏸ WAIT',
             'bos_2_partial': '✂️ BOS-2 partial',
             'bos_3_partial': '✂️ BOS-3 partial',
             'bos_4_partial': '✂️ BOS-4 partial',
