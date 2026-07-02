@@ -1084,7 +1084,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 <div class="sm-container">
     <div class="sm-header">
         <div>
-            <a href="/" class="back-link">← Dashboard</a>
+            <a href="{{ url_for('index') }}" class="back-link">← Dashboard</a>
             <h1>🎯 Smart Money Concepts</h1>
         </div>
         <div class="sm-control-item" id="sm-status">
@@ -2092,6 +2092,21 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <span style="color:#888;font-size:0.78rem">seconds</span>
                             <span class="tm-help" title="Як часто бот синхронізується з Bybit для:&#10;• Прийняття у керування ручно-відкритих позицій (adopt)&#10;• Виявлення ручних закриттів / Bybit-SL/TP / ліквідацій&#10;&#10;Рекомендовано: 10-15s — швидка реакція, низьке навантаження на API.&#10;Min 5s, max 300s. Округлюється до tick 10s.&#10;Bybit ліміт: 5-10 req/sec, ми використовуємо ~0.1 req/sec.">?</span>
                             <span id="tm-reconcile-info" style="color:#888;font-size:0.74rem;font-style:italic"></span>
+                        </label>
+                    </div>
+
+                    <!-- Row 3: Per-trade time-series log -->
+                    <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+                        <label style="display:flex;align-items:center;gap:8px;flex:1 1 auto;cursor:pointer">
+                            <input type="checkbox" id="tm-trade-log" onchange="saveTMSettings()">
+                            <span>📈 Лог по угоді (хронологія)</span>
+                            <span class="tm-help" title="Записувати стан кожної відкритої угоди (ціна / PnL% / ММ / виснаженість) із заданим інтервалом. Після закриття угоди клік по ній у 📜 Recent Closed Trades покаже графік усієї хронології. Діє і для реальних, і для тестових угод.">?</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:10px;flex:1 1 auto">
+                            <span>⏱ Інтервал запису:</span>
+                            <input type="number" id="tm-trade-log-interval" min="10" max="3600" step="10"
+                                   style="width:70px" onchange="saveTMSettings()">
+                            <span style="color:#888;font-size:0.78rem">сек</span>
                         </label>
                     </div>
                 </div>
@@ -5604,6 +5619,11 @@ async function loadTMSettings() {
         const ri = (typeof s.reconcile_interval_secs === 'number') ? s.reconcile_interval_secs : 10;
         document.getElementById('tm-reconcile-interval').value = ri;
         updateReconcileInfo(ri);
+        // Per-trade time-series log
+        const _tl = document.getElementById('tm-trade-log');
+        if (_tl) _tl.checked = !!s.trade_log_enabled;
+        const _tli = document.getElementById('tm-trade-log-interval');
+        if (_tli) _tli.value = (typeof s.trade_log_interval_sec === 'number') ? s.trade_log_interval_sec : 60;
         
         // Test mode (paper trading)
         document.getElementById('tm-test-mode').checked = !!s.test_mode;
@@ -5950,6 +5970,8 @@ async function saveTMSettings() {
             telegram_alerts: document.getElementById('tm-telegram-alerts').checked,
             test_telegram_alerts: document.getElementById('tm-test-telegram-alerts').checked,
             reconcile_interval_secs: parseInt(document.getElementById('tm-reconcile-interval').value, 10) || 10,
+            trade_log_enabled: document.getElementById('tm-trade-log').checked,
+            trade_log_interval_sec: parseInt(document.getElementById('tm-trade-log-interval').value, 10) || 60,
             use_bos_partials: document.getElementById('tm-use-bos-partials').checked,
             bos_2_close_pct: parseFloat(document.getElementById('tm-bos2-pct').value) || 0,
             bos_3_close_pct: parseFloat(document.getElementById('tm-bos3-pct').value) || 0,
@@ -7736,6 +7758,120 @@ function ffFuelCell(dir, now, prev) {
     return `<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">${dotSeg}${pctSeg}${arrowSeg}${barSeg}${bandSeg}</span>`;
 }
 
+// ── 📈 Per-trade history chart (clicking a closed trade) ─────────────────
+// Symbol cell becomes a link when the trade carries a recorded time-series
+// (hist_len>0). Click → fetch /api/tm/trade-history → SVG chart modal.
+function histSymCell(c, isShadow) {
+    if (!(c.hist_len > 0)) return `<b>${c.symbol}</b>`;
+    const ca = JSON.stringify(c.closed_at);
+    return `<b style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px"`
+        + ` title="Показати графік хронології (${c.hist_len} точок)"`
+        + ` onclick="showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">${c.symbol} 📈</b>`;
+}
+
+function ensureHistModal() {
+    let m = document.getElementById('tm-hist-modal');
+    if (m) return m;
+    m = document.createElement('div');
+    m.id = 'tm-hist-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;'
+        + 'background:rgba(0,0,0,0.6);align-items:center;justify-content:center';
+    m.innerHTML = `<div style="background:#0f1117;border:1px solid rgba(255,255,255,0.12);border-radius:10px;max-width:920px;width:92%;max-height:88vh;overflow:auto;padding:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <span class="tm-hist-title" style="font-size:0.9rem;font-weight:700;color:#e5e7eb"></span>
+            <button onclick="document.getElementById('tm-hist-modal').style.display='none'" style="background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.4);color:#f87171;border-radius:6px;padding:3px 10px;cursor:pointer">✕ Закрити</button>
+        </div>
+        <div class="tm-hist-body"></div>
+    </div>`;
+    m.addEventListener('click', (e) => { if (e.target === m) m.style.display = 'none'; });
+    document.body.appendChild(m);
+    return m;
+}
+
+async function showTradeHistory(symbol, closedAt, isShadow) {
+    const modal = ensureHistModal();
+    modal.querySelector('.tm-hist-title').textContent = `📈 ${symbol} — хронологія угоди`;
+    const body = modal.querySelector('.tm-hist-body');
+    body.innerHTML = '<div style="padding:24px;color:#888">Завантаження…</div>';
+    modal.style.display = 'flex';
+    try {
+        let q = `symbol=${encodeURIComponent(symbol)}&shadow=${isShadow ? 1 : 0}`;
+        if (closedAt != null) q += `&closed_at=${encodeURIComponent(closedAt)}`;
+        const d = await (await fetch('/api/tm/trade-history?' + q)).json();
+        const h = (d && d.history) || [];
+        if (!h.length) {
+            body.innerHTML = '<div style="padding:24px;color:#888">Немає записаної хронології для цієї угоди (лог був вимкнений або угода надто коротка).</div>';
+            return;
+        }
+        body.innerHTML = renderTradeHistoryChart(h, d);
+    } catch (e) {
+        body.innerHTML = `<div style="padding:24px;color:#f87171">Помилка завантаження: ${e}</div>`;
+    }
+}
+
+// Build two stacked inline-SVG panels: PnL% and ММ/виснаженість over time.
+function renderTradeHistoryChart(h, meta) {
+    const t0 = h[0].t, tN = h[h.length - 1].t, span = Math.max(1, tN - t0);
+    const W = 860, PAD = 34;
+    const xOf = (s, w) => PAD + ((s.t - t0) / span) * (w - 2 * PAD);
+
+    function panel(title, series, opts) {
+        const H = opts.h || 170;
+        // collect all finite values across series to auto-scale (shared axis)
+        let all = [];
+        series.forEach(se => h.forEach(s => { const v = se.acc(s); if (v != null && isFinite(v)) all.push(v); }));
+        if (!all.length) return '';
+        let lo = (opts.min != null) ? opts.min : Math.min(...all);
+        let hi = (opts.max != null) ? opts.max : Math.max(...all);
+        if (opts.includeZero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+        if (lo === hi) { lo -= 1; hi += 1; }
+        const yOf = v => PAD + (1 - (v - lo) / (hi - lo)) * (H - 2 * PAD);
+        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">`;
+        svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="rgba(255,255,255,0.02)"/>`;
+        // gridlines: lo / mid / hi (+ zero if in range)
+        [lo, (lo + hi) / 2, hi].forEach(gv => {
+            const y = yOf(gv);
+            svg += `<line x1="${PAD}" y1="${y.toFixed(1)}" x2="${W - PAD}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.08)"/>`;
+            svg += `<text x="4" y="${(y + 3).toFixed(1)}" fill="#8b93a7" font-size="10">${gv.toFixed(opts.dec != null ? opts.dec : 1)}</text>`;
+        });
+        if (lo < 0 && hi > 0) {
+            const yz = yOf(0);
+            svg += `<line x1="${PAD}" y1="${yz.toFixed(1)}" x2="${W - PAD}" y2="${yz.toFixed(1)}" stroke="rgba(255,255,255,0.25)" stroke-dasharray="3 3"/>`;
+        }
+        series.forEach(se => {
+            const pts = h.map(s => { const v = se.acc(s); if (v == null || !isFinite(v)) return null; return `${xOf(s, W).toFixed(1)},${yOf(v).toFixed(1)}`; }).filter(Boolean);
+            if (pts.length) svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="1.8"/>`;
+        });
+        svg += `<text x="${PAD}" y="14" fill="#cbd5e1" font-size="11" font-weight="700">${title}</text>`;
+        const legend = series.map(se => `<span style="color:${se.color}">■ ${se.name}</span>`).join(' &nbsp; ');
+        svg += `</svg>`;
+        return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center">${legend}</div></div>`;
+    }
+
+    const _fmtT = (typeof fmtTimeJS === 'function') ? fmtTimeJS : (t => new Date(t * 1000).toLocaleString());
+    const dur = tN - t0;
+    const durTxt = dur < 3600 ? `${Math.round(dur / 60)}хв` : `${(dur / 3600).toFixed(1)}год`;
+    const pnlLast = h[h.length - 1].pnl;
+    const pnlCol = (pnlLast >= 0) ? '#22c55e' : '#ef4444';
+    const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap">`
+        + `<span>Сторона: <b>${meta.side || '—'}</b></span>`
+        + `<span>Вхід: <b>${fmtPriceJS(meta.entry_price)}</b></span>`
+        + (meta.exit_price != null ? `<span>Вихід: <b>${fmtPriceJS(meta.exit_price)}</b></span>` : '<span><b>ще відкрита</b></span>')
+        + (meta.pnl_pct != null ? `<span>PnL: <b style="color:${pnlCol}">${meta.pnl_pct >= 0 ? '+' : ''}${meta.pnl_pct}%</b></span>` : '')
+        + `<span>Тривалість: <b>${durTxt}</b></span>`
+        + `<span>Точок: <b>${h.length}</b></span>`
+        + `<span style="color:#8b93a7">${_fmtT(t0)} → ${_fmtT(tN)}</span></div>`;
+
+    const pnlPanel = panel('PnL, %', [{ name: 'PnL%', color: pnlCol, acc: s => s.pnl }], { includeZero: true, dec: 2 });
+    const mmPanel = panel('ММ / Виснаженість, %', [
+        { name: 'ММ', color: '#fbbf24', acc: s => s.mm },
+        { name: 'Виснаженість', color: '#f87171', acc: s => s.exh },
+    ], { min: 0, max: 100, dec: 0 });
+    const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4 });
+
+    return info + pnlPanel + mmPanel + pricePanel;
+}
+
 async function loadTMState() {
     try {
         const res = await fetch('/api/tm/state');
@@ -7836,7 +7972,7 @@ async function loadTMState() {
                 const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
                 return `<tr>
                     <td>${fmtTimeJS(c.closed_at)}</td>
-                    <td><b>${c.symbol}</b></td>
+                    <td>${histSymCell(c, false)}</td>
                     <td class="${sideClass}">${c.side}</td>
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>
@@ -7905,7 +8041,7 @@ async function loadTMState() {
                 const sideClass = c.side === 'LONG' ? 'tm-side-long' : 'tm-side-short';
                 return `<tr>
                     <td>${fmtTimeJS(c.closed_at)}</td>
-                    <td><b>${c.symbol}</b></td>
+                    <td>${histSymCell(c, true)}</td>
                     <td class="${sideClass}">${c.side}</td>
                     <td>${fmtPriceJS(c.entry_price)}</td>
                     <td>${fmtPriceJS(c.exit_price)}</td>

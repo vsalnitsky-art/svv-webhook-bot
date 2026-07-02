@@ -45,6 +45,18 @@ CLOSED_TRADES_LIMIT = 500   # in-memory cap for the UI list; the permanent
                             # TradeArchive DB table keeps the FULL history
                             # (never trimmed) for backtesting.
 INITIAL_DELAY_SECS = 20      # wait at startup before first tick
+TRADE_LOG_MAX = 5000         # max per-trade time-series samples kept (safety cap)
+
+
+def _lite_trade(d: Dict) -> Dict:
+    """Copy a position/closed-trade dict WITHOUT the heavy per-trade history
+    time-series (kept out of the /api/tm/state payload). Exposes only
+    `hist_len` so the UI knows a chart is available; the full series is
+    fetched on demand via /api/tm/trade-history."""
+    h = d.get('history') or []
+    out = {k: v for k, v in d.items() if k not in ('history', '_last_log_at')}
+    out['hist_len'] = len(h)
+    return out
 
 # Reconcile interval is now user-tunable via DEFAULT_SETTINGS["reconcile_interval_secs"].
 # At each monitor tick we read the setting and compute N_TICKS dynamically,
@@ -145,6 +157,14 @@ DEFAULT_SETTINGS = {
     # through settings.
     'allow_long_entries': True,
     'allow_short_entries': True,
+
+    # === Per-trade time-series log ===
+    # When ON, every open position (real + test) is sampled every
+    # trade_log_interval_sec (price / PnL% / ММ / exhaustion). The series is
+    # carried into the closed-trade record so its full history can be charted
+    # by clicking the closed trade.
+    'trade_log_enabled': False,
+    'trade_log_interval_sec': 60,
 
     # === Fuel Auto-Filter confirmation gate ===
     # When ON, a trade is only opened if the SAME coin with the SAME direction
@@ -692,7 +712,113 @@ class TradeManager:
                 if self._errors <= 10:
                     print(f"[TM] Shadow monitor error {sym}: {e}")
                 self._errors += 1
-    
+
+        # Per-trade time-series log (optional).
+        try:
+            self._sample_trade_logs(time.time())
+        except Exception as e:
+            if self._errors <= 10:
+                print(f"[TM] trade-log sample error: {e}")
+
+    def _sample_trade_logs(self, now: float):
+        """Append a {t, price, pnl, mm, mm_dir, exh} sample to each open
+        position's `history` every trade_log_interval_sec, when the feature is
+        on. Covers real AND shadow positions. The series rides along in the
+        position dict → persisted → carried into the closed record on close."""
+        s = self._settings
+        if not s.get('trade_log_enabled', False):
+            return
+        try:
+            interval = int(s.get('trade_log_interval_sec', 60) or 60)
+        except (TypeError, ValueError):
+            interval = 60
+        interval = max(10, interval)
+        # Cheap live maps (single call each), tolerant of FF being absent.
+        mm_map, exh_map = {}, {}
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if ff:
+                mm_map = ff.get_fuel_strength_map() or {}
+                exh_map = ff.get_exhaustion_map() or {}
+        except Exception:
+            pass
+        with self._lock:
+            items = list(self._positions.items()) + list(self._shadow_positions.items())
+        changed = False
+        for sym, pos in items:
+            try:
+                if (now - float(pos.get('_last_log_at', 0))) < interval:
+                    continue
+                price = self._get_current_price(sym)
+                if not price:
+                    continue
+                entry = pos.get('entry_price')
+                side = pos.get('side')
+                if entry and side:
+                    pnl = ((price - entry) / entry * 100.0) if side == 'LONG' \
+                        else ((entry - price) / entry * 100.0)
+                else:
+                    pnl = 0.0
+                mm = mm_map.get(sym) or {}
+                sample = {
+                    't': int(now),
+                    'price': price,
+                    'pnl': round(pnl, 4),
+                    'mm': mm.get('now'),
+                    'mm_dir': mm.get('dir'),
+                    'exh': exh_map.get(sym),
+                }
+                with self._lock:
+                    hist = pos.setdefault('history', [])
+                    hist.append(sample)
+                    if len(hist) > TRADE_LOG_MAX:
+                        del hist[:len(hist) - TRADE_LOG_MAX]
+                    pos['_last_log_at'] = now
+                changed = True
+            except Exception:
+                continue
+        if changed:
+            self._persist_positions()
+            self._persist_shadow_positions()
+
+    def get_trade_history(self, symbol: str, closed_at=None,
+                          is_shadow: bool = False) -> Dict:
+        """Return the recorded time-series for a trade. Matches a CLOSED trade
+        by symbol (+ closed_at if given); falls back to the live OPEN position
+        so an in-progress trade can be charted too."""
+        symbol = (symbol or '').upper()
+        src = self._shadow_closed if is_shadow else self._closed_trades
+        with self._lock:
+            rows = list(src)
+            op = (self._shadow_positions if is_shadow
+                  else self._positions).get(symbol)
+        best = None
+        for c in rows:
+            if str(c.get('symbol', '')).upper() != symbol:
+                continue
+            if closed_at is not None:
+                try:
+                    if abs(float(c.get('closed_at', 0)) - float(closed_at)) > 2:
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            best = c   # keep the last (most recent) match
+        if best is not None:
+            return {'ok': True, 'symbol': symbol, 'open': False,
+                    'side': best.get('side'), 'entry_price': best.get('entry_price'),
+                    'exit_price': best.get('exit_price'),
+                    'pnl_pct': best.get('pnl_pct'),
+                    'opened_at': best.get('opened_at'),
+                    'closed_at': best.get('closed_at'),
+                    'history': list(best.get('history') or [])}
+        if op:
+            return {'ok': True, 'symbol': symbol, 'open': True,
+                    'side': op.get('side'), 'entry_price': op.get('entry_price'),
+                    'opened_at': op.get('opened_at'),
+                    'history': list(op.get('history') or [])}
+        return {'ok': True, 'symbol': symbol, 'history': []}
+
     def _monitor_position(self, symbol: str):
         with self._lock:
             pos = self._positions.get(symbol)
@@ -2191,6 +2317,7 @@ class TradeManager:
         with self._lock:
             self._positions.pop(symbol, None)
             self._pos_state.pop(symbol, None)
+            closed['history'] = list(pos.get('history') or [])
             self._closed_trades.append(closed)
             if len(self._closed_trades) > CLOSED_TRADES_LIMIT:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
@@ -2709,6 +2836,7 @@ class TradeManager:
         with self._lock:
             self._positions.pop(symbol, None)
             self._pos_state.pop(symbol, None)
+            closed['history'] = list(pos.get('history') or [])
             self._closed_trades.append(closed)
             if len(self._closed_trades) > CLOSED_TRADES_LIMIT:
                 self._closed_trades = self._closed_trades[-CLOSED_TRADES_LIMIT:]
@@ -3097,6 +3225,7 @@ class TradeManager:
         with self._lock:
             self._shadow_positions.pop(symbol, None)
             self._shadow_pos_state.pop(symbol, None)
+            closed['history'] = list(pos.get('history') or [])
             self._shadow_closed.append(closed)
             if len(self._shadow_closed) > CLOSED_TRADES_LIMIT:
                 self._shadow_closed = self._shadow_closed[-CLOSED_TRADES_LIMIT:]
@@ -3592,10 +3721,10 @@ class TradeManager:
                 hold = self._compute_hold_score(pos_dict)
                 if hold is not None:
                     pos_dict['hold'] = hold
-                positions.append(pos_dict)
+                positions.append(_lite_trade(pos_dict))
             
-            closed = list(self._closed_trades[-50:])
-            
+            closed = [_lite_trade(c) for c in self._closed_trades[-50:]]
+
             # Stats — real
             total_closed = len(self._closed_trades)
             wins = sum(1 for c in self._closed_trades if c.get('pnl_pct', 0) > 0)
@@ -3622,8 +3751,8 @@ class TradeManager:
                 hold = self._compute_hold_score(pos_dict)
                 if hold is not None:
                     pos_dict['hold'] = hold
-                shadow_positions.append(pos_dict)
-            shadow_closed = list(self._shadow_closed[-50:])
+                shadow_positions.append(_lite_trade(pos_dict))
+            shadow_closed = [_lite_trade(c) for c in self._shadow_closed[-50:]]
             
             # Stats — shadow
             sh_total = len(self._shadow_closed)

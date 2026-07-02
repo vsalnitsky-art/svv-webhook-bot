@@ -545,8 +545,13 @@ def register_routes(app):
     """Register all web routes"""
     
     @app.route('/')
+    def home():
+        """Start page → Smart Money Concepts (moved from Dashboard)."""
+        return redirect(url_for('smart_money_page'))
+
+    @app.route('/dashboard')
     def index():
-        """Main dashboard"""
+        """Main dashboard (now at /dashboard; '/' redirects to Smart Money)."""
         db = get_db()
         
         # Get statistics
@@ -4540,6 +4545,28 @@ def register_api_routes(app):
     
     # ===== Trade Manager =====
     
+    @app.route('/api/tm/trade-history')
+    def api_tm_trade_history():
+        """Per-trade recorded time-series (price/PnL/ММ/exhaustion) for charting.
+        Query: symbol=BTCUSDT&closed_at=<float>&shadow=0|1. Matches a closed
+        trade (or the live open position as fallback)."""
+        from detection.trade_manager import get_trade_manager
+        tm = get_trade_manager()
+        if not tm:
+            return jsonify({'ok': False, 'reason': 'Not initialized'})
+        symbol = request.args.get('symbol', '')
+        shadow = str(request.args.get('shadow', '0')).lower() in ('1', 'true')
+        closed_at = request.args.get('closed_at')
+        try:
+            closed_at = float(closed_at) if closed_at not in (None, '') else None
+        except (TypeError, ValueError):
+            closed_at = None
+        try:
+            return jsonify(tm.get_trade_history(symbol, closed_at=closed_at,
+                                                is_shadow=shadow))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/tm/state')
     def api_tm_state():
         """Return Trade Manager state: positions, closed trades, stats.
