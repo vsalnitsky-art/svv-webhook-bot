@@ -398,7 +398,7 @@ async function tkTopToFF() {
     if (!tkTopRows || !tkTopRows.length) return;
     const symbols = tkTopRows
         .map(r => (typeof r === 'string' ? r : (r && r.symbol)))
-        .filter(Boolean);
+        .filter(s => s && String(s).indexOf('-') === -1);   // skip dated futures
     if (!symbols.length) return;
     const stat = document.getElementById('tk-top-stat');
     stat.textContent = '⏳ Додаю у FF-добірку…';
@@ -425,8 +425,17 @@ async function tkTopToFF() {
 let ffDobList = [];
 
 function ffDobRender(symbols) {
-    // Show the добірка sorted alphabetically for easy scanning.
-    ffDobList = (symbols || []).slice().sort((a, b) => String(a).localeCompare(String(b)));
+    // Drop dated futures (ETHUSDT-03JUL26), then sort alphabetically with
+    // number-prefixed symbols (1000PEPE…) pushed to the very bottom.
+    const startsDigit = s => /^[0-9]/.test(String(s));
+    ffDobList = (symbols || [])
+        .filter(s => s && String(s).indexOf('-') === -1)
+        .slice()
+        .sort((a, b) => {
+            const da = startsDigit(a), db = startsDigit(b);
+            if (da !== db) return da ? 1 : -1;   // digit-first → bottom
+            return String(a).localeCompare(String(b));
+        });
     const tb = document.getElementById('ffdob-tbody');
     const cnt = document.getElementById('ffdob-count');
     if (cnt) cnt.textContent = ffDobList.length;
