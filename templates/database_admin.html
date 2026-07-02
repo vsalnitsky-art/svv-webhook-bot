@@ -34,12 +34,23 @@
     border: 1px solid rgba(255,255,255,0.1);
     border-radius: 8px;
     padding: 15px;
+    min-height: 104px;            /* equal height → рядок карток не «пригає» */
+    box-sizing: border-box;
 }
 
 .db-stat-label {
     font-size: 0.75rem;
     color: #888;
     margin-bottom: 5px;
+    line-height: 1.4;             /* fixed → емодзі не міняє висоту підпису */
+}
+/* Fixed-width icon slot so emoji never shifts the label baseline/width. */
+.db-ic {
+    display: inline-block;
+    width: 1.25em;
+    text-align: center;
+    font-style: normal;
+    vertical-align: -0.05em;
 }
 
 .db-stat-value {
@@ -230,15 +241,15 @@
         <div class="db-stat-card">
             <div class="db-stat-label">This Bot's Tables</div>
             <div class="db-stat-value bot" id="db-bot">—</div>
-            <div class="db-stat-label" style="margin-top:5px;color:#8b93a7">🟢 дані <span id="db-bot-data-inline">—</span> · 🗄️ службові <span id="db-bot-service-inline">—</span></div>
+            <div class="db-stat-label" style="margin-top:5px;color:#8b93a7"><span class="db-ic">🟢</span>дані <span id="db-bot-data-inline">—</span> · <span class="db-ic">🗄️</span>службові <span id="db-bot-service-inline">—</span></div>
         </div>
         <div class="db-stat-card" title="Робочі дані стратегії: угоди, архів угод, order blocks, sleeper-кандидати, налаштування, стан SMC/радара.">
-            <div class="db-stat-label">🟢 Дані роботи бота</div>
+            <div class="db-stat-label"><span class="db-ic">🟢</span>Дані роботи бота</div>
             <div class="db-stat-value" style="color:#22c55e" id="db-bot-data">—</div>
             <div class="db-stat-label" style="margin-top:5px;color:#8b93a7"><span id="db-bot-data-pct">—</span>% від БД</div>
         </div>
         <div class="db-stat-card" title="Службові дані: логи подій, снапшоти/історія ринку, кеші liquidation-map та heatmap. Це телеметрія — її можна періодично чистити.">
-            <div class="db-stat-label">🗄️ Службові (логи/снапшоти)</div>
+            <div class="db-stat-label"><span class="db-ic">🗄️</span>Службові (логи/снапшоти)</div>
             <div class="db-stat-value" style="color:#a78bfa" id="db-bot-service">—</div>
             <div class="db-stat-label" style="margin-top:5px;color:#8b93a7"><span id="db-bot-service-pct">—</span>% від БД</div>
         </div>
@@ -260,6 +271,53 @@
     <div class="progress-bar">
         <div class="progress-fill bot" id="bot-progress" style="width:0%"></div>
         <div class="progress-fill foreign" id="foreign-progress" style="width:0%"></div>
+    </div>
+
+    <!-- Cleanup Actions (moved to top) -->
+    <div class="db-panel">
+        <h2>🧹 Очистка бази — що можна чистити</h2>
+
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px;font-size:0.8rem">
+            <span style="color:#22c55e"><b>🟢 Дані роботи бота</b> — НЕ чистити</span>
+            <span style="color:#8b93a7">(угоди, архів угод, order blocks, налаштування, стан SMC/радара)</span>
+            <span style="color:#a78bfa;margin-left:8px"><b>🗄️ Службові</b> — безпечно чистити</span>
+            <span style="color:#8b93a7">(логи, снапшоти, liquidation-map, heatmap — це «мотлох», що росте сам)</span>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:15px">
+            <div style="padding:15px;background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.3);border-radius:6px">
+                <h3 style="font-size:0.9rem;color:#c4b5fd;margin:0 0 10px 0">🗄️ Службові дані (мотлох)</h3>
+                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
+                    Логи, снапшоти, liquidation-map та heatmap кеші. Це <b>основне джерело росту</b> БД.
+                    Безпечно видаляти — на роботу стратегії не впливає.
+                </p>
+                <button class="cleanup-btn warning" onclick="cleanupService(3)">🗑️ Старші 3 днів</button>
+                <button class="cleanup-btn warning" onclick="cleanupService(1)" style="margin-left:6px">🗑️ Старші 1 дня</button>
+                <button class="cleanup-btn danger" onclick="cleanupService('all')" style="margin-left:6px">⚠️ Очистити ВСІ службові</button>
+            </div>
+
+            <div style="padding:15px;background:rgba(255,68,68,0.05);border:2px solid rgba(239,68,68,0.3);border-radius:6px">
+                <h3 style="font-size:0.9rem;color:#fca5a5;margin:0 0 10px 0">⚡ VACUUM FULL</h3>
+                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
+                    <strong>ПОВЕРТАЄ МІСЦЕ ДИСКУ</strong> після видалення. Запускай ПІСЛЯ чистки.
+                    БД буде заблоковано на 5–15 хв!
+                </p>
+                <button class="cleanup-btn danger" onclick="runVacuumFull()">⚡ VACUUM FULL</button>
+            </div>
+
+            <div style="padding:15px;background:rgba(255,255,255,0.02);border-radius:6px">
+                <h3 style="font-size:0.9rem;color:#cbd5e1;margin:0 0 10px 0">🗑️ Архів угод <span style="color:#f59e0b;font-weight:400;font-size:0.72rem">(ДАНІ — обережно)</span></h3>
+                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
+                    Це дані угод для навчання ML. Видаляй лише якщо точно не потрібні.
+                </p>
+                <button class="cleanup-btn danger" onclick="cleanupTradeArchive()">🗑️ Очистити архів</button>
+            </div>
+        </div>
+
+        <p style="font-size:0.72rem;color:#7a8395;margin:14px 0 0 0">
+            💡 Щоб база <b>не росла</b> постійно: періодично тисни «🗄️ Службові → Старші 3 днів» + «VACUUM FULL»,
+            або взагалі вимкни модуль <b>Liquidation Map</b> на сторінці Smart Money (він головний писар цих даних).
+        </p>
     </div>
 
     <!-- Foreign Tables (Priority!) -->
@@ -304,55 +362,6 @@
         </table>
     </div>
 
-    <!-- Cleanup Actions -->
-    <div class="db-panel">
-        <h2>🧹 Cleanup Actions</h2>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:15px">
-            <div style="padding:15px;background:rgba(255,255,255,0.02);border-radius:6px">
-                <h3 style="font-size:0.9rem;color:#cbd5e1;margin:0 0 10px 0">Event Logs</h3>
-                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
-                    Логи подій ростуть нескінченно. Очистка старих даних економить місце.
-                </p>
-                <button class="cleanup-btn warning" onclick="cleanupEventLogs('old')">
-                    🗑️ Delete >30 days
-                </button>
-                <button class="cleanup-btn danger" onclick="cleanupEventLogs('all')" style="margin-left:8px">
-                    ⚠️ Delete ALL
-                </button>
-            </div>
-
-            <div style="padding:15px;background:rgba(255,255,255,0.02);border-radius:6px">
-                <h3 style="font-size:0.9rem;color:#cbd5e1;margin:0 0 10px 0">Trade Archive</h3>
-                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
-                    Архів угод для ML. Якщо не збираєте дані — можна видалити.
-                </p>
-                <button class="cleanup-btn danger" onclick="cleanupTradeArchive()">
-                    🗑️ Clear Archive
-                </button>
-            </div>
-
-            <div style="padding:15px;background:rgba(255,255,255,0.02);border-radius:6px">
-                <h3 style="font-size:0.9rem;color:#cbd5e1;margin:0 0 10px 0">Old Cache Data</h3>
-                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
-                    Видалити кеші OB, snapshots старші 7 днів.
-                </p>
-                <button class="cleanup-btn warning" onclick="cleanupOldCache()">
-                    🗑️ Delete >7 days
-                </button>
-            </div>
-
-            <div style="padding:15px;background:rgba(255,68,68,0.05);border:2px solid rgba(239,68,68,0.3);border-radius:6px">
-                <h3 style="font-size:0.9rem;color:#fca5a5;margin:0 0 10px 0">⚡ VACUUM FULL</h3>
-                <p style="font-size:0.75rem;color:#94a3b8;margin:0 0 10px 0">
-                    <strong>ПОВЕРТАЄ МІСЦЕ</strong> після видалення даних. БД буде заблоковано на 5-15 хв!
-                </p>
-                <button class="cleanup-btn danger" onclick="runVacuumFull()">
-                    ⚡ VACUUM FULL (reclaim space)
-                </button>
-            </div>
-        </div>
-    </div>
 </div>
 
 <script>
@@ -527,6 +536,34 @@ async function cleanupTradeArchive() {
     } catch (err) {
         console.error('Cleanup error:', err);
         alert('Failed to cleanup');
+    }
+}
+
+// Clean СЛУЖБОВІ (logs/snapshots/liquidation/heatmap). arg: number of days
+// to keep-cut ('старші N днів') or 'all' to wipe everything.
+async function cleanupService(daysOrAll) {
+    const isAll = (daysOrAll === 'all');
+    const msg = isAll
+        ? 'Очистити ВСІ службові дані (логи, снапшоти, liquidation, heatmap)?\nНа стратегію не впливає. Після цього запусти VACUUM FULL.'
+        : `Видалити службові дані старші ${daysOrAll} днів?`;
+    if (!confirm(msg)) return;
+    try {
+        const body = isAll ? {action: 'service_all'} : {action: 'service_old', days: daysOrAll};
+        const res = await fetch('/api/db/cleanup', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (data.ok) {
+            alert(`✅ Видалено ${(data.deleted_rows||0).toLocaleString()} рядків службових даних.\n💡 Запусти VACUUM FULL, щоб повернути місце на диску.`);
+            loadDBAnalysis();
+        } else {
+            alert('Error: ' + (data.reason || 'unknown'));
+        }
+    } catch (err) {
+        console.error('Service cleanup error:', err);
+        alert('Failed to cleanup service data');
     }
 }
 

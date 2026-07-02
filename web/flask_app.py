@@ -3129,6 +3129,47 @@ def register_api_routes(app):
                             pass
                     conn.commit()
 
+                elif action in ('service_old', 'service_all'):
+                    # СЛУЖБОВІ дані (логи / снапшоти / liquidation & heatmap
+                    # кеші) — саме вони роздувають БД. service_old видаляє
+                    # рядки старші за N днів; service_all очищає повністю.
+                    # (col, kind): kind = 'dt' DateTime | 'sec' epoch-сек |
+                    # 'ms' epoch-мс (BigInteger).
+                    SERVICE_TABLES_TIME = {
+                        'sob_event_logs': ('timestamp', 'dt'),
+                        'sob_liquidation_buckets': ('last_updated_ts', 'sec'),
+                        'sob_liquidation_oi_snapshots': ('ts', 'sec'),
+                        'sob_liquidation_events': ('ts', 'sec'),
+                        'sob_liq_heatmap_profiles': ('ts', 'dt'),
+                        'sob_top100_ob_snapshots': ('created_at_t', 'ms'),
+                        'sob_top100_ob_history': ('created_at', 'dt'),
+                        'volumized_radar_snapshots': ('scan_time', 'dt'),
+                    }
+                    try:
+                        days = int(data.get('days', 3) or 3)
+                    except (TypeError, ValueError):
+                        days = 3
+                    days = max(0, min(365, days))
+                    for tbl, (col, kind) in SERVICE_TABLES_TIME.items():
+                        try:
+                            if action == 'service_all':
+                                result = conn.execute(text(f"DELETE FROM {tbl}"))
+                            elif kind == 'dt':
+                                result = conn.execute(text(
+                                    f"DELETE FROM {tbl} WHERE {col} < NOW() - INTERVAL '{days} days'"))
+                            elif kind == 'sec':
+                                result = conn.execute(text(
+                                    f"DELETE FROM {tbl} WHERE {col} < EXTRACT(EPOCH FROM NOW()) - {days}*86400"))
+                            elif kind == 'ms':
+                                result = conn.execute(text(
+                                    f"DELETE FROM {tbl} WHERE {col} < (EXTRACT(EPOCH FROM NOW()) - {days}*86400)*1000"))
+                            else:
+                                continue
+                            deleted_rows += result.rowcount or 0
+                        except Exception as _e:
+                            print(f"[DB cleanup] {tbl} skip: {_e}")
+                    conn.commit()
+
                 elif action == 'vacuum_full':
                     # VACUUM FULL to actually reclaim disk space and return it to OS
                     # WARNING: This locks the entire database and can take 5-15 minutes
