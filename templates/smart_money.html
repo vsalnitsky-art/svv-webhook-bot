@@ -1091,12 +1091,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span class="sm-pulse"></span>
             <span>—</span>
         </div>
-        <div class="sm-control-item" id="sm-datasource" title="Біржа, з якої зараз береться аналітика. Binance переважно (глибші дані); Bybit — резерв, якщо Binance заблокований." style="display:none">
+        <div class="sm-control-item" id="sm-datasource" title="Біржа, з якої береться аналітика — Bybit (бот торгує на Bybit)." style="display:none">
             <span style="font-size:0.72rem;color:#8b93a7">Аналітика:</span>
             <span id="sm-datasource-val" style="font-size:0.74rem;font-weight:700">—</span>
         </div>
-        <div class="sm-control-item" id="sm-api-health" title="Стан API бірж: 🟢 живий / 🔴 заблокований або недоступний" style="display:none;gap:10px">
-            <span id="sm-api-binance" style="font-size:0.72rem;font-weight:600">Binance —</span>
+        <div class="sm-control-item" id="sm-api-health" title="Стан API біржі: 🟢 живий / 🔴 заблокований або недоступний" style="display:none;gap:10px">
             <span id="sm-api-bybit" style="font-size:0.72rem;font-weight:600">Bybit —</span>
         </div>
     </div>
@@ -7676,26 +7675,19 @@ async function loadDataSource() {
         const d = await (await fetch('/api/sm/data-source')).json();
         if (!d.ok) { wrap.style.display = 'none'; return; }
         wrap.style.display = '';
-        const act = d.active;
-        val.textContent = act === 'binance' ? '📊 Binance' : '📊 Bybit';
-        val.style.color = act === 'binance' ? '#f0b90b' : '#f7a600';
-        // Add a hint when Binance is blocked and we're on the fallback
-        if (act === 'bybit' && d.binance_ok === false) {
-            val.textContent += ' (Binance недоступний)';
-        }
-        // Live API-health badges for BOTH exchanges
+        // Bybit only — Binance is dropped from the analysis entirely.
+        val.textContent = '📊 Bybit';
+        val.style.color = '#f7a600';
+        // Live API-health badge for Bybit only.
         const hWrap = document.getElementById('sm-api-health');
-        const bn = document.getElementById('sm-api-binance');
         const bb = document.getElementById('sm-api-bybit');
-        if (hWrap && bn && bb) {
+        if (hWrap && bb) {
             const fmt = (name, ok, reason) => {
                 if (ok === true)  return [`${name} 🟢 живий`, '#4ade80'];
                 if (ok === false) return [`${name} 🔴 ${reason && reason !== 'ok' ? reason : 'заблокований'}`, '#f87171'];
                 return [`${name} ⚪ —`, '#8b93a7'];  // not yet checked
             };
-            const [bnTxt, bnCol] = fmt('Binance', d.binance_ok, d.binance_reason);
             const [bbTxt, bbCol] = fmt('Bybit', d.bybit_ok, d.bybit_reason);
-            bn.textContent = bnTxt; bn.style.color = bnCol;
             bb.textContent = bbTxt; bb.style.color = bbCol;
             hWrap.style.display = 'flex';
         }
