@@ -3511,21 +3511,34 @@ def register_api_routes(app):
         import json as _json
         get_db().set_setting(_FF_DOBIRKA_KEY, _json.dumps(lst))
 
+    def _ff_valid_sym(sym):
+        """Reject dated/delivery futures (e.g. ETHUSDT-03JUL26) — they carry a
+        '-' suffix. Only standard perps belong in the FF-добірка."""
+        return bool(sym) and '-' not in sym
+
     @app.route('/api/ff-dobirka', methods=['GET'])
     def api_ff_dobirka_get():
-        """Current FF-добірка staging symbols."""
-        return jsonify({'ok': True, 'symbols': _ff_dobirka_load()})
+        """Current FF-добірка staging symbols. Also prunes any dated-futures
+        entries that slipped in before the filter existed."""
+        cur = _ff_dobirka_load()
+        cleaned = [s for s in cur if _ff_valid_sym(s)]
+        if cleaned != cur:
+            _ff_dobirka_save(cleaned)
+        return jsonify({'ok': True, 'symbols': cleaned})
 
     @app.route('/api/ff-dobirka/add', methods=['POST'])
     def api_ff_dobirka_add():
-        """Append symbols to the FF-добірка (dedup, order preserved)."""
+        """Append symbols to the FF-добірка (dedup, order preserved). Dated
+        futures (symbols with a '-') are skipped."""
         data = request.get_json() or {}
         syms = [str(x).upper().strip() for x in (data.get('symbols') or []) if x]
-        cur = _ff_dobirka_load()
+        cur = [s for s in _ff_dobirka_load() if _ff_valid_sym(s)]
         seen = set(cur)
-        added, already = [], []
+        added, already, skipped = [], [], []
         for sym in syms:
-            if sym in seen:
+            if not _ff_valid_sym(sym):
+                skipped.append(sym)
+            elif sym in seen:
                 already.append(sym)
             else:
                 cur.append(sym)
@@ -3533,7 +3546,7 @@ def register_api_routes(app):
                 added.append(sym)
         _ff_dobirka_save(cur)
         return jsonify({'ok': True, 'added': added, 'already': already,
-                        'symbols': cur})
+                        'skipped': skipped, 'symbols': cur})
 
     @app.route('/api/ff-dobirka/remove', methods=['POST'])
     def api_ff_dobirka_remove():
