@@ -108,6 +108,10 @@ DEFAULT_SETTINGS = {
                                   # more exhausted than this % (0..100). Active.
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
     'manage_open_positions': True,  # if True, FF closes positions it opened
+    # Auto-close an open (real OR test) position when its ММ (fuel) STRENGTH
+    # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
+    # the position (manage_open_positions=True).
+    'manage_close_min_mm': 0,
     'direction_smoothing_min': 0,   # EMA window (min) for ММ direction; 0 = OFF (raw)
     'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
     'start_signal_minutes': 5,      # BTC ММ held ≥ this → START signal (else STOP)
@@ -1428,6 +1432,20 @@ class FuelFilterDaemon:
             if track.get('faded_since'):
                 with self._lock:
                     track.pop('faded_since', None)
+        # exit: ММ (fuel) strength fell below the configured minimum (optional).
+        # Closes even while direction is unchanged — a fading-but-not-flipped
+        # position (e.g. ММ 80% → 15%) is no longer worth holding.
+        try:
+            _min_close_mm = int(settings.get('manage_close_min_mm', 0) or 0)
+        except (TypeError, ValueError):
+            _min_close_mm = 0
+        if _min_close_mm > 0 and fuel:
+            _cur_mm = abs(float(fuel.get('dir') or 0.0)) * 100.0
+            if _cur_mm < _min_close_mm:
+                self._close(symbol, mark or 0.0,
+                            reason='mm_below_min', is_real=is_real)
+                return
+
         # exit: exhaustion reached (optional).
         if settings.get('use_potential_exit') and exh is not None \
                 and exh >= settings.get('potential_threshold_pct', 95):
