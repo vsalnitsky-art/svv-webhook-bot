@@ -230,6 +230,17 @@
         <div class="db-stat-card">
             <div class="db-stat-label">This Bot's Tables</div>
             <div class="db-stat-value bot" id="db-bot">—</div>
+            <div class="db-stat-label" style="margin-top:5px;color:#8b93a7">🟢 дані <span id="db-bot-data-inline">—</span> · 🗄️ службові <span id="db-bot-service-inline">—</span></div>
+        </div>
+        <div class="db-stat-card" title="Робочі дані стратегії: угоди, архів угод, order blocks, sleeper-кандидати, налаштування, стан SMC/радара.">
+            <div class="db-stat-label">🟢 Дані роботи бота</div>
+            <div class="db-stat-value" style="color:#22c55e" id="db-bot-data">—</div>
+            <div class="db-stat-label" style="margin-top:5px;color:#8b93a7"><span id="db-bot-data-pct">—</span>% від БД</div>
+        </div>
+        <div class="db-stat-card" title="Службові дані: логи подій, снапшоти/історія ринку, кеші liquidation-map та heatmap. Це телеметрія — її можна періодично чистити.">
+            <div class="db-stat-label">🗄️ Службові (логи/снапшоти)</div>
+            <div class="db-stat-value" style="color:#a78bfa" id="db-bot-service">—</div>
+            <div class="db-stat-label" style="margin-top:5px;color:#8b93a7"><span id="db-bot-service-pct">—</span>% від БД</div>
         </div>
         <div class="db-stat-card">
             <div class="db-stat-label">Foreign Tables</div>
@@ -372,6 +383,15 @@ function renderDBStats(data) {
     document.getElementById('db-actual').textContent = summary.actual_db_mb.toFixed(1) + ' MB';
     document.getElementById('db-limit-pct').textContent = (summary.actual_db_mb / 1024 * 100).toFixed(1);
     document.getElementById('db-bot').textContent = summary.bot_mb.toFixed(1) + ' MB';
+    // Bot data vs service (logs/snapshots) breakdown
+    const _bd = (summary.bot_data_mb || 0), _bs = (summary.bot_service_mb || 0);
+    const _set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    _set('db-bot-data', _bd.toFixed(1) + ' MB');
+    _set('db-bot-service', _bs.toFixed(1) + ' MB');
+    _set('db-bot-data-pct', (summary.bot_data_pct != null ? summary.bot_data_pct : 0));
+    _set('db-bot-service-pct', (summary.bot_service_pct != null ? summary.bot_service_pct : 0));
+    _set('db-bot-data-inline', _bd.toFixed(1) + ' MB');
+    _set('db-bot-service-inline', _bs.toFixed(1) + ' MB');
     document.getElementById('db-foreign').textContent = summary.foreign_mb.toFixed(1) + ' MB';
     document.getElementById('db-indexes').textContent =
         ((summary.bot_indexes_mb || 0) + (summary.foreign_indexes_mb || 0)).toFixed(1) + ' MB';
@@ -417,12 +437,16 @@ function renderDBStats(data) {
         else if (t.name.includes('snapshot')) category = 'Snapshots';
         else if (t.name.includes('volumized_radar')) category = 'Vol Radar';
 
+        const isSvc = (t.category === 'service');
+        const typeTag = isSvc
+            ? '<span style="color:#a78bfa;font-weight:700">🗄️ Службові</span>'
+            : '<span style="color:#22c55e;font-weight:700">🟢 Дані</span>';
         return `
             <tr>
                 <td class="table-name">${t.name}</td>
                 <td class="size">${t.size}</td>
                 <td class="rows">${t.rows.toLocaleString()}</td>
-                <td style="color:#94a3b8;font-size:0.75rem">${category}</td>
+                <td style="font-size:0.75rem">${typeTag} <span style="color:#94a3b8">· ${category}</span></td>
             </tr>
         `;
     }).join('');

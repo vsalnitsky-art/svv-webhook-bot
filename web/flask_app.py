@@ -2948,6 +2948,14 @@ def register_api_routes(app):
         def belongs_to_bot(table_name):
             return any(table_name.startswith(p) for p in BOT_PREFIXES)
 
+        # Within the bot's tables, split СЛУЖБОВІ (logs / market snapshots /
+        # liquidation & heatmap caches — high-volume, append-only telemetry)
+        # from ДАНІ РОБОТИ БОТА (trades, order blocks, settings, state).
+        SERVICE_HINTS = ['event_log', 'liquidation', 'heatmap', 'snapshot', 'history']
+
+        def is_service(table_name):
+            return any(h in table_name for h in SERVICE_HINTS)
+
         try:
             with engine.connect() as conn:
                 # Get actual database size
@@ -2981,6 +2989,8 @@ def register_api_routes(app):
                 foreign_total = 0
                 bot_indexes = 0
                 foreign_indexes = 0
+                bot_data_total = 0      # робочі дані стратегії
+                bot_service_total = 0   # службові: логи/снапшоти/liq-кеші
 
                 for row in result:
                     table, size, size_bytes, table_size, table_size_bytes, index_size, index_size_bytes = row
@@ -3005,9 +3015,15 @@ def register_api_routes(app):
                     }
 
                     if belongs_to_bot(table):
+                        _svc = is_service(table)
+                        table_info['category'] = 'service' if _svc else 'data'
                         bot_tables.append(table_info)
                         bot_total += size_bytes
                         bot_indexes += index_size_bytes
+                        if _svc:
+                            bot_service_total += size_bytes
+                        else:
+                            bot_data_total += size_bytes
                     else:
                         foreign_tables.append(table_info)
                         foreign_total += size_bytes
@@ -3026,6 +3042,10 @@ def register_api_routes(app):
                         'actual_db_mb': round(actual_db_size_bytes / (1024**2), 2),
                         'total_mb': round(total_bytes / (1024**2), 2),
                         'bot_mb': round(bot_total / (1024**2), 2),
+                        'bot_data_mb': round(bot_data_total / (1024**2), 2),
+                        'bot_service_mb': round(bot_service_total / (1024**2), 2),
+                        'bot_data_pct': round(bot_data_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
+                        'bot_service_pct': round(bot_service_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
                         'foreign_mb': round(foreign_total / (1024**2), 2),
                         'bot_indexes_mb': round(bot_indexes / (1024**2), 2),
                         'foreign_indexes_mb': round(foreign_indexes / (1024**2), 2),
