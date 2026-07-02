@@ -735,12 +735,19 @@ class TradeManager:
         interval = max(10, interval)
         # Cheap live maps (single call each), tolerant of FF being absent.
         mm_map, exh_map = {}, {}
+        btc_dir, btc_paused, btc_mm = None, None, None
         try:
             from detection.fuel_filter import get_fuel_filter
             ff = get_fuel_filter()
             if ff:
                 mm_map = ff.get_fuel_strength_map() or {}
                 exh_map = ff.get_exhaustion_map() or {}
+                # ₿ BTCUSDT banner (session) + BTC ММ strength — same for every
+                # sample this tick, recorded so the trade chart can overlay them.
+                sess = ff.get_btc_session() or {}
+                btc_dir = sess.get('dir')
+                btc_paused = bool(sess.get('paused'))
+                btc_mm = (mm_map.get('BTCUSDT') or {}).get('now')
         except Exception:
             pass
         with self._lock:
@@ -768,6 +775,10 @@ class TradeManager:
                     'mm': mm.get('now'),
                     'mm_dir': mm.get('dir'),
                     'exh': exh_map.get(sym),
+                    # ₿ BTCUSDT banner state + BTC ММ at this moment.
+                    'btc_dir': btc_dir,
+                    'btc_paused': btc_paused,
+                    'btc_mm': btc_mm,
                 }
                 with self._lock:
                     hist = pos.setdefault('history', [])
