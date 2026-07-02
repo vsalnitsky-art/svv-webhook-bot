@@ -1318,6 +1318,28 @@ class FuelFilterDaemon:
             managed = list(self._fuel_managed.keys())
             pending = list(self._pending.keys())
 
+        # Prune STALE managed markers (TM no longer holds the position) EVERY
+        # tick — independent of the manage_open_positions toggle. Without this,
+        # when management is OFF the markers accumulate forever and the
+        # "відкрито" counter drifts (e.g. 34 while 0 positions are actually open).
+        _pruned = False
+        _tm_ready = bool(self._get_tm() if self._get_tm else None)
+        if _tm_ready:   # skip while TM is transiently unavailable (boot)
+            for sym in managed:
+                tr = self._fuel_managed.get(sym)
+                if not tr:
+                    continue
+                is_real = tr.get('mode') == 'real'
+                if not self._tm_has_position(sym, is_real):
+                    with self._lock:
+                        self._fuel_managed.pop(sym, None)
+                        self._timers.pop(sym, None)
+                    _pruned = True
+        if _pruned:
+            with self._lock:
+                managed = list(self._fuel_managed.keys())
+            self._persist_state()
+
         # NEW STRATEGY: fuel is computed ONLY for the few relevant coins —
         # open FF positions + the waiting base (_pending) + funding-scanner
         # coins + BTC. No more whole-WATCHLIST scan.
