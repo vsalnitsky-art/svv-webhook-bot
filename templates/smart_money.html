@@ -7778,7 +7778,16 @@ function histSymCell(c, isShadow) {
     const ca = JSON.stringify(c.closed_at);
     return `<b style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px"`
         + ` title="Показати графік хронології (${c.hist_len} точок)"`
-        + ` onclick="showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">${c.symbol} 📈</b>`;
+        + ` onclick="showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">📈 ${c.symbol}</b>`;
+}
+
+// Open-position symbol cell — same 📈 chart link (icon on the LEFT), fetches
+// the live/in-progress history (closed_at = null → endpoint uses open pos).
+function histSymOpen(p, isShadow) {
+    if (!(p.hist_len > 0)) return `<b class="tm-sym-name">${p.symbol}</b>`;
+    return `<b class="tm-sym-name" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px"`
+        + ` title="Показати графік хронології (${p.hist_len} точок)"`
+        + ` onclick="showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈 ${p.symbol}</b>`;
 }
 
 function ensureHistModal() {
@@ -7861,7 +7870,13 @@ function renderTradeHistoryChart(h, meta) {
     }
 
     const _fmtT = (typeof fmtTimeJS === 'function') ? fmtTimeJS : (t => new Date(t * 1000).toLocaleString());
-    const dur = tN - t0;
+    // Duration from the actual OPEN → CLOSE (NOT the queue / history span).
+    // Open trade → up to the moment of viewing (now_ts).
+    const isOpen = (meta.open === true) || (meta.closed_at == null && meta.exit_price == null);
+    const oa = (meta.opened_at != null) ? meta.opened_at : t0;
+    const ca = (meta.closed_at != null) ? meta.closed_at
+             : (meta.now_ts != null ? meta.now_ts : tN);
+    const dur = Math.max(0, ca - oa);
     const durTxt = dur < 3600 ? `${Math.round(dur / 60)}хв` : `${(dur / 3600).toFixed(1)}год`;
     const pnlLast = h[h.length - 1].pnl;
     const pnlCol = (pnlLast >= 0) ? '#22c55e' : '#ef4444';
@@ -7881,23 +7896,27 @@ function renderTradeHistoryChart(h, meta) {
         + (meta.pnl_pct != null ? `<span>PnL: <b style="color:${pnlCol}">${meta.pnl_pct >= 0 ? '+' : ''}${meta.pnl_pct}%</b></span>` : '')
         + peakSpan
         + `<span>Тривалість: <b>${durTxt}</b></span>`
-        + `<span>Точок: <b>${h.length}</b></span>`
-        + `<span style="color:#8b93a7">${_fmtT(t0)} → ${_fmtT(tN)}</span></div>`;
+        + `<span>Відкрито: <b>${_fmtT(oa)}</b></span>`
+        + (isOpen ? `<span>Перегляд: <b>${_fmtT(ca)}</b></span>` : `<span>Закрито: <b>${_fmtT(ca)}</b></span>`)
+        + `<span>Точок: <b>${h.length}</b></span></div>`;
 
-    // 🧠 Decision Center — what it showed at ENTRY (from stamped entry_score).
-    let dcLine = '';
-    const ed = meta.entry_decision;
-    if (ed && (ed.headline || ed.verdict)) {
-        const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
-        const V_COL = { good: '#22c55e', marginal: '#fbbf24', poor: '#f87171' };
-        const vlabel = V_UA[ed.verdict] || (ed.verdict ? String(ed.verdict).toUpperCase() : '—');
-        const vcol = V_COL[ed.verdict] || '#cbd5e1';
-        dcLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">`
-            + `🧠 Decision Center на вході: <b style="color:${vcol}">${vlabel}</b>`
-            + (ed.headline ? ` · <span style="color:#cbd5e1">${ed.headline}</span>` : '')
-            + (ed.recommended && ed.recommended !== 'NEUTRAL' ? ` · ${ed.recommended}` : '')
+    // 🧠 Decision Center — at ENTRY and at EXIT (or "as of now" for open trades).
+    const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
+    const V_COL = { good: '#22c55e', marginal: '#fbbf24', poor: '#f87171' };
+    function dcLineOf(dec, label) {
+        if (!dec || !(dec.headline || dec.verdict)) return '';
+        const vl = V_UA[dec.verdict] || (dec.verdict ? String(dec.verdict).toUpperCase() : '—');
+        const vc = V_COL[dec.verdict] || '#cbd5e1';
+        return `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:4px">`
+            + `🧠 ${label}: <b style="color:${vc}">${vl}</b>`
+            + (dec.headline ? ` · <span style="color:#cbd5e1">${dec.headline}</span>` : '')
+            + (dec.recommended && dec.recommended !== 'NEUTRAL' ? ` · ${dec.recommended}` : '')
             + `</div>`;
     }
+    let dcLine = dcLineOf(meta.entry_decision, 'Decision Center на вході')
+        + (isOpen ? dcLineOf(meta.decision_now, 'Decision Center зараз (перегляд)')
+                  : dcLineOf(meta.exit_decision, 'Decision Center на виході'));
+    if (dcLine) dcLine = `<div style="margin-bottom:10px">${dcLine}</div>`;
 
     // ₿ BTCUSDT banner state over time — colored strip (green=LONG, red=SHORT,
     // grey=WAIT/немає; напівпрозорий = ПАУЗА).
@@ -7997,7 +8016,7 @@ async function loadTMState() {
                 const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(1) + '%' : '—';
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
-                    <td><b class="tm-sym-name">${p.symbol}</b>${badges}</td>
+                    <td>${histSymOpen(p, false)}${badges}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>
@@ -8071,7 +8090,7 @@ async function loadTMState() {
                 const exh = (p.exhaustion != null) ? p.exhaustion.toFixed(1) + '%' : '—';
                 const exhColor = (p.exhaustion != null && p.exhaustion >= 85) ? '#f87171' : '#cbd5e1';
                 return `<tr${rowClass}>
-                    <td><b class="tm-sym-name">${p.symbol}</b>${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this paper position">MANUAL</span>' : ''}</td>
+                    <td>${histSymOpen(p, true)}${manualOn ? ' <span class="tm-manual-badge" title="Manual mode is ON for this paper position">MANUAL</span>' : ''}</td>
                     <td class="${sideClass}">${p.side}</td>
                     <td>${fmtPriceJS(p.entry_price)}</td>
                     <td>${fmtPriceJS(p.current_price)}</td>

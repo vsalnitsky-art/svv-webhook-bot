@@ -822,6 +822,7 @@ class TradeManager:
                     'pnl_pct': best.get('pnl_pct'),
                     'peak_pnl_pct': best.get('peak_pnl_pct'),
                     'entry_decision': best.get('entry_score'),
+                    'exit_decision': best.get('exit_decision'),
                     'opened_at': best.get('opened_at'),
                     'closed_at': best.get('closed_at'),
                     'history': list(best.get('history') or [])}
@@ -831,7 +832,10 @@ class TradeManager:
                     'peak_pnl_pct': self._peak_pnl(
                         symbol, op.get('pnl_pct') or 0.0, is_shadow=is_shadow),
                     'entry_decision': op.get('entry_score'),
+                    # live Decision Center as of THIS view (heavy — one call)
+                    'decision_now': self._decision_snapshot(symbol),
                     'opened_at': op.get('opened_at'),
+                    'now_ts': time.time(),
                     'history': list(op.get('history') or [])}
         return {'ok': True, 'symbol': symbol, 'history': []}
 
@@ -2326,6 +2330,7 @@ class TradeManager:
             'reason_detail': self._build_reason_detail(
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=False),
+            'exit_decision': self._decision_snapshot(symbol),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             'entry_score': pos.get('entry_score'),
@@ -2710,6 +2715,20 @@ class TradeManager:
             return None
 
     @staticmethod
+    def _decision_snapshot(symbol: str):
+        """Decision-Center snapshot dict for `symbol` right now (headline,
+        recommended, verdict…). Stamped at close (exit_decision) and computed
+        live when viewing an open trade. Heavy (compute_bias) — call ONCE per
+        close / per view, never in a loop."""
+        try:
+            from web.flask_app import compute_bias
+            from storage.db_operations import get_db
+            d = compute_bias(get_db(), symbol, None) or {}
+            return d.get('decision')
+        except Exception:
+            return None
+
+    @staticmethod
     def _mm_band_word(strength) -> str:
         """ММ strength band label (same bands as the UI): 0–10 немає,
         10–30 слабке, 30–60 помірний, 60–100 сильне."""
@@ -2813,6 +2832,7 @@ class TradeManager:
             'reason_detail': self._build_reason_detail(
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=False),
+            'exit_decision': self._decision_snapshot(symbol),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             # Carry the entry-side advisory snapshot into the closed record
@@ -3205,6 +3225,7 @@ class TradeManager:
             'reason_detail': self._build_reason_detail(
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=True),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=True),
+            'exit_decision': self._decision_snapshot(symbol),
             'opened_by': pos.get('opened_by', ''),
             'shadow': True,
             # Same as real-position close — preserve the entry snapshot for
