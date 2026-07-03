@@ -112,6 +112,10 @@ DEFAULT_SETTINGS = {
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
     # the position (manage_open_positions=True).
     'manage_close_min_mm': 0,
+    # Auto-close open trades (real + test) whose side is OPPOSITE to the
+    # committed ₿ BTCUSDT banner direction. On a session flip LONG↔SHORT the
+    # banner turns, and every conflicting open trade is closed. 0/off default.
+    'close_on_btc_flip': False,
     'direction_smoothing_min': 0,   # EMA window (min) for ММ direction; 0 = OFF (raw)
     'anomaly_hours': 10,            # fuel held longer than this → "anomaly" list
     'start_signal_minutes': 5,      # BTC ММ held ≥ this → START signal (else STOP)
@@ -868,6 +872,45 @@ class FuelFilterDaemon:
                     'paused': bool(self._btc_paused),
                     'since': float(self._btc_verdict_since or 0.0)}
 
+    def _enforce_btc_flip_close(self, settings: Dict):
+        """Close every open trade (real + test) whose side is OPPOSITE to the
+        committed ₿ banner direction. Fires on a session flip (banner turns),
+        gated by close_on_btc_flip. Skips while the session is on PAUSE (WAIT)
+        so a transient neutral doesn't flush positions."""
+        if not settings.get('close_on_btc_flip', False):
+            return
+        bdir = self._btc_verdict_dir
+        if bdir not in ('LONG', 'SHORT') or self._btc_paused:
+            return
+        tm = self._get_tm() if self._get_tm else None
+        if not tm:
+            return
+        opp = 'SHORT' if bdir == 'LONG' else 'LONG'
+        # Real positions
+        try:
+            for sym in list(getattr(tm, '_positions', {}).keys()):
+                p = (getattr(tm, '_positions', {}) or {}).get(sym)
+                if p and p.get('side') == opp:
+                    if hasattr(tm, 'manual_close') and callable(tm.manual_close):
+                        tm.manual_close(sym, reason='btc_flip')
+                        print(f"[FuelFilter] ₿-flip → closed real {opp} {sym} (banner {bdir})")
+        except Exception as e:
+            print(f"[FuelFilter] btc-flip real close: {e}")
+        # Shadow (paper) positions
+        try:
+            for sym in list(getattr(tm, '_shadow_positions', {}).keys()):
+                p = (getattr(tm, '_shadow_positions', {}) or {}).get(sym)
+                if p and p.get('side') == opp:
+                    price = None
+                    if hasattr(tm, '_get_current_price'):
+                        price = tm._get_current_price(sym)
+                    price = price or p.get('entry_price')
+                    if hasattr(tm, '_close_shadow') and callable(tm._close_shadow):
+                        tm._close_shadow(sym, price, 'btc_flip')
+                        print(f"[FuelFilter] ₿-flip → closed paper {opp} {sym} (banner {bdir})")
+        except Exception as e:
+            print(f"[FuelFilter] btc-flip shadow close: {e}")
+
     def _update_btc_verdict(self):
         """BTC ММ *session* tracker (drives the ₿ banner + START engine + queue).
 
@@ -1340,6 +1383,12 @@ class FuelFilterDaemon:
         # BTC banner direction = main-window ММ indicator (compute_bias fuel).
         self._update_btc_verdict()
         now = time.time()
+
+        # Auto-close trades that conflict with the ₿ banner (optional).
+        try:
+            self._enforce_btc_flip_close(settings)
+        except Exception as e:
+            print(f"[FuelFilter] btc-flip close error: {e}")
 
         # 💰 Funding scanner membership / rates — it has its OWN table now.
         funding_syms = self._get_funding_symbols()

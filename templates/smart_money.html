@@ -1876,6 +1876,11 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <input type="number" id="ff-manage-close-mm" min="0" max="100" step="5" style="width:80px;padding:5px 8px;border-radius:5px;border:1px solid rgba(239,68,68,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace" onchange="saveFuelFilterSettings()">
                         </div>
                         <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Закривати всі відкриті угоди (реальні + тестові), напрямок яких протилежний банеру ₿ BTCUSDT. При розвороті банера LONG↔SHORT конфліктні угоди закриваються.">
+                                <input type="checkbox" id="ff-close-btc-flip" onchange="saveFuelFilterSettings()"> ₿ Закривати проти банера
+                            </label>
+                        </div>
+                        <div>
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Відкривати угоду лише коли SCORE монети = STRONG HOLD і напрямок SCORE збігається з колонкою «Напрямок».">
                                 <input type="checkbox" id="ff-engine-stronghold" onchange="saveFuelFilterSettings()"> 💪 Лише STRONG HOLD (SCORE = напрямок)
                             </label>
@@ -7011,6 +7016,7 @@ function renderFuelFilter(d) {
     setIf('ff-use-potential', s.use_potential_exit);
     setIf('ff-manage-positions', s.manage_open_positions !== false);  // default true
     setIf('ff-manage-close-mm', String(s.manage_close_min_mm != null ? s.manage_close_min_mm : 0));
+    setIf('ff-close-btc-flip', !!s.close_on_btc_flip);
     setIf('ff-smoothing-min', s.direction_smoothing_min != null ? s.direction_smoothing_min : 0);
     const anomHrs = (s.anomaly_hours != null ? s.anomaly_hours : 10);
     setIf('ff-anomaly-hours', anomHrs);
@@ -7653,6 +7659,7 @@ async function saveFuelFilterSettings() {
     const payload = {
         manage_open_positions: _c('ff-manage-positions'),
         manage_close_min_mm: parseInt(_v('ff-manage-close-mm', '0') || '0', 10),
+        close_on_btc_flip: _c('ff-close-btc-flip'),
         direction_smoothing_min: parseInt(_v('ff-smoothing-min', '0') || '0', 10),
         start_signal_minutes: parseInt(_v('ff-start-minutes', '5') || '5', 10),
         engine_candle_tf: _v('ff-engine-candle-tf', '5m') || '5m',
@@ -7880,25 +7887,38 @@ function renderTradeHistoryChart(h, meta) {
     const durTxt = dur < 3600 ? `${Math.round(dur / 60)}хв` : `${(dur / 3600).toFixed(1)}год`;
     const pnlLast = h[h.length - 1].pnl;
     const pnlCol = (pnlLast >= 0) ? '#22c55e' : '#ef4444';
-    // Peak PnL (MFE) + give-back
+    // Peak (MFE, ↑ best) + give-back, and trough (MAE, ↓ worst) drawdown.
+    const _pnls = h.map(s => s.pnl).filter(v => v != null && isFinite(v));
+    const peakUp = (meta.peak_pnl_pct != null) ? meta.peak_pnl_pct
+                 : (_pnls.length ? Math.max(..._pnls) : null);
+    const peakDn = _pnls.length ? Math.min(..._pnls) : null;
     let peakSpan = '';
-    if (meta.peak_pnl_pct != null) {
-        const pk = meta.peak_pnl_pct;
-        const gb = (meta.pnl_pct != null) ? (pk - meta.pnl_pct) : null;
-        peakSpan = `<span>Пік: <b style="color:${pk >= 0 ? '#22c55e' : '#ef4444'}">${pk >= 0 ? '+' : ''}${pk}%</b>`
+    if (peakUp != null) {
+        const gb = (meta.pnl_pct != null) ? (peakUp - meta.pnl_pct) : null;
+        peakSpan = `<span>Пік ↑: <b style="color:${peakUp >= 0 ? '#22c55e' : '#ef4444'}">${peakUp >= 0 ? '+' : ''}${(+peakUp).toFixed(2)}%</b>`
             + ((gb != null && gb > 0.1) ? ` <span style="color:#8b93a7">(віддано ${gb.toFixed(2)}%)</span>` : '')
             + `</span>`;
     }
-    const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap">`
+    // Show the negative extreme too when the trade dipped against us.
+    let troughSpan = '';
+    if (peakDn != null && peakDn < -0.1) {
+        troughSpan = `<span>Просадка ↓: <b style="color:#ef4444">${(+peakDn).toFixed(2)}%</b></span>`;
+    }
+    const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:6px;display:flex;gap:16px;flex-wrap:wrap">`
         + `<span>Сторона: <b>${meta.side || '—'}</b></span>`
         + `<span>Вхід: <b>${fmtPriceJS(meta.entry_price)}</b></span>`
         + (meta.exit_price != null ? `<span>Вихід: <b>${fmtPriceJS(meta.exit_price)}</b></span>` : '<span><b>ще відкрита</b></span>')
         + (meta.pnl_pct != null ? `<span>PnL: <b style="color:${pnlCol}">${meta.pnl_pct >= 0 ? '+' : ''}${meta.pnl_pct}%</b></span>` : '')
-        + peakSpan
+        + peakSpan + troughSpan
         + `<span>Тривалість: <b>${durTxt}</b></span>`
-        + `<span>Відкрито: <b>${_fmtT(oa)}</b></span>`
-        + (isOpen ? `<span>Перегляд: <b>${_fmtT(ca)}</b></span>` : `<span>Закрито: <b>${_fmtT(ca)}</b></span>`)
         + `<span>Точок: <b>${h.length}</b></span></div>`;
+    // Line 2: open/close datetimes (with date).
+    const _fmtDT = t => { try { return new Date(t * 1000).toLocaleString('uk-UA'); } catch (e) { return _fmtT(t); } };
+    const info2 = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap">`
+        + `<span>Відкрито: <b style="color:#cbd5e1">${_fmtDT(oa)}</b></span>`
+        + (isOpen ? `<span>Перегляд: <b style="color:#cbd5e1">${_fmtDT(ca)}</b></span>`
+                  : `<span>Закрито: <b style="color:#cbd5e1">${_fmtDT(ca)}</b></span>`)
+        + `</div>`;
 
     // 🧠 Decision Center — at ENTRY and at EXIT (or "as of now" for open trades).
     const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
@@ -7947,7 +7967,7 @@ function renderTradeHistoryChart(h, meta) {
     ], { min: 0, max: 100, dec: 0 });
     const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4 });
 
-    return info + dcLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
+    return info + info2 + dcLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 async function loadTMState() {
