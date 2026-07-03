@@ -950,20 +950,22 @@ class FuelFilterDaemon:
         self._bias_cache[symbol] = {'ts': now, 'data': data}
         return data
 
-    def _decision_verdict(self, symbol: str):
-        """Decision-Center quality verdict for `symbol`: 'good'|'marginal'|
-        'poor' (or None). Same object the 🧠 badge shows. Cached BIAS_TTL sec
-        because the underlying compute_bias is heavy — call only from the
-        engine's final open gate, never in a per-coin loop."""
+    def _decision_verdict(self, symbol: str) -> Dict:
+        """Decision-Center snapshot for `symbol`: {'verdict': 'good'|'marginal'|
+        'poor'|None, 'recommended': 'LONG'|'SHORT'|'NEUTRAL'|None}. Same object
+        the 🧠 badge shows. Cached BIAS_TTL sec (compute_bias is heavy) — call
+        only from the engine's final open gate, never in a per-coin loop."""
         now = time.time()
         c = self._decision_cache.get(symbol)
         if c and (now - c.get('ts', 0)) < BIAS_TTL:
-            return c.get('v')
-        v = None
+            return c.get('v') or {}
+        v = {}
         try:
             from web.flask_app import compute_bias
             d = compute_bias(self._db, symbol, None) or {}
-            v = (d.get('decision') or {}).get('verdict')
+            dec = d.get('decision') or {}
+            v = {'verdict': dec.get('verdict'),
+                 'recommended': dec.get('recommended')}
         except Exception as e:
             print(f"[FuelFilter] decision verdict err {symbol}: {e}")
         self._decision_cache[symbol] = {'ts': now, 'v': v}
@@ -2150,11 +2152,15 @@ class FuelFilterDaemon:
             # START event (never per-coin-per-tick). 'any' skips it entirely.
             _min_dec = str(s.get('engine_min_decision', 'any') or 'any').lower()
             if _min_dec in ('marginal', 'good'):
-                _vd = self._decision_verdict(sym)
+                _dc = self._decision_verdict(sym)
+                _vd = _dc.get('verdict')
+                _rec = _dc.get('recommended')
                 _rank = {'poor': 0, 'marginal': 1, 'good': 2}
                 _need = 2 if _min_dec == 'good' else 1
-                if _rank.get(_vd, 0) < _need:
-                    trace.append(f"{sym}:рішення={_vd or '—'}<{_min_dec}")
+                # BOTH must hold: quality tier ≥ selected AND Decision Center
+                # recommends the SAME direction as the candidate.
+                if _rank.get(_vd, 0) < _need or _rec != d:
+                    trace.append(f"{sym}:рішення={_vd or '—'}/{_rec or '—'}≠{_min_dec}·{d}")
                     continue
             try:
                 # _open routes through TM (bypass gates, like Alerts but ignoring

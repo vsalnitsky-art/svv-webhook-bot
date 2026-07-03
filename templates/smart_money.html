@@ -1900,8 +1900,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна якість вердикту 🧠 Decision Center, щоб двигун відкрив угоду. Оцінюється лише для монети, що вже пройшла всі інші фільтри (не навантажує систему).">Мін. якість рішення</label>
                             <select id="ff-min-decision" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="any">Будь-яке</option>
-                                <option value="marginal">МЕЖОВИЙ і кращий</option>
-                                <option value="good">Тільки ДОБРИЙ</option>
+                                <option value="marginal">СЕРЕДНІЙ/СИЛЬНИЙ</option>
+                                <option value="good">Тільки СИЛЬНИЙ</option>
                             </select>
                         </div>
                         <div>
@@ -5271,7 +5271,7 @@ function renderDecision(decision) {
     
     // Verdict badge (good/marginal/poor) — text in Ukrainian, class kept raw
     // for the colour styling.
-    const V_UA = { good: 'ДОБРИЙ', marginal: 'МЕЖОВИЙ', poor: 'СЛАБКИЙ' };
+    const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
     const vBadge = document.getElementById('sm-decision-verdict');
     vBadge.textContent = V_UA[verdict] || String(verdict).toUpperCase();
     vBadge.className = 'sm-decision-verdict ' + verdict;
@@ -7880,7 +7880,7 @@ function renderTradeHistoryChart(h, meta) {
     let dcLine = '';
     const ed = meta.entry_decision;
     if (ed && (ed.headline || ed.verdict)) {
-        const V_UA = { good: 'ДОБРИЙ', marginal: 'МЕЖОВИЙ', poor: 'СЛАБКИЙ' };
+        const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
         const V_COL = { good: '#22c55e', marginal: '#fbbf24', poor: '#f87171' };
         const vlabel = V_UA[ed.verdict] || (ed.verdict ? String(ed.verdict).toUpperCase() : '—');
         const vcol = V_COL[ed.verdict] || '#cbd5e1';
