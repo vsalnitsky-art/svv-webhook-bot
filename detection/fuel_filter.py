@@ -132,6 +132,10 @@ DEFAULT_SETTINGS = {
     'engine_min_mm_strength': 0,
     'engine_min_mm_strength_long': 0,
     'engine_min_mm_strength_short': 0,
+    # Min Decision-Center verdict to OPEN: 'any' | 'marginal' | 'good'.
+    # 'marginal' = МЕЖОВИЙ або кращий; 'good' = лише ДОБРИЙ. Оцінюється
+    # лениво лише для кандидата, що вже пройшов усі інші гейти.
+    'engine_min_decision': 'any',
     'start_signal_tg_alerts': False,      # Telegram alert on BTC START/STOP change
     'funding_duration_minutes': 0,        # separate show-threshold for 💰 funding coins
     'funding_tg_alerts': False,           # Telegram alert when a funding coin enters the table
@@ -178,6 +182,9 @@ class FuelFilterDaemon:
         # verdict and panel-status so we call the (heavy) shared bias
         # computation at most once per symbol per BIAS_TTL window.
         self._bias_cache: Dict[str, Dict] = {}
+        # Decision-Center verdict cache (symbol → {ts, v}); used by the engine's
+        # final open gate (engine_min_decision).
+        self._decision_cache: Dict[str, Dict] = {}
         # Aggregate scan stats for the panel header: how many scan-targets were
         # scanned, watchlist size, and average move exhaustion (LONG/SHORT).
         # Recomputed each tick.
@@ -942,6 +949,25 @@ class FuelFilterDaemon:
         data = compute_bias_for_ff(self._db, symbol) or {}
         self._bias_cache[symbol] = {'ts': now, 'data': data}
         return data
+
+    def _decision_verdict(self, symbol: str):
+        """Decision-Center quality verdict for `symbol`: 'good'|'marginal'|
+        'poor' (or None). Same object the 🧠 badge shows. Cached BIAS_TTL sec
+        because the underlying compute_bias is heavy — call only from the
+        engine's final open gate, never in a per-coin loop."""
+        now = time.time()
+        c = self._decision_cache.get(symbol)
+        if c and (now - c.get('ts', 0)) < BIAS_TTL:
+            return c.get('v')
+        v = None
+        try:
+            from web.flask_app import compute_bias
+            d = compute_bias(self._db, symbol, None) or {}
+            v = (d.get('decision') or {}).get('verdict')
+        except Exception as e:
+            print(f"[FuelFilter] decision verdict err {symbol}: {e}")
+        self._decision_cache[symbol] = {'ts': now, 'v': v}
+        return v
 
     def _is_wait_verdict(self, symbol: str) -> bool:
         """Check if the given symbol has a WAIT verdict (unclear direction).
@@ -2117,6 +2143,18 @@ class FuelFilterDaemon:
                 sc = self._timer_score_for(sym, d, held, exh, dur, tf)
                 if sc.get('label') != 'STRONG HOLD' or sc.get('dir') != d:
                     trace.append(f"{sym}:score={sc.get('label')}/{sc.get('dir')}≠STRONG·{d}")
+                    continue
+            # Decision-Center quality gate (LAST — heaviest). Only evaluated for
+            # a candidate that already passed every cheap gate and is about to
+            # open, so the expensive compute_bias runs at most a few times per
+            # START event (never per-coin-per-tick). 'any' skips it entirely.
+            _min_dec = str(s.get('engine_min_decision', 'any') or 'any').lower()
+            if _min_dec in ('marginal', 'good'):
+                _vd = self._decision_verdict(sym)
+                _rank = {'poor': 0, 'marginal': 1, 'good': 2}
+                _need = 2 if _min_dec == 'good' else 1
+                if _rank.get(_vd, 0) < _need:
+                    trace.append(f"{sym}:рішення={_vd or '—'}<{_min_dec}")
                     continue
             try:
                 # _open routes through TM (bypass gates, like Alerts but ignoring

@@ -1897,6 +1897,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             </select>
                         </div>
                         <div>
+                            <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Мінімальна якість вердикту 🧠 Decision Center, щоб двигун відкрив угоду. Оцінюється лише для монети, що вже пройшла всі інші фільтри (не навантажує систему).">Мін. якість рішення</label>
+                            <select id="ff-min-decision" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(168,85,247,0.35);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
+                                <option value="any">Будь-яке</option>
+                                <option value="marginal">МЕЖОВИЙ і кращий</option>
+                                <option value="good">Тільки ДОБРИЙ</option>
+                            </select>
+                        </div>
+                        <div>
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Таймфрейм свічок для імпульсу SCORE">TF свічки</label>
                             <select id="ff-engine-candle-tf" onchange="saveFuelFilterSettings()" style="padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                                 <option value="1m">1m</option>
@@ -5261,9 +5269,11 @@ function renderDecision(decision) {
     headline.textContent = decision.headline;
     headline.className = 'sm-decision-headline ' + recommended.toLowerCase();
     
-    // Verdict badge (good/marginal/poor)
+    // Verdict badge (good/marginal/poor) — text in Ukrainian, class kept raw
+    // for the colour styling.
+    const V_UA = { good: 'ДОБРИЙ', marginal: 'МЕЖОВИЙ', poor: 'СЛАБКИЙ' };
     const vBadge = document.getElementById('sm-decision-verdict');
-    vBadge.textContent = verdict;
+    vBadge.textContent = V_UA[verdict] || String(verdict).toUpperCase();
     vBadge.className = 'sm-decision-verdict ' + verdict;
     
     // Icon — brain for normal, scale for neutral
@@ -7010,6 +7020,7 @@ function renderFuelFilter(d) {
     setIf('ff-engine-stronghold', !!s.engine_require_strong_hold);
     setIf('ff-min-mm-long', String(s.engine_min_mm_strength_long != null ? s.engine_min_mm_strength_long : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
     setIf('ff-min-mm-short', String(s.engine_min_mm_strength_short != null ? s.engine_min_mm_strength_short : (s.engine_min_mm_strength != null ? s.engine_min_mm_strength : 0)));
+    setIf('ff-min-decision', s.engine_min_decision || 'any');
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
@@ -7641,6 +7652,7 @@ async function saveFuelFilterSettings() {
         engine_require_strong_hold: _c('ff-engine-stronghold'),
         engine_min_mm_strength_long: parseInt(_v('ff-min-mm-long', '0') || '0', 10),
         engine_min_mm_strength_short: parseInt(_v('ff-min-mm-short', '0') || '0', 10),
+        engine_min_decision: _v('ff-min-decision', 'any') || 'any',
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
