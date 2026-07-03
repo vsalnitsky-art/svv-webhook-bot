@@ -318,6 +318,30 @@
             💡 Щоб база <b>не росла</b> постійно: періодично тисни «🗄️ Службові → Старші 3 днів» + «VACUUM FULL»,
             або взагалі вимкни модуль <b>Liquidation Map</b> на сторінці Smart Money (він головний писар цих даних).
         </p>
+
+        <!-- Auto-clean config -->
+        <div style="margin-top:16px;padding:15px;background:rgba(34,197,94,0.05);border:1px solid rgba(34,197,94,0.3);border-radius:6px">
+            <h3 style="font-size:0.9rem;color:#86efac;margin:0 0 10px 0">🤖 Автоматична очистка</h3>
+            <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;font-size:0.8rem;color:#cbd5e1">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" id="ac-enabled" onchange="saveAutoclean()"> Увімкнути
+                </label>
+                <label style="display:flex;align-items:center;gap:6px">
+                    Кожні <input type="number" id="ac-interval" min="1" max="90" step="1" style="width:64px" onchange="saveAutoclean()"> днів
+                </label>
+                <label style="display:flex;align-items:center;gap:6px">
+                    Залишати останні <input type="number" id="ac-keep" min="1" max="90" step="1" style="width:64px" onchange="saveAutoclean()"> днів
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" id="ac-vacuum" onchange="saveAutoclean()"> VACUUM FULL після очистки
+                </label>
+                <span id="ac-last" style="color:#8b93a7"></span>
+            </div>
+            <p style="font-size:0.72rem;color:#7a8395;margin:10px 0 0 0">
+                Автоматично видаляє <b>лише службові дані</b> старші за «залишати останні N днів» кожні N днів,
+                і (за бажанням) виконує VACUUM FULL. Дані стратегії (угоди/статистика) не чіпаються.
+            </p>
+        </div>
     </div>
 
     <!-- Foreign Tables (Priority!) -->
@@ -623,8 +647,43 @@ async function runVacuumFull() {
     }
 }
 
+// ── Auto-clean config ──
+async function loadAutoclean() {
+    try {
+        const d = await (await fetch('/api/db/autoclean')).json();
+        if (!d.ok) return;
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+        const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+        chk('ac-enabled', d.enabled);
+        set('ac-interval', d.interval_days);
+        set('ac-keep', d.keep_days);
+        chk('ac-vacuum', d.vacuum);
+        const lastEl = document.getElementById('ac-last');
+        if (lastEl) lastEl.textContent = d.last_ts
+            ? ('остання: ' + new Date(d.last_ts * 1000).toLocaleString())
+            : 'ще не запускалась';
+    } catch (e) { /* ignore */ }
+}
+
+async function saveAutoclean() {
+    const body = {
+        enabled: document.getElementById('ac-enabled').checked,
+        interval_days: parseInt(document.getElementById('ac-interval').value, 10) || 7,
+        keep_days: parseInt(document.getElementById('ac-keep').value, 10) || 3,
+        vacuum: document.getElementById('ac-vacuum').checked,
+    };
+    try {
+        await fetch('/api/db/autoclean', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        loadAutoclean();
+    } catch (e) { alert('Не вдалось зберегти автоочистку: ' + e); }
+}
+
 // Load on page load
 window.addEventListener('DOMContentLoaded', loadDBAnalysis);
+window.addEventListener('DOMContentLoaded', loadAutoclean);
 </script>
 
 {% endblock %}

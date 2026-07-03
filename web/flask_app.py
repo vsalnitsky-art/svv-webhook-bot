@@ -17,6 +17,92 @@ from storage.db_operations import get_db
 from storage.db_models import init_db
 
 
+# ── СЛУЖБОВІ таблиці (логи / снапшоти / liquidation & heatmap кеші) — те, що
+# роздуває БД. (col, kind): 'dt' DateTime | 'sec' epoch-сек | 'ms' epoch-мс.
+_SERVICE_TABLES_TIME = {
+    'sob_event_logs': ('timestamp', 'dt'),
+    'sob_liquidation_buckets': ('last_updated_ts', 'sec'),
+    'sob_liquidation_oi_snapshots': ('ts', 'sec'),
+    'sob_liquidation_events': ('ts', 'sec'),
+    'sob_liq_heatmap_profiles': ('ts', 'dt'),
+    'sob_top100_ob_snapshots': ('created_at_t', 'ms'),
+    'sob_top100_ob_history': ('created_at', 'dt'),
+    'volumized_radar_snapshots': ('scan_time', 'dt'),
+}
+
+
+def _db_service_cleanup(keep_days=None, wipe_all=False):
+    """Delete СЛУЖБОВІ rows older than keep_days (or ALL if wipe_all).
+    Returns number of deleted rows. Never touches strategy DATA tables."""
+    from storage.db_models import engine
+    from sqlalchemy import text
+    deleted = 0
+    try:
+        kd = max(0, min(365, int(keep_days if keep_days is not None else 3)))
+    except (TypeError, ValueError):
+        kd = 3
+    with engine.connect() as conn:
+        for tbl, (col, kind) in _SERVICE_TABLES_TIME.items():
+            try:
+                if wipe_all:
+                    r = conn.execute(text(f"DELETE FROM {tbl}"))
+                elif kind == 'dt':
+                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < NOW() - INTERVAL '{kd} days'"))
+                elif kind == 'sec':
+                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < EXTRACT(EPOCH FROM NOW()) - {kd}*86400"))
+                elif kind == 'ms':
+                    r = conn.execute(text(f"DELETE FROM {tbl} WHERE {col} < (EXTRACT(EPOCH FROM NOW()) - {kd}*86400)*1000"))
+                else:
+                    continue
+                deleted += r.rowcount or 0
+            except Exception as _e:
+                print(f"[DB cleanup] {tbl} skip: {_e}")
+        conn.commit()
+    return deleted
+
+
+def _db_vacuum_full():
+    """VACUUM FULL ANALYZE — reclaims disk to the OS. Locks DB briefly."""
+    from storage.db_models import engine
+    from sqlalchemy import create_engine, text
+    ve = create_engine(engine.url, isolation_level='AUTOCOMMIT')
+    try:
+        with ve.connect() as c:
+            c.execute(text("VACUUM FULL ANALYZE"))
+    finally:
+        ve.dispose()
+
+
+def _db_autoclean_loop():
+    """Periodic auto-cleanup of СЛУЖБОВІ data + optional VACUUM FULL, gated by
+    DB settings. Checks hourly; runs when interval elapsed since last run."""
+    import time as _t
+    _t.sleep(150)   # let the app finish booting
+    while True:
+        try:
+            db = get_db()
+            enabled = str(db.get_setting('db_autoclean_enabled', 'false')).lower() in ('true', '1')
+            if enabled:
+                interval_days = float(db.get_setting('db_autoclean_interval_days', 7) or 7)
+                keep_days = int(db.get_setting('db_autoclean_keep_days', 3) or 3)
+                do_vac = str(db.get_setting('db_autoclean_vacuum', 'true')).lower() in ('true', '1')
+                last = float(db.get_setting('db_autoclean_last_ts', 0) or 0)
+                now = _t.time()
+                if (now - last) >= interval_days * 86400:
+                    n = _db_service_cleanup(keep_days=keep_days)
+                    print(f"[DB autoclean] removed {n} service rows (keep {keep_days}d)")
+                    if do_vac:
+                        try:
+                            _db_vacuum_full()
+                            print("[DB autoclean] VACUUM FULL done")
+                        except Exception as _e:
+                            print(f"[DB autoclean] vacuum error: {_e}")
+                    db.set_setting('db_autoclean_last_ts', str(now))
+        except Exception as e:
+            print(f"[DB autoclean] loop error: {e}")
+        _t.sleep(3600)   # re-check hourly
+
+
 def create_app():
     """Create and configure Flask application"""
     app = Flask(
@@ -103,7 +189,7 @@ def create_app():
     # off on the first request (see _kick_bootstrap below) — NOT inline — so the
     # worker answers immediately and Render's port probe never blocks on the
     # ~12 daemons booting.
-    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False, 'apihealth': False}
+    _auto_started = {'ctr': False, 'liq': False, 'funding': False, 'volflow': False, 'coinflow': False, 'exitmon': False, 'whales': False, 'smc': False, 'tm': False, 'top100ob': False, 'liqmap': False, 'apihealth': False, 'dbautoclean': False}
 
     def _bootstrap_daemons():
         # Volume Flow — always start
@@ -130,6 +216,17 @@ def create_app():
                 init_api_health_monitor().start()
             except Exception as e:
                 print(f"[APP] Failed to start API Health monitor: {e}")
+
+        # DB auto-clean loop — always start (no-op unless enabled in settings)
+        if not _auto_started['dbautoclean']:
+            _auto_started['dbautoclean'] = True
+            try:
+                import threading as _th
+                _th.Thread(target=_db_autoclean_loop, daemon=True,
+                           name='db-autoclean').start()
+                print("[APP] DB auto-clean loop started")
+            except Exception as e:
+                print(f"[APP] Failed to start DB auto-clean loop: {e}")
         
         # Liquidity Map
         if not _auto_started['liq']:
@@ -3130,45 +3227,14 @@ def register_api_routes(app):
                     conn.commit()
 
                 elif action in ('service_old', 'service_all'):
-                    # СЛУЖБОВІ дані (логи / снапшоти / liquidation & heatmap
-                    # кеші) — саме вони роздувають БД. service_old видаляє
-                    # рядки старші за N днів; service_all очищає повністю.
-                    # (col, kind): kind = 'dt' DateTime | 'sec' epoch-сек |
-                    # 'ms' epoch-мс (BigInteger).
-                    SERVICE_TABLES_TIME = {
-                        'sob_event_logs': ('timestamp', 'dt'),
-                        'sob_liquidation_buckets': ('last_updated_ts', 'sec'),
-                        'sob_liquidation_oi_snapshots': ('ts', 'sec'),
-                        'sob_liquidation_events': ('ts', 'sec'),
-                        'sob_liq_heatmap_profiles': ('ts', 'dt'),
-                        'sob_top100_ob_snapshots': ('created_at_t', 'ms'),
-                        'sob_top100_ob_history': ('created_at', 'dt'),
-                        'volumized_radar_snapshots': ('scan_time', 'dt'),
-                    }
+                    # СЛУЖБОВІ дані (логи/снапшоти/liquidation/heatmap) — головне
+                    # джерело росту БД. Логіка спільна з авто-очисткою.
                     try:
                         days = int(data.get('days', 3) or 3)
                     except (TypeError, ValueError):
                         days = 3
-                    days = max(0, min(365, days))
-                    for tbl, (col, kind) in SERVICE_TABLES_TIME.items():
-                        try:
-                            if action == 'service_all':
-                                result = conn.execute(text(f"DELETE FROM {tbl}"))
-                            elif kind == 'dt':
-                                result = conn.execute(text(
-                                    f"DELETE FROM {tbl} WHERE {col} < NOW() - INTERVAL '{days} days'"))
-                            elif kind == 'sec':
-                                result = conn.execute(text(
-                                    f"DELETE FROM {tbl} WHERE {col} < EXTRACT(EPOCH FROM NOW()) - {days}*86400"))
-                            elif kind == 'ms':
-                                result = conn.execute(text(
-                                    f"DELETE FROM {tbl} WHERE {col} < (EXTRACT(EPOCH FROM NOW()) - {days}*86400)*1000"))
-                            else:
-                                continue
-                            deleted_rows += result.rowcount or 0
-                        except Exception as _e:
-                            print(f"[DB cleanup] {tbl} skip: {_e}")
-                    conn.commit()
+                    deleted_rows += _db_service_cleanup(
+                        keep_days=days, wipe_all=(action == 'service_all'))
 
                 elif action == 'vacuum_full':
                     # VACUUM FULL to actually reclaim disk space and return it to OS
@@ -3200,6 +3266,41 @@ def register_api_routes(app):
 
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/db/autoclean', methods=['GET', 'POST'])
+    def api_db_autoclean():
+        """Get/set the automatic service-data cleanup config."""
+        db = get_db()
+        if request.method == 'POST':
+            body = request.get_json() or {}
+            if 'enabled' in body:
+                db.set_setting('db_autoclean_enabled', 'true' if body['enabled'] else 'false')
+            if 'interval_days' in body:
+                try:
+                    db.set_setting('db_autoclean_interval_days',
+                                   str(max(1, min(90, int(body['interval_days'])))))
+                except (TypeError, ValueError):
+                    pass
+            if 'keep_days' in body:
+                try:
+                    db.set_setting('db_autoclean_keep_days',
+                                   str(max(1, min(90, int(body['keep_days'])))))
+                except (TypeError, ValueError):
+                    pass
+            if 'vacuum' in body:
+                db.set_setting('db_autoclean_vacuum', 'true' if body['vacuum'] else 'false')
+        try:
+            last = float(db.get_setting('db_autoclean_last_ts', 0) or 0)
+        except (TypeError, ValueError):
+            last = 0
+        return jsonify({
+            'ok': True,
+            'enabled': str(db.get_setting('db_autoclean_enabled', 'false')).lower() in ('true', '1'),
+            'interval_days': int(db.get_setting('db_autoclean_interval_days', 7) or 7),
+            'keep_days': int(db.get_setting('db_autoclean_keep_days', 3) or 3),
+            'vacuum': str(db.get_setting('db_autoclean_vacuum', 'true')).lower() in ('true', '1'),
+            'last_ts': last,
+        })
 
     @app.route('/api/sm/data-source')
     def api_sm_data_source():
