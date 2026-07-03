@@ -1994,6 +1994,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label style="display:block;font-size:0.66rem;color:#8b93a7;margin-bottom:3px" title="Гістерезис: монета «зникає» лише коли сила ММ впаде на стільки % НИЖЧЕ порога входу. Прибирає тремтіння на межі. 0 = вимкнено.">Гістерезис ММ, %</label>
                             <input type="number" id="ff-funding-hyst" min="0" max="50" step="5" onchange="saveFuelFilterSettings()" style="width:90px;padding:5px 8px;border-radius:5px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25);color:#e5e7eb;font-family:monospace">
                         </div>
+                        <div style="flex-basis:100%;height:0"></div>
+                        <div>
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#cbd5e1;cursor:pointer" title="Режим сесій по кожній монеті (як банер ₿): напрямок ММ фіксується в сесію; WAIT = ПАУЗА (монета лишається, без повторних оповіщень), протилежний фліп = НОВА сесія (одне оповіщення). Найсильніший антиспам. Коли увімкнено — кулдаун/гістерезис вище не потрібні.">
+                                <input type="checkbox" id="ff-funding-session" onchange="saveFuelFilterSettings()"> 🔄 Режим сесій по монеті (як ₿ банер)
+                            </label>
+                        </div>
                     </div>
                     <!-- 📨 Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ -->
                     <div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06)">
@@ -7024,6 +7030,7 @@ function renderFuelFilter(d) {
     setIf('ff-funding-min-mm', String(s.funding_min_mm_strength != null ? s.funding_min_mm_strength : 0));
     setIf('ff-funding-cooldown', String(s.funding_notify_cooldown_min != null ? s.funding_notify_cooldown_min : 30));
     setIf('ff-funding-hyst', String(s.funding_mm_hysteresis != null ? s.funding_mm_hysteresis : 10));
+    setIf('ff-funding-session', !!s.funding_session_mode);
     setIf('ff-funding-duration', s.funding_duration_minutes != null ? s.funding_duration_minutes : 0);
     setIf('ff-tg-entry', !!s.ff_tg_on_entry);
     setIf('ff-tg-exit', !!s.ff_tg_on_exit);
@@ -7192,7 +7199,7 @@ function renderFuelFilter(d) {
                 return `<tr style="background:rgba(16,185,129,0.06)">
                     <td style="font-weight:600"><span title="З 💰 Funding Rate Scanner" style="user-select:none;-webkit-user-select:none;color:#34d399;margin-right:4px;font-size:0.7rem">💰</span><span>${a.symbol}</span></td>
                     <td>${dirHtml}</td>
-                    <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}</td>
+                    <td style="font-size:0.72rem">${ffFuelCell(a.mm, a.mm_str, a.mm_str_prev)}${a.paused ? ' <span title="Сесія на паузі (WAIT) — тримається за напрямком" style="color:#fbbf24;font-weight:700">⏸</span>' : ''}</td>
                     <td style="font-size:0.78rem;color:#cbd5e1;font-weight:600">${heldCell}</td>
                     <td style="min-width:160px">${progHtml}</td>
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}</td>
@@ -7656,6 +7663,7 @@ async function saveFuelFilterSettings() {
         funding_min_mm_strength: parseInt(_v('ff-funding-min-mm', '0') || '0', 10),
         funding_notify_cooldown_min: parseInt(_v('ff-funding-cooldown', '30') || '30', 10),
         funding_mm_hysteresis: parseInt(_v('ff-funding-hyst', '10') || '10', 10),
+        funding_session_mode: _c('ff-funding-session'),
         ff_tg_on_entry: _c('ff-tg-entry'),
         ff_tg_on_exit: _c('ff-tg-exit'),
         ff_tg_entry_template: _v('ff-tg-entry-tpl', ''),

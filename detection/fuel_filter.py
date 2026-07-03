@@ -148,6 +148,11 @@ DEFAULT_SETTINGS = {
     #  порога входу (тремтіння рівно на межі не робить churn).
     'funding_notify_cooldown_min': 30,
     'funding_mm_hysteresis': 10,
+    # Optional per-coin SESSION mode (like the ₿ banner). When ON, a funding
+    # coin's ММ direction commits into a session: WAIT = ПАУЗА (keeps the coin,
+    # no re-announce), opposite flip = NEW session (single re-announce). Kills
+    # spam far harder than cooldown/hysteresis. Off = classic behaviour.
+    'funding_session_mode': False,
     # ── Telegram про 💰 funding-монети: поява/зникнення в таблиці ММ ──
     # Replaces the old funding alert. Fires when a funding coin APPEARS
     # (ff_tg_on_entry) / DISAPPEARS (ff_tg_on_exit) from the 💰 ММ table.
@@ -1536,6 +1541,7 @@ class FuelFilterDaemon:
             except (TypeError, ValueError):
                 _cool_sec = 0
             _keep_mm = max(0, fmin_mm - _hyst)   # lower bar to STAY in table
+            _sess_mode = bool(settings.get('funding_session_mode', False))
             # Evaluate BOTH coins currently in the funding scanner AND coins
             # already in the 💰 ММ table. A coin ENTERS only from the scanner,
             # but once in, it STAYS as long as it has fuel and meets the ММ
@@ -1561,6 +1567,70 @@ class FuelFilterDaemon:
                 # Directional AND strong enough → in table; else treated as no-ММ.
                 _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0 if fuel else 0.0
                 _mm = int(round(_strength))
+
+                # ── SESSION MODE (optional, like the ₿ banner) ──────────────
+                if _sess_mode:
+                    _dirl = status in ('LONG', 'SHORT')
+                    if a is None:
+                        # start a NEW session only from the scanner, directional,
+                        # and above the strength filter.
+                        if in_scanner and _dirl and _strength >= fmin_mm:
+                            self._anomalies[sym] = {
+                                'symbol': sym, 'dir': status, 'started_at': now,
+                                'start_price': mark, 'holding': True, 'sess_paused': False,
+                                'last_price': mark, 'last_held_sec': 0,
+                                'funding': True, 'rate': rate, 'prev_rate': rate,
+                                'next_funding': nf, 'entry_threshold': thr,
+                                'vol24h': vol, 'mm_str': _mm,
+                            }
+                            self._notify_funding(notifier, sym, status, mark, btc_line,
+                                                 settings, now, entered=True, strength=_mm)
+                            self._funding_notify_at[sym] = now
+                        continue
+                    if _dirl and status != a.get('dir'):
+                        # opposite flip → NEW session (the ONLY re-announce case)
+                        a.update({'dir': status, 'started_at': now, 'holding': True,
+                                  'sess_paused': False, 'rate': rate, 'next_funding': nf,
+                                  'mm_str': _mm, 'funding': True})
+                        if mark:
+                            a['last_price'] = mark
+                        if vol is not None:
+                            a['vol24h'] = vol
+                        self._notify_funding(notifier, sym, status, mark, btc_line,
+                                             settings, now, entered=True, strength=_mm)
+                        self._funding_notify_at[sym] = now
+                    elif _dirl:
+                        # same direction → hold / resume, NO announce
+                        a.update({'holding': True, 'sess_paused': False, 'dir': status,
+                                  'last_held_sec': int(now - a.get('started_at', now)),
+                                  'prev_rate': a.get('rate'), 'rate': rate,
+                                  'next_funding': nf, 'mm_str': _mm, 'funding': True})
+                        if mark:
+                            a['last_price'] = mark
+                        if vol is not None:
+                            a['vol24h'] = vol
+                    elif in_scanner:
+                        # WAIT while still in the funding scanner → PAUSE (keep,
+                        # no announce) — the session holds its direction.
+                        a.update({'holding': True, 'sess_paused': True,
+                                  'rate': rate, 'next_funding': nf,
+                                  'mm_str': _mm, 'funding': True})
+                        if mark:
+                            a['last_price'] = mark
+                        if vol is not None:
+                            a['vol24h'] = vol
+                    else:
+                        # WAIT and gone from the scanner → session finished.
+                        if a.get('holding'):
+                            self._notify_funding(notifier, sym, a.get('dir'),
+                                                 mark or a.get('last_price'), btc_line,
+                                                 settings, now, entered=False,
+                                                 strength=_mm, reason='сесію завершено')
+                        self._anomalies.pop(sym, None)
+                        self._funding_notify_at.pop(sym, None)
+                    continue
+                # ── end SESSION MODE ────────────────────────────────────────
+
                 _was_holding = bool(a and a.get('holding'))
                 # Enter needs full threshold; STAY only needs the (lower) keep
                 # threshold — that hysteresis stops boundary flicker.
@@ -2312,6 +2382,7 @@ class FuelFilterDaemon:
                     'mm': (self._score_cache.get(sym) or {}).get('fuel_dir') or a.get('dir'),
                     'mm_str': self._fuel_str.get(sym),
                     'mm_str_prev': self._fuel_str_prev.get(sym),
+                    'paused': bool(a.get('sess_paused')),
                 })
             anomalies.sort(key=lambda x: -x['held_sec'])
         return {
