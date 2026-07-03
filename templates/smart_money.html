@@ -7857,14 +7857,39 @@ function renderTradeHistoryChart(h, meta) {
     const durTxt = dur < 3600 ? `${Math.round(dur / 60)}хв` : `${(dur / 3600).toFixed(1)}год`;
     const pnlLast = h[h.length - 1].pnl;
     const pnlCol = (pnlLast >= 0) ? '#22c55e' : '#ef4444';
+    // Peak PnL (MFE) + give-back
+    let peakSpan = '';
+    if (meta.peak_pnl_pct != null) {
+        const pk = meta.peak_pnl_pct;
+        const gb = (meta.pnl_pct != null) ? (pk - meta.pnl_pct) : null;
+        peakSpan = `<span>Пік: <b style="color:${pk >= 0 ? '#22c55e' : '#ef4444'}">${pk >= 0 ? '+' : ''}${pk}%</b>`
+            + ((gb != null && gb > 0.1) ? ` <span style="color:#8b93a7">(віддано ${gb.toFixed(2)}%)</span>` : '')
+            + `</span>`;
+    }
     const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap">`
         + `<span>Сторона: <b>${meta.side || '—'}</b></span>`
         + `<span>Вхід: <b>${fmtPriceJS(meta.entry_price)}</b></span>`
         + (meta.exit_price != null ? `<span>Вихід: <b>${fmtPriceJS(meta.exit_price)}</b></span>` : '<span><b>ще відкрита</b></span>')
         + (meta.pnl_pct != null ? `<span>PnL: <b style="color:${pnlCol}">${meta.pnl_pct >= 0 ? '+' : ''}${meta.pnl_pct}%</b></span>` : '')
+        + peakSpan
         + `<span>Тривалість: <b>${durTxt}</b></span>`
         + `<span>Точок: <b>${h.length}</b></span>`
         + `<span style="color:#8b93a7">${_fmtT(t0)} → ${_fmtT(tN)}</span></div>`;
+
+    // 🧠 Decision Center — what it showed at ENTRY (from stamped entry_score).
+    let dcLine = '';
+    const ed = meta.entry_decision;
+    if (ed && (ed.headline || ed.verdict)) {
+        const V_UA = { good: 'ДОБРИЙ', marginal: 'МЕЖОВИЙ', poor: 'СЛАБКИЙ' };
+        const V_COL = { good: '#22c55e', marginal: '#fbbf24', poor: '#f87171' };
+        const vlabel = V_UA[ed.verdict] || (ed.verdict ? String(ed.verdict).toUpperCase() : '—');
+        const vcol = V_COL[ed.verdict] || '#cbd5e1';
+        dcLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">`
+            + `🧠 Decision Center на вході: <b style="color:${vcol}">${vlabel}</b>`
+            + (ed.headline ? ` · <span style="color:#cbd5e1">${ed.headline}</span>` : '')
+            + (ed.recommended && ed.recommended !== 'NEUTRAL' ? ` · ${ed.recommended}` : '')
+            + `</div>`;
+    }
 
     // ₿ BTCUSDT banner state over time — colored strip (green=LONG, red=SHORT,
     // grey=WAIT/немає; напівпрозорий = ПАУЗА).
@@ -7895,7 +7920,7 @@ function renderTradeHistoryChart(h, meta) {
     ], { min: 0, max: 100, dec: 0 });
     const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 4 });
 
-    return info + pnlPanel + mmPanel + bannerStrip() + pricePanel;
+    return info + dcLine + pnlPanel + mmPanel + bannerStrip() + pricePanel;
 }
 
 async function loadTMState() {

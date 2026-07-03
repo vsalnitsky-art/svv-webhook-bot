@@ -820,12 +820,17 @@ class TradeManager:
                     'side': best.get('side'), 'entry_price': best.get('entry_price'),
                     'exit_price': best.get('exit_price'),
                     'pnl_pct': best.get('pnl_pct'),
+                    'peak_pnl_pct': best.get('peak_pnl_pct'),
+                    'entry_decision': best.get('entry_score'),
                     'opened_at': best.get('opened_at'),
                     'closed_at': best.get('closed_at'),
                     'history': list(best.get('history') or [])}
         if op:
             return {'ok': True, 'symbol': symbol, 'open': True,
                     'side': op.get('side'), 'entry_price': op.get('entry_price'),
+                    'peak_pnl_pct': self._peak_pnl(
+                        symbol, op.get('pnl_pct') or 0.0, is_shadow=is_shadow),
+                    'entry_decision': op.get('entry_score'),
                     'opened_at': op.get('opened_at'),
                     'history': list(op.get('history') or [])}
         return {'ok': True, 'symbol': symbol, 'history': []}
@@ -2320,6 +2325,7 @@ class TradeManager:
             'reason': reason,
             'reason_detail': self._build_reason_detail(
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
+            'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=False),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             'entry_score': pos.get('entry_score'),
@@ -2756,47 +2762,18 @@ class TradeManager:
             base = f'Частковий вихід на BOS-{n}'
         parts.append(base or reason)
 
-        # 2. Trade duration
-        opened = pos.get('opened_at')
-        if opened:
-            secs = max(0, time.time() - opened)
-            if secs < 3600:
-                parts.append(f'тривалість {int(secs // 60)}хв')
-            elif secs < 86400:
-                parts.append(f'тривалість {secs / 3600:.1f}год')
-            else:
-                parts.append(f'тривалість {secs / 86400:.1f}дн')
+        # NB: duration / peak / ММ-at-open were removed from this text — that
+        # recap now lives in the 📈 trade-history chart modal. Reason column
+        # stays short: just WHY it closed.
+        return ' · '.join(str(p) for p in parts if p)
 
-        # 3. Peak / MFE — best unrealised PnL the trade reached.
-        # The evaluator's peak_pnl_pct only updates during evaluate cycles, so
-        # for a fast close (e.g. WAIT-gate) it can lag behind the actual exit
-        # PnL — which is impossible (peak must be >= final, since the final
-        # level WAS reached). Clamp to at least the final pnl_pct so the shown
-        # peak never contradicts the realised result.
+    def _peak_pnl(self, symbol: str, pnl_pct: float, is_shadow: bool = False):
+        """Best unrealised PnL% the trade reached (MFE), clamped to at least
+        the final PnL so it never contradicts the result. Stored on close so
+        the trade-history modal can show peak / give-back."""
         state = (self._shadow_pos_state if is_shadow else self._pos_state).get(symbol, {})
         peak = state.get('peak_pnl_pct')
-        # ALWAYS show the peak/give-back line for EVERY trade — even losers that
-        # never went green (peak then is just the best level reached, clamped to
-        # the final PnL so it never contradicts the result). Signed so a trade
-        # that never profited reads e.g. 'пік -0.30%'.
-        peak = max(peak if peak is not None else pnl_pct, pnl_pct)
-        give_back = peak - pnl_pct
-        if give_back > 0.1:
-            parts.append(f'пік {peak:+.2f}% (віддано {give_back:.2f}%)')
-        else:
-            parts.append(f'пік {peak:+.2f}%')
-
-        # 4. ММ (fuel) value at the MOMENT the trade opened — direction +
-        # strength% + band word (e.g. 'ММ на відкритті: LONG 66% помірний').
-        mm = pos.get('ff_mm_open')
-        if mm and mm.get('str') is not None:
-            _dir = mm.get('dir') or '—'
-            _str = mm.get('str')
-            _band = self._mm_band_word(_str)
-            _band_txt = f" {_band}" if _band else ''
-            parts.append(f"📊 ММ на відкритті: {_dir} {_str}%{_band_txt}")
-
-        return ' · '.join(str(p) for p in parts if p)
+        return round(max(peak if peak is not None else pnl_pct, pnl_pct), 4)
 
     def _close_position(self, symbol: str, exit_price: float, reason: str):
         with self._lock:
@@ -2835,6 +2812,7 @@ class TradeManager:
             'reason': reason,
             'reason_detail': self._build_reason_detail(
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
+            'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=False),
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             # Carry the entry-side advisory snapshot into the closed record
@@ -3226,6 +3204,7 @@ class TradeManager:
             'reason': reason,
             'reason_detail': self._build_reason_detail(
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=True),
+            'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=True),
             'opened_by': pos.get('opened_by', ''),
             'shadow': True,
             # Same as real-position close — preserve the entry snapshot for
