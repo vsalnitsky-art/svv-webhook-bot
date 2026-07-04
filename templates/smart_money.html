@@ -8051,54 +8051,70 @@ async function showFundingArchive() {
 
 function renderFundingHistoryChart(h, meta) {
     const t0 = h[0].t, tN = h[h.length - 1].t, span = Math.max(1, tN - t0);
-    const W = 860, PAD = 34;
-    const xOf = s => PAD + ((s.t - t0) / span) * (W - 2 * PAD);
     const _fmtDT = t => { try { return new Date(t * 1000).toLocaleString('uk-UA'); } catch (e) { return t; } };
+    const _fmtT = t => { try { return new Date(t * 1000).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return t; } };
+    const fmtBig = v => { if (v == null || !isFinite(v)) return '—'; const a = Math.abs(v); if (a >= 1e9) return (v / 1e9).toFixed(2) + 'B'; if (a >= 1e6) return (v / 1e6).toFixed(2) + 'M'; if (a >= 1e3) return (v / 1e3).toFixed(1) + 'K'; return '' + Math.round(v); };
+    const priceOf = v => (typeof fmtPriceJS === 'function' ? fmtPriceJS(v) : (v != null ? (+v).toPrecision(6) : '—'));
 
-    function panel(title, series, opts) {
-        const H = opts.h || 150;
-        let all = [];
-        series.forEach(se => h.forEach(s => { const v = se.acc(s); if (v != null && isFinite(v)) all.push(v); }));
-        if (!all.length) return '';
-        let lo = (opts.min != null) ? opts.min : Math.min(...all);
-        let hi = (opts.max != null) ? opts.max : Math.max(...all);
-        if (opts.includeZero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
-        if (lo === hi) { lo -= 1; hi += 1; }
-        const yOf = v => PAD + (1 - (v - lo) / (hi - lo)) * (H - 2 * PAD);
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"><rect width="${W}" height="${H}" fill="rgba(255,255,255,0.02)"/>`;
-        [lo, (lo + hi) / 2, hi].forEach(gv => { const y = yOf(gv); svg += `<line x1="${PAD}" y1="${y.toFixed(1)}" x2="${W - PAD}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.08)"/><text x="4" y="${(y + 3).toFixed(1)}" fill="#8b93a7" font-size="10">${gv.toFixed(opts.dec != null ? opts.dec : 1)}</text>`; });
-        if (lo < 0 && hi > 0) { const yz = yOf(0); svg += `<line x1="${PAD}" y1="${yz.toFixed(1)}" x2="${W - PAD}" y2="${yz.toFixed(1)}" stroke="rgba(255,255,255,0.25)" stroke-dasharray="3 3"/>`; }
-        // event markers
-        h.forEach(s => { if (s.ev && s.ev !== 'sample') { const x = xOf(s); const c = s.ev === 'appear' ? '#22c55e' : (s.ev === 'flip' ? '#fbbf24' : '#ef4444'); svg += `<line x1="${x.toFixed(1)}" y1="${PAD}" x2="${x.toFixed(1)}" y2="${H - PAD}" stroke="${c}" stroke-opacity="0.35" stroke-dasharray="2 2"/>`; } });
-        series.forEach(se => { const pts = h.map(s => { const v = se.acc(s); if (v == null || !isFinite(v)) return null; return `${xOf(s).toFixed(1)},${yOf(v).toFixed(1)}`; }).filter(Boolean); if (pts.length) svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="1.8"/>`; });
-        svg += `<text x="${PAD}" y="14" fill="#cbd5e1" font-size="11" font-weight="700">${title}</text></svg>`;
-        const legend = series.map(se => `<span style="color:${se.color}">■ ${se.name}</span>`).join(' &nbsp; ');
-        return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center">${legend}</div></div>`;
+    // ── ONE combined chart: all metrics normalised onto a shared time axis ──
+    const W = 900, H = 360, padL = 46, padR = 16, padT = 52, padB = 30;
+    const yTop = padT, yBot = H - padB;
+    const xOf = s => padL + ((s.t - t0) / span) * (W - padL - padR);
+
+    // series definitions (each normalised to its own min..max)
+    const SERIES = [
+        { key: 'mm', name: 'ММ %', color: '#fbbf24', acc: s => s.mm, fmt: v => (v != null ? v + '%' : '—') },
+        { key: 'funding', name: 'Фандінг %', color: '#a78bfa', acc: s => s.funding, fmt: v => (v != null ? (+v).toFixed(4) + '%' : '—') },
+        { key: 'price', name: 'Ціна', color: '#60a5fa', acc: s => s.price, fmt: priceOf },
+        { key: 'vol24h', name: 'Vol 24h', color: '#34d399', acc: s => s.vol24h, fmt: v => (v != null ? '$' + fmtBig(v) : '—') },
+    ];
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;background:rgba(255,255,255,0.02);border-radius:8px">`;
+    // horizontal guide lines (visual only — series are normalised)
+    for (let g = 0; g <= 4; g++) { const y = yTop + (yBot - yTop) * g / 4; svg += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.06)"/>`; }
+    // ₿ banner strip along the very top
+    if (h.some(s => s.btc_dir != null || s.btc_paused != null)) {
+        const colOf = d => d === 'LONG' ? '#22c55e' : (d === 'SHORT' ? '#ef4444' : '#6b7280');
+        svg += `<text x="${padL}" y="14" fill="#cbd5e1" font-size="11" font-weight="700">₿ Банер BTCUSDT</text>`;
+        for (let i = 0; i < h.length; i++) { const s = h[i]; const x1 = xOf(s), x2 = i < h.length - 1 ? xOf(h[i + 1]) : (W - padR); svg += `<rect x="${x1.toFixed(1)}" y="20" width="${Math.max(1, x2 - x1).toFixed(1)}" height="12" fill="${colOf(s.btc_dir)}" opacity="${s.btc_paused ? 0.35 : 0.9}"/>`; }
     }
-    function bannerStrip() {
-        if (!h.some(s => s.btc_dir != null || s.btc_paused != null)) return '';
-        const H = 40, top = 18, bh = 14, colOf = d => d === 'LONG' ? '#22c55e' : (d === 'SHORT' ? '#ef4444' : '#6b7280');
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"><text x="${PAD}" y="12" fill="#cbd5e1" font-size="11" font-weight="700">₿ Банер BTCUSDT</text>`;
-        for (let i = 0; i < h.length; i++) { const s = h[i]; const x1 = xOf(s), x2 = i < h.length - 1 ? xOf(h[i + 1]) : (W - PAD); svg += `<rect x="${x1.toFixed(1)}" y="${top}" width="${Math.max(1, x2 - x1).toFixed(1)}" height="${bh}" fill="${colOf(s.btc_dir)}" opacity="${s.btc_paused ? 0.35 : 0.9}"/>`; }
-        svg += `</svg>`;
-        return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center"><span style="color:#22c55e">■ LONG</span> &nbsp; <span style="color:#ef4444">■ SHORT</span> &nbsp; <span style="color:#6b7280">■ WAIT</span> &nbsp; напівпрозорий=ПАУЗА</div></div>`;
-    }
+    // x-axis time labels
+    for (let g = 0; g <= 4; g++) { const tt = t0 + span * g / 4; const x = padL + (W - padL - padR) * g / 4; svg += `<text x="${x.toFixed(1)}" y="${H - 10}" fill="#8b93a7" font-size="10" text-anchor="${g === 0 ? 'start' : (g === 4 ? 'end' : 'middle')}">${_fmtT(tt)}</text>`; }
+    // event vertical lines + letter
+    h.forEach(s => { if (s.ev && s.ev !== 'sample') { const x = xOf(s); const c = s.ev === 'appear' ? '#22c55e' : (s.ev === 'flip' ? '#fbbf24' : '#ef4444'); const L = s.ev === 'appear' ? 'П' : (s.ev === 'flip' ? 'Р' : 'З'); svg += `<line x1="${x.toFixed(1)}" y1="${yTop}" x2="${x.toFixed(1)}" y2="${yBot}" stroke="${c}" stroke-opacity="0.45" stroke-dasharray="3 3"/><text x="${x.toFixed(1)}" y="${yTop - 2}" fill="${c}" font-size="10" text-anchor="middle" font-weight="700">${L}</text>`; } });
+    // one polyline per metric (normalised)
+    const stats = {};
+    SERIES.forEach(se => {
+        const vals = h.map(se.acc).filter(v => v != null && isFinite(v));
+        if (!vals.length) { stats[se.key] = null; return; }
+        let lo = Math.min(...vals), hi = Math.max(...vals); if (lo === hi) { lo -= 1; hi += 1; }
+        stats[se.key] = { lo, hi, last: se.acc(h[h.length - 1]) };
+        const yOf = v => yBot - ((v - lo) / (hi - lo)) * (yBot - yTop);
+        const pts = h.map(s => { const v = se.acc(s); if (v == null || !isFinite(v)) return null; return `${xOf(s).toFixed(1)},${yOf(v).toFixed(1)}`; }).filter(Boolean);
+        if (pts.length) svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="1.8"/>`;
+    });
+    svg += `</svg>`;
+
+    // legend under the chart — real last value + range per metric
+    const legend = `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:0.72rem;margin:6px 0 10px;justify-content:center">`
+        + SERIES.map(se => { const st = stats[se.key]; if (!st) return ''; return `<span style="color:${se.color}">■ <b>${se.name}:</b> ${se.fmt(st.last)} <span style="color:#7a8395">(${se.fmt(st.lo)}…${se.fmt(st.hi)})</span></span>`; }).filter(Boolean).join('')
+        + `</div>`
+        + `<div style="font-size:0.64rem;color:#7a8395;text-align:center;margin-bottom:10px">Лінії нормовані (кожна у власному діапазоні) — важлива форма/збіг у часі, точні значення — у легенді та лозі. Позначки: <b style="color:#22c55e">П</b>=поява · <b style="color:#fbbf24">Р</b>=розворот · <b style="color:#ef4444">З</b>=зникнення.</div>`;
+
     const events = h.filter(s => s.ev && s.ev !== 'sample');
     const evName = e => e === 'appear' ? '🟢 поява' : (e === 'flip' ? '🔄 розворот' : (e === 'exit' ? '🔴 зникнення' : e));
-    const evLog = events.length ? `<div style="max-height:130px;overflow:auto;font-size:0.72rem;color:#cbd5e1;margin-bottom:10px;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px">`
-        + `<div style="color:#8b93a7;margin-bottom:4px">Події:</div>`
+    const evLog = events.length ? `<div style="max-height:150px;overflow:auto;font-size:0.72rem;color:#cbd5e1;border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px">`
+        + `<div style="color:#8b93a7;margin-bottom:4px;font-weight:700">Лог подій</div>`
         + events.map(s => `<div>${_fmtDT(s.t)} · ${evName(s.ev)} · <b>${s.mm_dir || '—'}</b> · ММ ${s.mm != null ? s.mm + '%' : '—'} · фандінг ${s.funding != null ? (+s.funding).toFixed(4) + '%' : '—'} · ₿ ${s.btc_dir || 'WAIT'}${s.btc_paused ? ' ⏸' : ''}</div>`).join('')
         + `</div>` : '';
-    const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:6px;display:flex;gap:16px;flex-wrap:wrap">`
+
+    const info = `<div style="font-size:0.74rem;color:#cbd5e1;margin-bottom:8px;display:flex;gap:16px;flex-wrap:wrap">`
         + `<span>Записів: <b>${h.length}</b></span>`
         + `<span>Подій: <b>${events.length}</b></span>`
         + (meta.live ? `<span style="color:#34d399"><b>● зараз на радарі</b></span>` : `<span style="color:#8b93a7">поза радаром</span>`)
         + `<span style="color:#8b93a7">${_fmtDT(t0)} → ${_fmtDT(tN)}</span></div>`;
-    const mmPanel = panel('ММ, %', [{ name: 'ММ', color: '#fbbf24', acc: s => s.mm }], { min: 0, max: 100, dec: 0 });
-    const fundPanel = panel('Фандінг, %', [{ name: 'Funding', color: '#a78bfa', acc: s => s.funding }], { includeZero: true, dec: 4 });
-    const pricePanel = panel('Ціна', [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }], { dec: 6 });
-    const volPanel = panel('Vol 24h ($)', [{ name: 'Vol', color: '#34d399', acc: s => s.vol24h }], { dec: 0 });
-    return info + evLog + mmPanel + fundPanel + pricePanel + volPanel + bannerStrip();
+
+    return info + svg + legend + evLog;
 }
 
 async function loadTMState() {
