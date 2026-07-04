@@ -2898,6 +2898,70 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
+    @app.route('/api/fuel-filter/funding-archive/delete', methods=['POST'])
+    def api_ff_funding_archive_delete():
+        """Delete one coin's funding archive."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            sym = (request.get_json() or {}).get('symbol', '')
+            return jsonify({'ok': True, 'deleted': ff.delete_funding_archive(sym)})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/funding-archive/clear', methods=['POST'])
+    def api_ff_funding_archive_clear():
+        """Wipe the whole funding archive."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify({'ok': True, 'cleared': ff.clear_funding_archive()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/funding-mute', methods=['POST'])
+    def api_ff_funding_mute():
+        """Mute a funding coin for N hours (default 24). Body: {symbol, hours?}."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            body = request.get_json() or {}
+            until = ff.mute_funding(body.get('symbol', ''),
+                                    hours=float(body.get('hours', 24) or 24))
+            return jsonify({'ok': True, 'until': until})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/funding-unmute', methods=['POST'])
+    def api_ff_funding_unmute():
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            sym = (request.get_json() or {}).get('symbol', '')
+            return jsonify({'ok': True, 'unmuted': ff.unmute_funding(sym)})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/fuel-filter/funding-muted')
+    def api_ff_funding_muted():
+        """List currently-muted funding coins with remaining time."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            if not ff:
+                return jsonify({'ok': False, 'reason': 'not initialized'})
+            return jsonify({'ok': True, 'muted': ff.list_funding_muted()})
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
     @app.route('/api/fuel-filter/settings', methods=['POST'])
     def api_fuel_filter_settings():
         """Update settings. Body may include any of: enabled, duration_minutes,

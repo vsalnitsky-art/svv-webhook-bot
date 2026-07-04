@@ -238,6 +238,9 @@ class FuelFilterDaemon:
         self._funding_arch_last: Dict[str, float] = {}
         self._funding_arch_dirty = False
         self._funding_arch_saved_at = 0.0
+        # Per-coin MUTE: {sym: until_ts}. A muted coin is ignored entirely by
+        # the 💰 Funding — ММ scan (no table row, no TG, no archive) until then.
+        self._funding_muted: Dict[str, float] = {}
         # {symbol: current funding %} for funding-sourced coins (UI display).
         self._funding_rates: Dict[str, float] = {}
         # {symbol: nextFundingTime ms} — countdown to next funding settlement.
@@ -546,6 +549,15 @@ class FuelFilterDaemon:
                           f"{len(self._funding_archive)} coin(s)")
             except Exception as e:
                 print(f"[FuelFilter] funding archive load error: {e}")
+            # Muted funding coins (drop already-expired ones).
+            try:
+                _now = time.time()
+                fm = st.get('funding_muted', {}) or {}
+                self._funding_muted = {str(k).upper(): float(v)
+                                       for k, v in fm.items()
+                                       if float(v) > _now}
+            except Exception:
+                self._funding_muted = {}
             # Candle-confirm attempt counters per coin — restored so the
             # "🕯️ Спроби" column and the "Opened by" attempt number survive
             # a bot restart instead of resetting to 0.
@@ -602,6 +614,7 @@ class FuelFilterDaemon:
                 'btc_verdict_dir': self._btc_verdict_dir,
                 'btc_verdict_since': self._btc_verdict_since,
                 'pending': self._pending,
+                'funding_muted': self._funding_muted,
             })
         except Exception as e:
             print(f"[FuelFilter] state persist error: {e}")
@@ -685,6 +698,78 @@ class FuelFilterDaemon:
             live = bool(sym in self._anomalies and self._anomalies[sym].get('holding'))
             return {'ok': True, 'symbol': sym, 'live': live,
                     'history': list(self._funding_archive.get(sym) or [])}
+
+    def delete_funding_archive(self, sym: str) -> bool:
+        """Remove one coin's archive."""
+        sym = (sym or '').upper()
+        with self._lock:
+            existed = self._funding_archive.pop(sym, None) is not None
+            self._funding_prev_state.pop(sym, None)
+            self._funding_arch_last.pop(sym, None)
+            if existed:
+                try:
+                    self._db.set_setting(_DB_FUNDING_ARCHIVE, self._funding_archive)
+                except Exception as e:
+                    print(f"[FuelFilter] archive delete persist: {e}")
+        return existed
+
+    def clear_funding_archive(self) -> int:
+        """Wipe the whole funding archive."""
+        with self._lock:
+            n = len(self._funding_archive)
+            self._funding_archive = {}
+            self._funding_prev_state = {}
+            self._funding_arch_last = {}
+            try:
+                self._db.set_setting(_DB_FUNDING_ARCHIVE, {})
+            except Exception as e:
+                print(f"[FuelFilter] archive clear persist: {e}")
+        return n
+
+    def mute_funding(self, sym: str, hours: float = 24.0) -> float:
+        """Mute a funding coin for `hours` — it's ignored entirely (no row, no
+        TG, no archive) until then. Removes it from the table immediately.
+        Returns the until-timestamp."""
+        sym = (sym or '').upper()
+        try:
+            hours = max(0.0, min(720.0, float(hours)))
+        except (TypeError, ValueError):
+            hours = 24.0
+        until = time.time() + hours * 3600.0
+        with self._lock:
+            self._funding_muted[sym] = until
+            self._anomalies.pop(sym, None)
+            self._funding_notify_at.pop(sym, None)
+            self._funding_prev_state.pop(sym, None)
+            self._persist_state()
+        return until
+
+    def unmute_funding(self, sym: str) -> bool:
+        sym = (sym or '').upper()
+        with self._lock:
+            existed = self._funding_muted.pop(sym, None) is not None
+            if existed:
+                self._persist_state()
+        return existed
+
+    def list_funding_muted(self) -> List[Dict]:
+        """Active mutes (auto-drops expired), with remaining seconds."""
+        now = time.time()
+        with self._lock:
+            for s in [k for k, v in self._funding_muted.items() if v <= now]:
+                self._funding_muted.pop(s, None)
+            return [{'symbol': s, 'until': v, 'remaining_sec': int(v - now)}
+                    for s, v in sorted(self._funding_muted.items(),
+                                       key=lambda kv: kv[1])]
+
+    def _is_funding_muted(self, sym: str, now: float) -> bool:
+        u = self._funding_muted.get(sym)
+        if u is None:
+            return False
+        if u <= now:
+            self._funding_muted.pop(sym, None)
+            return False
+        return True
 
     def get_funding_archive_list(self) -> List[Dict]:
         """Index of archived coins (incl. ones no longer on the radar), newest
@@ -1744,6 +1829,10 @@ class FuelFilterDaemon:
             # the keep-threshold. This fixes "паливо зникло" firing at ММ 100%.
             _in_table = {s for s, a in self._anomalies.items() if a.get('funding')}
             for sym in (funding | _in_table):
+                # Muted → ignore this coin entirely (no row, no TG, no archive).
+                if self._is_funding_muted(sym, now):
+                    self._anomalies.pop(sym, None)
+                    continue
                 in_scanner = sym in funding
                 fuel = fuels.get(sym) or self._fuel_dir_smoothed(sym)
                 status = fuel.get('status') if fuel else None

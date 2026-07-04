@@ -1976,6 +1976,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— окремий скан монет із 💰 Funding Rate Scanner на появу «ММ»</span>
                 </div>
                 <div style="display:flex;gap:8px">
+                    <button onclick="showFundingMuted()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(251,191,36,0.4);background:rgba(251,191,36,0.1);color:#fbbf24;cursor:pointer" title="Приглушені монети (на 24 год) — переглянути / увімкнути назад">🔕 Приглушені</button>
                     <button onclick="showFundingArchive()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(96,165,250,0.4);background:rgba(96,165,250,0.1);color:#60a5fa;cursor:pointer" title="Архів історії всіх монет (зокрема тих, що зникли з радара)">📜 Архів монет</button>
                     <button onclick="clearAnomalies()" style="font-size:0.68rem;padding:4px 10px;border-radius:5px;border:1px solid rgba(239,68,68,0.4);background:rgba(239,68,68,0.1);color:#f87171;cursor:pointer" title="Очистити таблицю Funding">🗑️ Очистити всі</button>
                 </div>
@@ -7233,7 +7234,7 @@ function renderFuelFilter(d) {
                     <td style="min-width:160px">${progHtml}</td>
                     <td style="font-size:0.72rem;white-space:nowrap">${rateTxt} ${cdTxt}</td>
                     <td style="font-size:0.72rem;color:#cbd5e1;white-space:nowrap">${volTxt}</td>
-                    <td><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕</span></td>
+                    <td style="white-space:nowrap"><span onclick="muteFunding('${a.symbol}')" style="cursor:pointer;color:#fbbf24;font-size:0.9rem;margin-right:8px" title="Приглушити монету на 24 год (не турбувати, ігнорувати)">🔕</span><span onclick="deleteAnomaly('${a.symbol}')" style="cursor:pointer;color:#f87171;font-size:0.9rem" title="Прибрати з таблиці">✕</span></td>
                 </tr>`;
             }).join('');
         }
@@ -8036,14 +8037,81 @@ async function showFundingArchive() {
         const coins = (d && d.coins) || [];
         if (!coins.length) { body.innerHTML = '<div style="padding:24px;color:#888">Архів порожній.</div>'; return; }
         const _fmtDT = t => { try { return new Date(t * 1000).toLocaleString('uk-UA'); } catch (e) { return t; } };
-        body.innerHTML = '<div style="max-height:70vh;overflow:auto">'
-            + '<table class="tm-table" style="width:100%"><thead><tr><th>Монета</th><th>Записів</th><th>Перше</th><th>Останнє</th><th></th></tr></thead><tbody>'
+        body.innerHTML = `<div style="text-align:right;margin-bottom:8px"><button class="cleanup-btn danger" onclick="clearFundingArchive()">🗑️ Очистити весь архів</button></div>`
+            + '<div style="max-height:66vh;overflow:auto">'
+            + '<table class="tm-table" style="width:100%"><thead><tr><th>Монета</th><th>Записів</th><th>Перше</th><th>Останнє</th><th>Дії</th></tr></thead><tbody>'
             + coins.map(c => `<tr>
-                <td><b style="cursor:pointer;color:#60a5fa" onclick="showFundingHistory('${c.symbol}')">📜 ${c.symbol}</b>${c.live ? ' <span style="color:#34d399" title="Зараз на радарі">●</span>' : ''}</td>
+                <td><b style="cursor:pointer;color:#60a5fa" onclick="showFundingHistory('${c.symbol}')">📜 ${c.symbol}</b>${c.live ? ' <span style="color:#34d399" title="Зараз на радарі">●</span>' : ' <span style="color:#8b93a7" title="Поза радаром">○</span>'}</td>
                 <td>${c.count}</td>
                 <td style="color:#8b93a7">${_fmtDT(c.first_t)}</td>
                 <td style="color:#8b93a7">${_fmtDT(c.last_t)}</td>
-                <td><button class="tk-btn" style="padding:2px 8px;font-size:0.72rem" onclick="showFundingHistory('${c.symbol}')">Історія</button></td>
+                <td style="white-space:nowrap"><button class="tk-btn" style="padding:2px 8px;font-size:0.72rem" onclick="showFundingHistory('${c.symbol}')">Історія</button>
+                    <button class="tk-btn alt" style="padding:2px 8px;font-size:0.72rem;margin-left:4px;color:#f87171" title="Видалити архів цієї монети" onclick="deleteFundingArchive('${c.symbol}')">✕</button></td>
+            </tr>`).join('')
+            + '</tbody></table></div>';
+    } catch (e) { body.innerHTML = `<div style="padding:24px;color:#f87171">Помилка: ${e}</div>`; }
+}
+
+async function deleteFundingArchive(sym) {
+    if (!confirm(`Видалити архів монети ${sym}?`)) return;
+    try {
+        await fetch('/api/fuel-filter/funding-archive/delete', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: sym})
+        });
+        showFundingArchive();
+    } catch (e) { alert('Помилка: ' + e); }
+}
+
+async function clearFundingArchive() {
+    if (!confirm('Очистити ВЕСЬ архів funding-монет? Це незворотньо.')) return;
+    try {
+        await fetch('/api/fuel-filter/funding-archive/clear', {method: 'POST'});
+        showFundingArchive();
+    } catch (e) { alert('Помилка: ' + e); }
+}
+
+// ── 🔕 Mute a funding coin for 24h ──
+async function muteFunding(sym) {
+    if (!confirm(`Приглушити ${sym} на 24 години? Бот ігноруватиме її (без таблиці/оповіщень) цей період.`)) return;
+    try {
+        await fetch('/api/fuel-filter/funding-mute', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: sym, hours: 24})
+        });
+        if (typeof loadFuelFilterStatus === 'function') loadFuelFilterStatus();
+    } catch (e) { alert('Помилка: ' + e); }
+}
+
+async function unmuteFunding(sym) {
+    try {
+        await fetch('/api/fuel-filter/funding-unmute', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: sym})
+        });
+        showFundingMuted();
+    } catch (e) { alert('Помилка: ' + e); }
+}
+
+async function showFundingMuted() {
+    const modal = ensureHistModal();
+    modal.querySelector('.tm-hist-title').textContent = '🔕 Приглушені funding-монети';
+    const body = modal.querySelector('.tm-hist-body');
+    body.innerHTML = '<div style="padding:24px;color:#888">Завантаження…</div>';
+    modal.style.display = 'flex';
+    try {
+        const d = await (await fetch('/api/fuel-filter/funding-muted')).json();
+        const muted = (d && d.muted) || [];
+        if (!muted.length) { body.innerHTML = '<div style="padding:24px;color:#888">Немає приглушених монет.</div>'; return; }
+        const _rem = s => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h > 0 ? `${h}год ${m}хв` : `${m}хв`; };
+        const _fmtDT = t => { try { return new Date(t * 1000).toLocaleString('uk-UA'); } catch (e) { return t; } };
+        body.innerHTML = '<div style="max-height:70vh;overflow:auto">'
+            + '<table class="tm-table" style="width:100%"><thead><tr><th>Монета</th><th>Залишилось</th><th>До</th><th>Дії</th></tr></thead><tbody>'
+            + muted.map(m => `<tr>
+                <td><b>${m.symbol}</b></td>
+                <td style="color:#fbbf24">${_rem(m.remaining_sec)}</td>
+                <td style="color:#8b93a7">${_fmtDT(m.until)}</td>
+                <td><button class="tk-btn warm" style="padding:2px 10px;font-size:0.72rem" onclick="unmuteFunding('${m.symbol}')">🔔 Увімкнути</button></td>
             </tr>`).join('')
             + '</tbody></table></div>';
     } catch (e) { body.innerHTML = `<div style="padding:24px;color:#f87171">Помилка: ${e}</div>`; }
