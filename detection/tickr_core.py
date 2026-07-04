@@ -437,7 +437,7 @@ SORT_KEYS = ['vol_usd', 'spike', 'change_abs', 'trades', 'oi_usd', 'funding_abs'
 
 def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
                top_n: int = 20, active_only: bool = True,
-               baseline_key: str = '') -> Dict:
+               baseline_key: str = '', min_vol_usd: float = 0.0) -> Dict:
     """Fetch instruments + 24h activity metrics, rank, return top N.
 
     sort_by:
@@ -474,8 +474,17 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
         except Exception as e:
             warnings.append(f'{exchange} {mt} activity: {e}')
 
+    try:
+        min_vol_usd = max(0.0, float(min_vol_usd or 0.0))
+    except (TypeError, ValueError):
+        min_vol_usd = 0.0
+
     enriched = []
     for s in symbols:
+        # Skip dated/delivery futures (ETHUSDT-26MAR27, BTCUSDT-31JUL26 …) —
+        # they carry a '-' suffix and are not the perpetual/spot we want.
+        if '-' in str(s.get('symbol', '')):
+            continue
         m = metrics.get((s['market_type'], _canon(s['symbol']))) or {}
         row = dict(s)
         row['vol_usd'] = m.get('vol_usd', 0.0)
@@ -486,6 +495,9 @@ def top_active(exchange: str, categories: List[str], sort_by: str = 'vol_usd',
         row['funding'] = m.get('funding', 0.0)
         row['funding_abs'] = abs(m.get('funding', 0.0))
         row['last'] = m.get('last', 0.0)
+        # Filter out illiquid coins (small 24h volume).
+        if min_vol_usd > 0 and (row['vol_usd'] or 0) < min_vol_usd:
+            continue
         enriched.append(row)
 
     sort_by = sort_by if sort_by in SORT_KEYS else 'vol_usd'
