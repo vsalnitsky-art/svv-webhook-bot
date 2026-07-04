@@ -7807,9 +7807,13 @@ function ffFuelCell(dir, now, prev) {
 // doesn't also trigger a row's select/other onclick.
 function tvSym(sym, label) {
     const s = String(sym || '').toUpperCase();
-    return `<a href="https://www.tradingview.com/chart/?symbol=BYBIT:${s}" target="tvchart" rel="noopener"`
-        + ` title="Відкрити BYBIT:${s} у TradingView (одна вкладка)"`
-        + ` onclick="event.stopPropagation()"`
+    // Bybit PERPETUAL futures on TradingView = SYMBOL.P (spot has no suffix).
+    const url = `https://www.tradingview.com/chart/?symbol=BYBIT:${s}.P`;
+    // window.open(url, 'tvchart') RE-USES the named tab we opened earlier
+    // (target="tvchart" + rel=noopener was spawning a fresh tab each click).
+    return `<a href="${url}"`
+        + ` title="Відкрити BYBIT:${s}.P (ф'ючерс) у TradingView — одна вкладка"`
+        + ` onclick="event.stopPropagation();event.preventDefault();window.open(this.href,'tvchart');return false;"`
         + ` style="color:inherit;text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.4)">${label != null ? label : s}</a>`;
 }
 
